@@ -1,7 +1,6 @@
 # satz — working rules
 
-Rust tool (bin `satz`, crate `crates/satz-core`; rename to `satz` in
-progress) that compiles estates written in **Satz** — a language whose
+Rust tool (bin `satz`, crate `crates/satz-core`) that compiles estates written in **Satz** — a language whose
 resource types and attributes are the Terraform provider's, to the underscore —
 to OpenTofu/Terraform HCL, with a compliance plane on top: claims → catalogs →
 `require` (goal view, declared) → `report-compliance` (evidence, verified live,
