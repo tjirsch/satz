@@ -20,8 +20,7 @@
 //! this module through the fragment pipeline's front end, produced by the same
 //! compile that produced the `main.tf` whose addresses supply the witnesses. One
 //! read, so claims and witnesses can never disagree about which estate they
-//! describe. The YAML dialect's `*.claims.yaml` sidecar route survives only for
-//! the last un-converted estate and retires with the dialect (M3).
+//! describe. There is no sidecar route: a YAML-dialect estate is rejected here.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -31,7 +30,7 @@ use serde::Deserialize;
 type BoxErr = Box<dyn std::error::Error>;
 
 // ---------------------------------------------------------------------------
-// Data model (all plain YAML, all reviewable as diffs)
+// Data model (catalogs and attestations are YAML files; claims are Satz syntax)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]

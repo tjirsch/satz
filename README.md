@@ -20,11 +20,11 @@ customer-repo/ (e.g. project-root/)
 
 Two different files are involved, and both are easy to mistake for each other.
 
-| | `--config <FILE>` | positional `<INFRA_YAML>` |
+| | `--config <FILE>` | positional `<ESTATE>` |
 |---|---|---|
-| **Is** | the **project** config — TOML | the **infrastructure definition** — YAML |
-| **Example** | `config.toml`, `../config.toml` | `C01234567.yaml` |
-| **Holds** | `yaml_dir`, `hcl_dir`, `schema_dir`, `include_dirs`, providers | variables, `terraform` block, folders, projects, resources |
+| **Is** | the **project** config — TOML | the **estate** — Satz |
+| **Example** | `config.toml`, `../config.toml` | `C0example.satz` |
+| **Holds** | `yaml_dir`, `hcl_dir`, `schema_dir`, `include_dirs`, providers | params, `terraform` block, folders, projects, resources |
 | **Default** | `./config.toml` (error if missing) | none — required |
 | **Path resolves against** | your current directory | **`yaml_dir`** |
 
@@ -32,11 +32,11 @@ Two different files are involved, and both are easy to mistake for each other.
 
 ```bash
 # from the project root (config.toml is in the current directory)
-satz transpile C01234567.yaml
-satz bootstrap  C01234567.yaml
+satz transpile C0example.satz
+satz bootstrap  C0example.satz
 
 # from a subdirectory such as hcl/ — yaml_dir still resolves from config.toml's directory
-satz transpile C01234567.yaml --config ../config.toml
+satz transpile C0example.satz --config ../config.toml
 ```
 
 **Rule of thumb: `--config` takes a path; the positional takes a bare filename.**
@@ -45,15 +45,15 @@ Common mistakes:
 
 | Mistake | What happens |
 |---|---|
-| `satz bootstrap yaml/C01.yaml` | resolves to `yaml/yaml/C01.yaml` → not found |
+| `satz bootstrap yaml/C01.satz` | resolves to `yaml/yaml/C01.satz` → not found |
 | `satz bootstrap C01` | no extension is appended → looks for `yaml/C01` |
-| `satz bootstrap C01.yaml --config yaml/C01.yaml` | the YAML is parsed as TOML → `key with no value, expected =` |
+| `satz bootstrap C01.satz --config yaml/C01.satz` | the estate is parsed as TOML → `key with no value, expected =` |
 
 ### Global Options
 
 These options can be placed anywhere in the command (e.g., before or after subcommands):
 
-- `--config <FILE>`: Path to the **project** config file (`config.toml`, TOML — not the infrastructure YAML). Mandatory for most commands if `config.toml` is not in the current directory. Every relative path inside it resolves from its own directory.
+- `--config <FILE>`: Path to the **project** config file (`config.toml`, TOML — not the estate file). Mandatory for most commands if `config.toml` is not in the current directory. Every relative path inside it resolves from its own directory.
 - `--validation <LEVEL>`: Validation level for mandatory parameters (`warn`, `error`, `none`). Default from project config or `warn`.
 - `--verbose`: Enable verbose output. When invoked without a subcommand (e.g. `satz --verbose`), prints full recursive help listing all subcommands and their options.
 
@@ -129,7 +129,6 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--no-live` |
-| `build-packs` | *(maintainer: compile presets/**/*.satz to their .yaml twins)* |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
 | `self-update` | `--no-download-readme`, `--no-open-readme`, `--check-only`, `--skip-checksum` |
@@ -168,7 +167,7 @@ satz init \
 **Under the Hood:**
 - Creates the standardized directory structure: `yaml/`, `hcl/`, `schemas/`.
 - Generates a default `config.toml` and `.gitignore`.
-- If customer details are provided, generates a template YAML file in `yaml/`.
+- If customer details are provided, generates a template estate in `yaml/` (still written in the legacy YAML dialect — run `migrate-to-satz` on it).
 - Fetches the latest provider schemas for the configured providers.
 
 ### Day 0 Bootstrap (`bootstrap`)
@@ -179,11 +178,11 @@ satz bootstrap <CONFIG_FILE> [options]
 ```
 
 **Parameters:**
-- `<INFRA_YAML>`: The infrastructure definition YAML (e.g. `C01234567.yaml`). Relative paths are looked up inside `yaml_dir`, so pass the bare filename — **not** `yaml/C01234567.yaml`, which would resolve to `yaml/yaml/C01234567.yaml`. This is not the tool config; that is `--config`.
+- `<ESTATE>`: The estate file (e.g. `C0example.satz`). Relative paths are looked up inside `yaml_dir`, so pass the bare filename — **not** `yaml/C0example.satz`, which would resolve to `yaml/yaml/C0example.satz`. This is not the tool config; that is `--config`.
 - `--dry-run`: Simulation mode; does not create resources.
 **Tip:** Use `--dry-run` to see what resources would be created without making changes.
 
-**Tip:** For a declarative approach, set `deployment-mode: boot` in your YAML and run `transpile`.
+**Tip:** For a declarative approach, set `deployment_mode = "boot"` in the estate's `params` block and run `transpile`.
 
 **Under the Hood:**
 1.  **Authentication**: Uses Application Default Credentials (ADC).
@@ -193,33 +192,33 @@ satz bootstrap <CONFIG_FILE> [options]
 5.  **Enable APIs**: Enables the foundation APIs (Service Usage, Cloud Resource Manager, IAM, IAM Credentials, Storage, Cloud Billing, Cloud Identity, Cloud Asset, Logging, Org Policy, Essential Contacts).
 6.  **State Bucket**: Creates the GCS bucket for Terraform state (with versioning, uniform access).
 7.  **Automated Setup**:
-    - **Transpile**: Converts the YAML to HCL.
+    - **Transpile**: Compiles the estate to HCL.
     - **Init**: Runs `tofu init` to download plugins.
     - **Import**: Automatically imports the created Folder, Project, and Bucket into the local state.
 
 ### Transpile (`transpile`)
-Convert your YAML configuration to production-ready HCL.
+Compile your estate to production-ready HCL. Input is `.satz`; the legacy `.yaml` dialect is still accepted.
 
 ```bash
 satz transpile <INPUT> [options]
 ```
 
 **Parameters:**
-- `<INPUT>`: Name of the input YAML file. This is resolved relative to the `yaml_dir` defined in your config.
+- `<INPUT>`: Name of the estate file. This is resolved relative to the `yaml_dir` defined in your config.
 - `--output, -o <FILE>`: Optional output subdirectory or absolute path. By default, output goes to `hcl_dir`.
 - `--schema-dir, -s <DIR>`: Override the schema directory.
-- `--print-variables`: After transpilation, print the fully resolved variable table as YAML to stdout. Useful for debugging variable resolution across multiple include files.
+- `--print-variables`: After transpilation, print the resolved variable table (`terraform.tfvars`) to stdout. Useful for debugging variable resolution across multiple include files.
 
 **Running from subdirectories:**
 You can run the transpile command from any directory (e.g., from within the `hcl/` folder) by specifying the config path. Both styles are supported:
 ```bash
 # Global option before subcommand
-satz --config ../config.toml transpile my-infra.yaml
+satz --config ../config.toml transpile my-infra.satz
 
 # Global option after subcommand (Recommended)
-satz transpile my-infra.yaml --config ../config.toml
+satz transpile my-infra.satz --config ../config.toml
 ```
-This will correctly look for `../yaml/my-infra.yaml` and update the files in the current directory.
+This will correctly look for `../yaml/my-infra.satz` and update the files in the current directory.
 
 **Satz estates — the fragment pipeline:**
 A `.satz` input compiles through the stage-B fragment pipeline: every source
@@ -295,19 +294,19 @@ refuses such files.
 
 #### Declarative Imports (via `import-id`)
 
-To import an existing resource, add the `import-id` tag to its definition in your YAML:
+To import an existing resource, add the `"import-id"` attribute to its definition in your estate:
 
-```yaml
-google_org_policy_policy:
-  iam.disableServiceAccountKeyCreation:
-    import-id: "organizations/12345/policies/iam.disableServiceAccountKeyCreation"
-    spec:
-      rules:
-        - enforce: "TRUE"
+```
+google_org_policy_policy {
+  iam.disableServiceAccountKeyCreation {
+    "import-id" = "organizations/12345/policies/iam.disableServiceAccountKeyCreation"
+    spec { rules = [{ enforce = "TRUE" }] }
+  }
+}
 ```
 
 **How it works:**
-- **`import-id: "<ID>"`**: Provide the full GCP resource ID.
+- **`"import-id" = "<ID>"`**: Provide the full GCP resource ID.
 - **`imports.tf` Generation**: The transpiler detects the `import-id` and generates a corresponding OpenTofu `import` block in `hcl/imports.tf`.
 - **Automatic Lifecycle**: `imports.tf` is automatically deleted before each `transpile` run and only recreated if `import-id` tags are found.
 - **Execution**: Running `tofu plan` (or `apply`) will show these resources as "to be imported".
@@ -321,8 +320,8 @@ The `bootstrap` command automatically handles the import of core infrastructure 
 
 ### Organization Policy Alignment
 
-Curated Organization Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.yaml`) are normally
-pulled into a config with `!include` and rendered as `google_org_policy_policy` resources
+Curated Organization Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) are normally
+pulled into an estate with `use` and rendered as `google_org_policy_policy` resources
 like any other. The wrinkle is GCP **managed** constraints (their name contains
 `.managed.`, e.g. `iam.managed.disableServiceAccountKeyCreation`): depending on org state
 they must be *activated*, then *imported as-is*, and only then *modified*. The
@@ -343,13 +342,13 @@ editing** — change the one include line in your main config from `!include` to
 
 ```yaml
 # C01234567.yaml
-org_policy_policy: !import-include presets/CIS-GCP-Foundation-4.0.yaml
+org_policy_policy: !import-include presets/CIS-GCP-Foundation-4.0.satz
 ```
 
 Then run the normal transpile and apply:
 
 ```bash
-satz transpile C01234567.yaml --config config.toml   # renders HCL, then:
+satz transpile C0example.satz --config config.toml   # renders HCL, then:
                                                          #   - activates managed constraints (API)
                                                          #   - tofu import of existing policies into state
 cd hcl && tofu apply                                     # rolls out spec changes / creates the rest
@@ -385,7 +384,7 @@ satz export-organizational-policies C01234567.yaml --customer-organization-id 12
 ```bash
 # Compare a preset against live:
 satz diff-organizational-policies C01234567.yaml \
-  --preset presets/CIS-GCP-Foundation-4.0.yaml --format markdown --report diff.md
+  --preset presets/CIS-GCP-Foundation-4.0.satz --format markdown --report diff.md
 
 # Or, with no --preset, compare everything the config declares against live:
 satz diff-organizational-policies C01234567.yaml
@@ -430,7 +429,7 @@ cloud_identity_group:
 #### Cloud Identity groups
 
 ```bash
-satz transpile C01234567.yaml --config config.toml
+satz transpile C0example.satz --config config.toml
 # !import-include: importing Cloud Identity groups from 1 preset(s)...
 # !import-include: groups imported=3, create-on-apply=2, skipped=0;
 #                  memberships imported=5, create-on-apply=1, skipped=0.
@@ -672,7 +671,7 @@ satz update-schema --providers google,google-beta
 - Updates the JSON files in `schemas/`.
 
 ### Get presets (`get-presets`) — bootstrap, not an updater
-Download the `presets` folder from the repository into your project's `presets_dir` (default: `presets/` beside `config.toml`). The library holds everything available for copying; `yaml_dir` stays reserved for the files you actually use and adapt. Requires a valid config so the tool knows where to write files. Each preset's purpose, include line and variables (required vs. overridable defaults) are documented in [presets/README.md](presets/README.md) — presets are read-only building blocks; all per-org values belong in the main YAML's `variables:` block.
+Download the `presets` folder from the repository into your project's `presets_dir` (default: `presets/` beside `config.toml`). The library holds everything available for copying; `yaml_dir` stays reserved for the files you actually use and adapt. Requires a valid config so the tool knows where to write files. Each preset's purpose, include line and variables (required vs. overridable defaults) are documented in [presets/README.md](presets/README.md) — presets are read-only building blocks; all per-org values belong in the estate's `params { … }` block.
 
 ```bash
 satz get-presets
@@ -691,12 +690,12 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 ### Compliance goal view (`require`)
 
 Frameworks are data: a **catalog** (`presets/catalogs/cis-gcp-4.0.yaml`) lists control
-IDs with this project's own paraphrases; preset packs declare **claims** in sidecar
-files (`<preset>.claims.yaml`): "including me discharges control §x.y, witnessed by
+IDs with this project's own paraphrases; preset packs declare **claims** inline
+(`claim "cis-gcp" "4.0" "2.2" implements { … }`): "including me discharges control §x.y, witnessed by
 these resources". `require` is the goal view over both:
 
 ```bash
-satz require cis-gcp-4.0 C01234567.yaml
+satz require cis-gcp-4.0 C0example.satz
 #   ✓ 2.2  Sinks for all log entries    — google_logging_organization_sink.…
 #   ◐ 2.3  Retention on the log bucket  — open duty: validate-then-lock
 #   ✗ 2.11 Storage IAM change alerts    — unmet. Provides: monitoring/organization-cis-log-alerts-central
@@ -822,8 +821,8 @@ the generated HCL). Manual duties merge with `attestations.yaml` beside config.t
 corroboration (`--prowler findings.json`).
 
 ```bash
-satz report-compliance cis-gcp-4.0 C01234567.yaml            # markdown + history
-satz report-compliance cis-gcp-4.0 C01234567.yaml --format pdf --prowler prowler.json
+satz report-compliance cis-gcp-4.0 C0example.satz            # markdown + history
+satz report-compliance cis-gcp-4.0 C0example.satz --format pdf --prowler prowler.json
 ```
 
 Row statuses: **verified** (all witnesses live), `verified*` (some witness types have
@@ -890,13 +889,13 @@ moved, or a repoint was refused) — CI-friendly.
 
 ### Check presets for drift (`check-presets`)
 
-Presets are read-only building blocks — per-org values belong in the main YAML as
+Presets are read-only building blocks — per-org values belong in the estate's `params` block as
 [overridable defaults](presets/README.md). `check-presets` finds preset copies that were
 edited locally anyway, and tells you how to migrate:
 
 ```bash
-satz check-presets C01234567.yaml            # compares against upstream (downloads a pristine copy)
-satz check-presets C01234567.yaml --pristine-dir /path/to/pristine/presets
+satz check-presets C0example.satz            # compares against upstream (downloads a pristine copy)
+satz check-presets C0example.satz --pristine-dir /path/to/pristine/presets
 ```
 
 Every local preset is compared against its pristine upstream version and classified:
@@ -909,8 +908,8 @@ Every local preset is compared against its pristine upstream version and classif
   `.local` sibling exists is exempt from the adopt advice — the estate runs the
   fork, and that copy is the fork's baseline.
 - **EDITED (variables only)** — same version, only default values changed.
-  Mechanically migratable: the report prints the exact lines to add to the main file's
-  `variables:` block (anchors the main file already overrides are flagged as redundant
+  Mechanically migratable: the report prints the exact lines to add to the estate's
+  `params` block (params the estate already overrides are flagged as redundant
   instead). After adding them, `get-presets` restores the pristine preset — the
   transpiled output is unchanged.
 - **EDITED (structural)** — same version, resource bodies or the variable set itself
@@ -920,9 +919,9 @@ Every local preset is compared against its pristine upstream version and classif
   their upstream deltas live in `X.diff.satz`.
 - **local-only** / **missing locally** — customer-own files and new upstream presets.
 
-Presets actually included by `<INPUT>` (via any `!include` form) are tagged
+Presets actually used by `<INPUT>` (via `use`, or any `!include` form in a YAML estate) are tagged
 `[included]`; drift in an included preset makes the command exit non-zero, so it can
-gate CI. `!include-if` presets whose condition is off count as not included.
+gate CI. `use … when` packs whose condition is off count as not included.
 
 ### Self-update (`self-update`)
 Check for and install a new release from GitHub. After a successful install, the tool downloads the release README and prints its full path, then opens it unless you pass the options below.
@@ -1044,7 +1043,7 @@ Ensure the executing user has:
 The `bootstrap` command automates the entire process: creating the infrastructure folder, project, bucket, linking billing, enabling foundation APIs (fixing the "chicken-and-egg" problem), and initializing the state.
 
 ```bash
-satz bootstrap C01234567.yaml
+satz bootstrap C0example.satz
 ```
 
 **What this does:**
@@ -1054,11 +1053,11 @@ satz bootstrap C01234567.yaml
 - Automatically runs `transpile`, `init`, and `import` to bring resources under Terraform management.
 
 #### 2. (Optional) Customize & Transpile
-*Only needed if you modify the generated YAML configuration after bootstrap.*
+*Only needed if you modify the estate after bootstrap.*
 
-Modify `yaml/C01234567.yaml` as needed, then manually generate the HCL:
+Modify `yaml/C0example.satz` as needed, then manually generate the HCL:
 ```bash
-satz transpile C01234567.yaml
+satz transpile C0example.satz
 ```
 
 #### 3. (Optional) Configure Identity
@@ -1122,18 +1121,18 @@ When you run `init`, the following variables are generated in the template:
 | `default-zone` | `europe-west3-a` | Default zone for zonal resources. |
 
 ### 3. Transpile
-Convert a YAML file to HCL. Run this from within the customer repository directory.
+Compile an estate to HCL. Run this from within the customer repository directory.
 ```bash
-satz transpile my-infra.yaml
+satz transpile my-infra.satz
 ```
-- Input is read from `yaml_dir` (e.g., `./yaml/my-infra.yaml`).
+- Input is read from `yaml_dir` (e.g., `./yaml/my-infra.satz`).
 - Output is written directly to the `hcl_dir` defined in your config.
 - **Run from anywhere**: All paths are resolved relative to the configuration file's directory.
 - **Automatic Schema Sync**: The tool will automatically fetch missing provider schemas via `tofu/terraform` during transpilation.
 
-## YAML Configuration
+## The legacy YAML dialect
 
-The input YAML file is the source of truth for your infrastructure.
+Everything in this chapter and in "YAML dialect features" below describes the **legacy `.yaml` input**, which `transpile` and `migrate-to-satz` still accept. New estates are written in Satz — see [docs/satz-language.md](docs/satz-language.md). The input file is the source of truth for your infrastructure.
 
 ### Terraform & Backend
 The `terraform` block is mandatory and used primarily for backend configuration.
@@ -1229,11 +1228,11 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `yaml_dir` | `"yaml"` | Source directory for YAML files |
+| `yaml_dir` | `"yaml"` | Source directory for estate files |
 | `hcl_dir` | `"hcl"` | Target directory for generated HCL |
 | `schema_dir` | `"schemas"` | Directory where provider schemas are cached |
 | `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; `--preset` and the discovery-config default resolve here |
-| `include_dirs` | `[".", "yaml"]` | Search paths for `!include` files |
+| `include_dirs` | `[".", "yaml"]` | Search paths for `use` / `!include` files |
 | `tf_tool` | `"tofu"` | The binary used to fetch schemas |
 | `google_providers` | `["google", "google-beta"]` | List of Google providers |
 | `provider_version` | `"7.12.0"` | Provider version to use |
@@ -1249,26 +1248,23 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 
 ## Schema Validation
 
-The tool automatically checks your YAML against the provider schemas to ensure all mandatory parameters and blocks are present.
+The tool automatically checks your estate against the provider schemas to ensure all mandatory parameters and blocks are present.
 
 - **Attributes**: Checks for `required` fields (e.g., `project_id`).
 - **Blocks**: Checks for mandatory blocks with `min_items > 0` (e.g., `boot_disk` for a VM).
 
 You can control the strictness via CLI `--validation` or `config.toml`.
 
-## Satz (experimental)
+## Satz
 
-Estates can be written in **Satz**, the successor surface language (`.satz` files,
-accepted everywhere an estate YAML is: `transpile`, `require`, `report-compliance`).
-Params are lexically scoped declarations (no anchors), `"{param}"` interpolates
-(no `!format`), `use "pack.yaml" [as key] [when param]` includes, blocks nest with
-braces, and resource attribute names are **1:1 the Terraform provider names** — the
-registry docs are the docs. A `.satz` estate compiles deterministically to a generated
-`.gen.yaml` sibling in the existing dialect (inspect it, never edit it) and the proven
-pipeline does the rest, so a converted estate is verifiable by diffing transpiled
-output. Packs can be Satz-native too: `use "pack.satz"` compiles the whole tree (each file
-to a `.gen.yaml` sibling), pack params are overridable defaults exactly like YAML
-preset variables, and **control claims are language syntax** —
+Estates are written in **Satz** (`.satz` files) — the language reference is
+[docs/satz-language.md](docs/satz-language.md). Params are lexically scoped declarations
+(no anchors), `"{param}"` interpolates (no `!format`), `use "pack.satz" [as key] [when param]`
+includes, blocks nest with braces, and resource attribute names are **1:1 the Terraform
+provider names** — the registry docs are the docs. A `.satz` estate is parsed directly by
+the fragment pipeline (per-file fragments, folded by address, emitted as HCL); packs are
+Satz-native, pack params are overridable defaults, and **control claims are language
+syntax** —
 
 ```
 claim "cis-gcp" "4.0" "2.2" implements {
@@ -1277,15 +1273,15 @@ claim "cis-gcp" "4.0" "2.2" implements {
 }
 ```
 
-— read directly by `require`/`report-compliance` through the fragment pipeline's front
-end, so the same compile produces the witnesses and the claims (a `.claims.yaml` sidecar
-is still generated for the legacy YAML dialect). Coverage is `implements`, `contributes`
-or `deviates`; witnesses are mandatory on the first two. Literal Terraform `${…}` references
+— read by `require`/`report-compliance` from the same compile that produces the witnesses,
+so claims and witnesses can never disagree. Coverage is `implements`, `contributes` or
+`deviates`; witnesses are mandatory on the first two. Literal Terraform `${…}` references
 inside strings need doubled braces (`"${{google_project.x.project_id}}"`) since `{…}`
-interpolates params. Grammar: `crates/satz-core/src/satz.rs` module docs. Status:
-experimental — surface may still change; the YAML dialect remains fully supported.
+interpolates params. `require` and `report-compliance` accept only `.satz`; `transpile`
+also accepts the legacy YAML dialect, and `migrate-to-satz` converts it with a proof that
+the transpiled output is identical.
 
-## YAML Features
+## YAML dialect features (legacy input)
 
 ### Custom YAML Tags
 Enhance your configuration with dynamic logic:
@@ -1480,7 +1476,7 @@ While the tool encourages a clean hierarchy, it allows placing cross-context res
 
 ## Handling Resource Renames (State Migration)
 
-If you rename a resource in your YAML, the transpiler will generate a new HCL label. OpenTofu will see this as a "delete and recreate" action. To avoid downtime, you can use the built-in migration suite:
+If you rename a resource in your estate, the transpiler will generate a new HCL label. OpenTofu will see this as a "delete and recreate" action. To avoid downtime, you can use the built-in migration suite:
 
 1.  **Iterate Locally**: Use `tofu plan -out=plan.binary` and `tofu show -json plan.binary > plan.json` to identify changes.
 2.  **Map Moves**: Use `satz scan-plan plan.json` to generate a `mapping.yaml`.
@@ -1537,7 +1533,7 @@ satz discover-from-organization --customer-organization-id "123456789012" --outp
 ```
 
 ### 2. Hierarchical Refinement
-The discovery tool produces a relatively flat YAML structure. Organize this into the `satz` hierarchical format:
+The discovery tool produces a relatively flat YAML-dialect file. Convert it with `satz migrate-to-satz migration-discovery.yaml`, then organize the result into the `satz` hierarchical format:
 - Move projects into their respective folders.
 - Nest resources (Buckets, Networks, etc.) inside their projects to leverage **Attribute Inheritance**.
 - Remove redundant attributes (like `project_id`) that are now inherited from the context.
@@ -1550,14 +1546,14 @@ Convert standard resource definitions into optimized `satz` patterns:
 
 ### 4. Validation & Reconciliation
 Generate the HCL and compare it with the live environment:
-1. Run `satz transpile migration-discovery.yaml`.
+1. Run `satz transpile migration-discovery.satz`.
 2. Run `tofu plan` in the `hcl/` directory.
 3. **Reconcile**: If the plan shows "replace" instead of "no changes", it means the HCL labels or resource IDs don't match.
-   - Use `import-id` in the YAML to link existing resources.
+   - Use `"import-id"` in the estate to link existing resources.
    - Or use `tofu state mv` to align the existing state with the new HCL labels.
 
 ### 5. Transition to Management
-Once `tofu plan` shows no changes (or only intended updates), the migration is complete. You can now manage the infrastructure exclusively through the YAML configuration.
+Once `tofu plan` shows no changes (or only intended updates), the migration is complete. You can now manage the infrastructure exclusively through the estate.
 
 ## Development
 
@@ -1565,7 +1561,7 @@ Once `tofu plan` shows no changes (or only intended updates), the migration is c
 
 ```bash
 cargo build --release                              # build
-cargo run -- --config config.toml transpile C01234567.yaml   # run a command
+cargo run -- --config config.toml transpile C0example.satz   # run a command
 cargo test                                         # run unit tests
 cargo fmt && cargo clippy                          # format + lint
 cargo install --path .                             # install the release binary (see Installation)
@@ -1585,7 +1581,7 @@ The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that 
 
 ## Architecture
 
-`satz` is a Rust-based transpiler that converts compact, human-friendly YAML definitions into production-ready OpenTofu/Terraform HCL. It prioritizes structure, inheritance, and validation.
+`satz` compiles Satz estates (and, for `transpile`, the legacy YAML dialect) into production-ready OpenTofu/Terraform HCL. It prioritizes structure, inheritance, and validation.
 
 ### Core Components
 
@@ -1620,7 +1616,7 @@ The `discover` commands reverse-engineer YAML from existing Google Cloud assets.
 - **Heuristics**: Intelligent mapping of IAM policies (e.g., `google_storage_bucket_iam_member`) and key generation.
 
 #### 6. Organization Policy Engine (`src/org_policy.rs`)
-Aligns curated Org Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.yaml`) with the live organization via the GCP Org Policy API v2 (ADC auth, reusing the `bootstrap` pattern).
+Aligns curated Org Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) with the live organization via the GCP Org Policy API v2 (ADC auth, reusing the `bootstrap` pattern).
 - **`!import-include` (transpile-time)**: after the HCL is rendered, `transpile` activates managed constraints that are missing (API create), then `tofu import`s the existing policies into state — no manual console activation and no `import-id` editing. The user then runs `tofu apply` and flips the directive back to `!include`.
 - **CLI commands**: `export-organizational-policies` (snapshot live state to a re-importable preset), `diff-organizational-policies` (semantic current-vs-desired report), `report-organizational-policies` (markdown/JSON/PDF inventory with constraint descriptions).
 - **Managed constraints**: constraints whose name contains `.managed.` must be *activated* (API create), then *imported as-is* (`tofu import`), then *modified* (`tofu apply`). `!import-include` sequences the activate+import; `tofu apply` does the modify.

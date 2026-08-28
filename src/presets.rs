@@ -1,11 +1,11 @@
 //! Preset drift detection: the `check-presets` command.
 //!
-//! Presets are read-only building blocks — all per-org values belong in the main YAML's
-//! `variables:` block (overridable defaults, first definition wins). Historically each
+//! Presets are read-only building blocks — all per-org values belong in the estate's
+//! `params { … }` block (overridable defaults, first definition wins). Historically each
 //! customer org edited its preset copies instead, which makes preset updates painful.
 //! This module compares the local preset library against the pristine upstream one,
 //! classifies every drifted file, and for the mechanically fixable class (changed
-//! variable defaults) prints the exact override block to paste into the main YAML.
+//! variable defaults) prints the exact override block to paste into the estate.
 //!
 //! The classification layer is pure and unit-tested; downloading and directory walking
 //! are the only IO.
@@ -191,7 +191,7 @@ pub(crate) fn classify(local: &str, pristine: &str) -> Drift {
     }
 }
 
-/// Anchors the main YAML defines itself (its overrides and shared variables).
+/// Anchors a YAML-dialect estate defines itself (its overrides and shared variables).
 pub(crate) fn anchors_defined_in_main(main_text: &str) -> BTreeSet<String> {
     let mut seen = std::collections::HashSet::new();
     for line in main_text.lines() {
