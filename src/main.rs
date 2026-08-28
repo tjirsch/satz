@@ -2719,8 +2719,9 @@ async fn check_update_available(client: &reqwest::Client) -> Result<Option<(Stri
     let url = format!("{}/{}/releases/latest", API_URL, REPO);
     let response = api_get(client, &url).send().await?;
     if !response.status().is_success() {
-        // A background check stays quiet: the user asked for something else.
-        return Ok(None);
+        // Surfaced, not swallowed: a 404 here once hid a repo that had no
+        // releases at all. The caller prints it and continues with the user's command.
+        return Err(api_error("Update check failed", response.status(), response.headers(), "").into());
     }
     #[derive(Deserialize)]
     struct Release {
@@ -2758,7 +2759,13 @@ async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Bo
     let client = reqwest::Client::builder()
         .user_agent("satz-update-checker")
         .build()?;
-    let update = check_update_available(&client).await?;
+    let update = match check_update_available(&client).await {
+        Ok(update) => update,
+        Err(e) => {
+            eprintln!("⚠️  {} (set self_update_frequency = \"never\" in ~/.config/satz/satz.toml to silence)", e);
+            None
+        }
+    };
     if freq == "daily" {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2826,10 +2833,19 @@ async fn run_self_update(download_readme: bool, open_readme: bool, check_only: b
         }
         println!("\n📥 Installing update...");
 
-        let installer_url = format!("https://github.com/{}/releases/latest/download/satz-installer.sh", REPO);
+        // Installer and sidecar both come from THIS release object, never from
+        // `/releases/latest/download/` — a release published between the API
+        // call and the download would otherwise pair one release's installer
+        // with another's checksum.
+        let installer_asset = release.assets.iter()
+            .find(|a| a.name == "satz-installer.sh")
+            .ok_or_else(|| format!(
+                "Release {} has no satz-installer.sh asset — the release build did not finish. Aborting.",
+                release.html_url
+            ))?;
 
         // Download installer as bytes for checksum verification
-        let installer_bytes = client.get(&installer_url).send().await?.bytes().await?;
+        let installer_bytes = client.get(&installer_asset.browser_download_url).send().await?.bytes().await?;
 
         // Checksum verification
         let checksum_asset = release.assets.iter()
@@ -4053,7 +4069,7 @@ mod preset_tests {
 #[cfg(test)]
 mod checksum_tests {
     /// The self-update path verifies the downloaded installer against the release's
-    /// `.sha256` asset (main.rs:1617). Pin the digest to known vectors so a `sha2` major
+    /// `.sha256` asset (see `run_self_update`). Pin the digest to known vectors so a `sha2` major
     /// upgrade cannot silently change what that comparison computes — a wrong hash here
     /// either blocks every update or, worse, passes something it should not.
     #[test]

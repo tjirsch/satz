@@ -132,7 +132,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `build-packs` | *(maintainer: compile presets/**/*.satz to their .yaml twins)* |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
-| `self-update` | `--no-download-readme`, `--no-open-readme`, `--check-only` |
+| `self-update` | `--no-download-readme`, `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `open-readme` | *(none)* |
 | `completion [SHELL]` | `--install` |
 | `set-preferred-editor [EDITOR]` | `--clear` |
@@ -939,10 +939,10 @@ satz self-update --no-download-readme
 satz self-update --no-download-readme --no-open-readme
 ```
 
-**Self-update options:** `--no-download-readme`, `--no-open-readme`, `--check-only`. The program can also check for updates automatically when you run other commands; this is controlled by the [user settings](#user-settings-configsatzsatztoml) file `~/.config/satz/satz.toml` (`self_update_frequency`: `never`, `always`, or `daily`).
+**Self-update options:** `--no-download-readme`, `--no-open-readme`, `--check-only`, `--skip-checksum`. The program can also check for updates automatically when you run other commands; this is controlled by the [user settings](#user-settings-configsatzsatztoml) file `~/.config/satz/satz.toml` (`self_update_frequency`: `never`, `always`, or `daily`).
 
 **Under the Hood:**
-- Fetches the latest release from the GitHub API, compares versions, and runs the cargo-dist installer script when a newer version is available. On success, optionally downloads `README.md` from the repo and prints its path (e.g. `README: /Users/you/Downloads/satz-0.4.9-README.md`).
+- Fetches the latest release from the GitHub API and compares versions. When a newer version is available it downloads `satz-installer.sh` and `satz-installer.sh.sha256` from that same release, verifies the SHA-256 digest, and only then runs the installer. A checksum mismatch aborts; a release without the sidecar aborts too, unless you pass `--skip-checksum`. On success, optionally downloads `README.md` from the repo and prints its path (e.g. `README: /Users/you/Downloads/satz-0.4.9-README.md`).
 
 ### Open README (`open-readme`)
 Download the latest `README.md` from the main branch and open it with your configured editor (see [user settings](#user-settings-configsatzsatztoml)).
@@ -1573,14 +1573,15 @@ cargo install --path .                             # install the release binary 
 
 ## Releasing
 
-Releases are built by GitHub Actions (cargo-dist) when you **push a version tag**. Pushing only `main` does not trigger a release.
+Releases are built by GitHub Actions (cargo-dist) when a **version tag** is pushed. Pushing only `main` does not trigger a release. From a clean `main`:
 
-1. **Bump version** in `Cargo.toml` (e.g. `version = "0.9.0"`).
-2. **Commit** the bump: `git commit -am "version bump"`.
-3. **Tag** the commit (must match the new version): `git tag v0.9.0`.
-4. **Push the tag**: `git push origin v0.9.0` (and `git push origin main` for the commits).
+```bash
+cargo release patch --execute --no-confirm    # or: minor
+```
 
-The workflow triggers on **tag push** only; the tag pattern is `**[0-9]+.[0-9]+.[0-9]+*` (e.g. `v0.9.0`). The tagged commit must carry that exact `version` in `Cargo.toml`, so always commit the bump before tagging. Common reasons a release doesn't run: only `main` was pushed (push the tag), the tag predates the bump commit, or the tag/`Cargo.toml` versions differ.
+`cargo-release` (config in `release.toml`) bumps `Cargo.toml`, commits `version bump`, tags `vX.Y.Z` and pushes commit and tag. The tag runs `.github/workflows/release.yml`: build the four targets, create the GitHub release with archives, `sha256.sum` and `satz-installer.sh`, then the `attach-checksum` post-announce job (`dist-workspace.toml`, `.github/workflows/attach-checksum.yml`) uploads `satz-installer.sh.sha256` — the sidecar `self-update` verifies against. `prune-releases.yml` afterwards keeps the five newest releases. Re-run `dist generate` after editing `dist-workspace.toml`; the `plan` job runs `dist generate --check` and fails on a hand-edited `release.yml`.
+
+The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that exact `version` in `Cargo.toml`. Common reasons a release doesn't run: only `main` was pushed, the tag predates the bump commit, or the tag/`Cargo.toml` versions differ.
 
 ## Architecture
 

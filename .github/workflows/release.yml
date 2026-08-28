@@ -294,3 +294,12 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+
+  custom-attach-checksum:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/attach-checksum.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
