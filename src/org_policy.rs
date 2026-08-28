@@ -73,7 +73,7 @@ pub fn normalize_parent(raw: &str) -> String {
     }
 }
 
-/// Turn a constraint name into the YAML key style used by the presets,
+/// Turn a constraint name into the label style used by the packs,
 /// e.g. `iam.managed.disableServiceAccountKeyCreation`
 ///   -> `iam-managed-disableServiceAccountKeyCreation`.
 pub fn sanitize_yaml_key(constraint: &str) -> String {

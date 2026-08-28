@@ -149,9 +149,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Transpile YAML config to HCL
+    /// Compile an estate to HCL (.satz; the legacy .yaml dialect is still accepted)
     Transpile {
-        /// Infrastructure definition YAML (inside yaml_dir if relative).
+        /// Estate file — .satz, or a legacy .yaml (inside yaml_dir if relative).
         /// Not the tool config — that is --config
         input: String,
         /// Name of the output file (inside hcl_dir if relative)
@@ -160,7 +160,7 @@ enum Commands {
         /// Schema directory containing provider JSON files
         #[arg(long)]
         schema_dir: Option<PathBuf>,
-        /// Print all resolved variables as YAML to stdout after transpilation
+        /// Print the resolved variable table (terraform.tfvars) to stdout after transpilation
         #[arg(long)]
         print_variables: bool,
     },
@@ -221,9 +221,9 @@ enum Commands {
     },
     /// Bootstrap initial Google Cloud infrastructure (Project, Bucket, Service Account)
     Bootstrap {
-        /// Infrastructure definition YAML, e.g. C0example.yaml (inside yaml_dir if relative).
+        /// Estate file, e.g. C0example.satz (inside yaml_dir if relative).
         /// Not the tool config — that is --config
-        infra_yaml: PathBuf,
+        estate: PathBuf,
         /// Dry run mode (don't create resources)
         #[arg(long)]
         dry_run: bool,
@@ -231,9 +231,9 @@ enum Commands {
     /// Export the current live Organization Policies to a re-importable YAML preset
     #[command(visible_alias = "export-org-policies")]
     ExportOrganizationalPolicies {
-        /// Infrastructure definition YAML providing variables, incl. customer-organization-id
+        /// Estate file providing the parameter table, incl. customer-organization-id
         /// (inside yaml_dir if relative). Not the tool config — that is --config
-        infra_yaml: PathBuf,
+        estate: PathBuf,
         /// Organization id override (numeric or organizations/<id>); else read from config
         #[arg(long)]
         customer_organization_id: Option<String>,
@@ -244,10 +244,10 @@ enum Commands {
     /// Diff a desired Org Policy preset against the live organization state
     #[command(visible_alias = "diff-org-policies")]
     DiffOrganizationalPolicies {
-        /// Infrastructure definition YAML providing variables for anchor resolution
+        /// Estate file providing the parameter table
         /// (inside yaml_dir if relative). Not the tool config — that is --config
-        infra_yaml: PathBuf,
-        /// Desired Org Policy preset (e.g. presets/CIS-GCP-Foundation-4.0.yaml).
+        estate: PathBuf,
+        /// Desired Org Policy preset (e.g. presets/CIS-GCP-Foundation-4.0.satz).
         /// Omit to diff every org_policy_policy the config declares against live.
         #[arg(long)]
         preset: Option<PathBuf>,
@@ -269,9 +269,9 @@ enum Commands {
     /// Produce a human-readable report of Organization Policies with explanatory text
     #[command(visible_alias = "report-org-policies")]
     ReportOrganizationalPolicies {
-        /// Infrastructure definition YAML providing variables, incl. customer-organization-id
+        /// Estate file providing the parameter table, incl. customer-organization-id
         /// (inside yaml_dir if relative). Not the tool config — that is --config
-        infra_yaml: PathBuf,
+        estate: PathBuf,
         /// Organization id override; else read from config
         #[arg(long)]
         customer_organization_id: Option<String>,
@@ -337,7 +337,8 @@ enum Commands {
     },
     /// Migrate state and configuration between local and cloud modes
     Migrate {
-        /// Infrastructure definition YAML (inside yaml_dir if relative)
+        /// Estate file — YAML dialect only: this command rewrites the deployment-mode anchor
+        /// (inside yaml_dir if relative)
         input: String,
         /// Target mode (local or cloud)
         #[arg(long)]
@@ -424,7 +425,7 @@ enum Commands {
     Require {
         /// Catalog id, e.g. cis-gcp-4.0 (a file in <presets_dir>/catalogs/)
         framework: String,
-        /// Infrastructure definition YAML (inside yaml_dir if relative)
+        /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
     },
     /// Evidence report: the goal view joined with LIVE verification (Cloud Asset
@@ -433,7 +434,7 @@ enum Commands {
     ReportCompliance {
         /// Catalog id, e.g. cis-gcp-4.0
         framework: String,
-        /// Infrastructure definition YAML (inside yaml_dir if relative)
+        /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// Output format
         #[arg(long, default_value = "markdown")]
@@ -449,11 +450,11 @@ enum Commands {
         no_live: bool,
     },
     /// Compare local presets against the pristine upstream library and report drift:
-    /// which included presets were edited locally, and the variables block to add to
-    /// the main YAML so the pristine preset can be restored.
+    /// which included presets were edited locally, and the params block to add to
+    /// the estate so the pristine preset can be restored.
     CheckPresets {
-        /// Infrastructure definition YAML (inside yaml_dir if relative) whose includes
-        /// decide which presets count as "in use"
+        /// Estate file (inside yaml_dir if relative) whose `use` graph decides which
+        /// presets count as "in use"
         input: String,
         /// Compare against this directory instead of downloading the upstream presets
         #[arg(long)]
@@ -1136,11 +1137,11 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Bootstrap { infra_yaml, dry_run } => {
+        Commands::Bootstrap { estate, dry_run } => {
             init_resource_merge(&runtime_config.schema_dir);
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
-            let config_path = estate_path(infra_yaml, &runtime_config);
+            let config_path = estate_path(estate, &runtime_config);
             crate::bootstrap::bootstrap(
                 config_path,
                 dry_run,
@@ -1152,11 +1153,11 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::ExportOrganizationalPolicies { infra_yaml, customer_organization_id, output } => {
+        Commands::ExportOrganizationalPolicies { estate, customer_organization_id, output } => {
             init_resource_merge(&runtime_config.schema_dir);
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
-            let config_path = estate_path(infra_yaml, &runtime_config);
+            let config_path = estate_path(estate, &runtime_config);
             crate::org_policy::export_org_policies(
                 config_path,
                 customer_organization_id,
@@ -1166,11 +1167,11 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::DiffOrganizationalPolicies { infra_yaml, preset, customer_organization_id, report, format, recursive } => {
+        Commands::DiffOrganizationalPolicies { estate, preset, customer_organization_id, report, format, recursive } => {
             init_resource_merge(&runtime_config.schema_dir);
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
-            let config_path = estate_path(infra_yaml, &runtime_config);
+            let config_path = estate_path(estate, &runtime_config);
             // Presets resolve against the presets library (beside config.toml).
             let preset = preset.map(|p| resolve_against(&runtime_config.presets_dir, p));
             crate::org_policy::diff_org_policies(
@@ -1185,10 +1186,10 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::ReportOrganizationalPolicies { infra_yaml, customer_organization_id, scope, format, report, recursive } => {
+        Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, report, recursive } => {
             init_resource_merge(&runtime_config.schema_dir);
             // Satz-native: bootstrap needs the variable table, nothing more.
-            let config_path = estate_path(infra_yaml, &runtime_config);
+            let config_path = estate_path(estate, &runtime_config);
             crate::org_policy::report_org_policies(
                 config_path,
                 customer_organization_id,
@@ -2043,11 +2044,11 @@ fn provider_maps(tool_config: &ToolConfig) -> (HashMap<String, String>, HashMap<
 /// The estate argument as a path, with no compilation. `estate_input` layers the
 /// `.gen.yaml` twin build on top of this; commands that read Satz natively want
 /// the `.satz` file itself.
-fn estate_path(infra_yaml: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
-    if infra_yaml.is_absolute() {
-        infra_yaml
+fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
+    if estate.is_absolute() {
+        estate
     } else {
-        PathBuf::from(&runtime_config.yaml_dir).join(infra_yaml)
+        PathBuf::from(&runtime_config.yaml_dir).join(estate)
     }
 }
 
@@ -2637,7 +2638,7 @@ fn sync_schemas(tool_config: &mut ToolConfig, runtime_config: &ToolConfig, provi
     Ok(())
 }
 
-/// Resolve a user-supplied path against the directory that owns its kind — YAML against
+/// Resolve a user-supplied path against the directory that owns its kind — estates against
 /// `yaml_dir`, schemas against `schema_dir` — leaving absolute paths untouched.
 ///
 /// Relative paths are never interpreted against the caller's working directory, so a

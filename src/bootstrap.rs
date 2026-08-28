@@ -769,7 +769,7 @@ pub async fn bootstrap(
     println!("Running automatic setup...");
 
     // 7a. Transpile
-    println!("Transpiling YAML to HCL...");
+    println!("Transpiling to HCL...");
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(&exe);
 
