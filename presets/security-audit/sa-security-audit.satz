@@ -1,0 +1,73 @@
+// 
+// Security-Audit Service Account — read-only Audit-SA + Impersonations-Gruppe
+// 
+// Dieses Preset kombiniert mehrere Ressourcentypen (Service Account, Gruppe,
+// Org-IAM) und gehoert daher — analog zu organization-audit-logsink-1.0.yaml —
+// auf das Wurzel-Level der Kunden-Haupt-YAML, NICHT unter einen einzelnen
+// Resource-Key:
+// !include presets/security-audit/sa-security-audit-1.0.yaml
+// direkt neben den anderen Top-Level-Bloecken (google_billing_account_iam_member,
+// org_policy_policy, cloud_identity_group, ...).
+// 
+// Referenz: Security Toolset.md, Abschnitt 6.6 "Audit-SA + Impersonation
+// (Ausrollpaket)" — dieses Preset ist die YAML-Form des dort beschriebenen
+// gcloud-Skripts, gedacht zum wiederholten Ausrollen je (Managed) Org.
+// 
+// Nutzung nach dem Apply (Mensch, nicht Claude — Toolset bleibt read-only):
+// prowler gcp --impersonate-service-account $SA --compliance cis_5.0_gcp ...
+// gcloud <cmd> --impersonate-service-account=$SA
+// gcloud auth application-default login --impersonate-service-account=$SA
+// -> erzeugt die impersonierte ADC fuer den Prowler-CLI-Anwender bzw.
+// die SCC-MCP-Config (adc-audit.json, siehe Abschnitt 6.3/6.6)
+// 
+// Was dieses Preset NICHT tut:
+// - keine API-Aktivierung im Seed-Projekt (iamcredentials.googleapis.com
+// wird fuer Impersonation benoetigt — separat aktivieren, siehe unten)
+// - keine SA-Keys — Zugriff ausschliesslich per Token-Creator-Impersonation
+// - keine Remediation-Rechte — das Rollen-Set ist bewusst vollstaendig lesend
+// 
+
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack sa_security_audit version "1.0"
+
+params {
+  security_audit_sa_project = ""
+  security_audit_sa_name = "sa-security-audit"
+  security_audit_sa_display_name = "Security Audit (read-only)"
+  security_audit_auditors_group = "grp-security-auditors"
+}
+
+google_service_account {
+  security_audit {
+    account_id = security_audit_sa_name
+    project = security_audit_sa_project
+    display_name = security_audit_sa_display_name
+  }
+}
+
+google_cloud_identity_group {
+  "{security_audit_auditors_group}" {
+    display_name = "Security Audit Auditors"
+    description = "Nutzer, die den Security-Audit-Service-Account impersonieren duerfen (Prowler-CLI via ADC, SCC-MCP- und gcloud-Stichproben im Review)"
+    owner = [
+      "{security_audit_sa_name}@{security_audit_sa_project}.iam.gserviceaccount.com",
+    ]
+    member = [
+      "user:{first_admin}@{customer_domain}",
+    ]
+  }
+}
+
+google_organization_iam_member {
+  "serviceAccount:{security_audit_sa_name}@{security_audit_sa_project}.iam.gserviceaccount.com" = [
+    "roles/viewer",
+    "roles/iam.securityReviewer",
+    "roles/securitycenter.adminViewer",
+    "roles/cloudasset.viewer",
+  ]
+  "group:{security_audit_auditors_group}@{customer_domain}" = [
+    "roles/iam.serviceAccountTokenCreator",
+  ]
+}
+

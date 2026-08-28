@@ -1,0 +1,39 @@
+    "cloudidentity.googleapis.com/groups.discussion_forum" = ""
+    "cloudidentity.googleapis.com/groups.security" = ""
+    id = "log-admins@example.com"
+  display_name = "A"
+  display_name = "B"
+  display_name = "Log Admins"
+  group_key {
+  initial_group_config = "EMPTY"
+  labels = {
+  member = "group:log-admins@example.com"
+  member = "group:log-admins@example.com"
+  org_id = "123456789"
+  org_id = "123456789"
+  parent = "customers/C01"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  role = "roles/logging.admin"
+  role = "roles/monitoring.admin"
+  }
+  }
+resource "google_cloud_identity_group" "log_admins" {
+resource "google_folder" "a" {
+resource "google_folder" "b" {
+resource "google_organization_iam_member" "iam_group_log_admins_example_com_10179319b415f6d9" {
+resource "google_organization_iam_member" "iam_group_log_admins_example_com_482ed0494e53cb75" {
+}
+}
+}
+}
+}
+---tfvars---
+customer-domain = "example.com"
+customer-id = "C01"
+customer-organization-id = "123456789"

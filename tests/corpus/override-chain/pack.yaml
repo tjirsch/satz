@@ -1,0 +1,7 @@
+variables:
+  widget-name: &widget-name "default-widget"
+  widget-location: &widget-location "europe-west3"
+google_storage_bucket:
+  widget:
+    name: *widget-name
+    location: *widget-location

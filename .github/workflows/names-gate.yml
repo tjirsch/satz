@@ -1,0 +1,40 @@
+name: privacy gate
+
+# Public repository. Neutral gate — no customer, company or person is named
+# in it. Rejects anything shaped like private data that is not a documented
+# example value (docs/example-customers.md), a domain that is neither
+# IANA-reserved nor a known vendor host, and any commit not authored under the
+# maintainer identity or a GitHub noreply address. Runs on every push and PR.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: whole tree
+        run: bash scripts/check-names.sh
+      - name: commit identities and messages in this push / PR
+        # Only the commits this event ADDS are judged — never history that
+        # predates the rule. A pull request: what it adds over its base. A push
+        # to an existing branch: before..sha. A push that creates a branch
+        # (before = 0…0): what the branch adds over main; and a first push to
+        # main itself: just HEAD.
+        run: |
+          zero=0000000000000000000000000000000000000000
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="origin/${{ github.base_ref }}..HEAD"
+          elif [ "${{ github.event.before }}" != "$zero" ]; then
+            range="${{ github.event.before }}..${{ github.sha }}"
+          elif [ "${{ github.ref }}" != "refs/heads/main" ] && git rev-parse -q --verify origin/main >/dev/null; then
+            range="origin/main..HEAD"
+          else
+            range="HEAD"
+          fi
+          echo "range: $range"
+          bash scripts/check-names.sh --commits "$range"

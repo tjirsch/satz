@@ -1,0 +1,8 @@
+pack corpus_pack_b
+
+google_logging_organization_sink {
+  metrics {
+    name = "b"
+    org_id = customer_organization_id
+  }
+}

@@ -1,0 +1,42 @@
+# A YAML-dialect estate, kept as a FIXTURE on purpose.
+#
+# The YAML path is supported (owner, 2026-08-23) but nothing exercised it, and
+# that gap shipped two regressions in one day while the Satz fleet stayed green.
+# Every shape here is one that broke or could break:
+#
+#   * shorthand resource keys at the top level  (org_policy_policy)
+#   * a shorthand key NESTED in a project       (project_iam_member)
+#     -- the one that used to vanish silently, absorbed as an attribute
+#   * a nested ATTRIBUTE block                  (labels)
+#     -- must NOT be mistaken for a resource type
+#   * an !include pack, which conversion has to repoint at the .satz twin
+variables:
+  customer-organization-id: &customer-organization-id "123456789"
+  customer-id: &customer-id "C0TEST"
+  customer-domain: &customer-domain "example.com"
+  infra-folder-name: &infra-folder-name "Infrastructure"
+
+terraform:
+  backend:
+    local:
+      path: "terraform.tfstate"
+
+org_policy_policy:
+  !include pack.yaml
+
+organization_iam_member:
+  !format ["group:admins@{}", *customer-domain]:
+    - roles/resourcemanager.organizationAdmin
+
+folder:
+  infra_folder:
+    display_name: *infra-folder-name
+    project:
+      demo_project:
+        name: "Demo"
+        project_id: "demo-project"
+        labels:
+          costcenter: "cc1"
+        project_iam_member:
+          !format ["group:devs@{}", *customer-domain]:
+            - roles/viewer

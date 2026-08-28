@@ -1,0 +1,17 @@
+  display_name = "Logging"
+  name = "a"
+  name = "b"
+  org_id = "123456789"
+  org_id = "123456789"
+  parent = "organizations/123456789"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+resource "google_folder" "logging" {
+resource "google_logging_organization_sink" "archive" {
+resource "google_logging_organization_sink" "metrics" {
+}
+}
+}
+---tfvars---
+customer-organization-id = "123456789"

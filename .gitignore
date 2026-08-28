@@ -1,0 +1,24 @@
+.agent
+.cursor
+.claude
+.terraform.lock.hcl
+.terraform/
+/organizations/*
+/target
+.env
+*.secret
+.DS_Store
+*.log
+
+# Session handover notes (local working docs, not for the public repo)
+HANDOVER-*.md
+# satz build artifacts (customer-side); upstream twins are built via `build-packs`
+*.gen.yaml
+*.gen.claims.yaml
+
+# Private working state — never in the public repo (also rejected by the gate)
+CLAUDE.local.md
+*.local.md
+.claude/
+attestations.yaml
+evidence/

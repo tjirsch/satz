@@ -1,0 +1,38 @@
+// 
+// Budget for Global Spend
+// 
+// Include in the YAML file
+// 
+
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack organization_budget version "1.0"
+
+google_billing_budget {
+  "global-budget" {
+    "import-id" = "billingAccounts/123456-123456-123456/budgets/123456-123456789012"
+    display_name = "Global Budget"
+    billing_account = billing_account_infra
+    amount {
+      specified_amount {
+        currency_code = "EUR"
+        units = "1000"
+      }
+    }
+    threshold_rules = [
+      {
+        threshold_percent = 0.5
+        spend_basis = "CURRENT_SPEND"
+      },
+      {
+        threshold_percent = 0.8
+        spend_basis = "CURRENT_SPEND"
+      },
+      {
+        threshold_percent = 1.0
+        spend_basis = "CURRENT_SPEND"
+      },
+    ]
+  }
+}
+

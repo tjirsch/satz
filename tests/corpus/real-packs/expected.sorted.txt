@@ -1,0 +1,412 @@
+        alignment_period = "300s"
+        alignment_period = "300s"
+        alignment_period = "300s"
+        alignment_period = "300s"
+        alignment_period = "300s"
+        alignment_period = "300s"
+        alignment_period = "300s"
+        alignment_period = "300s"
+        cross_series_reducer = "REDUCE_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        per_series_aligner = "ALIGN_COUNT"
+        per_series_aligner = "ALIGN_COUNT"
+        per_series_aligner = "ALIGN_COUNT"
+        per_series_aligner = "ALIGN_COUNT"
+        per_series_aligner = "ALIGN_COUNT"
+        per_series_aligner = "ALIGN_COUNT"
+        per_series_aligner = "ALIGN_COUNT"
+        per_series_aligner = "ALIGN_COUNT"
+      age = 400
+      aggregations {
+      aggregations {
+      aggregations {
+      aggregations {
+      aggregations {
+      aggregations {
+      aggregations {
+      aggregations {
+      comparison = "COMPARISON_GT"
+      comparison = "COMPARISON_GT"
+      comparison = "COMPARISON_GT"
+      comparison = "COMPARISON_GT"
+      comparison = "COMPARISON_GT"
+      comparison = "COMPARISON_GT"
+      comparison = "COMPARISON_GT"
+      comparison = "COMPARISON_GT"
+      duration = "0s"
+      duration = "0s"
+      duration = "0s"
+      duration = "0s"
+      duration = "0s"
+      duration = "0s"
+      duration = "0s"
+      duration = "0s"
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_10_network.name}\" AND resource.type=\"logging_bucket\""
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_11_bucket_permission.name}\" AND resource.type=\"logging_bucket\""
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_12_sql_instance.name}\" AND resource.type=\"logging_bucket\""
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_5_project_ownership.name}\" AND resource.type=\"logging_bucket\""
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_6_audit_config.name}\" AND resource.type=\"logging_bucket\""
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_7_custom_role.name}\" AND resource.type=\"logging_bucket\""
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_8_firewall_rule.name}\" AND resource.type=\"logging_bucket\""
+      filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.cis_central_2_9_network_route.name}\" AND resource.type=\"logging_bucket\""
+      threshold_value = 0
+      threshold_value = 0
+      threshold_value = 0
+      threshold_value = 0
+      threshold_value = 0
+      threshold_value = 0
+      threshold_value = 0
+      threshold_value = 0
+      type = "Delete"
+      }
+      }
+      }
+      }
+      }
+      }
+      }
+      }
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "${google_monitoring_notification_channel.cis_central_alerts.id}"
+    "email_address" = "gcp-security@example.com"
+    action {
+    condition {
+    condition_threshold {
+    condition_threshold {
+    condition_threshold {
+    condition_threshold {
+    condition_threshold {
+    condition_threshold {
+    condition_threshold {
+    condition_threshold {
+    display_name = "Audit configuration changed"
+    display_name = "Bucket IAM permissions changed"
+    display_name = "Cloud SQL instance configuration changed"
+    display_name = "Custom role created, updated or deleted"
+    display_name = "Firewall rule changed"
+    display_name = "Network route changed"
+    display_name = "Project ownership assignment changed"
+    display_name = "VPC network changed"
+    log_type = "ADMIN_READ"
+    log_type = "DATA_READ"
+    log_type = "DATA_WRITE"
+    metric_kind = "DELTA"
+    metric_kind = "DELTA"
+    metric_kind = "DELTA"
+    metric_kind = "DELTA"
+    metric_kind = "DELTA"
+    metric_kind = "DELTA"
+    metric_kind = "DELTA"
+    metric_kind = "DELTA"
+    unit = "1"
+    unit = "1"
+    unit = "1"
+    unit = "1"
+    unit = "1"
+    unit = "1"
+    unit = "1"
+    unit = "1"
+    value_type = "INT64"
+    value_type = "INT64"
+    value_type = "INT64"
+    value_type = "INT64"
+    value_type = "INT64"
+    value_type = "INT64"
+    value_type = "INT64"
+    value_type = "INT64"
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  audit_log_config {
+  audit_log_config {
+  audit_log_config {
+  billing_account = "01AA-BB-CC"
+  bucket = "corp-organization-audit-logs"
+  bucket_id = "corp-organization-log-alerts"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  bucket_name = "${google_logging_project_bucket_config.cis_central_metrics.id}"
+  combiner = "OR"
+  combiner = "OR"
+  combiner = "OR"
+  combiner = "OR"
+  combiner = "OR"
+  combiner = "OR"
+  combiner = "OR"
+  combiner = "OR"
+  conditions {
+  conditions {
+  conditions {
+  conditions {
+  conditions {
+  conditions {
+  conditions {
+  conditions {
+  description = "CIS 2.10 — VPC network changed (org-wide)"
+  description = "CIS 2.11 — Cloud Storage IAM permissions changed (org-wide)"
+  description = "CIS 2.12 — Cloud SQL instance configuration changed (org-wide)"
+  description = "CIS 2.5 — project ownership assignments changed (org-wide)"
+  description = "CIS 2.5-2.12 — org-wide audit logs for metrics and alerting"
+  description = "CIS 2.6 — audit configuration changed (org-wide)"
+  description = "CIS 2.7 — custom role created, updated or deleted (org-wide)"
+  description = "CIS 2.8 — VPC firewall rule changed (org-wide)"
+  description = "CIS 2.9 — VPC network route changed (org-wide)"
+  destination = "logging.googleapis.com/projects/corp-log-infra-001/locations/europe-west3/buckets/corp-organization-log-alerts"
+  destination = "storage.googleapis.com/corp-organization-audit-logs"
+  display_name = "CIS 2.10 — VPC network changes (org-wide)"
+  display_name = "CIS 2.11 — Cloud Storage IAM permission changes (org-wide)"
+  display_name = "CIS 2.12 — Cloud SQL instance configuration changes (org-wide)"
+  display_name = "CIS 2.5 — Project ownership changes (org-wide)"
+  display_name = "CIS 2.6 — Audit configuration changes (org-wide)"
+  display_name = "CIS 2.7 — Custom role changes (org-wide)"
+  display_name = "CIS 2.8 — VPC firewall rule changes (org-wide)"
+  display_name = "CIS 2.9 — VPC network route changes (org-wide)"
+  display_name = "CIS Security Alerts (org)"
+  display_name = "Logging"
+  filter = "(protoPayload.serviceName=\"cloudresourcemanager.googleapis.com\") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"REMOVE\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"ADD\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\")"
+  filter = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
+  filter = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
+  filter = "protoPayload.methodName=\"SetIamPolicy\" AND protoPayload.serviceData.policyDelta.auditConfigDeltas:*"
+  filter = "protoPayload.methodName=\"cloudsql.instances.update\""
+  filter = "resource.type=\"gce_firewall_rule\" AND (protoPayload.methodName:\"compute.firewalls.patch\" OR protoPayload.methodName:\"compute.firewalls.insert\" OR protoPayload.methodName:\"compute.firewalls.delete\")"
+  filter = "resource.type=\"gce_network\" AND (protoPayload.methodName:\"compute.networks.insert\" OR protoPayload.methodName:\"compute.networks.patch\" OR protoPayload.methodName:\"compute.networks.delete\" OR protoPayload.methodName:\"compute.networks.removePeering\" OR protoPayload.methodName:\"compute.networks.addPeering\")"
+  filter = "resource.type=\"gce_route\" AND (protoPayload.methodName:\"compute.routes.delete\" OR protoPayload.methodName:\"compute.routes.insert\")"
+  filter = "resource.type=\"gcs_bucket\" AND protoPayload.methodName=\"storage.setIamPermissions\""
+  filter = "resource.type=\"iam_role\" AND (protoPayload.methodName=\"google.iam.admin.v1.CreateRole\" OR protoPayload.methodName=\"google.iam.admin.v1.DeleteRole\" OR protoPayload.methodName=\"google.iam.admin.v1.UpdateRole\")"
+  folder_id = google_folder.logging.name
+  include_children = true
+  include_children = true
+  labels = {
+  lifecycle_rule {
+  location = "europe-west3"
+  location = "europe-west3"
+  member = "${google_logging_organization_sink.cis_central_metrics_sink.writer_identity}"
+  member = "${google_logging_organization_sink.organization_audit_gcs.writer_identity}"
+  metric_descriptor {
+  metric_descriptor {
+  metric_descriptor {
+  metric_descriptor {
+  metric_descriptor {
+  metric_descriptor {
+  metric_descriptor {
+  metric_descriptor {
+  name = "cis-central-2-10-network-changes"
+  name = "cis-central-2-11-bucket-permission-changes"
+  name = "cis-central-2-12-sql-instance-changes"
+  name = "cis-central-2-5-project-ownership-changes"
+  name = "cis-central-2-6-audit-config-changes"
+  name = "cis-central-2-7-custom-role-changes"
+  name = "cis-central-2-8-firewall-rule-changes"
+  name = "cis-central-2-9-network-route-changes"
+  name = "cis-central-metrics-sink"
+  name = "corp-log-infra-001"
+  name = "corp-organization-audit-gcs"
+  name = "corp-organization-audit-logs"
+  notification_channels = [
+  notification_channels = [
+  notification_channels = [
+  notification_channels = [
+  notification_channels = [
+  notification_channels = [
+  notification_channels = [
+  notification_channels = [
+  org_id = "123456789012"
+  org_id = "123456789012"
+  org_id = "123456789012"
+  parent = "organizations/123456789012"
+  project = "${google_project.logsink_project.project_id}"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = "corp-log-infra-001"
+  project = google_project.logsink_project.project_id
+  project = google_project.logsink_project.project_id
+  project = google_project.logsink_project.project_id
+  project_id = "corp-log-infra-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  public_access_prevention = "enforced"
+  retention_days = 30
+  role = "roles/logging.bucketWriter"
+  role = "roles/storage.objectCreator"
+  service = "allServices"
+  service = "logging.googleapis.com"
+  service = "monitoring.googleapis.com"
+  service = "storage.googleapis.com"
+  storage_class = "NEARLINE"
+  type = "email"
+  uniform_bucket_level_access = true
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+resource "google_folder" "logging" {
+resource "google_logging_metric" "cis_central_2_10_network" {
+resource "google_logging_metric" "cis_central_2_11_bucket_permission" {
+resource "google_logging_metric" "cis_central_2_12_sql_instance" {
+resource "google_logging_metric" "cis_central_2_5_project_ownership" {
+resource "google_logging_metric" "cis_central_2_6_audit_config" {
+resource "google_logging_metric" "cis_central_2_7_custom_role" {
+resource "google_logging_metric" "cis_central_2_8_firewall_rule" {
+resource "google_logging_metric" "cis_central_2_9_network_route" {
+resource "google_logging_organization_sink" "cis_central_metrics_sink" {
+resource "google_logging_organization_sink" "organization_audit_gcs" {
+resource "google_logging_project_bucket_config" "cis_central_metrics" {
+resource "google_monitoring_alert_policy" "cis_central_2_10_network" {
+resource "google_monitoring_alert_policy" "cis_central_2_11_bucket_permission" {
+resource "google_monitoring_alert_policy" "cis_central_2_12_sql_instance" {
+resource "google_monitoring_alert_policy" "cis_central_2_5_project_ownership" {
+resource "google_monitoring_alert_policy" "cis_central_2_6_audit_config" {
+resource "google_monitoring_alert_policy" "cis_central_2_7_custom_role" {
+resource "google_monitoring_alert_policy" "cis_central_2_8_firewall_rule" {
+resource "google_monitoring_alert_policy" "cis_central_2_9_network_route" {
+resource "google_monitoring_notification_channel" "cis_central_alerts" {
+resource "google_organization_iam_audit_config" "org_all_services" {
+resource "google_project" "logsink_project" {
+resource "google_project_iam_member" "cis_central_sink_writer" {
+resource "google_project_service" "logsink_project_logging_googleapis_com" {
+resource "google_project_service" "logsink_project_monitoring_googleapis_com" {
+resource "google_project_service" "logsink_project_storage_googleapis_com" {
+resource "google_storage_bucket" "org_audit_logs" {
+resource "google_storage_bucket_iam_member" "org_audit_sink_writer" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+billing-account-infra = "01AA-BB-CC"
+cis-central-alert-window = "300s"
+cis-central-bucket-id = "corp-organization-log-alerts"
+cis-central-bucket-location = "europe-west3"
+cis-central-bucket-project = "corp-log-infra-001"
+cis-central-bucket-retention-days = 30
+cis-central-channel-name = "CIS Security Alerts (org)"
+cis-central-email = "gcp-security@example.com"
+cis-central-sink-name = "cis-central-metrics-sink"
+customer-domain = "example.com"
+customer-id = "C0TEST"
+customer-organization-id = "123456789012"
+customer-shortname = "corp"
+default-region = "europe-west3"
+logsink-bucket-location = "europe-west3"
+logsink-bucket-name = "corp-organization-audit-logs"
+logsink-filter = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
+logsink-name = "corp-organization-audit-gcs"
+logsink-project-name = "corp-log-infra-001"
+logsink-retention-days = 400

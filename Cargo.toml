@@ -1,0 +1,53 @@
+[package]
+name = "satz"
+version = "0.46.1"
+edition = "2021"
+authors = ["Thomas Jirsch"]
+description = "Infrastructure with a constitution — proven live. Compiles Satz estates to OpenTofu/Terraform HCL and proves declared controls against the live Google Cloud organisation."
+license = "MIT"
+repository = "https://github.com/tjirsch/satz"
+homepage = "https://github.com/tjirsch/satz"
+readme = "README.md"
+keywords = [
+    "terraform",
+    "opentofu",
+    "yaml",
+    "infrastructure-as-code",
+    "transpiler",
+    "google-cloud",
+    "infrastructure-discovery"
+]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+satz-core = { path = "crates/satz-core" }
+hcl-rs = "0.19.8"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_yaml = "0.9.34"
+serde_json = "1.0"
+serde_path_to_error = "0.1"
+clap = { version = "4.6", features = ["derive"] }
+clap_complete = "4.6"
+toml = "1.1"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time"] }
+google-cloud-auth = "1.15"
+reqwest = { version = "0.13.4", features = ["json"] }
+sha2 = "0.11"
+hex = "0.4"
+regex = "1.13"
+google-cloud-asset-v1 = "1.12.0"
+google-cloud-gax = "1.13.0"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+opt-level = "z"          # optimize for size (vs "s" which is slightly less aggressive)
+lto = true               # full LTO — more effective than "thin" for size
+codegen-units = 1        # single codegen unit enables better dead code elimination
+strip = true             # strip symbols and debug info from the binary
+panic = "abort"          # removes unwinding machinery (~50-100KB)
+
+# Workspace root: the satz binary plus the satz-core library (the typed
+# composition core growing strangler-fig style; see ROADMAP.md).
+[workspace]
+members = ["crates/satz-core"]

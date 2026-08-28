@@ -1,0 +1,13 @@
+pack corpus_widgets
+
+params {
+  widget_name = "default-widget"
+  widget_location = "europe-west3"
+}
+
+google_storage_bucket {
+  widget {
+    name = widget_name
+    location = widget_location
+  }
+}

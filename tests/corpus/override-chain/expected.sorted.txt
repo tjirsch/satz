@@ -1,0 +1,9 @@
+  location = "europe-west3"
+  name = "overridden-widget"
+  provider = google.google
+resource "google_storage_bucket" "widget" {
+}
+---tfvars---
+customer-organization-id = "123456789"
+widget-location = "europe-west3"
+widget-name = "overridden-widget"

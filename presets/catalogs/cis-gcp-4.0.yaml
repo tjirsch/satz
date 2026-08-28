@@ -1,0 +1,111 @@
+#
+# CIS Google Cloud Platform Foundation Benchmark 4.0 — control catalog (data plane)
+#
+# Control IDs plus this project's OWN one-line paraphrases. Framework prose is
+# deliberately absent (CIS benchmark text is license-restricted); consult the
+# benchmark itself for authoritative wording.
+#
+# automatability: technical    — fully checkable/implementable as infrastructure
+#                 partial      — infrastructure helps, human duties remain
+#                 organizational — process control, no IaC implementation
+#
+catalog: cis-gcp
+version: "4.0"
+section-1-title: "Identity and Access Management"
+section-3-title: "Networking"
+section-4-title: "Virtual Machines"
+section-5-title: "Storage"
+section-2-title: "Logging and Monitoring"
+controls:
+  "1.1":
+    title: "Corporate login credentials only"
+    paraphrase: "IAM grants are restricted to identities from the organisation's own directory; consumer accounts cannot be granted roles."
+    automatability: technical
+  "1.4":
+    title: "Only GCP-managed service account keys"
+    paraphrase: "User-managed service account keys cannot be created or uploaded; only Google-managed keys exist."
+    automatability: technical
+  "1.5":
+    title: "Service accounts without admin privileges"
+    paraphrase: "Default service accounts do not receive primitive or privileged roles automatically."
+    automatability: technical
+  "1.16":
+    title: "Essential Contacts configured for the organisation"
+    paraphrase: "Organisation-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address."
+    automatability: technical
+  "3.1":
+    title: "Default network does not exist"
+    paraphrase: "New projects are created without the auto-mode default VPC and its permissive firewall rules."
+    automatability: technical
+  "3.8":
+    title: "VPC Flow Logs enabled on subnets"
+    paraphrase: "Subnets record flow logs so network traffic is auditable."
+    automatability: technical
+  "4.4":
+    title: "OS Login enabled"
+    paraphrase: "VM SSH access goes through OS Login and IAM rather than project-wide or instance metadata keys."
+    automatability: technical
+  "4.6":
+    title: "IP forwarding not enabled on instances"
+    paraphrase: "Instances may not forward packets for addresses other than their own."
+    automatability: technical
+  "4.9":
+    title: "Compute instances without public IP addresses"
+    paraphrase: "VMs are not reachable directly from the internet via external IPs."
+    automatability: technical
+  "5.1":
+    title: "Storage buckets not anonymously or publicly accessible"
+    paraphrase: "Public access prevention is enforced so buckets cannot be exposed to allUsers/allAuthenticatedUsers."
+    automatability: technical
+  "5.2":
+    title: "Uniform bucket-level access enabled"
+    paraphrase: "Object ACLs are disabled; access is governed by IAM alone."
+    automatability: technical
+  "2.1":
+    title: "Cloud Audit Logging on all services"
+    paraphrase: "Data Access audit logs (ADMIN_READ/DATA_READ/DATA_WRITE) enabled org-wide for all services."
+    automatability: technical
+  "2.2":
+    title: "Sinks for all log entries"
+    paraphrase: "An aggregated org-level sink routes audit log entries to a central destination project owners cannot bypass."
+    automatability: technical
+  "2.3":
+    title: "Retention on the log bucket"
+    paraphrase: "The central log destination retains entries per policy; bucket-lock retention once the pipeline is validated."
+    automatability: partial
+  "2.4":
+    title: "Log metric filters exist"
+    paraphrase: "Log-based metrics and alerting are wired to the central audit trail."
+    automatability: technical
+  "2.5":
+    title: "Project ownership change alerts"
+    paraphrase: "Alert on project ownership assignments/changes across the organization."
+    automatability: technical
+  "2.6":
+    title: "Audit configuration change alerts"
+    paraphrase: "Alert on changes to audit logging configuration."
+    automatability: technical
+  "2.7":
+    title: "Custom role change alerts"
+    paraphrase: "Alert on IAM custom role creation, modification, deletion."
+    automatability: technical
+  "2.8":
+    title: "VPC firewall rule change alerts"
+    paraphrase: "Alert on firewall rule create/modify/delete."
+    automatability: technical
+  "2.9":
+    title: "VPC route change alerts"
+    paraphrase: "Alert on VPC network route changes."
+    automatability: technical
+  "2.10":
+    title: "VPC network change alerts"
+    paraphrase: "Alert on VPC network create/modify/delete."
+    automatability: technical
+  "2.11":
+    title: "Storage IAM change alerts"
+    paraphrase: "Alert on Cloud Storage bucket IAM permission changes."
+    automatability: technical
+  "2.12":
+    title: "SQL instance change alerts"
+    paraphrase: "Alert on Cloud SQL instance configuration changes."
+    automatability: technical

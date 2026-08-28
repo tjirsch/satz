@@ -1,0 +1,7 @@
+pack corpus_optional
+
+google_storage_bucket {
+  optional {
+    name = "opt"
+  }
+}

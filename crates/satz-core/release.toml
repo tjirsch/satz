@@ -1,0 +1,2 @@
+# satz-core is an internal library: never released or tagged by cargo release.
+release = false

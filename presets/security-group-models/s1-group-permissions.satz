@@ -1,0 +1,79 @@
+// 
+// Include under organization_iam_member:
+// 
+
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack s1_group_permissions version "1.0"
+
+"domain:{customer_domain}" = [
+  "roles/resourcemanager.organizationViewer",
+]
+
+"group:{gcp_organization_admins_name}@{customer_domain}" = [
+  "roles/resourcemanager.organizationAdmin",
+  "roles/iam.organizationRoleAdmin",
+  "roles/orgpolicy.policyAdmin",
+  "roles/resourcemanager.folderAdmin",
+  "roles/resourcemanager.folderIamAdmin",
+  "roles/resourcemanager.projectCreator",
+  "roles/resourcemanager.projectIamAdmin",
+  "roles/cloudsupport.admin",
+  "roles/billing.user",
+]
+
+"group:{gcp_project_admins_name}@{customer_domain}" = [
+  "roles/resourcemanager.folderViewer",
+  "roles/resourcemanager.projectIamAdmin",
+  "roles/resourcemanager.tagAdmin",
+  "roles/iam.organizationRoleViewer",
+  "roles/iam.serviceAccountCreator",
+  "roles/owner",
+  "roles/bigquery.admin",
+  "roles/pubsub.admin",
+  "roles/cloudsupport.admin",
+  "roles/compute.networkAdmin",
+  "roles/compute.viewer",
+  "roles/compute.xpnAdmin",
+  "roles/container.viewer",
+  "roles/monitoring.admin",
+  "roles/logging.admin",
+  "roles/logging.configWriter",
+  "roles/logging.privateLogViewer",
+  "roles/monitoring.viewer",
+  "roles/billing.user",
+]
+
+"group:{gcp_security_admins_name}@{customer_domain}" = [
+  "roles/orgpolicy.policyAdmin",
+  "roles/compute.viewer",
+  "roles/container.viewer",
+  "roles/iam.organizationRoleViewer",
+  "roles/iam.securityReviewer",
+  "roles/monitoring.admin",
+  "roles/logging.configWriter",
+  "roles/logging.privateLogViewer",
+  "roles/resourcemanager.folderIamAdmin",
+  "roles/securitycenter.admin",
+  "roles/billing.user",
+]
+
+"group:{gcp_security_viewers_name}@{customer_domain}" = [
+  "roles/viewer",
+  "roles/resourcemanager.organizationViewer",
+  "roles/compute.viewer",
+  "roles/logging.configWriter",
+  "roles/logging.privateLogViewer",
+  "roles/monitoring.viewer",
+  "roles/logging.viewer",
+  "roles/container.viewer",
+  "roles/iam.organizationRoleViewer",
+  "roles/iam.securityReviewer",
+]
+
+"group:{gcp_billing_admins_name}@{customer_domain}" = [
+  "roles/resourcemanager.organizationViewer",
+  "roles/billing.admin",
+  "roles/billing.creator",
+]
+

@@ -1,0 +1,126 @@
+// Organization-wide audit log sink -> GCS bucket (compliance archive).
+// Satz-native pack: params are overridable defaults (define the same param in the
+// estate to override), claims compile to the .claims.yaml sidecar, and the estate
+// includes this file with:  use "presets/monitoring/organization-audit-logsink.satz"
+//
+// Required from the estate: customer_organization_id, billing_account_infra,
+// customer_shortname, default_region.
+//
+// The YAML twin (organization-audit-logsink-1.0.yaml) is the same pack for
+// YAML-dialect estates; they stay in lockstep until the migrator retires it.
+
+pack monitoring.organization_audit_logsink version "1.1"
+
+params {
+  logsink_name            = "{customer_shortname}-organization-audit-gcs"
+  logsink_project_name    = "{customer_shortname}-log-infra-001"
+  logsink_bucket_name     = "{customer_shortname}-organization-audit-logs"
+  logsink_bucket_location = default_region
+  logsink_retention_days  = 400
+  // Audit logs only by default — widen deliberately (e.g. add vpc_flows) by
+  // overriding this param in the estate.
+  logsink_filter          = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
+}
+
+// 0) The destination project. Lands wherever this pack is used: at root ->
+//    organization level, inside a folder block -> that folder.
+google_project {
+  logsink_project {
+    project_id      = logsink_project_name
+    billing_account = billing_account_infra
+    project_service = [
+      "logging.googleapis.com",
+      "monitoring.googleapis.com",
+      "storage.googleapis.com",
+    ]
+  }
+}
+
+// 1) Data Access audit logs, org-wide, all services.
+google_organization_iam_audit_config {
+  org_all_services {
+    org_id  = customer_organization_id
+    service = "allServices"
+    audit_log_config = [
+      { log_type = "ADMIN_READ" },
+      { log_type = "DATA_READ" },
+      { log_type = "DATA_WRITE" },
+    ]
+  }
+}
+
+// 2) Central archive bucket, referenced into the project created above.
+google_storage_bucket {
+  org_audit_logs {
+    project  = "${{google_project.logsink_project.project_id}}"
+    name     = logsink_bucket_name
+    location = logsink_bucket_location
+    storage_class = "NEARLINE"
+    uniform_bucket_level_access = true
+    public_access_prevention    = "enforced"
+    lifecycle_rule = [
+      { action { type = "Delete" }
+        condition { age = logsink_retention_days } },
+    ]
+  }
+}
+
+// 3) The aggregated sink. Filter comes from logsink_filter (audit-only default).
+//    Static label: the writer-identity reference below depends on it.
+google_logging_organization_sink {
+  organization_audit_gcs {
+    name   = logsink_name
+    org_id = customer_organization_id
+    include_children = true
+    destination = "storage.googleapis.com/{logsink_bucket_name}"
+    filter = logsink_filter
+  }
+}
+
+// 4) Writer identity may create objects — nothing else.
+google_storage_bucket_iam_member {
+  org_audit_sink_writer {
+    bucket = logsink_bucket_name
+    role   = "roles/storage.objectCreator"
+    member = "${{google_logging_organization_sink.organization_audit_gcs.writer_identity}}"
+  }
+}
+
+// --- Control claims: the lemmas this pack proves, witnesses named. -----------
+
+claim "cis-gcp" "4.0" "2.1" implements {
+  resources = ["google_organization_iam_audit_config.org_all_services"]
+  interpretation = "ADMIN_READ/DATA_READ/DATA_WRITE on allServices at organization scope; exemptions via exempted_members keep the category enabled and visible."
+}
+claim "cis-gcp" "5.0" "2.1" implements {
+  resources = ["google_organization_iam_audit_config.org_all_services"]
+  interpretation = "As for 4.0 §2.1; 5.0 control ID provisional pending benchmark verification."
+}
+
+claim "cis-gcp" "4.0" "2.2" implements {
+  resources = [
+    "google_logging_organization_sink.organization_audit_gcs",
+    "google_storage_bucket.org_audit_logs",
+    "google_storage_bucket_iam_member.org_audit_sink_writer",
+  ]
+  interpretation = "Aggregated org sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only."
+}
+claim "cis-gcp" "5.0" "2.2" implements {
+  resources = [
+    "google_logging_organization_sink.organization_audit_gcs",
+    "google_storage_bucket.org_audit_logs",
+    "google_storage_bucket_iam_member.org_audit_sink_writer",
+  ]
+  interpretation = "As for 4.0 §2.2; 5.0 control ID provisional pending benchmark verification."
+}
+
+claim "cis-gcp" "4.0" "2.3" contributes {
+  resources = ["google_storage_bucket.org_audit_logs"]
+  duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
+  interpretation = "Lifecycle retention (logsink_retention_days) is automated; the bucket LOCK is a deliberate human decision, so coverage is honestly partial."
+}
+claim "cis-gcp" "5.0" "2.3" contributes {
+  resources = ["google_storage_bucket.org_audit_logs"]
+  duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
+  interpretation = "As for 4.0 §2.3; 5.0 control ID provisional pending benchmark verification."
+}

@@ -1,0 +1,388 @@
+// 
+// https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
+// 
+// Include all CIS GCP Foundation 4.0 policies
+// https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
+// 
+// Some policies need to be activated manually before import
+// 
+
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack CIS_GCP_Foundation_4_0 version "2.1"
+
+params {
+  // CIS §1.1 Domain Restricted Sharing (iam.managed.allowedPolicyMembers):
+  // PRINCIPAL SETS whose members may be granted IAM roles. Default = the
+  // customer's own org. Add a partner's org here when the estate genuinely
+  // needs cross-org grants.
+  //
+  // v2.0 drops the legacy `iam.allowedPolicyMemberDomains` and its
+  // `allowed_policy_member_customers` param entirely; the claim's
+  // duty_legacy_superseded says why.
+  allowed_policy_member_principal_sets = [
+    "//cloudresourcemanager.googleapis.com/organizations/{customer_organization_id}",
+  ]
+  // Individual principals allowed despite the locks. Only the MANAGED
+  // constraint can express this — the legacy `iam.allowedPolicyMemberDomains`
+  // takes directory customer ids and, per Google, "cannot configure exceptions
+  // for specific principals"; its documented remedy for granting a service
+  // agent is disable / grant / re-enable. So while both §1.1 policies are
+  // enforced, this list does NOT by itself unblock a service agent.
+  //
+  // Default = Security Command Center's service agents. They are CANONICAL:
+  // the address is derived from the org id inside a Google-owned domain nobody
+  // else can register, so nobody can plant an identity that matches, and
+  // allowing them costs nothing. SCC activation grants roles to them, and
+  // domain-restricted sharing blocks exactly that.
+  //
+  // NOTE: overriding this param REPLACES the list — Satz v0 has no list
+  // concatenation — so keep these five entries when adding your own.
+  // SCC's org-level service agents, READ OFF estate 1's live org IAM policy — not
+  // inferred from the docs, which name two of them and misspell one. All follow
+  // the canonical `service-org-<ORG_ID>@<service>` shape: derived from the org
+  // id, in a Google-owned domain nobody else can register.
+  //
+  // These agents live in Google tenant projects, NOT in the customer's org, so
+  // the org principal set does not cover them — they have to be named.
+  //
+  // NOT a complete list of what a full SCC activation needs. Enabling further
+  // SCC services provisions further agents, and the managed constraint blocks a
+  // grant to any agent not named here. Harvest the real set from the org IAM
+  // policy after an activation and add what appears.
+  allowed_policy_member_subjects = [
+    "serviceAccount:service-org-{customer_organization_id}@security-center-api.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-csc-hpsa.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-dspm-hpsa.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ktd-hpsa.iam.gserviceaccount.com",
+  ]
+  // essentialcontacts.managed.allowedContactDomains: the domain whose addresses
+  // may be set as essential contacts. Default = the customer's own domain. Some
+  // customers keep their contact addresses on a DIFFERENT domain than the org
+  // (estate 3: org example.com, contacts @example.net) — set it here rather
+  // than forking the pack.
+  essential_contacts_allowed_domain = customer_domain
+}
+
+"iam-managed-disableServiceAccountKeyCreation" {
+  name = "iam.managed.disableServiceAccountKeyCreation"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"iam-managed-disableServiceAccountKeyUpload" {
+  name = "iam.managed.disableServiceAccountKeyUpload"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"iam-managed-preventPrivilegedBasicRolesForDefaultServiceAccounts" {
+  name = "iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"iam-automaticIamGrantsForDefaultServiceAccounts" {
+  name = "iam.automaticIamGrantsForDefaultServiceAccounts"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"storage-uniformBucketLevelAccess" {
+  name = "storage.uniformBucketLevelAccess"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"compute-setNewProjectDefaultToZonalDNSOnly" {
+  name = "compute.setNewProjectDefaultToZonalDNSOnly"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"compute-restrictProtocolForwardingCreationForTypes" {
+  name = "compute.restrictProtocolForwardingCreationForTypes"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        values {
+          allowed_values = [
+            "INTERNAL",
+          ]
+        }
+      },
+    ]
+  }
+}
+
+"compute-skipDefaultNetworkCreation" {
+  name = "compute.skipDefaultNetworkCreation"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"gcp-resourceLocations" {
+  name = "gcp.resourceLocations"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        values {
+          allowed_values = [
+            "in:eu-locations",
+            "in:us-locations",
+          ]
+        }
+      },
+    ]
+  }
+}
+
+"compute-managed-requireOsLogin" {
+  name = "compute.managed.requireOsLogin"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"gcp-detailedAuditLoggingMode" {
+  name = "gcp.detailedAuditLoggingMode"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"iam-disableAuditLoggingExemption" {
+  name = "iam.disableAuditLoggingExemption"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"compute-requireVpcFlowLogs" {
+  name = "compute.requireVpcFlowLogs"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        values {
+          allowed_values = [
+            "ESSENTIAL",
+            "LIGHT",
+            "COMPREHENSIVE",
+          ]
+        }
+      },
+    ]
+  }
+}
+
+"storage-publicAccessPrevention" {
+  name = "storage.publicAccessPrevention"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"compute-managed-vmCanIpForward" {
+  name = "compute.managed.vmCanIpForward"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"compute-managed-vmExternalIpAccess" {
+  name = "compute.managed.vmExternalIpAccess"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
+}
+
+"essentialcontacts-managed-allowedContactDomains" {
+  name = "essentialcontacts.managed.allowedContactDomains"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+        parameters = "{{\"allowedDomains\" : [\"@{essential_contacts_allowed_domain}\"]}}"
+      },
+    ]
+  }
+}
+
+"iam-managed-allowedPolicyMembers" {
+  name = "iam.managed.allowedPolicyMembers"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+        parameters = {
+          allowedPrincipalSets = allowed_policy_member_principal_sets
+          allowedMemberSubjects = allowed_policy_member_subjects
+        }
+      },
+    ]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Control claims. Each org policy below is the enforcement mechanism for a CIS
+// control; the claim names the emitted resource so `require` and
+// `report-compliance` can find the witness. Control IDs verified against
+// Google's inspec-gcp-cis-benchmark 4.0.0 profile; paraphrases are ours (CIS
+// prose is licence-restricted).
+// ---------------------------------------------------------------------------
+
+claim "cis-gcp" "4.0" "1.1" implements {
+  resources = [
+    "google_org_policy_policy.iam_managed_allowedPolicyMembers",
+  ]
+  interpretation = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately NOT set — see duty_legacy_superseded."
+  duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone."
+  duty_review_allowlist = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
+}
+
+claim "cis-gcp" "4.0" "1.4" implements {
+  resources = [
+    "google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation",
+    "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
+  ]
+  interpretation = "User-managed service account keys can neither be created nor uploaded org-wide, leaving only Google-managed keys."
+}
+
+claim "cis-gcp" "4.0" "1.5" implements {
+  resources = [
+    "google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts",
+  ]
+  interpretation = "Default service accounts are prevented from holding privileged basic roles."
+}
+claim "cis-gcp" "4.0" "1.5" contributes {
+  resources = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
+  interpretation = "Also disables the automatic Editor grant to default service accounts at project creation."
+}
+
+claim "cis-gcp" "4.0" "1.16" contributes {
+  resources = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
+  interpretation = "Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim."
+}
+
+claim "cis-gcp" "4.0" "2.1" contributes {
+  resources = [
+    "google_org_policy_policy.gcp_detailedAuditLoggingMode",
+    "google_org_policy_policy.iam_disableAuditLoggingExemption",
+  ]
+  interpretation = "Detailed audit logging mode plus a ban on per-principal audit-logging exemptions keep the audit trail complete. The audit config itself is declared by the audit-logsink pack."
+}
+
+claim "cis-gcp" "4.0" "3.1" implements {
+  resources = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
+  interpretation = "New projects are created without the auto-mode default VPC and its permissive firewall rules."
+}
+
+claim "cis-gcp" "4.0" "3.8" implements {
+  resources = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
+  interpretation = "Subnets must enable VPC Flow Logs."
+}
+
+claim "cis-gcp" "4.0" "4.4" implements {
+  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  interpretation = "OS Login is required, so VM SSH access is governed by IAM rather than metadata keys."
+  duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
+}
+
+claim "cis-gcp" "4.0" "4.6" implements {
+  resources = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
+  interpretation = "Instances may not enable IP forwarding."
+  duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
+}
+
+claim "cis-gcp" "4.0" "4.9" implements {
+  resources = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
+  interpretation = "Compute instances may not be given external IP addresses."
+}
+
+claim "cis-gcp" "4.0" "5.1" implements {
+  resources = ["google_org_policy_policy.storage_publicAccessPrevention"]
+  interpretation = "Public access prevention is enforced, so buckets cannot be exposed to allUsers or allAuthenticatedUsers."
+}
+
+claim "cis-gcp" "4.0" "5.2" implements {
+  resources = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
+  interpretation = "Uniform bucket-level access disables object ACLs; bucket access is governed by IAM alone."
+}

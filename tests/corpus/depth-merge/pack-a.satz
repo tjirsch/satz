@@ -1,0 +1,8 @@
+pack corpus_pack_a
+
+google_logging_organization_sink {
+  archive {
+    name = "a"
+    org_id = customer_organization_id
+  }
+}

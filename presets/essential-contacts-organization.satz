@@ -1,0 +1,24 @@
+// 
+// Essential Contacts
+// 
+// Combine notification categories, each email may only be used once
+// 
+
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack essential_contacts_organization version "1.1" content
+
+params {
+  // The org-wide contact address receiving ALL Google notifications.
+  essential_contacts_email = "essential-contacts-all@{customer_domain}"
+}
+
+all {
+  parent = "organizations/{customer_organization_id}"
+  email = essential_contacts_email
+  language_tag = "en-GB"
+  notification_category_subscriptions = [
+    "ALL",
+  ]
+}
+

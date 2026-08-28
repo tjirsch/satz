@@ -1,0 +1,91 @@
+// 
+// Include under cloud_identity_group:
+// 
+// cloud_identity_group: !include presets/security-group-models/s1-group-definitions-1.0.yaml
+// 
+// To adopt groups that already exist in the tenant, use !import-include instead of
+// !include for one transpile: each group is looked up by email over the Cloud Identity
+// API and the ones that exist are imported into state. That is why no group ids are
+// hard-coded here — they are tenant-specific and do not belong in a shared preset.
+// Memberships are deliberately NOT part of this preset (v1.1): presets define
+// groups, humans grant membership. Estates that need managed memberships declare
+// them as estate-level resources.
+// 
+
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack s1_group_definitions version "1.1"
+
+params {
+  gcp_organization_admins_name = "gcp-organization-admins"
+  gcp_project_admins_name = "gcp-project-admins"
+  gcp_security_admins_name = "gcp-security-admins"
+  gcp_security_viewers_name = "gcp-security-viewers"
+  gcp_billing_admins_name = "gcp-billing-admins"
+}
+
+"{gcp_organization_admins_name}" {
+  lifecycle {
+    ignore_changes = [
+      "initial_group_config",
+    ]
+  }
+  display_name = "GCP-Organization Admins"
+  description = "Permissions merged from default roles for\nOrganization administrators, Hybrid Connectivity administrators,\nLogging-monitoring administrators and Network administrators.\n"
+  owner = [
+    "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
+  ]
+}
+
+"{gcp_project_admins_name}" {
+  lifecycle {
+    ignore_changes = [
+      "initial_group_config",
+    ]
+  }
+  display_name = "GCP-Project Admins"
+  description = "Permissions allow Day2Day Project Administration across all projects+\nHybrid Connectivity administrators, Logging-monitoring administrators and\nNetwork administrators.\n"
+  owner = [
+    "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
+  ]
+}
+
+"{gcp_security_admins_name}" {
+  lifecycle {
+    ignore_changes = [
+      "initial_group_config",
+    ]
+  }
+  display_name = "GCP-Security Admins"
+  description = "Permissions for use with Security Admin role. Use of setting IAM on most Resources.\nOrganizational, Folder  and Project IAM Admin roles.\nSCC PowerUser.\n"
+  owner = [
+    "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
+  ]
+}
+
+"{gcp_security_viewers_name}" {
+  lifecycle {
+    ignore_changes = [
+      "initial_group_config",
+    ]
+  }
+  display_name = "GCP-Security Viewers"
+  description = "All Viewer Permissions for use with Security Auitor role.\nSCC User.\n"
+  owner = [
+    "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
+  ]
+}
+
+"{gcp_billing_admins_name}" {
+  lifecycle {
+    ignore_changes = [
+      "initial_group_config",
+    ]
+  }
+  display_name = "GCP-Billing Admins"
+  description = "All Billing and Procurement roles.\n"
+  owner = [
+    "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
+  ]
+}
+

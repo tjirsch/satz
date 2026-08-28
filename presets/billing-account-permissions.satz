@@ -1,0 +1,14 @@
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack billing_account_permissions version "1.0"
+
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/billing.admin",
+  ]
+  "domain:{customer_domain}" = [
+    "roles/billing.user",
+  ]
+}
+

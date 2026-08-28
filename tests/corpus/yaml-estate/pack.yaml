@@ -1,0 +1,10 @@
+# An included pack in the YAML dialect. Conversion must repoint the estate's
+# `use` at pack.satz, or the converted estate references YAML the fragment
+# pipeline cannot load — which the legacy walk reads happily, so the
+# conversion gate never noticed.
+compute-requireOsLogin:
+  name: "compute.requireOsLogin"
+  parent: !format ["organizations/{}", *customer-organization-id]
+  spec:
+    rules:
+      - enforce: "TRUE"

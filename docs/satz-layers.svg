@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 670" width="960" height="670" role="img" aria-label="Four stacked layers. Bottom: HCL, the foundation — the IaC layer's assembly language, run by OpenTofu or Terraform with providers from Google and others; main.tf is applied to become the live estate. Above it: Satz — an estate and its packs are folded and transpiled, emitting main.tf. Above that: Controls — claims and a catalog go through require, producing a declared goal view whose witnesses are the emitted HCL addresses. Top: Evidence — report-compliance joins the goal view with Cloud Asset Inventory, comparing every witness by value, producing verified, drifted or not-enforced verdicts. Only the top layer is proven; the controls layer is declared.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/>
+    </marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="670" fill="#FFFFFF"/>
+
+  <!-- ===== bands ===== -->
+  <rect x="20" y="20" width="920" height="135" rx="6" fill="#EEF1F3" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="34" y="44" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#0F766E" font-weight="500">EVIDENCE</text>
+  <text x="34" y="62" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="15" fill="#0F766E">proven</text>
+  <text x="34" y="82" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">report-compliance</text>
+  <text x="34" y="96" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">checked against the cloud,</text>
+  <text x="34" y="110" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">by value</text>
+
+  <rect x="20" y="185" width="920" height="135" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="209" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">CONTROLS</text>
+  <text x="34" y="227" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="15" fill="#1B2430">declared</text>
+  <text x="34" y="247" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">require</text>
+  <text x="34" y="261" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">judges the estate as</text>
+  <text x="34" y="275" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">written — never says</text>
+  <text x="34" y="289" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">“compliant”</text>
+
+  <rect x="20" y="350" width="920" height="135" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="374" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">SATZ</text>
+  <text x="34" y="392" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="15" fill="#1B2430">secure by policy</text>
+  <text x="34" y="410" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="15" fill="#1B2430">and design</text>
+  <text x="34" y="430" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">org policies are versioned</text>
+  <text x="34" y="444" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">packs; declining one is a</text>
+  <text x="34" y="458" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">visible line, not a fork</text>
+
+  <rect x="20" y="515" width="920" height="135" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="539" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">HCL</text>
+  <text x="34" y="557" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="15" fill="#1B2430">foundation</text>
+  <text x="34" y="577" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">the IaC layer’s assembly</text>
+  <text x="34" y="591" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">language · run by OpenTofu</text>
+  <text x="34" y="605" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">(preferred) or Terraform ·</text>
+  <text x="34" y="619" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.7">providers from Google &amp; others</text>
+
+  <!-- ===== EVIDENCE boxes ===== -->
+  <rect x="200" y="50" width="180" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="290" y="82" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12.5" fill="#1B2430" font-weight="500">Cloud Asset Inventory</text>
+  <text x="290" y="100" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">the live estate, read</text>
+
+  <rect x="430" y="50" width="170" height="75" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="515" y="82" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12.5" fill="#0F766E" font-weight="500">report-compliance</text>
+  <text x="515" y="100" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">declared ⋈ live</text>
+
+  <rect x="700" y="50" width="220" height="75" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="810" y="75" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#0F766E" font-weight="500">verified · DRIFTED</text>
+  <text x="810" y="92" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#0F766E" font-weight="500">NOT ENFORCED</text>
+  <text x="810" y="110" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">evidence/&lt;framework&gt;-&lt;time&gt;.json</text>
+
+  <line x1="380" y1="87" x2="428" y2="87" stroke="#1B2430" marker-end="url(#arr)"/>
+  <text x="404" y="80" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">live values</text>
+  <line x1="600" y1="87" x2="698" y2="87" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+  <text x="649" y="80" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#0F766E">every witness, by VALUE</text>
+
+  <!-- ===== CONTROLS boxes ===== -->
+  <rect x="200" y="205" width="180" height="46" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="290" y="225" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">claim … implements</text>
+  <text x="290" y="242" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" opacity="0.8">contributes · deviates</text>
+
+  <rect x="200" y="261" width="180" height="46" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="290" y="281" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">catalog</text>
+  <text x="290" y="298" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">cis-gcp-4.0.yaml — ids, paraphrases</text>
+
+  <rect x="430" y="215" width="170" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="515" y="247" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12.5" fill="#1B2430" font-weight="500">require</text>
+  <text x="515" y="265" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">claims ∧ catalog ∧ duties</text>
+
+  <rect x="700" y="215" width="220" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="810" y="243" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="13" fill="#1B2430" font-weight="500">✓ ◐ ⚠ ✗ ‼</text>
+  <text x="810" y="262" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">goal view — the estate as written</text>
+  <text x="810" y="277" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">unmet or broken fails the gate</text>
+
+  <line x1="380" y1="228" x2="428" y2="245" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="380" y1="284" x2="428" y2="262" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="600" y1="252" x2="698" y2="252" stroke="#1B2430" marker-end="url(#arr)"/>
+  <text x="649" y="245" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">per control</text>
+
+  <!-- ===== SATZ boxes ===== -->
+  <rect x="200" y="370" width="180" height="46" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="290" y="390" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">estate.satz</text>
+  <text x="290" y="407" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" opacity="0.8">params · use · suppress · claim</text>
+
+  <rect x="200" y="426" width="180" height="46" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="290" y="446" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">packs</text>
+  <text x="290" y="463" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430" opacity="0.8">X.satz · X.local.satz · X.diff.satz</text>
+
+  <rect x="430" y="380" width="170" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="515" y="412" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="13" fill="#1B2430" font-weight="500">⊕ fold</text>
+  <text x="515" y="430" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">same address, different body = error</text>
+
+  <rect x="700" y="380" width="220" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="810" y="412" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12.5" fill="#1B2430" font-weight="500">transpile</text>
+  <text x="810" y="430" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">types matched against the schema</text>
+
+  <line x1="380" y1="393" x2="428" y2="410" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="380" y1="449" x2="428" y2="428" stroke="#1B2430" marker-end="url(#arr)"/>
+  <text x="398" y="440" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">use</text>
+  <line x1="600" y1="417" x2="698" y2="417" stroke="#1B2430" marker-end="url(#arr)"/>
+  <text x="649" y="410" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">one folded estate</text>
+
+  <!-- ===== HCL boxes ===== -->
+  <rect x="200" y="545" width="180" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="290" y="577" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12.5" fill="#1B2430" font-weight="500">live estate</text>
+  <text x="290" y="595" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">what the org actually runs</text>
+
+  <rect x="430" y="545" width="170" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="515" y="577" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12.5" fill="#1B2430" font-weight="500">tofu plan · apply</text>
+  <text x="515" y="595" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">providers · state</text>
+
+  <rect x="700" y="545" width="220" height="75" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="810" y="577" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12.5" fill="#1B2430" font-weight="500">hcl/main.tf</text>
+  <text x="810" y="595" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430" opacity="0.75">resources at Terraform addresses</text>
+
+  <line x1="698" y1="582" x2="602" y2="582" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="428" y1="582" x2="382" y2="582" stroke="#1B2430" marker-end="url(#arr)"/>
+  <text x="405" y="575" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">apply</text>
+
+  <!-- ===== the spine ===== -->
+  <line x1="810" y1="455" x2="810" y2="543" stroke="#1B2430" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="820" y="504" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">emits</text>
+  <line x1="770" y1="378" x2="770" y2="292" stroke="#1B2430" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+  <text x="780" y="330" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">witnesses = the emitted addresses</text>
+  <text x="780" y="345" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.7">a claim naming an address that is not emitted is ‼ broken</text>
+  <line x1="810" y1="213" x2="810" y2="127" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+  <text x="820" y="165" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#0F766E">the goal view, joined with live</text>
+  <text x="820" y="180" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#0F766E" opacity="0.85">a policy that exists but is switched off reads NOT ENFORCED</text>
+
+  <polyline points="200,582 186,582 186,87 198,87" fill="none" stroke="#0F766E" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-acc)"/>
+  <text x="181" y="340" transform="rotate(-90 181 340)" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#0F766E">read live</text>
+</svg>

@@ -1,0 +1,418 @@
+// 
+// CIS log metric filters + alert policies — PER PROJECT
+// 
+// Covers CIS GCP Foundations 2.5 – 2.12: eight log-based metric filters, each
+// with an alert policy, plus the notification channel they fire into.
+// 
+// Include at ROOT level — this preset declares several resource types, and the
+// target project is chosen by the `project:` field of each resource, not by
+// where the include sits:
+// 
+// !include presets/monitoring/project-cis-log-alerts-1.0.yaml
+// 
+// Or gated on the target project being defined:
+// 
+// !include-if cis-alert-project presets/monitoring/project-cis-log-alerts-1.0.yaml
+// 
+// Required from the including config's variables:
+// *customer-domain            recipient domain for the notification channel
+// 
+// The variables below are DEFAULTS: define the same anchor in the main file's
+// `variables:` block (before the include) to override.
+// 
+// ---------------------------------------------------------------------------
+// ONE PROJECT PER INCLUDE — no parameterisation
+// ---------------------------------------------------------------------------
+// The YAML keys below (cis_2_5_project_ownership, ...) are fixed. Including
+// this file twice collides: duplicate keys, last one wins or the parse fails.
+// For a second project, copy the file and prefix every key and metric `name`
+// (e.g. cis_2_5_project_ownership -> tenantb_cis_2_5_project_ownership), or —
+// preferably — use the central variant, which covers all projects at once:
+// presets/monitoring/organization-cis-log-alerts-central-1.0.yaml
+// 
+// ---------------------------------------------------------------------------
+// WHY PER PROJECT — and why that is the expensive option
+// ---------------------------------------------------------------------------
+// Notification channels are PROJECT resources
+// (google_monitoring_notification_channel -> projects.notificationChannels).
+// An alert policy can only reference channels living in its OWN project;
+// there is no organization-level channel and no cross-project reference.
+// So "one channel for everything" is not available: including this file in
+// N projects creates N channels pointing at the same mailbox, N x 8 metrics
+// and N x 8 policies. Every new project needs the include again, or it
+// silently fails CIS 2.5-2.12.
+// 
+// The cheaper topology: route all projects' logs through an org-level
+// aggregated sink into a LOGGING bucket (not GCS), then define the eight
+// metrics bucket-scoped in that one project. Prowler credits every child
+// project of such a sink as compliant
+// (logging_service.get_projects_covered_by_aggregated_metric) — eight metrics
+// and one channel for the whole organization, and future projects are covered
+// on creation without touching their config.
+// See organization-cis-log-alerts-central-1.0.yaml.
+// 
+// Use THIS file when a project must alert on its own (separate on-call,
+// delegated ownership, tenant isolation) or when the central logging bucket
+// does not exist yet. Both variants may coexist: Prowler passes the control as
+// soon as EITHER condition is met.
+// 
+// ---------------------------------------------------------------------------
+// WHAT PROWLER CHECKS — and what it does not
+// ---------------------------------------------------------------------------
+// The checks require (a) a metric whose filter CONTAINS the CIS filter string
+// and (b) any alert policy whose condition filter mentions that metric name.
+// Whether the policy has a recipient is NEVER checked: an alert policy with
+// notification_channels = [] passes CIS and notifies nobody. The channel below
+// exists for that reason, not because the benchmark asks for it.
+// 
+// Filter strings must match Prowler's expectation verbatim — they are compared
+// by substring. Reformatting or "improving" a filter silently breaks the check
+// while leaving the alert working. Source of truth:
+// prowler/providers/gcp/services/logging/logging_log_metric_filter_and_alert_for_*
+// Validated against prowler master, 2026-08-18.
+// 
+// ---------------------------------------------------------------------------
+// PREREQUISITES
+// ---------------------------------------------------------------------------
+// - logging.googleapis.com and monitoring.googleapis.com enabled in the
+// target project (add to its project_service list).
+// - The recipient group must exist in Cloud Identity BEFORE apply; Google
+// accepts unverified email channels but they stay unconfirmed and silent.
+// - Admin Activity audit logs are always on; DATA_READ/DATA_WRITE are not
+// needed for these eight filters (they all match activity logs).
+// 
+// Verify after transpile:
+// grep -c 'google_logging_metric'          hcl/main.tf   # expect 8
+// grep -c 'google_monitoring_alert_policy' hcl/main.tf   # expect 8
+// grep -A3 'notification_channels'         hcl/main.tf   # reference, not literal
+// 
+// After apply, prove the pipeline works end to end — a metric that never
+// increments satisfies the auditor but not the attacker:
+// gcloud iam roles create cis_probe --project=<p> --permissions=storage.buckets.get --stage=GA
+// gcloud iam roles delete cis_probe --project=<p>
+// # expect an alert from the 2.7 policy within ~5 minutes
+
+// Converted by `satz migrate-to-satz` — interior comments were not carried.
+
+pack project_cis_log_alerts version "1.0"
+
+params {
+  cis_alert_project = "{infra_project_name}"
+  cis_alert_email_local = "gcp-security"
+  cis_alert_channel_name = "CIS Security Alerts"
+  cis_alert_window = "300s"
+}
+
+google_monitoring_notification_channel {
+  cis_security_alerts {
+    project = cis_alert_project
+    display_name = cis_alert_channel_name
+    type = "email"
+    labels {
+      email_address = "{cis_alert_email_local}@{customer_domain}"
+    }
+  }
+}
+
+google_logging_metric {
+  cis_2_5_project_ownership {
+    project = cis_alert_project
+    name = "cis-2-5-project-ownership-changes"
+    description = "CIS 2.5 — project ownership assignments changed"
+    filter = "(protoPayload.serviceName=\"cloudresourcemanager.googleapis.com\") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"REMOVE\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"ADD\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\")"
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+  cis_2_6_audit_config {
+    project = cis_alert_project
+    name = "cis-2-6-audit-config-changes"
+    description = "CIS 2.6 — audit configuration changed"
+    filter = "protoPayload.methodName=\"SetIamPolicy\" AND protoPayload.serviceData.policyDelta.auditConfigDeltas:*"
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+  cis_2_7_custom_role {
+    project = cis_alert_project
+    name = "cis-2-7-custom-role-changes"
+    description = "CIS 2.7 — custom role created, updated or deleted"
+    filter = "resource.type=\"iam_role\" AND (protoPayload.methodName=\"google.iam.admin.v1.CreateRole\" OR protoPayload.methodName=\"google.iam.admin.v1.DeleteRole\" OR protoPayload.methodName=\"google.iam.admin.v1.UpdateRole\")"
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+  cis_2_8_firewall_rule {
+    project = cis_alert_project
+    name = "cis-2-8-firewall-rule-changes"
+    description = "CIS 2.8 — VPC firewall rule changed"
+    filter = "resource.type=\"gce_firewall_rule\" AND (protoPayload.methodName:\"compute.firewalls.patch\" OR protoPayload.methodName:\"compute.firewalls.insert\" OR protoPayload.methodName:\"compute.firewalls.delete\")"
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+  cis_2_9_network_route {
+    project = cis_alert_project
+    name = "cis-2-9-network-route-changes"
+    description = "CIS 2.9 — VPC network route changed"
+    filter = "resource.type=\"gce_route\" AND (protoPayload.methodName:\"compute.routes.delete\" OR protoPayload.methodName:\"compute.routes.insert\")"
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+  cis_2_10_network {
+    project = cis_alert_project
+    name = "cis-2-10-network-changes"
+    description = "CIS 2.10 — VPC network changed"
+    filter = "resource.type=\"gce_network\" AND (protoPayload.methodName:\"compute.networks.insert\" OR protoPayload.methodName:\"compute.networks.patch\" OR protoPayload.methodName:\"compute.networks.delete\" OR protoPayload.methodName:\"compute.networks.removePeering\" OR protoPayload.methodName:\"compute.networks.addPeering\")"
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+  cis_2_11_bucket_permission {
+    project = cis_alert_project
+    name = "cis-2-11-bucket-permission-changes"
+    description = "CIS 2.11 — Cloud Storage IAM permissions changed"
+    filter = "resource.type=\"gcs_bucket\" AND protoPayload.methodName=\"storage.setIamPermissions\""
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+  cis_2_12_sql_instance {
+    project = cis_alert_project
+    name = "cis-2-12-sql-instance-changes"
+    description = "CIS 2.12 — Cloud SQL instance configuration changed"
+    filter = "protoPayload.methodName=\"cloudsql.instances.update\""
+    metric_descriptor {
+      metric_kind = "DELTA"
+      value_type = "INT64"
+      unit = "1"
+    }
+  }
+}
+
+google_monitoring_alert_policy {
+  cis_2_5_project_ownership {
+    project = cis_alert_project
+    display_name = "CIS 2.5 — Project ownership changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "Project ownership assignment changed"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_5_project_ownership.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+  cis_2_6_audit_config {
+    project = cis_alert_project
+    display_name = "CIS 2.6 — Audit configuration changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "Audit configuration changed"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_6_audit_config.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+  cis_2_7_custom_role {
+    project = cis_alert_project
+    display_name = "CIS 2.7 — Custom role changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "Custom role created, updated or deleted"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_7_custom_role.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+  cis_2_8_firewall_rule {
+    project = cis_alert_project
+    display_name = "CIS 2.8 — VPC firewall rule changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "Firewall rule changed"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_8_firewall_rule.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+  cis_2_9_network_route {
+    project = cis_alert_project
+    display_name = "CIS 2.9 — VPC network route changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "Network route changed"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_9_network_route.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+  cis_2_10_network {
+    project = cis_alert_project
+    display_name = "CIS 2.10 — VPC network changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "VPC network changed"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_10_network.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+  cis_2_11_bucket_permission {
+    project = cis_alert_project
+    display_name = "CIS 2.11 — Cloud Storage IAM permission changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "Bucket IAM permissions changed"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_11_bucket_permission.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+  cis_2_12_sql_instance {
+    project = cis_alert_project
+    display_name = "CIS 2.12 — Cloud SQL instance configuration changes"
+    combiner = "OR"
+    notification_channels = [
+      "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
+    ]
+    conditions = [
+      {
+        display_name = "Cloud SQL instance configuration changed"
+        condition_threshold {
+          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_12_sql_instance.name}}\""
+          comparison = "COMPARISON_GT"
+          threshold_value = 0
+          duration = "0s"
+          aggregations = [
+            {
+              alignment_period = cis_alert_window
+              per_series_aligner = "ALIGN_COUNT"
+              cross_series_reducer = "REDUCE_SUM"
+            },
+          ]
+        }
+      },
+    ]
+  }
+}
+

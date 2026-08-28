@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Names gate — refuses a commit that carries a non-example identifier.
+# Enable once per clone:  git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/scripts/check-names.sh" --staged

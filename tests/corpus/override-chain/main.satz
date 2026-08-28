@@ -1,0 +1,17 @@
+// Satz twin of main.yaml — gated by the differential harness.
+
+estate corpus_override_chain
+
+params {
+  customer_organization_id = "123456789"
+  widget_name = "overridden-widget"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "pack.satz"
+use "optional.satz" when never_defined
