@@ -350,8 +350,8 @@ enum Commands {
     },
     /// Migrate state and configuration between local and cloud modes
     Migrate {
-        /// Estate file — YAML dialect only: this command rewrites the deployment-mode anchor
-        /// (inside yaml_dir if relative)
+        /// Estate file (inside yaml_dir if relative): rewrites `deployment_mode` in
+        /// params (Satz) or the `deployment-mode` anchor (legacy YAML)
         input: String,
         /// Target mode (local or cloud)
         #[arg(long)]
@@ -946,9 +946,9 @@ Thumbs.db
                 println!("Created {}", gitignore_path.display());
             }
 
-            // 4. Generate template YAML if customer_id provided
+            // 4. Generate the template estate if customer_id provided
             if let Some(c_id) = customer_id {
-                let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.yaml", c_id));
+                let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", c_id));
                 if !yaml_path.exists() {
                     let domain = customer_domain.clone().unwrap_or_default();
                     let resolved_iac_user = iac_user.unwrap_or_else(|| format!("first.admin@{}", domain));
@@ -980,7 +980,7 @@ Thumbs.db
                         first_admin: first_admin.to_string(),
                     };
                     crate::template::generate_template(&args, &yaml_path)?;
-                    println!("Generated template: {}", yaml_path.display());
+                    println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
                 } else {
                     println!("Template already exists: {}", yaml_path.display());
                 }
@@ -1278,14 +1278,33 @@ Thumbs.db
             }
 
             let content = fsx::read_to_string(&input_path)?;
+            let is_satz = input_path.extension().and_then(|e| e.to_str()) == Some("satz");
 
-            // Detect current mode
-            let re_cloud = regex::Regex::new(r"deployment-mode:\s+&deployment-mode\s+cloud").unwrap();
-            let current_mode = if re_cloud.is_match(&content) {
-                "cloud"
+            // Detect current mode. Satz: the `deployment_mode` param; YAML: the
+            // `deployment-mode` anchor. Neither present is an error, not "local":
+            // the guard used to be the regex itself, so a .satz estate silently
+            // reported "already in local mode" and changed nothing.
+            let (re_mode, re_line) = if is_satz {
+                (
+                    regex::Regex::new(r#"(?m)^\s*deployment_mode\s*=\s*"(\w+)""#).unwrap(),
+                    regex::Regex::new(r#"(?m)^(\s*)deployment_mode(\s*)=\s*"\w+"[^\n]*$"#).unwrap(),
+                )
             } else {
-                "local"
+                (
+                    regex::Regex::new(r"(?m)^\s*deployment-mode:\s+&deployment-mode\s+(\w+)").unwrap(),
+                    regex::Regex::new(r"(?m)^(\s*)deployment-mode(\s*):\s+&deployment-mode\s+\w+[^\n]*$").unwrap(),
+                )
             };
+            let current_mode = re_mode
+                .captures(&content)
+                .map(|c| c[1].to_string())
+                .ok_or_else(|| {
+                    format!(
+                        "{} declares no deployment mode ({}) — nothing to migrate",
+                        input_path.display(),
+                        if is_satz { "`deployment_mode = \"local\"` in params" } else { "`deployment-mode: &deployment-mode local` in variables" }
+                    )
+                })?;
 
             let target_mode = match mode {
                 Some(m) => m,
@@ -1299,11 +1318,18 @@ Thumbs.db
 
             println!("Migrating from {} to {} mode...", current_mode, target_mode);
 
-            // Update YAML while preserving formatting and anchors
-            let re = regex::Regex::new(r"(?m)^\s*deployment-mode:\s+&deployment-mode\s+\w+.*$").unwrap();
-            let new_content = re.replace(&content, format!("  deployment-mode: &deployment-mode {} # switch by command", target_mode)).to_string();
+            // Rewrite the one line, preserving its indentation and formatting.
+            let new_content = re_line
+                .replace(&content, |caps: &regex::Captures| {
+                    if is_satz {
+                        format!("{}deployment_mode{}= \"{}\" // switched by `satz migrate`", &caps[1], &caps[2], target_mode)
+                    } else {
+                        format!("{}deployment-mode{}: &deployment-mode {} # switch by command", &caps[1], &caps[2], target_mode)
+                    }
+                })
+                .to_string();
             fsx::write(&input_path, new_content)?;
-            println!("Updated YAML: {}", input_path.display());
+            println!("Updated estate: {}", input_path.display());
 
             // Transpile
             println!("Regenerating HCL...");
@@ -4569,6 +4595,60 @@ google_cloud_identity_group {
         let got = crate::emitter::reconciled_edges(&merged).unwrap();
         assert_eq!(got.len(), 1, "with and without an id is one binding");
         assert_eq!(got[0].import_id, "x");
+    }
+}
+
+#[cfg(test)]
+mod init_template {
+    //! The estate `init` writes must compile through the fragment pipeline and
+    //! emit exactly the labels `bootstrap` imports by name.
+
+    #[test]
+    fn the_generated_estate_compiles_and_carries_bootstraps_labels() {
+        let dir = std::env::temp_dir().join(format!("satz-init-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("C0example.satz");
+        crate::template::generate_template(&crate::template::tests::args("first.admin", "example.com"), &path).unwrap();
+        let src = std::fs::read_to_string(&path).unwrap();
+
+        let reg = super::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("init template does not compile: {:?}\n{}", e, src));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        assert!(folded.conflicts().is_empty());
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs = out.manifest.addresses();
+        for a in [
+            "google_folder.infra_folder",
+            "google_project.infra",
+            "google_storage_bucket.state",
+            "google_service_account.provisioner",
+            "google_cloud_identity_group.svc_iac_users",
+        ] {
+            assert!(addrs.contains(a), "bootstrap imports {} by name; got {:?}", a, addrs);
+        }
+        assert!(out.imports_tf.contains("google_storage_bucket.state"), "{}", out.imports_tf);
+        // the membership emits the bare email (prefix stripped), the org grants keep it
+        assert!(out.main_tf.contains("id = \"first.admin@example.com\""), "{}", out.main_tf);
+        assert!(out.main_tf.contains("member = \"group:svc-iac-users@example.com\""), "{}", out.main_tf);
+        assert!(out.main_tf.contains("svc-iac-users@example.com"), "{}", out.main_tf);
+        assert_eq!(out.manifest.of_type("google_organization_iam_member").count(), 15);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_rewrites_the_satz_param_and_refuses_an_estate_without_one() {
+        let re_mode = regex::Regex::new(r#"(?m)^\s*deployment_mode\s*=\s*"(\w+)""#).unwrap();
+        let re_line = regex::Regex::new(r#"(?m)^(\s*)deployment_mode(\s*)=\s*"\w+"[^\n]*$"#).unwrap();
+        let src = "params {\n  deployment_mode          = \"local\" // switched by `satz migrate`\n  x = 1\n}\n";
+        assert_eq!(&re_mode.captures(src).unwrap()[1], "local");
+        let out = re_line.replace(src, |c: &regex::Captures| format!("{}deployment_mode{}= \"cloud\" // switched by `satz migrate`", &c[1], &c[2])).to_string();
+        assert_eq!(out, "params {\n  deployment_mode          = \"cloud\" // switched by `satz migrate`\n  x = 1\n}\n");
+        assert!(re_mode.captures("params { x = 1 }").is_none());
     }
 }
 
