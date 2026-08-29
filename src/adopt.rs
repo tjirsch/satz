@@ -40,6 +40,11 @@ pub(crate) trait Live {
     async fn group(&mut self, email: &str) -> Result<Option<String>, String>;
     async fn membership(&mut self, group_name: &str, email: &str) -> Result<Option<String>, String>;
     async fn org_policy_exists(&mut self, parent: &str, constraint: &str) -> Result<bool, String>;
+    /// Every live asset of `asset_type` under `scope` (`organizations/<n>`,
+    /// `folders/<n>`, `projects/<id>`): its resource path (the CAI name without
+    /// the `//<service>/` prefix — which is the Terraform import id for the
+    /// types that carry one) and its resource data.
+    async fn search(&mut self, scope: &str, asset_type: &str) -> Result<Vec<(String, serde_json::Value)>, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,14 +94,15 @@ pub(crate) struct Options {
 /// Rule for one resource type, from `import-config.yaml`.
 enum Rule {
     Template(String),
-    Match(Vec<String>),
+    /// (attributes to match on, CAI asset type to list)
+    Match(Vec<String>, Option<String>),
     None,
 }
 
 fn rule_for(rules: &ImportConfig, tf_type: &str) -> Rule {
     match rules.resource_types.get(tf_type) {
         Some(r) if r.import_id.is_some() => Rule::Template(r.import_id.clone().unwrap()),
-        Some(r) if r.match_on.is_some() => Rule::Match(r.match_on.clone().unwrap()),
+        Some(r) if r.match_on.is_some() => Rule::Match(r.match_on.clone().unwrap(), r.asset_type.clone()),
         _ => Rule::None,
     }
 }
@@ -138,10 +144,7 @@ pub(crate) async fn resolve<L: Live>(
             "google_org_policy_policy" => resolve_org_policy(r, manifest, &resolved_ids, opts, live, &mut res).await,
             _ => match rule_for(rules, &r.tf_type) {
                 Rule::Template(t) => render_template(&t, r, manifest, &resolved_ids),
-                Rule::Match(on) => (
-                    on.iter().filter_map(|k| r.attrs.get(k).cloned()).collect::<Vec<_>>().join(" / "),
-                    Outcome::NeedsLookup(format!("match on {} via Cloud Asset Inventory is not supported yet", on.join(", "))),
-                ),
+                Rule::Match(on, asset_type) => resolve_match(r, &on, asset_type.as_deref(), manifest, &resolved_ids, live).await,
                 Rule::None => (String::new(), Outcome::NoRule),
             },
         };
@@ -221,6 +224,112 @@ fn value_of(
         .get(&attr)
         .cloned()
         .ok_or_else(|| format!("{}: `{}` references {}.{}, which is not a literal", r.address(), key, target, attr))
+}
+
+/// A GCP-assigned id looked up through Cloud Asset Inventory: the assets of
+/// the rule's `asset_type` under the resource's own scope, matched on the
+/// `match_on` attributes — declared value against the asset data, dotted
+/// keys walking the data (`group_key.id` → `groupKey.id`). One candidate
+/// resolves, none is on-apply, several are ambiguous. Never a guess.
+async fn resolve_match<L: Live>(
+    r: &EmittedResource,
+    on: &[String],
+    asset_type: Option<&str>,
+    manifest: &Manifest,
+    resolved_ids: &BTreeMap<String, String>,
+    live: &mut L,
+) -> (String, Outcome) {
+    let key_text = on.join(", ");
+    // `TODO/UNKNOWN` is the auto-generated placeholder of an unfilled row
+    let asset_type = asset_type.filter(|a| !a.starts_with("TODO"));
+    let Some(asset_type) = asset_type else {
+        return (key_text, Outcome::Unresolvable(format!("{} has match_on but no asset_type in import-config.yaml", r.tf_type)));
+    };
+    let scope = match match_scope(r, manifest, resolved_ids) {
+        Ok(s) => s,
+        Err(e) => return (key_text, Outcome::Unresolvable(e)),
+    };
+    let mut wanted: Vec<(String, String)> = Vec::new();
+    for k in on {
+        let v = r.attrs.get(k).or_else(|| r.nested.get(k)).cloned();
+        let v = match v {
+            Some(v) => v,
+            None => match value_of(r, k, manifest, resolved_ids) {
+                Ok(v) => v,
+                Err(e) => return (key_text, Outcome::Unresolvable(e)),
+            },
+        };
+        wanted.push((k.clone(), v));
+    }
+    let natural_key = format!(
+        "{} under {}",
+        wanted.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(", "),
+        scope
+    );
+    let assets = match live.search(&scope, asset_type).await {
+        Ok(a) => a,
+        Err(e) => return (natural_key, Outcome::Failed(e)),
+    };
+    let hits: Vec<String> = assets
+        .into_iter()
+        .filter(|(_, data)| wanted.iter().all(|(k, v)| data_at(data, k).as_deref() == Some(v.as_str())))
+        .map(|(path, _)| path)
+        .collect();
+    let outcome = match hits.as_slice() {
+        [] => Outcome::OnApply,
+        [one] => Outcome::Resolved { id: one.clone(), verified: true },
+        many => Outcome::Ambiguous(many.to_vec()),
+    };
+    (natural_key, outcome)
+}
+
+/// The scope to list under: the resource's `parent`, else its project,
+/// folder or organization attribute.
+fn match_scope(r: &EmittedResource, manifest: &Manifest, resolved_ids: &BTreeMap<String, String>) -> Result<String, String> {
+    if let Ok(p) = value_of(r, "parent", manifest, resolved_ids) {
+        return Ok(p);
+    }
+    if let Ok(p) = value_of(r, "project", manifest, resolved_ids) {
+        return Ok(format!("projects/{}", p.trim_start_matches("projects/")));
+    }
+    if let Ok(f) = value_of(r, "folder", manifest, resolved_ids) {
+        return Ok(format!("folders/{}", f.trim_start_matches("folders/")));
+    }
+    if let Ok(o) = value_of(r, "org_id", manifest, resolved_ids) {
+        return Ok(format!("organizations/{}", o.trim_start_matches("organizations/")));
+    }
+    Err(format!("{} has no parent, project, folder or org_id to scope the lookup", r.address()))
+}
+
+/// `group_key.id` → data["groupKey"]["id"], as text.
+fn data_at(data: &serde_json::Value, dotted: &str) -> Option<String> {
+    let mut cur = data;
+    for part in dotted.split('.') {
+        let camel = snake_to_camel(part);
+        cur = cur.get(&camel).or_else(|| cur.get(part))?;
+    }
+    match cur {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+fn snake_to_camel(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut up = false;
+    for c in s.chars() {
+        if c == '_' {
+            up = true;
+        } else if up {
+            out.push(c.to_ascii_uppercase());
+            up = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 async fn resolve_folder<L: Live>(
@@ -548,6 +657,7 @@ pub(crate) struct RealLive {
     customer_id: String,
     groups: Option<crate::cloud_identity::GroupResolver>,
     org_policy: Option<crate::org_policy::OrgPolicyClient>,
+    assets: Option<google_cloud_asset_v1::client::AssetService>,
     policies: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
@@ -560,6 +670,7 @@ impl RealLive {
             customer_id: customer_id.to_string(),
             groups: None,
             org_policy: None,
+            assets: None,
             policies: BTreeMap::new(),
         })
     }
@@ -601,6 +712,42 @@ impl Live for RealLive {
         self.groups.as_mut().unwrap().membership(group_name, email).await
     }
 
+    async fn search(&mut self, scope: &str, asset_type: &str) -> Result<Vec<(String, serde_json::Value)>, String> {
+        use google_cloud_asset_v1::model::ContentType;
+        use google_cloud_gax::paginator::ItemPaginator as _;
+        if self.assets.is_none() {
+            self.assets = Some(
+                google_cloud_asset_v1::client::AssetService::builder().build().await.map_err(|e| e.to_string())?,
+            );
+        }
+        let client = self.assets.as_ref().unwrap();
+        let mut stream = client
+            .list_assets()
+            .set_parent(scope.to_string())
+            .set_asset_types(vec![asset_type.to_string()])
+            .set_content_type(ContentType::Resource)
+            .set_page_size(1000)
+            .by_item();
+        let mut out = Vec::new();
+        while let Some(asset) = stream.next().await {
+            let asset: google_cloud_asset_v1::model::Asset = asset.map_err(|e| e.to_string())?;
+            let data = asset
+                .resource
+                .as_ref()
+                .and_then(|r| r.data.as_ref())
+                .and_then(|d| serde_json::to_value(d).ok())
+                .unwrap_or(serde_json::Value::Null);
+            let path = asset
+                .name
+                .strip_prefix("//")
+                .and_then(|r| r.split_once('/'))
+                .map(|(_, p)| p.to_string())
+                .unwrap_or_else(|| asset.name.clone());
+            out.push((path, data));
+        }
+        Ok(out)
+    }
+
     async fn org_policy_exists(&mut self, parent: &str, constraint: &str) -> Result<bool, String> {
         if !self.policies.contains_key(parent) {
             let client = self.org_policy_client().await?;
@@ -621,6 +768,7 @@ mod tests {
         groups: BTreeMap<String, String>,
         memberships: BTreeMap<(String, String), String>,
         policies: BTreeSet<(String, String)>,
+        searches: BTreeMap<(String, String), Vec<(String, serde_json::Value)>>,
         calls: Vec<String>,
     }
 
@@ -641,6 +789,10 @@ mod tests {
             self.calls.push(format!("policy {} {}", parent, constraint));
             Ok(self.policies.contains(&(parent.to_string(), constraint.to_string())))
         }
+        async fn search(&mut self, scope: &str, asset_type: &str) -> Result<Vec<(String, serde_json::Value)>, String> {
+            self.calls.push(format!("search {} {}", scope, asset_type));
+            Ok(self.searches.get(&(scope.to_string(), asset_type.to_string())).cloned().unwrap_or_default())
+        }
     }
 
     /// (type, import_id template, match_on attrs)
@@ -654,7 +806,7 @@ mod tests {
                 ImportResourceConfig {
                     description: String::new(),
                     import: false,
-                    asset_type: None,
+                    asset_type: on.map(|_| format!("test.googleapis.com/{}", t)),
                     content_type: None,
                     exclude: None,
                     include: None,
@@ -724,6 +876,7 @@ resource "google_org_policy_policy" "legacy" {
 }
 resource "google_monitoring_alert_policy" "alert" {
   display_name = "CIS 2.5"
+  project = "acme-infra-001"
 }
 resource "google_widget" "w" {
   name = "w"
@@ -743,7 +896,14 @@ import {
     }
 
     fn fake() -> Fake {
-        let mut f = Fake { folders: BTreeMap::new(), groups: BTreeMap::new(), memberships: BTreeMap::new(), policies: BTreeSet::new(), calls: vec![] };
+        let mut f = Fake { folders: BTreeMap::new(), groups: BTreeMap::new(), memberships: BTreeMap::new(), policies: BTreeSet::new(), searches: BTreeMap::new(), calls: vec![] };
+        f.searches.insert(
+            ("projects/acme-infra-001".into(), "test.googleapis.com/google_monitoring_alert_policy".into()),
+            vec![
+                ("projects/acme-infra-001/alertPolicies/42".into(), serde_json::json!({"displayName": "CIS 2.5"})),
+                ("projects/acme-infra-001/alertPolicies/43".into(), serde_json::json!({"displayName": "CIS 2.6"})),
+            ],
+        );
         f.folders.insert(("organizations/123456789012".into(), "Workloads".into()), Lookup::One("folders/111".into()));
         f.folders.insert(("folders/111".into(), "Team".into()), Lookup::One("folders/222".into()));
         f.folders.insert(("organizations/123456789012".into(), "Twin".into()), Lookup::Many(vec!["folders/8".into(), "folders/9".into()]));
@@ -785,7 +945,13 @@ import {
         );
         assert_eq!(outcome(&rs, "google_project.infra"), &Outcome::Resolved { id: "acme-infra-001".into(), verified: false });
         assert_eq!(outcome(&rs, "google_storage_bucket.b"), &Outcome::AlreadyAdopted("acme-state".into()));
-        assert!(matches!(outcome(&rs, "google_monitoring_alert_policy.alert"), Outcome::NeedsLookup(_)));
+        // a GCP-assigned id: listed under the resource's own scope through CAI,
+        // matched on display_name — one hit, verified
+        assert_eq!(
+            outcome(&rs, "google_monitoring_alert_policy.alert"),
+            &Outcome::Resolved { id: "projects/acme-infra-001/alertPolicies/42".into(), verified: true }
+        );
+        assert!(live.calls.contains(&"search projects/acme-infra-001 test.googleapis.com/google_monitoring_alert_policy".to_string()), "{:?}", live.calls);
         assert_eq!(outcome(&rs, "google_widget.w"), &Outcome::NoRule);
     }
 
@@ -867,7 +1033,7 @@ import {
             assert!(matches!(rule_for(&cfg, t), Rule::Template(_)), "{} needs an import_id rule", t);
         }
         for t in ["google_folder", "google_monitoring_alert_policy", "google_monitoring_notification_channel", "google_billing_budget", "google_essential_contacts_contact"] {
-            assert!(matches!(rule_for(&cfg, t), Rule::Match(_)), "{} needs a match_on rule", t);
+            assert!(matches!(rule_for(&cfg, t), Rule::Match(..)), "{} needs a match_on rule", t);
         }
         assert_eq!(cfg.resource_types["google_org_policy_policy"].activate.as_deref(), Some("managed"));
     }

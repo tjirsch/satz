@@ -743,8 +743,10 @@ two different ids for the same binding is an error.
 You rarely write these by hand: `satz adopt <estate>` resolves the live ids of
 everything the estate declares — folders by display name under their parent,
 groups by email, org policies by constraint (activating managed constraints
-with `--activate`), user-chosen ids from the rules in
-`presets/import-config.yaml` — and `--execute` writes them back: an
+with `--activate`), any other GCP-assigned id through Cloud Asset Inventory
+under the resource's own scope on the row's `match_on` attributes (contacts by
+email, alert policies by display name), user-chosen ids from the `import_id`
+templates in `presets/import-config.yaml` — and `--execute` writes them back: an
 `"import-id"` line into a block, the object form into a list entry. Derived
 ids are written too; `tofu plan` verifies each through its import block. Two
 things it will not do: rewrite an entry it cannot find in the source (an
