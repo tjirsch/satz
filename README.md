@@ -334,13 +334,17 @@ Run `gcloud auth application-default login` and set a quota project first.
 
 #### Export current state (`export-organizational-policies`)
 
-Snapshot the live policies into a pack:
+Snapshot the live policies into a Satz pack — one quoted block per constraint, the
+shape the shipped CIS packs use, `parent` written as
+`"organizations/{customer_organization_id}"` so the file carries no customer number:
 
 ```bash
 satz export-organizational-policies C0example.satz --customer-organization-id 123456789012
-# -> yaml/<customer-id>-orgpolicies.yaml   (legacy pack dialect; convert with
-#    `migrate-to-satz --kind pack` — a `.satz` export is the next step, roadmap M5.5)
+# -> yaml/<customer-id>-orgpolicies.satz
 ```
+
+`use` it from the estate inside a `google_org_policy_policy { … }` block, diff it, or
+run `satz adopt` to import what it describes.
 
 #### Diff desired vs. live (`diff-organizational-policies`)
 

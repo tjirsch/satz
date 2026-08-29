@@ -237,7 +237,7 @@ enum Commands {
         /// Organization id override (numeric or organizations/<id>); else read from config
         #[arg(long)]
         customer_organization_id: Option<String>,
-        /// Output YAML path (default: <yaml_dir>/<Cxxxx>-orgpolicies.yaml)
+        /// Output path inside yaml_dir, always .satz (default: <Cxxxx>-orgpolicies.satz)
         #[arg(long)]
         output: Option<PathBuf>,
     },

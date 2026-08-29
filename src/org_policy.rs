@@ -972,6 +972,14 @@ fn live_spec_to_yaml(spec: &Value) -> serde_yaml::Value {
                     serde_yaml::Value::String(if b { "TRUE" } else { "FALSE" }.into()),
                 );
             }
+            for (camel, snake) in [("allowAll", "allow_all"), ("denyAll", "deny_all")] {
+                if let Some(b) = rule.get(camel).and_then(coerce_bool) {
+                    rm.insert(
+                        serde_yaml::Value::String(snake.into()),
+                        serde_yaml::Value::String(if b { "TRUE" } else { "FALSE" }.into()),
+                    );
+                }
+            }
             if let Some(values) = rule.get("values").and_then(|v| v.as_object()) {
                 let mut vm = serde_yaml::Mapping::new();
                 if let Some(av) = values.get("allowedValues").or_else(|| values.get("allowed_values"))
@@ -1044,60 +1052,67 @@ pub async fn export_org_policies(
     let client = OrgPolicyClient::new().await?;
     let current = fetch_current(&client, &parent).await?;
 
-    let mut root = serde_yaml::Mapping::new();
-    let mut policies = serde_yaml::Mapping::new();
-    for (constraint, live) in &current {
-        let key = sanitize_yaml_key(constraint);
-        let mut entry = serde_yaml::Mapping::new();
-        entry.insert(
-            serde_yaml::Value::String("name".into()),
-            serde_yaml::Value::String(constraint.clone()),
-        );
-        entry.insert(
-            serde_yaml::Value::String("parent".into()),
-            serde_yaml::Value::String(parent.clone()),
-        );
-        if let Some(spec) = live.get("spec") {
-            entry.insert(
-                serde_yaml::Value::String("spec".into()),
-                live_spec_to_yaml(spec),
-            );
-        }
-        if let Some(dry) = live.get("dryRunSpec") {
-            entry.insert(
-                serde_yaml::Value::String("dry_run_spec".into()),
-                live_spec_to_yaml(dry),
-            );
-        }
-        policies.insert(serde_yaml::Value::String(key), serde_yaml::Value::Mapping(entry));
-    }
-    root.insert(
-        serde_yaml::Value::String("org_policy_policy".into()),
-        serde_yaml::Value::Mapping(policies),
-    );
+    let basename = output_basename(&parent, &vars);
+    let header = vec![
+        format!("Org policies exported from {} ({}).", parent, now_stamp()),
+        "A pack: `use` it from the estate (inside a `google_org_policy_policy { … }` block),".to_string(),
+        "diff with diff-organizational-policies, or adopt with `satz adopt`.".to_string(),
+    ];
+    let text = exported_pack_satz(&parent, &current, &format!("{}_orgpolicies", basename), &header)?;
 
-    let yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(root))?;
-    let header = format!(
-        "# Org policies exported from {} ({}).\n# Re-importable preset: diff with diff-organizational-policies, or adopt with `satz adopt`.\n",
-        parent,
-        now_stamp()
-    );
-
-    // The export is a YAML preset, so it belongs in yaml_dir whether or not --output was
-    // given. Previously only the default landed there and an explicit path went to the
-    // caller's directory.
+    // The export is a pack, so it belongs in yaml_dir whether or not --output was
+    // given; the extension is always .satz.
     let out_path = crate::resolve_against(
         &runtime_config.yaml_dir,
-        output.unwrap_or_else(|| {
-            PathBuf::from(format!("{}-orgpolicies.yaml", output_basename(&parent, &vars)))
-        }),
+        output
+            .unwrap_or_else(|| PathBuf::from(format!("{}-orgpolicies.satz", basename)))
+            .with_extension("satz"),
     );
     if let Some(dir) = out_path.parent() {
         crate::fsx::create_dir_all(dir)?;
     }
-    crate::fsx::write(&out_path, format!("{}{}", header, yaml))?;
+    crate::fsx::write(&out_path, text)?;
     println!("Wrote {} policies to {}", current.len(), out_path.display());
     Ok(())
+}
+
+/// The live policy set as a Satz pack: one quoted block per constraint, the
+/// shape the shipped CIS packs use. `parent` is written as
+/// `"organizations/{customer_organization_id}"` when it is the org itself, so
+/// the pack carries no customer number and is portable between estates.
+fn exported_pack_satz(
+    parent: &str,
+    current: &BTreeMap<String, Value>,
+    pack_name: &str,
+    header: &[String],
+) -> Result<String, BoxErr> {
+    let parent_expr = if parent.starts_with("organizations/") {
+        satz_core::migrate::interpolated("organizations/{}", &["customer_organization_id"])
+    } else {
+        serde_yaml::Value::String(parent.to_string())
+    };
+    let mut top = serde_yaml::Mapping::new();
+    for (constraint, live) in current {
+        let mut entry = serde_yaml::Mapping::new();
+        entry.insert("name".into(), serde_yaml::Value::String(constraint.clone()));
+        entry.insert("parent".into(), parent_expr.clone());
+        if let Some(spec) = live.get("spec") {
+            entry.insert("spec".into(), live_spec_to_yaml(spec));
+        }
+        if let Some(dry) = live.get("dryRunSpec") {
+            entry.insert("dry_run_spec".into(), live_spec_to_yaml(dry));
+        }
+        top.insert(
+            serde_yaml::Value::String(sanitize_yaml_key(constraint)),
+            serde_yaml::Value::Mapping(entry),
+        );
+    }
+    let text = satz_core::migrate::convert_value(&top, "pack", pack_name, &[], header)
+        .map_err(|e| format!("could not print the export as Satz: {}", e))?;
+    // The export must be readable by the pipeline that will `use` it.
+    satz_core::satz::parse(&text)
+        .map_err(|e| format!("exported pack does not parse as Satz: {}", e))?;
+    Ok(text)
 }
 
 // ---------------------------------------------------------------------------
@@ -1476,6 +1491,31 @@ mod tests {
         let z = r.entries.iter().find(|e| e.constraint == "stray.z").unwrap();
         assert_eq!(z.classification, Classification::CurrentOnly);
         assert_eq!(z.action, PlannedAction::Ignore);
+    }
+
+    #[test]
+    fn export_is_a_pack_the_pipeline_can_use() {
+        let mut current = BTreeMap::new();
+        current.insert(
+            "iam.managed.disableServiceAccountKeyCreation".to_string(),
+            jv(r#"{"spec":{"rules":[{"enforce":true}]}}"#),
+        );
+        current.insert(
+            "compute.vmExternalIpAccess".to_string(),
+            jv(r#"{"spec":{"rules":[{"allowAll":false,"values":{"allowedValues":["projects/p/zones/z/instances/i"]}}]},"dryRunSpec":{"rules":[{"denyAll":true}]}}"#),
+        );
+        let text = exported_pack_satz("organizations/123456789", &current, "c0example_orgpolicies", &["exported".into()])
+            .expect("export prints");
+        assert!(text.starts_with("// exported\n"), "{}", text);
+        assert!(text.contains("pack c0example_orgpolicies"), "{}", text);
+        assert!(text.contains(r#""iam-managed-disableServiceAccountKeyCreation" {"#), "{}", text);
+        assert!(text.contains(r#"parent = "organizations/{customer_organization_id}""#), "{}", text);
+        assert!(text.contains("dry_run_spec {"), "{}", text);
+        assert!(text.contains(r#"deny_all = "TRUE""#), "{}", text);
+        assert!(text.contains(r#"allow_all = "FALSE""#), "{}", text);
+        assert!(!text.contains("123456789"), "the pack must not carry the org number:\n{}", text);
+        let f = satz_core::satz::parse(&text).expect("parses");
+        assert!(f.is_pack);
     }
 
     #[test]
