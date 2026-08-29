@@ -129,6 +129,75 @@ pub(crate) struct CloudIdentityClient {
     quota_project: Option<String>,
 }
 
+/// The natural-key → live-id resolver `satz adopt` uses for groups and
+/// memberships: the client plus the list-once fallback for a refused lookup.
+/// `Ok(None)` is "provably absent — apply will create it"; a refusal that
+/// cannot be disambiguated is an error, never "absent".
+pub(crate) struct GroupResolver {
+    client: CloudIdentityClient,
+    customer_id: String,
+    listed_groups: Option<BTreeMap<String, String>>,
+    listed_memberships: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl GroupResolver {
+    pub(crate) async fn new(customer_id: &str) -> Result<Self, BoxErr> {
+        Ok(Self {
+            client: CloudIdentityClient::new().await?,
+            customer_id: customer_id.to_string(),
+            listed_groups: None,
+            listed_memberships: BTreeMap::new(),
+        })
+    }
+
+    /// `groups/<id>` for a group email.
+    pub(crate) async fn group(&mut self, email: &str) -> Result<Option<String>, String> {
+        if email.ends_with('@') || !email.contains('@') {
+            return Err(format!("'{}' is not a group email (set customer-domain, or an explicit id/email)", email));
+        }
+        match self.client.lookup_group(email).await {
+            Ok(found) => Ok(found),
+            Err(LookupError::Other(e)) => Err(format!("groups:lookup {}: {}", email, e)),
+            Err(LookupError::Forbidden(body)) => {
+                if self.listed_groups.is_none() {
+                    if self.customer_id.is_empty() {
+                        return Err(format!(
+                            "groups:lookup denied for {} and customer-id is unset, so the tenant cannot be listed instead \
+                             (enable cloudidentity.googleapis.com, grant roles/cloudidentity.groups.readonly): {}",
+                            email,
+                            body.trim()
+                        ));
+                    }
+                    let map = self.client.list_groups(&self.customer_id).await.map_err(|e| {
+                        format!("groups:lookup denied for {} and listing customers/{} failed: {}", email, self.customer_id, e)
+                    })?;
+                    self.listed_groups = Some(map);
+                }
+                Ok(self.listed_groups.as_ref().and_then(|m| m.get(&email.to_lowercase())).cloned())
+            }
+        }
+    }
+
+    /// `groups/<g>/memberships/<m>` for a member email of `group_name`.
+    pub(crate) async fn membership(&mut self, group_name: &str, email: &str) -> Result<Option<String>, String> {
+        match self.client.lookup_membership(group_name, email).await {
+            Ok(found) => Ok(found),
+            Err(LookupError::Other(e)) => Err(format!("memberships:lookup {} in {}: {}", email, group_name, e)),
+            Err(LookupError::Forbidden(_)) => {
+                if !self.listed_memberships.contains_key(group_name) {
+                    let map = self
+                        .client
+                        .list_memberships(group_name)
+                        .await
+                        .map_err(|e| format!("memberships:lookup denied and listing {} failed: {}", group_name, e))?;
+                    self.listed_memberships.insert(group_name.to_string(), map);
+                }
+                Ok(self.listed_memberships[group_name].get(&email.to_lowercase()).cloned())
+            }
+        }
+    }
+}
+
 impl CloudIdentityClient {
     pub(crate) async fn new() -> Result<Self, BoxErr> {
         use google_cloud_auth::credentials::Builder;

@@ -8,6 +8,7 @@ mod manifest;
 mod state_migration;
 mod discovery;
 mod template;
+mod adopt;
 mod bootstrap;
 mod gcp;
 mod org_policy;
@@ -462,8 +463,29 @@ enum Commands {
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
     },
-    /// Bring the org policies this estate declares under Terraform management,
-    /// activating GCP managed constraints the organisation has never had
+    /// Adopt what already exists: resolve the live ids of the resources this
+    /// estate declares (folders by name, groups by email, org policies by
+    /// constraint, everything else by its rule in discovery-config.yaml) and
+    /// bring them under management. A dry run unless --execute
+    Adopt {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Resource types to adopt, comma-separated (default: every type)
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Apply: write verified "import-id"s into the estate (default), or
+        /// with --import run `<tf_tool> import` now
+        #[arg(long)]
+        execute: bool,
+        /// With --execute: import into state now instead of writing "import-id"s
+        #[arg(long)]
+        import: bool,
+        /// Activate GCP managed org-policy constraints the organisation has
+        /// never had, so they can be imported (mutates the org)
+        #[arg(long)]
+        activate: bool,
+    },
+    /// Alias of `adopt --only google_org_policy_policy --activate --execute --import`
     AdoptOrgPolicies {
         /// Estate file (inside yaml_dir if relative)
         input: String,
@@ -632,7 +654,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::DiscoverFromState { .. } | Commands::DiscoverFromOrganization { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MigrateToSatz { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::DiscoverFromState { .. } | Commands::DiscoverFromOrganization { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MigrateToSatz { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1554,29 +1576,20 @@ Thumbs.db
             .await?;
             Ok(())
         }
+        Commands::Adopt { input, only, execute, import, activate } => {
+            run_adopt(&input, only, execute, import, activate, &tool_config, &runtime_config).await
+        }
         Commands::AdoptOrgPolicies { input, dry_run } => {
-            let input_path = if Path::new(&input).is_absolute() {
-                PathBuf::from(&input)
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(&input)
-            };
-            reject_yaml_estate(&input_path, "adopt-org-policies")?;
-            init_resource_merge(&runtime_config.schema_dir);
-            // Same compile the emitter uses, so the adopted addresses are exactly
-            // the ones `apply` will act on.
-            let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
-            let org_id = out.org_id.ok_or(
-                "estate declares no customer_organization_id — cannot resolve the policy parent",
-            )?;
-            crate::org_policy::adopt_org_policies(
-                &out.manifest,
-                &org_id,
+            run_adopt(
+                &input,
+                vec!["google_org_policy_policy".to_string()],
+                !dry_run,
+                true,
+                true,
+                &tool_config,
                 &runtime_config,
-                Path::new(&runtime_config.hcl_dir),
-                dry_run,
             )
-            .await?;
-            Ok(())
+            .await
         }
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
@@ -1689,6 +1702,9 @@ struct PipelineBOut {
     /// main.tf. The org-policy commands used to recover this by parsing a
     /// generated YAML twin back into a `Config`.
     org_policies: Vec<(String, serde_yaml::Value)>,
+    /// The Cloud Identity customer id the estate declares ("" when absent) —
+    /// the tenant adoption lists when a group lookup is refused.
+    customer_id: String,
 }
 
 use satz_core::pipeline::ResolvedType;
@@ -1844,6 +1860,7 @@ impl satz_core::algebra::TypeTable for EstateResolver<'_> {
         imports_tf: out.imports_tf,
         claims: fe.claims,
         org_policies,
+        customer_id: ctx.customer_id.clone(),
         // EmitCtx defaults it to the empty string when the estate declares no
         // customer_organization_id; the compliance plane wants None there so it
         // reports "no customer-organization-id" instead of querying org "".
@@ -1958,6 +1975,100 @@ fn reject_yaml_estate(input: &Path, what: &str) -> Result<(), Box<dyn std::error
 /// be written to disk. The emission manifest, not the rendered text, is what
 /// the compliance plane reads: a witness inside a raw `hcl { … }` block is
 /// therefore not a witness, as documented.
+/// `satz adopt`: compile, resolve every declared resource against the live
+/// org, report, and — only with `--execute` — write the verified ids into the
+/// estate or import them into state now.
+async fn run_adopt(
+    input: &str,
+    only: Vec<String>,
+    execute: bool,
+    import: bool,
+    activate: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::adopt::{self, Outcome};
+    let input_path = if Path::new(input).is_absolute() {
+        PathBuf::from(input)
+    } else {
+        PathBuf::from(&runtime_config.yaml_dir).join(input)
+    };
+    reject_yaml_estate(&input_path, "adopt")?;
+    init_resource_merge(&runtime_config.schema_dir);
+    // Same compile the emitter uses, so the adopted addresses are exactly the
+    // ones `apply` will act on.
+    let out = pipeline_b_generate(&input_path, tool_config, runtime_config)?;
+    let rules = load_discovery_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
+        "adoption rules live in <presets_dir>/discovery-config.yaml — run `satz get-presets` so it exists",
+    )?;
+    let opts = adopt::Options { only: only.into_iter().collect(), activate };
+    let mut live = adopt::RealLive::new(&out.customer_id).await?;
+    let resolutions = adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
+
+    println!("\nadopt {} — {} resources declared\n", input_path.display(), out.manifest.resources.len());
+    print!("{}", adopt::render_table(&resolutions));
+    println!("\n{}", adopt::summary(&resolutions));
+
+    if !execute {
+        println!(
+            "\ndry run — nothing was changed. Re-run with --execute to write the verified \"import-id\"s into the estate, \
+             or --execute --import to run `{} import` now (derived ids are verified by the import itself).",
+            runtime_config.tf_tool
+        );
+        return Ok(());
+    }
+
+    if import {
+        let hcl_dir = Path::new(&runtime_config.hcl_dir);
+        let (mut activated, mut imported, mut failed) = (0usize, 0usize, 0usize);
+        for r in &resolutions {
+            let id = match &r.outcome {
+                Outcome::NeedsActivation { id, enforce } => {
+                    let Some((parent, constraint)) = &r.org_policy else { continue };
+                    println!("  {:60} activating (managed, not live)...", r.address);
+                    let spec = serde_json::json!({ "rules": [{ "enforce": enforce.unwrap_or(true) }] });
+                    let client = live.org_policy_client().await?;
+                    match client.create_policy(parent, constraint, spec).await {
+                        Ok(()) => activated += 1,
+                        Err(e) => {
+                            eprintln!("  {:60} activation FAILED: {}", r.address, e);
+                            failed += 1;
+                            continue;
+                        }
+                    }
+                    id
+                }
+                Outcome::Resolved { id, .. } => id,
+                _ => continue,
+            };
+            if crate::bootstrap::run_import(&runtime_config.tf_tool, hcl_dir, &r.address, id) {
+                imported += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        println!("\nadopt: {} activated, {} imported, {} failed. Now run `satz plan` — it should show no create for what was imported.", activated, imported, failed);
+    } else {
+        let (written, hints) = adopt::write_import_ids(&resolutions)?;
+        for w in &written {
+            println!("  wrote {}", w);
+        }
+        for h in &hints {
+            println!("  note: {}", h);
+        }
+        let pending_activation = resolutions.iter().filter(|r| matches!(r.outcome, Outcome::NeedsActivation { .. })).count();
+        if pending_activation > 0 {
+            println!("  note: {} managed constraint(s) need activation — that is `--execute --import --activate`, activation cannot be written into the estate", pending_activation);
+        }
+        println!(
+            "\nadopt: {} \"import-id\"(s) written. Run `satz transpile {}` to regenerate imports.tf, then `satz plan`.",
+            written.len(),
+            input
+        );
+    }
+    Ok(())
+}
+
 type ComplianceInputs = (crate::manifest::Manifest, Vec<(String, crate::compliance::Claim)>, Option<String>);
 
 fn compliance_inputs(
@@ -4217,10 +4328,21 @@ mod manifest_gate {
                 }
             }
             assert_eq!(m.declared_enforcement(), legacy_enforcement(&out.main_tf), "{}: enforcement", name);
-            let got: Vec<_> = crate::org_policy::declared_org_policies(m)
-                .into_iter()
-                .map(|d| (d.address, d.constraint, d.parent, d.enforce))
+            // What `adopt` reads for an org policy: address, bare constraint,
+            // parent, single enforce — same tuple the old scanner produced.
+            let mut got: Vec<_> = m
+                .of_type("google_org_policy_policy")
+                .filter(|r| r.attrs.get("name").is_some_and(|n| !n.is_empty()))
+                .map(|r| {
+                    (
+                        r.address(),
+                        crate::org_policy::constraint_name(r.attrs.get("name").unwrap()),
+                        r.attrs.get("parent").cloned().unwrap_or_default(),
+                        r.enforce,
+                    )
+                })
                 .collect();
+            got.sort();
             let mut want = legacy_org_policies(&out.main_tf);
             want.sort();
             assert_eq!(got, want, "{}: declared org policies", name);

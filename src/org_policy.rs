@@ -26,7 +26,6 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::config::Config;
-use crate::manifest::Manifest;
 use crate::include_processor::IncludeBinding;
 use crate::ToolConfig;
 
@@ -1141,7 +1140,7 @@ impl OrgPolicyClient {
 }
 
 /// Fetch current policies for `parent` keyed by bare constraint name.
-async fn fetch_current(
+pub(crate) async fn fetch_current(
     client: &OrgPolicyClient,
     parent: &str,
 ) -> Result<BTreeMap<String, Value>, BoxErr> {
@@ -1704,158 +1703,6 @@ pub async fn run_import_includes(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Adoption: get a set of org policies under management (R1)
-// ---------------------------------------------------------------------------
-
-/// One org policy the estate declares, read from the emission manifest.
-#[derive(Debug, PartialEq)]
-pub(crate) struct DeclaredOrgPolicy {
-    /// Terraform address, e.g. `google_org_policy_policy.compute_managed_requireOsLogin`
-    pub address: String,
-    /// Bare constraint, e.g. `compute.managed.requireOsLogin`
-    pub constraint: String,
-    /// `organizations/<id>` / `folders/<id>` / `projects/<id>`
-    pub parent: String,
-    /// The single `enforce` it declares, when it declares exactly one.
-    pub enforce: Option<bool>,
-}
-
-/// The org policies an estate declares, read from the emission manifest — the
-/// structured form of the very blocks `main.tf` renders. That is the right
-/// source precisely because it is what `tofu apply` will act on: adoption exists
-/// to stop that apply colliding with policies that already exist, so the two
-/// must be reading the same list.
-pub(crate) fn declared_org_policies(manifest: &Manifest) -> Vec<DeclaredOrgPolicy> {
-    manifest
-        .of_type("google_org_policy_policy")
-        .filter_map(|r| {
-            let name = r.attrs.get("name").map(String::as_str).unwrap_or("");
-            if name.is_empty() {
-                return None;
-            }
-            Some(DeclaredOrgPolicy {
-                address: r.address(),
-                constraint: constraint_name(name).to_string(),
-                parent: r.attrs.get("parent").cloned().unwrap_or_default(),
-                enforce: r.enforce,
-            })
-        })
-        .collect()
-}
-
-/// `adopt-org-policies`: bring the org policies an estate declares under
-/// Terraform management, activating GCP **managed** constraints first where the
-/// organisation has never had them.
-///
-/// This is the gap the YAML dialect covered with `!import-include` and Satz did
-/// not. Without it a first `apply` on a brownfield org fails one policy at a
-/// time with `Error 409: A Policy of constraint ... already exists` — four orgs
-/// hit that in a single day, and one estate needed eleven separate manual imports.
-///
-/// Deliberately a separate, explicit command: it performs live API calls and
-/// ACTIVATES constraints, so it must never be a side effect of `transpile`,
-/// which runs constantly and stays pure.
-pub async fn adopt_org_policies(
-    manifest: &Manifest,
-    org_id: &str,
-    runtime_config: &ToolConfig,
-    hcl_dir: &Path,
-    dry_run: bool,
-) -> Result<(), BoxErr> {
-    let declared = declared_org_policies(manifest);
-    if declared.is_empty() {
-        println!("No org policies declared by this estate — nothing to adopt.");
-        return Ok(());
-    }
-    let default_parent = normalize_parent(org_id);
-
-    // Printed before any network call: what the estate declares is knowable
-    // offline, and if credentials are stale the operator should still see the
-    // inventory rather than only an auth error.
-    let (managed, legacy): (Vec<_>, Vec<_>) =
-        declared.iter().partition(|d| is_managed(&d.constraint));
-    println!(
-        "\nadopt-org-policies: {} org policies declared by {} — {} managed (activatable), {} legacy",
-        declared.len(),
-        org_id,
-        managed.len(),
-        legacy.len()
-    );
-
-    let client = OrgPolicyClient::new().await?;
-    let mut parents: Vec<String> = declared
-        .iter()
-        .map(|d| if d.parent.is_empty() { default_parent.clone() } else { d.parent.clone() })
-        .collect();
-    parents.sort();
-    parents.dedup();
-
-    let mut current: BTreeMap<String, Value> = BTreeMap::new();
-    for p in &parents {
-        for (k, v) in fetch_current(&client, p).await? {
-            current.entry(k).or_insert(v);
-        }
-    }
-
-    println!("{} live in {}\n", current.len(), parents.join(", "));
-
-    let (mut activated, mut imported, mut on_apply, mut failed) = (0usize, 0usize, 0usize, 0usize);
-    for d in &declared {
-        let parent = if d.parent.is_empty() { default_parent.clone() } else { d.parent.clone() };
-        let live = current.contains_key(&d.constraint);
-        if !live {
-            if !is_managed(&d.constraint) {
-                // A legacy constraint that does not exist yet is simply created by
-                // apply — there is nothing to adopt and nothing to collide with.
-                println!("  {:60} not live, apply will create it", d.constraint);
-                on_apply += 1;
-                continue;
-            }
-            // A managed constraint the org has never had cannot be imported until
-            // it exists. Activate it with the enforcement the estate declares, so
-            // the subsequent apply is a no-op rather than a change.
-            let spec = serde_json::json!({"rules": [{"enforce": d.enforce.unwrap_or(true)}]});
-            if dry_run {
-                println!("  {:60} WOULD ACTIVATE (managed, not live)", d.constraint);
-                activated += 1;
-                continue;
-            }
-            println!("  {:60} activating (managed, not live)...", d.constraint);
-            if let Err(e) = client.create_policy(&parent, &d.constraint, spec).await {
-                eprintln!("  warning: activation failed for {}: {}", d.constraint, e);
-                failed += 1;
-                continue;
-            }
-            activated += 1;
-        }
-        // Live (or just activated): import so apply only reconciles the spec.
-        let id = full_policy_name(&parent, &d.constraint);
-        if dry_run {
-            println!("  {:60} WOULD IMPORT {}", d.constraint, id);
-            imported += 1;
-            continue;
-        }
-        if crate::bootstrap::run_import(&runtime_config.tf_tool, hcl_dir, &d.address, &id) {
-            imported += 1;
-        } else {
-            failed += 1;
-        }
-    }
-
-    println!(
-        "\nadopt-org-policies: {} activated, {} imported, {} left for apply, {} failed.{}",
-        activated,
-        imported,
-        on_apply,
-        failed,
-        if dry_run { " (dry run — nothing was changed)" } else { "" }
-    );
-    if !dry_run {
-        println!("Now run `satz plan` — it should show only the spec changes you intend.");
-    }
-    Ok(())
-}
 
 pub(crate) fn run_tf(tf_tool: &str, dir: &Path, args: &[&str]) -> Result<(), BoxErr> {
     let status = std::process::Command::new(tf_tool)
@@ -1878,61 +1725,6 @@ mod tests {
 
     fn jv(s: &str) -> Value {
         serde_json::from_str(s).unwrap()
-    }
-
-    /// Adoption reads the policies out of the emission manifest, because that
-    /// is exactly what `apply` will act on. Shapes here are copied from real
-    /// estate output: a managed constraint with nested enforce, and a legacy list
-    /// constraint with no boolean at all.
-    #[test]
-    fn declared_org_policies_reads_emitted_resources() {
-        let tf = r#"
-resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
-  provider = google.google
-  name = "organizations/123456789012/policies/compute.managed.requireOsLogin"
-  parent = "organizations/123456789012"
-
-  spec {
-    rules {
-      enforce = "TRUE"
-    }
-  }
-}
-
-resource "google_org_policy_policy" "iam_allowedPolicyMemberDomains" {
-  provider = google.google
-  name = "organizations/123456789012/policies/iam.allowedPolicyMemberDomains"
-  parent = "organizations/123456789012"
-
-  spec {
-    rules {
-      values {
-        allowed_values = [
-          "C0example"
-        ]
-      }
-    }
-  }
-}
-
-resource "google_storage_bucket" "not_a_policy" {
-  name = "irrelevant"
-}
-"#;
-        let got = declared_org_policies(&Manifest::parse(tf));
-        assert_eq!(got.len(), 2, "only org policies, got {:?}", got);
-
-        assert_eq!(got[0].address, "google_org_policy_policy.compute_managed_requireOsLogin");
-        // the bare constraint, not the full organizations/.../policies/... path
-        assert_eq!(got[0].constraint, "compute.managed.requireOsLogin");
-        assert_eq!(got[0].parent, "organizations/123456789012");
-        assert_eq!(got[0].enforce, Some(true));
-        assert!(is_managed(&got[0].constraint), "must be treated as activatable");
-
-        assert_eq!(got[1].constraint, "iam.allowedPolicyMemberDomains");
-        // a list constraint declares no enforce — activation must not invent one
-        assert_eq!(got[1].enforce, None);
-        assert!(!is_managed(&got[1].constraint), "legacy: apply creates it, no activation");
     }
 
     #[test]

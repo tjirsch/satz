@@ -78,6 +78,12 @@ and in the maintainer's notes. Nothing in this file names a customer.
   on every transpile unless `hcl trust "…"` and is never a witness (the
   compliance plane and `adopt-org-policies` read the emission manifest,
   `src/manifest.rs`, not `main.tf` text).
+- Adoption: `satz adopt` resolves live ids over the emission manifest (natural-key
+  lookups for folders/groups/memberships/org policies, `import_id`/`match_on`
+  rules per type in `presets/discovery-config.yaml` for the rest), never
+  guesses (one candidate resolves, many is ambiguous), and `--execute` writes
+  verified ids back as `"import-id"` — the only adoption surface in the
+  language. `adopt-org-policies` is an alias.
 - Compliance plane: `require` is text only and judges the DECLARED estate;
   `report-compliance` verifies witnesses through Cloud Asset Inventory and
   compares org policies by VALUE — a policy that exists but is switched off

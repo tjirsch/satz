@@ -740,8 +740,13 @@ takes its object form and carries the id there. An IAM binding declared with
 and without an id (a pack's grant that the estate adopts) is one resource;
 two different ids for the same binding is an error.
 
-For **org policies** prefer `satz adopt-org-policies`, which resolves ids
-live and activates managed constraints the organisation has never had.
+You rarely write these by hand: `satz adopt <estate>` resolves the live ids of
+everything the estate declares — folders by display name under their parent,
+groups by email, org policies by constraint (activating managed constraints
+with `--activate`), user-chosen ids from the rules in
+`presets/discovery-config.yaml` — and `--execute` writes the verified ones back
+as `"import-id"`. A resolution with more than one live candidate is reported as
+ambiguous and left for you to pin; nothing is ever guessed.
 
 ### 6.8 Estate configuration blocks
 
@@ -1181,7 +1186,7 @@ never legal conformity.
 | `report-compliance <framework> <estate>.satz` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--format pdf` |
 | `check-presets <estate>.satz` | Satz | drift of packs vs upstream |
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
-| `adopt-org-policies <estate>.satz` | Satz | activate managed constraints and import |
+| `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `tf-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
 | `migrate-to-satz <file>.yaml` | — | convert from the legacy dialect, gated by identity (§12) |
 
@@ -1242,7 +1247,7 @@ does.
 
 **What a YAML estate cannot have**, because these are fragment-pipeline
 features: `suppress`, `hcl { … }`, `claim` / `deviates` (and therefore
-`require` and `report-compliance`), and `adopt-org-policies`. `transpile` says
+`require` and `report-compliance`), `adopt` and `adopt-org-policies`. `transpile` says
 so once per run.
 
 **What changed at the surface:**
