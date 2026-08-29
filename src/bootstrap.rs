@@ -306,32 +306,25 @@ fn load_bootstrap_yaml(
     config_file: &Path,
     include_dirs: &[String],
 ) -> Result<(Value, Value), Box<dyn std::error::Error>> {
-    // A satz estate reads as satz. Bootstrap only ever addresses the variable
-    // table — every `lookup` below names a variable, never a document position —
-    // so the parameter table synthesized into the same two shapes serves it
-    // exactly, without compiling `.gen.yaml` siblings into a repo that, for the
-    // first command a new customer runs, does not have a `.gitignore` yet.
-    if config_file.extension().and_then(|e| e.to_str()) == Some("satz") {
-        let params = crate::satz_estate_params(config_file, include_dirs)?;
-        let mut flat = serde_yaml::Mapping::new();
-        for (k, v) in params {
-            flat.insert(Value::String(k), v);
-        }
-        let mut with_block = serde_yaml::Mapping::new();
-        with_block.insert(Value::String("variables".into()), Value::Mapping(flat.clone()));
-        return Ok((Value::Mapping(with_block), Value::Mapping(flat)));
+    // The estate reads as Satz. Bootstrap only ever addresses the parameter
+    // table — every `lookup` below names a param, never a document position —
+    // so the table synthesized into the two shapes the lookups expect serves
+    // it exactly.
+    if config_file.extension().and_then(|e| e.to_str()) != Some("satz") {
+        return Err(format!(
+            "{} is not a Satz estate — bootstrap reads Satz only; convert with `satz migrate-to-satz`",
+            config_file.display()
+        )
+        .into());
     }
-    let include_paths: Vec<PathBuf> = include_dirs.iter().map(PathBuf::from).collect();
-    let (processed, _ops) =
-        crate::include_processor::process_includes_with_ops(config_file, &include_paths)?;
-
-    let raw: Value = serde_yaml::from_str(&processed).inspect_err(|e| {
-        crate::print_yaml_error_context(&processed, e);
-    })?;
-
-    let vars_view = crate::resolve_yaml_custom_tags(raw.clone());
-    let resolved = crate::resolve_yaml_custom_tags(crate::merge_variables(raw));
-    Ok((vars_view, resolved))
+    let params = crate::satz_estate_params(config_file, include_dirs)?;
+    let mut flat = serde_yaml::Mapping::new();
+    for (k, v) in params {
+        flat.insert(Value::String(k), v);
+    }
+    let mut with_block = serde_yaml::Mapping::new();
+    with_block.insert(Value::String("variables".into()), Value::Mapping(flat.clone()));
+    Ok((Value::Mapping(with_block), Value::Mapping(flat)))
 }
 
 pub async fn bootstrap(

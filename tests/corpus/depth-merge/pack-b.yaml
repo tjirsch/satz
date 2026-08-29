@@ -1,4 +1,0 @@
-google_logging_organization_sink:
-  metrics:
-    name: b
-    org_id: *customer-organization-id

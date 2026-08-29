@@ -1,5 +1,4 @@
-// Satz twin of main.yaml — gated by the differential harness. Uses the REAL
-// shipped monitoring packs (the .satz sources the .yaml twins are built from).
+// Corpus case: uses the REAL shipped monitoring packs. Snapshot-gated.
 
 estate corpus_real_packs
 

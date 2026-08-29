@@ -1239,19 +1239,13 @@ composition conflicts: <type>.<label>: 2 disagreeing definitions
 
 ## 12. Migration from the YAML dialect
 
-satz's first surface language was a YAML dialect with custom tags. It is
-still accepted — `transpile` emits HCL for a `.yaml` estate through the legacy
-walk, and `migrate-to-satz` converts — so converting is a choice each repo
-makes when ready, not a toll on using the tool. This section is everything a
-reader coming from that dialect needs, and nothing a reader who never used it
-does. (Brownfield estates never need the dialect: `discover-from-state --satz`
-and `discover-from-organization --satz` write a Satz estate directly, through
-the same printer `migrate-to-satz` uses.)
-
-**What a YAML estate cannot have**, because these are fragment-pipeline
-features: `suppress`, `hcl { … }`, `claim` / `deviates` (and therefore
-`require` and `report-compliance`), `adopt` and `adopt-org-policies`. `transpile` says
-so once per run.
+satz's first surface language was a YAML dialect with custom tags. Since
+v0.46.14 nothing reads it but `migrate-to-satz`: `transpile` and every other
+command take `.satz` and refuse a `.yaml` estate with a pointer to the
+converter. This section is everything a reader coming from that dialect needs,
+and nothing a reader who never used it does. (Brownfield estates never need
+the dialect: `discover-from-state` and `discover-from-organization` write a
+Satz estate directly, through the same printer `migrate-to-satz` uses.)
 
 **What changed at the surface:**
 
@@ -1301,7 +1295,7 @@ a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
 
 **A limit worth knowing:** `use "x.yaml"` is accepted by the parser, but the
 fragment pipeline cannot load a YAML pack — it reports `unexpected character
-':'`. Convert the pack.
+':'`. Convert the pack (`migrate-to-satz x.yaml --kind pack`).
 
 **Why the dialect still parses at all:** to be migrated. That is the whole of
 its support (owner decision, 2026-08-29): YAML is never transpiled or generated

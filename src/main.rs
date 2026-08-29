@@ -1,7 +1,6 @@
 mod config;
 mod fsx;
 mod schema;
-mod transpiler;
 mod emit_shared;
 mod emitter;
 mod manifest;
@@ -24,7 +23,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use crate::schema::ResourceRegistry;
-use crate::transpiler::Transpiler;
 use crate::config::{Config, DiscoveryConfig};
 
 use serde::{Deserialize, Serialize};
@@ -127,7 +125,6 @@ fn default_auto_explode() -> Vec<String> {
 }
 fn default_validation_level() -> String { "warn".to_string() }
 
-mod include_processor;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -250,10 +247,6 @@ enum Commands {
         /// Estate file providing the parameter table
         /// (inside yaml_dir if relative). Not the tool config — that is --config
         estate: PathBuf,
-        /// Desired Org Policy preset (e.g. presets/CIS-GCP-Foundation-4.0.satz).
-        /// Omit to diff every org_policy_policy the config declares against live.
-        #[arg(long)]
-        preset: Option<PathBuf>,
         /// Organization id override; else read from config
         #[arg(long)]
         customer_organization_id: Option<String>,
@@ -302,48 +295,29 @@ enum Commands {
         #[arg(long)]
         tf_tool: Option<String>,
     },
-    /// Discover infrastructure from Terraform state and write it as an estate
-    /// (Satz with --satz, else the legacy YAML dialect)
+    /// Discover infrastructure from Terraform state and write it as a Satz
+    /// estate: terraform block, customer_organization_id param inferred from
+    /// the resources, "import-id" on every resource
     DiscoverFromState {
         /// Path to Terraform state JSON file
         #[arg(long)]
         state_json: Option<PathBuf>,
-        /// Output file (with --satz a .yaml default becomes .satz)
-        #[arg(long, default_value = "discovered.yaml")]
+        /// Output file inside yaml_dir
+        #[arg(long, default_value = "discovered.satz")]
         output: PathBuf,
-        /// Write a Satz estate: terraform block, customer_organization_id param
-        /// inferred from the resources, "import-id" on every resource
-        #[arg(long)]
-        satz: bool,
-        /// Add import ID to every resource (implied by --satz)
-        #[arg(long)]
-        add_import_id: bool,
-        /// Add import ID as a comment to every resource (YAML output only)
-        #[arg(long)]
-        add_import_id_as_comment: bool,
         /// Path to discovery configuration YAML file
         #[arg(long)]
         discovery_config: Option<PathBuf>,
     },
     /// Discover infrastructure from a GCP organization (Cloud Asset Inventory)
-    /// and write it as an estate (Satz with --satz, else the legacy YAML dialect)
+    /// and write it as a Satz estate
     DiscoverFromOrganization {
         /// Numeric Organization ID
         #[arg(long)]
         customer_organization_id: String,
-        /// Output file (with --satz a .yaml default becomes .satz)
-        #[arg(long, default_value = "discovered.yaml")]
+        /// Output file inside yaml_dir
+        #[arg(long, default_value = "discovered.satz")]
         output: PathBuf,
-        /// Write a Satz estate: terraform block, customer_organization_id param,
-        /// "import-id" on every resource
-        #[arg(long)]
-        satz: bool,
-        /// Add import ID to every resource (implied by --satz)
-        #[arg(long)]
-        add_import_id: bool,
-        /// Add import ID as a comment to every resource (YAML output only)
-        #[arg(long)]
-        add_import_id_as_comment: bool,
         /// Path to discovery configuration YAML file
         #[arg(long)]
         discovery_config: Option<PathBuf>,
@@ -748,7 +722,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cmd_choice {
         Commands::Transpile { input, output, schema_dir, print_variables } => {
-            let _validation_level = cli.validation.unwrap_or(tool_config.validation_level.clone());
 
             let input_path = if Path::new(&input).is_absolute() {
                 PathBuf::from(&input)
@@ -762,43 +735,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     config_dir.join(sd).to_string_lossy().to_string()
                 };
             }
-            // BOTH dialects emit HCL. Satz compiles through the fragment
-            // pipeline (per-file fragments, the ⊕ fold, emission from Folded);
-            // a `.yaml` estate goes through the legacy walk.
-            //
-            // Keeping the YAML door open is deliberate (owner, 2026-08-23):
-            // converting is a decision each repo owner makes when ready, not a
-            // toll on using the tool at all. What they give up until they do is
-            // real and worth naming rather than discovering — `suppress`,
-            // `hcl { … }`, claims and the whole compliance plane are fragment-
-            // pipeline features, so the warning below says so once per run.
-            let is_satz = input_path.extension().and_then(|e| e.to_str()) == Some("satz");
-            let (main_tf, providers_tf, variables_tf, tfvars, imports_tf) = if is_satz {
-                let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
-                (out.main_tf, out.providers_tf, out.variables_tf, out.tfvars, out.imports_tf)
-            } else {
-                eprintln!(
-                    "note: {} is a YAML-dialect estate — transpiled through the legacy walk.\n\
-                     `suppress`, `hcl {{ … }}`, claims and `require`/`report-compliance` need\n\
-                     Satz. Convert when ready; the conversion proves itself:\n\
-                     \n    satz migrate-to-satz {} --kind estate\n",
-                    input_path.display(),
-                    input_path.file_name().unwrap_or_default().to_string_lossy()
-                );
-                init_resource_merge(&runtime_config.schema_dir);
-                let include_paths: Vec<PathBuf> =
-                    runtime_config.include_dirs.iter().map(PathBuf::from).collect();
-                let (provider_sources, provider_versions) = provider_maps(&tool_config);
-                let p = pipeline_a_generate(
-                    &input_path,
-                    &_validation_level,
-                    provider_sources,
-                    provider_versions,
-                    &include_paths,
-                    &runtime_config,
-                )?;
-                (p.main_tf, p.providers_tf, p.variables_tf, p.tfvars, p.imports_tf)
-            };
+            // Satz only (M5, 2026-08-29): the legacy walk is gone. A `.yaml`
+            // estate is migrated, never transpiled — `reject_yaml_estate` says
+            // so and names the converter.
+            reject_yaml_estate(&input_path, "transpile")?;
+            let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
+            let (main_tf, providers_tf, variables_tf, tfvars, imports_tf) =
+                (out.main_tf, out.providers_tf, out.variables_tf, out.tfvars, out.imports_tf);
             if print_variables {
                 println!("{}", tfvars);
             }
@@ -1051,8 +994,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::DiscoverFromState { state_json, output, satz, add_import_id, add_import_id_as_comment, discovery_config } => {
-            let add_import_id = add_import_id || satz;
+        Commands::DiscoverFromState { state_json, output, discovery_config } => {
             let discovery_config_obj = load_discovery_config(discovery_config, &tool_config, &runtime_config.presets_dir)?
                 .ok_or_else(|| {
                     let err: Box<dyn std::error::Error> = format!(
@@ -1082,62 +1024,25 @@ Thumbs.db
 
             let s_dir = PathBuf::from(&runtime_config.schema_dir);
             let registry = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
-
             let is_type = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
-            let discoverer = crate::discovery::Discoverer::new(state_val, registry, cli.verbose, add_import_id, add_import_id_as_comment, enabled_types);
+            // Every discovered resource carries its import id: the estate this
+            // writes exists to adopt what is already there.
+            let discoverer = crate::discovery::Discoverer::new(state_val, registry, cli.verbose, true, false, enabled_types);
             let config = discoverer.discover()?;
 
-            if satz {
-                let final_output = satz_output_path(&runtime_config.yaml_dir, output);
-                let text = discovered_to_satz(&config, "discovered", &|t| is_type.as_ref().is_some_and(|r| r.resources.contains_key(t)))?;
-                if let Some(parent) = final_output.parent() {
-                    fsx::create_dir_all(parent)?;
-                }
-                fsx::write(&final_output, text)?;
-                println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
-                if cli.verbose {
-                    crate::discovery::Discoverer::print_summary(&config, Some(discoverer.filtered_count.get()));
-                }
-                return Ok(());
-            }
-
-            let mut yaml = serde_yaml::to_string(&config)?;
-
-            if add_import_id_as_comment {
-                // Post-process to turn import-id-comment fields into actual YAML comments
-                let mut lines: Vec<String> = Vec::new();
-                for line in yaml.lines() {
-                    if line.contains("import-id-comment:") {
-                        let parts: Vec<&str> = line.split("import-id-comment:").collect();
-                        if parts.len() == 2 {
-                            let indent = parts[0];
-                            let value = parts[1].trim().trim_matches('"').trim_matches('\'');
-                            lines.push(format!("{}# import-id: {}", indent, value));
-                            continue;
-                        }
-                    }
-                    lines.push(line.to_string());
-                }
-                yaml = lines.join("\n") + "\n";
-            }
-
-            let final_output = if output.is_absolute() {
-                output
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(output)
-            };
-
+            let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+            let text = discovered_to_satz(&config, "discovered", &|t| is_type.as_ref().is_some_and(|r| r.resources.contains_key(t)))?;
             if let Some(parent) = final_output.parent() {
                 fsx::create_dir_all(parent)?;
             }
-            fsx::write(&final_output, yaml)?;
+            fsx::write(&final_output, text)?;
+            println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
             if cli.verbose {
                 crate::discovery::Discoverer::print_summary(&config, Some(discoverer.filtered_count.get()));
             }
             Ok(())
         }
-        Commands::DiscoverFromOrganization { customer_organization_id, output, satz, add_import_id, add_import_id_as_comment, discovery_config } => {
-            let add_import_id = add_import_id || satz;
+        Commands::DiscoverFromOrganization { customer_organization_id, output, discovery_config } => {
             // runtime_config, not tool_config: the sibling DiscoverFromState already
             // uses the resolved directory, so --config was silently ignored here.
             let s_dir = PathBuf::from(&runtime_config.schema_dir);
@@ -1154,56 +1059,18 @@ Thumbs.db
                     ).into();
                      err
                 })?;
-            let config = crate::discovery::Discoverer::discover_from_org(&customer_organization_id, cli.verbose, add_import_id, add_import_id_as_comment, Some(discovery_config_obj), Some(registry)).await?;
+            let config = crate::discovery::Discoverer::discover_from_org(&customer_organization_id, cli.verbose, true, false, Some(discovery_config_obj), Some(registry)).await?;
 
-            if satz {
-                let final_output = satz_output_path(&runtime_config.yaml_dir, output);
-                let text = discovered_to_satz(&config, "discovered", &|t| type_names.contains(t))?;
-                if let Some(parent) = final_output.parent() {
-                    fsx::create_dir_all(parent)?;
-                }
-                fsx::write(&final_output, text)?;
-                println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
-                return Ok(());
-            }
-
-            let mut yaml = serde_yaml::to_string(&config)?;
-
-            if add_import_id_as_comment {
-                // Post-process to turn import-id-comment fields into actual YAML comments
-                let mut lines: Vec<String> = Vec::new();
-                for line in yaml.lines() {
-                    if line.contains("import-id-comment:") {
-                        let parts: Vec<&str> = line.split("import-id-comment:").collect();
-                        if parts.len() == 2 {
-                            let indent = parts[0];
-                            let value = parts[1].trim().trim_matches('"').trim_matches('\'');
-                            lines.push(format!("{}# import-id: {}", indent, value));
-                            continue;
-                        }
-                    }
-                    lines.push(line.to_string());
-                }
-                yaml = lines.join("\n") + "\n";
-            }
-
-            let final_output = if output.is_absolute() {
-                output
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(output)
-            };
-
+            let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+            let text = discovered_to_satz(&config, "discovered", &|t| type_names.contains(t))?;
             if let Some(parent) = final_output.parent() {
                 fsx::create_dir_all(parent)?;
             }
-            fsx::write(&final_output, yaml)?;
-            if cli.verbose {
-                crate::discovery::Discoverer::print_summary(&config, None);
-            }
+            fsx::write(&final_output, text)?;
+            println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
             Ok(())
         }
         Commands::Bootstrap { estate, dry_run } => {
-            init_resource_merge(&runtime_config.schema_dir);
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
@@ -1219,7 +1086,6 @@ Thumbs.db
             Ok(())
         }
         Commands::ExportOrganizationalPolicies { estate, customer_organization_id, output } => {
-            init_resource_merge(&runtime_config.schema_dir);
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
@@ -1232,16 +1098,12 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::DiffOrganizationalPolicies { estate, preset, customer_organization_id, report, format, recursive } => {
-            init_resource_merge(&runtime_config.schema_dir);
-            // Satz-native: no .gen.yaml twin build. The vars table and the
-            // declared policy set both come from the fragment pipeline.
+        Commands::DiffOrganizationalPolicies { estate, customer_organization_id, report, format, recursive } => {
+            // The params table and the declared policy set both come from the
+            // fragment pipeline; the desired set is what the estate emits.
             let config_path = estate_path(estate, &runtime_config);
-            // Presets resolve against the presets library (beside config.toml).
-            let preset = preset.map(|p| resolve_against(&runtime_config.presets_dir, p));
             crate::org_policy::diff_org_policies(
                 config_path,
-                preset,
                 customer_organization_id,
                 report,
                 format,
@@ -1252,7 +1114,6 @@ Thumbs.db
             Ok(())
         }
         Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, report, recursive } => {
-            init_resource_merge(&runtime_config.schema_dir);
             // Satz-native: bootstrap needs the variable table, nothing more.
             let config_path = estate_path(estate, &runtime_config);
             crate::org_policy::report_org_policies(
@@ -1278,32 +1139,21 @@ Thumbs.db
                 return Err(format!("Input file not found: {}", input_path.display()).into());
             }
 
+            reject_yaml_estate(&input_path, "migrate")?;
             let content = fsx::read_to_string(&input_path)?;
-            let is_satz = input_path.extension().and_then(|e| e.to_str()) == Some("satz");
 
-            // Detect current mode. Satz: the `deployment_mode` param; YAML: the
-            // `deployment-mode` anchor. Neither present is an error, not "local":
-            // the guard used to be the regex itself, so a .satz estate silently
-            // reported "already in local mode" and changed nothing.
-            let (re_mode, re_line) = if is_satz {
-                (
-                    regex::Regex::new(r#"(?m)^\s*deployment_mode\s*=\s*"(\w+)""#).unwrap(),
-                    regex::Regex::new(r#"(?m)^(\s*)deployment_mode(\s*)=\s*"\w+"[^\n]*$"#).unwrap(),
-                )
-            } else {
-                (
-                    regex::Regex::new(r"(?m)^\s*deployment-mode:\s+&deployment-mode\s+(\w+)").unwrap(),
-                    regex::Regex::new(r"(?m)^(\s*)deployment-mode(\s*):\s+&deployment-mode\s+\w+[^\n]*$").unwrap(),
-                )
-            };
+            // Detect current mode from the `deployment_mode` param. Absent is an
+            // error, not "local": the guard used to be the regex itself, so an
+            // estate without the param silently reported "already in local mode".
+            let re_mode = regex::Regex::new(r#"(?m)^\s*deployment_mode\s*=\s*"(\w+)""#).unwrap();
+            let re_line = regex::Regex::new(r#"(?m)^(\s*)deployment_mode(\s*)=\s*"\w+"[^\n]*$"#).unwrap();
             let current_mode = re_mode
                 .captures(&content)
                 .map(|c| c[1].to_string())
                 .ok_or_else(|| {
                     format!(
-                        "{} declares no deployment mode ({}) — nothing to migrate",
-                        input_path.display(),
-                        if is_satz { "`deployment_mode = \"local\"` in params" } else { "`deployment-mode: &deployment-mode local` in variables" }
+                        "{} declares no deployment mode (`deployment_mode = \"local\"` in params) — nothing to migrate",
+                        input_path.display()
                     )
                 })?;
 
@@ -1322,11 +1172,7 @@ Thumbs.db
             // Rewrite the one line, preserving its indentation and formatting.
             let new_content = re_line
                 .replace(&content, |caps: &regex::Captures| {
-                    if is_satz {
-                        format!("{}deployment_mode{}= \"{}\" // switched by `satz migrate`", &caps[1], &caps[2], target_mode)
-                    } else {
-                        format!("{}deployment-mode{}: &deployment-mode {} # switch by command", &caps[1], &caps[2], target_mode)
-                    }
+                    format!("{}deployment_mode{}= \"{}\" // switched by `satz migrate`", &caps[1], &caps[2], target_mode)
                 })
                 .to_string();
             fsx::write(&input_path, new_content)?;
@@ -1375,7 +1221,6 @@ Thumbs.db
             crate::presets::run_get_presets(&runtime_config.presets_dir, &runtime_config, force, pristine_dir).await
         }
         Commands::MigrateToSatz { input, gate, kind, fork } => {
-            init_resource_merge(&runtime_config.schema_dir);
             // Resolve the file: as given, else under yaml_dir, else presets_dir.
             let resolve = |p: &PathBuf| -> PathBuf {
                 if p.exists() { return p.clone(); }
@@ -1472,7 +1317,6 @@ Thumbs.db
             }
         }
         Commands::MergePresets { pristine_dir, estate, report_only, adopt } => {
-            init_resource_merge(&runtime_config.schema_dir);
             let attention = crate::presets::run_merge_presets(
                 &runtime_config.presets_dir, pristine_dir, estate, &tool_config, &runtime_config, report_only, &adopt,
             ).await?;
@@ -1568,7 +1412,6 @@ Thumbs.db
             // value, never on disk. The stage-B block belongs in `transpile`
             // only; pasted here it once made the command silently regenerate
             // hcl/ and return without a report.
-            init_resource_merge(&runtime_config.schema_dir);
             let (manifest, included_claims, _org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
 
@@ -1591,7 +1434,6 @@ Thumbs.db
                 PathBuf::from(&runtime_config.yaml_dir).join(&input)
             };
             // Reports, never emits — see the note in `require`.
-            init_resource_merge(&runtime_config.schema_dir);
             let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
 
@@ -1714,93 +1556,50 @@ struct PipelineBOut {
 use satz_core::pipeline::ResolvedType;
 
 /// Schema-driven resolver: tf-type facts come from the loaded provider
-        /// schemas; the three intrinsic-scope types and the grant classes are the
-        /// same facts HoistTable/the auto-explode list encode in the walk.
-        struct EstateResolver<'a> {
-            registry: &'a ResourceRegistry,
+/// schemas; the intrinsic scopes and grant classes are the same facts
+/// HoistTable / the auto-explode list encode in the walk.
+pub(crate) struct EstateResolver<'a> {
+    pub(crate) registry: &'a ResourceRegistry,
+}
+impl satz_core::pipeline::TypeResolver for EstateResolver<'_> {
+    fn resolve(&self, key: &str) -> Option<ResolvedType> {
+        match key {
+            "terraform" | "providers" | "variables" | "include" => return None,
+            _ => {}
         }
-        impl satz_core::pipeline::TypeResolver for EstateResolver<'_> {
-            fn resolve(&self, key: &str) -> Option<ResolvedType> {
-                use satz_core::{MergeClass, Scope};
-                match key {
-                    "terraform" | "providers" | "variables" | "include" => return None,
-                    "cloud_identity_group" | "google_cloud_identity_group" => {
-                        return Some(ResolvedType {
-                            tf_type: "google_cloud_identity_group".into(),
-                            class: MergeClass::Entity,
-                            scope: Scope::Customer,
-                        })
-                    }
-                    _ => {}
-                }
-                let (_, _schema) = self.registry.find_resource(key)?;
-                let tf = if key.starts_with("google_") { key.to_string() } else { format!("google_{}", key) };
-                let (class, scope) = if tf == "google_organization_iam_member" {
-                    (MergeClass::Grant, Scope::Org)
-                } else if tf == "google_billing_account_iam_member" {
-                    (MergeClass::Grant, Scope::Billing)
-                } else if tf.ends_with("iam_member") {
-                    (MergeClass::Grant, Scope::Node)
-                } else {
-                    (MergeClass::Entity, Scope::Node)
-                };
-                Some(ResolvedType { tf_type: tf, class, scope })
-            }
+        // Existence is the schema's call. EXACT lookup only: Satz names
+        // Terraform types in full, so `org_policy_policy` is not a resource
+        // key here. `find_resource` deliberately falls back to a `google_`
+        // prefix — that shorthand belongs to the YAML dialect, which keeps
+        // it — so this path must not go through it.
+        //
+        // (`google_cloud_identity_group` used to be special-cased to accept
+        // the bare form; it is a real schema type, so the registry answers
+        // for it like any other.)
+        if !self.registry.resources.contains_key(key) {
+            return None;
         }
+        let (class, scope) = satz_core::pipeline::type_facts(key);
+        Some(ResolvedType { tf_type: key.to_string(), class, scope })
+    }
+}
 impl satz_core::algebra::TypeTable for EstateResolver<'_> {
     fn merge_class(&self, t: &str) -> satz_core::MergeClass {
-        satz_core::pipeline::type_facts(t).0
+        use satz_core::pipeline::TypeResolver as _;
+        self.resolve(t).map(|r| r.class).unwrap_or(satz_core::MergeClass::Entity)
     }
     fn scope(&self, t: &str) -> satz_core::Scope {
-        satz_core::pipeline::type_facts(t).1
+        use satz_core::pipeline::TypeResolver as _;
+        self.resolve(t).map(|r| r.scope).unwrap_or(satz_core::Scope::Node)
     }
 }
 
-    fn pipeline_b_generate(
+fn pipeline_b_generate(
     input_path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)?;
-
-    /// Schema-driven resolver: tf-type facts come from the loaded provider
-    /// schemas; the intrinsic scopes and grant classes are the same facts
-    /// HoistTable / the auto-explode list encode in the walk.
-    struct EstateResolver<'a> {
-        registry: &'a ResourceRegistry,
-    }
-    impl satz_core::pipeline::TypeResolver for EstateResolver<'_> {
-        fn resolve(&self, key: &str) -> Option<ResolvedType> {
-            match key {
-                "terraform" | "providers" | "variables" | "include" => return None,
-                _ => {}
-            }
-            // Existence is the schema's call. EXACT lookup only: Satz names
-            // Terraform types in full, so `org_policy_policy` is not a resource
-            // key here. `find_resource` deliberately falls back to a `google_`
-            // prefix — that shorthand belongs to the YAML dialect, which keeps
-            // it — so this path must not go through it.
-            //
-            // (`google_cloud_identity_group` used to be special-cased to accept
-            // the bare form; it is a real schema type, so the registry answers
-            // for it like any other.)
-            if !self.registry.resources.contains_key(key) {
-                return None;
-            }
-            let (class, scope) = satz_core::pipeline::type_facts(key);
-            Some(ResolvedType { tf_type: key.to_string(), class, scope })
-        }
-    }
-    impl satz_core::algebra::TypeTable for EstateResolver<'_> {
-        fn merge_class(&self, t: &str) -> satz_core::MergeClass {
-            use satz_core::pipeline::TypeResolver as _;
-            self.resolve(t).map(|r| r.class).unwrap_or(satz_core::MergeClass::Entity)
-        }
-        fn scope(&self, t: &str) -> satz_core::Scope {
-            use satz_core::pipeline::TypeResolver as _;
-            self.resolve(t).map(|r| r.scope).unwrap_or(satz_core::Scope::Node)
-        }
-    }
 
     let resolver = EstateResolver { registry: &registry };
     let src = fsx::read_to_string(input_path)?;
@@ -2073,7 +1872,6 @@ async fn run_adopt(
         PathBuf::from(&runtime_config.yaml_dir).join(input)
     };
     reject_yaml_estate(&input_path, "adopt")?;
-    init_resource_merge(&runtime_config.schema_dir);
     // Same compile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
     let out = pipeline_b_generate(&input_path, tool_config, runtime_config)?;
@@ -2306,92 +2104,6 @@ pub(crate) fn satz_org_policy_bodies(
     Ok(pipeline_b_generate(input, runtime_config, runtime_config)?.org_policies)
 }
 
-/// Transpile an estate through the standard pipeline and return sorted
-/// main.tf + tfvars — the comparison form every differential gate uses.
-/// Emit a YAML-dialect estate through the legacy walk.
-///
-/// The dialect is convert-ONLY no longer: an owner decision (2026-08-23) keeps
-/// `transpile` open to `.yaml` so nobody is forced through `migrate-to-satz`
-/// before they are ready. Satz remains the direction of travel and the only
-/// dialect the fragment pipeline — and therefore `suppress`, `hcl { … }` and
-/// the compliance plane — can see.
-///
-/// `validation_level` and the provider maps are parameters because the gate in
-/// `transpile_sorted` deliberately passes different ones: it compares main.tf
-/// and tfvars only, so provider metadata would be noise in a proof.
-fn pipeline_a_generate(
-    input: &Path,
-    validation_level: &str,
-    provider_sources: HashMap<String, String>,
-    provider_versions: HashMap<String, String>,
-    include_paths: &[PathBuf],
-    runtime_config: &ToolConfig,
-) -> Result<crate::transpiler::GeneratedProject, Box<dyn std::error::Error>> {
-    let (text, _) = include_processor::process_includes_with_ops(input, include_paths)?;
-    let raw: serde_yaml::Value = serde_yaml::from_str(&text).inspect_err(|e| {
-        print_yaml_error_context(&text, e);
-    })?;
-    let raw = merge_renamed_resource_keys(raw)?;
-    let variables = extract_variables(&resolve_yaml_custom_tags(raw.clone()));
-    let resolved = resolve_yaml_custom_tags(merge_variables(raw));
-    let config: Config = serde_yaml::from_value(resolved)?;
-    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let t = Transpiler::new(
-        &config,
-        registry,
-        runtime_config.auto_explode.clone(),
-        validation_level.to_string(),
-        variables,
-        provider_sources,
-        provider_versions,
-    );
-    t.transpile()
-}
-
-pub(crate) fn transpile_sorted(
-    input: &Path,
-    include_paths: &[PathBuf],
-    runtime_config: &ToolConfig,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let project = pipeline_a_generate(
-        input,
-        "none",
-        HashMap::new(),
-        HashMap::new(),
-        include_paths,
-        runtime_config,
-    )?;
-    let mut lines: Vec<&str> = project.main_tf.lines().filter(|l| !l.trim().is_empty()).collect();
-    lines.sort_unstable();
-    let mut tv: Vec<&str> = project.tfvars.lines().collect();
-    tv.sort_unstable();
-    Ok(format!("{}\n---\n{}", lines.join("\n"), tv.join("\n")))
-}
-
-/// The same comparison form as `transpile_sorted`, but produced by the fragment
-/// pipeline — no YAML round trip, so `suppress` and `hcl { … }` are honored and
-/// the gate sees exactly what `transpile` would write.
-///
-/// Wider than the legacy form on purpose: a preset repoint can move an
-/// `import-id` or a variable default, and those belong in an identity proof.
-/// The gate's comparison form for EITHER dialect: Satz through the fragment
-/// pipeline, YAML through the legacy walk.
-///
-/// Both arms are load-bearing. YAML input stays supported (owner decision,
-/// 2026-08-23: three estates are still unconverted), so a gate that only speaks
-/// Satz is a gate that refuses half the estates it is supposed to protect.
-pub(crate) fn transpile_sorted_for(
-    input: &Path,
-    tool_config: &ToolConfig,
-    runtime_config: &ToolConfig,
-) -> Result<String, Box<dyn std::error::Error>> {
-    if input.extension().and_then(|e| e.to_str()) == Some("satz") {
-        return transpile_sorted_b(input, tool_config, runtime_config);
-    }
-    let include_paths: Vec<PathBuf> =
-        runtime_config.include_dirs.iter().map(PathBuf::from).collect();
-    transpile_sorted(input, &include_paths, runtime_config)
-}
 
 pub(crate) fn transpile_sorted_b(
     input: &Path,
@@ -2412,280 +2124,6 @@ pub(crate) fn transpile_sorted_b(
 }
 
 
-/// Load the provider schemas' resource names and install them for cross-file merging
-/// (see include_processor::set_resource_types). Missing schema dir => empty set =>
-/// merging off, strict duplicate-key errors — deterministic, no heuristics.
-pub(crate) fn init_resource_merge(schema_dir: &str) {
-    let names = ResourceRegistry::load_all(schema_dir)
-        .map(|r| r.resources.keys().cloned().collect::<std::collections::HashSet<_>>())
-        .unwrap_or_default();
-    include_processor::set_resource_types(names);
-}
-
-/// Fold `_satz_merge_<n>_<key>` top-level maps (colliding resource keys renamed
-/// during include expansion) back into `<key>`, id by id: distinct ids union; the same
-/// id with deep-equal content collapses with a note (a repeated definition means "this
-/// resource should exist"); the same id with different content is an error.
-pub(crate) fn merge_renamed_resource_keys(value: serde_yaml::Value) -> Result<serde_yaml::Value, Box<dyn std::error::Error>> {
-    let serde_yaml::Value::Mapping(map) = value else {
-        return Ok(value);
-    };
-    let mut out = serde_yaml::Mapping::new();
-    let mut errors: Vec<String> = Vec::new();
-
-    for (k, v) in map {
-        // Depth first: collisions inside a folder/project block are renamed at that
-        // level, so the fold must reach them there.
-        let v = match v {
-            serde_yaml::Value::Mapping(_) => merge_renamed_resource_keys(v)?,
-            other => other,
-        };
-        let Some(orig_key) = k
-            .as_str()
-            .and_then(|ks| ks.strip_prefix(include_processor::MERGE_KEY_PREFIX))
-            // strip the running index: "0_google_logging_organization_sink"
-            .and_then(|rest| rest.split_once('_').map(|(_, key)| key.to_string()))
-        else {
-            out.insert(k, v);
-            continue;
-        };
-
-        let target_key = serde_yaml::Value::String(orig_key.clone());
-        let serde_yaml::Value::Mapping(additions) = v else {
-            errors.push(format!("'{}' is declared twice but not as a mapping both times", orig_key));
-            continue;
-        };
-        let target = out
-            .entry(target_key)
-            .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-        let serde_yaml::Value::Mapping(existing) = target else {
-            errors.push(format!("'{}' is declared twice but not as a mapping both times", orig_key));
-            continue;
-        };
-        for (id, body) in additions {
-            match existing.get(&id) {
-                None => {
-                    existing.insert(id, body);
-                }
-                Some(prev) if *prev == body => {
-                    println!(
-                        "note: {}.{} is defined in more than one included file with identical content — merged",
-                        orig_key,
-                        id.as_str().unwrap_or("?")
-                    );
-                }
-                Some(_) => {
-                    errors.push(format!(
-                        "{}.{} is defined in more than one included file with different content",
-                        orig_key,
-                        id.as_str().unwrap_or("?")
-                    ));
-                }
-            }
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(serde_yaml::Value::Mapping(out))
-    } else {
-        Err(format!("Conflicting merged resource entries:\n  - {}", errors.join("\n  - ")).into())
-    }
-}
-
-pub(crate) fn extract_variables(value: &serde_yaml::Value) -> HashMap<String, serde_yaml::Value> {
-    let mut vars = HashMap::new();
-    collect_variables_recursive(value, &mut vars);
-    vars
-}
-
-fn is_variables_key(k: &serde_yaml::Value) -> bool {
-    k.as_str().is_some_and(|s| {
-        s == "variables" || s.starts_with(include_processor::INCLUDE_VARS_PREFIX)
-    })
-}
-
-fn extract_mapping_vars(variables: &serde_yaml::Mapping, vars: &mut HashMap<String, serde_yaml::Value>) {
-    for (k, v) in variables {
-        if let serde_yaml::Value::String(k_str) = k {
-            vars.insert(k_str.clone(), v.clone());
-        }
-    }
-}
-
-fn collect_variables_recursive(value: &serde_yaml::Value, vars: &mut HashMap<String, serde_yaml::Value>) {
-    if let serde_yaml::Value::Mapping(map) = value {
-        // Recurse into non-variable children first (lowest priority)
-        for (k, v) in map {
-            if !is_variables_key(k) {
-                collect_variables_recursive(v, vars);
-            }
-        }
-        // Apply renamed include vars (medium priority — overwritten by direct variables:)
-        for (k, v) in map {
-            if k.as_str().is_some_and(|s| s.starts_with(include_processor::INCLUDE_VARS_PREFIX)) {
-                if let serde_yaml::Value::Mapping(variables) = v {
-                    extract_mapping_vars(variables, vars);
-                }
-            }
-        }
-        // Apply direct variables: block last (highest priority at this level)
-        if let Some(serde_yaml::Value::Mapping(variables)) = map.get("variables") {
-            extract_mapping_vars(variables, vars);
-        }
-    } else if let serde_yaml::Value::Sequence(seq) = value {
-        for item in seq {
-            collect_variables_recursive(item, vars);
-        }
-    }
-}
-
-fn strip_variables_recursive(value: serde_yaml::Value) -> serde_yaml::Value {
-    match value {
-        serde_yaml::Value::Mapping(map) => {
-            let cleaned: serde_yaml::Mapping = map
-                .into_iter()
-                .filter_map(|(k, v)| {
-                    if is_variables_key(&k) {
-                        None
-                    } else {
-                        Some((k, strip_variables_recursive(v)))
-                    }
-                })
-                .collect();
-            serde_yaml::Value::Mapping(cleaned)
-        }
-        serde_yaml::Value::Sequence(seq) => {
-            serde_yaml::Value::Sequence(seq.into_iter().map(strip_variables_recursive).collect())
-        }
-        other => other,
-    }
-}
-
-pub(crate) fn merge_variables(value: serde_yaml::Value) -> serde_yaml::Value {
-    // Collect top-level variables before stripping so they can be promoted to root
-    let top_level_vars = if let serde_yaml::Value::Mapping(ref map) = value {
-        map.get("variables").and_then(|v| {
-            if let serde_yaml::Value::Mapping(m) = v { Some(m.clone()) } else { None }
-        })
-    } else {
-        None
-    };
-
-    let value = strip_variables_recursive(value);
-
-    if let serde_yaml::Value::Mapping(mut map) = value {
-        if let Some(variables) = top_level_vars {
-            for (k, v) in variables {
-                if !map.contains_key(&k) {
-                    map.insert(k, v);
-                }
-            }
-        }
-        serde_yaml::Value::Mapping(map)
-    } else {
-        value
-    }
-}
-
-pub(crate) fn resolve_yaml_custom_tags(value: serde_yaml::Value) -> serde_yaml::Value {
-    match value {
-        serde_yaml::Value::Mapping(map) => {
-            let mut new_map = serde_yaml::Mapping::new();
-            for (k, v) in map {
-                let processed_k = resolve_yaml_custom_tags(k);
-                let key_str = processed_k.as_str().unwrap_or("").to_string();
-                let mut processed_v = resolve_yaml_custom_tags(v);
-
-                // Coerce known string fields if they are numbers
-                if matches!(key_str.as_str(), "customer-organization-id" | "infra-bucket-name" | "project_id" | "org_id" | "folder_id") {
-                    if let serde_yaml::Value::Number(n) = processed_v {
-                        processed_v = serde_yaml::Value::String(n.to_string());
-                    }
-                }
-
-                new_map.insert(processed_k, processed_v);
-            }
-            serde_yaml::Value::Mapping(new_map)
-        }
-        serde_yaml::Value::Sequence(seq) => {
-            serde_yaml::Value::Sequence(seq.into_iter().map(resolve_yaml_custom_tags).collect())
-        }
-        serde_yaml::Value::Tagged(tagged) => {
-            if tagged.tag == "!expr" {
-                // Resolve to an interpolation string: `!expr a.b.c` -> "${a.b.c}".
-                // The transpiler's string_to_hcl_expr renders that as a template, which
-                // in HCL is semantically the bare expression — Terraform tracks the
-                // dependency, which is the whole point of !expr over !format.
-                //
-                // Passing the Tagged value through (as this arm used to) broke the
-                // typed Config deserialization whenever !expr appeared in key position
-                // ("untagged and internally tagged enums do not support enum input").
-                let inner = resolve_yaml_custom_tags(tagged.value);
-                if let serde_yaml::Value::String(s) = inner {
-                    let t = s.trim();
-                    // Already-interpolated input stays as-is; wrapping would nest ${}.
-                    let out = if t.contains("${") { t.to_string() } else { format!("${{{}}}", t) };
-                    return serde_yaml::Value::String(out);
-                }
-                // Non-string payloads keep the tag and fail downstream, as before.
-                return serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue {
-                    tag: tagged.tag,
-                    value: inner,
-                }));
-            }
-            if tagged.tag == "!join" {
-                if let serde_yaml::Value::Sequence(items) = tagged.value {
-                    let mut result = String::new();
-                    for item in items {
-                        let inner = resolve_yaml_custom_tags(item);
-                        match inner {
-                            serde_yaml::Value::String(s) => result.push_str(&s),
-                            serde_yaml::Value::Number(n) => result.push_str(&n.to_string()),
-                            serde_yaml::Value::Bool(b) => result.push_str(&b.to_string()),
-                            _ => {}
-                        }
-                    }
-                    return serde_yaml::Value::String(result);
-                } else {
-                    let inner = resolve_yaml_custom_tags(tagged.value);
-                    return match inner {
-                        serde_yaml::Value::String(s) => serde_yaml::Value::String(s),
-                        serde_yaml::Value::Number(n) => serde_yaml::Value::String(n.to_string()),
-                        _ => serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue {
-                            tag: tagged.tag,
-                            value: inner,
-                        }))
-                    };
-                }
-            } else if tagged.tag == "!format" {
-                if let serde_yaml::Value::Sequence(items) = tagged.value {
-                    if items.is_empty() { return serde_yaml::Value::Null; }
-                    let fmt_v = resolve_yaml_custom_tags(items[0].clone());
-                    let mut fmt = match fmt_v {
-                        serde_yaml::Value::String(s) => s,
-                        _ => return serde_yaml::Value::Null,
-                    };
-                    for i in 1..items.len() {
-                        let arg = resolve_yaml_custom_tags(items[i].clone());
-                        let arg_str = match arg {
-                            serde_yaml::Value::String(s) => s,
-                            serde_yaml::Value::Number(n) => n.to_string(),
-                            serde_yaml::Value::Bool(b) => b.to_string(),
-                            _ => "".to_string(),
-                        };
-                        fmt = fmt.replacen("{}", &arg_str, 1);
-                    }
-                    return serde_yaml::Value::String(fmt);
-                }
-            }
-            serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue {
-                tag: tagged.tag,
-                value: resolve_yaml_custom_tags(tagged.value),
-            }))
-        }
-        _ => value,
-    }
-}
 
 /// Provider-schema sync, previously driven by the YAML estate's `providers:`
 /// block. The Satz path resolves providers through the fragment pipeline and does
@@ -3220,98 +2658,6 @@ fn describe_toml_error(path: &Path, content: &str, err: &toml::de::Error) -> Str
     msg
 }
 
-pub(crate) fn print_yaml_error_context(content: &str, err: &serde_yaml::Error) {
-    // serde_yaml reports duplicate-key errors at the enclosing mapping's start (line 1
-    // for top-level keys), which points nowhere useful. Locate the actual occurrences
-    // in the merged document and attribute each to the file it came from.
-    let msg = err.to_string();
-    if let Some(key) = msg
-        .split_once("duplicate entry with key \"")
-        .and_then(|(_, r)| r.split('\"').next())
-    {
-        let occurrences = find_key_occurrences(content, key);
-        if occurrences.len() >= 2 {
-            eprintln!("\nDuplicate key '{}' — defined at:", key);
-            for (line_no, source) in &occurrences {
-                match source {
-                    Some(src) => eprintln!("  - line {} (from include: {})", line_no, src),
-                    None => eprintln!("  - line {} (main file)", line_no),
-                }
-            }
-            eprintln!(
-                "\nTwo files (or two places in one file) declare '{}' at the same level. \
-                 YAML forbids duplicate keys. Resource-type keys merge automatically \
-                 across files when provider schemas are present (run `satz \
-                 update-schema` if they are not); hoisted-scope types may also be \
-                 declared per fragment inside distinct folder/project blocks. See \
-                 'Hoisted scopes' in the README.\n",
-                key
-            );
-            return;
-        }
-    }
-
-    if let Some(location) = err.location() {
-        // serde_yaml reports 1-based lines, but has been seen to report 0; saturating
-        // keeps a malformed location from panicking inside the error reporter itself.
-        let line_idx = location.line().saturating_sub(1);
-        let lines: Vec<&str> = content.lines().collect();
-
-        if line_idx < lines.len() {
-            // Scan backward from the error line to find the nearest satz:source: annotation
-            let source_file = lines[..=line_idx]
-                .iter()
-                .rev()
-                .find_map(|l| l.trim().strip_prefix("# satz:source: "));
-
-            if let Some(src) = source_file {
-                eprintln!("\nError in included file: {}", src);
-            }
-
-            eprintln!("\nError context (line {}):", line_idx + 1);
-            eprintln!("--------------------------------------------------");
-
-            let start = usize::max(0, line_idx.saturating_sub(2));
-            let end = usize::min(lines.len() - 1, line_idx + 2);
-
-            for i in start..=end {
-                let marker = if i == line_idx { ">>" } else { "  " };
-                eprintln!("{} {:4} | {}", marker, i + 1, lines[i]);
-            }
-            eprintln!("--------------------------------------------------\n");
-        }
-    }
-}
-
-/// All lines in the merged document where `key:` opens a mapping entry, each attributed
-/// to the include file it came from (`None` = the main file). Source attribution tracks
-/// the `# satz:source:` / `# satz:source-end:` markers as a stack, since includes
-/// nest.
-fn find_key_occurrences(content: &str, key: &str) -> Vec<(usize, Option<String>)> {
-    let mut source_stack: Vec<String> = Vec::new();
-    let mut out = Vec::new();
-    for (idx, line) in content.lines().enumerate() {
-        let trimmed = line.trim();
-        if let Some(src) = trimmed.strip_prefix("# satz:source: ") {
-            source_stack.push(src.to_string());
-            continue;
-        }
-        if trimmed.strip_prefix("# satz:source-end: ").is_some() {
-            source_stack.pop();
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        let rest = line.trim_start();
-        if let Some(after) = rest.strip_prefix(key) {
-            if after.starts_with(':') {
-                out.push((idx + 1, source_stack.last().cloned()));
-            }
-        }
-    }
-    out
-}
 
 /// Best-effort detection of the user's shell when none is passed to `completion`.
 /// Prefers `$SHELL`; falls back to zsh on macOS (its default login shell) and
@@ -3407,159 +2753,8 @@ fn completion_install_path(shell: CompletionShell) -> Result<(PathBuf, Option<St
     Ok((path, msg))
 }
 // Presets ship to users verbatim via `get-presets`, so a malformed one reaches everybody.
-#[cfg(test)]
-mod resource_merge_tests {
-    use super::*;
 
-    fn fold(yaml: &str) -> Result<serde_yaml::Value, Box<dyn std::error::Error>> {
-        merge_renamed_resource_keys(serde_yaml::from_str(yaml).unwrap())
-    }
 
-    /// The user-facing semantics: merging steps INTO the colliding key and unions the
-    /// ids; the rename is only how the document survives the YAML parser.
-    #[test]
-    fn distinct_ids_union_under_the_original_key() {
-        let v = fold(
-            "google_logging_organization_sink:\n  archive:\n    name: a\n\
-             _satz_merge_0_google_logging_organization_sink:\n  metrics:\n    name: b\n",
-        )
-        .unwrap();
-        let sinks = v.get("google_logging_organization_sink").unwrap().as_mapping().unwrap();
-        assert_eq!(sinks.len(), 2);
-        assert!(sinks.contains_key(serde_yaml::Value::String("archive".into())));
-        assert!(sinks.contains_key(serde_yaml::Value::String("metrics".into())));
-        assert!(v.as_mapping().unwrap().len() == 1, "renamed key must not survive");
-    }
-
-    #[test]
-    fn identical_id_collapses_and_different_content_errors() {
-        let v = fold(
-            "s:\n  a:\n    name: x\n_satz_merge_0_s:\n  a:\n    name: x\n",
-        )
-        .unwrap();
-        assert_eq!(v.get("s").unwrap().as_mapping().unwrap().len(), 1);
-
-        let err = fold("s:\n  a:\n    name: x\n_satz_merge_0_s:\n  a:\n    name: y\n")
-            .expect_err("conflicting id must error");
-        assert!(err.to_string().contains("s.a"), "{err}");
-    }
-
-    /// The real-world case that forced depth-awareness: two presets included inside
-    /// the SAME folder block both declare the sink key one level down. The rename must
-    /// fire at that level and the fold must recurse to reach it.
-    #[test]
-    fn colliding_keys_inside_a_folder_block_merge() {
-        include_processor::set_resource_types(
-            ["google_logging_organization_sink".to_string()].into_iter().collect(),
-        );
-        let dir = std::env::temp_dir().join(format!("satz-merge-nested-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.yaml"), "google_logging_organization_sink:\n  archive:\n    name: a\n").unwrap();
-        std::fs::write(dir.join("b.yaml"), "google_logging_organization_sink:\n  metrics:\n    name: b\n").unwrap();
-        std::fs::write(
-            dir.join("main.yaml"),
-            "folder:\n  logging_folder:\n    display_name: L\n    !include a.yaml\n    !include b.yaml\n",
-        )
-        .unwrap();
-
-        let (text, _) = include_processor::process_includes_with_ops(&dir.join("main.yaml"), &[]).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        let raw: serde_yaml::Value = serde_yaml::from_str(&text).expect("renamed doc parses");
-        let folded = merge_renamed_resource_keys(raw).unwrap();
-        let sinks = folded["folder"]["logging_folder"]["google_logging_organization_sink"]
-            .as_mapping()
-            .expect("merged under the folder");
-        assert_eq!(sinks.len(), 2, "both sinks under one key inside the folder");
-    }
-
-    /// End-to-end through the include processor: two files, both declaring the sink
-    /// key at top level, merge into one map. Relies on the process-wide resource-type
-    /// set; harmless for other tests since no other fixture has duplicate keys.
-    #[test]
-    fn two_includes_with_the_same_resource_key_merge() {
-        include_processor::set_resource_types(
-            ["google_logging_organization_sink".to_string()].into_iter().collect(),
-        );
-        let dir = std::env::temp_dir().join(format!("satz-merge-e2e-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.yaml"), "google_logging_organization_sink:\n  archive:\n    name: a\n").unwrap();
-        std::fs::write(dir.join("b.yaml"), "google_logging_organization_sink:\n  metrics:\n    name: b\n").unwrap();
-        std::fs::write(dir.join("main.yaml"), "!include a.yaml\n!include b.yaml\n").unwrap();
-
-        let (text, _) = include_processor::process_includes_with_ops(&dir.join("main.yaml"), &[]).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        let raw: serde_yaml::Value = serde_yaml::from_str(&text).expect("renamed doc parses");
-        let folded = merge_renamed_resource_keys(raw).unwrap();
-        let sinks = folded.get("google_logging_organization_sink").unwrap().as_mapping().unwrap();
-        assert_eq!(sinks.len(), 2, "both sinks under one key");
-    }
-}
-
-#[cfg(test)]
-mod variable_table_tests {
-    use super::*;
-
-    /// Derived variables must reach the table resolved: extracted raw, they were
-    /// emitted as `variable` blocks with no tfvars value, and tofu prompts
-    /// interactively for every declared-but-unset variable on apply.
-    #[test]
-    fn derived_variables_resolve_before_extraction() {
-        let yaml = r#"
-variables:
-  customer-prefix: &customer-prefix "acme"
-  bucket-name: &bucket-name !format ["{}-audit-logs", *customer-prefix]
-  bucket-url: &bucket-url !format ["gs://{}", *bucket-name]
-"#;
-        let raw: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let vars = extract_variables(&resolve_yaml_custom_tags(raw));
-        assert_eq!(vars.get("bucket-name").and_then(|v| v.as_str()), Some("acme-audit-logs"));
-        assert_eq!(vars.get("bucket-url").and_then(|v| v.as_str()), Some("gs://acme-audit-logs"));
-    }
-}
-
-#[cfg(test)]
-mod yaml_transpile_tests {
-    //! `transpile` accepts BOTH dialects (owner, 2026-08-23), so the YAML arm is
-    //! a supported path and needs a gate of its own. It had none, which is how a
-    //! v0.40.0 change silently routed YAML estates into the Satz parser.
-    use super::*;
-
-    #[test]
-    fn a_yaml_estate_emits_hcl_through_the_legacy_walk() {
-        let dir = std::env::temp_dir().join(format!("satz-yaml-transpile-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        let estate = dir.join("estate.yaml");
-        std::fs::write(
-            &estate,
-            "variables:\n  \
-             customer-organization-id: &customer-organization-id \"123456789\"\n  \
-             bucket-name: &bucket-name \"demo-bucket\"\n\
-             terraform:\n  backend:\n    local:\n      path: \"terraform.tfstate\"\n\
-             google_storage_bucket:\n  demo:\n    name: *bucket-name\n    location: \"EU\"\n",
-        )
-        .expect("write estate");
-
-        // Every field carries a serde default, so empty TOML is the config a
-        // repo with no config.toml would get.
-        let cfg: ToolConfig = toml::from_str("").expect("default config");
-        let project = pipeline_a_generate(&estate, "none", HashMap::new(), HashMap::new(), &[], &cfg)
-            .expect("YAML estate must transpile");
-        assert!(
-            project.main_tf.contains(r#"resource "google_storage_bucket" "demo""#),
-            "expected the bucket resource, got:\n{}",
-            project.main_tf
-        );
-        assert!(
-            project.main_tf.contains(r#""demo-bucket""#),
-            "the anchor must resolve, got:\n{}",
-            project.main_tf
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
 
 #[cfg(test)]
 mod satz_vars_parity {
@@ -3651,25 +2846,112 @@ mod satz_vars_parity {
     }
 }
 
+
+#[cfg(test)]
+mod corpus {
+    //! The corpus: every composition scenario battle-proven in the field,
+    //! snapshot-gated (`tests/corpus/<case>/expected.sorted.txt`). This is the
+    //! contract any refactor of composition semantics must honor byte-for-byte
+    //! on sorted output. Regenerate deliberately with UPDATE_CORPUS=1 and review
+    //! the snapshot diff like production code.
+    use super::*;
+    use std::path::Path;
+
+    /// The corpus schema fixture — a real provider schema trimmed to the types
+    /// the fixtures use. The corpus classifies types through THIS, the same way
+    /// production does, instead of a hand-written table guessing at what a
+    /// resource is.
+    pub(super) fn schema_dir() -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schemas").to_string_lossy().into_owned()
+    }
+
+    pub(super) fn registry() -> ResourceRegistry {
+        ResourceRegistry::load_all(&schema_dir()).expect("corpus schema fixture")
+    }
+
+    pub(super) fn sorted_lines(s: &str) -> Vec<String> {
+        let mut v: Vec<String> =
+            s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.to_string()).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Compile `<case>/main.satz` through the fragment pipeline, the way
+    /// `transpile` does, and return `sorted(main.tf) ---tfvars--- sorted(tfvars)`.
+    pub(super) fn run_case(case: &Path) -> String {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let name = case.file_name().unwrap().to_string_lossy().to_string();
+        let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
+        let reg = registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| {
+            std::fs::read_to_string(case.join(p))
+                .or_else(|_| std::fs::read_to_string(root.join(p)))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap_or_else(|e| panic!("{}: front-end failed: {}", name, e));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        assert!(
+            folded.conflicts().is_empty(),
+            "{}: conflicts on a conflict-free case: {:?}",
+            name,
+            folded.conflicts()
+        );
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        // Same as production: without the registry the emitter drops
+        // schema-derived detail (it once silently lost every alert policy's
+        // notification_channels).
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
+        format!(
+            "{}\n---tfvars---\n{}",
+            sorted_lines(&out.main_tf).join("\n"),
+            sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n")
+        )
+    }
+
+    /// THE corpus gate: every case's emission must reproduce its snapshot.
+    #[test]
+    fn every_case_reproduces_its_snapshot() {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
+        let mut cases: Vec<_> = std::fs::read_dir(&corpus)
+            .expect("corpus dir")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir() && p.join("main.satz").exists())
+            .collect();
+        cases.sort();
+        assert!(!cases.is_empty(), "no corpus case found");
+        for case in cases {
+            let name = case.file_name().unwrap().to_string_lossy().to_string();
+            let got = run_case(&case);
+            let expected_path = case.join("expected.sorted.txt");
+            if std::env::var("UPDATE_CORPUS").is_ok() {
+                std::fs::write(&expected_path, &got).unwrap();
+                eprintln!("{}: snapshot regenerated — review the diff", name);
+            }
+            let expected = std::fs::read_to_string(&expected_path).unwrap();
+            assert_eq!(expected, got, "{}: emission diverged from the snapshot", name);
+        }
+    }
+}
+
 #[cfg(test)]
 mod yaml_estate_gate {
-    //! THE gate for the YAML dialect. It is a supported input (owner rule), and
-    //! until this existed nothing ran a YAML estate end to end — which is how
-    //! two regressions shipped in one day with the Satz fleet fully green:
-    //! v0.40.0 sent every estate to the fragment pipeline, so `merge-presets`
-    //! died on a Satz parse error against a `.yaml` file; v0.41.0 had
-    //! `migrate-to-satz` emit Satz that would not compile while its own gate
-    //! reported PROVEN, because that gate runs the legacy walk.
+    //! THE gate for the legacy YAML dialect. The dialect is migration input
+    //! only (owner, 2026-08-29): nothing transpiles it, `migrate-to-satz`
+    //! converts it. So what must keep working is the CONVERSION — the fixture
+    //! and its `!include` pack become Satz that compiles through the fragment
+    //! pipeline and declares every resource the YAML declared.
     //!
-    //! Self-contained: no schema registry, no live org, no customer repo. It
-    //! replaces wsw as the thing to test against.
+    //! Self-contained: no schema registry, no live org, no customer repo.
     use super::*;
 
     fn fixture() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/yaml-estate")
     }
 
-    /// Addresses the estate declares. Written out rather than counted, because
+    /// Addresses the fixture declares. Written out rather than counted, because
     /// the failure mode being guarded is resources DISAPPEARING — a count is
     /// satisfied by the wrong set, and "it got smaller" was exactly the bug.
     const EXPECTED: &[&str] = &[
@@ -3680,32 +2962,10 @@ mod yaml_estate_gate {
         "google_project_iam_member.",
     ];
 
-    fn addresses(main_tf: &str) -> Vec<String> {
-        main_tf
-            .lines()
-            .filter_map(|l| l.trim().strip_prefix("resource \""))
-            .map(|r| {
-                let mut it = r.split('"').filter(|p| !p.trim().is_empty() && *p != " ");
-                let ty = it.next().unwrap_or_default();
-                let label = it.next().unwrap_or_default();
-                format!("{}.{}", ty, label)
-            })
-            .collect()
-    }
-
-    fn pipeline_a(dir: &Path) -> String {
-        crate::corpus::run_case(dir, &[dir.to_path_buf()])
-    }
-
-    /// The fixture's type table: an explicit ALLOWLIST, standing in for the
-    /// provider schemas.
-    ///
-    /// Not "anything starting with `google_`" — that shortcut (which
-    /// `CorpusTable` still takes) claims `google_labels` exists, which sends a
-    /// genuine `labels { … }` attribute block down the resource path and fails
-    /// a conversion the real registry handles fine. Nested attribute blocks and
-    /// resource maps are the same syntax; only a schema separates them, so a
-    /// stub that guesses is a stub that lies.
+    /// The fixture's type table: an explicit ALLOWLIST standing in for the
+    /// provider schemas. Not "anything starting with `google_`" — that claims
+    /// `google_labels` exists and sends a genuine `labels { … }` attribute
+    /// block down the resource path.
     struct FixtureTypes;
     impl FixtureTypes {
         fn known(&self, t: &str) -> bool {
@@ -3738,33 +2998,7 @@ mod yaml_estate_gate {
     }
 
     #[test]
-    fn a_yaml_estate_emits_every_resource_it_declares() {
-        let out = pipeline_a(&fixture());
-        let addrs = addresses(&out);
-        for want in EXPECTED {
-            assert!(
-                addrs.iter().any(|a| a.starts_with(want)),
-                "{} missing from the emitted HCL — declared resources must never \
-                 be silently dropped.\ngot: {:?}",
-                want,
-                addrs
-            );
-        }
-        // `labels` is an ATTRIBUTE of the project, not a resource of its own.
-        assert!(
-            !addrs.iter().any(|a| a.contains("google_labels")),
-            "a nested attribute block was emitted as a resource: {:?}",
-            addrs
-        );
-    }
-
-    /// The v0.41.0 regression, end to end: convert the estate AND its pack, then
-    /// compile the result through the FRAGMENT pipeline — the one that will
-    /// actually read it — and require the same resources as the legacy walk.
-    /// The conversion gate alone cannot catch this: it runs pipeline A on both
-    /// sides, and pipeline A accepts everything the converter might get wrong.
-    #[test]
-    fn a_converted_estate_compiles_as_satz_and_emits_the_same_resources() {
+    fn a_converted_yaml_estate_compiles_and_declares_every_resource() {
         let src_dir = fixture();
         let tmp = std::env::temp_dir().join(format!("satz-yaml-gate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -3804,250 +3038,27 @@ mod yaml_estate_gate {
             &|p| std::fs::read_to_string(tmp_for_load.join(p)).map_err(|e| e.to_string()),
         )
         .unwrap_or_else(|e| panic!("converted estate does not compile as Satz: {:?}", e));
-        let folded =
-            satz_core::pipeline::fold_fragments(&FixtureTypes, &fe.fragments);
+        let folded = satz_core::pipeline::fold_fragments(&FixtureTypes, &fe.fragments);
         assert!(folded.conflicts().is_empty(), "conflicts: {:?}", folded.conflicts());
         let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-        let b = crate::emitter::emit(&folded, &ctx).expect("emit").main_tf;
-
-        let mut a_addrs = addresses(&pipeline_a(&src_dir));
-        let mut b_addrs = addresses(&b);
-        a_addrs.sort();
-        b_addrs.sort();
-        assert_eq!(
-            a_addrs, b_addrs,
-            "the converted estate emits a different resource set than the YAML it came from"
-        );
-
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-}
-
-#[cfg(test)]
-mod corpus {
-    //! The differential corpus: every composition scenario battle-proven in the
-    //! field, snapshot-gated. This is the contract the satz-core swap (and any
-    //! future refactor of composition semantics) must honor byte-for-byte on
-    //! sorted output. Regenerate deliberately with UPDATE_CORPUS=1 and review the
-    //! snapshot diff like production code.
-    use super::*;
-    use std::path::{Path, PathBuf};
-
-    /// The corpus schema fixture — a real provider schema trimmed to the types
-    /// the fixtures use. Both pipelines classify types through THIS, the same
-    /// way production does, instead of a hand-written table guessing at what a
-    /// resource is. Without it pipeline A has no registry at all and files every
-    /// nested `google_*` block away as an attribute of its parent.
-    pub(super) fn schema_dir() -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schemas").to_string_lossy().into_owned()
-    }
-
-    pub(super) fn registry() -> ResourceRegistry {
-        ResourceRegistry::load_all(&schema_dir()).expect("corpus schema fixture")
-    }
-
-    pub(super) fn run_case(case_dir: &Path, include_paths: &[PathBuf]) -> String {
-        include_processor::set_resource_types(
-            ["google_logging_organization_sink".to_string()].into_iter().collect(),
-        );
-        let main = case_dir.join("main.yaml");
-        let (text, _) =
-            include_processor::process_includes_with_ops(&main, include_paths).expect("expand");
-        let raw: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse");
-        let raw = merge_renamed_resource_keys(raw).expect("fold");
-        let variables = extract_variables(&resolve_yaml_custom_tags(raw.clone()));
-        let resolved = resolve_yaml_custom_tags(merge_variables(raw));
-        let config: Config = serde_yaml::from_value(resolved).expect("config");
-        let t = Transpiler::new(
-            &config,
-            Some(registry()),
-            vec!["google_project_service".to_string(), ".*_iam_member".to_string()],
-            "none".to_string(),
-            variables,
-            HashMap::new(),
-            HashMap::new(),
-        );
-        let project = t.transpile().expect("transpile");
-        let mut lines: Vec<&str> =
-            project.main_tf.lines().filter(|l| !l.trim().is_empty()).collect();
-        lines.sort_unstable();
-        format!("{}\n---tfvars---\n{}", lines.join("\n"), {
-            let mut v: Vec<&str> = project.tfvars.lines().collect();
-            v.sort_unstable();
-            v.join("\n")
-        })
-    }
-
-}
-
-#[cfg(test)]
-mod differential {
-    //! THE corpus gate (M3 step 6). For every case: (1) compile `main.satz` and
-    //! run pipeline A over the result, which must reproduce the recorded
-    //! snapshot, and (2) run pipeline B over the same source. PARITY cases must
-    //! match byte-identically on sorted lines, so B is gated against the snapshot
-    //! transitively; the rest report their distance without failing the build —
-    //! the ratchet only ever tightens.
-    //!
-    //! Pipeline A is here as the CONVERTER's cross-check, not as the product
-    //! path: satz emits from B. It generates its own YAML from the Satz source
-    //! in a temp dir, so it depends on no checked-in twins — which is what let the
-    //! `.yaml` twins be deleted.
-    
-    use std::path::{Path, PathBuf};
-
-    fn sorted_lines(s: &str) -> Vec<String> {
-        let mut v: Vec<String> =
-            s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.to_string()).collect();
-        v.sort_unstable();
-        v
-    }
-
-    /// Cases pipeline B already reproduces byte-identically (sorted). Ratchet:
-    /// additions only — removing an entry means a parity regression.
-    const PARITY: &[&str] = &["billing-nested", "depth-merge", "hoist-two-folders", "override-chain", "real-packs"];
-
-    /// The corpus resolves types through the SAME schema-backed resolver
-    /// production uses, over the trimmed provider schema in `tests/schemas/`.
-    ///
-    /// It used to be a hand-written `CorpusTable` answering "is this a type?"
-    /// with "does it start with `google_`" — which claims `google_labels` exists
-    /// and sends a genuine attribute block down the resource path. The truth
-    /// about type names lives in the schema; a second, guessing opinion is how
-    /// two pipelines drift apart without anyone noticing.
-    fn corpus_resolver(registry: &crate::ResourceRegistry) -> crate::EstateResolver<'_> {
-        crate::EstateResolver { registry }
-    }
-
-    #[test]
-    fn satz_twins_gate_and_pipeline_b_distance() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let corpus = root.join("tests/corpus");
-        let mut cases: Vec<PathBuf> = std::fs::read_dir(&corpus)
-            .expect("corpus dir")
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_dir() && p.join("main.satz").exists())
-            .collect();
-        cases.sort();
-        assert!(!cases.is_empty(), "no corpus case has a main.satz twin yet");
-        for case in cases {
-            let name = case.file_name().unwrap().to_string_lossy().to_string();
-            let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
-            let compiled = satz_core::satz::compile(&src)
-                .unwrap_or_else(|e| panic!("{}: satz compile failed: {}", name, e));
-
-            // GATE: pipeline A over the twin == the snapshot of the YAML case.
-            // The twin's .satz packs compile to .gen.yaml siblings in the temp
-            // dir, exactly like resolve_satz_input does for real estates.
-            let tmp = std::env::temp_dir().join(format!("satz-diff-{}", name));
-            let _ = std::fs::remove_dir_all(&tmp);
-            std::fs::create_dir_all(&tmp).unwrap();
-            std::fs::write(tmp.join("main.yaml"), &compiled.yaml).unwrap();
-            let mut queue = compiled.satz_deps.clone();
-            let mut done = std::collections::HashSet::new();
-            while let Some(dep) = queue.pop() {
-                if !done.insert(dep.clone()) {
-                    continue;
-                }
-                let dep_src = std::fs::read_to_string(case.join(&dep))
-                    .or_else(|_| std::fs::read_to_string(root.join(&dep)))
-                    .unwrap_or_else(|e| panic!("{}: dep {} unreadable: {}", name, dep, e));
-                let dep_compiled = satz_core::satz::compile(&dep_src)
-                    .unwrap_or_else(|e| panic!("{}: dep {} failed: {}", name, dep, e));
-                let gen = dep.trim_end_matches(".satz").to_string() + ".gen.yaml";
-                let gen_path = tmp.join(&gen);
-                if let Some(parent) = gen_path.parent() {
-                    std::fs::create_dir_all(parent).unwrap();
-                }
-                std::fs::write(&gen_path, &dep_compiled.yaml).unwrap();
-                queue.extend(dep_compiled.satz_deps);
-            }
-            let include_paths = vec![tmp.clone(), root.to_path_buf()];
-            let reg = super::corpus::registry();
-            let a = super::corpus::run_case(&tmp, &include_paths);
-            // The module doc promises UPDATE_CORPUS=1 regeneration; this assertion
-            // never implemented it, so the only way to move a snapshot was to
-            // hand-transcribe it out of a panic message.
-            let expected_path = case.join("expected.sorted.txt");
-            if std::env::var("UPDATE_CORPUS").is_ok() {
-                std::fs::write(&expected_path, &a).unwrap();
-                eprintln!("{}: snapshot regenerated — review the diff", name);
-            }
-            let expected = std::fs::read_to_string(&expected_path).unwrap();
-            assert_eq!(
-                expected, a,
-                "{}: pipeline A over main.satz diverged from the snapshot — the twin is not a faithful conversion",
-                name
-            );
-
-            // DIFF: pipeline B over the same source.
-            let case_dir = case.clone();
-            let fe = satz_core::pipeline::compile_estate(
-                "main.satz",
-                &src,
-                &corpus_resolver(&reg),
-                &|p| {
-                    std::fs::read_to_string(case_dir.join(p))
-                        .or_else(|_| std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(p)))
-                        .map_err(|e| e.to_string())
-                },
-            )
-            .unwrap_or_else(|e| panic!("{}: pipeline B front-end failed: {}", name, e));
-            let folded = satz_core::pipeline::fold_fragments(&corpus_resolver(&reg), &fe.fragments);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs: Vec<String> = out.manifest.addresses().into_iter().collect();
+        for want in EXPECTED {
             assert!(
-                folded.conflicts().is_empty(),
-                "{}: pipeline B raised conflicts on a conflict-free case: {:?}",
-                name,
-                folded.conflicts()
+                addrs.iter().any(|a| a.starts_with(want)),
+                "{} missing after conversion — declared resources must never be \
+                 silently dropped.\ngot: {:?}",
+                want,
+                addrs
             );
-            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-            // Same as production: without the registry the emitter drops
-            // schema-derived detail (it silently lost every alert policy's
-            // notification_channels), and the corpus then "proved" parity
-            // between two equally impoverished outputs.
-            ctx.registry = Some(&reg);
-            let b = match crate::emitter::emit(&folded, &ctx) {
-                Ok(out) => {
-                    format!("{}\n---tfvars---\n{}", out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars))
-                }
-                Err(e) => {
-                    assert!(
-                        !PARITY.contains(&name.as_str()),
-                        "{}: PARITY case failed to emit: {}",
-                        name,
-                        e
-                    );
-                    eprintln!("differential[{}]: emitter incomplete: {}", name, e);
-                    continue;
-                }
-            };
-
-            let av = sorted_lines(&a);
-            let bv = sorted_lines(&b);
-            if PARITY.contains(&name.as_str()) {
-                assert_eq!(av, bv, "{}: PARITY case regressed", name);
-            } else {
-                let aset: std::collections::BTreeSet<&String> = av.iter().collect();
-                let bset: std::collections::BTreeSet<&String> = bv.iter().collect();
-                let matched = aset.intersection(&bset).count();
-                eprintln!(
-                    "differential[{}]: {} lines matched, {} only in A (walk), {} only in B (fold) — not yet ratcheted",
-                    name,
-                    matched,
-                    aset.difference(&bset).count(),
-                    bset.difference(&aset).count()
-                );
-                if std::env::var("DIFF_DETAIL").is_ok() {
-                    for l in aset.difference(&bset) {
-                        eprintln!("A| {}", l);
-                    }
-                    for l in bset.difference(&aset) {
-                        eprintln!("B| {}", l);
-                    }
-                }
-            }
         }
+        // `labels` is an ATTRIBUTE of the project, not a resource of its own.
+        assert!(
+            !addrs.iter().any(|a| a.contains("google_labels")),
+            "a nested attribute block was emitted as a resource: {:?}",
+            addrs
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
@@ -4328,12 +3339,10 @@ hcl trust "test fixture" {
 
 #[cfg(test)]
 mod import_id_channels {
-    //! `"import-id"` on every kind of emitted resource, both pipelines. Pipeline
-    //! B used to drop it silently for IAM bindings and nested project services,
-    //! and neither pipeline had a channel for memberships. Parity is the gate:
-    //! the walk over the compiled twin must produce the same import blocks.
+    //! `"import-id"` on every kind of emitted resource. The emitter used to
+    //! drop it silently for IAM bindings and nested project services, and
+    //! memberships had no channel at all.
     use super::*;
-    use std::path::Path;
 
     const ESTATE: &str = r#"estate import_channels
 
@@ -4378,12 +3387,6 @@ google_cloud_identity_group {
 }
 "#;
 
-    fn sorted_lines(s: &str) -> Vec<String> {
-        let mut v: Vec<String> = s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).collect();
-        v.sort_unstable();
-        v
-    }
-
     fn pipeline_b(reg: &ResourceRegistry) -> crate::emitter::EmitOut {
         let resolver = crate::EstateResolver { registry: reg };
         let fe = satz_core::pipeline::compile_estate("main.satz", ESTATE, &resolver, &|p| Err(format!("no use: {}", p)))
@@ -4395,35 +3398,13 @@ google_cloud_identity_group {
         crate::emitter::emit(&folded, &ctx).expect("emit")
     }
 
-    fn pipeline_a(tmp: &Path, reg: ResourceRegistry) -> crate::transpiler::GeneratedProject {
-        let compiled = satz_core::satz::compile(ESTATE).expect("compile twin");
-        std::fs::write(tmp.join("main.yaml"), &compiled.yaml).unwrap();
-        include_processor::set_resource_types(Default::default());
-        let (text, _) = include_processor::process_includes_with_ops(&tmp.join("main.yaml"), &[tmp.to_path_buf()]).expect("expand");
-        let raw: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse");
-        let raw = merge_renamed_resource_keys(raw).expect("fold");
-        let variables = extract_variables(&resolve_yaml_custom_tags(raw.clone()));
-        let resolved = resolve_yaml_custom_tags(merge_variables(raw));
-        let config: Config = serde_yaml::from_value(resolved).expect("config");
-        let t = Transpiler::new(
-            &config,
-            Some(reg),
-            vec!["google_project_service".to_string(), ".*_iam_member".to_string()],
-            "none".to_string(),
-            variables,
-            HashMap::new(),
-            HashMap::new(),
-        );
-        t.transpile().expect("transpile")
-    }
-
     #[test]
-    fn every_channel_emits_its_import_block_and_both_pipelines_agree() {
+    fn every_channel_emits_its_import_block() {
         let reg = super::corpus::registry();
         let b = pipeline_b(&reg);
 
         let binding = crate::emit_shared::iam_member_label("group:gcp-org-admins@example.com", "roles/browser", None);
-        let membership = crate::transpiler::membership_resource_label("gcp_auditors", "user:b@example.com");
+        let membership = crate::emit_shared::membership_resource_label("gcp_auditors", "user:b@example.com");
         for (to, id) in [
             (format!("google_organization_iam_member.{}", binding), "123456789012 roles/browser group:gcp-org-admins@example.com"),
             ("google_project.infra".to_string(), "acme-infra-001"),
@@ -4438,13 +3419,6 @@ google_cloud_identity_group {
         // the unadopted entries still emit as resources
         assert!(b.manifest.addresses().contains("google_project_service.infra_logging_googleapis_com"));
         assert_eq!(b.manifest.of_type("google_cloud_identity_group_membership").count(), 2);
-
-        let tmp = std::env::temp_dir().join("satz-import-id-channels");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let a = pipeline_a(&tmp, super::corpus::registry());
-        assert_eq!(sorted_lines(&a.imports_tf), sorted_lines(&b.imports_tf), "the walk and the emitter disagree on import blocks");
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
