@@ -101,7 +101,7 @@ pub enum MergeClass {
 }
 
 /// Parameter binding strength. Order matters: `Default < Set < Force`.
-/// `Force` is reserved for the subtractive-override channel (ROADMAP Phase 2).
+/// `Force` is reserved for the subtractive-override channel (private roadmap, Phase 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
     /// A preset's overridable default.

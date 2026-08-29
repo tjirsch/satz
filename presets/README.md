@@ -1,82 +1,71 @@
 # Preset library
 
-**Single-source packs:** packs with a `.satz` sibling are AUTHORED in Satz; their
-`.yaml` and `.claims.yaml` files are BUILT artifacts (`satz build-packs`) carrying a
-GENERATED header — edit the `.satz`, never the twins. YAML estates keep including the
-same `.yaml` filenames as always; Satz estates `use` the `.satz` directly.
+Every pack is a `.satz` file: `pack <name> version "<v>"`, a `params { … }` block
+of overridable defaults, and the resources it contributes. Estates `use` them.
 
-Presets are **read-only building blocks**: include them from a customer's estate and
+Presets are **read-only building blocks**: use them from a customer's estate and
 set every org-specific value there — never by editing a preset.
 
-**Satz estates (the standard since v0.29):** `use "presets/<pack>.satz"` — at top level
-for packs that declare their own resource-type maps, under a key
-(`use … as org_policy_policy`) or inside a resource map for content packs. Pack `params`
-are overridable defaults; define the same name in the estate `params` block to override
-(the using document always wins). When a needed customization is not expressible as a
-param, fork: copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains
-the `.diff.satz` adoption ledger. **Rule of thumb: a fork whose whole diff could be a
+`use "presets/<pack>.satz"` at top level for packs that declare their own
+resource-type maps, under a key (`use … as google_org_policy_policy`) or inside a
+resource map for content packs. Pack `params` are overridable defaults; define
+the same name in the estate `params` block to override (the using document
+always wins). When a needed customization is not expressible as a param, fork:
+copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains the
+`.diff.satz` adoption ledger. **Rule of thumb: a fork whose whole diff could be a
 param is upstream debt — lift the param into the pack instead** (that is how
 `allowed_policy_member_*` and `essential_contacts_email` came to exist).
 
-For YAML estates, customization flows through two mechanisms (satz >= v0.14.0):
+Optional packs are gated on a single param: `use "presets/x.satz" when
+logsink_project_name` — undefined or falsy skips the pack entirely (no resources,
+no params, no claims).
 
-- **Required anchors**: the preset references anchors it does not define (e.g.
-  `*customer-organization-id`). The main file must define them in its `variables:`
-  block *before* the include line, or the transpile fails with an unknown-anchor error.
-- **Overridable defaults**: the preset's own `variables:` block holds defaults.
-  Define the same anchor in the main file (before the include) to override —
-  first definition wins. Undefined = default applies. Full rules, composition via
-  `!format`, and the anchor-of-an-alias pitfall: see "Overriding variable defaults"
-  in the main README.
+Multi-resource-type packs (marked below) rely on **hoisted scopes**: org/customer/
+billing-scoped types (`google_cloud_identity_group`, `google_organization_iam_member`,
+`google_billing_account_iam_member`) may sit anywhere in the tree and are emitted
+once at their intrinsic scope. Projects land wherever the pack is used — root or
+inside a `google_folder { … }` block. Two packs contributing to the same
+resource-type map merge label by label (the ⊕ fold); the same label with a
+different body is a hard error naming both files.
 
-Optional presets can be gated on a single variable:
-
-```yaml
-!include-if logsink-project-name presets/monitoring/organization-audit-logsink.yaml
-```
-
-If `logsink-project-name` is not defined in the main file, the whole preset is skipped.
-
-Multi-resource-type presets (marked below) rely on **hoisted scopes**: org/customer/
-billing-scoped types (`cloud_identity_group`, `organization_iam_member`,
-`google_billing_account_iam_member`) may sit anywhere in the tree and are emitted once at
-their intrinsic scope. Projects land wherever the file is included —
-root or inside a `folder:` block. Two presets declaring the same top-level resource-type
-key (both defining a `google_logging_organization_sink:`, say) merge id by id when
-provider schemas are present — see "Hoisted scopes" in the main README.
+**Adopting what already exists** (groups, org policies, folders, the state bucket
+…) is `satz adopt <estate>` — it resolves live ids and `--execute` writes them
+back as `"import-id"`. Pack headers that mention adoption mean that command.
 
 ---
 
-## monitoring/organization-audit-logsink.yaml
+## monitoring/organization-audit-logsink.satz
 
 Organization-wide audit trail: enables Data Access audit logs for **all** services
 org-wide, creates its own destination project + GCS archive bucket, and routes all Cloud
 Audit Logs from every current and future project into that bucket via an aggregated
 org-level sink (project owners cannot bypass it). Self-contained — multi-resource-type.
 
-**Include** (root, or inside a folder block to place the project there):
+**Use** (root, or inside a folder block to place the project there):
 
-```yaml
-folder:
-  shared-services:
-    display_name: "Shared Services"
-    !include-if logsink-project-name presets/monitoring/organization-audit-logsink.yaml
+```
+google_folder {
+  shared_services {
+    display_name = "Shared Services"
+    use "presets/monitoring/organization-audit-logsink.satz" when logsink_project_name
+  }
+}
 ```
 
-**Required from main:** `*customer-organization-id`, `*billing-account-infra`,
-`*customer-shortname`, `*default-region`
+**Required from the estate:** `customer_organization_id`, `billing_account_infra`,
+`customer_shortname`, `default_region`
 
-**Overridable defaults** (names are derived from `*customer-shortname`, so they are
+**Overridable defaults** (names are derived from `customer_shortname`, so they are
 globally unique without overrides):
 
-| Anchor | Default | Meaning |
+| Param | Default | Meaning |
 |---|---|---|
-| `logsink-project-name` | `<shortname>-log-infra-001` | project_id of the destination project |
-| `logsink-bucket-name` | `<shortname>-organization-audit-logs` | GCS archive bucket |
-| `logsink-bucket-location` | `<default-region>` | bucket region |
-| `logsink-retention-days` | `400` | lifecycle delete age |
-| `logsink-name` | `<shortname>-organization-audit-gcs` | display name of the sink |
-| `logsink-filter` (`logsink_filter`) | the four Cloud Audit log streams | sink filter — extend to archive more (e.g. VPC flow logs), never narrow below the audit streams |
+| `logsink_project_name` | `"{customer_shortname}-log-infra-001"` | project_id of the destination project |
+| `logsink_bucket_name` | `"{customer_shortname}-organization-audit-logs"` | GCS archive bucket |
+| `logsink_bucket_location` | `default_region` | bucket region |
+| `logsink_retention_days` | `400` | lifecycle delete age |
+| `logsink_name` | `"{customer_shortname}-organization-audit-gcs"` | display name of the sink |
+| `logsink_filter` | the four Cloud Audit log streams | sink filter — extend to archive more (e.g. VPC flow logs), never narrow below the audit streams |
 
 **Notes:**
 Retention lock (`retention_policy.is_locked`) is deliberately not set; see the preset
@@ -90,39 +79,39 @@ is satisfied.
 
 | | central | per project |
 |---|---|---|
-| File | `organization-cis-log-alerts-central.yaml` | `project-cis-log-alerts.yaml` |
+| File | `organization-cis-log-alerts-central.satz` | `project-cis-log-alerts.satz` |
 | Covers | every project in the org, current and future | one named project |
 | Resources | 1 logging bucket, 1 sink, 8 metrics, 8 policies, 1 channel | 8 metrics, 8 policies, 1 channel — **per project** |
-| New project | covered on creation, no config change | needs its own include, or it silently fails 2.5–2.12 |
+| New project | covered on creation, no config change | needs its own `use`, or it silently fails 2.5–2.12 |
 | Recipients | one org-wide channel; per-*control* routing possible | own channel per project |
 | Cost | audit logs stored twice (GCS archive + logging bucket) | none beyond the metrics |
 
-### monitoring/organization-cis-log-alerts-central.yaml
+### monitoring/organization-cis-log-alerts-central.satz
 
 One Cloud Logging bucket, a second organization sink into it, and eight **bucket-scoped**
 metrics with alert policies — covering the whole organization. Multi-resource-type.
 
-**Include** (root level):
+**Use** (root level):
 
-```yaml
-!include-if cis-central-bucket-project presets/monitoring/organization-cis-log-alerts-central.yaml
+```
+use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_central_bucket_project
 ```
 
-**Required from main:** `*customer-organization-id`, `*customer-domain`,
-`*logsink-project-name` (reuse the project from `organization-audit-logsink.yaml`)
+**Required from the estate:** `customer_organization_id`, `customer_domain`,
+`customer_shortname`, `default_region`
 
 **Overridable defaults:**
 
-| Anchor | Default | Meaning |
+| Param | Default | Meaning |
 |---|---|---|
-| `cis-central-bucket-project` | `*logsink-project-name` | project hosting bucket, metrics, policies, channel |
-| `cis-central-bucket-id` | `cis-audit-metrics` | Cloud Logging bucket id |
-| `cis-central-bucket-location` | `europe-west3` | bucket location |
-| `cis-central-bucket-retention-days` | `30` | short on purpose — the archive lives in GCS |
-| `cis-central-sink-name` | `cis-central-metrics-sink` | second org sink |
-| `cis-central-email` (`cis_central_email`) | `gcp-security@<customer-domain>` | recipient — a FULL address since pack v1.2, any domain. The mailbox must exist and receive external mail (Monitoring sends from alerting-noreply@google.com); a group whose members have no mailboxes silently drops everything |
-| `cis-central-channel-name` | `CIS Security Alerts (org)` | channel display name |
-| `cis-central-alert-window` | `300s` | alert alignment period |
+| `cis_central_bucket_project` | `"{customer_shortname}-organization-log-alerts"` | project hosting bucket, metrics, policies, channel |
+| `cis_central_bucket_id` | `"{customer_shortname}-organization-log-alerts"` | Cloud Logging bucket id |
+| `cis_central_bucket_location` | `default_region` | bucket location |
+| `cis_central_bucket_retention_days` | `30` | short on purpose — the archive lives in GCS |
+| `cis_central_sink_name` | `"cis-central-metrics-sink"` | second org sink |
+| `cis_central_email` | `"gcp-security@{customer_domain}"` | recipient — a FULL address since pack v1.2, any domain. The mailbox must exist and receive external mail (Monitoring sends from alerting-noreply@google.com); a group whose members have no mailboxes silently drops everything |
+| `cis_central_channel_name` | `"CIS Security Alerts (org)"` | channel display name |
+| `cis_central_alert_window` | `"300s"` | alert alignment period |
 
 **How the credit works.** Prowler's CIS metric checks are written per-project, but it credits
 a child project when an org sink with `include_children` routes its logs to a Cloud Logging
@@ -202,8 +191,8 @@ gcloud logging read 'protoPayload.methodName="google.iam.admin.v1.CreateRole"' \
   --project=<any-project> --freshness=15m --format='value(timestamp)'
 # 2. did the org sink deliver it into the central alerts bucket?
 gcloud logging read 'protoPayload.methodName="google.iam.admin.v1.CreateRole"' \
-  --bucket=<cis-central-bucket-id> --location=<cis-central-bucket-location> \
-  --view=_AllLogs --project=<cis-central-bucket-project> --freshness=15m \
+  --bucket=<cis_central_bucket_id> --location=<cis_central_bucket_location> \
+  --view=_AllLogs --project=<cis_central_bucket_project> --freshness=15m \
   --format='value(timestamp)'
 # 3. stages 1+2 fine but no mail → check the channel address is real and
 #    mail-enabled, and look for an incident on the policy in Cloud Monitoring.
@@ -216,32 +205,33 @@ delete it. Do **not** enable the compute API just for the test — with the CIS 
 domain locks live, first-time API enablement can trip on the service-agent
 auto-grant (see the CIS pack notes); §2.7 tests the identical pipeline.
 
-### monitoring/project-cis-log-alerts.yaml
+### monitoring/project-cis-log-alerts.satz
 
 CIS GCP Foundations **2.5 – 2.12** for one project: eight log-based metric filters, one
 alert policy each, and the email notification channel they fire into. Multi-resource-type.
 
-**Include** (root level — the target project comes from the resources' `project:` field,
-not from where the include sits):
+**Use** (root level — the target project comes from the resources' `project` attribute,
+not from where the `use` sits):
 
-```yaml
-!include-if cis-alert-project presets/monitoring/project-cis-log-alerts.yaml
+```
+use "presets/monitoring/project-cis-log-alerts.satz" when cis_alert_project
 ```
 
-**Required from main:** `*customer-domain`
+**Required from the estate:** `customer_domain`, `infra_project_name`
 
 **Overridable defaults:**
 
-| Anchor | Default | Meaning |
+| Param | Default | Meaning |
 |---|---|---|
-| `cis-alert-project` | `*infra-project-name` | project hosting metrics, policies and channel |
-| `cis-alert-email-local` | `gcp-security` | local part of the recipient group address |
-| `cis-alert-channel-name` | `CIS Security Alerts` | channel display name |
-| `cis-alert-window` | `300s` | alert alignment period |
+| `cis_alert_project` | `"{infra_project_name}"` | project hosting metrics, policies and channel |
+| `cis_alert_email_local` | `"gcp-security"` | local part of the recipient group address |
+| `cis_alert_channel_name` | `"CIS Security Alerts"` | channel display name |
+| `cis_alert_window` | `"300s"` | alert alignment period |
 
-**One project per include — no parameterisation.** The YAML keys are fixed, so including
-the file twice collides (duplicate keys). For a second project either copy the file and
-prefix every key and metric `name`, or use the central variant above.
+**One project per use — no parameterisation of labels.** The resource labels are fixed,
+so using the pack twice folds the same addresses with different bodies — a hard error.
+For a second project either fork the pack (`.local.satz`) and prefix every label and
+metric `name`, or use the central variant above.
 
 **Alerts cannot go to Essential Contacts.** That is Google's channel for notifying the
 customer (security bulletins, billing, suspension), not a Cloud Monitoring channel — alert
@@ -252,7 +242,7 @@ both sources.
 lives in a project and an alert policy can only reference channels from its *own* project —
 there is no org-level channel and no cross-project reference. N projects therefore mean N
 channels pointing at the same mailbox, N×8 metrics and N×8 policies, and every new project
-needs the include again or it silently fails 2.5–2.12.
+needs the pack again or it silently fails 2.5–2.12.
 
 **Notes:** enable `monitoring.googleapis.com` (and `logging.googleapis.com`) in the target
 project's `project_service` list. The recipient group must exist in Cloud Identity before
@@ -260,27 +250,27 @@ apply — Google accepts unverified email channels, but they stay silent. Filter
 compared by *substring* against Prowler's expectation: reformatting a filter keeps the
 alert working but silently breaks the compliance check — see the preset header for the
 source of truth and the end-to-end test. Prowler also never checks whether a policy has a
-recipient; `notification_channels: []` passes CIS and notifies nobody.
+recipient; `notification_channels = []` passes CIS and notifies nobody.
 
 ## security-group-models/
 
 The S1 security group model: five admin groups plus their org-level role grants.
 
-- **s1-group-definitions.yaml** — the groups (`gcp-organization-admins`,
+- **s1-group-definitions.satz** — the groups (`gcp-organization-admins`,
   `gcp-project-admins`, `gcp-security-admins`, `gcp-security-viewers`,
   `gcp-billing-admins`), each with the IaC service account as owner. Lifecycle
   ignores `initial_group_config` (imported groups always diff on it).
   **Since v1.1 the pack ships NO human memberships** — presets define groups,
   humans grant membership (console or gcloud, deliberately unmanaged). Estates
   that must manage a membership declare it on their own estate-level groups.
-- **s1-group-permissions.yaml** — the `organization_iam_member` grants for
+- **s1-group-permissions.satz** — the `google_organization_iam_member` grants for
   those groups plus a domain-wide `organizationViewer`.
 
-**Include:**
+**Use:**
 
-```yaml
-cloud_identity_group: !include presets/security-group-models/s1-group-definitions.yaml
-organization_iam_member: !include presets/security-group-models/s1-group-permissions.yaml
+```
+google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
+google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
 ```
 
 To adopt groups (and their declared members) that already exist in the tenant, run
@@ -289,43 +279,45 @@ To adopt groups (and their declared members) that already exist in the tenant, r
 `--execute` writes the verified ids back as `"import-id"`. Members not declared in the
 estate stay unmanaged.
 
-**Required from main:** `*customer-domain`, `*first-admin`, `*svc-iac-account`,
-`*infra-project-name`
+**Required from the estate:** `customer_domain`, `first_admin`, `svc_iac_account`,
+`infra_project_name`
 
-**Overridable defaults:** the five `gcp-*-name` group names.
+**Overridable defaults:** the five `gcp_*_name` group names
+(`gcp_organization_admins_name`, `gcp_project_admins_name`, `gcp_security_admins_name`,
+`gcp_security_viewers_name`, `gcp_billing_admins_name`).
 
-## security-audit/sa-security-audit.yaml
+## security-audit/sa-security-audit.satz
 
 Read-only security-audit service account + impersonation group + org-level IAM in one
-fragment (YAML form of Security Toolset §6.6). Access is impersonation-only: no SA keys,
+pack (Security Toolset §6.6). Access is impersonation-only: no SA keys,
 no remediation rights (`roles/viewer`, `iam.securityReviewer`,
 `securitycenter.adminViewer`, `cloudasset.viewer`; auditors group gets
 `serviceAccountTokenCreator`). Multi-resource-type.
 
-**Include** (root level):
+**Use** (root level):
 
-```yaml
-!include presets/security-audit/sa-security-audit.yaml
+```
+use "presets/security-audit/sa-security-audit.satz"
 ```
 
-**Required from main:** `*customer-domain`, `*first-admin`
+**Required from the estate:** `customer_domain`, `first_admin`
 
 **Overridable defaults:**
 
-| Anchor | Default | Meaning |
+| Param | Default | Meaning |
 |---|---|---|
-| `security-audit-sa-project` | `""` | **effectively required** — project hosting the SA |
-| `security-audit-sa-name` | `sa-security-audit` | SA account_id |
-| `security-audit-sa-display-name` | `Security Audit (read-only)` | |
-| `security-audit-auditors-group` | `grp-security-auditors` | impersonation group |
+| `security_audit_sa_project` | `""` | **effectively required** — project hosting the SA |
+| `security_audit_sa_name` | `"sa-security-audit"` | SA account_id |
+| `security_audit_sa_display_name` | `"Security Audit (read-only)"` | |
+| `security_audit_auditors_group` | `"grp-security-auditors"` | impersonation group |
 
 **Notes:** enable `iamcredentials.googleapis.com` in the SA's project manually after
 apply — impersonation fails without it.
 
-## CIS-GCP-Foundation-4.0.yaml
+## CIS-GCP-Foundation-4.0.satz
 
 The CIS GCP Foundation 4.0 organization-policy set as `google_org_policy_policy`
-fragments — managed constraints included. Since pack v1.1–v1.3 the §1.1
+resources — managed constraints included. Since pack v1.1–v1.3 the §1.1
 Domain Restricted Sharing pair is **parameterized with compliant defaults**: every
 estate is locked to its own directory/org out of the box, and cross-org needs are
 visible one-line overrides — never forks.
@@ -337,6 +329,7 @@ visible one-line overrides — never forks.
 | `allowed_policy_member_customers` | `[customer_id]` | `iam.allowedPolicyMemberDomains`: DIRECTORY customer ids (`C0…`) whose identities may be granted IAM roles. **Never DNS domain names.** |
 | `allowed_policy_member_principal_sets` | own org (`//cloudresourcemanager.googleapis.com/organizations/<org-id>`) | `iam.managed.allowedPolicyMembers`: principal sets allowed past the managed lock |
 | `allowed_policy_member_subjects` | `[]` | individual principals past both locks — typically Google SYSTEM service accounts that org-level products grant roles to (Firebase Hosting `firebase-hosting@system…`, SCC premium agents `service-org-<id>@gcp-sa-*-hpsa…` / `@security-center-api…`) |
+| `essential_contacts_allowed_domain` | `customer_domain` | domain the Essential Contacts constraint allows |
 
 **The two lists must stay consistent**: a directory allowed by
 `allowed_policy_member_customers` needs its org in
@@ -441,49 +434,64 @@ google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
 satz adopt C0example.satz --only google_org_policy_policy --activate --execute --import
 ```
 
-**Required from main:** `*customer-organization-id`, `*customer-id`, `*customer-domain`
+**Required from the estate:** `customer_organization_id`, `customer_id`, `customer_domain`
 
-**Overridable defaults:** none.
-
-## billing-account-permissions.yaml
+## billing-account-permissions.satz
 
 Billing-account IAM: grants for the billing admins group and the IaC service account
-on the billing account (declares its own `google_billing_account_iam_member:` key).
+on the billing account (declares its own `google_billing_account_iam_member` map,
+pinned to `billing_account_infra`).
 
-**Include** (root level): `!include presets/billing-account-permissions.yaml`
+**Use** (root level): `use "presets/billing-account-permissions.satz"`
 
-**Required from main:** `*billing-account-infra`, `*customer-domain`,
-`*svc-iac-account`, `*infra-project-name`
+**Required from the estate:** `billing_account_infra`, `customer_domain`,
+`svc_iac_account`, `infra_project_name`
 
-## organization-budget.yaml
+## organization-budget.satz
 
 A global budget (1000 EUR, thresholds at 50/80/100% of current spend) on the infra
-billing account (declares its own `billing_budget:` key).
+billing account (declares its own `google_billing_budget` map).
 
-**Include** (root level): `!include presets/organization-budget.yaml`
+**Use** (root level): `use "presets/organization-budget.satz"`
 
-**Required from main:** `*billing-account-infra`
+**Required from the estate:** `billing_account_infra`
 
-**Notes:** contains a placeholder `import-id:` for adopting an existing budget — remove
-it for a fresh budget, or replace it with the real budget id. (Not yet migrated to
-variable-driven defaults.)
+**Notes:** contains a placeholder `"import-id"` for adopting an existing budget — remove
+it for a fresh budget, or replace it with the real budget id (`satz adopt` cannot resolve
+budgets yet: they are matched by display name and need the Budgets API). Not yet migrated
+to param-driven defaults.
 
-## essential-contacts-organization.yaml
+## essential-contacts-organization.satz
 
-One organization-level Essential Contact (`essential-contacts-all@<customer-domain>`)
-subscribed to ALL notification categories.
+One organization-level Essential Contact subscribed to ALL notification categories.
+A content pack: use it inside the resource map.
 
-**Include** (Form B under the resource type):
+**Use:**
 
-```yaml
-google_essential_contacts_contact: !include presets/essential-contacts-organization.yaml
+```
+google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }
 ```
 
-**Required from main:** `*customer-organization-id`, `*customer-domain`
+**Required from the estate:** `customer_organization_id`, `customer_domain`
+
+**Overridable defaults:**
+
+| Param | Default | Meaning |
+|---|---|---|
+| `essential_contacts_email` | `"essential-contacts-all@{customer_domain}"` | the contact address |
+
+## catalogs/
+
+Compliance catalogs (`cis-gcp-4.0.yaml`, `cis-gcp-5.0.yaml`): control ids with this
+project's own paraphrases, read by `require` and `report-compliance`. YAML data, not
+packs.
 
 ## discovery-config.yaml
 
-Not an includable preset: the resource-type filter configuration consumed by the
-`discover-from-*` commands (which asset types to ingest, per-type attribute
-include/exclude). Referenced automatically from `presets_dir`, or explicitly via
+Not a pack: per resource type, the discovery filter (`import`, `asset_type`,
+attribute include/exclude) consumed by the `discover-from-*` commands **and the
+adoption rules `satz adopt` reads** — `import_id` templates for user-chosen ids,
+`match_on` keys for GCP-assigned ones, `activate: managed` for org policies. A type
+without a rule is reported by `adopt` as "no rule"; adding one is a one-line change
+here. Referenced automatically from `presets_dir`, or explicitly via
 `--discovery-config`.
