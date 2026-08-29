@@ -766,48 +766,106 @@ pub(crate) struct Attestation {
     pub note: String,
 }
 
-/// Tolerant Prowler-JSON ingest: per catalog control, PASS/FAIL counts from findings
-/// whose compliance mapping references this framework. Unknown shapes are skipped —
-/// corroboration must never fail the report.
+/// One Prowler finding that maps to a catalog control.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct ProwlerFinding {
+    pub check: String,
+    /// PASS / FAIL / MANUAL / …
+    pub status: String,
+    pub severity: String,
+    /// the resource's uid as Prowler names it (`//storage.googleapis.com/…`,
+    /// `projects/x/…`), empty when absent
+    pub resource: String,
+    pub project: String,
+}
+
+/// Prowler ingest, OCSF (Prowler ≥ 4) and the legacy native JSON: per
+/// catalog control, the findings whose compliance mapping references this
+/// framework. Unknown shapes are skipped — corroboration must never fail
+/// the report.
+///
+/// OCSF: `status_code`, `severity`, `unmapped.compliance`,
+/// `unmapped.check_id`, `resources[0].uid`, `cloud.project.uid`.
+/// Legacy: `status` / `Status`, `compliance` / `Compliance`, `check_id`.
 pub(crate) fn ingest_prowler(
     raw: &serde_json::Value,
     catalog_name: &str,
     catalog_version: &str,
-) -> BTreeMap<String, (usize, usize)> {
-    let mut out: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+) -> BTreeMap<String, Vec<ProwlerFinding>> {
+    let mut out: BTreeMap<String, Vec<ProwlerFinding>> = BTreeMap::new();
     let Some(findings) = raw.as_array() else { return out };
     let fw_needle = format!(
         "{}_{}",
         catalog_name.replace("-gcp", ""),
         catalog_version
     ); // "cis_4.0" matches prowler's "cis_4.0_gcp"
+    let text = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).unwrap_or("").to_string();
     for f in findings {
-        let status = f
-            .get("status")
-            .or_else(|| f.get("Status"))
-            .and_then(|s| s.as_str())
-            .unwrap_or("");
-        let Some(compliance) = f.get("compliance").or_else(|| f.get("Compliance")) else {
-            continue;
+        let unmapped = f.get("unmapped");
+        let status = text(f.get("status_code").or_else(|| f.get("status")).or_else(|| f.get("Status")));
+        let compliance = unmapped
+            .and_then(|u| u.get("compliance"))
+            .or_else(|| f.get("compliance"))
+            .or_else(|| f.get("Compliance"));
+        let Some(map) = compliance.and_then(|c| c.as_object()) else { continue };
+        let finding = ProwlerFinding {
+            check: text(unmapped.and_then(|u| u.get("check_id")).or_else(|| f.get("check_id")).or_else(|| f.get("CheckID"))),
+            status: status.clone(),
+            severity: text(f.get("severity").or_else(|| f.get("Severity"))),
+            resource: text(
+                f.get("resources")
+                    .and_then(|r| r.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|r| r.get("uid").or_else(|| r.get("name")))
+                    .or_else(|| f.get("resource_id"))
+                    .or_else(|| f.get("ResourceId")),
+            ),
+            project: text(f.get("cloud").and_then(|c| c.get("project")).and_then(|p| p.get("uid")).or_else(|| f.get("project_id"))),
         };
-        let Some(map) = compliance.as_object() else { continue };
         for (fw, controls) in map {
-            if !fw.to_lowercase().contains(&fw_needle) {
+            // legacy `cis_4.0_gcp`, OCSF `CIS-4.0-GCP`: same framework, two spellings
+            let norm = |x: &str| x.to_lowercase().replace(['-', '_'], ".");
+            if !norm(fw).contains(&norm(&fw_needle)) {
                 continue;
             }
             if let Some(list) = controls.as_array() {
                 for c in list.iter().filter_map(|c| c.as_str()) {
-                    let entry = out.entry(c.to_string()).or_default();
-                    match status {
-                        "PASS" => entry.0 += 1,
-                        "FAIL" => entry.1 += 1,
-                        _ => {}
-                    }
+                    out.entry(c.to_string()).or_default().push(finding.clone());
                 }
             }
         }
     }
     out
+}
+
+/// The combined verdict of a control's row and Prowler's findings on it
+/// (proposal I2): a FAIL on one of the control's verified witnesses is
+/// CONTESTED — two readers of the same organisation disagree, and the
+/// report says so; a FAIL elsewhere is an unmanaged finding beside a
+/// verified witness; MANUAL findings are duties.
+pub(crate) fn prowler_verdict(findings: &[ProwlerFinding], witness_ids: &[String], status_verified: bool) -> String {
+    let pass = findings.iter().filter(|f| f.status == "PASS").count();
+    let fail = findings.iter().filter(|f| f.status == "FAIL").count();
+    let manual = findings.iter().filter(|f| f.status == "MANUAL").count();
+    let mut cell = format!("{} PASS / {} FAIL", pass, fail);
+    if manual > 0 {
+        cell.push_str(&format!(" / {} MANUAL", manual));
+    }
+    let same_resource = |f: &ProwlerFinding| {
+        !f.resource.is_empty()
+            && witness_ids.iter().any(|w| {
+                let (a, b) = (f.resource.trim_start_matches("//"), w.trim_start_matches("//"));
+                a.ends_with(b) || b.ends_with(a)
+            })
+    };
+    let contested = findings.iter().filter(|f| f.status == "FAIL" && same_resource(f)).count();
+    let elsewhere = fail - contested;
+    if status_verified && contested > 0 {
+        cell.push_str(&format!(" · **CONTESTED** ({} FAIL on a verified witness)", contested));
+    } else if status_verified && elsewhere > 0 {
+        cell.push_str(&format!(" · {} unmanaged finding(s) outside the estate", elsewhere));
+    }
+    cell
 }
 
 /// The `report-compliance` command: the evidence run. Joins goal view × live
@@ -956,7 +1014,7 @@ pub(crate) async fn run_report_compliance(
             Attestations::default()
         }
     };
-    let prowler: BTreeMap<String, (usize, usize)> = match prowler_path {
+    let prowler: BTreeMap<String, Vec<ProwlerFinding>> = match prowler_path {
         Some(p) => {
             let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(&p)?)
                 .map_err(|e| format!("prowler json does not parse: {}", e))?;
@@ -1073,9 +1131,19 @@ pub(crate) async fn run_report_compliance(
             ),
             Goal::Organizational => ("organizational".into(), "no IaC witness".into(), "–".into()),
         };
-        let prowler_cell = prowler
-            .get(id)
-            .map(|(p, f)| format!("{} PASS / {} FAIL", p, f))
+        let witness_ids: Vec<String> = match goal {
+            Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. } => witnesses
+                .iter()
+                .filter_map(|w| match live.get(w) {
+                    Some(LiveState::Verified(idn)) => Some(idn.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let prowler_findings = prowler.get(id);
+        let prowler_cell = prowler_findings
+            .map(|fs| prowler_verdict(fs, &witness_ids, status.contains("verified")))
             .unwrap_or_else(|| "–".into());
         let checkov_cell = match (checkov, goal) {
             (None, _) => "–".to_string(),
@@ -1095,7 +1163,8 @@ pub(crate) async fn run_report_compliance(
         json_rows.push(serde_json::json!({
             "control": id, "title": control.title, "status": status.replace("**",""),
             "witnesses": witness_cell.replace("**","").replace('`',""),
-            "duties": duty_cell, "prowler": prowler_cell,
+            "duties": duty_cell, "prowler": prowler_cell.replace("**",""),
+            "prowler_findings": prowler_findings.cloned().unwrap_or_default(),
             "checkov": checkov_cell.replace("**","").replace('`',""),
         }));
     }
@@ -1147,4 +1216,56 @@ pub(crate) fn chrono_free_timestamp() -> String {
     let mth = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if mth <= 2 { y + 1 } else { y };
     format!("{:04}-{:02}-{:02}T{:02}:{:02}Z", y, mth, d, h, m)
+}
+
+#[cfg(test)]
+mod prowler_ocsf_tests {
+    //! Prowler ≥ 4 emits OCSF; the parser used to read the legacy shape only
+    //! and, by its own "never fail the report" contract, silently yielded
+    //! `–` in every row (integration proposal I2).
+    use super::*;
+
+    const OCSF: &str = r#"[
+      {"status_code":"FAIL","severity":"High","finding_info":{"uid":"1","title":"Bucket is public"},
+       "unmapped":{"check_id":"storage_bucket_public_access","compliance":{"CIS-4.0-GCP":["5.1"]}},
+       "resources":[{"uid":"//storage.googleapis.com/corp-audit-logs","name":"corp-audit-logs","type":"bucket"}],
+       "cloud":{"project":{"uid":"corp-log-infra-001"}}},
+      {"status_code":"PASS","severity":"Medium","finding_info":{"uid":"2","title":"UBLA on"},
+       "unmapped":{"check_id":"storage_bucket_uniform_access","compliance":{"CIS-4.0-GCP":["5.2"]}},
+       "resources":[{"uid":"//storage.googleapis.com/corp-audit-logs"}],
+       "cloud":{"project":{"uid":"corp-log-infra-001"}}},
+      {"status_code":"MANUAL","severity":"Low","unmapped":{"check_id":"iam_manual","compliance":{"CIS-4.0-GCP":["1.1"]}}}
+    ]"#;
+
+    #[test]
+    fn ocsf_findings_map_to_controls_with_their_resource() {
+        let raw: serde_json::Value = serde_json::from_str(OCSF).unwrap();
+        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
+        assert_eq!(by["5.1"].len(), 1);
+        assert_eq!(by["5.1"][0].status, "FAIL");
+        assert_eq!(by["5.1"][0].check, "storage_bucket_public_access");
+        assert_eq!(by["5.1"][0].resource, "//storage.googleapis.com/corp-audit-logs");
+        assert_eq!(by["5.1"][0].project, "corp-log-infra-001");
+        assert_eq!(by["1.1"][0].status, "MANUAL");
+    }
+
+    #[test]
+    fn legacy_shape_still_reads() {
+        let raw: serde_json::Value = serde_json::from_str(r#"[{"status":"PASS","compliance":{"cis_4.0_gcp":["3.1"]},"check_id":"x"}]"#).unwrap();
+        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
+        assert_eq!(by["3.1"][0].status, "PASS");
+    }
+
+    #[test]
+    fn a_fail_on_a_verified_witness_is_contested_elsewhere_it_is_unmanaged() {
+        let raw: serde_json::Value = serde_json::from_str(OCSF).unwrap();
+        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
+        let on_witness = prowler_verdict(&by["5.1"], &["storage.googleapis.com/corp-audit-logs".to_string()], true);
+        assert!(on_witness.contains("CONTESTED"), "{}", on_witness);
+        let elsewhere = prowler_verdict(&by["5.1"], &["storage.googleapis.com/other-bucket".to_string()], true);
+        assert!(elsewhere.contains("unmanaged"), "{}", elsewhere);
+        let not_verified = prowler_verdict(&by["5.1"], &[], false);
+        assert_eq!(not_verified, "0 PASS / 1 FAIL");
+        assert_eq!(prowler_verdict(&by["1.1"], &[], false), "0 PASS / 0 FAIL / 1 MANUAL");
+    }
 }

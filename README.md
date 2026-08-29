@@ -793,7 +793,7 @@ control is verified against Cloud Asset Inventory (org sinks, log metrics, alert
 policies, notification channels, buckets — matched by name/display name extracted from
 the generated HCL). Manual duties merge with `attestations.yaml` beside config.toml
 (`duty-id: {by, date, note}`), and a Prowler native-JSON export can be ingested as
-corroboration (`--prowler findings.json`).
+corroboration (`--prowler findings.json` — Prowler's OCSF output or its legacy JSON; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it).
 
 ```bash
 satz report-compliance cis-gcp-4.0 C0example.satz            # markdown + history

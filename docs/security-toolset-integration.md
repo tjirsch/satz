@@ -108,6 +108,8 @@ selection, the MANUAL-control sampling.
 
 ### I2 — Findings corroborate the evidence report (fix, then extend)
 
+*Status 2026-08-29: the fix and the CONTESTED / unmanaged / MANUAL verdicts shipped (v0.46.33); the triage buckets of I3 and the accepted-exception join of I4 are still proposals.*
+
 **What.** Parse OCSF: `status_code`, `severity`, `finding_info.{uid,title}`,
 `unmapped.compliance`, `unmapped.check_id`, `resources[].{uid,name,type}`,
 `cloud.project.uid`, `remediation.desc`. Match a finding to a catalog control
