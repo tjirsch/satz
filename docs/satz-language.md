@@ -744,9 +744,14 @@ You rarely write these by hand: `satz adopt <estate>` resolves the live ids of
 everything the estate declares — folders by display name under their parent,
 groups by email, org policies by constraint (activating managed constraints
 with `--activate`), user-chosen ids from the rules in
-`presets/import-config.yaml` — and `--execute` writes the verified ones back
-as `"import-id"`. A resolution with more than one live candidate is reported as
-ambiguous and left for you to pin; nothing is ever guessed.
+`presets/import-config.yaml` — and `--execute` writes them back: an
+`"import-id"` line into a block, the object form into a list entry. Derived
+ids are written too; `tofu plan` verifies each through its import block. Two
+things it will not do: rewrite an entry it cannot find in the source (an
+interpolated member), and edit a **pristine pack** — packs are upstream-owned,
+so their resources come back as hints (`--execute --import`, or fork the pack).
+A resolution with more than one live candidate is reported as ambiguous and
+left for you to pin; nothing is ever guessed.
 
 ### 6.8 Estate configuration blocks
 

@@ -675,11 +675,16 @@ It **never guesses**: exactly one live candidate resolves; none means *on apply*
 (Terraform will create it); more than one is **AMBIGUOUS**, the candidates are
 listed, and you pin `"import-id"` by hand. Managed org-policy constraints the
 organisation has never had need `--activate` (they cannot be imported before
-activation; this mutates the org). `--execute` writes only *verified* ids into
-the `.satz` (an `import` block for a non-existent object would fail the whole
-plan); `--execute --import` runs `tofu import` for derived ids too and reports
-each failure. Entry-level resources (IAM bindings, services, memberships) get a
-printed snippet rather than an in-place edit — see the language reference §6.7.
+activation; this mutates the org). `--execute` writes the ids into the `.satz`:
+a resource with a block of its own gets an `"import-id"` line; an entry-level
+resource (an IAM grant, a project service, a membership) has its list entry
+rewritten into the object form (`{ role = "…" "import-id" = "…" }`, see the
+language reference §6.7). Derived ids are written too — `tofu plan` verifies
+them through the import block, and says so if one does not exist. An entry
+that cannot be found in the source (interpolated) and a resource declared in a
+**pristine pack** (upstream-owned, never edited) come back as hints: import
+those with `--execute --import`, or fork the pack first. On the test org write
+mode reached 112 of 117 resources; plan = 112 to import, 0 to destroy.
 
 `adopt-org-policies` remains as an alias of
 `adopt --only google_org_policy_policy --activate --execute --import`.
