@@ -82,6 +82,9 @@ fn res_ctx(path: &[String], ctx: &EmitCtx, folded: &Folded) -> crate::emit_share
 pub(crate) struct EmitOut {
     pub main_tf: String,
     pub imports_tf: String,
+    /// The emitted resources as structure — built from the same blocks
+    /// `main_tf` renders, so consumers never parse the text back.
+    pub manifest: crate::manifest::Manifest,
 }
 
 /// A conditional grant edge carries its condition as canonical YAML text. Parse
@@ -287,6 +290,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
 
+    let manifest = crate::manifest::Manifest::from_blocks(&blocks);
     let mut body = hcl::Body::builder();
     for b in blocks {
         body = body.add_block(b);
@@ -302,7 +306,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
     let imports_tf = hcl::to_string(&import_body.build()).map_err(|e| e.to_string())?;
-    Ok(EmitOut { main_tf, imports_tf })
+    Ok(EmitOut { main_tf, imports_tf, manifest })
 }
 
 /// google_project + its google_project_service children — mirrors the walk's

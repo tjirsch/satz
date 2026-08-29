@@ -4,6 +4,7 @@ mod schema;
 mod transpiler;
 mod emit_shared;
 mod emitter;
+mod manifest;
 mod state_migration;
 mod discovery;
 mod template;
@@ -1508,7 +1509,7 @@ Thumbs.db
             // only; pasted here it once made the command silently regenerate
             // hcl/ and return without a report.
             init_resource_merge(&runtime_config.schema_dir);
-            let (main_tf, included_claims, _org_id) =
+            let (manifest, included_claims, _org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
 
             let gaps = crate::compliance::run_require(
@@ -1516,7 +1517,7 @@ Thumbs.db
                 &input_path,
                 &runtime_config.presets_dir,
                 &included_claims,
-                &main_tf,
+                &manifest,
             )?;
             if gaps {
                 std::process::exit(1);
@@ -1531,7 +1532,7 @@ Thumbs.db
             };
             // Reports, never emits — see the note in `require`.
             init_resource_merge(&runtime_config.schema_dir);
-            let (main_tf, included_claims, org_id) =
+            let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
 
             crate::compliance::run_report_compliance(
@@ -1539,7 +1540,7 @@ Thumbs.db
                 &input_path,
                 &runtime_config.presets_dir,
                 &included_claims,
-                &main_tf,
+                &manifest,
                 org_id.as_deref(),
                 &config_dir,
                 &format,
@@ -1565,7 +1566,7 @@ Thumbs.db
                 "estate declares no customer_organization_id — cannot resolve the policy parent",
             )?;
             crate::org_policy::adopt_org_policies(
-                &out.main_tf,
+                &out.manifest,
                 &org_id,
                 &runtime_config,
                 Path::new(&runtime_config.hcl_dir),
@@ -1666,6 +1667,11 @@ pub(crate) fn classify_import_binding(binding: &include_processor::IncludeBindin
 /// Returns every generated file. Used by the transpile flip and diff-pipelines.
 struct PipelineBOut {
     main_tf: String,
+    /// What `main_tf` contains, as structure (resource blocks only — the raw
+    /// `hcl { … }` passthrough is text appended afterwards and is not in it,
+    /// which is exactly the "opaque to the proof layer" contract). Every
+    /// consumer that needs the emitted resource set reads this, never the text.
+    manifest: crate::manifest::Manifest,
     providers_tf: String,
     variables_tf: String,
     tfvars: String,
@@ -1828,6 +1834,7 @@ impl satz_core::algebra::TypeTable for EstateResolver<'_> {
         .map_err(|e| format!("emit_providers: {}", e))?;
     Ok(PipelineBOut {
         main_tf: append_hcl_passthrough(out.main_tf, &fe.hcl),
+        manifest: out.manifest,
         providers_tf,
         variables_tf: crate::emitter::emit_variables(&fe.tfvars),
         tfvars: crate::emitter::emit_tfvars(&fe.tfvars),
@@ -1945,17 +1952,20 @@ fn reject_yaml_estate(input: &Path, what: &str) -> Result<(), Box<dyn std::error
 ///
 /// `.satz` estates run the fragment pipeline — same compile as `transpile`, so
 /// the witnesses the goal view matches against are exactly the ones that would
-/// be written to disk. The YAML dialect keeps the include-manifest + sidecar
-/// route until it is retired (M3).
+/// be written to disk. The emission manifest, not the rendered text, is what
+/// the compliance plane reads: a witness inside a raw `hcl { … }` block is
+/// therefore not a witness, as documented.
+type ComplianceInputs = (crate::manifest::Manifest, Vec<(String, crate::compliance::Claim)>, Option<String>);
+
 fn compliance_inputs(
     input_path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
-) -> Result<(String, Vec<(String, crate::compliance::Claim)>, Option<String>), Box<dyn std::error::Error>> {
+) -> Result<ComplianceInputs, Box<dyn std::error::Error>> {
     reject_yaml_estate(input_path, "this command")?;
     let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
     let claims = crate::compliance::claims_from_frontend(&out.claims);
-    Ok((out.main_tf, claims, out.org_id))
+    Ok((out.manifest, claims, out.org_id))
 }
 
 /// Append `hcl { … }` bodies verbatim to the generated main.tf, each under a
@@ -3994,6 +4004,270 @@ mod differential {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod manifest_gate {
+    //! The emission manifest replaced four line scanners over `main.tf`
+    //! (`emitted_addresses`, `extract_witness_attrs`, `declared_enforcement`,
+    //! `declared_org_policies`). The scanners survive here as oracles: over
+    //! every corpus case the manifest must say exactly what they said, so the
+    //! compliance plane's verdicts cannot move. The one intended difference is
+    //! pinned separately — raw `hcl { … }` passthrough is not in the manifest.
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::Path;
+
+    fn legacy_addresses(main_tf: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for line in main_tf.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix("resource \"") {
+                let mut parts = rest.split('"');
+                let tf_type = parts.next().unwrap_or("");
+                parts.next();
+                let label = parts.next().unwrap_or("");
+                if !tf_type.is_empty() && !label.is_empty() {
+                    out.insert(format!("{}.{}", tf_type, label));
+                }
+            }
+        }
+        out
+    }
+
+    fn legacy_witness_attrs(main_tf: &str) -> BTreeMap<String, BTreeMap<String, String>> {
+        let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let mut current: Option<String> = None;
+        let mut depth = 0usize;
+        for line in main_tf.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("resource \"") {
+                let mut parts = rest.split('"');
+                let tf_type = parts.next().unwrap_or("");
+                parts.next();
+                let label = parts.next().unwrap_or("");
+                current = Some(format!("{}.{}", tf_type, label));
+                out.entry(current.clone().unwrap()).or_default();
+                depth = 1;
+                continue;
+            }
+            if current.is_none() {
+                continue;
+            }
+            if t == "}" || t == "}," {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    current = None;
+                }
+                continue;
+            }
+            if depth == 1 {
+                if let (Some(addr), Some(eq)) = (&current, t.find(" = \"")) {
+                    let key = t[..eq].trim().to_string();
+                    let val = t[eq + 4..].trim_end_matches('"').to_string();
+                    if !key.contains(' ') && !val.contains('"') {
+                        out.get_mut(addr).unwrap().insert(key, val);
+                    }
+                }
+            }
+            if t.ends_with('{') {
+                depth += 1;
+            }
+        }
+        out
+    }
+
+    fn legacy_enforcement(main_tf: &str) -> BTreeMap<String, bool> {
+        let mut out = BTreeMap::new();
+        let mut current: Option<String> = None;
+        let mut depth = 0usize;
+        let mut found: Vec<bool> = Vec::new();
+        for line in main_tf.lines() {
+            let t = line.trim();
+            if current.is_none() {
+                if let Some(rest) = t.strip_prefix(r#"resource "google_org_policy_policy" ""#) {
+                    if let Some(label) = rest.split('"').next() {
+                        current = Some(format!("google_org_policy_policy.{}", label));
+                        depth = t.matches('{').count() - t.matches('}').count();
+                        found.clear();
+                    }
+                }
+                continue;
+            }
+            depth = depth + t.matches('{').count() - t.matches('}').count();
+            if let Some(v) = t.strip_prefix("enforce") {
+                match v.trim_start_matches([' ', '=']).trim().trim_matches('"').to_ascii_uppercase().as_str() {
+                    "TRUE" => found.push(true),
+                    "FALSE" => found.push(false),
+                    _ => {}
+                }
+            }
+            if depth == 0 {
+                if let (Some(addr), [only]) = (current.take(), found.as_slice()) {
+                    out.insert(addr, *only);
+                }
+                found.clear();
+            }
+        }
+        out
+    }
+
+    /// (address, constraint, parent, enforce) — the old `declared_org_policies`.
+    fn legacy_org_policies(main_tf: &str) -> Vec<(String, String, String, Option<bool>)> {
+        let mut out = Vec::new();
+        let mut cur: Option<(String, String, String, Vec<bool>)> = None;
+        let mut depth = 0usize;
+        for line in main_tf.lines() {
+            let t = line.trim();
+            if cur.is_none() {
+                if let Some(rest) = t.strip_prefix(r#"resource "google_org_policy_policy" ""#) {
+                    if let Some(label) = rest.split('"').next() {
+                        cur = Some((format!("google_org_policy_policy.{}", label), String::new(), String::new(), Vec::new()));
+                        depth = t.matches('{').count() - t.matches('}').count();
+                    }
+                }
+                continue;
+            }
+            depth = depth + t.matches('{').count() - t.matches('}').count();
+            if let Some((_, name, parent, enf)) = cur.as_mut() {
+                if let Some(v) = t.strip_prefix("name") {
+                    let v = v.trim_start_matches([' ', '=']).trim().trim_matches('"');
+                    if !v.is_empty() {
+                        *name = crate::org_policy::constraint_name(v).to_string();
+                    }
+                } else if let Some(v) = t.strip_prefix("parent") {
+                    let v = v.trim_start_matches([' ', '=']).trim().trim_matches('"');
+                    if !v.is_empty() {
+                        *parent = v.to_string();
+                    }
+                } else if let Some(v) = t.strip_prefix("enforce") {
+                    match v.trim_start_matches([' ', '=']).trim().trim_matches('"').to_ascii_uppercase().as_str() {
+                        "TRUE" => enf.push(true),
+                        "FALSE" => enf.push(false),
+                        _ => {}
+                    }
+                }
+            }
+            if depth == 0 {
+                if let Some((address, constraint, parent, enf)) = cur.take() {
+                    if !constraint.is_empty() {
+                        out.push((address, constraint, parent, if enf.len() == 1 { Some(enf[0]) } else { None }));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn emit_case(case: &Path, reg: &crate::ResourceRegistry) -> (crate::emitter::EmitOut, satz_core::pipeline::FrontEnd) {
+        let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
+        let case_dir = case.to_path_buf();
+        let resolver = crate::EstateResolver { registry: reg };
+        let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| {
+            std::fs::read_to_string(case_dir.join(p))
+                .or_else(|_| std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(p)))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap_or_else(|e| panic!("{}: front-end failed: {}", case.display(), e));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(reg);
+        let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", case.display(), e));
+        (out, fe)
+    }
+
+    #[test]
+    fn manifest_says_exactly_what_the_text_scanners_said() {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
+        let reg = super::corpus::registry();
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&corpus).unwrap().flatten() {
+            let case = entry.path();
+            if !case.join("main.satz").exists() {
+                continue;
+            }
+            let name = case.file_name().unwrap().to_string_lossy().to_string();
+            let (out, _) = emit_case(&case, &reg);
+            let m = &out.manifest;
+            assert_eq!(m.addresses(), legacy_addresses(&out.main_tf), "{}: addresses", name);
+            // Witness attrs: the scanner skipped any value with an escaped quote
+            // in it (log filters); the manifest keeps them. Everything the
+            // scanner saw the manifest must see identically, and the only
+            // extras allowed are exactly those quote-bearing values.
+            let got_attrs = m.witness_attrs();
+            let legacy_attrs = legacy_witness_attrs(&out.main_tf);
+            assert_eq!(
+                got_attrs.keys().collect::<Vec<_>>(),
+                legacy_attrs.keys().collect::<Vec<_>>(),
+                "{}: witness attr addresses",
+                name
+            );
+            for (addr, legacy) in &legacy_attrs {
+                let got = &got_attrs[addr];
+                for (k, v) in legacy {
+                    assert_eq!(got.get(k), Some(v), "{}: {} {}", name, addr, k);
+                }
+                for (k, v) in got {
+                    if !legacy.contains_key(k) {
+                        assert!(v.contains('"'), "{}: {} {} is new and not a quote-bearing value: {}", name, addr, k, v);
+                    }
+                }
+            }
+            assert_eq!(m.declared_enforcement(), legacy_enforcement(&out.main_tf), "{}: enforcement", name);
+            let got: Vec<_> = crate::org_policy::declared_org_policies(m)
+                .into_iter()
+                .map(|d| (d.address, d.constraint, d.parent, d.enforce))
+                .collect();
+            let mut want = legacy_org_policies(&out.main_tf);
+            want.sort();
+            assert_eq!(got, want, "{}: declared org policies", name);
+            checked += 1;
+        }
+        assert!(checked >= 5, "corpus shrank to {} cases", checked);
+    }
+
+    /// The contract the scanners could not keep: raw HCL deploys, but no claim
+    /// covers it. A resource that exists only inside `hcl { … }` reaches
+    /// `main.tf` and never reaches the manifest.
+    #[test]
+    fn passthrough_is_emitted_but_is_not_a_witness() {
+        let reg = super::corpus::registry();
+        let tmp = std::env::temp_dir().join("satz-manifest-passthrough");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("main.satz"),
+            r#"estate passthrough_case
+
+params {
+  customer_organization_id = "123456789012"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_storage_bucket {
+  real { name = "real-bucket" location = "EU" }
+}
+
+hcl trust "test fixture" {
+  resource "google_storage_bucket" "ghost" {
+    name = "ghost-bucket"
+  }
+}
+"#,
+        )
+        .unwrap();
+        let (out, fe) = emit_case(&tmp, &reg);
+        let main_tf = crate::append_hcl_passthrough(out.main_tf.clone(), &fe.hcl);
+        assert!(main_tf.contains(r#"resource "google_storage_bucket" "ghost""#), "passthrough must deploy:\n{}", main_tf);
+        let addrs = out.manifest.addresses();
+        assert!(addrs.contains("google_storage_bucket.real"), "{:?}", addrs);
+        assert!(!addrs.contains("google_storage_bucket.ghost"), "a passthrough resource is not a witness: {:?}", addrs);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
