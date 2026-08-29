@@ -975,6 +975,8 @@ Thumbs.db
         }
         Commands::UpdateSchema { providers, version, tf_tool } => {
             let tool = tf_tool.unwrap_or_else(|| tool_config.tf_tool.clone());
+            // A fresh clone has no schema_dir yet (it is git-ignored).
+            fsx::create_dir_all(&runtime_config.schema_dir)?;
             
             // If explicit providers are given, use them with CLI version or default
             // If not, iterate all providers from config and use their specific versions
@@ -1050,7 +1052,7 @@ Thumbs.db
                         import_state(state_json, output, cfg, filtered, cli.verbose, &tool_config, &runtime_config)
                     } else {
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
-                        import_org(&parent, output, cfg, cli.verbose, &runtime_config).await
+                        import_org(&parent, output, cfg, filtered, cli.verbose, &runtime_config).await
                     }
                 }
                 other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
@@ -1067,7 +1069,7 @@ Thumbs.db
             let cfg = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?
                 .ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
             let parent = format!("organizations/{}", customer_organization_id.trim_start_matches("organizations/"));
-            import_org(&parent, output, cfg, cli.verbose, &runtime_config).await
+            import_org(&parent, output, cfg, Default::default(), cli.verbose, &runtime_config).await
         }
         Commands::Bootstrap { estate, dry_run } => {
             // Satz-native: no .gen.yaml twin build. The vars table and the
@@ -1822,7 +1824,7 @@ fn import_state(
     let discoverer = crate::discovery::Discoverer::new(state_val, registry, verbose, enabled_types, filtered);
     let found = discoverer.discover()?;
     write_imported(&found.config, output, None, &|t| type_names.contains(t), runtime_config)?;
-    crate::discovery::report_skipped(&found.skipped, verbose);
+    crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
     if verbose {
         crate::discovery::Discoverer::print_summary(&found.config);
     }
@@ -1835,6 +1837,7 @@ async fn import_org(
     parent: &str,
     output: PathBuf,
     cfg: ImportConfig,
+    filtered: std::collections::HashSet<String>,
     verbose: bool,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1844,9 +1847,12 @@ async fn import_org(
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let org_hint = cfg.root.as_ref().and_then(|r| r.organization.clone())
         .or_else(|| parent.strip_prefix("organizations/").map(String::from));
-    let found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    // A folder/project root names no organization; the assets' ancestors do.
+    let org_hint = org_hint.or(found.organization.clone());
+    attach_billing_accounts(&mut found.config).await;
     write_imported(&found.config, output, org_hint.as_deref(), &|t| type_names.contains(t), runtime_config)?;
-    crate::discovery::report_skipped(&found.skipped, verbose);
+    crate::discovery::report_skipped(&found, &filtered, verbose);
     Ok(())
 }
 
@@ -1970,6 +1976,26 @@ fn discovered_to_satz(
             serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n")?;
         top.insert(serde_yaml::Value::String("terraform".into()), backend);
     }
+    // Root-scoped resources (org IAM, org policies, groups) use the root
+    // provider alias, which an estate declares in `providers { … }`; without
+    // it `tofu plan` says "Provider configuration not present" (live-run F10).
+    if !top.contains_key(serde_yaml::Value::String("providers".into())) {
+        // Org-scoped APIs (Org Policy, Cloud Identity) need a quota project:
+        // the first project the import found stands in, the way the Day-0
+        // template uses the infra project. Review it.
+        let billing = first_project_id(config);
+        let quota = billing
+            .as_deref()
+            .map(|p| format!("  project: {p}\n  billing_project: {p}\n"))
+            .unwrap_or_default();
+        let providers: serde_yaml::Value = serde_yaml::from_str(&format!(
+            "google:\n  alias: google\n  user_project_override: true\n{quota}google-beta:\n  alias: google-beta\n  user_project_override: true\n{quota}"
+        ))?;
+        top.insert(serde_yaml::Value::String("providers".into()), providers);
+        if billing.is_none() {
+            eprintln!("warning: no project among the imported resources — set `billing_project` in the estate's `providers` block by hand (org-scoped APIs need a quota project)");
+        }
+    }
     let mut params = Vec::new();
     match infer_org_id(&serde_yaml::Value::Mapping(top.clone())).or_else(|| org_hint.map(String::from)) {
         Some(org) => params.push(("customer_organization_id".to_string(), format!("\"{}\"", org))),
@@ -1984,6 +2010,79 @@ fn discovered_to_satz(
     ];
     let satz = satz_core::migrate::convert_value(&top, "estate", name, &params, &header)?;
     Ok(satz_core::migrate::normalize_type_keys(&satz, is_type))
+}
+
+/// The Resource Manager asset carries no billing link; without it an imported
+/// project plans `billing_account = null` — an unlink. Ask Cloud Billing per
+/// project; a project this cannot be read for is named, not guessed.
+async fn attach_billing_accounts(config: &mut Config) {
+    fn projects_mut(config: &mut Config) -> Vec<&mut crate::config::Project> {
+        fn walk<'a>(f: &'a mut crate::config::Folder, out: &mut Vec<&'a mut crate::config::Project>) {
+            if let Some(ps) = &mut f.project {
+                out.extend(ps.values_mut());
+            }
+            if let Some(fs) = &mut f.folder {
+                for sub in fs.values_mut() {
+                    walk(sub, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(ps) = &mut config.project {
+            out.extend(ps.values_mut());
+        }
+        if let Some(fs) = &mut config.folder {
+            for f in fs.values_mut() {
+                walk(f, &mut out);
+            }
+        }
+        out
+    }
+    let projects = projects_mut(config);
+    if projects.is_empty() {
+        return;
+    }
+    let token = match crate::gcp::access_token().await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("warning: billing accounts not read ({}); set `billing_account` on each project by hand", e);
+            return;
+        }
+    };
+    let http = reqwest::Client::new();
+    for p in projects {
+        match crate::gcp::billing::project_billing_account(&http, &token, &p.project_id).await {
+            Ok(Some(acct)) => p.billing_account = Some(acct),
+            Ok(None) => {}
+            Err(e) => eprintln!(
+                "warning: billing account of project {} not read ({}) — set `billing_account` by hand or `tofu plan` will unlink it",
+                p.project_id,
+                e.lines().next().unwrap_or("")
+            ),
+        }
+    }
+}
+
+/// The alphabetically first project id in the discovered tree, at any depth.
+fn first_project_id(config: &Config) -> Option<String> {
+    fn walk_folder(f: &crate::config::Folder, out: &mut Vec<String>) {
+        if let Some(ps) = &f.project {
+            out.extend(ps.values().map(|p| p.project_id.clone()));
+        }
+        if let Some(fs) = &f.folder {
+            for sub in fs.values() {
+                walk_folder(sub, out);
+            }
+        }
+    }
+    let mut ids: Vec<String> = config.project.iter().flat_map(|ps| ps.values().map(|p| p.project_id.clone())).collect();
+    if let Some(fs) = &config.folder {
+        for f in fs.values() {
+            walk_folder(f, &mut ids);
+        }
+    }
+    ids.sort();
+    ids.into_iter().next()
 }
 
 /// The first organization number the tree names: an `organizations/<n>`
@@ -3650,6 +3749,34 @@ mod import_skipped_report {
         // and the one that fit is in the estate
         let infra = &found.config.project.as_ref().unwrap()["infra"];
         assert!(infra.extra.contains_key("google_storage_bucket"), "{:?}", infra.extra.keys().collect::<Vec<_>>());
+    }
+
+    /// F5a: a key the provider schema does not know is API vocabulary and
+    /// would not plan — dropped, and named.
+    #[test]
+    fn unknown_attributes_are_dropped_and_reported() {
+        let reg = super::corpus::registry();
+        let state: serde_json::Value = serde_json::from_str(r#"{"values":{"root_module":{"resources":[
+          {"type":"google_project","name":"infra","values":{"project_id":"acme-infra","name":"Infra"}},
+          {"type":"google_storage_bucket","name":"logs","values":{"name":"acme-logs","project":"acme-infra","location":"EU",
+             "lifecycle":{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]},
+             "versioning":{"enabled":true}}}
+        ]}}}"#).unwrap();
+        let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
+        let found = Discoverer::new(state, Some(reg), false, Some(enabled), Default::default()).discover().unwrap();
+        assert_eq!(found.dropped_attrs, vec![("google_storage_bucket".to_string(), "lifecycle".to_string())]);
+        let bucket = &found.config.project.as_ref().unwrap()["infra"].extra["google_storage_bucket"];
+        let text = serde_yaml::to_string(bucket).unwrap();
+        assert!(!text.contains("lifecycle"), "{}", text);
+        assert!(text.contains("versioning"), "a known block survives:\n{}", text);
+    }
+
+    #[test]
+    fn organization_comes_from_the_ancestor_chain() {
+        use crate::discovery::organization_from_ancestors;
+        let anc = vec!["projects/123".to_string(), "folders/456".to_string(), "organizations/789".to_string()];
+        assert_eq!(organization_from_ancestors(&anc).as_deref(), Some("789"));
+        assert_eq!(organization_from_ancestors(&Vec::<String>::new()), None);
     }
 }
 

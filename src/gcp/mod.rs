@@ -3,6 +3,7 @@
 //! merging, matching — are separate functions so they can be tested without
 //! a network.
 
+pub(crate) mod billing;
 pub(crate) mod resourcemanager;
 
 /// An ADC bearer token for the cloud-platform scope.
