@@ -11,9 +11,16 @@ pub struct Discoverer {
     pub registry: Option<ResourceRegistry>,
     pub filtered_count: std::cell::Cell<usize>,
     pub _verbose: bool, // Renamed to silence warning
-    pub add_import_id: bool,
-    pub add_import_id_as_comment: bool,
     pub enabled_types: Option<HashSet<String>>,
+}
+
+/// Where a discovered asset lands: the estate under construction and the
+/// folder/project maps it is assembled from, plus the id → key index.
+struct Sinks<'a> {
+    config: &'a mut Config,
+    folder_map: &'a mut HashMap<String, Folder>,
+    project_map: &'a mut HashMap<String, Project>,
+    gcp_id_to_yaml_name: &'a HashMap<String, String>,
 }
 
 impl Discoverer {
@@ -27,8 +34,6 @@ impl Discoverer {
         state_json: Value,
         registry: Option<ResourceRegistry>,
         verbose: bool,
-        add_import_id: bool,
-        add_import_id_as_comment: bool,
         enabled_types: Option<HashSet<String>>,
     ) -> Self {
         Self {
@@ -36,8 +41,6 @@ impl Discoverer {
             registry,
             filtered_count: std::cell::Cell::new(0),
             _verbose: verbose,
-            add_import_id,
-            add_import_id_as_comment,
             enabled_types,
         }
     }
@@ -87,8 +90,7 @@ impl Discoverer {
 
                         folder_map.insert(yaml_key, Folder {
                             display_name,
-                            import_id: if self.add_import_id { Some(gcp_id.clone()) } else { None },
-                            import_id_comment: if self.add_import_id_as_comment { Some(gcp_id.clone()) } else { None },
+                            import_id: Some(gcp_id.clone()),
                             ..Default::default()
                         });
 
@@ -112,8 +114,7 @@ impl Discoverer {
                         project_map.insert(yaml_key, Project {
                             project_id: project_id.clone(),
                             name: display_name,
-                            import_id: if self.add_import_id { Some(project_id.clone()) } else { None },
-                            import_id_comment: if self.add_import_id_as_comment { Some(project_id.clone()) } else { None },
+                            import_id: Some(project_id.clone()),
                             ..Default::default()
                         });
 
@@ -164,7 +165,7 @@ impl Discoverer {
         Ok(config)
     }
 
-    pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, add_import_id_as_comment: bool, exclude: Option<&Vec<String>>) -> serde_yaml::Value {
+    pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>) -> serde_yaml::Value {
         let mut yaml_val = serde_yaml::to_value(values).unwrap_or(serde_yaml::Value::Null);
         let block_schema = schema.map(|s| &s.block);
         
@@ -184,18 +185,13 @@ impl Discoverer {
             full_blacklist.extend(ex.clone());
         }
 
-        Self::filter_recursive(&mut yaml_val, tf_type, block_schema, &full_blacklist);
+        Self::filter_recursive(&mut yaml_val, block_schema, &full_blacklist);
 
         if let Some(id) = values["id"].as_str() {
-            if add_import_id || add_import_id_as_comment {
+            if add_import_id {
                 if let serde_yaml::Value::Mapping(map) = yaml_val {
                     let mut new_map = serde_yaml::Mapping::new();
-                    if add_import_id {
-                        new_map.insert(serde_yaml::Value::String("import-id".to_string()), serde_yaml::Value::String(id.to_string()));
-                    }
-                    if add_import_id_as_comment {
-                        new_map.insert(serde_yaml::Value::String("import-id-comment".to_string()), serde_yaml::Value::String(id.to_string()));
-                    }
+                    new_map.insert(serde_yaml::Value::String("import-id".to_string()), serde_yaml::Value::String(id.to_string()));
                     new_map.extend(map);
                     yaml_val = serde_yaml::Value::Mapping(new_map);
                 }
@@ -219,7 +215,7 @@ impl Discoverer {
         yaml_val
     }
 
-    fn filter_recursive(val: &mut serde_yaml::Value, tf_type: &str, schema: Option<&BlockSchema>, blacklist: &[String]) {
+    fn filter_recursive(val: &mut serde_yaml::Value, schema: Option<&BlockSchema>, blacklist: &[String]) {
         if let serde_yaml::Value::Mapping(map) = val {
             for key in blacklist {
                 map.remove(serde_yaml::Value::String(key.to_string()));
@@ -262,26 +258,28 @@ impl Discoverer {
             for (k, v) in map.iter_mut() {
                 let k_str = k.as_str().unwrap_or("");
                 let sub_schema = schema.and_then(|s| s.block_types.get(k_str)).map(|bt| &bt.block);
-                Self::filter_recursive(v, tf_type, sub_schema, blacklist);
+                Self::filter_recursive(v, sub_schema, blacklist);
             }
 
             map.retain(|_, v| {
-                !v.is_null() &&
-                !(v.is_string() && v.as_str().unwrap().is_empty()) &&
-                !(v.is_sequence() && v.as_sequence().unwrap().is_empty()) &&
-                !(v.is_mapping() && v.as_mapping().unwrap().is_empty())
+                !Self::is_empty_value(v)
             });
         } else if let serde_yaml::Value::Sequence(seq) = val {
              for item in seq.iter_mut() {
-                Self::filter_recursive(item, tf_type, schema, blacklist);
+                Self::filter_recursive(item, schema, blacklist);
             }
             seq.retain(|v| {
-                !v.is_null() &&
-                !(v.is_string() && v.as_str().unwrap().is_empty()) &&
-                !(v.is_sequence() && v.as_sequence().unwrap().is_empty()) &&
-                !(v.is_mapping() && v.as_mapping().unwrap().is_empty())
+                !Self::is_empty_value(v)
             });
         }
+    }
+
+    /// Null, "" , [] or {} — carries nothing, dropped from discovered output.
+    fn is_empty_value(v: &serde_yaml::Value) -> bool {
+        v.is_null()
+            || v.as_str().is_some_and(|s| s.is_empty())
+            || v.as_sequence().is_some_and(|s| s.is_empty())
+            || v.as_mapping().is_some_and(|m| m.is_empty())
     }
 
     fn is_zero_value(v: &serde_yaml::Value) -> bool {
@@ -344,10 +342,10 @@ impl Discoverer {
         if tf_type.ends_with("_iam_member") {
             let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
             let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
-            if p.extra.get(tf_type).is_none() { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+            if !p.extra.contains_key(tf_type) { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
                 let member_key = serde_yaml::Value::String(member);
-                if members_map.get(&member_key).is_none() { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
+                if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                 if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
                     let role_val = serde_yaml::Value::String(role);
                     if !roles.contains(&role_val) { roles.push(role_val); }
@@ -355,12 +353,12 @@ impl Discoverer {
             }
             return;
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, self.add_import_id, self.add_import_id_as_comment, None);
+        let yaml_val = Self::filter_values(tf_type, values, schema, true, None);
         if tf_type == "google_project_service" {
             if p.project_service.is_none() { p.project_service = Some(Vec::new()); }
             p.project_service.as_mut().unwrap().push(yaml_val);
         } else {
-            if p.extra.get(tf_type).is_none() { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+            if !p.extra.contains_key(tf_type) { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(type_map)) = p.extra.get_mut(tf_type) {
                 type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
             }
@@ -371,10 +369,10 @@ impl Discoverer {
         if tf_type.ends_with("_iam_member") {
             let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
             let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
-            if f.extra.get(tf_type).is_none() { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+            if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = f.extra.get_mut(tf_type) {
                 let member_key = serde_yaml::Value::String(member);
-                if members_map.get(&member_key).is_none() { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
+                if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                 if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
                     let role_val = serde_yaml::Value::String(role);
                     if !roles.contains(&role_val) { roles.push(role_val); }
@@ -382,8 +380,8 @@ impl Discoverer {
             }
             return;
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, self.add_import_id, self.add_import_id_as_comment, None);
-        if f.extra.get(tf_type).is_none() { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+        let yaml_val = Self::filter_values(tf_type, values, schema, true, None);
+        if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = f.extra.get_mut(tf_type) {
              type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
         }
@@ -402,10 +400,10 @@ impl Discoverer {
                     if !roles.contains(&role_val) { roles.push(role_val); }
                 }
             } else {
-                if c.extra.get(tf_type).is_none() { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+                if !c.extra.contains_key(tf_type) { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
                 if let Some(serde_yaml::Value::Mapping(members_map)) = c.extra.get_mut(tf_type) {
                     let member_key = serde_yaml::Value::String(member);
-                    if members_map.get(&member_key).is_none() { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
+                    if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                     if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
                         let role_val = serde_yaml::Value::String(role);
                         if !roles.contains(&role_val) { roles.push(role_val); }
@@ -414,8 +412,8 @@ impl Discoverer {
             }
             return;
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, self.add_import_id, self.add_import_id_as_comment, None);
-        if c.extra.get(tf_type).is_none() { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+        let yaml_val = Self::filter_values(tf_type, values, schema, true, None);
+        if !c.extra.contains_key(tf_type) { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = c.extra.get_mut(tf_type) {
             type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
         }
@@ -468,8 +466,6 @@ impl Discoverer {
     pub async fn discover_from_org(
         org_id: &str,
         verbose: bool,
-        add_import_id: bool,
-        add_import_id_as_comment: bool,
         discovery_config: Option<DiscoveryConfig>,
         registry: Option<ResourceRegistry>,
     ) -> Result<Config, Box<dyn std::error::Error>> {
@@ -582,7 +578,7 @@ impl Discoverer {
              println!("{:<width$}: {}\n", total_label, all_assets.len(), width = max_len);
         }
 
-        let config = Self::construct_config_from_assets(all_assets, verbose, add_import_id, add_import_id_as_comment, registry.as_ref(), discovery_config.as_ref());
+        let config = Self::construct_config_from_assets(all_assets, verbose, registry.as_ref(), discovery_config.as_ref());
 
         Ok(config)
     }
@@ -590,8 +586,6 @@ impl Discoverer {
     fn construct_config_from_assets(
         assets: Vec<Asset>, 
         _verbose: bool,
-        add_import_id: bool, 
-        add_import_id_as_comment: bool,
         registry: Option<&ResourceRegistry>,
         discovery_config: Option<&DiscoveryConfig>,
     ) -> Config {
@@ -623,9 +617,9 @@ impl Discoverer {
              let (tf_type, res_config) = if let Some(found) = configs.iter().find(|(t, c)| (t == "google_folder" || t == "google_project") && c.content_type.as_deref() == Some("RESOURCE")) { found } else { continue; };
 
              if tf_type == "google_folder" {
-                 Self::discover_google_folder(asset, res_config, add_import_id, add_import_id_as_comment, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
+                 Self::discover_google_folder(asset, res_config, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
              } else if tf_type == "google_project" {
-                 Self::discover_google_project(asset, res_config, add_import_id, add_import_id_as_comment, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name);
+                 Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name);
              }
         }
         
@@ -648,9 +642,9 @@ impl Discoverer {
              if !res_config.import { continue; }
 
              if tf_type == "google_folder" {
-                 Self::discover_google_folder(asset, res_config, add_import_id, add_import_id_as_comment, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
+                 Self::discover_google_folder(asset, res_config, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
              } else if tf_type == "google_project" {
-                 Self::discover_google_project(asset, res_config, add_import_id, add_import_id_as_comment, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name);
+                 Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name);
              }
         }
 
@@ -697,13 +691,13 @@ impl Discoverer {
              }
 
              if tf_type.contains("organization_policy") || tf_type == "google_org_policy_policy" {
-                 Self::discover_organization_policy(tf_type, asset, res_config, registry, add_import_id, add_import_id_as_comment, &scope, &scope_id, &mut config, &mut folder_map, &mut project_map, &gcp_id_to_yaml_name);
+                 Self::discover_organization_policy(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if asset.iam_policy.is_some() {
-                 Self::discover_iam_policy(tf_type, asset, &scope, &scope_id, &mut config, &mut folder_map, &mut project_map, &gcp_id_to_yaml_name);
+                 Self::discover_iam_policy(tf_type, asset, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if tf_type == "google_project_service" {
-                 Self::discover_google_project_service(tf_type, asset, res_config, registry, add_import_id, add_import_id_as_comment, &scope_id, &mut project_map, &gcp_id_to_yaml_name);
+                 Self::discover_google_project_service(tf_type, asset, res_config, registry, &scope_id, &mut project_map, &gcp_id_to_yaml_name);
              } else {
-                 Self::discover_generic_resource(tf_type, asset, res_config, registry, add_import_id, add_import_id_as_comment, &scope, &scope_id, &mut config, &mut folder_map, &mut project_map, &gcp_id_to_yaml_name);
+                 Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              }
         }
         
@@ -723,8 +717,6 @@ impl Discoverer {
     fn discover_google_folder(
         asset: &Asset,
         _res_config: &crate::config::DiscoveryResourceConfig,
-        add_import_id: bool,
-        add_import_id_as_comment: bool,
         folder_map: &mut HashMap<String, Folder>,
         folder_id_to_parent: &mut HashMap<String, String>,
         gcp_id_to_yaml_name: &mut HashMap<String, String>,
@@ -757,8 +749,7 @@ impl Discoverer {
          let folder = Folder {
              display_name,
              parent: parent_string.clone(),
-             import_id: if add_import_id { Some(folder_id.clone()) } else { None },
-             import_id_comment: if add_import_id_as_comment { Some(folder_id.clone()) } else { None },
+             import_id: Some(folder_id.clone()),
              ..Default::default()
          };
          folder_map.insert(yaml_key, folder);
@@ -786,8 +777,6 @@ impl Discoverer {
     fn discover_google_project(
         asset: &Asset,
         res_config: &crate::config::DiscoveryResourceConfig,
-        add_import_id: bool,
-        add_import_id_as_comment: bool,
         project_map: &mut HashMap<String, Project>,
         project_id_to_parent: &mut HashMap<String, String>,
         gcp_id_to_yaml_name: &mut HashMap<String, String>,
@@ -866,8 +855,7 @@ impl Discoverer {
              tags,
              billing_account,
              deletion_policy,
-             import_id: if add_import_id { Some(project_id.clone()) } else { None },
-             import_id_comment: if add_import_id_as_comment { Some(project_id.clone()) } else { None },
+             import_id: Some(project_id.clone()),
              ..Default::default()
          };
          project_map.insert(yaml_key, project);
@@ -897,8 +885,6 @@ impl Discoverer {
          asset: &Asset,
          res_config: &crate::config::DiscoveryResourceConfig,
          registry: Option<&ResourceRegistry>,
-         _add_import_id: bool,
-         _add_import_id_as_comment: bool,
          scope_id: &str,
          project_map: &mut HashMap<String, Project>,
          gcp_id_to_yaml_name: &HashMap<String, String>,
@@ -915,7 +901,7 @@ impl Discoverer {
                    data_clone.insert("service".to_string(), serde_json::Value::String(service_name.clone()));
 
                    let data_val = serde_json::Value::Object(data_clone);
-                   Self::filter_values(tf_type, &data_val, schema, false, false, res_config.exclude.as_ref())
+                   Self::filter_values(tf_type, &data_val, schema, false, res_config.exclude.as_ref())
                } else {
                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
                }
@@ -936,15 +922,11 @@ impl Discoverer {
          asset: &Asset,
          res_config: &crate::config::DiscoveryResourceConfig,
          registry: Option<&ResourceRegistry>,
-         add_import_id: bool,
-         add_import_id_as_comment: bool,
          scope: &str,
          scope_id: &str,
-         config: &mut Config,
-         folder_map: &mut HashMap<String, Folder>,
-         project_map: &mut HashMap<String, Project>,
-         gcp_id_to_yaml_name: &HashMap<String, String>,
+         sinks: Sinks<'_>,
     ) {
+         let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
           let name = &asset.name;
           
           let raw_key = if let Some(field) = &res_config.derive_yaml_key_from {
@@ -970,18 +952,13 @@ impl Discoverer {
                 }
           }
 
-          if !resource_val.is_empty()
-               && add_import_id {
+          if !resource_val.is_empty() {
                     let import_id_val = resource_val.get(serde_yaml::Value::String("name".to_string())).cloned();
 
                     if let Some(val) = import_id_val {
                          let old_map = std::mem::replace(&mut resource_val, serde_yaml::Mapping::new());
                          
-                         if !add_import_id_as_comment {
-                              resource_val.insert(serde_yaml::Value::String("import-id".to_string()), val);
-                         } else {
-                              resource_val.insert(serde_yaml::Value::String("import-id-comment".to_string()), val);
-                         }
+                         resource_val.insert(serde_yaml::Value::String("import-id".to_string()), val);
                          
                          for (k, v) in old_map {
                               resource_val.insert(k, v);
@@ -1032,11 +1009,9 @@ impl Discoverer {
          asset: &Asset,
          scope: &str,
          scope_id: &str,
-         config: &mut Config,
-         folder_map: &mut HashMap<String, Folder>,
-         project_map: &mut HashMap<String, Project>,
-         gcp_id_to_yaml_name: &HashMap<String, String>,
+         sinks: Sinks<'_>,
     ) {
+         let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
          if let Some(iam) = &asset.iam_policy {
              for binding in &iam.bindings {
                  if !binding.members.is_empty() {
@@ -1057,7 +1032,7 @@ impl Discoverer {
                                       f.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
                                       if let Some(serde_yaml::Value::Mapping(members_map)) = f.extra.get_mut(tf_type) {
                                             let member_key = serde_yaml::Value::String(member.clone());
-                                            if members_map.get(&member_key).is_none() { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
+                                            if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                                             if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
                                                 let role_val = serde_yaml::Value::String(role.clone());
                                                 if !roles.contains(&role_val) { roles.push(role_val); }
@@ -1087,7 +1062,7 @@ impl Discoverer {
                                           p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
                                       if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
                                             let member_key = serde_yaml::Value::String(member.clone());
-                                            if members_map.get(&member_key).is_none() { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
+                                            if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                                             if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
                                                 let role_val = serde_yaml::Value::String(role.clone());
                                                 if !roles.contains(&role_val) { roles.push(role_val); }
@@ -1108,15 +1083,11 @@ impl Discoverer {
          asset: &Asset,
          res_config: &crate::config::DiscoveryResourceConfig,
          registry: Option<&ResourceRegistry>,
-         add_import_id: bool,
-         add_import_id_as_comment: bool,
          scope: &str,
          scope_id: &str,
-         config: &mut Config,
-         folder_map: &mut HashMap<String, Folder>,
-         project_map: &mut HashMap<String, Project>,
-         gcp_id_to_yaml_name: &HashMap<String, String>,
+         sinks: Sinks<'_>,
     ) {
+         let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
           let name = &asset.name;
           let raw_key = if let Some(field) = &res_config.derive_yaml_key_from {
                if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
@@ -1132,7 +1103,7 @@ impl Discoverer {
                if let Some(data) = &resource.data {
                    let schema = registry.and_then(|r| r.find_resource(tf_type)).map(|(_, s)| s);
                    let data_val = serde_json::Value::Object(data.clone());
-                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &data_val, schema, add_import_id, add_import_id_as_comment, res_config.exclude.as_ref()) {
+                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &data_val, schema, true, res_config.exclude.as_ref()) {
                         resource_val = m;
                    }
                }
@@ -1369,7 +1340,7 @@ fn link_folders_to_parents(
     folder_map: &mut HashMap<String, Folder>,
 ) {
     let mut sorted_folder_ids: Vec<String> = folder_id_to_parent.keys().cloned().collect();
-    sorted_folder_ids.sort_by(|a, b| b.len().cmp(&a.len()));
+    sorted_folder_ids.sort_by_key(|id| std::cmp::Reverse(id.len()));
 
     for child_id in sorted_folder_ids {
         let parent_id = &folder_id_to_parent[&child_id];

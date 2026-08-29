@@ -1025,9 +1025,7 @@ Thumbs.db
             let s_dir = PathBuf::from(&runtime_config.schema_dir);
             let registry = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
             let is_type = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
-            // Every discovered resource carries its import id: the estate this
-            // writes exists to adopt what is already there.
-            let discoverer = crate::discovery::Discoverer::new(state_val, registry, cli.verbose, true, false, enabled_types);
+            let discoverer = crate::discovery::Discoverer::new(state_val, registry, cli.verbose, enabled_types);
             let config = discoverer.discover()?;
 
             let final_output = satz_output_path(&runtime_config.yaml_dir, output);
@@ -1059,7 +1057,7 @@ Thumbs.db
                     ).into();
                      err
                 })?;
-            let config = crate::discovery::Discoverer::discover_from_org(&customer_organization_id, cli.verbose, true, false, Some(discovery_config_obj), Some(registry)).await?;
+            let config = crate::discovery::Discoverer::discover_from_org(&customer_organization_id, cli.verbose, Some(discovery_config_obj), Some(registry)).await?;
 
             let final_output = satz_output_path(&runtime_config.yaml_dir, output);
             let text = discovered_to_satz(&config, "discovered", &|t| type_names.contains(t))?;
