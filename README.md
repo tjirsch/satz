@@ -119,7 +119,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
 | `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report` |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables` |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--plan` / `--apply` (then run the tool in `hcl_dir`) |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
@@ -209,6 +209,7 @@ satz transpile <INPUT> [options]
 - `--output, -o <FILE>`: Optional output subdirectory or absolute path. By default, output goes to `hcl_dir`.
 - `--schema-dir, -s <DIR>`: Override the schema directory.
 - `--print-variables`: After transpilation, print the resolved variable table (`terraform.tfvars`) to stdout. Useful for debugging variable resolution across multiple include files.
+- `--plan` / `--apply`: after transpiling, run `<tf_tool> plan` / `apply` in `hcl_dir` — one command from estate to plan. The dir is initialised first when it has no `.terraform`. The same as `satz transpile … && satz plan`; `satz plan`, `satz apply` and `satz tf-init` remain for running the tool on its own (extra arguments pass through).
 
 **Running from subdirectories:**
 You can run the transpile command from any directory (e.g., from within the `hcl/` folder) by specifying the config path. Both styles are supported:

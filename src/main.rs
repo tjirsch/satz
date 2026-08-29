@@ -165,6 +165,12 @@ enum Commands {
         /// Print the resolved variable table (terraform.tfvars) to stdout after transpilation
         #[arg(long)]
         print_variables: bool,
+        /// After transpiling, run `<tf_tool> plan` in hcl_dir (initialising it first if needed)
+        #[arg(long)]
+        plan: bool,
+        /// After transpiling, run `<tf_tool> apply` in hcl_dir (initialising it first if needed)
+        #[arg(long)]
+        apply: bool,
     },
     /// Scan Tofu plan JSON for resource renames
     ScanPlan {
@@ -729,7 +735,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     match cmd_choice {
-        Commands::Transpile { input, output, schema_dir, print_variables } => {
+        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply } => {
 
             let input_path = if Path::new(&input).is_absolute() {
                 PathBuf::from(&input)
@@ -780,6 +786,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             write_file("variables.tf", &variables_tf)?;
             write_file("terraform.tfvars", &tfvars)?;
             write_file("imports.tf", &imports_tf)?;
+            if plan || apply {
+                // one tool: transpile, then the tool, in the estate's hcl dir
+                if output.is_some() {
+                    return Err("--plan/--apply run in hcl_dir; drop --output".into());
+                }
+                let hcl_dir = Path::new(&runtime_config.hcl_dir);
+                if !hcl_dir.join(".terraform").exists() {
+                    run_tf(&runtime_config, "init", &["-input=false".to_string()])?;
+                }
+                run_tf(&runtime_config, if apply { "apply" } else { "plan" }, &[])?;
+            }
             Ok::<(), Box<dyn std::error::Error>>(())
         }
         Commands::Init {
