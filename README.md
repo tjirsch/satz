@@ -1200,8 +1200,9 @@ so claims and witnesses can never disagree. Coverage is `implements`, `contribut
 `deviates`; witnesses are mandatory on the first two. Literal Terraform `${…}` references
 inside strings need doubled braces (`"${{google_project.x.project_id}}"`) since `{…}`
 interpolates params. `require` and `report-compliance` accept only `.satz`; `transpile`
-also accepts the legacy YAML dialect, and `migrate-to-satz` converts it with a proof that
-the transpiled output is identical.
+also accepts the legacy YAML dialect (being retired), and `migrate-to-satz` converts it,
+gated by compiling the result through the fragment pipeline and reporting what it emits —
+a migrated estate may need a manual edit; `tofu plan` has the last word.
 
 ## YAML dialect features (legacy input)
 

@@ -90,6 +90,9 @@ struct PrePassed {
     header: Vec<String>,
     /// (snake name, satz value expression)
     params: Vec<(String, String)>,
+    /// The source used `!import-include`, the dialect's transpile-time live
+    /// import. Converted as a plain include; the operator runs `satz adopt`.
+    import_include_seen: bool,
 }
 
 fn pre_pass(src: &str) -> Result<PrePassed, MigrateError> {
@@ -112,6 +115,7 @@ fn pre_pass(src: &str) -> Result<PrePassed, MigrateError> {
     let mut params: Vec<(String, String)> = Vec::new();
     let mut in_vars = false;
     let mut use_n = 0usize;
+    let mut import_include_seen = false;
 
     while i < lines.len() {
         let line = lines[i];
@@ -198,6 +202,17 @@ fn pre_pass(src: &str) -> Result<PrePassed, MigrateError> {
                 cond.unwrap_or("")
             )
         };
+        // `!import-include` was the transpile-time live import of the dialect;
+        // Satz has no such tag — the file is `use`d like any other and the
+        // adoption happens through `satz adopt` afterwards. Convert it as a
+        // plain include and tell the operator.
+        let subst = if strimmed.contains("!import-include ") && !strimmed.starts_with('#') {
+            import_include_seen = true;
+            subst.replace("!import-include ", "!include ")
+        } else {
+            subst
+        };
+        let strimmed = subst.trim_start();
         if !strimmed.starts_with('#') {
             if let Some(rest) = strimmed.strip_prefix("!include-if ") {
                 let mut parts = rest.trim().splitn(2, ' ');
@@ -247,7 +262,7 @@ fn pre_pass(src: &str) -> Result<PrePassed, MigrateError> {
     if src.ends_with('\n') {
         yaml.push('\n');
     }
-    Ok(PrePassed { yaml, header, params })
+    Ok(PrePassed { yaml, header, params, import_include_seen })
 }
 
 /// Convert a scalar value's TEXT (from the variables pre-pass) into a Satz value
@@ -694,6 +709,10 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
     let mut header = pre.header.clone();
     header.push(String::new());
     header.push("Converted by `satz migrate-to-satz` — interior comments were not carried.".to_string());
+    if pre.import_include_seen {
+        header.push("NEEDS ADOPTION: the source used `!import-include` (a transpile-time live import).".to_string());
+        header.push("It is a plain `use` here; run `satz adopt <estate> --execute` after converting to import what already exists.".to_string());
+    }
     convert_value(&top, kind_keyword, name, &pre.params, &header)
 }
 
@@ -791,6 +810,20 @@ mod tests {
         let y = "variables:\n  sink-name: &sink-name \"s\"\n  org-id: &org-id \"1\"\nsec:\n  *sink-name:\n    org_id: *org-id\n    include_children: True\n    filter: |\n      lineA \"q\"\n      lineB:\"z\"\n";
         let s = convert(y, "pack", "t").unwrap();
         assert!(s.contains("lineA \\\"q\\\"\\nlineB:\\\"z\\\"\\n\""), "TRAILING LOST:\n{s}");
+    }
+
+    #[test]
+    fn import_include_converts_to_use_with_an_adoption_note() {
+        let y = "org_policy_policy: !import-include presets/cis.yaml\n!import-include presets/groups.yaml\n";
+        let s = convert(y, "estate", "t").unwrap();
+        assert!(s.contains("use \"presets/cis.yaml\" as org_policy_policy"), "{s}");
+        assert!(s.contains("use \"presets/groups.yaml\""), "{s}");
+        // the directive is gone from the body; only the note mentions it
+        assert!(!s.lines().any(|l| !l.starts_with("//") && l.contains("import-include")), "{s}");
+        assert!(s.contains("// NEEDS ADOPTION") && s.contains("satz adopt"), "{s}");
+        // a source without the tag carries no note
+        let s2 = convert("!include a.yaml\n", "estate", "t").unwrap();
+        assert!(!s2.contains("NEEDS ADOPTION"), "{s2}");
     }
 
     #[test]

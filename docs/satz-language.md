@@ -1188,7 +1188,7 @@ never legal conformity.
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `tf-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
-| `migrate-to-satz <file>.yaml` | — | convert from the legacy dialect, gated by identity (§12) |
+| `migrate-to-satz <file>.yaml [--kind estate] [--gate <estate>.satz]` | — | convert from the legacy dialect; gated by compiling through the fragment pipeline (§12) |
 
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere.
 The estate file is a positional argument, relative to `yaml_dir`.
@@ -1287,19 +1287,22 @@ iam-managed-disableServiceAccountKeyCreation:
 }
 ```
 
-**How the conversion is proven.** Satz has a second, independent compilation
-target: the legacy YAML dialect. `migrate-to-satz` converts a file and then
-compiles the result back through that twin, and the gate is transpile identity
-— the converted estate must emit the same resource set as the original. Convert
-packs first with `--gate <estate>`, then the estate with `--kind estate`.
-Interior comments are not carried; the converter says so at the top of its
-output.
+**How a conversion is checked.** `migrate-to-satz` converts a file and compiles
+the result through the fragment pipeline — the pipeline that will actually read
+it — and prints the emitted resource set (`CONVERTED: … N resources emitted`).
+An estate is gated on itself; a pack is gated on the `.satz` estate you pass
+with `--gate`, or only parsed when there is none. A conversion that cannot be
+checked in context says `NEEDS-REVIEW`; the last word is `satz transpile` and a
+`tofu plan` that shows no destroy for what the old estate managed. Interior
+comments are not carried; the converter says so at the top of its output. An
+estate that used the dialect's `!import-include` converts to a plain `use` with
+a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
 
 **A limit worth knowing:** `use "x.yaml"` is accepted by the parser, but the
 fragment pipeline cannot load a YAML pack — it reports `unexpected character
 ':'`. Convert the pack.
 
-**Why the dialect is still supported** rather than deleted: some estates have
-not converted, and the owner's rule is that the YAML path stays open as long as
-it does not hinder a design decision. When it does, that is raised as an
-explicit decision and recorded — never worked around quietly.
+**Why the dialect still parses at all:** to be migrated. That is the whole of
+its support (owner decision, 2026-08-29): YAML is never transpiled or generated
+by new functionality, and a YAML code path a cleanup breaks is removed rather
+than repaired. A migrated estate may need a manual edit or two.
