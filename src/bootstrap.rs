@@ -473,38 +473,18 @@ pub async fn bootstrap(
         let step = format!("Folder \"{}\"", folder_display_name);
         println!("Checking for existing Infrastructure Folder: {}...", folder_display_name);
 
-        // 2a. Search for folder by display name in the parent
-        let search_url = "https://cloudresourcemanager.googleapis.com/v3/folders";
-        let res = client.get(search_url)
-            .query(&[("parent", &parent)])
-            .bearer_auth(&token.token)
-            .send()
-            .await?;
+        // 2a. Search for folder by display name in the parent — every page,
+        // and exactly one match. A failed search must not fall through to
+        // creation: that would try to create a folder that may already exist,
+        // and the real cause (usually a denied list call) would never be reported.
+        let lookup = match crate::gcp::resourcemanager::list_folders(&client, &token.token, &parent).await {
+            Ok(folders) => crate::gcp::resourcemanager::find_folder_by_display_name(&folders, folder_display_name),
+            Err(e) => Err(format!("could not list folders under {}: {}", parent, e)),
+        };
 
-        // A failed search must not fall through to creation: that would try to create a
-        // folder that may already exist, and the real cause (usually a denied list call)
-        // would never be reported.
-        let mut search_failed = None;
-        let mut resolved_folder_id = None;
-        if res.status().is_success() {
-            let folders: serde_json::Value = res.json().await?;
-            if let Some(list) = folders.get("folders").and_then(|v| v.as_array()) {
-                let found = list.iter().find(|f| {
-                    f.get("displayName").and_then(|v| v.as_str()) == Some(folder_display_name)
-                });
-                if let Some(folder) = found {
-                    if let Some(name) = folder.get("name").and_then(|v| v.as_str()) {
-                        resolved_folder_id = Some(name.to_string());
-                    }
-                }
-            }
-        } else {
-            search_failed = Some(res.text().await?);
-        }
-
-        if let Some(err) = search_failed {
-            summary.record(&step, StepStatus::Failed(format!("could not list folders under {}: {}", parent, err)));
-        } else if let Some(folder_id) = resolved_folder_id {
+        if let Err(err) = lookup {
+            summary.record(&step, StepStatus::Failed(err));
+        } else if let Ok(Some(folder_id)) = lookup {
             current_parent = folder_id.clone();
             summary.record(&step, StepStatus::AlreadyExisted);
         } else {
@@ -580,6 +560,10 @@ pub async fn bootstrap(
     // Billing, API enablement and the bucket all live inside this project, so track
     // whether it exists explicitly rather than inferring it from the last recorded step.
     let mut project_usable = true;
+    // The project NUMBER: the create operation's response carries it, and it
+    // is the id every folder-scoped or project-scoped adoption needs. It used
+    // to be discarded here — the only place the tool ever had it.
+    let mut project_number: Option<String> = None;
     if res.status().is_success() {
         let info: serde_json::Value = res.json().await?;
         match info.get("name").and_then(|v| v.as_str()) {
@@ -593,6 +577,11 @@ pub async fn bootstrap(
                             project_usable = false;
                             summary.record(&project_step, StepStatus::Failed(err.to_string()));
                         } else {
+                            project_number = op
+                                .get("response")
+                                .and_then(|r| r.get("name"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
                             summary.record(&project_step, StepStatus::Created);
                         }
                     }
@@ -611,10 +600,17 @@ pub async fn bootstrap(
         }
     } else if res.status().as_u16() == 409 {
         summary.record(&project_step, StepStatus::AlreadyExisted);
+        match crate::gcp::resourcemanager::get_project_number(&client, &token.token, &project_id).await {
+            Ok(n) => project_number = n,
+            Err(e) => eprintln!("warning: could not read project {}: {}", project_id, e),
+        }
     } else {
         let err = res.text().await?;
         project_usable = false;
         summary.record(&project_step, StepStatus::Failed(err));
+    }
+    if let Some(n) = &project_number {
+        println!("Project number: {}", n.trim_start_matches("projects/"));
     }
 
     if summary.has_permission_failure() {
