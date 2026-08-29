@@ -4272,6 +4272,146 @@ hcl trust "test fixture" {
 }
 
 #[cfg(test)]
+mod import_id_channels {
+    //! `"import-id"` on every kind of emitted resource, both pipelines. Pipeline
+    //! B used to drop it silently for IAM bindings and nested project services,
+    //! and neither pipeline had a channel for memberships. Parity is the gate:
+    //! the walk over the compiled twin must produce the same import blocks.
+    use super::*;
+    use std::path::Path;
+
+    const ESTATE: &str = r#"estate import_channels
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0example"
+  customer_domain = "example.com"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_organization_iam_member {
+  "group:gcp-org-admins@{customer_domain}" = [
+    "roles/viewer",
+    { role = "roles/browser" "import-id" = "123456789012 roles/browser group:gcp-org-admins@example.com" },
+  ]
+}
+
+google_project {
+  infra {
+    "import-id" = "acme-infra-001"
+    project_id = "acme-infra-001"
+    project_service = [
+      "logging.googleapis.com",
+      { service = "storage.googleapis.com" "import-id" = "acme-infra-001/storage.googleapis.com" },
+    ]
+  }
+}
+
+google_cloud_identity_group {
+  gcp_auditors {
+    "import-id" = "groups/00abc"
+    member = [
+      "user:a@{customer_domain}",
+      { id = "user:b@{customer_domain}" "import-id" = "groups/00abc/memberships/111" },
+    ]
+  }
+}
+"#;
+
+    fn sorted_lines(s: &str) -> Vec<String> {
+        let mut v: Vec<String> = s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).collect();
+        v.sort_unstable();
+        v
+    }
+
+    fn pipeline_b(reg: &ResourceRegistry) -> crate::emitter::EmitOut {
+        let resolver = crate::EstateResolver { registry: reg };
+        let fe = satz_core::pipeline::compile_estate("main.satz", ESTATE, &resolver, &|p| Err(format!("no use: {}", p)))
+            .expect("front-end");
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        assert!(folded.conflicts().is_empty());
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(reg);
+        crate::emitter::emit(&folded, &ctx).expect("emit")
+    }
+
+    fn pipeline_a(tmp: &Path, reg: ResourceRegistry) -> crate::transpiler::GeneratedProject {
+        let compiled = satz_core::satz::compile(ESTATE).expect("compile twin");
+        std::fs::write(tmp.join("main.yaml"), &compiled.yaml).unwrap();
+        include_processor::set_resource_types(Default::default());
+        let (text, _) = include_processor::process_includes_with_ops(&tmp.join("main.yaml"), &[tmp.to_path_buf()]).expect("expand");
+        let raw: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse");
+        let raw = merge_renamed_resource_keys(raw).expect("fold");
+        let variables = extract_variables(&resolve_yaml_custom_tags(raw.clone()));
+        let resolved = resolve_yaml_custom_tags(merge_variables(raw));
+        let config: Config = serde_yaml::from_value(resolved).expect("config");
+        let t = Transpiler::new(
+            &config,
+            Some(reg),
+            vec!["google_project_service".to_string(), ".*_iam_member".to_string()],
+            "none".to_string(),
+            variables,
+            HashMap::new(),
+            HashMap::new(),
+        );
+        t.transpile().expect("transpile")
+    }
+
+    #[test]
+    fn every_channel_emits_its_import_block_and_both_pipelines_agree() {
+        let reg = super::corpus::registry();
+        let b = pipeline_b(&reg);
+
+        let binding = crate::emit_shared::iam_member_label("group:gcp-org-admins@example.com", "roles/browser", None);
+        let membership = crate::transpiler::membership_resource_label("gcp_auditors", "user:b@example.com");
+        for (to, id) in [
+            (format!("google_organization_iam_member.{}", binding), "123456789012 roles/browser group:gcp-org-admins@example.com"),
+            ("google_project.infra".to_string(), "acme-infra-001"),
+            ("google_project_service.infra_storage_googleapis_com".to_string(), "acme-infra-001/storage.googleapis.com"),
+            ("google_cloud_identity_group.gcp_auditors".to_string(), "groups/00abc"),
+            (format!("google_cloud_identity_group_membership.{}", membership), "groups/00abc/memberships/111"),
+        ] {
+            assert!(b.imports_tf.contains(&format!("to = {}", to)), "missing import for {}:\n{}", to, b.imports_tf);
+            assert!(b.imports_tf.contains(&format!("id = \"{}\"", id)), "missing id {}:\n{}", id, b.imports_tf);
+        }
+        assert!(!b.main_tf.contains("import-id"), "import-id must never reach a resource body:\n{}", b.main_tf);
+        // the unadopted entries still emit as resources
+        assert!(b.manifest.addresses().contains("google_project_service.infra_logging_googleapis_com"));
+        assert_eq!(b.manifest.of_type("google_cloud_identity_group_membership").count(), 2);
+
+        let tmp = std::env::temp_dir().join("satz-import-id-channels");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let a = pipeline_a(&tmp, super::corpus::registry());
+        assert_eq!(sorted_lines(&a.imports_tf), sorted_lines(&b.imports_tf), "the walk and the emitter disagree on import blocks");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn two_different_ids_for_one_binding_refuse() {
+        use satz_core::algebra::GrantEdge;
+        let mut edges = std::collections::BTreeSet::new();
+        for id in ["one", "two"] {
+            edges.insert(GrantEdge { member: "user:x@example.com".into(), role: "roles/viewer".into(), condition: String::new(), import_id: id.into() });
+        }
+        let err = crate::emitter::reconciled_edges(&edges).unwrap_err();
+        assert!(err.contains("two different import-ids"), "{}", err);
+
+        let mut merged = std::collections::BTreeSet::new();
+        merged.insert(GrantEdge { member: "u".into(), role: "r".into(), condition: String::new(), import_id: String::new() });
+        merged.insert(GrantEdge { member: "u".into(), role: "r".into(), condition: String::new(), import_id: "x".into() });
+        let got = crate::emitter::reconciled_edges(&merged).unwrap();
+        assert_eq!(got.len(), 1, "with and without an id is one binding");
+        assert_eq!(got[0].import_id, "x");
+    }
+}
+
+#[cfg(test)]
 mod preset_tests {
     use std::path::{Path, PathBuf};
 

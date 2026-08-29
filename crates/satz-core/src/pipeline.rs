@@ -960,8 +960,8 @@ fn insert_grant(
     };
     let mut edges = std::collections::BTreeSet::new();
     for r in list {
-        let (role, condition) = match r {
-            serde_yaml::Value::String(s) => (s, String::new()),
+        let (role, condition, import_id) = match r {
+            serde_yaml::Value::String(s) => (s, String::new(), String::new()),
             // Conditional binding. Satz writes `{ role = "…", condition = { … } }`;
             // the legacy YAML dialect puts the role in the key with a null value
             // (`- roles/x:` followed by a sibling `condition:`). Both are accepted.
@@ -970,6 +970,7 @@ fn insert_grant(
             serde_yaml::Value::Mapping(m) => {
                 let mut role = String::new();
                 let mut condition = String::new();
+                let mut import_id = String::new();
                 for (k, v) in &m {
                     let Some(k) = k.as_str() else { continue };
                     match k {
@@ -979,7 +980,10 @@ fn insert_grant(
                                 .trim_end()
                                 .to_string();
                         }
-                        "import-id" => {}
+                        // Adoption of an existing binding: rides the edge to the
+                        // emitter, which writes the `import` block. Used to be
+                        // dropped here without a word.
+                        "import-id" => import_id = v.as_str().unwrap_or_default().to_string(),
                         "role" => role = v.as_str().unwrap_or_default().to_string(),
                         other => role = other.to_string(),
                     }
@@ -987,11 +991,11 @@ fn insert_grant(
                 if role.is_empty() {
                     return perr(file_name, line, format!("conditional grant has no role: {:?}", m));
                 }
-                (role, condition)
+                (role, condition, import_id)
             }
             other => return perr(file_name, line, format!("grant role must be a string or a conditional mapping, got {:?}", other)),
         };
-        edges.insert(GrantEdge { member: member.to_string(), role, condition });
+        edges.insert(GrantEdge { member: member.to_string(), role, condition, import_id });
     }
     let label = if rt.scope == Scope::Node && !path.is_empty() {
         format!("{}{}{}", path.join("/"), GRANT_SCOPE_SEP, member)

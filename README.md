@@ -306,7 +306,7 @@ google_org_policy_policy {
 ```
 
 **How it works:**
-- **`"import-id" = "<ID>"`**: Provide the full GCP resource ID.
+- **`"import-id" = "<ID>"`**: Provide the full GCP resource ID. Honoured on every emitted resource; where the resource is an *entry* — a role in an IAM grant list, a service in `project_service`, a member of a group — write the entry as an object and put the id there (`{ role = "roles/x" "import-id" = "…" }`, `{ service = "…" "import-id" = "…" }`, `{ id = "user:…" "import-id" = "…" }`). See the language reference §6.7.
 - **`imports.tf` Generation**: The transpiler detects the `import-id` and generates a corresponding OpenTofu `import` block in `hcl/imports.tf`.
 - **Automatic Lifecycle**: `imports.tf` is automatically deleted before each `transpile` run and only recreated if `import-id` tags are found.
 - **Execution**: Running `tofu plan` (or `apply`) will show these resources as "to be imported".

@@ -17,6 +17,10 @@ pub struct GrantEdge {
     pub role: String,
     /// Canonical rendering of the condition, empty when absent.
     pub condition: String,
+    /// `"import-id"` declared on this binding, empty when absent. Not part of
+    /// the binding's identity: the emitter reconciles an edge declared with
+    /// and without an id into one resource, and refuses two different ids.
+    pub import_id: String,
 }
 
 /// A resource body in canonical form. Canonical equality — not byte equality — is
@@ -244,7 +248,7 @@ mod laws {
                 // deterministic body from seed via a tiny strategy sample
                 let body = if kind == 0 {
                     let mut s = BTreeSet::new();
-                    if seed % 3 != 0 { s.insert(GrantEdge{member: format!("m{}", seed % 2), role: format!("r{}", seed % 3), condition: String::new()}); }
+                    if seed % 3 != 0 { s.insert(GrantEdge{member: format!("m{}", seed % 2), role: format!("r{}", seed % 3), condition: String::new(), import_id: String::new()}); }
                     Body::Grant(s)
                 } else {
                     Body::Attrs(serde_yaml::Value::Number(((seed % 3) as u64).into()))
