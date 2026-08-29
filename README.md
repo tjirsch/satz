@@ -124,6 +124,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork` |
+| `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
 | `migrate <INPUT>` | `--mode` |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
@@ -567,12 +568,20 @@ them and the next run subtracts them. The report names what was already
 declared (live id → address), what is new, and what is declared but not live.
 On a real org: estate + packs → `tofu plan` = N to import, 0 to add, 0 to destroy.
 
-Live imports carry the API's vocabulary: keys are snake-cased (`storageClass` →
-`storage_class`) and any key the provider schema still does not know is
-**dropped and reported** (`19 attribute(s) dropped — not in the provider
-schema`, names with `--verbose`) rather than written into HCL that would not
-plan. A fetch that fails aborts the import — nothing is written from a
-partial sweep.
+Live imports carry the API's vocabulary. Keys are snake-cased (`storageClass` →
+`storage_class`); where the names genuinely differ — `lifecycle.rule[]` is
+Terraform's `lifecycle_rule` (a reserved-word collision),
+`iamConfiguration.uniformBucketLevelAccess.enabled` is `uniform_bucket_level_access`
+(a flattening) — no rule relates the two, so **`satz map-types` derives the map**:
+for every `import: true` row it fetches the API's Discovery Document (cached under
+`presets/.discovery/`), aligns its schema against the provider schema (exact after
+snake_case; flattened leaves; renamed blocks by property overlap; the rest
+unmatched) and writes `presets/type-map.yaml`, which the live import applies before
+the schema filter. Review the rows it marks `renamed`; re-run after a provider
+bump; an ambiguous schema name is pinned with `api_schema:` on the row. What the
+schema still does not know is **dropped and reported** (names with `--verbose`)
+rather than written into HCL that would not plan. A fetch that fails aborts the
+import — nothing is written from a partial sweep.
 
 **Under the Hood:**
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
