@@ -6,6 +6,7 @@ mod emitter;
 mod manifest;
 mod state_migration;
 mod discovery;
+mod delta;
 mod template;
 mod adopt;
 mod bootstrap;
@@ -326,6 +327,10 @@ enum Commands {
         /// yaml shape: write the conversion as a `<stem>.local.satz` fork
         #[arg(long)]
         fork: bool,
+        /// live shape: import only what this estate does not already declare
+        /// (matched by live id), as packs the estate `use`s
+        #[arg(long)]
+        into: Option<PathBuf>,
     },
     /// Alias of `satz import <state.json>` — removed in the next release
     #[command(hide = true)]
@@ -1019,7 +1024,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, output, import_config, gate, kind, fork } => {
+        Commands::Import { source, from, only, output, import_config, gate, kind, fork, into } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1044,6 +1049,9 @@ Thumbs.db
                         filtered = off.into_iter().collect();
                     }
                     let output = output.unwrap_or_else(|| PathBuf::from("discovered.satz"));
+                    if into.is_some() && shape != "org" {
+                        return Err("--into applies to the live shape (organizations/…, folders/…, projects/…)".into());
+                    }
                     if shape == "state" {
                         let state_json = match source.as_deref() {
                             None | Some("-") => None,
@@ -1052,7 +1060,10 @@ Thumbs.db
                         import_state(state_json, output, cfg, filtered, cli.verbose, &tool_config, &runtime_config)
                     } else {
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
-                        import_org(&parent, output, cfg, filtered, cli.verbose, &runtime_config).await
+                        match into {
+                            Some(estate) => import_delta(&parent, estate_path(estate, &runtime_config), cfg, filtered, cli.verbose, &tool_config, &runtime_config).await,
+                            None => import_org(&parent, output, cfg, filtered, cli.verbose, &runtime_config).await,
+                        }
                     }
                 }
                 other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
@@ -2010,6 +2021,123 @@ fn discovered_to_satz(
     ];
     let satz = satz_core::migrate::convert_value(&top, "estate", name, &params, &header)?;
     Ok(satz_core::migrate::normalize_type_keys(&satz, is_type))
+}
+
+/// The live shape with `--into`: the delta against what the estate declares.
+async fn import_delta(
+    parent: &str,
+    estate: PathBuf,
+    cfg: ImportConfig,
+    filtered: std::collections::HashSet<String>,
+    verbose: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::delta;
+    reject_yaml_estate(&estate, "import --into")?;
+    println!("import: root {} → into {}", parent, estate.display());
+
+    // 1. what the estate already covers, by live id (adopt's resolution, dry)
+    let out = pipeline_b_generate(&estate, tool_config, runtime_config)?;
+    let opts = crate::adopt::Options { only: Default::default(), activate: false };
+    let mut live = crate::adopt::RealLive::new(&out.customer_id).await?;
+    let resolutions = crate::adopt::resolve(&out.manifest, &cfg, &opts, &mut live).await;
+    let declared = delta::declared_from(&resolutions);
+    println!("import: {} declared resource(s) resolved to live ids", declared.ids.len());
+
+    // 2. the sweep
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    attach_billing_accounts(&mut found.config).await;
+    let top = match serde_yaml::to_value(&found.config)? {
+        serde_yaml::Value::Mapping(m) => m,
+        other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
+    };
+    let live_ids = delta::live_ids(&top);
+
+    // 3. subtract
+    let d = delta::subtract(top, &declared);
+
+    // 4. packs + `use` lines
+    let yaml_dir = Path::new(&runtime_config.yaml_dir);
+    let mut estate_text = fsx::read_to_string(&estate)?;
+    let mut written: Vec<String> = Vec::new();
+    let header = |what: &str| {
+        vec![
+            format!("Imported from {} — what the estate did not declare {}.", parent, what),
+            "Regenerated on every `satz import --into`; move entries into the estate as you adopt them —".to_string(),
+            "the next run subtracts them by live id. `satz transpile`, then `tofu plan` is the check.".to_string(),
+        ]
+    };
+    let is_type = |t: &str| type_names.contains(t);
+    if !d.top.is_empty() {
+        let name = delta::pack_name(parent, None);
+        let satz = satz_core::migrate::convert_value(&d.top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
+        let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
+        fsx::write(yaml_dir.join(&name), satz)?;
+        if let Some(t) = delta::add_use(&estate_text, &name, None)? {
+            estate_text = t;
+        }
+        written.push(name);
+    }
+    let mut hints: Vec<String> = Vec::new();
+    // packs first, then the `use` lines bottom-up so earlier line numbers
+    // stay valid (an insert shifts everything below it)
+    let mut inserts: Vec<(u32, String)> = Vec::new();
+    for (address, children) in &d.under {
+        let name = delta::pack_name(parent, Some(address));
+        let satz = satz_core::migrate::convert_value(children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
+        let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
+        fsx::write(yaml_dir.join(&name), satz)?;
+        let origin = declared.containers.values().find(|(a, _)| a == address).and_then(|(_, o)| o.clone());
+        match origin {
+            Some((file, line)) if Path::new(&file) == estate.as_path() || file.ends_with(&estate.to_string_lossy().to_string()) => {
+                inserts.push((line, name.clone()));
+            }
+            Some((file, line)) => hints.push(format!("{} is declared in {}:{} (not the estate) — add `use \"{}\"` inside that block by hand", address, file, line, name)),
+            None => hints.push(format!("{} has no declaring line — add `use \"{}\"` inside its block by hand", address, name)),
+        }
+        written.push(name);
+    }
+    inserts.sort_by(|a, b| b.0.cmp(&a.0));
+    for (line, name) in inserts {
+        if let Some(t) = delta::add_use(&estate_text, &name, Some(line))? {
+            estate_text = t;
+        }
+    }
+    fsx::write(&estate, estate_text)?;
+
+    // 5. report
+    println!();
+    for name in &written {
+        println!("  wrote {} (+ its `use` in {})", yaml_dir.join(name).display(), estate.display());
+    }
+    for h in &hints {
+        println!("  note: {}", h);
+    }
+    let mut already = d.already.clone();
+    already.sort();
+    already.dedup();
+    println!("\nimport: {} new resource(s) written, {} already declared, {} declared but not live", d.new, already.len(), declared.not_live.len());
+    if verbose {
+        for (id, address) in &already {
+            println!("  already: {} = {}", address, id);
+        }
+    }
+    for a in &declared.not_live {
+        println!("  declared, not live (will be created on apply): {}", a);
+    }
+    let unseen: Vec<&String> = declared.ids.keys().filter(|id| !live_ids.contains(*id)).collect();
+    if verbose && !unseen.is_empty() {
+        println!("  {} declared id(s) not among the swept assets (types the sweep did not cover, or derived ids)", unseen.len());
+    }
+    crate::discovery::report_skipped(&found, &filtered, verbose);
+    if written.is_empty() {
+        println!("import: nothing to add — the estate already declares everything the sweep found.");
+    }
+    Ok(())
 }
 
 /// The Resource Manager asset carries no billing link; without it an imported

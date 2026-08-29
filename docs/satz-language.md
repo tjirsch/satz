@@ -1185,7 +1185,7 @@ never legal conformity.
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `tf-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
-| `import [<source>] [--only t,…] [--import-config f]` | — | create an estate from what exists: a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, or a legacy `.yaml` file (`--kind`, `--gate`; §12); checked by `transpile` + `tofu plan` |
+| `import [<source>] [--only t,…] [--import-config f] [--into <estate>]` | — | create an estate from what exists: a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, or a legacy `.yaml` file (`--kind`, `--gate`; §12); `--into` imports only what the estate does not declare, as packs it `use`s; checked by `transpile` + `tofu plan` |
 
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere.
 The estate file is a positional argument, relative to `yaml_dir`.

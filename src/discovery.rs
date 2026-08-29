@@ -79,6 +79,42 @@ fn take_dropped() -> Vec<(String, String)> {
     v
 }
 
+/// A grant entry carrying its Terraform import id: `{ role, "import-id" }`,
+/// the object form the pipeline reads (language reference §6.7).
+fn grant_entry(role: &str, import_id: &str) -> serde_yaml::Value {
+    let mut m = serde_yaml::Mapping::new();
+    m.insert("role".into(), serde_yaml::Value::String(role.to_string()));
+    m.insert("import-id".into(), serde_yaml::Value::String(import_id.to_string()));
+    serde_yaml::Value::Mapping(m)
+}
+
+fn grant_role(v: &serde_yaml::Value) -> Option<&str> {
+    v.as_str().or_else(|| v.as_mapping().and_then(|m| m.get("role")).and_then(|r| r.as_str()))
+}
+
+fn push_grant(roles: &mut Vec<serde_yaml::Value>, role: &str, import_id: Option<String>) {
+    if roles.iter().any(|r| grant_role(r) == Some(role)) {
+        return;
+    }
+    roles.push(match import_id {
+        Some(id) => grant_entry(role, &id),
+        None => serde_yaml::Value::String(role.to_string()),
+    });
+}
+
+/// The import id of a grant, from its parent's identity — the same
+/// derivation as the `import_id` templates adopt renders:
+/// `<parent> <role> <member>` (`b/<bucket>` for bucket grants, the bare
+/// number for the organization).
+pub fn grant_import_id(tf_type: &str, parent: &str, role: &str, member: &str) -> String {
+    let parent = match tf_type {
+        "google_storage_bucket_iam_member" => format!("b/{}", parent.trim_start_matches("b/")),
+        "google_organization_iam_member" => parent.trim_start_matches("organizations/").to_string(),
+        _ => parent.to_string(),
+    };
+    format!("{} {} {}", parent, role, member)
+}
+
 /// The organization an asset's ancestor chain ends in.
 pub fn organization_from_ancestors<'a, I: IntoIterator<Item = &'a String>>(ancestors: I) -> Option<String> {
     ancestors
@@ -474,13 +510,18 @@ impl Discoverer {
         if tf_type.ends_with("_iam_member") {
             let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
             let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
+            let parent = if tf_type == "google_storage_bucket_iam_member" {
+                values["bucket"].as_str().unwrap_or("").to_string()
+            } else {
+                p.project_id.clone()
+            };
+            let id = grant_import_id(tf_type, &parent, &role, &member);
             if !p.extra.contains_key(tf_type) { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
                 let member_key = serde_yaml::Value::String(member);
                 if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                 if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
-                    let role_val = serde_yaml::Value::String(role);
-                    if !roles.contains(&role_val) { roles.push(role_val); }
+                    push_grant(roles, &role, Some(id));
                 }
             }
             return;
@@ -501,13 +542,14 @@ impl Discoverer {
         if tf_type.ends_with("_iam_member") {
             let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
             let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
+            let parent = f.import_id.clone().unwrap_or_else(|| values["folder"].as_str().unwrap_or("").to_string());
+            let id = grant_import_id(tf_type, &parent, &role, &member);
             if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = f.extra.get_mut(tf_type) {
                 let member_key = serde_yaml::Value::String(member);
                 if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                 if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
-                    let role_val = serde_yaml::Value::String(role);
-                    if !roles.contains(&role_val) { roles.push(role_val); }
+                    push_grant(roles, &role, Some(id));
                 }
             }
             return;
@@ -523,13 +565,18 @@ impl Discoverer {
         if tf_type.ends_with("_iam_member") {
             let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
             let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
+            let parent = ["org_id", "billing_account_id", "folder", "project", "bucket"]
+                .iter()
+                .find_map(|k| values[*k].as_str().filter(|s| !s.is_empty()))
+                .unwrap_or("")
+                .to_string();
+            let id = grant_import_id(tf_type, &parent, &role, &member);
 
             if tf_type == "google_organization_iam_member" {
                 if c.organization_iam_member.is_none() { c.organization_iam_member = Some(HashMap::new()); }
                 if let Some(ref mut members_map) = c.organization_iam_member {
                     let roles = members_map.entry(member).or_insert_with(Vec::new);
-                    let role_val = serde_yaml::Value::String(role);
-                    if !roles.contains(&role_val) { roles.push(role_val); }
+                    push_grant(roles, &role, Some(id));
                 }
             } else {
                 if !c.extra.contains_key(tf_type) { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
@@ -537,8 +584,7 @@ impl Discoverer {
                     let member_key = serde_yaml::Value::String(member);
                     if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                     if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
-                        let role_val = serde_yaml::Value::String(role);
-                        if !roles.contains(&role_val) { roles.push(role_val); }
+                        push_grant(roles, &role, Some(id));
                     }
                 }
             }
@@ -1067,6 +1113,27 @@ impl Discoverer {
 
           if let Some(p_yaml) = gcp_id_to_yaml_name.get(scope_id) {
                if let Some(p) = project_map.get_mut(p_yaml) {
+                    // The service's import id is `<project>/<service>` (adopt's
+                    // rule), in the `{ "<service>": { "import-id": … } }` form the
+                    // emitter reads (`filter_values` collapsed a bare service to a
+                    // string).
+                    let id = serde_yaml::Value::String(format!("{}/{}", p.project_id, service_name));
+                    let resource_val = match resource_val {
+                        serde_yaml::Value::String(svc) => {
+                            let mut attrs = serde_yaml::Mapping::new();
+                            attrs.insert("import-id".into(), id);
+                            let mut m = serde_yaml::Mapping::new();
+                            m.insert(serde_yaml::Value::String(svc), serde_yaml::Value::Mapping(attrs));
+                            serde_yaml::Value::Mapping(m)
+                        }
+                        serde_yaml::Value::Mapping(mut m) => {
+                            if let Some((_, serde_yaml::Value::Mapping(attrs))) = m.iter_mut().next() {
+                                attrs.insert("import-id".into(), id);
+                            }
+                            serde_yaml::Value::Mapping(m)
+                        }
+                        other => other,
+                    };
                     if p.project_service.is_none() { p.project_service = Some(Vec::new()); }
                     p.project_service.as_mut().unwrap().push(resource_val);
                }
@@ -1178,8 +1245,7 @@ impl Discoverer {
                                  if config.organization_iam_member.is_none() { config.organization_iam_member = Some(HashMap::new()); }
                                  if let Some(ref mut members_map) = config.organization_iam_member {
                                      let roles = members_map.entry(member.clone()).or_insert_with(Vec::<serde_yaml::Value>::new);
-                                     let role_val = serde_yaml::Value::String(role.clone());
-                                     if !roles.contains(&role_val) { roles.push(role_val); }
+                                     push_grant(roles, role, Some(grant_import_id(tf_type, scope_id, role, member)));
                                  }
                              }
                          } else if scope == "folder" {
@@ -1190,8 +1256,7 @@ impl Discoverer {
                                             let member_key = serde_yaml::Value::String(member.clone());
                                             if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                                             if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
-                                                let role_val = serde_yaml::Value::String(role.clone());
-                                                if !roles.contains(&role_val) { roles.push(role_val); }
+                                                push_grant(roles, role, Some(grant_import_id(tf_type, scope_id, role, member)));
                                             }
                                       }
                                  }
@@ -1199,6 +1264,7 @@ impl Discoverer {
                          } else if scope == "project" {
                              if let Some(p_yaml) = gcp_id_to_yaml_name.get(scope_id) {
                                  if let Some(p) = project_map.get_mut(p_yaml) {
+                                      let project_id = p.project_id.clone();
                                       if tf_type == "google_storage_bucket_iam_member" {
                                           let bucket_name = asset.name.split('/').next_back().unwrap_or("unknown-bucket").to_string();
                                           let member_sanitized = member.replace(":", "_").replace("@", "_").replace(".", "_");
@@ -1209,6 +1275,10 @@ impl Discoverer {
                                           resource_map.insert(serde_yaml::Value::String("bucket".to_string()), serde_yaml::Value::String(bucket_name));
                                           resource_map.insert(serde_yaml::Value::String("member".to_string()), serde_yaml::Value::String(member.clone()));
                                           resource_map.insert(serde_yaml::Value::String("role".to_string()), serde_yaml::Value::String(role.clone()));
+                                          resource_map.insert(
+                                              serde_yaml::Value::String("import-id".to_string()),
+                                              serde_yaml::Value::String(grant_import_id(tf_type, resource_map.get("bucket").and_then(|b| b.as_str()).unwrap_or(""), role, member)),
+                                          );
                                           
                                           p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
                                           if let Some(serde_yaml::Value::Mapping(type_map)) = p.extra.get_mut(tf_type) {
@@ -1220,8 +1290,7 @@ impl Discoverer {
                                             let member_key = serde_yaml::Value::String(member.clone());
                                             if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                                             if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
-                                                let role_val = serde_yaml::Value::String(role.clone());
-                                                if !roles.contains(&role_val) { roles.push(role_val); }
+                                                push_grant(roles, role, Some(grant_import_id(tf_type, &project_id, role, member)));
                                             }
                                       }
                                   }

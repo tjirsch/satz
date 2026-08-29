@@ -123,7 +123,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
-| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`; yaml shape: `--kind`, `--gate`, `--fork` |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork` |
 | `migrate <INPUT>` | `--mode` |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
@@ -519,6 +519,7 @@ satz import folders/456789                   # live, one folder
 satz import projects/my-prj                  # live, one project
 satz import old-estate.yaml --kind estate    # the legacy YAML dialect (until the last org is moved)
 satz import                                  # live, root taken from the import config
+satz import organizations/123456789012 --into C0example.satz   # only what the estate does not declare
 ```
 
 **Parameters:**
@@ -552,6 +553,19 @@ its reason: `type off (import: false)`, `filtered by --only`, `unmapped` (no
 import-config row fits the asset), or `parent not imported`. Counts by reason
 always; every name with `--verbose`. The levers are the `import:` rows and
 `--only`.
+
+**Delta import (`--into <estate>`).** Identity is the live id, never the label
+(the import names a folder `folder-<n>`, your estate calls it `infra_folder`).
+The estate's declared resources are resolved to their live ids the way `adopt`
+does (dry, nothing changes in the cloud); everything the sweep found with one of
+those ids is subtracted; the remainder is written as packs the estate `use`s —
+`imported-<scope>.satz` for the top level, `imported-<scope>-<container>.satz`
+for what sits under a folder or project the estate already declares, `use`d
+from inside that block so the fold places it. The estate is never rewritten
+beyond those `use` lines; move entries from a pack into the estate as you adopt
+them and the next run subtracts them. The report names what was already
+declared (live id → address), what is new, and what is declared but not live.
+On a real org: estate + packs → `tofu plan` = N to import, 0 to add, 0 to destroy.
 
 Live imports carry the API's vocabulary: keys are snake-cased (`storageClass` →
 `storage_class`) and any key the provider schema still does not know is
