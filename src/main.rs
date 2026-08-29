@@ -1034,11 +1034,8 @@ Thumbs.db
                 }
                 "hcl" => {
                     let src = source.ok_or("the hcl shape needs a directory of .tf files, or one file")?;
-                    if !wrap_all {
-                        return Err("translating resource blocks into Satz is not implemented yet (roadmap 3.1b) — pass --wrap-all to carry every block verbatim inside `hcl trust`, or import the estate's state instead (`tofu show -json > state.json`)".into());
-                    }
                     let output = output.unwrap_or_else(|| PathBuf::from("imported-hcl.satz"));
-                    import_hcl_wrapped(&src, output, cli.verbose, &runtime_config)
+                    import_hcl(&src, output, wrap_all, cli.verbose, &runtime_config)
                 }
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
@@ -2131,9 +2128,9 @@ async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: bool, runtime_
     Ok(())
 }
 
-/// The hcl shape, `--wrap-all`: every block of every `.tf` verbatim inside
-/// `hcl trust`, one estate.
-fn import_hcl_wrapped(src: &str, output: PathBuf, verbose: bool, runtime_config: &ToolConfig) -> Result<(), Box<dyn std::error::Error>> {
+/// The hcl shape: literal resource blocks become Satz resources, the rest is
+/// carried verbatim inside `hcl trust` (`--wrap-all`: everything), one estate.
+fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime_config: &ToolConfig) -> Result<(), Box<dyn std::error::Error>> {
     let src_path = Path::new(src);
     let mut files: Vec<PathBuf> = if src_path.is_dir() {
         let mut v: Vec<PathBuf> = std::fs::read_dir(src_path)?
@@ -2155,7 +2152,9 @@ fn import_hcl_wrapped(src: &str, output: PathBuf, verbose: bool, runtime_config:
         .map(|f| Ok(satz_hcl::Input { path: f.to_string_lossy().into_owned(), text: fsx::read_to_string(f)? }))
         .collect::<Result<_, std::io::Error>>()?;
     let name = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl");
-    let imported = satz_hcl::wrap_all(&inputs, name)?;
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
+    let is_type = |t: &str| registry.as_ref().is_some_and(|r| r.resources.contains_key(t));
+    let imported = satz_hcl::import(&inputs, name, wrap_all, &is_type)?;
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
@@ -2165,8 +2164,9 @@ fn import_hcl_wrapped(src: &str, output: PathBuf, verbose: bool, runtime_config:
     println!("{}", satz_hcl::summary(&imported.rows));
     for r in &imported.rows {
         match &r.action {
-            satz_hcl::Action::Dropped(why) => println!("  dropped  {}:{} {} — {}", r.file, r.line, r.what, why),
-            satz_hcl::Action::Wrapped if verbose => println!("  wrapped  {}:{} {}", r.file, r.line, r.what),
+            satz_hcl::Action::Dropped(why) => println!("  dropped    {}:{} {} — {}", r.file, r.line, r.what, why),
+            satz_hcl::Action::Wrapped(why) if !wrap_all || verbose => println!("  wrapped    {}:{} {} — {}", r.file, r.line, r.what, why),
+            satz_hcl::Action::Translated if verbose => println!("  translated {}:{} {}", r.file, r.line, r.what),
             _ => {}
         }
     }

@@ -16,6 +16,10 @@ satz="${SATZ:-$root/target/release/satz}"
 if [ ! -x "$satz" ]; then
   (cd "$root" && cargo build --release --quiet)
 fi
+# no GitHub update check per invocation (CI runners share the unauthenticated quota)
+if [ ! -f "$HOME/.config/satz/satz.toml" ]; then
+  mkdir -p "$HOME/.config/satz" && printf 'self_update_frequency = "never"\n' > "$HOME/.config/satz/satz.toml"
+fi
 cd "$root/tests/smoke"
 rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz evidence
 mkdir -p tmp
@@ -74,6 +78,17 @@ grep -q 'resource "google_storage_bucket" "logs"' tmp/imported-hcl-hcl/main.tf |
 grep -q 'raw HCL passthrough' tmp/transpile-hcl.txt || fail "passthrough blocks must be announced"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/imported-hcl-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
+fi
+
+step "import, hcl shape (translate): literal resources become Satz, positional ones wrap"
+"$satz" --config . import tf -o imported-hcl2.satz --verbose | tee tmp/import-hcl2.txt
+grep -q '1 block(s) translated' tmp/import-hcl2.txt || fail "the bucket should translate:\n$(cat tmp/import-hcl2.txt)"
+grep -q 'google_folder.*positional' tmp/import-hcl2.txt || fail "the folder should wrap as positional"
+grep -q '^google_storage_bucket {' yaml/imported-hcl2.satz || fail "no translated bucket in the estate"
+"$satz" --config . transpile imported-hcl2.satz --output "$PWD/tmp/imported-hcl2-hcl" 2>&1 | tee tmp/transpile-hcl2.txt
+grep -q 'lifecycle_rule {' tmp/imported-hcl2-hcl/main.tf || fail "the translated bucket lost its lifecycle_rule"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/imported-hcl2-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
 fi
 
 step "adopt, offline dry run must refuse without ADC rather than guess"
