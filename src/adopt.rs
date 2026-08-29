@@ -389,20 +389,29 @@ pub(crate) fn summary(resolutions: &[Resolution]) -> String {
 /// that does not exist fails the whole `tofu plan`, so those go through
 /// `--import`, which verifies per resource. Returns (written, not written) —
 /// the latter with the exact snippet to add by hand.
-pub(crate) fn write_import_ids(resolutions: &[Resolution]) -> Result<(Vec<String>, Vec<String>), String> {
-    let mut by_file: BTreeMap<String, Vec<(u32, String, String)>> = BTreeMap::new();
+/// One id to write: (line, address, id, (tf_type, natural_key)).
+type Edit = (u32, String, String, (String, String));
+
+/// `presets_dir`: a pristine pack there (no `.local.` in its name) is
+/// upstream-owned and never edited — its resources are reported with the
+/// remedy (`--execute --import`, or fork the pack) instead.
+pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&std::path::Path>) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut by_file: BTreeMap<String, Vec<Edit>> = BTreeMap::new();
     let mut hints = Vec::new();
     for r in resolutions {
+        // Derived ids (`verified: false`) are written too: the id's existence
+        // is checked by `tofu plan` on the import block — the validator.
         let id = match &r.outcome {
-            Outcome::Resolved { id, verified: true } => id,
+            Outcome::Resolved { id, .. } => id,
             _ => continue,
         };
         match &r.origin {
-            Some((file, line)) => by_file.entry(file.clone()).or_default().push((*line, r.address.clone(), id.clone())),
-            None => hints.push(format!(
-                "{}: add \"import-id\" = \"{}\" to its entry (derived resource — object form, see language reference §6.7)",
-                r.address, id
+            Some((file, _)) if is_pristine_pack(file, presets_dir) => hints.push(format!(
+                "{}: declared in the pristine pack {} — packs are upstream-owned; import it with `--execute --import`, or fork the pack (`merge-presets`) and re-run",
+                r.address, file
             )),
+            Some((file, line)) => by_file.entry(file.clone()).or_default().push((*line, r.address.clone(), id.clone(), (r.tf_type.clone(), r.natural_key.clone()))),
+            None => hints.push(format!("{}: add \"import-id\" = \"{}\" to its entry by hand (no declaring line)", r.address, id)),
         }
     }
     let mut written = Vec::new();
@@ -411,22 +420,39 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution]) -> Result<(Vec<String
         let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
         // bottom-up so earlier line numbers stay valid
         edits.sort_by(|a, b| b.0.cmp(&a.0));
-        for (line, address, id) in edits {
+        for (line, address, id, (tf_type, natural_key)) in edits {
             let idx = line as usize - 1;
             let Some(decl) = lines.get(idx) else {
                 hints.push(format!("{}: {}:{} is past the end of the file", address, file, line));
                 continue;
             };
-            if !decl.trim_end().ends_with('{') {
-                hints.push(format!(
-                    "{}: {}:{} does not open a block on its own line — add \"import-id\" = \"{}\" by hand",
-                    address, file, line, id
-                ));
-                continue;
+            match derived_entry(&tf_type, &id, &natural_key) {
+                // a derived resource: rewrite the list entry inside the block
+                // that starts at `line` into `{ <key> = "<value>" "import-id" = "<id>" }`
+                Some((key, needles)) => match rewrite_list_entry(&mut lines, idx, &needles, key, &id) {
+                    Some(at) => written.push(format!("{} → {}:{}", address, file, at + 1)),
+                    None => hints.push(format!(
+                        "{}: no entry {} found under {}:{} (interpolated, or already an object) — add \"import-id\" = \"{}\" to it by hand",
+                        address,
+                        needles.iter().map(|n| format!("\"{}\"", n)).collect::<Vec<_>>().join(" / "),
+                        file,
+                        line,
+                        id
+                    )),
+                },
+                None => {
+                    if !decl.trim_end().ends_with('{') {
+                        hints.push(format!(
+                            "{}: {}:{} does not open a block on its own line — add \"import-id\" = \"{}\" by hand",
+                            address, file, line, id
+                        ));
+                        continue;
+                    }
+                    let indent: String = decl.chars().take_while(|c| c.is_whitespace()).collect();
+                    lines.insert(idx + 1, format!("{}  \"import-id\" = \"{}\"", indent, id));
+                    written.push(format!("{} → {}:{}", address, file, line + 1));
+                }
             }
-            let indent: String = decl.chars().take_while(|c| c.is_whitespace()).collect();
-            lines.insert(idx + 1, format!("{}  \"import-id\" = \"{}\"", indent, id));
-            written.push(format!("{} → {}:{}", address, file, line + 1));
         }
         let mut out = lines.join("\n");
         if text.ends_with('\n') {
@@ -435,6 +461,81 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution]) -> Result<(Vec<String
         std::fs::write(&file, out).map_err(|e| format!("{}: {}", file, e))?;
     }
     Ok((written, hints))
+}
+
+fn is_pristine_pack(file: &str, presets_dir: Option<&std::path::Path>) -> bool {
+    let Some(dir) = presets_dir else { return false };
+    let f = std::path::Path::new(file);
+    let under = match (std::fs::canonicalize(f), std::fs::canonicalize(dir)) {
+        (Ok(a), Ok(b)) => a.starts_with(&b),
+        _ => f.starts_with(dir),
+    };
+    under && !file.contains(".local.")
+}
+
+/// For a derived resource: the key of the object form and the source strings
+/// its list entry may be written as. `None` for a resource with a block of
+/// its own.
+fn derived_entry(tf_type: &str, id: &str, natural_key: &str) -> Option<(&'static str, Vec<String>)> {
+    if tf_type.ends_with("_iam_member") {
+        // `<parent> <role> <member>` — the entry is the role
+        let role = id.split_whitespace().nth(1)?;
+        return Some(("role", vec![role.to_string()]));
+    }
+    match tf_type {
+        "google_project_service" => {
+            let svc = id.rsplit('/').next()?;
+            Some(("service", vec![svc.to_string()]))
+        }
+        "google_cloud_identity_group_membership" => {
+            // natural key `<email> in groups/<n>`; the entry is the member as
+            // written — bare, or with its principal prefix
+            let email = natural_key.split(" in ").next()?.trim();
+            if email.is_empty() {
+                return None;
+            }
+            Some(("id", vec![
+                email.to_string(),
+                format!("user:{}", email),
+                format!("serviceAccount:{}", email),
+                format!("group:{}", email),
+            ]))
+        }
+        _ => None,
+    }
+}
+
+/// Inside the block/list opened at `start`, replace the first line whose entry
+/// is one of `needles` (a quoted string item) with the object form. Returns
+/// the line index rewritten.
+fn rewrite_list_entry(lines: &mut [String], start: usize, needles: &[String], key: &str, id: &str) -> Option<usize> {
+    let mut depth: i32 = 0;
+    for (i, line) in lines.iter_mut().enumerate().skip(start) {
+        let raw = line.clone();
+        let t = raw.trim();
+        if i > start {
+            let item = t.trim_end_matches(',').trim();
+            if let Some(inner) = item.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+                if needles.iter().any(|n| n == inner) {
+                    let indent: String = raw.chars().take_while(|c| c.is_whitespace()).collect();
+                    let comma = if t.ends_with(',') { "," } else { "" };
+                    *line = format!("{}{{ {} = \"{}\" \"import-id\" = \"{}\" }}{}", indent, key, inner, id, comma);
+                    return Some(i);
+                }
+            }
+        }
+        for c in t.chars() {
+            match c {
+                '{' | '[' => depth += 1,
+                '}' | ']' => depth -= 1,
+                _ => {}
+            }
+        }
+        if i > start && depth <= 0 {
+            return None;
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -724,6 +825,25 @@ import {
 
     /// The shipped rules are data the engine depends on: they must parse, and
     /// the types every fleet estate declares must have one.
+    /// F16: derived resources have no block of their own; their id goes into
+    /// the list entry they derive from, as the object form.
+    #[test]
+    fn derived_ids_rewrite_the_list_entry_in_place() {
+        let src = "google_organization_iam_member {\n  \"group:a@example.com\" = [\n    \"roles/viewer\",\n    \"roles/browser\",\n  ]\n}\n\ngoogle_cloud_identity_group {\n  auditors {\n    display_name = \"A\"\n    member = [\n      \"user:b@example.com\",\n    ]\n  }\n}\n";
+        let mut lines: Vec<String> = src.lines().map(String::from).collect();
+        let (key, needles) = derived_entry("google_organization_iam_member", "1 roles/browser group:a@example.com", "").unwrap();
+        let at = rewrite_list_entry(&mut lines, 1, &needles, key, "1 roles/browser group:a@example.com").unwrap();
+        assert_eq!(lines[at], "    { role = \"roles/browser\" \"import-id\" = \"1 roles/browser group:a@example.com\" },");
+        assert_eq!(lines[2], "    \"roles/viewer\",", "the other entry is untouched");
+        // a needle outside the block is not found
+        assert!(rewrite_list_entry(&mut lines, 1, &["user:b@example.com".to_string()], "id", "x").is_none());
+        let (key, needles) = derived_entry("google_cloud_identity_group_membership", "groups/g/memberships/m", "b@example.com in groups/g").unwrap();
+        let at = rewrite_list_entry(&mut lines, 8, &needles, key, "groups/g/memberships/m").unwrap();
+        assert_eq!(lines[at], "      { id = \"user:b@example.com\" \"import-id\" = \"groups/g/memberships/m\" },");
+        let (key, needles) = derived_entry("google_project_service", "p/storage.googleapis.com", "").unwrap();
+        assert_eq!((key, needles), ("service", vec!["storage.googleapis.com".to_string()]));
+    }
+
     #[test]
     fn shipped_import_config_carries_rules_for_the_fleet_types() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presets/import-config.yaml");
@@ -753,23 +873,30 @@ import {
     }
 
     #[test]
-    fn write_inserts_after_the_declaring_line_and_skips_the_unverified() {
+    fn write_inserts_after_the_declaring_line_and_refuses_pristine_packs() {
         let tmp = std::env::temp_dir().join("satz-adopt-write.satz");
         std::fs::write(&tmp, "google_folder {\n  workloads {\n    display_name = \"Workloads\"\n  }\n  one { display_name = \"x\" }\n}\n").unwrap();
         let file = tmp.to_string_lossy().to_string();
+        let presets = std::env::temp_dir().join("satz-adopt-presets");
+        std::fs::create_dir_all(&presets).unwrap();
+        let pack = presets.join("cis.satz");
+        std::fs::write(&pack, "pack cis version \"1.0\"\n\n\"x\" {\n  name = \"compute.x\"\n}\n").unwrap();
         let rs = vec![
             Resolution { address: "google_folder.workloads".into(), tf_type: "google_folder".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111".into(), verified: true }, origin: Some((file.clone(), 2)), org_policy: None },
             Resolution { address: "google_folder.one".into(), tf_type: "google_folder".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/1".into(), verified: true }, origin: Some((file.clone(), 5)), org_policy: None },
-            Resolution { address: "google_project.p".into(), tf_type: "google_project".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "p".into(), verified: false }, origin: Some((file.clone(), 2)), org_policy: None },
-            Resolution { address: "google_folder_iam_member.g".into(), tf_type: "google_folder_iam_member".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111 r m".into(), verified: true }, origin: None, org_policy: None },
+            Resolution { address: "google_folder_iam_member.g".into(), tf_type: "google_folder_iam_member".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111 r m".into(), verified: false }, origin: None, org_policy: None },
+            Resolution { address: "google_org_policy_policy.x".into(), tf_type: "google_org_policy_policy".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "organizations/1/policies/compute.x".into(), verified: false }, origin: Some((pack.to_string_lossy().to_string(), 3)), org_policy: None },
         ];
-        let (written, hints) = write_import_ids(&rs).unwrap();
+        let (written, hints) = write_import_ids(&rs, Some(&presets)).unwrap();
         let text = std::fs::read_to_string(&tmp).unwrap();
         assert_eq!(text, "google_folder {\n  workloads {\n    \"import-id\" = \"folders/111\"\n    display_name = \"Workloads\"\n  }\n  one { display_name = \"x\" }\n}\n");
         assert_eq!(written.len(), 1);
-        assert_eq!(hints.len(), 2, "{:?}", hints);
+        assert_eq!(hints.len(), 3, "{:?}", hints);
         assert!(hints.iter().any(|h| h.contains("google_folder.one") && h.contains("by hand")));
-        assert!(hints.iter().any(|h| h.contains("google_folder_iam_member.g") && h.contains("object form")));
+        assert!(hints.iter().any(|h| h.contains("google_folder_iam_member.g") && h.contains("no declaring line")));
+        assert!(hints.iter().any(|h| h.contains("google_org_policy_policy.x") && h.contains("pristine pack")));
+        assert!(!std::fs::read_to_string(&pack).unwrap().contains("import-id"), "a pristine pack is never edited");
         let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_dir_all(&presets);
     }
 }

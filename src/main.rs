@@ -2273,7 +2273,7 @@ async fn run_adopt(
         }
         println!("\nadopt: {} activated, {} imported, {} failed. Now run `satz plan` — it should show no create for what was imported.", activated, imported, failed);
     } else {
-        let (written, hints) = adopt::write_import_ids(&resolutions)?;
+        let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)))?;
         for w in &written {
             println!("  wrote {}", w);
         }

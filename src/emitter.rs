@@ -365,17 +365,13 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
         // The entity's own block is the first one its arm pushed; blocks after
         // it (memberships, services, exploded grants) are derived and have no
-        // line of their own. A grant map's blocks are all derived, and its
-        // provenance is the member line — recorded on each, so a grant can at
-        // least be pointed at.
+        // line of their own, so they point at the line they derive from — the
+        // group, the project, the grant map's member line. `adopt --execute`
+        // rewrites the list entry it finds there into the object form.
         if let Some(span) = entity.provenance.first() {
-            let derived_all = matches!(entity.body, Body::Grant(_));
             for b in &blocks[first_block..] {
                 if let Some(a) = block_address(b) {
                     origins.push((a, span.file.clone(), span.line));
-                }
-                if !derived_all {
-                    break;
                 }
             }
         }
