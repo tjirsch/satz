@@ -557,6 +557,10 @@ form is the only correct one.
 type name: it is expanded into a group resource (deriving `group_key`, `parent =
 customers/<id>` and the discussion_forum/security labels) rather than passed
 through.
+Every group block also carries `lifecycle { ignore_changes = [initial_group_config] }`
+(merged with a lifecycle you declare): `initial_group_config` is create-only and a
+live group does not report it, so without this an *adopted* group would plan as
+"must be replaced" — destroyed and recreated with its memberships.
 
 ### 6.5 IAM grants
 

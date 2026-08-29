@@ -231,9 +231,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     &ctx.customer_id,
                     &ctx.customer_domain,
                     Some("google.google"),
-                    attrs
-                        .get(serde_yaml::Value::String("lifecycle".into()))
-                        .and_then(|v| crate::emit_shared::lifecycle_block(v, &|_| None)),
+                    crate::emit_shared::group_lifecycle(attrs),
                 ));
                 blocks.extend(crate::emit_shared::membership_blocks(
                     &addr.label,
