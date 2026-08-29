@@ -119,7 +119,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
 | `diff-organizational-policies <CONFIG_FILE>` | `--preset`, `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report` |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables` (runs the `!import-include` live lookup + import as a side effect when present) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables` |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
@@ -325,50 +325,15 @@ Curated Organization Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) ar
 pulled into an estate with `use` and rendered as `google_org_policy_policy` resources
 like any other. The wrinkle is GCP **managed** constraints (their name contains
 `.managed.`, e.g. `iam.managed.disableServiceAccountKeyCreation`): depending on org state
-they must be *activated*, then *imported as-is*, and only then *modified*. The
-`!import-include` directive automates exactly that during `transpile`; three read-only CLI
-commands (`export`, `diff`, `report`) round out the workflow.
+they must be *activated*, then *imported as-is*, and only then *modified*.
+`satz adopt --activate` (see [Adopting what already exists](#adopting-what-already-exists-adopt-brownfield))
+does the first two; three read-only CLI commands (`export`, `diff`, `report`) round
+out the workflow.
 
 All Org Policy API calls authenticate via Application Default Credentials (same as
 `bootstrap`) and send your quota project as `x-goog-user-project` (resolved from
 `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT` or the ADC file's `quota_project_id`).
 Run `gcloud auth application-default login` and set a quota project first.
-
-#### Activate + import via `!import-include` (the main workflow)
-
-To bring a preset's policies under management — activating managed constraints and
-importing existing ones into state, with **no console clicking and no `import-id`
-editing** — change the one include line in your main config from `!include` to
-`!import-include`:
-
-```yaml
-# C01234567.yaml
-org_policy_policy: !import-include presets/CIS-GCP-Foundation-4.0.satz
-```
-
-Then run the normal transpile and apply:
-
-```bash
-satz transpile C0example.satz --config config.toml   # renders HCL, then:
-                                                         #   - activates managed constraints (API)
-                                                         #   - tofu import of existing policies into state
-cd hcl && tofu apply                                     # rolls out spec changes / creates the rest
-```
-
-What `transpile` does when it sees `!import-include`:
-1. Renders the HCL exactly as a plain `!include` would (the policies become normal
-   `google_org_policy_policy` resources).
-2. Runs `tofu init`, then for each included policy: if it is **managed and missing**, it is
-   activated via the Org Policy API so it becomes importable; every policy that **exists**
-   live is `tofu import`ed into state. Non-managed policies that don't exist yet are left
-   for your `tofu apply` to create.
-
-It is idempotent (re-running is safe). Once imported, change `!import-include` back to plain
-`!include` — subsequent transpiles are pure local codegen with no GCP/tofu side effects.
-A plain `!include` never triggers any of this.
-
-See [What `!import-include` supports](#what-import-include-supports) for the other resource
-kinds it handles.
 
 #### Export current state (`export-organizational-policies`)
 
@@ -405,80 +370,6 @@ satz report-organizational-policies C01234567.yaml --scope full --format markdow
 `--scope`: `active` (set policies), `inactive` (available but unset), or `full` (both,
 with constraint descriptions pulled from the Org Policy constraints API). `--format pdf`
 converts the markdown via `pandoc` if it is on `PATH` (otherwise the markdown is kept).
-
-### What `!import-include` supports
-
-`!import-include` is not org-policy-specific. **The YAML key the preset is included under
-decides which live lookup runs**, so one directive covers several resource kinds:
-
-| Include key | What `transpile` does | Import id used |
-|---|---|---|
-| `org_policy_policy` (or `google_org_policy_policy`) | Activates missing **managed** constraints, imports every policy that exists live | `organizations/<id>/policies/<constraint>` |
-| `cloud_identity_group` | Looks each group up by email over the Cloud Identity API, imports the ones that exist, then imports the **declared** memberships of those groups | `groups/<id>`, `groups/<id>/memberships/<id>` |
-| anything else / no key | Treated as org policies (the directive's original meaning) | — |
-
-Both spellings of the directive work and mean the same thing:
-
-```yaml
-cloud_identity_group: !import-include presets/security-group-models/s1-group-definitions.yaml
-
-# or, indented under the key:
-cloud_identity_group:
-  !import-include presets/security-group-models/s1-group-definitions.yaml
-```
-
-#### Cloud Identity groups
-
-```bash
-satz transpile C0example.satz --config config.toml
-# !import-include: importing Cloud Identity groups from 1 preset(s)...
-# !import-include: groups imported=3, create-on-apply=2, skipped=0;
-#                  memberships imported=5, create-on-apply=1, skipped=0.
-cd hcl && tofu apply    # creates the groups and members that did not exist yet
-```
-
-Each group's key is derived exactly as the generated HCL derives it — an explicit `id`,
-else an explicit `email`, else `<yaml-key>@<customer-domain>` — and looked up with
-`cloudidentity.googleapis.com/v1/groups:lookup`. Groups that exist are `tofu import`ed;
-groups that do not are left for `tofu apply`. Re-running is safe.
-
-##### Memberships: only the ones you declared
-
-For every group that already exists, each `member` / `manager` / `owner` entry **in your
-config** is looked up with `memberships:lookup` and imported if that person is already in
-the group. Nothing else is touched:
-
-| Situation | Result |
-|---|---|
-| Declared in YAML, already in the group | Imported — `apply` sees no change |
-| Declared in YAML, not in the group | Created by `apply` |
-| **In the group but not in your YAML** | **Left alone** — not in state, never proposed for deletion |
-
-That last row is the point. Importing *every* live member would put people your config
-never mentions under Terraform's control, and the next `apply` would propose removing them.
-Importing only the declared ones keeps the group's other members entirely out of scope.
-
-Requirements: `cloudidentity.googleapis.com` enabled (`bootstrap` already enables it) and a
-principal that may read groups (`roles/cloudidentity.groups.readonly` or Workspace Groups
-Reader). If `groups:lookup` is denied — some tenants answer `403` even for a group that
-simply does not exist — the tool falls back to listing `customers/<customer-id>` once and
-answers from that. If both are denied it warns, counts the group as `skipped`, and carries
-on rather than aborting a transpile whose HCL is already written.
-
-> [!NOTE]
-> An imported group always shows a diff on `initial_group_config`, because the live value
-> cannot be read back. That is what the `lifecycle.ignore_changes` block in the shipped
-> group presets is for.
-
-> [!NOTE]
-> The long `google_cloud_identity_group:` form renders through the generic schema path with
-> raw Terraform attributes, which the group importer cannot address. Using
-> `!import-include` with it is a hard error pointing you at the compact form above.
-
-Preset paths in a `!import-include` resolve like any other include — relative to the
-including file, then along `include_dirs` — **not** against `presets_dir`. With the default
-layout those coincide; if you point `presets_dir` somewhere else, add it to `include_dirs`
-too.
 
 ### Hoisted scopes: where resource types may live
 
@@ -1633,7 +1524,7 @@ Implements custom tags to extend YAML's expressiveness:
 - `!format`: Placeholder-based string construction.
 - `!join`: String concatenation.
 - `!expr`: Terraform expression references (resolved to `"${...}"` interpolation strings).
-- `!import-include`: like `!include`, but at transpile time it also looks the included resources up live and `tofu import`s the ones that already exist. Recorded in an include manifest together with the YAML key it sits under, and that key selects the importer — org policies or Cloud Identity groups (see [What `!import-include` supports](#what-import-include-supports)). Plain `!include` has no side effects.
+- Includes are recorded in a manifest of resolved paths, which is how `check-presets` learns which presets a YAML estate uses. `!include` has no side effects; the old transpile-time `!import-include` was removed — its job is `satz adopt`, and the tag is a loud error now.
 
 #### 5. Discovery Engine
 The `discover` commands reverse-engineer YAML from existing Google Cloud assets.
@@ -1644,17 +1535,17 @@ The `discover` commands reverse-engineer YAML from existing Google Cloud assets.
 
 #### 6. Organization Policy Engine (`src/org_policy.rs`)
 Aligns curated Org Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) with the live organization via the GCP Org Policy API v2 (ADC auth, reusing the `bootstrap` pattern).
-- **`!import-include` (transpile-time)**: after the HCL is rendered, `transpile` activates managed constraints that are missing (API create), then `tofu import`s the existing policies into state — no manual console activation and no `import-id` editing. The user then runs `tofu apply` and flips the directive back to `!include`.
+- **Adoption** (`satz adopt --activate`): activates managed constraints that are missing (API create), then imports the existing policies into state — no manual console activation and no `import-id` editing. `transpile` stays pure; adoption is a separate, explicit command (`src/adopt.rs` drives it through this module's `OrgPolicyClient`).
 - **CLI commands**: `export-organizational-policies` (snapshot live state to a re-importable preset), `diff-organizational-policies` (semantic current-vs-desired report), `report-organizational-policies` (markdown/JSON/PDF inventory with constraint descriptions).
-- **Managed constraints**: constraints whose name contains `.managed.` must be *activated* (API create), then *imported as-is* (`tofu import`), then *modified* (`tofu apply`). `!import-include` sequences the activate+import; `tofu apply` does the modify.
+- **Managed constraints**: constraints whose name contains `.managed.` must be *activated* (API create), then *imported as-is* (`tofu import`), then *modified* (`tofu apply`). `satz adopt --activate` sequences the activate+import; `tofu apply` does the modify.
 - **Pure diff core**: classification + `normalize_spec` are IO-free and unit-tested; they reconcile `enforce "TRUE"`↔`true`, `allowed_values` ordering, and `parameters` JSON-string↔object so semantically-equal policies don't show as diffs.
 
-#### 7. Cloud Identity Group Import (`src/cloud_identity.rs`)
-The second `!import-include` target. A groups preset declares groups by name; adopting the ones that already exist needs their opaque `groups/<id>`, which used to be pasted in by hand.
-- **Lookup, not guesswork**: each group's key is derived by the *same* helpers the transpiler emits HCL with (`group_email` / `group_resource_address` in `src/transpiler.rs`), then resolved via `cloudidentity.googleapis.com/v1/groups:lookup`. Existing groups are `tofu import`ed; missing ones are left for `tofu apply`.
-- **403 is ambiguous**: some tenants return it for a nonexistent group as well as for a permission problem, so a denied lookup falls back to listing `customers/<customer-id>` once. If that fails too the group is counted `skipped` with an actionable hint rather than aborting. Membership lookups use the same fallback, per group.
-- **Declared memberships only**: for a group that exists, each `member`/`manager`/`owner` entry in the config is resolved with `memberships:lookup` and imported if present. Live members the config does not mention are never looked at, so adopting a group cannot make `apply` propose deleting somebody. The membership label is a `DefaultHasher` digest of `(group key, raw member string)`; the importer computes it through the same `membership_resource_label` helper the transpiler emits with, and `membership_label_helper_matches_emitted_hcl` pins the two together.
-- **Quota project**: every Org Policy API request sends `x-goog-user-project`, resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT` or the ADC file's `quota_project_id`.
+#### 7. Cloud Identity Group Lookup (`src/cloud_identity.rs`)
+The group and membership resolvers `satz adopt` uses. A groups pack declares groups by name; adopting the ones that already exist needs their opaque `groups/<id>`, which used to be pasted in by hand.
+- **Lookup, not guesswork**: the group email the emitted HCL carries (`group_key.id`) is resolved via `cloudidentity.googleapis.com/v1/groups:lookup`; a member email via `memberships:lookup`. Existing ones are imported; missing ones are left for `tofu apply`.
+- **403 is ambiguous**: some tenants return it for a nonexistent group as well as for a permission problem, so a denied lookup falls back to listing `customers/<customer-id>` once and answers from that. If that fails too the resolution is reported as FAILED with an actionable hint rather than treated as absent.
+- **Declared memberships only**: `adopt` resolves the memberships the estate emits — live members the estate does not mention are never looked at, so adopting a group cannot make `apply` propose deleting somebody. The membership label is a `DefaultHasher` digest of `(group key, raw member string)` computed by the same `membership_resource_label` helper the emitter uses; `membership_address_matches_the_generated_resource` pins the two together.
+- **Quota project**: every request sends `x-goog-user-project`, resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT` or the ADC file's `quota_project_id`.
 
 ### Bootstrap Workflow (Declarative Tofu)
 Instead of hardcoded setup scripts, `satz` uses a two-phase Tofu approach:

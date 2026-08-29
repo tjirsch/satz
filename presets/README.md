@@ -283,10 +283,11 @@ cloud_identity_group: !include presets/security-group-models/s1-group-definition
 organization_iam_member: !include presets/security-group-models/s1-group-permissions.yaml
 ```
 
-To adopt groups (and their declared members) that already exist in the tenant, use
-`!import-include` instead of `!include` on the definitions line for one transpile —
-each group is looked up by email and imported into state. Members not listed in the
-YAML stay unmanaged.
+To adopt groups (and their declared members) that already exist in the tenant, run
+`satz adopt <estate> --only google_cloud_identity_group,google_cloud_identity_group_membership`
+— each group is looked up by email, each declared member by email in that group, and
+`--execute` writes the verified ids back as `"import-id"`. Members not declared in the
+estate stay unmanaged.
 
 **Required from main:** `*customer-domain`, `*first-admin`, `*svc-iac-account`,
 `*infra-project-name`
@@ -429,14 +430,15 @@ another service agent whose auto-grant the domain lock refuses; the script says
 so instead of printing the raw API error. Flags, failure modes and the rest:
 [`docs/scripts.md`](../docs/scripts.md).
 
-**Include** (the `!import-include` form is the main workflow: it activates managed
-constraints via the Org Policy API and imports existing policies into state — see the
-"Organization Policy Alignment" section of the main README):
+**Use**, then adopt what the organisation already has (`satz adopt --activate`
+activates managed constraints via the Org Policy API and imports existing policies
+into state — see "Adopting what already exists" in the main README):
 
-```yaml
-org_policy_policy: !import-include presets/CIS-GCP-Foundation-4.0.yaml
-# after the first successful transpile+apply, switch back to:
-org_policy_policy: !include presets/CIS-GCP-Foundation-4.0.yaml
+```
+google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
+```
+```bash
+satz adopt C0example.satz --only google_org_policy_policy --activate --execute --import
 ```
 
 **Required from main:** `*customer-organization-id`, `*customer-id`, `*customer-domain`

@@ -1,32 +1,21 @@
-//! Organization Policy alignment: export / diff / report, plus the `!import-include`
-//! transpile-time activate+import hook.
+//! Organization Policy alignment: export / diff / report, plus the Org Policy
+//! client `satz adopt` uses to activate managed constraints and check which
+//! policies are live.
 //!
 //! These subcommands manage GCP Organization Policies (`google_org_policy_policy`,
 //! Org Policy API v2) end-to-end. The hard part is GCP **managed constraints**
 //! (constraint name contains `.managed.`): depending on the org state they must be
-//! *activated*, then *imported as-is*, and only then *modified*. This module
-//! orchestrates that, reusing the existing ADC auth + REST + `tofu import` + transpile
-//! machinery from `bootstrap.rs` and the transpiler.
+//! *activated*, then *imported as-is*, and only then *modified*. `adopt` sequences
+//! the first two; `tofu apply` does the third.
 //!
 //! The pure diff layer (`compute_diff`, `normalize_spec`, helpers) is IO-free and
 //! unit-tested without touching GCP. The `OrgPolicyClient` is the only IO surface.
-//!
-//! **Status after M3 (2026-08-23):** the `!import-include` hook was a YAML-dialect
-//! feature and is no longer reachable — satz reads Satz, which has no
-//! equivalent yet. The code below is deliberately NOT deleted: it is the working
-//! implementation of live group lookup / constraint activation / import that the
-//! Satz adoption mechanism (R1) needs, and rebuilding it from scratch to satisfy a
-//! dead-code warning would be pure churn. It is dead until R1 adopts it; if R1
-//! lands with a different design, THEN delete it.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use crate::config::Config;
-use crate::include_processor::IncludeBinding;
 use crate::ToolConfig;
 
 type BoxErr = Box<dyn std::error::Error>;
@@ -78,12 +67,6 @@ pub fn normalize_parent(raw: &str) -> String {
 ///   -> `iam-managed-disableServiceAccountKeyCreation`.
 pub fn sanitize_yaml_key(constraint: &str) -> String {
     constraint.replace('.', "-")
-}
-
-/// The Terraform resource address for a policy, matching the transpiler's label
-/// (`res_name.replace('-', "_")`, see `transpiler.rs`).
-fn resource_address(yaml_key: &str) -> String {
-    format!("google_org_policy_policy.{}", yaml_key.replace('-', "_"))
 }
 
 // ---------------------------------------------------------------------------
@@ -586,7 +569,7 @@ pub(crate) fn resolve_config_vars(
     let raw: serde_yaml::Value = serde_yaml::from_str(&processed)?;
     // Tags resolved first, so derived variables (`x: &x !format [...]`) reach the table
     // as plain scalars - build_variables_block drops non-scalars, which silently lost
-    // them for !import-include preset resolution.
+    // them for preset resolution.
     Ok(crate::extract_variables(&crate::resolve_yaml_custom_tags(raw)))
 }
 
@@ -1213,45 +1196,6 @@ fn json_to_yaml(v: &Value) -> serde_yaml::Value {
     serde_yaml::to_value(v).unwrap_or(serde_yaml::Value::Null)
 }
 
-/// Build the camelCase API spec body for activation from a desired YAML/JSON spec.
-fn desired_spec_to_api(spec: &Value) -> Value {
-    let mut out = serde_json::Map::new();
-    if let Some(rules) = spec.get("rules").and_then(|r| r.as_array()) {
-        let mut api_rules = Vec::new();
-        for rule in rules {
-            let mut rm = serde_json::Map::new();
-            if let Some(b) = rule.get("enforce").and_then(coerce_bool) {
-                rm.insert("enforce".into(), Value::Bool(b));
-            }
-            if let Some(values) = rule.get("values").and_then(|v| v.as_object()) {
-                let mut vm = serde_json::Map::new();
-                if let Some(av) = values.get("allowed_values").or_else(|| values.get("allowedValues"))
-                {
-                    vm.insert("allowedValues".into(), av.clone());
-                }
-                if let Some(dv) = values.get("denied_values").or_else(|| values.get("deniedValues")) {
-                    vm.insert("deniedValues".into(), dv.clone());
-                }
-                rm.insert("values".into(), Value::Object(vm));
-            }
-            if let Some(p) = rule.get("parameters") {
-                let parsed = match p {
-                    Value::String(s) => {
-                        serde_json::from_str::<Value>(s).unwrap_or(Value::String(s.clone()))
-                    }
-                    other => other.clone(),
-                };
-                rm.insert("parameters".into(), parsed);
-            }
-            if let Some(c) = rule.get("condition").filter(|c| !c.is_null()) {
-                rm.insert("condition".into(), c.clone());
-            }
-            api_rules.push(Value::Object(rm));
-        }
-        out.insert("rules".into(), Value::Array(api_rules));
-    }
-    Value::Object(out)
-}
 
 /// Default output base name `<Cxxxx>` from `customer-id` var, falling back to org id.
 fn output_basename(parent: &str, vars: &HashMap<String, serde_yaml::Value>) -> String {
@@ -1317,7 +1261,7 @@ pub async fn export_org_policies(
 
     let yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(root))?;
     let header = format!(
-        "# Org policies exported from {} ({}).\n# Re-importable preset: diff with diff-organizational-policies, or import via !import-include.\n",
+        "# Org policies exported from {} ({}).\n# Re-importable preset: diff with diff-organizational-policies, or adopt with `satz adopt`.\n",
         parent,
         now_stamp()
     );
@@ -1600,122 +1544,6 @@ pub(crate) fn try_pandoc_pdf(md_path: &Path) {
 }
 
 // ---------------------------------------------------------------------------
-// Transpile-time hook: !import-include directives
-// ---------------------------------------------------------------------------
-
-/// Activate + import the org policies contributed by `!import-include` directives.
-///
-/// Called by `transpile` after the HCL has been written. For each policy in an
-/// `!import-include` file: if it is managed and missing live, it is activated via the Org
-/// Policy API (so it becomes importable); every policy that exists live is then
-/// `tofu import`ed into state. Non-managed policies that don't exist yet are left for the
-/// user's subsequent `tofu apply` to create. Idempotent and safe to re-run.
-pub async fn run_import_includes(
-    bindings: &[IncludeBinding],
-    config_path: &Path,
-    include_paths: &[PathBuf],
-    runtime_config: &ToolConfig,
-    hcl_dir: &Path,
-) -> Result<(), BoxErr> {
-    let import_paths: Vec<&PathBuf> = bindings
-        .iter()
-        .filter(|b| b.op == crate::include_processor::IncludeOp::Import)
-        .map(|b| &b.path)
-        .collect();
-    if import_paths.is_empty() {
-        return Ok(());
-    }
-
-    println!(
-        "\n!import-include: activating + importing org policies from {} preset(s)...",
-        import_paths.len()
-    );
-
-    // `tofu init` (providers must be installed before `tofu import` can run) is the
-    // caller's job — it is shared with the other importers and must happen exactly once.
-    let (parent, vars) = resolve_org_and_vars(config_path, include_paths, None)?;
-
-    let client = OrgPolicyClient::new().await?;
-
-    // Gather desired policies from every !import-include preset.
-    let mut desired: BTreeMap<String, DesiredPolicy> = BTreeMap::new();
-    for path in &import_paths {
-        for (k, v) in resolve_desired_from_preset(path, &vars, include_paths)? {
-            desired.insert(k, v);
-        }
-    }
-
-    // Fetch live state for each distinct parent the policies target.
-    let mut current: BTreeMap<String, Value> = BTreeMap::new();
-    let mut parents: Vec<String> = desired.values().map(|d| d.parent.clone()).collect();
-    parents.push(parent.clone());
-    parents.sort();
-    parents.dedup();
-    for p in &parents {
-        if p.is_empty() {
-            continue;
-        }
-        for (k, v) in fetch_current(&client, p).await? {
-            current.entry(k).or_insert(v);
-        }
-    }
-
-    let (mut activated, mut imported, mut create_on_apply) = (0usize, 0usize, 0usize);
-    for (constraint, dp) in &desired {
-        let exists = current.contains_key(constraint);
-        if !exists {
-            if is_managed(constraint) {
-                // Activate so the managed constraint exists and becomes importable.
-                let api_spec = dp
-                    .policy
-                    .get("spec")
-                    .map(desired_spec_to_api)
-                    .unwrap_or_else(|| serde_json::json!({"rules": [{"enforce": true}]}));
-                println!("  activating managed constraint {}...", constraint);
-                if let Err(e) = client.create_policy(&dp.parent, constraint, api_spec).await {
-                    eprintln!("  warning: activation failed for {}: {}", constraint, e);
-                    continue;
-                }
-                activated += 1;
-            } else {
-                // Non-managed and absent: the user's `tofu apply` will create it.
-                create_on_apply += 1;
-                continue;
-            }
-        }
-        // Exists (or was just activated): import into state so apply only updates the spec.
-        let address = resource_address(&dp.yaml_key);
-        let id = full_policy_name(&dp.parent, constraint);
-        if crate::bootstrap::run_import(&runtime_config.tf_tool, hcl_dir, &address, &id) {
-            imported += 1;
-        }
-    }
-
-    println!(
-        "!import-include: activated={}, imported={}, create-on-apply={}. \
-         Run `{} -chdir={} apply` to roll out changes.",
-        activated,
-        imported,
-        create_on_apply,
-        runtime_config.tf_tool,
-        hcl_dir.display()
-    );
-    Ok(())
-}
-
-
-pub(crate) fn run_tf(tf_tool: &str, dir: &Path, args: &[&str]) -> Result<(), BoxErr> {
-    let status = std::process::Command::new(tf_tool)
-        .current_dir(dir)
-        .args(args)
-        .status()?;
-    if !status.success() {
-        return Err(format!("{} {} failed", tf_tool, args.join(" ")).into());
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // Tests (pure layer only — no network)
 // ---------------------------------------------------------------------------
 
@@ -1742,10 +1570,6 @@ mod tests {
         assert_eq!(
             sanitize_yaml_key("iam.managed.disableServiceAccountKeyCreation"),
             "iam-managed-disableServiceAccountKeyCreation"
-        );
-        assert_eq!(
-            resource_address("iam-managed-x"),
-            "google_org_policy_policy.iam_managed_x"
         );
         assert_eq!(
             full_policy_name("organizations/123", "iam.managed.x"),
@@ -1898,72 +1722,6 @@ mod tests {
             .as_str()
             .expect("parameters is a JSON string");
         assert!(params.contains("@example.com"), "params were: {}", params);
-    }
-
-    #[test]
-    fn import_include_directive_is_reported_and_inlined() {
-        // `!import-include preset.yaml` in the main config must (a) appear in the manifest
-        // as an Import binding and (b) inline the preset so the expanded config parses into
-        // a Config carrying the policy (anchors resolved from the main config's variables).
-        use crate::include_processor::{process_includes_with_ops, IncludeOp};
-        // Own a scratch directory rather than writing fixed names into the shared temp
-        // dir: those collide between concurrent runs, and a failing assert below leaves
-        // them behind because the cleanup never runs.
-        let dir = std::env::temp_dir().join(format!("satz-iitest-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let main_path = dir.join("main.yaml");
-        let preset_path = dir.join("preset.yaml");
-        std::fs::write(
-            &preset_path,
-            "test-managed-x:\n  \
-               name: test.managed.x\n  \
-               parent: !format [\"organizations/{}\", *customer-organization-id]\n  \
-               spec:\n    rules:\n      - enforce: \"TRUE\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            &main_path,
-            format!(
-                "variables:\n  \
-                   customer-organization-id: &customer-organization-id \"123456789\"\n\
-                 customer-organization-id: *customer-organization-id\n\
-                 org_policy_policy:\n  !import-include {}\n",
-                preset_path.display()
-            ),
-        )
-        .unwrap();
-
-        let expanded = process_includes_with_ops(&main_path, &[]);
-        // Remove the scratch files before asserting, so a failure cannot leak them.
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let (text, bindings) = expanded.unwrap();
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].op, IncludeOp::Import);
-        assert_eq!(bindings[0].path.file_name(), preset_path.file_name());
-        // The directive sits indented under `org_policy_policy:`, and that key is what
-        // routes the binding to this module's importer rather than another.
-        assert_eq!(bindings[0].key.as_deref(), Some("org_policy_policy"));
-
-        let raw: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
-        let resolved = crate::resolve_yaml_custom_tags(crate::merge_variables(raw));
-        let config: Config = serde_yaml::from_value(resolved).unwrap();
-        let policies = config.org_policy_policy.expect("org policies present");
-        let entry = policies.get("test-managed-x").expect("preset policy inlined");
-        let json: Value = serde_json::to_value(entry).unwrap();
-        assert_eq!(json["parent"], "organizations/123456789");
-    }
-
-    #[test]
-    fn desired_to_api_parses_parameters_string() {
-        let spec = jv(
-            r#"{"rules":[{"enforce":"TRUE","parameters":"{\"allowedDomains\":[\"@example.net\"]}"}]}"#,
-        );
-        let api = desired_spec_to_api(&spec);
-        let params = &api["rules"][0]["parameters"];
-        assert!(params.is_object());
-        assert_eq!(params["allowedDomains"][0], "@example.net");
     }
 
     #[test]
