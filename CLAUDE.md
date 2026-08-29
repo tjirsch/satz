@@ -50,9 +50,8 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **Everyone is on the CURRENT version.** A release IS the migration: a
   breaking language change ships together with the estate edits that satisfy
   it. No deprecation periods, no dual-accept paths for old binaries.
-- **YAML exists only to be migrated (2026-08-29).** `satz import <file>.yaml` (the
-  old `migrate-to-satz`) must keep converting old estates and packs for as
-  long as legacy orgs exist; that is the whole YAML surface. No new functionality grows a YAML arm, YAML is never
+- **YAML exists only to be migrated (2026-08-29).** `satz import <file>.yaml` must keep
+  converting old estates and packs for as long as legacy orgs exist; that is the whole YAML surface. No new functionality grows a YAML arm, YAML is never
   generated, and a YAML code path that a cleanup breaks is deleted, not
   repaired — the legacy walk, the `.gen.yaml` twin and every YAML command arm
   are gone since v0.46.14. A conversion is reported as NEEDS-REVIEW where it

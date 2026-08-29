@@ -579,7 +579,6 @@ partial sweep.
 - live: one Cloud Asset Inventory sweep under the root; needs `cloudasset.assets.searchAllResources`; useful for infrastructure nobody manages with Terraform yet. Only asset types the config maps are seen.
 - yaml: the legacy-dialect converter (`!include` → `use`, anchors → params, `!format` → interpolation), compiled through the fragment pipeline afterwards and reporting what it emits; an old `!import-include` becomes `use` plus `satz adopt`.
 - hcl: not yet — import the estate's state instead (roadmap).
-- `discover-from-state`, `discover-from-organization` and `migrate-to-satz` still work as hidden aliases for one release and print the `import` form to use.
 
 ### Update Schemas (`update-schema`)
 Refresh local provider schemas to get the latest resource definitions.
