@@ -553,6 +553,13 @@ import-config row fits the asset), or `parent not imported`. Counts by reason
 always; every name with `--verbose`. The levers are the `import:` rows and
 `--only`.
 
+Live imports carry the API's vocabulary: keys are snake-cased (`storageClass` →
+`storage_class`) and any key the provider schema still does not know is
+**dropped and reported** (`19 attribute(s) dropped — not in the provider
+schema`, names with `--verbose`) rather than written into HCL that would not
+plan. A fetch that fails aborts the import — nothing is written from a
+partial sweep.
+
 **Under the Hood:**
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
 - live: one Cloud Asset Inventory sweep under the root; needs `cloudasset.assets.searchAllResources`; useful for infrastructure nobody manages with Terraform yet. Only asset types the config maps are seen.

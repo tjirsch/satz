@@ -24,6 +24,16 @@ pub struct AttributeSchema {
     pub computed: bool,
     #[serde(default)]
     pub default: Option<serde_json::Value>,
+    /// The provider's type expression: `"string"`, `"bool"`, `["list","string"]`,
+    /// `["map","string"]` …
+    #[serde(rename = "type", default)]
+    pub type_: Option<serde_json::Value>,
+}
+
+impl AttributeSchema {
+    pub fn is_string(&self) -> bool {
+        self.type_.as_ref().and_then(|t| t.as_str()) == Some("string")
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -83,7 +93,20 @@ impl BlockSchema {
                 };
 
                 if should_include {
-                     if let Ok(yaml_v) = serde_yaml::to_value(v) {
+                     // A string-typed attribute holding structured data (org-policy
+                     // `parameters`: an object in the API, a JSON string in Terraform)
+                     // is carried as its JSON text.
+                     let yaml_v = if attr_schema.is_string() && (v.is_object() || v.is_array()) {
+                         serde_json::to_string(v).ok().map(serde_yaml::Value::String)
+                     } else if let (true, Some(b)) = (attr_schema.is_string(), v.as_bool()) {
+                         // A boolean in a string-typed attribute (org-policy `enforce`,
+                         // `allow_all`, `deny_all`): the provider stores "TRUE"/"FALSE",
+                         // so that spelling avoids a plan diff after import.
+                         Some(serde_yaml::Value::String(if b { "TRUE" } else { "FALSE" }.into()))
+                     } else {
+                         serde_yaml::to_value(v).ok()
+                     };
+                     if let Some(yaml_v) = yaml_v {
                          map.insert(serde_yaml::Value::String(attr_name.clone()), yaml_v);
                      }
                 }

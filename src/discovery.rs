@@ -53,6 +53,37 @@ pub struct Skipped {
 pub struct Discovered {
     pub config: Config,
     pub skipped: Vec<Skipped>,
+    /// Attributes dropped because the provider schema does not know them —
+    /// `(tf_type, key path)`. CAI data is API-shaped; a key the Terraform
+    /// schema lacks would not plan (roadmap F5).
+    pub dropped_attrs: Vec<(String, String)>,
+    /// The organization the assets' ancestors name (live shape only).
+    pub organization: Option<String>,
+}
+
+thread_local! {
+    // `filter_values` is called from five places, three of them without a
+    // collector in reach; the run is single-threaded, so the dropped-key
+    // list is collected here and taken once per import.
+    static DROPPED_ATTRS: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn note_dropped(tf_type: &str, key: &str) {
+    DROPPED_ATTRS.with(|d| d.borrow_mut().push((tf_type.to_string(), key.to_string())));
+}
+
+fn take_dropped() -> Vec<(String, String)> {
+    let mut v = DROPPED_ATTRS.with(|d| std::mem::take(&mut *d.borrow_mut()));
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// The organization an asset's ancestor chain ends in.
+pub fn organization_from_ancestors<'a, I: IntoIterator<Item = &'a String>>(ancestors: I) -> Option<String> {
+    ancestors
+        .into_iter()
+        .find_map(|a| a.strip_prefix("organizations/").map(|n| n.to_string()))
 }
 
 /// Where a discovered asset lands: the estate under construction and the
@@ -217,7 +248,7 @@ impl Discoverer {
             }
         }
 
-        Ok(Discovered { config, skipped })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None })
     }
 
     pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>) -> serde_yaml::Value {
@@ -240,7 +271,7 @@ impl Discoverer {
             full_blacklist.extend(ex.clone());
         }
 
-        Self::filter_recursive(&mut yaml_val, block_schema, &full_blacklist);
+        Self::filter_recursive(&mut yaml_val, block_schema, &full_blacklist, tf_type, "");
 
         if let Some(id) = values["id"].as_str() {
             if add_import_id {
@@ -270,8 +301,36 @@ impl Discoverer {
         yaml_val
     }
 
-    fn filter_recursive(val: &mut serde_yaml::Value, schema: Option<&BlockSchema>, blacklist: &[String]) {
+    /// `storageClass` → `storage_class`: CAI data carries the API's camelCase
+    /// keys, the provider schema is snake_case. The plain rename is the base
+    /// rule of the API→Terraform vocabulary; what it does not cover is F5.
+    fn snake_key(k: &str) -> String {
+        let mut out = String::with_capacity(k.len() + 4);
+        for (i, c) in k.chars().enumerate() {
+            if c.is_ascii_uppercase() {
+                if i > 0 {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn filter_recursive(val: &mut serde_yaml::Value, schema: Option<&BlockSchema>, blacklist: &[String], tf_type: &str, at: &str) {
         if let serde_yaml::Value::Mapping(map) = val {
+            if map.keys().any(|k| k.as_str().is_some_and(|k| k.chars().any(|c| c.is_ascii_uppercase()))) {
+                let renamed: serde_yaml::Mapping = std::mem::take(map)
+                    .into_iter()
+                    .map(|(k, v)| match k.as_str() {
+                        Some(ks) => (serde_yaml::Value::String(Self::snake_key(ks)), v),
+                        None => (k, v),
+                    })
+                    .collect();
+                *map = renamed;
+            }
             for key in blacklist {
                 map.remove(serde_yaml::Value::String(key.to_string()));
             }
@@ -286,6 +345,13 @@ impl Discoverer {
             if let Some(s) = schema {
                 map.retain(|k, v| {
                     if let serde_yaml::Value::String(k_str) = k {
+                        // A key neither the attributes nor the blocks know is
+                        // API vocabulary the provider does not speak (F5):
+                        // it would not plan, so it goes — and is reported.
+                        if !s.attributes.contains_key(k_str) && !s.block_types.contains_key(k_str) {
+                            note_dropped(tf_type, &format!("{}{}", at, k_str));
+                            return false;
+                        }
                         if let Some(attr) = s.attributes.get(k_str) {
                             if attr.required { return true; }
                             if let Some(default_json) = &attr.default {
@@ -294,7 +360,7 @@ impl Discoverer {
                                 }
                             }
                             if attr.computed && !attr.optional && !attr.required {
-                                let keep_computed = ["project_number", "org_id", "folder_id", "project_id"];
+                                let keep_computed = ["org_id", "folder_id", "project_id"];
                                 if !keep_computed.contains(&k_str.as_str()) { return false; }
                             }
                             if attr.optional && !attr.required
@@ -312,8 +378,19 @@ impl Discoverer {
 
             for (k, v) in map.iter_mut() {
                 let k_str = k.as_str().unwrap_or("");
+                // A string-typed attribute holding structured data (org-policy
+                // `parameters` is a JSON string in Terraform, an object in
+                // the API) is carried as its JSON text.
+                if schema.and_then(|s| s.attributes.get(k_str)).is_some_and(|a| a.is_string())
+                    && (v.is_mapping() || v.is_sequence())
+                {
+                    if let Ok(json) = serde_json::to_value(&*v).and_then(|j| serde_json::to_string(&j)) {
+                        *v = serde_yaml::Value::String(json);
+                    }
+                    continue;
+                }
                 let sub_schema = schema.and_then(|s| s.block_types.get(k_str)).map(|bt| &bt.block);
-                Self::filter_recursive(v, sub_schema, blacklist);
+                Self::filter_recursive(v, sub_schema, blacklist, tf_type, &format!("{}{}.", at, k_str));
             }
 
             map.retain(|_, v| {
@@ -321,7 +398,7 @@ impl Discoverer {
             });
         } else if let serde_yaml::Value::Sequence(seq) = val {
              for item in seq.iter_mut() {
-                Self::filter_recursive(item, schema, blacklist);
+                Self::filter_recursive(item, schema, blacklist, tf_type, at);
             }
             seq.retain(|v| {
                 !Self::is_empty_value(v)
@@ -556,6 +633,7 @@ impl Discoverer {
 
         let mut all_assets = Vec::new();
         let mut stats: HashMap<String, usize> = HashMap::new();
+        let mut fetch_errors: Vec<String> = Vec::new();
 
         for (ctype_int, asset_types) in type_map {
             let ctype = ContentType::from(ctype_int as i32);
@@ -588,7 +666,7 @@ impl Discoverer {
 
                              if let Some(config) = &discovery_config {
                                   for (tf_type, r_config) in &config.resource_types {
-                                      if r_config.asset_type.as_deref() == Some(&asset.asset_type) {
+                                      if r_config.import && r_config.asset_type.as_deref() == Some(&asset.asset_type) {
                                           // Removed: if verbose || asset.asset_type.contains("Service") { println!("DEBUG: Checking match for {}. tf_type: {}, scope: {}", asset.asset_type, tf_type, scope); }
                                           let is_match = if tf_type.contains("_project_") {
                                               scope == "project"
@@ -614,12 +692,25 @@ impl Discoverer {
                          },
                          Err(e) => {
                              eprintln!("Error fetching asset type '{}': {}", asset_type, e);
+                             fetch_errors.push(format!("{}: {}", asset_type, e));
+                             break;
                          }
                      }
                  }
             }
         }
         
+        // Fail fast: an estate built from a partial sweep would be silently
+        // missing whole types, and the plan would then propose to create them.
+        if !fetch_errors.is_empty() {
+            return Err(format!(
+                "import aborted — {} asset type(s) could not be fetched, nothing written:\n  {}",
+                fetch_errors.len(),
+                fetch_errors.join("\n  ")
+            )
+            .into());
+        }
+
         if stats.is_empty() {
              println!("No assets discovered.");
         } else {
@@ -634,9 +725,10 @@ impl Discoverer {
              println!("{:<width$}: {}\n", total_label, all_assets.len(), width = max_len);
         }
 
+        let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
         let (config, skipped) = Self::construct_config_from_assets(all_assets, verbose, registry.as_ref(), discovery_config.as_ref());
 
-        Ok(Discovered { config, skipped })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization })
     }
 
     fn construct_config_from_assets(
@@ -663,25 +755,11 @@ impl Discoverer {
              }
         }
 
-        // Pass 1: Discover Folders and Projects first to build the hierarchy/map
-        for asset in &assets {
-             if (asset.asset_type == "cloudresourcemanager.googleapis.com/Folder" || 
-                 asset.asset_type == "cloudresourcemanager.googleapis.com/Project") && asset.resource.is_some() {
-                 continue;
-             }
-
-             let configs = if let Some(v) = asset_type_to_config.get(&asset.asset_type) { v } else { continue; };
-             let (tf_type, res_config) = if let Some(found) = configs.iter().find(|(t, c)| (t == "google_folder" || t == "google_project") && c.content_type.as_deref() == Some("RESOURCE")) { found } else { continue; };
-
-             if tf_type == "google_folder" {
-                 Self::discover_google_folder(asset, res_config, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
-             } else if tf_type == "google_project" {
-                 Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name);
-             }
-        }
-        
-        // Pass 2: Discover other resources
-        // Pass 1: Process Folders and Projects first to establish hierarchy and ID mappings
+        // Pass 1: Folders and Projects first, to establish the hierarchy and the
+        // id → key map (a Project asset carries both projectId and projectNumber;
+        // IAM-policy assets name the project by NUMBER, which is why the map
+        // must exist before pass 2 — running the project discovery on an
+        // IAM-policy asset used to create a phantom project keyed by number).
         // We only care about RESOURCE content here to get display names and IDs.
         for asset in &assets {
              if asset.resource.is_none() {
@@ -1438,12 +1516,37 @@ fn link_folders_to_parents(
 
 /// The end of every import: what was left out, and why. Never silent — a
 /// partial estate is fine, an unexplained one is not.
-pub fn report_skipped(skipped: &[Skipped], verbose: bool) {
-    if skipped.is_empty() {
+pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbose: bool) {
+    let skipped = &found.skipped;
+    if !found.dropped_attrs.is_empty() {
+        let mut by_type: BTreeMap<&str, usize> = BTreeMap::new();
+        for (t, _) in &found.dropped_attrs {
+            *by_type.entry(t.as_str()).or_default() += 1;
+        }
+        println!("import: {} attribute(s) dropped — not in the provider schema (API vocabulary; would not plan):", found.dropped_attrs.len());
+        for (t, n) in &by_type {
+            println!("  {:5} {}", n, t);
+        }
+        if verbose {
+            for (t, k) in &found.dropped_attrs {
+                println!("  - {} .{}", t, k);
+            }
+        }
+    }
+    if skipped.is_empty() && filtered_off.is_empty() {
         println!("import: nothing skipped — every resource the source had is in the estate.");
         return;
     }
     let mut by_reason: BTreeMap<String, usize> = BTreeMap::new();
+    if !filtered_off.is_empty() && !skipped.iter().any(|s| s.reason == SkipReason::Filtered) {
+        // live shape: filtered types are never fetched, so they have no
+        // per-resource rows — say so at the type level
+        by_reason.insert(format!("type(s) filtered by --only, not fetched ({})", {
+            let mut v: Vec<&str> = filtered_off.iter().map(String::as_str).collect();
+            v.sort();
+            v.join(", ")
+        }), filtered_off.len());
+    }
     for s in skipped {
         let key = match &s.reason {
             SkipReason::TypeOff => "type off (import: false)".to_string(),
@@ -1453,11 +1556,11 @@ pub fn report_skipped(skipped: &[Skipped], verbose: bool) {
         };
         *by_reason.entry(key).or_default() += 1;
     }
-    println!("import: skipped {} resource(s):", skipped.len());
+    println!("import: skipped {} resource(s):", skipped.len() + if skipped.iter().any(|s| s.reason == SkipReason::Filtered) { 0 } else { filtered_off.len() });
     for (reason, n) in &by_reason {
         println!("  {:5} {}", n, reason);
     }
-    if verbose {
+    if verbose && !skipped.is_empty() {
         let mut rows: Vec<&Skipped> = skipped.iter().collect();
         rows.sort_by(|a, b| (&a.tf_type, &a.what).cmp(&(&b.tf_type, &b.what)));
         for s in rows {
