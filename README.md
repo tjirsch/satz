@@ -123,7 +123,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
-| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork` |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
 | `migrate <INPUT>` | `--mode` |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
@@ -519,6 +519,7 @@ satz import organizations/123456789012       # live, whole org (Cloud Asset Inve
 satz import folders/456789                   # live, one folder
 satz import projects/my-prj                  # live, one project
 satz import old-estate.yaml --kind estate    # the legacy YAML dialect (until the last org is moved)
+satz import ./terraform --wrap-all           # existing .tf, every block verbatim in `hcl trust`
 satz import                                  # live, root taken from the import config
 satz import organizations/123456789012 --into C0example.satz   # only what the estate does not declare
 ```
@@ -587,7 +588,7 @@ import — nothing is written from a partial sweep.
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
 - live: one Cloud Asset Inventory sweep under the root; needs `cloudasset.assets.searchAllResources`; useful for infrastructure nobody manages with Terraform yet. Only asset types the config maps are seen.
 - yaml: the legacy-dialect converter (`!include` → `use`, anchors → params, `!format` → interpolation), compiled through the fragment pipeline afterwards and reporting what it emits; an old `!import-include` becomes `use` plus `satz adopt`.
-- hcl: not yet — import the estate's state instead (roadmap).
+- hcl (`satz import ./hcl-dir --wrap-all`): every top-level block of every `.tf` is carried verbatim inside `hcl trust "imported from <file>:<line>" { … }` — the estate deploys exactly as the source did (`tofu plan` against the source's state: no changes); `terraform`/`provider` blocks are dropped with a note, the emitter owns `providers.tf`. Each block is listed as wrapped or dropped. Translating resource blocks into Satz resources is the next step (roadmap 3.1b); until then `--wrap-all` is required. This is also the way in for `gcloud beta resource-config bulk-export --resource-format=terraform` and `tofu plan -generate-config-out` output.
 
 ### Update Schemas (`update-schema`)
 Refresh local provider schemas to get the latest resource definitions.
@@ -1297,8 +1298,8 @@ Once `tofu plan` shows no changes (or only intended updates), the migration is c
 ```bash
 cargo build --release                              # build
 cargo run -- --config config.toml transpile C0example.satz   # run a command
-cargo test                                         # run unit tests
-cargo fmt && cargo clippy                          # format + lint
+cargo test --workspace                             # run unit tests (all crates)
+cargo fmt && cargo clippy --workspace --all-targets  # format + lint
 cargo install --path .                             # install the release binary (see Installation)
 ```
 

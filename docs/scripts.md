@@ -146,7 +146,7 @@ contacts and monitoring packs, a group with a member, org grants, a project with
 services and a bucket): `transpile` (then `tofu validate` when `tofu` is on PATH —
 provider download only, no state, no cloud), `require`, `check-presets` against the
 repository's own presets (must be clean), `import` in its state shape (with the
-skipped report and import blocks) and yaml shape (including the refusal that names
+skipped report and import blocks), hcl shape (`--wrap-all`, then `tofu validate`) and yaml shape (including the refusal that names
 a pack still in YAML), `adopt` (a table with ADC, a credentials error without —
 never a guess), then `cargo test`.
 

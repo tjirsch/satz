@@ -272,7 +272,7 @@ mod laws {
         #[test]
         fn associativity(f in arb_fragment(), g in arb_fragment(), h in arb_fragment()) {
             let t = TestTable;
-            let left = compose(&t, compose(&t, fold(&t, &[f.clone()]), &g), &h);
+            let left = compose(&t, compose(&t, fold(&t, std::slice::from_ref(&f)), &g), &h);
             let gh = fold(&t, &[g, h]);
             let mut right = fold(&t, &[f]);
             for (addr, slot) in gh.slots {
@@ -299,7 +299,7 @@ mod laws {
         #[test]
         fn idempotence(f in arb_fragment()) {
             let t = TestTable;
-            let once = fold(&t, &[f.clone()]);
+            let once = fold(&t, std::slice::from_ref(&f));
             let twice = fold(&t, &[f.clone(), f]);
             // provenance doubles; bodies and conflict sets must not change
             prop_assert_eq!(once.slots.len(), twice.slots.len());

@@ -1173,12 +1173,11 @@ mod tests {
     #[test]
     fn long_string_param_with_escaped_quotes_round_trips() {
         let src = "pack demo version \"1.1\"\n\nparams {\n  logsink_filter = \"log_id(\\\"cloudaudit.googleapis.com/activity\\\") OR log_id(\\\"cloudaudit.googleapis.com/policy\\\")\"\n}\n\ngoogle_logging_organization_sink {\n  s {\n    filter = logsink_filter\n  }\n}\n";
-        let out = compile(src).expect("compile");
-        let doc: serde_yaml::Value = serde_yaml::from_str(&out.yaml).expect("twin parses");
-        let filter = doc["google_logging_organization_sink"]["s"]["filter"].clone();
-        // alias resolves to the anchored param value, quotes intact
-        let s = serde_yaml::to_string(&filter).unwrap();
-        assert!(s.contains("log_id(\"cloudaudit.googleapis.com/activity\")"), "{}", s);
+        let f = parse(src).expect("parse");
+        let (_, v, _) = f.params.iter().find(|(n, _, _)| n == "logsink_filter").expect("param");
+        // the escaped quotes survive as quotes in the param value
+        let s = format!("{:?}", v);
+        assert!(s.contains("log_id(\\\"cloudaudit.googleapis.com/activity\\\")"), "{}", s);
     }
 
     #[test]
@@ -1198,143 +1197,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn params_become_variables_with_kebab_anchors() {
-        let y = satz_to_yaml(
-            r#"
-estate demo
-params {
-  customer_shortname = "abc"
-  logsink_bucket_name = "{customer_shortname}-audit-logs"
-}
-"#,
-        )
-        .unwrap();
-        assert!(y.contains("customer-shortname: &customer-shortname \"abc\""), "{y}");
-        assert!(
-            y.contains("logsink-bucket-name: &logsink-bucket-name !format [\"{}-audit-logs\", *customer-shortname]"),
-            "{y}"
-        );
-    }
-
-    /// `a = b` between params is the aliasing case that YAML forbids as `&a *b`;
-    /// the identity wrapper carries it — and forward references are legal because
-    /// the emitter linearizes params by dependency, not by declaration order.
-    #[test]
-    fn ref_params_use_identity_wrapper_and_forward_refs_resolve() {
-        let y = satz_to_yaml(
-            r#"
-params {
-  alerts_project = logsink_project
-  logsink_project = "abc-logs-001"
-}
-"#,
-        )
-        .unwrap();
-        assert!(
-            y.contains("alerts-project: &alerts-project !format [\"{}\", *logsink-project]"),
-            "{y}"
-        );
-        // dependency order: logsink-project must be defined first
-        let li = y.find("logsink-project: &").unwrap();
-        let ai = y.find("alerts-project: &").unwrap();
-        assert!(li < ai, "dependency must precede dependent:\n{y}");
-        // and the whole document must parse with the alias resolving
-        let v: serde_yaml::Value = serde_yaml::from_str(&y).expect(&y);
-        assert_eq!(v["alerts-project"].as_str(), None); // variables block only
-    }
-
-    #[test]
-    fn use_forms_compile_to_include_directives() {
-        let y = satz_to_yaml(
-            r#"
-params { logsink_project_name = "p" }
-use "presets/a.yaml"
-use "presets/b.yaml" as org_policy_policy
-use "presets/c.yaml" when logsink_project_name
-"#,
-        )
-        .unwrap();
-        assert!(y.contains("\n!include presets/a.yaml"), "{y}");
-        assert!(y.contains("org_policy_policy: !include presets/b.yaml"), "{y}");
-        assert!(y.contains("!include-if logsink-project-name presets/c.yaml"), "{y}");
-    }
-
-    #[test]
-    fn blocks_nest_and_use_inside_folder_works() {
-        let y = satz_to_yaml(
-            r#"
-folder logging_folder {
-  display_name = "logging"
-  use "presets/monitoring/organization-audit-logsink-1.0.yaml"
-}
-"#,
-        )
-        .unwrap();
-        assert!(y.contains("folder:"), "{y}");
-        assert!(y.contains("\n  logging_folder:"), "{y}");
-        assert!(y.contains("\n    display_name: \"logging\""), "{y}");
-        assert!(y.contains("\n    !include presets/monitoring/organization-audit-logsink-1.0.yaml"), "{y}");
-    }
-
-    #[test]
-    fn interpolated_keys_and_role_lists() {
-        let y = satz_to_yaml(
-            r#"
-params {
-  svc_iac_account = "svc-iac-001"
-  infra_project_name = "acme-infra-001"
-}
-google_organization_iam_member {
-  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
-    "roles/owner",
-    "roles/billing.user",
-  ]
-}
-"#,
-        )
-        .unwrap();
-        assert!(
-            y.contains("!format [\"serviceAccount:{}@{}.iam.gserviceaccount.com\", *svc-iac-account, *infra-project-name]:"),
-            "{y}"
-        );
-        assert!(y.contains("- \"roles/owner\""), "{y}");
-    }
-
-    #[test]
-    fn two_folder_blocks_merge_into_one_mapping() {
-        let y = satz_to_yaml(
-            r#"
-folder a { display_name = "A" }
-folder b { display_name = "B" }
-"#,
-        )
-        .unwrap();
-        assert_eq!(y.matches("\nfolder:").count(), 1, "{y}");
-        assert!(y.contains("\n  a:"), "{y}");
-        assert!(y.contains("\n  b:"), "{y}");
-    }
-
-    #[test]
-    fn object_lists_emit_block_sequences() {
-        let y = satz_to_yaml(
-            r#"
-google_storage_bucket {
-  state {
-    lifecycle_rule = [
-      { action { type = "Delete" } condition { age = 400 } },
-    ]
-  }
-}
-"#,
-        )
-        .unwrap();
-        assert!(y.contains("lifecycle_rule:"), "{y}");
-        assert!(y.contains("- action:"), "{y}");
-        assert!(y.contains("age: 400"), "{y}");
-        // and the whole thing must be valid YAML
-        assert!(serde_yaml::from_str::<serde_yaml::Value>(&y).is_ok(), "{y}");
-    }
 
     /// Claims are language syntax read straight from the parsed file — no
     /// sidecar is generated any more; the front end carries them to the
@@ -1367,11 +1229,9 @@ claim "cis-gcp" "4.0" "2.2" implements {
     }
 
     #[test]
-    fn satz_pack_uses_are_rewritten_and_reported() {
-        let c = compile("use \"packs/logsink.satz\"\nuse \"plain.yaml\"\n").unwrap();
-        assert!(c.yaml.contains("!include packs/logsink.gen.yaml"), "{}", c.yaml);
-        assert!(c.yaml.contains("!include plain.yaml"), "{}", c.yaml);
-        assert_eq!(c.satz_deps, vec!["packs/logsink.satz".to_string()]);
+    fn satz_pack_uses_are_reported() {
+        let f = parse("use \"packs/logsink.satz\"\nuse \"plain.yaml\"\n").unwrap();
+        assert_eq!(use_paths(&f), vec!["packs/logsink.satz".to_string()]);
     }
 
     #[test]
@@ -1380,36 +1240,6 @@ claim "cis-gcp" "4.0" "2.2" implements {
         assert_eq!(e.line, 3, "{e}"); // value missing, found '}' on line 3
         let e = parse("x = ").unwrap_err();
         assert!(e.line >= 1);
-    }
-
-    #[test]
-    fn generated_yaml_parses_and_resolves_params() {
-        let y = satz_to_yaml(
-            r#"
-estate t
-params {
-  region = "europe-west3"
-}
-terraform {
-  backend {
-    local { path = "terraform.tfstate" }
-  }
-}
-google_storage_bucket {
-  b {
-    location = region
-  }
-}
-"#,
-        )
-        .unwrap();
-        let v: serde_yaml::Value = serde_yaml::from_str(&y).expect(&y);
-        // alias resolves through the variables block
-        assert_eq!(
-            v["google_storage_bucket"]["b"]["location"].as_str(),
-            Some("europe-west3"),
-            "{y}"
-        );
     }
 
     #[test]
@@ -1481,11 +1311,10 @@ google_storage_bucket {
     }
 
     #[test]
-    fn compiled_flags_hcl_for_the_yaml_path_guard() {
-        let c = compile("estate e\nhcl {\n  output \"x\" { value = 1 }\n}\n").unwrap();
-        assert!(c.has_hcl);
-        let c = compile("estate e\n").unwrap();
-        assert!(!c.has_hcl);
+    fn hcl_blocks_are_collected() {
+        let f = parse("estate e\nhcl {\n  output \"x\" { value = 1 }\n}\n").unwrap();
+        assert_eq!(f.hcl_blocks.len(), 1);
+        assert!(parse("estate e\n").unwrap().hcl_blocks.is_empty());
     }
 
 }
@@ -1494,26 +1323,15 @@ google_storage_bucket {
 mod empty_collection_tests {
     use super::*;
 
-    /// An empty list must survive the YAML round trip as `[]`. It used to emit
-    /// nothing, leaving `key: &anchor` with no value — which YAML reads as null,
-    /// so every consumer of the twin saw the key as absent.
+    /// An empty list param is an empty list — it used to vanish into null on
+    /// the way through the (now gone) YAML twin.
     #[test]
-    fn empty_list_param_emits_a_list_not_null() {
+    fn empty_list_param_stays_an_empty_list() {
         let src = "pack p\n\nparams {\n  subjects = []\n}\n\n\
                    google_org_policy_policy {\n  x {\n    name = \"c\"\n    members = subjects\n  }\n}\n";
-        let c = compile(src).expect("compile");
-        assert!(
-            c.yaml.contains("subjects: &subjects []"),
-            "empty list must emit []:\n{}",
-            c.yaml
-        );
-        let parsed: serde_yaml::Value = serde_yaml::from_str(&c.yaml).expect("twin must parse");
-        let vars = parsed.get("variables").expect("variables block");
-        assert_eq!(
-            vars.get("subjects").and_then(|v| v.as_sequence()).map(|s| s.len()),
-            Some(0),
-            "must read back as an empty sequence, not null"
-        );
+        let f = parse(src).expect("parse");
+        let c = canonical(&f);
+        assert!(c.contains("subjects=[]"), "canonical must show the empty list:\n{}", c);
     }
 
     /// The canonical form is what drift classification compares: comments,

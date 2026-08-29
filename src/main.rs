@@ -332,6 +332,10 @@ enum Commands {
         /// (matched by live id), as packs the estate `use`s
         #[arg(long)]
         into: Option<PathBuf>,
+        /// hcl shape: carry every block verbatim inside `hcl trust` (the
+        /// zero-risk form; the estate deploys exactly as the source did)
+        #[arg(long)]
+        wrap_all: bool,
     },
 
     /// Migrate state and configuration between local and cloud modes
@@ -1000,7 +1004,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, output, import_config, gate, kind, fork, into } => {
+        Commands::Import { source, from, only, output, import_config, gate, kind, fork, into, wrap_all } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1011,7 +1015,14 @@ Thumbs.db
                     let src = source.ok_or("the yaml shape needs a file to convert")?;
                     convert_yaml_to_satz(PathBuf::from(src), gate, kind, fork, &tool_config, &runtime_config)
                 }
-                "hcl" => Err("importing HCL is not implemented yet (roadmap phase 3). Import the estate's state instead: `tofu show -json > state.json`, then `satz import state.json`".into()),
+                "hcl" => {
+                    let src = source.ok_or("the hcl shape needs a directory of .tf files, or one file")?;
+                    if !wrap_all {
+                        return Err("translating resource blocks into Satz is not implemented yet (roadmap 3.1b) — pass --wrap-all to carry every block verbatim inside `hcl trust`, or import the estate's state instead (`tofu show -json > state.json`)".into());
+                    }
+                    let output = output.unwrap_or_else(|| PathBuf::from("imported-hcl.satz"));
+                    import_hcl_wrapped(&src, output, cli.verbose, &runtime_config)
+                }
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
                     let filter: Vec<String> = if only.is_empty() { cfg.only.clone().unwrap_or_default() } else { only };
@@ -2099,6 +2110,48 @@ async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: bool, runtime_
     println!("\nmap-types: {} type(s) mapped → {}", mapped, out_path.display());
     for s in &skipped {
         println!("  skipped: {}", s);
+    }
+    Ok(())
+}
+
+/// The hcl shape, `--wrap-all`: every block of every `.tf` verbatim inside
+/// `hcl trust`, one estate.
+fn import_hcl_wrapped(src: &str, output: PathBuf, verbose: bool, runtime_config: &ToolConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let src_path = Path::new(src);
+    let mut files: Vec<PathBuf> = if src_path.is_dir() {
+        let mut v: Vec<PathBuf> = std::fs::read_dir(src_path)?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("tf"))
+            .collect();
+        v.sort();
+        v
+    } else {
+        vec![src_path.to_path_buf()]
+    };
+    if files.is_empty() {
+        return Err(format!("{}: no .tf files", src).into());
+    }
+    files.retain(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| !n.ends_with(".tfstate")));
+    let inputs: Vec<satz_hcl::Input> = files
+        .iter()
+        .map(|f| Ok(satz_hcl::Input { path: f.to_string_lossy().into_owned(), text: fsx::read_to_string(f)? }))
+        .collect::<Result<_, std::io::Error>>()?;
+    let name = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl");
+    let imported = satz_hcl::wrap_all(&inputs, name)?;
+    let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+    if let Some(parent) = final_output.parent() {
+        fsx::create_dir_all(parent)?;
+    }
+    fsx::write(&final_output, &imported.satz)?;
+    println!("Wrote {} — review it, then `satz transpile` and `tofu plan` against the source's state: no changes.", final_output.display());
+    println!("{}", satz_hcl::summary(&imported.rows));
+    for r in &imported.rows {
+        match &r.action {
+            satz_hcl::Action::Dropped(why) => println!("  dropped  {}:{} {} — {}", r.file, r.line, r.what, why),
+            satz_hcl::Action::Wrapped if verbose => println!("  wrapped  {}:{} {}", r.file, r.line, r.what),
+            _ => {}
+        }
     }
     Ok(())
 }
