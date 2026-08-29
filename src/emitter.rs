@@ -192,6 +192,19 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 if let Some(id) = attr_import(attrs) {
                     imports.push(import_block(&format!("google_folder.{}", addr.label.replace('-', "_")), &id));
                 }
+                // Attributes the block builder does not place itself. Nested
+                // resources are separate entities by now; a `folder`/`project`
+                // or `google_*` key here would be one the fold left behind, not
+                // an attribute.
+                let mut extra: Vec<(String, serde_yaml::Value)> = attrs
+                    .iter()
+                    .filter_map(|(k, v)| k.as_str().map(|k| (k.to_string(), v.clone())))
+                    .filter(|(k, _)| {
+                        !matches!(k.as_str(), "display_name" | "parent" | "labels" | "lifecycle" | "import-id" | "folder" | "project")
+                            && !k.starts_with("google_")
+                    })
+                    .collect();
+                extra.sort_by(|a, b| a.0.cmp(&b.0));
                 blocks.push(crate::emit_shared::folder_block(
                     &addr.label.replace('-', "_"),
                     display_name,
@@ -201,6 +214,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     attrs
                         .get(serde_yaml::Value::String("lifecycle".into()))
                         .and_then(|v| crate::emit_shared::lifecycle_block(v, &|_| None)),
+                    &extra,
                 ));
             }
             ("google_cloud_identity_group", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {

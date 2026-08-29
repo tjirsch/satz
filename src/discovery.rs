@@ -9,9 +9,50 @@ use google_cloud_gax::paginator::ItemPaginator;
 pub struct Discoverer {
     pub state: Value,
     pub registry: Option<ResourceRegistry>,
-    pub filtered_count: std::cell::Cell<usize>,
     pub _verbose: bool, // Renamed to silence warning
     pub enabled_types: Option<HashSet<String>>,
+    /// Types the run's `--only` / `only:` switched off — reported as
+    /// "filtered", not "type off".
+    pub filtered_types: HashSet<String>,
+}
+
+/// Why a resource the source had is not in the written estate. An import is
+/// allowed to be partial; it is not allowed to be silent about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkipReason {
+    /// `import: false` in the import config.
+    TypeOff,
+    /// Switched off by `--only` / `only:` for this run.
+    Filtered,
+    /// The source had it, but no import-config row maps it (detail says what
+    /// was missing).
+    Unmapped(String),
+    /// Its project/folder is not in the imported tree, so it has no place.
+    ParentNotFound(String),
+}
+
+impl std::fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SkipReason::TypeOff => write!(f, "type off (import: false)"),
+            SkipReason::Filtered => write!(f, "filtered by --only"),
+            SkipReason::Unmapped(d) => write!(f, "unmapped: {}", d),
+            SkipReason::ParentNotFound(p) => write!(f, "parent not imported: {}", p),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skipped {
+    pub tf_type: String,
+    pub what: String,
+    pub reason: SkipReason,
+}
+
+/// What an import produced: the estate, and everything it left out.
+pub struct Discovered {
+    pub config: Config,
+    pub skipped: Vec<Skipped>,
 }
 
 /// Where a discovered asset lands: the estate under construction and the
@@ -35,13 +76,14 @@ impl Discoverer {
         registry: Option<ResourceRegistry>,
         verbose: bool,
         enabled_types: Option<HashSet<String>>,
+        filtered_types: HashSet<String>,
     ) -> Self {
         Self {
             state: state_json,
             registry,
-            filtered_count: std::cell::Cell::new(0),
             _verbose: verbose,
             enabled_types,
+            filtered_types,
         }
     }
 
@@ -52,8 +94,9 @@ impl Discoverer {
         }
     }
 
-    pub fn discover(&self) -> Result<Config, Box<dyn std::error::Error>> {
+    pub fn discover(&self) -> Result<Discovered, Box<dyn std::error::Error>> {
         let mut config = Config::default();
+        let mut skipped: Vec<Skipped> = Vec::new();
         let mut folder_map: HashMap<String, Folder> = HashMap::new(); 
         let mut project_map: HashMap<String, Project> = HashMap::new(); 
         let mut folder_id_to_parent: HashMap<String, String> = HashMap::new();
@@ -71,6 +114,8 @@ impl Discoverer {
                 let tf_name = res["name"].as_str().unwrap_or("");
                 
                 if !self.is_type_enabled(tf_type) {
+                    let reason = if self.filtered_types.contains(tf_type) { SkipReason::Filtered } else { SkipReason::TypeOff };
+                    skipped.push(Skipped { tf_type: tf_type.to_string(), what: tf_name.to_string(), reason });
                     continue;
                 }
 
@@ -148,21 +193,31 @@ impl Discoverer {
 
             if let Some(p_id) = values["project"].as_str() {
                 let p_yaml = gcp_id_to_yaml_name.get(p_id).map(|s| s.as_str()).unwrap_or(p_id);
-                if let Some(project) = Self::find_project_mut(&mut config, p_yaml) {
-                    self.add_resource_to_project(project, tf_type, tf_name, values, schema);
+                match Self::find_project_mut(&mut config, p_yaml) {
+                    Some(project) => self.add_resource_to_project(project, tf_type, tf_name, values, schema),
+                    None => skipped.push(Skipped {
+                        tf_type: tf_type.to_string(),
+                        what: tf_name.to_string(),
+                        reason: SkipReason::ParentNotFound(format!("project {}", p_id)),
+                    }),
                 }
             } else if let Some(f_id) = values["folder"].as_str() {
                 let f_norm = if f_id.starts_with("folders/") { f_id.to_string() } else { format!("folders/{}", f_id) };
                 let f_yaml = gcp_id_to_yaml_name.get(&f_norm).map(|s| s.as_str()).unwrap_or(f_id);
-                if let Some(folder) = Self::find_folder_mut(&mut config, f_yaml) {
-                    self.add_resource_to_folder(folder, tf_type, tf_name, values, schema);
+                match Self::find_folder_mut(&mut config, f_yaml) {
+                    Some(folder) => self.add_resource_to_folder(folder, tf_type, tf_name, values, schema),
+                    None => skipped.push(Skipped {
+                        tf_type: tf_type.to_string(),
+                        what: tf_name.to_string(),
+                        reason: SkipReason::ParentNotFound(f_norm),
+                    }),
                 }
             } else {
                 self.add_resource_to_config(&mut config, tf_type, tf_name, values, schema);
             }
         }
 
-        Ok(config)
+        Ok(Discovered { config, skipped })
     }
 
     pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>) -> serde_yaml::Value {
@@ -470,8 +525,7 @@ impl Discoverer {
         verbose: bool,
         discovery_config: Option<ImportConfig>,
         registry: Option<ResourceRegistry>,
-    ) -> Result<Config, Box<dyn std::error::Error>> {
-        
+    ) -> Result<Discovered, Box<dyn std::error::Error>> {
         let client = AssetService::builder().build().await?;
         
         let mut type_map: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
@@ -580,9 +634,9 @@ impl Discoverer {
              println!("{:<width$}: {}\n", total_label, all_assets.len(), width = max_len);
         }
 
-        let config = Self::construct_config_from_assets(all_assets, verbose, registry.as_ref(), discovery_config.as_ref());
+        let (config, skipped) = Self::construct_config_from_assets(all_assets, verbose, registry.as_ref(), discovery_config.as_ref());
 
-        Ok(config)
+        Ok(Discovered { config, skipped })
     }
 
     fn construct_config_from_assets(
@@ -590,8 +644,9 @@ impl Discoverer {
         _verbose: bool,
         registry: Option<&ResourceRegistry>,
         discovery_config: Option<&ImportConfig>,
-    ) -> Config {
+    ) -> (Config, Vec<Skipped>) {
         let mut config = Config::default();
+        let mut skipped: Vec<Skipped> = Vec::new();
         let mut deprecated_seen = HashSet::new();
         let mut folder_map: HashMap<String, Folder> = HashMap::new(); 
         let mut project_map: HashMap<String, Project> = HashMap::new();
@@ -641,7 +696,10 @@ impl Discoverer {
              let configs = if let Some(v) = asset_type_to_config.get(&asset.asset_type) { v } else { continue; };
              let (tf_type, res_config) = if let Some(found) = configs.iter().find(|(t, c)| (t == "google_folder" || t == "google_project") && c.content_type.as_deref() == Some("RESOURCE")) { found } else { continue; };
 
-             if !res_config.import { continue; }
+             if !res_config.import {
+                 skipped.push(Skipped { tf_type: tf_type.clone(), what: asset.name.clone(), reason: SkipReason::TypeOff });
+                 continue;
+             }
 
              if tf_type == "google_folder" {
                  Self::discover_google_folder(asset, res_config, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
@@ -657,8 +715,15 @@ impl Discoverer {
                  continue;
              }
 
-             let configs = if let Some(v) = asset_type_to_config.get(&asset.asset_type) { v } else { continue; };
-             
+             let Some(configs) = asset_type_to_config.get(&asset.asset_type) else {
+                 skipped.push(Skipped {
+                     tf_type: asset.asset_type.clone(),
+                     what: asset.name.clone(),
+                     reason: SkipReason::Unmapped(format!("no import-config row has asset_type {}", asset.asset_type)),
+                 });
+                 continue;
+             };
+
              let (scope, scope_id) = Self::get_asset_scope(asset);
 
              let matched_config = configs.iter().find(|(tf_type, c)| {
@@ -684,9 +749,20 @@ impl Discoverer {
                  true
              });
 
-             let (tf_type, res_config) = if let Some(found) = matched_config { found } else { continue; };
-
-             if !res_config.import { continue; }
+             let Some((tf_type, res_config)) = matched_config else {
+                 let content = if asset.resource.is_some() { "RESOURCE" } else { "IAM_POLICY" };
+                 let reason = if configs.iter().any(|(_, c)| !c.import) {
+                     SkipReason::TypeOff
+                 } else {
+                     SkipReason::Unmapped(format!(
+                         "no row for {} with content_type {} at {} scope (rows: {})",
+                         asset.asset_type, content, scope,
+                         configs.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(", ")
+                     ))
+                 };
+                 skipped.push(Skipped { tf_type: asset.asset_type.clone(), what: asset.name.clone(), reason });
+                 continue;
+             };
 
              if res_config.deprecated == Some(true) {
                  deprecated_seen.insert(tf_type.to_string());
@@ -713,7 +789,7 @@ impl Discoverer {
             eprintln!("Warning: Resource type '{}' is deprecated.", deprecated_type);
         }
 
-        config
+        (config, skipped)
     }
 
     fn discover_google_folder(
@@ -1141,11 +1217,8 @@ impl Discoverer {
     }
     
 
-    pub fn print_summary(config: &Config, filtered_count: Option<usize>) {
+    pub fn print_summary(config: &Config) {
         println!("\n=== Configuration Summary ===");
-        if let Some(count) = filtered_count {
-            println!("Filtered resources: {}", count);
-        }
         
         let mut stats: HashMap<String, usize> = HashMap::new();
         
@@ -1360,5 +1433,37 @@ fn link_folders_to_parents(
                 }
             }
         }
+    }
+}
+
+/// The end of every import: what was left out, and why. Never silent — a
+/// partial estate is fine, an unexplained one is not.
+pub fn report_skipped(skipped: &[Skipped], verbose: bool) {
+    if skipped.is_empty() {
+        println!("import: nothing skipped — every resource the source had is in the estate.");
+        return;
+    }
+    let mut by_reason: BTreeMap<String, usize> = BTreeMap::new();
+    for s in skipped {
+        let key = match &s.reason {
+            SkipReason::TypeOff => "type off (import: false)".to_string(),
+            SkipReason::Filtered => "filtered by --only".to_string(),
+            SkipReason::Unmapped(_) => "unmapped (no import-config row fits)".to_string(),
+            SkipReason::ParentNotFound(_) => "parent not imported".to_string(),
+        };
+        *by_reason.entry(key).or_default() += 1;
+    }
+    println!("import: skipped {} resource(s):", skipped.len());
+    for (reason, n) in &by_reason {
+        println!("  {:5} {}", n, reason);
+    }
+    if verbose {
+        let mut rows: Vec<&Skipped> = skipped.iter().collect();
+        rows.sort_by(|a, b| (&a.tf_type, &a.what).cmp(&(&b.tf_type, &b.what)));
+        for s in rows {
+            println!("  - {} {} — {}", s.tf_type, s.what, s.reason);
+        }
+    } else {
+        println!("  (--verbose lists every one; `import: false` rows and `--only` are the levers)");
     }
 }
