@@ -520,7 +520,8 @@ satz import organizations/123456789012       # live, whole org (Cloud Asset Inve
 satz import folders/456789                   # live, one folder
 satz import projects/my-prj                  # live, one project
 satz import old-estate.yaml --kind estate    # the legacy YAML dialect (until the last org is moved)
-satz import ./terraform --wrap-all           # existing .tf, every block verbatim in `hcl trust`
+satz import ./terraform                      # existing .tf: literal resources → Satz, the rest verbatim in `hcl trust`
+satz import ./terraform --wrap-all           # …or every block verbatim
 satz import                                  # live, root taken from the import config
 satz import organizations/123456789012 --into C0example.satz   # only what the estate does not declare
 ```
@@ -589,7 +590,7 @@ import — nothing is written from a partial sweep.
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
 - live: one Cloud Asset Inventory sweep under the root; needs `cloudasset.assets.searchAllResources`; useful for infrastructure nobody manages with Terraform yet. Only asset types the config maps are seen.
 - yaml: the legacy-dialect converter (`!include` → `use`, anchors → params, `!format` → interpolation), compiled through the fragment pipeline afterwards and reporting what it emits; an old `!import-include` becomes `use` plus `satz adopt`.
-- hcl (`satz import ./hcl-dir --wrap-all`): every top-level block of every `.tf` is carried verbatim inside `hcl trust "imported from <file>:<line>" { … }` — the estate deploys exactly as the source did (`tofu plan` against the source's state: no changes); `terraform`/`provider` blocks are dropped with a note, the emitter owns `providers.tf`. Each block is listed as wrapped or dropped. Translating resource blocks into Satz resources is the next step (roadmap 3.1b); until then `--wrap-all` is required. This is also the way in for `gcloud beta resource-config bulk-export --resource-format=terraform` and `tofu plan -generate-config-out` output.
+- hcl (`satz import ./hcl-dir`): a `resource` block of a schema-known, non-positional type whose values are all literals becomes a Satz resource (attributes as written, repeated nested blocks as a list, the label kept so references from wrapped blocks still resolve); everything else — `module`, `locals`, `data`, `variable`, `output`, blocks using `count`/`for_each`/`dynamic`/`provider`/`depends_on`, expressions and references, positional types (folders, projects, groups, services, IAM grants — their Satz form is their place in the tree, 3.1c), unknown types, labels that are not identifiers — is carried verbatim inside `hcl trust "imported from <file>:<line>" { … }` and the report says why. `terraform`/`provider` blocks are dropped with a note; the emitter owns `providers.tf`. `--wrap-all` wraps everything (the zero-risk form). Either way the estate deploys exactly as the source did: `tofu plan` against the source's state shows no changes. Also the way in for `gcloud beta resource-config bulk-export --resource-format=terraform` and `tofu plan -generate-config-out` output.
 
 ### Update Schemas (`update-schema`)
 Refresh local provider schemas to get the latest resource definitions.

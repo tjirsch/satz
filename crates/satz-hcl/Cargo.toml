@@ -8,3 +8,5 @@ publish = false
 
 [dependencies]
 hcl-rs = "0.19.8"
+satz-core = { path = "../satz-core" }
+serde_yaml = "0.9"

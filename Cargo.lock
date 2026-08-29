@@ -2197,6 +2197,8 @@ name = "satz-hcl"
 version = "0.1.0"
 dependencies = [
  "hcl-rs",
+ "satz-core",
+ "serde_yaml",
 ]
 
 [[package]]
