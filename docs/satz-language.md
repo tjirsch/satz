@@ -1148,7 +1148,7 @@ control at partial. No estate in the fleet has one yet.
 beside the config — `estate`, `framework`, `version`, `live`, `verified_at`,
 and one row per control with `control`, `title`, `status`, `witnesses`,
 `duties`, `prowler` — and writes the report (`evidence/<framework>-latest.md`,
-or `--format pdf`). `--prowler findings.json` ingests a Prowler export as
+or `--format pdf`). `--prowler findings.json` ingests a Prowler export (OCSF or legacy JSON) as
 corroboration. `--no-live` produces a declared-only report (statuses read
 *declared*) but still appends to the history. The report states check
 semantics — "a resource with these properties was verified at this time" —
