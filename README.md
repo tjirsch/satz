@@ -771,8 +771,8 @@ carry only framework versions (CIS-GCP-Foundation-**4.0**, catalogs). Never a
 `X.local.<n>.satz`, never more than one diff per pack — history lives in git.
 
 **A preset that your estate includes never changes silently.** When upstream's
-version differs *semantically* (the compiled canonical YAML — comment and
-formatting churn upgrades silently), merge-presets:
+version differs *semantically* (the canonical form of the parsed pack — comment,
+formatting and version-line churn upgrades silently), merge-presets:
 
 1. preserves your current content as `X.local.satz`,
 2. repoints the estate's `use` to it — then **proves the edit**: the transpiled

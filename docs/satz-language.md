@@ -270,7 +270,7 @@ Where line count is not the point, **what you have to touch** is:
 | decline one control a pack provides | fork the pack | one `suppress` line in the estate |
 | override one preset value | copy-edit, or define the anchor above the include in order | bind the param, any order |
 | say why a control is not met | nowhere | `claim … deviates { reason = "…" }` |
-| know whether a pack changed upstream | diff by hand | `check-presets` — compiled canonical form |
+| know whether a pack changed upstream | diff by hand | `check-presets` — canonical form of the parsed pack |
 | keep the compliance story with the code | a sidecar file | claims in the pack, same compile |
 
 ---
@@ -1011,8 +1011,9 @@ Suffix carries meaning; the tooling enforces it.
 | `X.diff.satz` | the current adoption delta (fork vs pristine), rewritten each merge |
 
 - A preset the estate **includes** never changes silently. A semantic upstream
-  change (compiled canonical form differs) auto-forks and repoints the estate,
-  with a transpile-identity proof. Comment and format churn upgrades silently.
+  change (the canonical form of the parsed pack differs — params or body)
+  auto-forks and repoints the estate. Comment, format and version-line churn
+  upgrades silently.
 - Pack versions live **in-file**; filenames carry only framework versions.
   Never `X.local.2.satz`.
 - 80% of customisation should be **params**; the rest a `.local` fork. A fork
