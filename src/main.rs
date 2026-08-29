@@ -8,6 +8,7 @@ mod state_migration;
 mod discovery;
 mod delta;
 mod align;
+mod scan;
 mod template;
 mod adopt;
 mod bootstrap;
@@ -171,6 +172,10 @@ enum Commands {
         /// After transpiling, run `<tf_tool> apply` in hcl_dir (initialising it first if needed)
         #[arg(long)]
         apply: bool,
+        /// After transpiling, run Checkov over hcl_dir and point each finding at
+        /// the Satz block that declared the resource (failed checks exit 1)
+        #[arg(long)]
+        scan: bool,
     },
     /// Scan Tofu plan JSON for resource renames
     ScanPlan {
@@ -492,6 +497,13 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Run Checkov over the emitted HCL in hcl_dir and point each finding at
+    /// the Satz block that declared the resource. Failed checks exit 1
+    Scan {
+        /// Estate file (inside yaml_dir if relative) — compiled for the source
+        /// locations of the findings; without it, findings name the HCL only
+        estate: Option<String>,
+    },
     /// Run `<tf_tool> plan` in the estate's hcl dir (extra args are passed through)
     Plan {
         /// Arguments passed straight to the tool, e.g. `-target=…`, `-out=plan.tfplan`
@@ -653,7 +665,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -735,7 +747,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     match cmd_choice {
-        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply } => {
+        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan } => {
 
             let input_path = if Path::new(&input).is_absolute() {
                 PathBuf::from(&input)
@@ -755,10 +767,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             reject_yaml_estate(&input_path, "transpile")?;
             let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
             let (main_tf, providers_tf, variables_tf, tfvars, imports_tf) =
-                (out.main_tf, out.providers_tf, out.variables_tf, out.tfvars, out.imports_tf);
+                (&out.main_tf, &out.providers_tf, &out.variables_tf, &out.tfvars, &out.imports_tf);
             if print_variables {
                 println!("{}", tfvars);
             }
+            let (main_tf, providers_tf, variables_tf, tfvars, imports_tf) =
+                (main_tf.as_str(), providers_tf.as_str(), variables_tf.as_str(), tfvars.as_str(), imports_tf.as_str());
             // --output relocates the emitted HCL; relative to hcl_dir, as before.
             let base_output_path = match &output {
                 Some(o) if Path::new(o).is_absolute() => PathBuf::from(o),
@@ -781,11 +795,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Created {}", p.display());
                 Ok(())
             };
-            write_file("main.tf", &main_tf)?;
-            write_file("providers.tf", &providers_tf)?;
-            write_file("variables.tf", &variables_tf)?;
-            write_file("terraform.tfvars", &tfvars)?;
-            write_file("imports.tf", &imports_tf)?;
+            write_file("main.tf", main_tf)?;
+            write_file("providers.tf", providers_tf)?;
+            write_file("variables.tf", variables_tf)?;
+            write_file("terraform.tfvars", tfvars)?;
+            write_file("imports.tf", imports_tf)?;
             if plan || apply {
                 // one tool: transpile, then the tool, in the estate's hcl dir
                 if output.is_some() {
@@ -796,6 +810,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     run_tf(&runtime_config, "init", &["-input=false".to_string()])?;
                 }
                 run_tf(&runtime_config, if apply { "apply" } else { "plan" }, &[])?;
+            }
+            if scan {
+                if output.is_some() {
+                    return Err("--scan runs over hcl_dir; drop --output".into());
+                }
+                let report = crate::scan::run(Path::new(&runtime_config.hcl_dir))?;
+                print!("{}", crate::scan::render(&report, Some(&out.manifest)));
+                if report.failed > 0 {
+                    std::process::exit(1);
+                }
             }
             Ok::<(), Box<dyn std::error::Error>>(())
         }
@@ -1376,6 +1400,22 @@ Thumbs.db
                 &runtime_config,
             )
             .await
+        }
+        Commands::Scan { estate } => {
+            let manifest = match estate {
+                Some(e) => {
+                    let path = estate_path(PathBuf::from(e), &runtime_config);
+                    reject_yaml_estate(&path, "scan")?;
+                    Some(pipeline_b_generate(&path, &tool_config, &runtime_config)?.manifest)
+                }
+                None => None,
+            };
+            let report = crate::scan::run(Path::new(&runtime_config.hcl_dir))?;
+            print!("{}", crate::scan::render(&report, manifest.as_ref()));
+            if report.failed > 0 {
+                std::process::exit(1);
+            }
+            Ok(())
         }
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),

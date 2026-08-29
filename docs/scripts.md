@@ -148,7 +148,7 @@ provider download only, no state, no cloud), `require`, `check-presets` against 
 repository's own presets (must be clean), `import` in its state shape (with the
 skipped report and import blocks), hcl shape (`--wrap-all`, then `tofu validate`) and yaml shape (including the refusal that names
 a pack still in YAML), `adopt` (a table with ADC, a credentials error without —
-never a guess), then `cargo test`.
+never a guess), `scan` when `checkov` or `uvx` is on PATH, then `cargo test`.
 
 ```bash
 scripts/smoke.sh                 # builds target/release/satz if missing
