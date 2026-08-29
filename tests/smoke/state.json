@@ -1,0 +1,15 @@
+{
+  "format_version": "1.0",
+  "values": {
+    "root_module": {
+      "resources": [
+        {"type": "google_folder", "name": "infra_folder", "values": {"name": "folders/123456789", "display_name": "Infrastructure", "parent": "organizations/123456789012"}},
+        {"type": "google_project", "name": "infra", "values": {"project_id": "corp-infra-001", "name": "corp-IaC", "folder_id": "123456789", "billing_account": "01AA-BB-CC"}},
+        {"type": "google_project_service", "name": "infra_iam", "values": {"id": "corp-infra-001/iam.googleapis.com", "project": "corp-infra-001", "service": "iam.googleapis.com"}},
+        {"type": "google_storage_bucket", "name": "state", "values": {"id": "corp-infra-001-state", "name": "corp-infra-001-state", "project": "corp-infra-001", "location": "EU", "uniform_bucket_level_access": true, "storage_class": "STANDARD", "versioning": [{"enabled": true}]}},
+        {"type": "google_organization_iam_member", "name": "admins", "values": {"org_id": "123456789012", "role": "roles/resourcemanager.organizationAdmin", "member": "group:gcp-organization-admins@example.com"}},
+        {"type": "google_org_policy_policy", "name": "skip_default_network", "values": {"id": "organizations/123456789012/policies/compute.skipDefaultNetworkCreation", "name": "organizations/123456789012/policies/compute.skipDefaultNetworkCreation", "parent": "organizations/123456789012", "spec": [{"rules": [{"enforce": "TRUE"}]}]}}
+      ]
+    }
+  }
+}

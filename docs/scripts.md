@@ -9,6 +9,7 @@ that maintain the repo's own data files.
 |---|---|---|
 | `scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below |
 | `update_import_config.py` | helper | add newly-seen provider types to `presets/import-config.yaml` |
+| `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build-satz-doc.py` | helper | render `docs/satz-language.md` as a self-contained HTML page with the layers diagram inlined |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/example-customers.md`); CI on every push, `--staged` from the pre-commit hook |
@@ -135,3 +136,24 @@ variable to change which type it reports.
 ```bash
 python3 scripts/inspect_schema.py <schema.json>
 ```
+
+## `smoke.sh` — the command matrix
+
+The unit tests cover the engines; nothing exercised the *commands* end to end, and
+two regressions shipped with a green suite before this existed. `scripts/smoke.sh`
+runs, offline, against the fixture estate in `tests/smoke/` (the shipped CIS,
+contacts and monitoring packs, a group with a member, org grants, a project with
+services and a bucket): `transpile` (then `tofu validate` when `tofu` is on PATH —
+provider download only, no state, no cloud), `require`, `check-presets` against the
+repository's own presets (must be clean), `import` in its state shape (with the
+skipped report and import blocks) and yaml shape (including the refusal that names
+a pack still in YAML), `adopt` (a table with ADC, a credentials error without —
+never a guess), then `cargo test`.
+
+```bash
+scripts/smoke.sh                 # builds target/release/satz if missing
+SATZ=~/.cargo/bin/satz scripts/smoke.sh
+```
+
+`.github/workflows/smoke.yml` runs it on every push and pull request with OpenTofu
+installed. A new command that reads an estate gets a step here in the same PR.
