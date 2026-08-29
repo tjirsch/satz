@@ -456,7 +456,7 @@ pub(crate) async fn run_check_presets(
             continue;
         }
         if fname_s.ends_with(".claims.yaml") {
-            continue; // sidecar generated from the pack's `claim` blocks
+            continue; // legacy sidecar (pre-v0.38) still lying in an estate — never a source
         }
         let in_use = included.contains(rel);
         let tag = if in_use { " [included]" } else { "" };
@@ -619,7 +619,7 @@ pub(crate) async fn run_get_presets(
             let p = e.path();
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
-            if name.ends_with(".claims.yaml") || name.ends_with(".md") {
+            if name.ends_with(".md") {
                 extra.push(p.strip_prefix(&tmp)?.to_path_buf());
             }
         }
@@ -744,7 +744,7 @@ pub(crate) async fn run_merge_presets(
             let p = e.path();
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
-            if name.ends_with(".satz") || name.ends_with(".claims.yaml") || name.ends_with(".md") {
+            if name.ends_with(".satz") || name.ends_with(".md") {
                 upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
             }
         }
@@ -781,9 +781,8 @@ pub(crate) async fn run_merge_presets(
 
         let fname = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
         let is_satz = fname.ends_with(".satz");
-        // twins of satz packs, claims sidecars and docs are generated/derived artifacts
-        let is_artifact = fname.ends_with(".claims.yaml")
-            || fname.ends_with(".md")
+        // twins of satz packs and docs are generated/derived artifacts
+        let is_artifact = fname.ends_with(".md") // (docs)
             || (fname.ends_with(".yaml") && upstream_set.contains(&rel.with_extension("satz")));
         if is_artifact {
             if report_only { println!("  would update artifact {}", rel.display()); continue; }
