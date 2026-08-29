@@ -168,7 +168,7 @@ satz init \
 **Under the Hood:**
 - Creates the standardized directory structure: `yaml/`, `hcl/`, `schemas/`.
 - Generates a default `config.toml` and `.gitignore`.
-- If customer details are provided, generates a template estate in `yaml/` (still written in the legacy YAML dialect — run `migrate-to-satz` on it).
+- If customer details are provided, generates the Day-0 estate `yaml/<customer-id>.satz` (params, providers, the IaC group and service account, the management folder/project/state bucket — the labels `bootstrap` imports by name).
 - Fetches the latest provider schemas for the configured providers.
 
 ### Day 0 Bootstrap (`bootstrap`)
@@ -1019,27 +1019,28 @@ In `cloud` mode, verify that you can plan/apply using the restricted service acc
 tofu plan
 ```
 
-#### Template Variables Reference
+#### Template Params Reference
 
-When you run `init`, the following variables are generated in the template:
+When you run `init`, the following params are generated in the estate's `params { … }` block:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `infra-folder-name` | `Infrastructure` | Display name for the top-level folder. Leave `""` to create the project in the root. |
-| `infra-project-name` | `""` | The unique ID for the management (IaC) project. |
-| `infra-bucket-name` | `""` | The name of the GCS bucket for Terraform state. |
-| `customer-id` | (from CLI) | The Workspace Organization ID (e.g., `C01234567...`). |
-| `customer-organization-id` | `"123456789012"` | The numeric Google Cloud Organization ID. **Note:** Always use quotes, otherwise YAML interprets this as a number. |
-| `customer-domain` | `""` | The customer's primary domain (e.g., `example.com`). |
-| `customer-longname` | `""` | The full legal name of the customer entity. |
-| `customer-shortname` | `""` | A unique slug or shortname for the customer. |
-| `svc-iac-account` | `svc-iac-001` | The name/ID of the primary IaC Service Account. |
-| `svc-iac-users-group` | `svc-iac-users` | The Cloud Identity group for IaC administrators. |
-| `billing-account-infra` | `""` | The Billing Account ID (e.g., `A12345-B67890-C12345`). |
-| `deployment-engine` | `tofu` | The IaC tool: `tofu` or `terraform`. |
-| `deployment-mode` | `local` | `local` for Day 0 (User ADC); `cloud` for Day 1+ (Impersonation). |
-| `default-region` | `europe-west3` | Default region for regional resources. |
-| `default-zone` | `europe-west3-a` | Default zone for zonal resources. |
+| Param | Default | Description |
+|-------|---------|-------------|
+| `infra_folder_name` | `"Infrastructure"` | Display name for the top-level folder. Leave `""` to create the project in the root. |
+| `infra_project_name` | `""` | The unique ID for the management (IaC) project. |
+| `infra_bucket_name` | `""` | The name of the GCS bucket for Terraform state. |
+| `customer_id` | (from CLI) | The Workspace customer ID (e.g., `C01234567`). |
+| `customer_organization_id` | `"123456789012"` | The numeric Google Cloud Organization ID. |
+| `customer_domain` | `""` | The customer's primary domain (e.g., `example.com`). |
+| `first_admin` | (from `--iac-user`) | Local part of the first admin's address; members are built as `user:{first_admin}@{customer_domain}`. |
+| `customer_longname` | `""` | The full legal name of the customer entity. |
+| `customer_shortname` | `""` | A unique slug or shortname for the customer. |
+| `svc_iac_account` | `"svc-iac-001"` | The name/ID of the primary IaC Service Account. |
+| `svc_iac_users_group` | `"svc-iac-users"` | The Cloud Identity group for IaC administrators. |
+| `billing_account_infra` | `""` | The Billing Account ID (e.g., `012345-6789AB-CDEF01`). |
+| `deployment_engine` | `"tofu"` | The IaC tool: `tofu` or `terraform`. |
+| `deployment_mode` | `"local"` | `local` for Day 0 (User ADC); `cloud` for Day 1+ (Impersonation). Switched by `satz migrate`. |
+| `default_region` | `"europe-west3"` | Default region for regional resources. |
+| `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
 
 ### 3. Transpile
 Compile an estate to HCL. Run this from within the customer repository directory.
@@ -1522,7 +1523,7 @@ Manages Terraform provider schemas (loaded as JSON).
 
 #### 3. Template Generator (`src/template.rs`)
 Provides a consistent starting point for new customer rollouts.
-- **Declarative Bootstrap**: Generates a YAML structure representing the Day 0 infrastructure (Project, Services, Bucket, SA).
+- **Declarative Bootstrap**: Generates the Satz estate representing the Day 0 infrastructure (Project, Services, Bucket, SA) under the labels `bootstrap` imports by name.
 
 #### 4. Custom YAML Processing (`src/main.rs`, `src/include_processor.rs`)
 Implements custom tags to extend YAML's expressiveness:
