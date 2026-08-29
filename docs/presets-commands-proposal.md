@@ -33,9 +33,10 @@ the *second* is the common case: on 2026-08-24, **nine of nine** stale packs wer
 byte-identical to their upstream release. The correct action there is to overwrite
 in place — which the tool cannot do, so it was done nine times with `cp`.
 
-**D3 — `check-presets` cannot see a changed list default.** It compares the
-compiled canonical twin, and the classifier reads only the text on a
-`variables:` anchor line. A default written as a multi-line list has an empty
+**D3 — `check-presets` cannot see a changed list default.** *(Historical: since
+M5 the classifier compares the parsed AST's canonical form, where a list default
+is one value.)* It compared the compiled canonical twin, and the classifier read
+only the text on a `variables:` anchor line. A default written as a multi-line list has an empty
 value on both sides and its items are never compared. estate 1 ran pack v2.0 against
 upstream v2.1 — a five-entry list default gaining its fifth entry — and the
 command printed *"13 preset(s) clean, no drift."* Silent false green in the one

@@ -285,9 +285,9 @@ fn used_preset_files(
             used.insert(rel.to_path_buf());
         }
         let Ok(src) = crate::fsx::read_to_string(&path) else { continue };
-        let Ok(compiled) = satz_core::satz::compile(&src) else { continue };
+        let Ok(file) = satz_core::satz::parse(&src) else { continue };
         let parent = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        for dep in compiled.satz_deps {
+        for dep in satz_core::satz::use_paths(&file) {
             let mut candidates = vec![parent.join(&dep)];
             candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(&dep)));
             if let Some(found) = candidates.into_iter().find(|c| c.exists()) {
@@ -300,26 +300,56 @@ fn used_preset_files(
 
 /// Semantic drift between two preset sources, in their canonical form.
 ///
-/// `.satz` packs are compiled to the YAML dialect first, so the existing
-/// variables-vs-body classifier applies unchanged: pack `params` become the
-/// twin's `variables:` block, which is exactly the distinction the report needs.
-/// This is the SAME canonical comparison `merge-presets` makes, so the two
-/// commands cannot disagree about whether a pack drifted.
+/// `.satz` packs are compared as parsed: `satz::canonical_parts` prints the AST
+/// without comments, formatting or the pack version, split into params
+/// (the "variables" half) and everything else (the "structural" half) —
+/// exactly the distinction the report needs. This is the SAME canonical
+/// comparison `merge-presets` makes, so the two commands cannot disagree about
+/// whether a pack drifted.
 fn classify_source(rel: &Path, local: &str, pristine: &str) -> Drift {
     let is_satz = rel.extension().and_then(|e| e.to_str()) == Some("satz");
     if !is_satz {
         return classify(local, pristine);
     }
-    match (satz_core::satz::compile(local), satz_core::satz::compile(pristine)) {
-        (Ok(l), Ok(p)) => classify(&l.yaml, &p.yaml),
+    if local == pristine {
+        return Drift::Clean;
+    }
+    let (l, p) = match (satz_core::satz::parse(local), satz_core::satz::parse(pristine)) {
+        (Ok(l), Ok(p)) => (satz_core::satz::canonical_parts(&l), satz_core::satz::canonical_parts(&p)),
         // A pack that no longer parses is drift the operator must see, not a skip.
-        _ => {
-            if local == pristine {
-                Drift::Clean
-            } else {
-                Drift::Structural { summary: "differs from upstream and does not compile".into() }
-            }
-        }
+        _ => return Drift::Structural { summary: "differs from upstream and does not parse".into() },
+    };
+    if l.body != p.body {
+        let lb: BTreeSet<&str> = l.body.lines().collect();
+        let pb: BTreeSet<&str> = p.body.lines().collect();
+        let changed = lb.symmetric_difference(&pb).count();
+        return Drift::Structural { summary: format!("{} resource line(s) differ from upstream", changed) };
+    }
+    let l_names: BTreeSet<&str> = l.params.iter().map(|(n, _)| n.as_str()).collect();
+    let p_names: BTreeSet<&str> = p.params.iter().map(|(n, _)| n.as_str()).collect();
+    if l_names != p_names {
+        let only_local: Vec<_> = l_names.difference(&p_names).cloned().collect();
+        let only_upstream: Vec<_> = p_names.difference(&l_names).cloned().collect();
+        return Drift::Structural {
+            summary: format!(
+                "param set differs (local-only: [{}], upstream-only: [{}])",
+                only_local.join(", "),
+                only_upstream.join(", ")
+            ),
+        };
+    }
+    let pristine_vals: std::collections::BTreeMap<&str, &str> =
+        p.params.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+    let changed: Vec<(String, VarEntry)> = l
+        .params
+        .iter()
+        .filter(|(n, v)| pristine_vals.get(n.as_str()) != Some(&v.as_str()))
+        .map(|(n, v)| (n.clone(), VarEntry { key: n.clone(), value: v.clone() }))
+        .collect();
+    if changed.is_empty() {
+        Drift::Clean
+    } else {
+        Drift::VariablesOnly(changed)
     }
 }
 
@@ -791,10 +821,11 @@ pub(crate) async fn run_merge_presets(
             continue;
         }
 
-        // semantic comparison in the canonical form
+        // semantic comparison in the canonical form (the parsed AST, printed
+        // without comments/formatting/version — same as check-presets)
         let sem_equal = if is_satz {
-            match (satz_core::satz::compile(&lo), satz_core::satz::compile(&up)) {
-                (Ok(a), Ok(b)) => a.yaml == b.yaml,
+            match (satz_core::satz::parse(&lo), satz_core::satz::parse(&up)) {
+                (Ok(a), Ok(b)) => satz_core::satz::canonical(&a) == satz_core::satz::canonical(&b),
                 _ => false,
             }
         } else {
@@ -1455,9 +1486,9 @@ google_x:
         }
     }
 
-    /// A pack `params` default maps to the twin's `variables:` block, so the
-    /// existing variables-only remedy (pin it in the estate, keep the pack
-    /// pristine) applies to Satz packs unchanged.
+    /// A pack `params` default is the "variables" half of the canonical form,
+    /// so the variables-only remedy (pin it in the estate, keep the pack
+    /// pristine) applies to Satz packs — under the param's own name.
     #[test]
     fn satz_param_drift_is_variables_only() {
         let rel = Path::new("CIS.satz");
@@ -1465,10 +1496,22 @@ google_x:
         match classify_source(rel, &drifted, PACK) {
             Drift::VariablesOnly(changed) => {
                 assert_eq!(changed.len(), 1);
-                assert_eq!(changed[0].0, "bucket-name");
+                assert_eq!(changed[0].0, "bucket_name");
+                assert_eq!(changed[0].1.value, "\"customer-audit\"");
             }
             other => panic!("expected VariablesOnly, got {:?}", other),
         }
+    }
+
+    /// A version bump with no content change is not drift — the staleness
+    /// check reports the version separately, and `merge-presets` upgrades it
+    /// silently as comment-only.
+    #[test]
+    fn satz_version_bump_alone_is_clean() {
+        let rel = Path::new("CIS.satz");
+        let bumped = PACK.replacen("version \"", "version \"9", 1);
+        assert_ne!(bumped, PACK);
+        assert_eq!(classify_source(rel, &bumped, PACK), Drift::Clean);
     }
 
     /// Comment and formatting churn upgrades silently — same rule `merge-presets`

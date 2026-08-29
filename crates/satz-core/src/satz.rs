@@ -1270,6 +1270,183 @@ pub struct Compiled {
     pub satz_deps: Vec<String>,
 }
 
+/// The `.satz` files a parsed file `use`s, as written (any depth).
+pub fn use_paths(file: &File) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_satz_deps(&file.items, &mut out);
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Canonical form
+//
+// What `check-presets` / `merge-presets` compare: the parsed file printed
+// deterministically, without comments, formatting or line numbers — so two
+// files that MEAN the same thing print the same. The pack `version` is metadata
+// and deliberately not part of it: a version bump with no content change must
+// read as a comment-only upgrade, which is what the staleness check reports
+// separately. This replaced the YAML twin as the canonical form (M5).
+// ---------------------------------------------------------------------------
+
+/// A file in canonical form, split the way drift classification needs it:
+/// params (name → canonical value) and everything else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Canonical {
+    pub params: Vec<(String, String)>,
+    pub body: String,
+}
+
+/// Canonical text of the whole file (params + body).
+pub fn canonical(file: &File) -> String {
+    let c = canonical_parts(file);
+    let mut s = String::new();
+    for (n, v) in &c.params {
+        s.push_str(n);
+        s.push('=');
+        s.push_str(v);
+        s.push('\n');
+    }
+    s.push_str(&c.body);
+    s
+}
+
+pub fn canonical_parts(file: &File) -> Canonical {
+    let params = file.params.iter().map(|(n, v, _)| (n.clone(), canon_value(v))).collect();
+    let mut body = String::new();
+    match (&file.estate, file.is_pack) {
+        (Some(n), true) => {
+            body.push_str("pack ");
+            body.push_str(n);
+            if file.content_mode {
+                body.push_str(" content");
+            }
+            body.push('\n');
+        }
+        (Some(n), false) => {
+            body.push_str("estate ");
+            body.push_str(n);
+            body.push('\n');
+        }
+        (None, _) => {}
+    }
+    for e in &file.items {
+        canon_entry(e, &mut body);
+        body.push('\n');
+    }
+    for c in &file.claims {
+        body.push_str(&format!(
+            "claim({}|{}|{}|{}|[{}]|{}|{}|[{}])\n",
+            c.framework,
+            c.version,
+            c.control,
+            c.coverage,
+            c.resources.join(","),
+            c.reason.as_deref().unwrap_or(""),
+            c.interpretation.as_deref().unwrap_or(""),
+            c.duties.iter().map(|(a, b)| format!("{}={}", a, b)).collect::<Vec<_>>().join(",")
+        ));
+    }
+    for s in &file.suppressions {
+        body.push_str(&format!(
+            "suppress({}|{}|{})\n",
+            s.tf_type,
+            canon_str(&s.label),
+            s.role.as_ref().map(|r| canon_str(r)).unwrap_or_default()
+        ));
+    }
+    for h in &file.hcl_blocks {
+        body.push_str(&format!("hcl({}){{{}}}\n", h.trust.as_deref().unwrap_or(""), h.body.trim()));
+    }
+    Canonical { params, body }
+}
+
+fn canon_str(parts: &[StrPart]) -> String {
+    let mut s = String::from("\"");
+    for p in parts {
+        match p {
+            StrPart::Lit(l) => {
+                for ch in l.chars() {
+                    match ch {
+                        '{' => s.push_str("{{"),
+                        '}' => s.push_str("}}"),
+                        '"' => s.push_str("\\\""),
+                        '\\' => s.push_str("\\\\"),
+                        '\n' => s.push_str("\\n"),
+                        c => s.push(c),
+                    }
+                }
+            }
+            StrPart::Param(p) => {
+                s.push('{');
+                s.push_str(p);
+                s.push('}');
+            }
+        }
+    }
+    s.push('"');
+    s
+}
+
+fn canon_key(k: &Key) -> String {
+    match k {
+        Key::Ident(i) => i.clone(),
+        Key::Str(parts) => canon_str(parts),
+    }
+}
+
+fn canon_value(v: &Value) -> String {
+    match v {
+        Value::Str(parts) => canon_str(parts),
+        Value::Num(n) => n.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Ref(r) => r.clone(),
+        Value::List(items) => {
+            let inner: Vec<String> = items.iter().map(canon_value).collect();
+            format!("[{}]", inner.join(","))
+        }
+        Value::Obj(entries) => {
+            let mut s = String::from("{");
+            for e in entries {
+                canon_entry(e, &mut s);
+                s.push(';');
+            }
+            s.push('}');
+            s
+        }
+    }
+}
+
+fn canon_entry(e: &Entry, out: &mut String) {
+    match e {
+        Entry::Attr { key, value, .. } => {
+            out.push_str(&canon_key(key));
+            out.push('=');
+            out.push_str(&canon_value(value));
+        }
+        Entry::Map { key, name, body, .. } => {
+            out.push_str(&canon_key(key));
+            if let Some(n) = name {
+                out.push(' ');
+                out.push_str(&canon_key(n));
+            }
+            out.push('{');
+            for b in body {
+                canon_entry(b, out);
+                out.push(';');
+            }
+            out.push('}');
+        }
+        Entry::Use { path, as_key, when, .. } => {
+            out.push_str(&format!(
+                "use({}|{}|{})",
+                path,
+                as_key.as_deref().unwrap_or(""),
+                when.as_deref().unwrap_or("")
+            ));
+        }
+    }
+}
+
 fn collect_satz_deps(entries: &[Entry], out: &mut Vec<String>) {
     for e in entries {
         match e {
@@ -1650,5 +1827,31 @@ mod empty_collection_tests {
             Some(0),
             "must read back as an empty sequence, not null"
         );
+    }
+
+    /// The canonical form is what drift classification compares: comments,
+    /// formatting and the pack version must not move it; a param default or a
+    /// resource body must.
+    #[test]
+    fn canonical_ignores_churn_and_version_but_sees_meaning() {
+        let base = "pack demo version \"1.0\"\nparams {\n  bucket_name = \"demo-audit\"\n}\ngoogle_storage_bucket {\n  b { name = bucket_name location = \"EU\" }\n}\n";
+        let churn = "// note\npack demo   version \"1.1\"\n\nparams {\n\n  bucket_name = \"demo-audit\" // default\n}\n\ngoogle_storage_bucket {\n  b {\n    name     = bucket_name\n    location = \"EU\"\n  }\n}\n";
+        let a = canonical_parts(&parse(base).unwrap());
+        let b = canonical_parts(&parse(churn).unwrap());
+        assert_eq!(a, b, "comment/format/version churn must be canonical-equal");
+
+        let param = base.replace("\"demo-audit\"", "\"customer-audit\"");
+        let c = canonical_parts(&parse(&param).unwrap());
+        assert_eq!(a.body, c.body, "a default change is not a body change");
+        assert_ne!(a.params, c.params);
+        assert_eq!(c.params[0], ("bucket_name".to_string(), "\"customer-audit\"".to_string()));
+
+        let body = base.replace("\"EU\"", "\"US\"");
+        let d = canonical_parts(&parse(&body).unwrap());
+        assert_eq!(a.params, d.params);
+        assert_ne!(a.body, d.body, "a resource change is a body change");
+
+        let deps = use_paths(&parse("estate e\nuse \"a.satz\"\ngoogle_folder { f { use \"b.satz\" } }\n").unwrap());
+        assert_eq!(deps, vec!["a.satz".to_string(), "b.satz".to_string()]);
     }
 }
