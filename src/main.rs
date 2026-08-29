@@ -7,6 +7,7 @@ mod manifest;
 mod state_migration;
 mod discovery;
 mod delta;
+mod align;
 mod template;
 mod adopt;
 mod bootstrap;
@@ -460,6 +461,19 @@ enum Commands {
         #[arg(long)]
         activate: bool,
     },
+    /// Derive the API→Terraform field map per resource type from the API's
+    /// Discovery Document and the provider schema, into
+    /// <presets_dir>/type-map.yaml — what the live import applies so
+    /// imported resources plan clean. Review the rows it marks renamed or
+    /// unmatched; re-run after a provider bump
+    MapTypes {
+        /// Resource types to map, comma-separated (default: every row with import: true)
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Import configuration (default: <presets_dir>/import-config.yaml)
+        #[arg(long)]
+        import_config: Option<PathBuf>,
+    },
     /// Alias of `adopt --only google_org_policy_policy --activate --execute --import`
     AdoptOrgPolicies {
         /// Estate file (inside yaml_dir if relative)
@@ -629,7 +643,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1321,6 +1335,11 @@ Thumbs.db
         Commands::Adopt { input, only, execute, import, activate } => {
             run_adopt(&input, only, execute, import, activate, &tool_config, &runtime_config).await
         }
+        Commands::MapTypes { only, import_config } => {
+            let cfg = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?
+                .ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
+            map_types(cfg, only, cli.verbose, &runtime_config).await
+        }
         Commands::AdoptOrgPolicies { input, dry_run } => {
             run_adopt(
                 &input,
@@ -1988,6 +2007,102 @@ fn discovered_to_satz(
     Ok(satz_core::migrate::normalize_type_keys(&satz, is_type))
 }
 
+/// `satz map-types`: align every selected row's API schema against the
+/// provider schema and write `type-map.yaml` beside the import config.
+async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: bool, runtime_config: &ToolConfig) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::gcp::discovery_doc as dd;
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let cache = dd::cache_dir(&runtime_config.presets_dir);
+    let http = reqwest::Client::new();
+    let mut rows: Vec<(&String, &crate::config::ImportResourceConfig)> = cfg
+        .resource_types
+        .iter()
+        .filter(|(t, r)| if only.is_empty() { r.import } else { only.iter().any(|o| crate::config::glob_match(o, t)) })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    if rows.is_empty() {
+        return Err("no rows selected — `import: true` rows, or --only <types>".into());
+    }
+    let out_path = Path::new(&runtime_config.presets_dir).join("type-map.yaml");
+    let mut existing: std::collections::BTreeMap<String, crate::align::TypeMap> = match fsx::read_to_string(&out_path) {
+        Ok(t) => serde_yaml::from_str(&t)?,
+        Err(_) => Default::default(),
+    };
+    let (mut mapped, mut skipped) = (0usize, Vec::new());
+    for (t, row) in rows {
+        if row.content_type.as_deref().is_some_and(|c| c.eq_ignore_ascii_case("IAM_POLICY")) {
+            continue; // an IAM binding has no resource schema of its own — its asset is the parent's policy
+        }
+        let Some(asset_type) = row.asset_type.as_deref().filter(|a| !a.starts_with("TODO")) else {
+            skipped.push(format!("{}: no asset_type", t));
+            continue;
+        };
+        let Some((service, type_name)) = dd::split_asset_type(asset_type) else {
+            skipped.push(format!("{}: asset_type {} is not <service>.googleapis.com/<Type>", t, asset_type));
+            continue;
+        };
+        let Some((_, tf)) = registry.find_resource(t) else {
+            skipped.push(format!("{}: not in the provider schema", t));
+            continue;
+        };
+        let doc = match dd::document(&http, &cache, &service).await {
+            Ok(d) => d,
+            Err(e) => {
+                skipped.push(format!("{}: {}", t, e));
+                continue;
+            }
+        };
+        let schema = match row.api_schema.as_deref() {
+            Some(id) => doc.get("schemas").and_then(|s| s.get(id)).map(|s| (id, s)).ok_or_else(|| format!("{}: api_schema `{}` not in the {} document", t, id, service)),
+            None => dd::schema_for(&doc, &type_name).map_err(|e| format!("{}: {}", t, e)),
+        };
+        let (schema_id, schema) = match schema {
+            Ok(x) => x,
+            Err(e) => {
+                skipped.push(e);
+                continue;
+            }
+        };
+        let schemas = doc.get("schemas").cloned().unwrap_or(serde_json::Value::Null);
+        let tm = crate::align::align(schema, &schemas, &tf.block);
+        let revision = doc.get("revision").and_then(|r| r.as_str()).unwrap_or("?");
+        println!(
+            "{:48} {}/{} rev {}: {} exact, {} mapped ({} renamed), {} API-only, {} TF-only",
+            t,
+            service,
+            schema_id,
+            revision,
+            tm.exact,
+            tm.map.len(),
+            tm.how.values().filter(|h| *h == "renamed").count(),
+            tm.unmatched.len(),
+            tm.tf_only.len()
+        );
+        if verbose {
+            for (src, dst) in &tm.map {
+                println!("    {:10} {} → {}", tm.how.get(src).map(String::as_str).unwrap_or(""), src, dst);
+            }
+            for u in &tm.unmatched {
+                println!("    API-only   {}", u);
+            }
+        }
+        existing.insert(t.clone(), tm);
+        mapped += 1;
+    }
+    let body = serde_yaml::to_string(&existing)?;
+    let header = format!(
+        "# Generated by `satz map-types` — the API→Terraform field map per resource type,\n# aligned from the API's Discovery Document and the provider schema in {}.\n# Review rows marked `renamed`; `unmatched` API fields are dropped at import.\n# Re-run after a provider bump. Do not edit by hand: put overrides in import-config.yaml.\n",
+        runtime_config.schema_dir
+    );
+    fsx::write(&out_path, format!("{}{}", header, body))?;
+    println!("\nmap-types: {} type(s) mapped → {}", mapped, out_path.display());
+    for s in &skipped {
+        println!("  skipped: {}", s);
+    }
+    Ok(())
+}
+
 /// The live shape with `--into`: the delta against what the estate declares.
 async fn import_delta(
     parent: &str,
@@ -2579,7 +2694,22 @@ fn load_import_config(
     }
 
     let content = fsx::read_to_string(&config_path)?;
-    let config: ImportConfig = serde_yaml::from_str(&content)?;
+    let mut config: ImportConfig = serde_yaml::from_str(&content)?;
+    // the generated field maps ride in a sibling file so the hand-maintained
+    // rows (and their comments) are never rewritten by a generator
+    let type_map_path = config_path.with_file_name("type-map.yaml");
+    if type_map_path.exists() {
+        let maps: std::collections::BTreeMap<String, crate::align::TypeMap> =
+            serde_yaml::from_str(&fsx::read_to_string(&type_map_path)?)
+                .map_err(|e| format!("{}: {}", type_map_path.display(), e))?;
+        for (t, tm) in maps {
+            if let Some(row) = config.resource_types.get_mut(&t) {
+                if !tm.map.is_empty() {
+                    row.map = Some(tm.map);
+                }
+            }
+        }
+    }
 
     let total_types = config.resource_types.len();
     let enabled_types = config.resource_types.values().filter(|v| v.import).count();

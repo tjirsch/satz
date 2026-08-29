@@ -4,6 +4,7 @@
 //! a network.
 
 pub(crate) mod billing;
+pub(crate) mod discovery_doc;
 pub(crate) mod resourcemanager;
 
 /// An ADC bearer token for the cloud-platform scope.

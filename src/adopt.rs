@@ -815,6 +815,8 @@ mod tests {
                     import_id: template.map(|s| s.to_string()),
                     match_on: on.map(|v| v.iter().map(|s| s.to_string()).collect()),
                     activate: None,
+                    map: None,
+                    api_schema: None,
                 },
             );
         }

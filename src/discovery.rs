@@ -287,8 +287,13 @@ impl Discoverer {
         Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None })
     }
 
-    pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>) -> serde_yaml::Value {
+    pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>, map: Option<&std::collections::BTreeMap<String, String>>) -> serde_yaml::Value {
         let mut yaml_val = serde_yaml::to_value(values).unwrap_or(serde_yaml::Value::Null);
+        // API vocabulary → Terraform vocabulary where the names differ (F5c),
+        // on the API's own key spelling, before anything else looks at keys
+        if let (Some(m), serde_yaml::Value::Mapping(d)) = (map, &mut yaml_val) {
+            crate::align::apply_map(d, m);
+        }
         let block_schema = schema.map(|s| &s.block);
         
         // Construct Blacklist
@@ -526,7 +531,7 @@ impl Discoverer {
             }
             return;
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, true, None);
+        let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
         if tf_type == "google_project_service" {
             if p.project_service.is_none() { p.project_service = Some(Vec::new()); }
             p.project_service.as_mut().unwrap().push(yaml_val);
@@ -554,7 +559,7 @@ impl Discoverer {
             }
             return;
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, true, None);
+        let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
         if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = f.extra.get_mut(tf_type) {
              type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
@@ -590,7 +595,7 @@ impl Discoverer {
             }
             return;
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, true, None);
+        let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
         if !c.extra.contains_key(tf_type) { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = c.extra.get_mut(tf_type) {
             type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
@@ -1103,7 +1108,7 @@ impl Discoverer {
                    data_clone.insert("service".to_string(), serde_json::Value::String(service_name.clone()));
 
                    let data_val = serde_json::Value::Object(data_clone);
-                   Self::filter_values(tf_type, &data_val, schema, false, res_config.exclude.as_ref())
+                   Self::filter_values(tf_type, &data_val, schema, false, res_config.exclude.as_ref(), res_config.map.as_ref())
                } else {
                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
                }
@@ -1328,7 +1333,7 @@ impl Discoverer {
                if let Some(data) = &resource.data {
                    let schema = registry.and_then(|r| r.find_resource(tf_type)).map(|(_, s)| s);
                    let data_val = serde_json::Value::Object(data.clone());
-                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &data_val, schema, true, res_config.exclude.as_ref()) {
+                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &data_val, schema, true, res_config.exclude.as_ref(), res_config.map.as_ref()) {
                         resource_val = m;
                    }
                }
