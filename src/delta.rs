@@ -264,6 +264,28 @@ pub(crate) fn add_use(estate_text: &str, pack: &str, after_line: Option<u32>) ->
     Ok(Some(out))
 }
 
+/// Is this resolution's declaring file one of the packs a delta import
+/// wrote? Those are re-derived on every run, so their content must not
+/// count as "declared" — or nothing moved out of a pack would ever be
+/// subtracted, and an emptied pack would never go away.
+pub(crate) fn from_imported_pack(origin: &Option<(String, u32)>) -> bool {
+    origin
+        .as_ref()
+        .and_then(|(f, _)| std::path::Path::new(f).file_name().and_then(|n| n.to_str()).map(|n| n.starts_with("imported-")))
+        .unwrap_or(false)
+}
+
+/// Drop the `use "<pack>"` line from the estate, wherever it sits.
+pub(crate) fn remove_use(estate_text: &str, pack: &str) -> Option<String> {
+    let use_line = format!("use \"{}\"", pack);
+    if !estate_text.lines().any(|l| l.trim() == use_line) {
+        return None;
+    }
+    let mut out: String = estate_text.lines().filter(|l| l.trim() != use_line).collect::<Vec<_>>().join("\n");
+    out.push('\n');
+    Some(out)
+}
+
 /// Everything the sweep found, by live id — for the "declared but not live"
 /// cross-check.
 pub(crate) fn live_ids(top: &serde_yaml::Mapping) -> BTreeSet<String> {
@@ -366,6 +388,18 @@ folder:
         let with_inner = add_use(&with_top, "imported-org-infra_folder.satz", Some(4)).unwrap().unwrap();
         assert!(with_inner.contains("  infra_folder {\n    use \"imported-org-infra_folder.satz\"\n"), "{}", with_inner);
         assert!(add_use(&with_inner, "x.satz", Some(5)).is_err(), "not a block line");
+    }
+
+    #[test]
+    fn use_lines_come_out_again_and_imported_packs_are_recognised() {
+        let estate = "estate e\n\ngoogle_folder {\n  infra_folder {\n    use \"imported-org-x.satz\"\n  }\n}\n\nuse \"imported-org.satz\"\n";
+        let without_top = remove_use(estate, "imported-org.satz").unwrap();
+        assert!(!without_top.contains("imported-org.satz\""), "{}", without_top);
+        assert!(without_top.contains("imported-org-x.satz"), "{}", without_top);
+        assert!(remove_use(&without_top, "imported-org.satz").is_none(), "idempotent");
+        assert!(from_imported_pack(&Some(("./yaml/imported-organizations-1.satz".into(), 3))));
+        assert!(!from_imported_pack(&Some(("./yaml/C0example.satz".into(), 3))));
+        assert!(!from_imported_pack(&None));
     }
 
     #[test]
