@@ -54,7 +54,9 @@ and in the maintainer's notes. Nothing in this file names a customer.
   the legacy `.yaml` dialect and both keep working — converting is a user's
   choice, not a toll. If the YAML path ever blocks a design decision, raise it
   as an explicit decision (keep / drop / carve out) and record it here; never
-  work around it quietly. `tests/corpus/yaml-estate/` is the gate: a YAML
+  work around it quietly. New estates are Satz: `discover-from-state` /
+  `discover-from-organization --satz` write a Satz estate directly (the YAML
+  output stays as the legacy form). `tests/corpus/yaml-estate/` is the gate: a YAML
   fixture through the legacy walk AND a full `migrate-to-satz` round trip that
   must compile as Satz and emit the same resource set.
 - **`cargo test` does NOT rebuild the debug binary** — `cargo build` before a

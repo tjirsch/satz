@@ -877,7 +877,7 @@ resource_types:
   google_project_iam_member:
     import_id: "{project} {role} {member}"
     description: IAM policy for a project
-    import: false
+    import: true
     asset_type: cloudresourcemanager.googleapis.com/Project
     content_type: IAM_POLICY
     derive_yaml_key_from: name
