@@ -1142,9 +1142,17 @@ pub(crate) async fn run_report_compliance(
             _ => Vec::new(),
         };
         let prowler_findings = prowler.get(id);
-        let prowler_cell = prowler_findings
+        let mut prowler_cell = prowler_findings
             .map(|fs| prowler_verdict(fs, &witness_ids, status.contains("verified")))
             .unwrap_or_else(|| "–".into());
+        // I4: a FAIL on a control the estate deviates from is a known,
+        // justified exception — real, on the record, nothing to fix
+        if let (Goal::Deviation { reasons, .. }, Some(fs)) = (goal, prowler_findings) {
+            if fs.iter().any(|f| f.status == "FAIL") {
+                let why = reasons.first().map(|(_, r)| r.as_str()).unwrap_or("");
+                prowler_cell.push_str(&format!(" · **accepted exception** — {}", why));
+            }
+        }
         let checkov_cell = match (checkov, goal) {
             (None, _) => "–".to_string(),
             (Some(_), Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. }) => {
@@ -1267,5 +1275,231 @@ mod prowler_ocsf_tests {
         let not_verified = prowler_verdict(&by["5.1"], &[], false);
         assert_eq!(not_verified, "0 PASS / 1 FAIL");
         assert_eq!(prowler_verdict(&by["1.1"], &[], false), "0 PASS / 0 FAIL / 1 MANUAL");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// I3 — triage: every Prowler FAIL sorted into the bucket that says who fixes
+// it and how (docs/security-toolset-integration.md)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub(crate) enum Bucket {
+    /// a pack in the library already covers the control
+    A,
+    /// Satz declares the resource — usually a CONTESTED case
+    B,
+    /// the estate declares a deviation: an accepted exception
+    C,
+    /// unmanaged, but expressible: bring under management
+    D,
+    /// not IaC: a manual duty
+    E,
+}
+
+impl Bucket {
+    pub fn title(self) -> &'static str {
+        match self {
+            Bucket::A => "A · a pack already covers it — adopt it",
+            Bucket::B => "B · Satz declares the resource — first-party proof contested",
+            Bucket::C => "C · declared exception — nothing to fix, something to re-assess",
+            Bucket::D => "D · unmanaged, expressible — bring under management",
+            Bucket::E => "E · not IaC — a manual duty",
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct TriageRow {
+    pub bucket: Bucket,
+    pub control: String,
+    pub title: String,
+    pub check: String,
+    pub status: String,
+    pub severity: String,
+    pub resource: String,
+    pub project: String,
+    /// the emitted address the resource matched, when any
+    pub declared: Option<String>,
+    pub plan: String,
+}
+
+/// The bucket of one finding, from what the estate says about its control.
+pub(crate) fn bucket_for(goal: Option<&Goal>, status: &str, has_resource: bool) -> Bucket {
+    if status == "MANUAL" {
+        return Bucket::E;
+    }
+    match goal {
+        Some(Goal::Deviation { .. }) => Bucket::C,
+        Some(Goal::Satisfied { .. }) | Some(Goal::Partial { .. }) | Some(Goal::ClaimBroken { .. }) => Bucket::B,
+        Some(Goal::Unmet { providers }) if !providers.is_empty() => Bucket::A,
+        Some(Goal::Organizational) => Bucket::E,
+        _ => {
+            if has_resource {
+                Bucket::D
+            } else {
+                Bucket::E
+            }
+        }
+    }
+}
+
+/// The emitted address whose attributes name this resource, if any — the
+/// reverse index from a live id to the block that declares it.
+fn declared_address(resource: &str, attrs: &BTreeMap<String, BTreeMap<String, String>>) -> Option<String> {
+    if resource.is_empty() {
+        return None;
+    }
+    let r = resource.trim_start_matches("//");
+    let mut hits: Vec<&String> = attrs
+        .iter()
+        .filter(|(_, a)| a.values().any(|v| !v.is_empty() && (r.ends_with(v.trim_start_matches("//")) || v.ends_with(r))))
+        .map(|(addr, _)| addr)
+        .collect();
+    hits.sort();
+    hits.first().map(|a| (*a).clone())
+}
+
+pub(crate) fn triage(
+    catalog: &Catalog,
+    goals: &BTreeMap<String, Goal>,
+    findings: &BTreeMap<String, Vec<ProwlerFinding>>,
+    attrs: &BTreeMap<String, BTreeMap<String, String>>,
+    manifest: &Manifest,
+) -> Vec<TriageRow> {
+    let mut rows = Vec::new();
+    for (control, fs) in findings {
+        let goal = goals.get(control);
+        let title = catalog.controls.get(control).map(|c| c.title.clone()).unwrap_or_default();
+        for f in fs.iter().filter(|f| f.status == "FAIL" || f.status == "MANUAL") {
+            let bucket = bucket_for(goal, &f.status, !f.resource.is_empty());
+            let declared = declared_address(&f.resource, attrs);
+            let plan = match (bucket, goal) {
+                (Bucket::A, Some(Goal::Unmet { providers })) => format!("adopt {}", providers.iter().map(|p| format!("`{}`", p)).collect::<Vec<_>>().join(" or ")),
+                (Bucket::B, _) => match declared.as_ref().and_then(|a| manifest.resources.get(a)).and_then(|r| r.origin.as_ref()) {
+                    Some((file, line)) => format!("the estate declares this at {}:{} — Satz and Prowler disagree on the same resource: check the live value", file, line),
+                    None => "the estate claims this control; Prowler's resource was not matched to a declared block — check which resource it is".to_string(),
+                },
+                (Bucket::C, Some(Goal::Deviation { reasons, open_duties, .. })) => format!(
+                    "accepted: {}{}",
+                    reasons.iter().map(|(_, r)| r.as_str()).collect::<Vec<_>>().join("; "),
+                    if open_duties.is_empty() { String::new() } else { format!("; open duties: {}", open_duties.join(", ")) }
+                ),
+                (Bucket::D, _) => "bring under management: declare it (or `satz import` it) in the estate, or generalise it into a pack".to_string(),
+                (Bucket::E, _) => "manual: follow the control's audit procedure; record an attestation when done".to_string(),
+                _ => String::new(),
+            };
+            rows.push(TriageRow {
+                bucket,
+                control: control.clone(),
+                title: title.clone(),
+                check: f.check.clone(),
+                status: f.status.clone(),
+                severity: f.severity.clone(),
+                resource: f.resource.clone(),
+                project: f.project.clone(),
+                declared,
+                plan,
+            });
+        }
+    }
+    rows.sort_by(|a, b| (a.bucket, &a.control, &a.resource).cmp(&(b.bucket, &b.control, &b.resource)));
+    rows
+}
+
+pub(crate) fn render_triage(catalog: &Catalog, rows: &[TriageRow]) -> String {
+    let mut md = format!("# Triage — {} {}\n\n", catalog.catalog, catalog.version);
+    md.push_str("Every Prowler FAIL (and MANUAL) sorted into the bucket that says who fixes it and how. This is the skeleton of the remediation plan; the concrete steps, ordering and side effects are yours.\n");
+    for b in [Bucket::A, Bucket::B, Bucket::C, Bucket::D, Bucket::E] {
+        let in_b: Vec<&TriageRow> = rows.iter().filter(|r| r.bucket == b).collect();
+        md.push_str(&format!("\n## {} ({})\n\n", b.title(), in_b.len()));
+        if in_b.is_empty() {
+            md.push_str("_none_\n");
+            continue;
+        }
+        md.push_str("| Control | Check | Severity | Resource | Plan |\n|---|---|---|---|---|\n");
+        for r in in_b {
+            let proj = if r.project.is_empty() { String::new() } else { format!(" ({})", r.project) };
+            let res = if r.resource.is_empty() { "–".to_string() } else { format!("`{}`{}", r.resource, proj) };
+            let declared = r.declared.as_ref().map(|d| format!("<br>declared as `{}`", d)).unwrap_or_default();
+            md.push_str(&format!("| {} {} | {} | {} | {}{} | {} |\n", r.control, r.title, r.check, r.severity, res, declared, r.plan));
+        }
+    }
+    md
+}
+
+/// The `triage` command.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_triage(
+    framework: &str,
+    presets_dir: &str,
+    included_claims: &[(String, Claim)],
+    manifest: &Manifest,
+    prowler_path: &Path,
+    format: &str,
+    report_path: Option<PathBuf>,
+) -> Result<(), BoxErr> {
+    let catalog = load_catalog(presets_dir, framework)?;
+    let library_claims = load_library_view(presets_dir)?;
+    let emitted = manifest.addresses();
+    let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
+    let attrs = manifest.witness_attrs();
+    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
+        .map_err(|e| format!("prowler json does not parse: {}", e))?;
+    let findings = ingest_prowler(&raw, &catalog.catalog, &catalog.version);
+    if findings.is_empty() {
+        return Err(format!("no finding in {} maps to {} {} — is this the right framework and a Prowler export (OCSF or legacy JSON)?", prowler_path.display(), catalog.catalog, catalog.version).into());
+    }
+    let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
+    let text = match format {
+        "json" => serde_json::to_string_pretty(&rows)?,
+        _ => render_triage(&catalog, &rows),
+    };
+    match report_path {
+        Some(p) => {
+            if let Some(d) = p.parent() {
+                crate::fsx::create_dir_all(d)?;
+            }
+            crate::fsx::write(&p, &text)?;
+            println!("Wrote {}", p.display());
+        }
+        None => print!("{}", text),
+    }
+    let counts: BTreeMap<String, usize> = rows.iter().fold(BTreeMap::new(), |mut m, r| {
+        *m.entry(format!("{:?}", r.bucket)).or_default() += 1;
+        m
+    });
+    eprintln!("triage: {}", counts.iter().map(|(b, n)| format!("{} {}", n, b)).collect::<Vec<_>>().join(", "));
+    Ok(())
+}
+
+#[cfg(test)]
+mod triage_tests {
+    use super::*;
+
+    #[test]
+    fn buckets_follow_the_estate_s_word_on_the_control() {
+        let unmet_with = Goal::Unmet { providers: vec!["CIS".into()] };
+        let unmet_without = Goal::Unmet { providers: vec![] };
+        let dev = Goal::Deviation { reasons: vec![("p".into(), "we know".into())], witnesses: vec![], open_duties: vec![] };
+        let sat = Goal::Satisfied { witnesses: vec!["google_storage_bucket.b".into()] };
+        assert_eq!(bucket_for(Some(&unmet_with), "FAIL", true), Bucket::A);
+        assert_eq!(bucket_for(Some(&sat), "FAIL", true), Bucket::B);
+        assert_eq!(bucket_for(Some(&dev), "FAIL", true), Bucket::C);
+        assert_eq!(bucket_for(Some(&unmet_without), "FAIL", true), Bucket::D);
+        assert_eq!(bucket_for(Some(&unmet_without), "FAIL", false), Bucket::E);
+        assert_eq!(bucket_for(Some(&sat), "MANUAL", true), Bucket::E);
+        assert_eq!(bucket_for(Some(&Goal::Organizational), "FAIL", true), Bucket::E);
+        assert_eq!(bucket_for(None, "FAIL", true), Bucket::D);
+    }
+
+    #[test]
+    fn the_reverse_index_finds_the_declaring_block_by_suffix() {
+        let mut attrs: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        attrs.insert("google_storage_bucket.logs".into(), [("name".to_string(), "corp-audit-logs".to_string())].into_iter().collect());
+        attrs.insert("google_folder.x".into(), [("display_name".to_string(), "X".to_string())].into_iter().collect());
+        assert_eq!(declared_address("//storage.googleapis.com/corp-audit-logs", &attrs).as_deref(), Some("google_storage_bucket.logs"));
+        assert_eq!(declared_address("//storage.googleapis.com/other", &attrs), None);
+        assert_eq!(declared_address("", &attrs), None);
     }
 }

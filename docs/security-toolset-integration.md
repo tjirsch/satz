@@ -140,6 +140,8 @@ severity, resource, project}]` and `verdict`. The report's Prowler column shows
 
 ### I3 — The remediation plan is input for Satz: triage
 
+*Status 2026-08-29: shipped as `satz triage` (v0.46.34) — buckets A–E as below, markdown and JSON; bucket B uses a suffix reverse index from the finding's resource uid to the declaring block; the param link of bucket A waits for I5.*
+
 **What.** `satz triage <framework> <estate> --prowler <ocsf.json>` sorts
 every FAIL into the bucket that says *who fixes it and how*:
 
@@ -169,6 +171,8 @@ with the I2 findings. Buckets A, C, E need nothing new; B needs the reverse
 index (§4); the param link in A is I5's `governs`.
 
 ### I4 — `deviates` is the exception register
+
+*Status 2026-08-29: the join shipped (v0.46.34) — a FAIL on a deviated control renders as **accepted exception — <reason>** in the Prowler column and lands in triage bucket C. `--review` (audit-side false positives) is still a proposal.*
 
 **What.** Nothing new in the language. A `claim … deviates { reason = "…" }` is
 already the only way an estate can decline a control on the record, with a

@@ -47,6 +47,13 @@ step "require cis-gcp-4.0 (goal view, offline)"
 "$satz" --config . require cis-gcp-4.0 smoke.satz | tee tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 
+step "triage: Prowler FAILs sorted into buckets against the estate's claims"
+"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
+grep -q '^## B ·' tmp/triage.md || fail "no bucket headings"
+grep -q 'declared as `google_storage_bucket' tmp/triage.md || fail "the bucket finding was not matched to its declaring block:\n$(cat tmp/triage.md)"
+"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --report tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
+grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
+
 step "check-presets against the repository's own presets (must be clean)"
 "$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz
 
