@@ -10,10 +10,9 @@
 //! The classification layer is pure and unit-tested; downloading and directory walking
 //! are the only IO.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::include_processor::{parse_vars_entry, register_anchors};
 
 type BoxErr = Box<dyn std::error::Error>;
 
@@ -45,81 +44,11 @@ static DOWNLOADED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 // Pure layer
 // ---------------------------------------------------------------------------
 
-/// One entry of a preset's top-level `variables:` block.
+/// One changed param default: its name and the canonical value text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VarEntry {
     pub key: String,
-    /// The value text exactly as written (everything after the anchor), trimmed.
     pub value: String,
-}
-
-/// A preset file split into its variables block and everything else.
-#[derive(Debug)]
-pub(crate) struct PresetParts {
-    /// anchor name -> entry
-    pub vars: BTreeMap<String, VarEntry>,
-    /// Non-variables lines, comments and blanks dropped, trailing space trimmed.
-    /// Comment-only edits are formatting, not drift.
-    pub body: Vec<String>,
-}
-
-pub(crate) fn split_preset(text: &str) -> PresetParts {
-    let mut vars: BTreeMap<String, VarEntry> = BTreeMap::new();
-    let mut body = Vec::new();
-    let mut in_vars_block = false;
-    // The entry whose value is still being read, with the indent it was declared
-    // at. A `variables:` entry may carry its value on the FOLLOWING, more-indented
-    // lines — a list, or a block scalar. Keeping only the text on the anchor line
-    // made every such default invisible: both sides had an empty value, the items
-    // were never compared, and a pack a whole version behind reported "clean".
-    // Real case: one estate on CIS v2.0 against upstream v2.1, whose only substantive
-    // change was a fifth entry in a list default. See docs/presets-workflow.md.
-    let mut open: Option<(String, usize)> = None;
-
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        let at_top_level = !line.starts_with(' ') && !trimmed.is_empty() && !trimmed.starts_with('#');
-        if at_top_level {
-            in_vars_block = trimmed == "variables:";
-            open = None;
-            if in_vars_block {
-                continue;
-            }
-        }
-        if in_vars_block {
-            if let Some((indent, key, anchor, rest)) = parse_vars_entry(line) {
-                vars.insert(
-                    anchor.to_string(),
-                    VarEntry { key: key.to_string(), value: rest.trim().to_string() },
-                );
-                open = Some((anchor.to_string(), indent));
-                continue;
-            }
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            // A more-indented line continues the open entry's value.
-            if let Some((anchor, indent)) = &open {
-                if line.len() - trimmed.len() > *indent {
-                    if let Some(entry) = vars.get_mut(anchor) {
-                        if !entry.value.is_empty() {
-                            entry.value.push('\n');
-                        }
-                        entry.value.push_str(line.trim_end());
-                    }
-                    continue;
-                }
-            }
-            open = None;
-            continue;
-        }
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        body.push(line.trim_end().to_string());
-    }
-
-    PresetParts { vars, body }
 }
 
 /// The version a Satz pack declares in-file: `pack <name> version "2.1"`.
@@ -148,79 +77,13 @@ pub(crate) enum Drift {
     Structural { summary: String },
 }
 
-pub(crate) fn classify(local: &str, pristine: &str) -> Drift {
-    if local == pristine {
-        return Drift::Clean;
-    }
-    let l = split_preset(local);
-    let p = split_preset(pristine);
-
-    if l.body != p.body {
-        let changed = l.body.iter().filter(|line| !p.body.contains(line)).count()
-            + p.body.iter().filter(|line| !l.body.contains(line)).count();
-        return Drift::Structural {
-            summary: format!("{} resource line(s) differ from upstream", changed),
-        };
-    }
-
-    let l_anchors: BTreeSet<_> = l.vars.keys().cloned().collect();
-    let p_anchors: BTreeSet<_> = p.vars.keys().cloned().collect();
-    if l_anchors != p_anchors {
-        let only_local: Vec<_> = l_anchors.difference(&p_anchors).cloned().collect();
-        let only_upstream: Vec<_> = p_anchors.difference(&l_anchors).cloned().collect();
-        return Drift::Structural {
-            summary: format!(
-                "variable set differs (local-only: [{}], upstream-only: [{}])",
-                only_local.join(", "),
-                only_upstream.join(", ")
-            ),
-        };
-    }
-
-    let changed: Vec<(String, VarEntry)> = l
-        .vars
-        .iter()
-        .filter(|(anchor, entry)| p.vars.get(*anchor).map(|pe| &pe.value) != Some(&entry.value))
-        .map(|(anchor, entry)| (anchor.clone(), entry.clone()))
-        .collect();
-
-    if changed.is_empty() {
-        Drift::Clean // comments/formatting only
-    } else {
-        Drift::VariablesOnly(changed)
-    }
-}
-
-/// Anchors a YAML-dialect estate defines itself (its overrides and shared variables).
-pub(crate) fn anchors_defined_in_main(main_text: &str) -> BTreeSet<String> {
-    let mut seen = std::collections::HashSet::new();
-    for line in main_text.lines() {
-        register_anchors(line, &mut seen);
-    }
-    seen.into_iter().collect()
-}
-
 // ---------------------------------------------------------------------------
 // IO layer
 // ---------------------------------------------------------------------------
 
-fn walk_yaml_files(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> Result<(), BoxErr> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            walk_yaml_files(&path, base, out)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-            out.push(path.strip_prefix(base)?.to_path_buf());
-        }
-    }
-    Ok(())
-}
-
-/// Every preset SOURCE under `dir`: `.yaml` packs and `.satz` packs alike.
-///
-/// `walk_yaml_files` only ever saw `.yaml`, which is why `check-presets` silently
-/// skipped the entire Satz fleet — a pack it never collected is a pack it never
-/// compares, and "nothing compared" printed as "clean".
+/// Every pack SOURCE under `dir`: the `.satz` files. (`.yaml` files in a presets
+/// dir — catalogs, `discovery-config.yaml` — are data refreshed as artifacts,
+/// not packs to classify; the YAML pack dialect is gone.)
 fn walk_preset_sources(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> Result<(), BoxErr> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
@@ -229,11 +92,7 @@ fn walk_preset_sources(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> Resul
             continue;
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        // `.gen.yaml` / `.gen.claims.yaml` are transpile artifacts, not sources.
-        if name.contains(".gen.") {
-            continue;
-        }
-        if name.ends_with(".yaml") || name.ends_with(".satz") {
+        if name.ends_with(".satz") {
             out.push(path.strip_prefix(base)?.to_path_buf());
         }
     }
@@ -260,16 +119,7 @@ fn used_preset_files(
     let mut used = BTreeSet::new();
 
     if input.extension().and_then(|e| e.to_str()) != Some("satz") {
-        let include_paths: Vec<PathBuf> = include_dirs.iter().map(PathBuf::from).collect();
-        let (_text, bindings) = crate::include_processor::process_includes_with_ops(input, &include_paths)?;
-        for b in &bindings {
-            if let Ok(c) = std::fs::canonicalize(&b.path) {
-                if let Ok(rel) = c.strip_prefix(&canon_presets) {
-                    used.insert(rel.to_path_buf());
-                }
-            }
-        }
-        return Ok(used);
+        return Err(format!("{}: not a Satz estate — YAML estates are migrated with `migrate-to-satz`, not checked", input.display()).into());
     }
 
     // Walk the `use` graph the same way the compiler resolves it: relative to the
@@ -306,11 +156,7 @@ fn used_preset_files(
 /// exactly the distinction the report needs. This is the SAME canonical
 /// comparison `merge-presets` makes, so the two commands cannot disagree about
 /// whether a pack drifted.
-fn classify_source(rel: &Path, local: &str, pristine: &str) -> Drift {
-    let is_satz = rel.extension().and_then(|e| e.to_str()) == Some("satz");
-    if !is_satz {
-        return classify(local, pristine);
-    }
+fn classify_source(_rel: &Path, local: &str, pristine: &str) -> Drift {
     if local == pristine {
         return Drift::Clean;
     }
@@ -381,7 +227,7 @@ fn indented(value: &str) -> String {
 /// The per-file detail of a drift verdict, shared by the STALE and EDITED arms
 /// so a version gap and a local edit are described the same way — only the
 /// headline and the remedy differ.
-fn print_drift_detail(drift: &Drift, rel: &Path, main_anchors: &BTreeSet<String>, stale: bool) {
+fn print_drift_detail(drift: &Drift, estate_params: &BTreeSet<String>, stale: bool) {
     match drift {
         Drift::Clean => {}
         // A STALE pack's local values are the OLD defaults. Telling the operator
@@ -393,33 +239,22 @@ fn print_drift_detail(drift: &Drift, rel: &Path, main_anchors: &BTreeSet<String>
         }
         Drift::VariablesOnly(changed) => {
             let mut to_add = Vec::new();
-            for (anchor, entry) in changed {
-                if main_anchors.contains(anchor) {
+            for (name, entry) in changed {
+                if estate_params.contains(name) {
                     println!(
-                        "    {} ={}\n      — already overridden in the main file; local edit is redundant",
-                        anchor,
+                        "    {} ={}\n      — already overridden in the estate's params; the local edit is redundant",
+                        name,
                         indented(&entry.value)
                     );
                 } else {
-                    to_add.push((anchor, entry));
+                    to_add.push((name, entry));
                 }
             }
             if !to_add.is_empty() {
-                // Same remedy either way — pin the value in the estate so the pack
-                // stays pristine — but the two dialects spell it differently, and
-                // the anchors a Satz reader sees here are the compiled twin's, not
-                // the names in their source.
-                let satz = rel.extension().and_then(|e| e.to_str()) == Some("satz");
-                if satz {
-                    println!("    override in the estate's `params {{ … }}` block, then restore the preset with `get-presets`:");
-                    for (anchor, entry) in to_add {
-                        println!("      {} ={}", anchor.replace('-', "_"), indented(&entry.value));
-                    }
-                } else {
-                    println!("    add to the main file's `variables:` block (before the include), then restore the preset with `get-presets`:");
-                    for (anchor, entry) in to_add {
-                        println!("      {}: &{}{}", entry.key, anchor, indented(&entry.value));
-                    }
+                // Pin the value in the estate so the pack stays pristine.
+                println!("    override in the estate's `params {{ … }}` block, then restore the preset with `get-presets`:");
+                for (name, entry) in to_add {
+                    println!("      {} ={}", name, indented(&entry.value));
                 }
             }
         }
@@ -449,12 +284,14 @@ pub(crate) async fn run_check_presets(
     // Pristine copy: an explicit directory, or one download for the process.
     let pristine_base = pristine_source(pristine_dir).await?;
 
-    // Which presets does the estate actually use? Satz `use` graph or YAML
-    // `!include` manifest, depending on the dialect.
+    // Which packs does the estate actually use? Its `use` graph.
     let included = used_preset_files(input, presets_dir, include_dirs)?;
 
-    let main_text = crate::fsx::read_to_string(input)?;
-    let main_anchors = anchors_defined_in_main(&main_text);
+    // The params the estate itself declares — an edited pack default that the
+    // estate already overrides is redundant, not a remedy to print.
+    let estate_params: BTreeSet<String> = satz_core::satz::parse(&crate::fsx::read_to_string(input)?)
+        .map(|f| f.params.iter().map(|(n, _, _)| n.clone()).collect())
+        .unwrap_or_default();
 
     let mut local_files = Vec::new();
     walk_preset_sources(&local_base, &local_base, &mut local_files)?;
@@ -470,23 +307,9 @@ pub(crate) async fn run_check_presets(
     println!("\ncheck-presets: comparing {} against upstream\n", local_base.display());
 
     for rel in local_set.union(&pristine_set) {
-        // bookkeeping and generated artifacts are not presets
-        let fname_s = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
-        if rel.starts_with(".base") || fname_s.contains(".gen.") {
+        // bookkeeping is not a preset
+        if rel.starts_with(".base") {
             continue;
-        }
-        // A `.yaml` whose `.satz` sibling exists upstream is that pack's generated
-        // twin, not a preset of its own. `merge-presets` already treats it that
-        // way; without the same rule here a Satz estate is told that every twin it
-        // correctly does not have is a "new upstream preset".
-        if fname_s.ends_with(".yaml")
-            && !fname_s.ends_with(".claims.yaml")
-            && pristine_set.contains(&rel.with_extension("satz"))
-        {
-            continue;
-        }
-        if fname_s.ends_with(".claims.yaml") {
-            continue; // legacy sidecar (pre-v0.38) still lying in an estate — never a source
         }
         let in_use = included.contains(rel);
         let tag = if in_use { " [included]" } else { "" };
@@ -545,7 +368,7 @@ pub(crate) async fn run_check_presets(
                             drift_in_use = true;
                         }
                         println!("  STALE{}: {}{}", tag, rel.display(), vtag);
-                        print_drift_detail(&drift, rel, &main_anchors, true);
+                        print_drift_detail(&drift, &estate_params, true);
                         // A pristine file whose `.local` fork exists is not a
                         // candidate for adoption: the estate runs the fork, so
                         // overwriting this copy changes nothing it emits AND
@@ -568,7 +391,7 @@ pub(crate) async fn run_check_presets(
                             _ => "structural",
                         };
                         println!("  EDITED ({kind}){}: {}{}", tag, rel.display(), vtag);
-                        print_drift_detail(&drift, rel, &main_anchors, false);
+                        print_drift_detail(&drift, &estate_params, false);
                         if lv.is_some() && lv == uv {
                             println!("    same version as upstream, different content — a local edit (or an");
                             println!("    upstream release that changed without a version bump).");
@@ -759,14 +582,13 @@ pub(crate) async fn run_merge_presets(
 
     // baseline for the self-verifying estate edit
     let baseline = match (&estate, report_only) {
-        (Some(est), false) => Some(crate::transpile_sorted_for(est, tool_config, runtime_config)?),
+        (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config)?),
         _ => None,
     };
     let estate_dirty = estate.as_deref().map(is_git_dirty).unwrap_or(false);
 
     // ---- upstream inventory --------------------------------------------------
     let mut upstream_files = Vec::new();
-    walk_yaml_files(&pristine, &pristine, &mut upstream_files)?;
     let mut stack = vec![pristine.clone()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -774,15 +596,13 @@ pub(crate) async fn run_merge_presets(
             let p = e.path();
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
-            if name.ends_with(".satz") || name.ends_with(".md") {
+            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") {
                 upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
             }
         }
     }
     upstream_files.sort();
     upstream_files.dedup();
-    let upstream_set: BTreeSet<PathBuf> = upstream_files.iter().cloned().collect();
-
     let (mut installed, mut current, mut doc_only, mut artifacts, mut unused_over, mut forked, mut refreshed, mut refused) =
         (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut adopted = 0usize;
@@ -810,10 +630,9 @@ pub(crate) async fn run_merge_presets(
         if lo == up { current += 1; continue; }
 
         let fname = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let is_satz = fname.ends_with(".satz");
-        // twins of satz packs and docs are generated/derived artifacts
-        let is_artifact = fname.ends_with(".md") // (docs)
-            || (fname.ends_with(".yaml") && upstream_set.contains(&rel.with_extension("satz")));
+        // docs and data (catalogs, discovery-config) are artifacts: upstream
+        // owns them, nothing to fork
+        let is_artifact = fname.ends_with(".md") || fname.ends_with(".yaml");
         if is_artifact {
             if report_only { println!("  would update artifact {}", rel.display()); continue; }
             crate::fsx::write(&lo_path, up.as_bytes())?;
@@ -823,13 +642,9 @@ pub(crate) async fn run_merge_presets(
 
         // semantic comparison in the canonical form (the parsed AST, printed
         // without comments/formatting/version — same as check-presets)
-        let sem_equal = if is_satz {
-            match (satz_core::satz::parse(&lo), satz_core::satz::parse(&up)) {
-                (Ok(a), Ok(b)) => satz_core::satz::canonical(&a) == satz_core::satz::canonical(&b),
-                _ => false,
-            }
-        } else {
-            normalized_yaml(&lo) == normalized_yaml(&up)
+        let sem_equal = match (satz_core::satz::parse(&lo), satz_core::satz::parse(&up)) {
+            (Ok(a), Ok(b)) => satz_core::satz::canonical(&a) == satz_core::satz::canonical(&b),
+            _ => false,
         };
         if sem_equal {
             if report_only { println!("  would update {} (doc/format only)", rel.display()); continue; }
@@ -838,18 +653,15 @@ pub(crate) async fn run_merge_presets(
             continue;
         }
 
-        // version hygiene cross-check (satz packs carry in-file versions)
-        let (v_lo, v_up) = if is_satz {
-            (satz_version(&lo), satz_version(&up))
-        } else { (None, None) };
-        if is_satz && v_lo.is_some() && v_lo == v_up {
+        // version hygiene cross-check (packs carry in-file versions)
+        let (v_lo, v_up) = (satz_version(&lo), satz_version(&up));
+        if v_lo.is_some() && v_lo == v_up {
             println!("  WARNING {}: content changed semantically but the pack version did not — upstream release-hygiene bug", rel.display());
             needs_attention = true;
         }
 
         let stem = pack_stem(rel).unwrap_or_else(|| rel.clone());
-        let fork_ext = if is_satz { "satz" } else { "yaml" };
-        let fork_rel = PathBuf::from(format!("{}.local.{}", stem.display(), fork_ext));
+        let fork_rel = PathBuf::from(format!("{}.local.satz", stem.display()));
         let fork_path = local_base.join(&fork_rel);
         let diff_path = local_base.join(format!("{}.diff.satz", stem.display()));
         let used = used_stems.contains(&stem);
@@ -953,7 +765,7 @@ pub(crate) async fn run_merge_presets(
     // identity check to make. Show the delta instead, in the terms that matter.
     if adopted > 0 && !report_only {
         if let (Some(est), Some(before)) = (estate.clone(), baseline.clone()) {
-            let after = crate::transpile_sorted_for(&est, tool_config, runtime_config)?;
+            let after = crate::transpile_sorted_b(&est, tool_config, runtime_config)?;
             println!("\n  emission delta after adoption:");
             print!("{}", emission_delta(&before, &after));
             println!("  hcl/ on disk is NOT regenerated by this command — run `satz transpile`,");
@@ -964,7 +776,7 @@ pub(crate) async fn run_merge_presets(
     // the self-verifying estate edit: output must be byte-identical
     if estate_edited {
         let est = estate.clone().unwrap();
-        let after = crate::transpile_sorted_for(&est, tool_config, runtime_config)?;
+        let after = crate::transpile_sorted_b(&est, tool_config, runtime_config)?;
         if baseline.as_deref() != Some(after.as_str()) {
             for p in &created { let _ = std::fs::remove_file(p); }
             for (p, content) in journal.iter().rev() { crate::fsx::write(p, content.as_bytes())?; }
@@ -1046,67 +858,30 @@ fn emission_delta(before: &str, after: &str) -> String {
 
 /// The single estate file: a `.satz` in yaml_dir whose header declares `estate`.
 fn find_estate(yaml_dir: &str) -> Option<PathBuf> {
-    let mut satz = Vec::new();
-    let mut yaml = Vec::new();
+    let mut found = Vec::new();
     for e in std::fs::read_dir(yaml_dir).ok()?.flatten() {
         let p = e.path();
         let name = p.to_string_lossy().to_string();
-        if name.contains(".local.") || name.contains(".gen.") {
+        if name.contains(".local.") || p.extension().and_then(|x| x.to_str()) != Some("satz") {
             continue;
         }
-        match p.extension().and_then(|x| x.to_str()) {
-            Some("satz") => {
-                if let Ok(src) = std::fs::read_to_string(&p) {
-                    if let Ok(f) = satz_core::satz::parse(&src) {
-                        if f.estate.is_some() && !f.is_pack {
-                            satz.push(p);
-                        }
-                    }
+        if let Ok(src) = std::fs::read_to_string(&p) {
+            if let Ok(f) = satz_core::satz::parse(&src) {
+                if f.estate.is_some() && !f.is_pack {
+                    found.push(p);
                 }
             }
-            // A YAML estate declares the deployment itself; a YAML pack never
-            // does. `terraform:` at the top level is therefore the discriminator.
-            Some("yaml") | Some("yml") => {
-                if let Ok(src) = std::fs::read_to_string(&p) {
-                    if src.lines().any(|l| l.trim_end() == "terraform:") {
-                        yaml.push(p);
-                    }
-                }
-            }
-            _ => {}
         }
     }
-    // Satz wins outright: falling back only when there is no satz estate keeps
-    // this change incapable of altering what a satz repo resolves to, including
-    // one with a stale hand-written `.yaml` estate still lying around.
-    if satz.len() == 1 {
-        return satz.pop();
-    }
-    if satz.is_empty() && yaml.len() == 1 {
-        return yaml.pop();
-    }
-    None
+    if found.len() == 1 { found.pop() } else { None }
 }
 
-/// rel path -> pack stem: strip generated/derived suffixes and a `.local` marker.
+/// rel path -> pack stem: strip the `.satz` suffix and a `.local` marker.
 fn pack_stem(rel: &Path) -> Option<PathBuf> {
     let s = rel.to_string_lossy();
-    let stem = s
-        .strip_suffix(".gen.claims.yaml")
-        .or_else(|| s.strip_suffix(".claims.yaml"))
-        .or_else(|| s.strip_suffix(".gen.yaml"))
-        .or_else(|| s.strip_suffix(".yaml"))
-        .or_else(|| s.strip_suffix(".satz"))?;
+    let stem = s.strip_suffix(".satz")?;
     let stem = stem.strip_suffix(".local").unwrap_or(stem);
     Some(PathBuf::from(stem))
-}
-
-fn normalized_yaml(s: &str) -> String {
-    s.lines()
-        .map(str::trim_end)
-        .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn satz_version(src: &str) -> Option<String> {
@@ -1152,12 +927,8 @@ fn rewrite_estate_uses(
                 let written = &line[a + 5..a + 5 + b];
                 let mut candidates = vec![est_dir.join(written)];
                 candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(written)));
-                // a written `X.yaml` may resolve to the twin of the target .satz
-                let twin_target = canon_target.with_extension("yaml");
                 if candidates.iter().any(|c| {
-                    std::fs::canonicalize(c)
-                        .map(|cc| cc == canon_target || cc == twin_target)
-                        .unwrap_or(false)
+                    std::fs::canonicalize(c).map(|cc| cc == canon_target).unwrap_or(false)
                 }) {
                     let new_written = match written.rfind('/') {
                         Some(i) => format!("{}/{}", &written[..i], fork_name),
@@ -1188,26 +959,17 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
                 continue;
             }
             let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-            // orphaned generated twins of an adopted fork
-            if let Some(stem_name) = name.strip_suffix(".local.gen.yaml").or_else(|| name.strip_suffix(".local.gen.claims.yaml")) {
-                if !p.with_file_name(format!("{}.local.satz", stem_name)).exists() {
-                    let _ = std::fs::remove_file(&p);
-                }
-                continue;
-            }
             // orphaned delta: the fork was adopted/deleted -> the diff goes too
             if let Some(stem_name) = name.strip_suffix(".diff.satz") {
-                let has_fork = p.with_file_name(format!("{}.local.satz", stem_name)).exists()
-                    || p.with_file_name(format!("{}.local.yaml", stem_name)).exists();
+                let has_fork = p.with_file_name(format!("{}.local.satz", stem_name)).exists();
                 if !has_fork {
                     let _ = std::fs::remove_file(&p);
                     println!("  removed orphaned {} (fork adopted)", p.display());
                 }
                 continue;
             }
-            let Some(stem_name) = name.strip_suffix(".local.satz").or_else(|| name.strip_suffix(".local.yaml")) else { continue };
-            let ext = if name.ends_with(".satz") { "satz" } else { "yaml" };
-            let pristine = p.with_file_name(format!("{}.{}", stem_name, ext));
+            let Some(stem_name) = name.strip_suffix(".local.satz") else { continue };
+            let pristine = p.with_file_name(format!("{}.satz", stem_name));
             if !pristine.exists() { continue; }
             let fork_text = crate::fsx::read_to_string(&p)?;
             let pris_text = crate::fsx::read_to_string(&pristine)?;
@@ -1253,82 +1015,8 @@ fn text_diff(old: &str, new: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod find_estate_tests {
-    //! YAML input stays supported (owner, 2026-08-23), so estate discovery has
-    //! to see both dialects — but a satz repo is FULL of `.gen.yaml` twins that
-    //! each carry a top-level `terraform:`, and counting one of those as a second
-    //! estate would return None and silently switch used-preset protection off.
-    use super::*;
-
-    fn dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir()
-            .join(format!("satz-find-estate-{}-{}", std::process::id(), name));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).expect("mkdir");
-        d
-    }
-
-    const YAML_ESTATE: &str = "variables:\n  a: &a \"x\"\nterraform:\n  backend:\n    local:\n      path: \"t.tfstate\"\n";
-    const SATZ_ESTATE: &str = "estate demo\n\nparams {\n  a = \"x\"\n}\n";
-
-    #[test]
-    fn finds_a_yaml_estate_when_there_is_no_satz_one() {
-        let d = dir("yaml-only");
-        std::fs::write(d.join("C01.yaml"), YAML_ESTATE).unwrap();
-        // a YAML pack: resources but no `terraform:` — must not be mistaken for one
-        std::fs::write(d.join("pack.yaml"), "google_storage_bucket:\n  b:\n    name: n\n").unwrap();
-        assert_eq!(find_estate(d.to_str().unwrap()), Some(d.join("C01.yaml")));
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn generated_twins_never_count_as_estates() {
-        let d = dir("twins");
-        std::fs::write(d.join("C01.satz"), SATZ_ESTATE).unwrap();
-        // what a satz repo actually looks like after a transpile
-        std::fs::write(d.join("C01.gen.yaml"), YAML_ESTATE).unwrap();
-        std::fs::write(d.join("other.gen.yaml"), YAML_ESTATE).unwrap();
-        assert_eq!(
-            find_estate(d.to_str().unwrap()),
-            Some(d.join("C01.satz")),
-            "twins must not turn a satz repo into an ambiguous one"
-        );
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn satz_wins_over_a_stale_hand_written_yaml_estate() {
-        let d = dir("both");
-        std::fs::write(d.join("C01.satz"), SATZ_ESTATE).unwrap();
-        std::fs::write(d.join("C01-old.yaml"), YAML_ESTATE).unwrap();
-        assert_eq!(find_estate(d.to_str().unwrap()), Some(d.join("C01.satz")));
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn two_estates_of_the_same_dialect_stay_ambiguous() {
-        let d = dir("ambiguous");
-        std::fs::write(d.join("a.yaml"), YAML_ESTATE).unwrap();
-        std::fs::write(d.join("b.yaml"), YAML_ESTATE).unwrap();
-        assert_eq!(find_estate(d.to_str().unwrap()), None);
-        let _ = std::fs::remove_dir_all(&d);
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-
-    const PRISTINE: &str = "\
-# header comment
-variables:
-  logsink-project-name: &logsink-project-name \"log-infra-001\"
-  logsink-retention-days: &logsink-retention-days 400
-
-google_storage_bucket:
-  org_audit_logs:
-    name: *logsink-bucket-name
-";
 
     const PACK: &str = r#"pack demo version "1.0"
 
@@ -1381,80 +1069,6 @@ params {
         assert!(d.contains("REMOVED"), "{d}");
         assert!(d.contains("other line(s) differ"), "{d}");
         assert!(emission_delta("x\n", "x\n").contains("none"));
-    }
-
-    /// P4. A default written as a LIST lives on the lines BELOW its anchor.
-    /// `split_preset` used to keep only the text on the anchor line, so both
-    /// sides had an empty value, the items were never compared, and a pack a
-    /// whole version behind reported "clean". This is the real case above: CIS v2.0 vs
-    /// upstream v2.1, whose only substantive change was a fifth list entry.
-    #[test]
-    fn a_changed_list_default_is_drift_not_clean() {
-        let old = "\
-variables:
-  subjects: &subjects
-    - \"a\"
-    - \"b\"
-
-google_org_policy_policy:
-  p:
-    name: x
-";
-        let new = old.replace("    - \"b\"", "    - \"b\"\n    - \"c\"");
-        assert_ne!(classify(&new, old), Drift::Clean, "a list default gaining an entry is drift");
-        match classify(&new, old) {
-            Drift::VariablesOnly(changed) => {
-                assert_eq!(changed.len(), 1);
-                assert_eq!(changed[0].0, "subjects");
-            }
-            other => panic!("expected VariablesOnly, got {other:?}"),
-        }
-    }
-
-    /// The same walk must not turn indentation or comments inside the variables
-    /// block into drift — comment churn upgrades silently, by design.
-    #[test]
-    fn comments_inside_the_variables_block_are_not_drift() {
-        let a = "\
-variables:
-  subjects: &subjects
-    - \"a\"
-
-google_x:
-  y:
-    name: n
-";
-        let b = "\
-variables:
-  # explaining the list
-  subjects: &subjects
-    - \"a\"
-
-google_x:
-  y:
-    name: n
-";
-        assert_eq!(classify(a, b), Drift::Clean);
-    }
-
-    /// A multi-line value must not leak into the resource body — that would make
-    /// every list default read as a structural difference instead.
-    #[test]
-    fn list_items_do_not_leak_into_the_body() {
-        let parts = split_preset(
-            "\
-variables:
-  subjects: &subjects
-    - \"a\"
-    - \"b\"
-
-google_x:
-  y:
-    name: n
-",
-        );
-        assert!(parts.body.iter().all(|l| !l.contains("\"a\"")), "body: {:?}", parts.body);
-        assert_eq!(parts.vars["subjects"].value.lines().count(), 2);
     }
 
     /// P1. The version line is the staleness signal — the only one that does not
@@ -1524,55 +1138,4 @@ google_x:
         assert_eq!(classify_source(rel, &commented, PACK), Drift::Clean);
     }
 
-    #[test]
-    fn identical_and_comment_only_edits_are_clean() {
-        assert_eq!(classify(PRISTINE, PRISTINE), Drift::Clean);
-        let commented = PRISTINE.replace("# header comment", "# customer note\n# more notes");
-        assert_eq!(classify(&commented, PRISTINE), Drift::Clean);
-    }
-
-    #[test]
-    fn changed_default_values_are_variables_only_with_local_values() {
-        let local = PRISTINE.replace("\"log-infra-001\"", "\"acme-infra-001\"");
-        match classify(&local, PRISTINE) {
-            Drift::VariablesOnly(changed) => {
-                assert_eq!(changed.len(), 1);
-                assert_eq!(changed[0].0, "logsink-project-name");
-                assert_eq!(changed[0].1.value, "\"acme-infra-001\"");
-                assert_eq!(changed[0].1.key, "logsink-project-name");
-            }
-            other => panic!("expected VariablesOnly, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn body_edits_are_structural_even_if_variables_also_changed() {
-        let local = PRISTINE
-            .replace("400", "900")
-            .replace("org_audit_logs:", "my_audit_logs:");
-        match classify(&local, PRISTINE) {
-            Drift::Structural { summary } => assert!(summary.contains("resource line"), "{summary}"),
-            other => panic!("expected Structural, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn added_or_removed_variables_are_structural() {
-        let local = PRISTINE.replace(
-            "  logsink-retention-days: &logsink-retention-days 400",
-            "  logsink-retention-days: &logsink-retention-days 400\n  my-own-var: &my-own-var \"x\"",
-        );
-        match classify(&local, PRISTINE) {
-            Drift::Structural { summary } => assert!(summary.contains("my-own-var"), "{summary}"),
-            other => panic!("expected Structural, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn main_anchor_detection_sees_variables_and_ignores_comments() {
-        let main = "variables:\n  a: &logsink-project-name \"x\"\n# not &commented-anchor\n";
-        let anchors = anchors_defined_in_main(main);
-        assert!(anchors.contains("logsink-project-name"));
-        assert!(!anchors.contains("commented-anchor"));
-    }
 }

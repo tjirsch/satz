@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::config::Config;
 use crate::ToolConfig;
 
 type BoxErr = Box<dyn std::error::Error>;
@@ -556,21 +555,18 @@ pub(crate) fn resolve_config_vars(
     config_path: &Path,
     include_paths: &[PathBuf],
 ) -> Result<HashMap<String, serde_yaml::Value>, BoxErr> {
-    // A satz estate is read AS satz: the fragment pipeline's parameter table is
+    // The estate is read as Satz: the fragment pipeline's parameter table is
     // the one `transpile` emits tfvars from, so these commands and the emitted
-    // HCL can no longer disagree about what a variable resolves to. The YAML
-    // branch below serves the dialect until it is retired.
-    if config_path.extension().and_then(|e| e.to_str()) == Some("satz") {
-        let dirs: Vec<String> =
-            include_paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-        return crate::satz_estate_params(config_path, &dirs);
+    // HCL cannot disagree about what a param resolves to.
+    if config_path.extension().and_then(|e| e.to_str()) != Some("satz") {
+        return Err(format!(
+            "{} is not a Satz estate — the org-policy commands read Satz only; convert with `satz migrate-to-satz`",
+            config_path.display()
+        )
+        .into());
     }
-    let processed = crate::include_processor::process_includes(config_path, include_paths)?;
-    let raw: serde_yaml::Value = serde_yaml::from_str(&processed)?;
-    // Tags resolved first, so derived variables (`x: &x !format [...]`) reach the table
-    // as plain scalars - build_variables_block drops non-scalars, which silently lost
-    // them for preset resolution.
-    Ok(crate::extract_variables(&crate::resolve_yaml_custom_tags(raw)))
+    let dirs: Vec<String> = include_paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    crate::satz_estate_params(config_path, &dirs)
 }
 
 fn resolve_org_and_vars(
@@ -606,125 +602,6 @@ fn yaml_scalar_to_string(v: &serde_yaml::Value) -> Option<String> {
     }
 }
 
-/// Build a `variables:` YAML block with one anchor per scalar variable, so that a
-/// standalone preset referencing `*customer-organization-id` etc. parses correctly.
-///
-/// `skip` names anchors the preset declares itself. Emitting those again would define the
-/// same anchor twice in one document, which does not merely shadow — every alias in the
-/// preset then resolves to the last definition, so aliased *keys* collapse onto one key and
-/// the parse fails with a duplicate-entry error.
-fn build_variables_block(
-    vars: &HashMap<String, serde_yaml::Value>,
-    skip: &std::collections::HashSet<String>,
-) -> String {
-    let mut s = String::from("variables:\n");
-    let mut keys: Vec<&String> = vars.keys().collect();
-    keys.sort();
-    for k in keys {
-        if skip.contains(k) {
-            continue;
-        }
-        if let Some(scalar) = yaml_scalar_to_string(&vars[k]) {
-            s.push_str(&format!("  {}: &{} {}\n", k, k, quote_yaml_scalar(&scalar)));
-        }
-    }
-    s
-}
-
-/// Anchor names a YAML fragment defines itself (`&name`), ignoring comment lines.
-fn anchors_defined_in(text: &str) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
-    for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
-        for (i, _) in line.match_indices('&') {
-            let rest = &line[i + 1..];
-            let end = rest
-                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
-                .unwrap_or(rest.len());
-            if end > 0 {
-                out.insert(rest[..end].to_string());
-            }
-        }
-    }
-    out
-}
-
-fn quote_yaml_scalar(s: &str) -> String {
-    // Always double-quote and escape, which is valid for strings, numbers and bools
-    // (the consuming fields coerce types later). Keeps anchors well-formed.
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn indent_block(content: &str, spaces: usize) -> String {
-    let pad = " ".repeat(spaces);
-    content
-        .lines()
-        .map(|l| {
-            if l.trim().is_empty() {
-                String::new()
-            } else {
-                format!("{}{}", pad, l)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Parse a standalone preset as if it had been included under `wrapper_key`, merging the
-/// main config's variables in-memory so anchors/`!format` resolve identically to transpile.
-///
-/// `wrapper_key` is the YAML key the preset is included under in the real config
-/// (`org_policy_policy`, `cloud_identity_group`, ...); the preset itself is a bare fragment
-/// with no such key of its own. Any `variables:` block the preset declares is stripped by
-/// `merge_variables` at every depth, so it cannot show up as a phantom resource.
-pub(crate) fn resolve_preset_config(
-    preset_path: &Path,
-    wrapper_key: &str,
-    vars: &HashMap<String, serde_yaml::Value>,
-    include_paths: &[PathBuf],
-) -> Result<Config, BoxErr> {
-    // Packs are Satz sources since M3 — the generated `.yaml` twins are gone.
-    // Compile in memory rather than requiring a build step: this path only needs
-    // the pack's YAML SHAPE, which is exactly what the compiler produces.
-    let preset_text = if preset_path.extension().and_then(|e| e.to_str()) == Some("satz") {
-        let src = crate::fsx::read_to_string(preset_path)?;
-        satz_core::satz::compile(&src)
-            .map_err(|e| format!("{} in {}", e, preset_path.display()))?
-            .yaml
-    } else {
-        crate::include_processor::process_includes(preset_path, include_paths)
-            .or_else(|_| crate::fsx::read_to_string(preset_path).map_err(BoxErr::from))?
-    };
-
-    let combined = format!(
-        "{}{}:\n{}\n",
-        build_variables_block(vars, &anchors_defined_in(&preset_text)),
-        wrapper_key,
-        indent_block(&preset_text, 2)
-    );
-
-    let raw: serde_yaml::Value = serde_yaml::from_str(&combined).map_err(|e| {
-        format!(
-            "Failed to parse preset '{}' merged with config variables: {}",
-            preset_path.display(),
-            e
-        )
-    })?;
-    let raw = crate::merge_renamed_resource_keys(raw)?;
-    let merged = crate::merge_variables(raw);
-    let resolved = crate::resolve_yaml_custom_tags(merged);
-    Ok(serde_yaml::from_value(resolved)?)
-}
-
-/// Resolve a standalone preset (Mode 1) into the desired policy map.
-fn resolve_desired_from_preset(
-    preset_path: &Path,
-    vars: &HashMap<String, serde_yaml::Value>,
-    include_paths: &[PathBuf],
-) -> Result<BTreeMap<String, DesiredPolicy>, BoxErr> {
-    let config = resolve_preset_config(preset_path, "org_policy_policy", vars, include_paths)?;
-    desired_from_config(&config)
-}
-
 /// Convert a parsed `Config.org_policy_policy` map into desired policies keyed by bare
 /// constraint name.
 /// The same mapping as `desired_from_config`, from (label, body) pairs rather
@@ -756,90 +633,31 @@ fn desired_from_bodies(
     Ok(desired)
 }
 
-fn desired_from_config(config: &Config) -> Result<BTreeMap<String, DesiredPolicy>, BoxErr> {
-    let mut desired = BTreeMap::new();
-    if let Some(policies) = &config.org_policy_policy {
-        for (yaml_key, body) in policies {
-            let body_json: Value = serde_json::to_value(body)?;
-            let name = body_json
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or(yaml_key);
-            let constraint = constraint_name(name);
-            let parent = body_json
-                .get("parent")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            desired.insert(
-                constraint.clone(),
-                DesiredPolicy {
-                    yaml_key: yaml_key.clone(),
-                    constraint,
-                    parent: normalize_parent(&parent),
-                    policy: body_json,
-                },
-            );
-        }
-    }
-    Ok(desired)
-}
-
-/// Resolve the desired policy set for the `diff` command: an explicit `--preset` (merged
-/// in-memory with the config's variables), or — when omitted — every `org_policy_policy`
-/// declared by the include-expanded main config. Returns the map plus a human label.
+/// The desired policy set for `diff`/`report`: every `google_org_policy_policy`
+/// the estate emits, read off the folded IR — what the emitter writes. (The
+/// old `--preset <pack>` form compiled a pack standalone through the YAML twin;
+/// a Satz estate `use`s its pack, so the estate's own set is the desired set.)
 fn resolve_desired(
     config_path: &Path,
-    preset: Option<&Path>,
-    vars: &HashMap<String, serde_yaml::Value>,
-    include_paths: &[PathBuf],
     runtime_config: &ToolConfig,
 ) -> Result<(BTreeMap<String, DesiredPolicy>, String), BoxErr> {
-    if let Some(p) = preset {
-        let d = resolve_desired_from_preset(p, vars, include_paths)?;
-        return Ok((d, p.display().to_string()));
-    }
-
-    // No preset, satz estate: desired = the org policies in the folded IR, which
-    // is what the emitter writes. Reading them back out of a generated YAML twin
-    // could only ever agree with main.tf by coincidence — a suppressed policy,
-    // for one, is in the twin's include tree but not in the output.
-    if config_path.extension().and_then(|e| e.to_str()) == Some("satz") {
-        let bodies = crate::satz_org_policy_bodies(config_path, runtime_config)?;
-        let desired = desired_from_bodies(bodies)?;
-        if desired.is_empty() {
-            return Err(
-                "No --preset given and the estate declares no org_policy_policy to diff".into(),
-            );
-        }
-        return Ok((desired, format!("estate:{}", config_path.display())));
-    }
-
-    // No preset: desired = all org policies declared by the (include-expanded) config.
-    let text = crate::include_processor::process_includes(config_path, include_paths)?;
-    let raw: serde_yaml::Value = serde_yaml::from_str(&text)?;
-    let raw = crate::merge_renamed_resource_keys(raw)?;
-    let resolved = crate::resolve_yaml_custom_tags(crate::merge_variables(raw));
-    let config: Config = serde_yaml::from_value(resolved)?;
-    let desired = desired_from_config(&config)?;
+    let bodies = crate::satz_org_policy_bodies(config_path, runtime_config)?;
+    let desired = desired_from_bodies(bodies)?;
     if desired.is_empty() {
-        return Err(
-            "No --preset given and the config declares no org_policy_policy to diff".into(),
-        );
+        return Err("the estate declares no google_org_policy_policy to diff".into());
     }
-    Ok((desired, format!("config:{}", config_path.display())))
+    Ok((desired, format!("estate:{}", config_path.display())))
 }
 
 async fn prepare(
     config_path: &Path,
-    preset: Option<&Path>,
     org_id_override: Option<&str>,
     runtime_config: &ToolConfig,
 ) -> Result<DiffReport, BoxErr> {
     let include_paths: Vec<PathBuf> =
         runtime_config.include_dirs.iter().map(PathBuf::from).collect();
-    let (parent, vars) = resolve_org_and_vars(config_path, &include_paths, org_id_override)?;
-    let (desired, label) = resolve_desired(config_path, preset, &vars, &include_paths, runtime_config)?;
+    let (parent, _vars) = resolve_org_and_vars(config_path, &include_paths, org_id_override)?;
+    let (desired, label) = resolve_desired(config_path, runtime_config)?;
 
     let client = OrgPolicyClient::new().await?;
     // Query each distinct desired parent (policies may target folders/projects).
@@ -867,14 +685,13 @@ async fn prepare(
 /// "overridden" at a folder; a slightly stale-but-consistent view is the lesser evil.)
 async fn prepare_recursive(
     config_path: &Path,
-    preset: Option<&Path>,
     org_id_override: Option<&str>,
     runtime_config: &ToolConfig,
 ) -> Result<(DiffReport, crate::policy_tree::PolicyTree), BoxErr> {
     let include_paths: Vec<PathBuf> =
         runtime_config.include_dirs.iter().map(PathBuf::from).collect();
-    let (parent, vars) = resolve_org_and_vars(config_path, &include_paths, org_id_override)?;
-    let (desired, label) = resolve_desired(config_path, preset, &vars, &include_paths, runtime_config)?;
+    let (parent, _vars) = resolve_org_and_vars(config_path, &include_paths, org_id_override)?;
+    let (desired, label) = resolve_desired(config_path, runtime_config)?;
 
     let tree = crate::policy_tree::sweep_and_assemble(&parent).await?;
 
@@ -1289,7 +1106,6 @@ pub async fn export_org_policies(
 
 pub async fn diff_org_policies(
     config_path: PathBuf,
-    preset: Option<PathBuf>,
     org_id_override: Option<String>,
     report: Option<PathBuf>,
     format: String,
@@ -1297,22 +1113,10 @@ pub async fn diff_org_policies(
     runtime_config: ToolConfig,
 ) -> Result<(), BoxErr> {
     let (report_obj, tree) = if recursive {
-        let (r, t) = prepare_recursive(
-            &config_path,
-            preset.as_deref(),
-            org_id_override.as_deref(),
-            &runtime_config,
-        )
-        .await?;
+        let (r, t) = prepare_recursive(&config_path, org_id_override.as_deref(), &runtime_config).await?;
         (r, Some(t))
     } else {
-        let r = prepare(
-            &config_path,
-            preset.as_deref(),
-            org_id_override.as_deref(),
-            &runtime_config,
-        )
-        .await?;
+        let r = prepare(&config_path, org_id_override.as_deref(), &runtime_config).await?;
         (r, None)
     };
 
@@ -1684,28 +1488,27 @@ mod tests {
     }
 
     #[test]
-    fn cis_preset_resolves_with_merged_variables() {
-        // The real CIS preset uses bare anchors (*customer-organization-id, *customer-id,
-        // *customer-domain) defined only in the main config. Verify our in-memory merge +
-        // !format resolution parses it into desired policies.
-        let mut vars: HashMap<String, serde_yaml::Value> = HashMap::new();
-        vars.insert(
-            "customer-organization-id".into(),
-            serde_yaml::Value::String("123456789".into()),
-        );
-        vars.insert(
-            "customer-id".into(),
-            serde_yaml::Value::String("C0abcd123".into()),
-        );
-        vars.insert(
-            "customer-domain".into(),
-            serde_yaml::Value::String("example.com".into()),
-        );
+    fn cis_pack_resolves_through_the_estate_that_uses_it() {
+        // The desired set is read off the estate's folded IR, so the pack's
+        // `{customer_organization_id}` / `{customer_domain}` params resolve
+        // from the estate's `params` — the only source they ever had.
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let tmp = std::env::temp_dir().join(format!("satz-cis-desired-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let estate = tmp.join("main.satz");
+        std::fs::write(
+            &estate,
+            "estate cis_test\n\nparams {\n  customer_organization_id = \"123456789\"\n  customer_id = \"C0abcd123\"\n  customer_domain = \"example.com\"\n}\n\nterraform {\n  backend {\n    local { path = \"t.tfstate\" }\n  }\n}\n\ngoogle_org_policy_policy {\n  use \"presets/CIS-GCP-Foundation-4.0.satz\"\n}\n",
+        )
+        .unwrap();
+        let mut cfg: crate::ToolConfig = toml::from_str("").unwrap();
+        cfg.schema_dir = root.join("tests/schemas").to_string_lossy().into_owned();
+        cfg.include_dirs = vec![root.to_string_lossy().into_owned()];
 
-        let preset = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("presets/CIS-GCP-Foundation-4.0.satz");
-        let desired = resolve_desired_from_preset(&preset, &vars, &[])
-            .expect("CIS preset should resolve");
+        let bodies = crate::satz_org_policy_bodies(&estate, &cfg).expect("CIS pack should compile");
+        let desired = desired_from_bodies(bodies).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
 
         // A managed boolean constraint is present and flagged managed.
         let m = desired
@@ -1714,7 +1517,7 @@ mod tests {
         assert!(is_managed(&m.constraint));
         assert_eq!(m.parent, "organizations/123456789");
 
-        // The parameterized managed constraint resolved its !format JSON string.
+        // The parameterized managed constraint resolved its JSON parameters.
         let ec = desired
             .get("essentialcontacts.managed.allowedContactDomains")
             .expect("parameterized constraint present");

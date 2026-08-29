@@ -54,10 +54,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
   converting old estates and packs for as long as legacy orgs exist; that is
   the whole YAML surface. No new functionality grows a YAML arm, YAML is never
   generated, and a YAML code path that a cleanup breaks is deleted, not
-  repaired — the legacy walk, the `.gen.yaml` twin and the YAML `transpile`
-  arm are being retired (private roadmap M5). A conversion is reported as
-  NEEDS-REVIEW where it cannot be proven; migrated estates may need manual
-  edits (an old `!import-include` becomes `!include` plus `satz adopt`).
+  repaired — the legacy walk, the `.gen.yaml` twin and every YAML command arm
+  are gone since v0.46.14. A conversion is reported as NEEDS-REVIEW where it
+  cannot be proven; migrated estates may need manual edits (an old
+  `!import-include` becomes `use` plus `satz adopt`).
   `tests/corpus/yaml-estate/` is the converter's gate: a YAML fixture through
   `migrate-to-satz` must compile as Satz and emit the expected resource set.
 - **`cargo test` does NOT rebuild the debug binary** — `cargo build` before a

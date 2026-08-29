@@ -1,7 +1,5 @@
-// Satz twin of main.yaml — gated by the differential harness. The two packs
-// contribute the same resource-type map inside one folder: the YAML dialect
-// needs the MERGE_KEY_PREFIX rename dance for this; fragments simply don't
-// collide — the fold composes them.
+// Corpus case: two packs contribute the same resource-type map inside one
+// folder; the fragments don't collide — the fold composes them. Snapshot-gated.
 
 estate corpus_depth_merge
 

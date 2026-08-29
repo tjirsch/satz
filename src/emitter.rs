@@ -207,7 +207,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 // Hoisted to customer scope: the walk emits these with the root alias.
                 if let Some(id) = attr_import(attrs) {
                     imports.push(import_block(
-                        &crate::transpiler::group_resource_address(&addr.label),
+                        &crate::emit_shared::group_resource_address(&addr.label),
                         &id,
                     ));
                 }
@@ -226,9 +226,9 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     attrs,
                     Some("google.google"),
                 ));
-                for (member_raw, id) in crate::transpiler::group_member_import_ids(attrs) {
+                for (member_raw, id) in crate::emit_shared::group_member_import_ids(attrs) {
                     imports.push(import_block(
-                        &crate::transpiler::membership_resource_address(&addr.label, &member_raw),
+                        &crate::emit_shared::membership_resource_address(&addr.label, &member_raw),
                         &id,
                     ));
                 }
@@ -242,9 +242,9 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         "google_organization_iam_member",
                         &label,
                         &e.role,
-                        crate::transpiler::Transpiler::string_to_hcl_expr(&e.member),
+                        crate::emit_shared::string_to_hcl_expr(&e.member),
                         "org_id",
-                        crate::transpiler::Transpiler::string_to_hcl_expr(&ctx.org_id),
+                        crate::emit_shared::string_to_hcl_expr(&ctx.org_id),
                         cond_block,
                         Some("google.google"),
                     ));
@@ -276,9 +276,9 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         "google_billing_account_iam_member",
                         &label,
                         &e.role,
-                        crate::transpiler::Transpiler::string_to_hcl_expr(&e.member),
+                        crate::emit_shared::string_to_hcl_expr(&e.member),
                         "billing_account_id",
-                        crate::transpiler::Transpiler::string_to_hcl_expr(billing_id),
+                        crate::emit_shared::string_to_hcl_expr(billing_id),
                         cond_block,
                         Some("google.google"),
                     ));
@@ -312,7 +312,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         t,
                         &label,
                         &e.role,
-                        crate::transpiler::Transpiler::string_to_hcl_expr(&e.member),
+                        crate::emit_shared::string_to_hcl_expr(&e.member),
                         id_attr,
                         parent_expr.clone(),
                         cond_block,

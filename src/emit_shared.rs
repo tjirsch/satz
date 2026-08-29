@@ -3,7 +3,6 @@
 //! functions, so a block's shape is defined exactly once. Extracted verbatim
 //! from the walk; the corpus snapshots gate the extraction.
 
-use crate::transpiler::{aggregate_group_members, group_email, group_resource_label, member_email, membership_resource_label};
 
 /// Terraform label for an IAM member binding: hash of member + role (+ condition
 /// debug rendering when present). `DefaultHasher::new()` has a fixed key, so the
@@ -167,7 +166,7 @@ pub(crate) fn render_value(v: &serde_yaml::Value, resolve: ValueResolver) -> Opt
                 None
             }
         }
-        serde_yaml::Value::String(s) => Some(crate::transpiler::Transpiler::string_to_hcl_expr(s)),
+        serde_yaml::Value::String(s) => Some(string_to_hcl_expr(s)),
         serde_yaml::Value::Bool(b) => Some(hcl::Expression::from(*b)),
         serde_yaml::Value::Number(n) => {
             if n.is_i64() {
@@ -305,7 +304,7 @@ pub(crate) struct ResCtx {
 /// paths are traversals, everything else a quoted string. Extracted verbatim.
 pub(crate) fn parse_expr(s: &str) -> hcl::Expression {
     if s.contains("${") || s.contains("%{") {
-        return crate::transpiler::Transpiler::string_to_hcl_expr(s);
+        return string_to_hcl_expr(s);
     }
     if s.contains('.') && !s.contains('/') && !s.contains(':') {
         return traversal_expr(s);
@@ -477,15 +476,15 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
                      if let Some(p_str) = resolved_parent_str {
                          // Interpolation, not a literal: without the helper hcl-rs
                          // would escape this to "$${...}/policies/...".
-                         crate::transpiler::Transpiler::string_to_hcl_expr(&format!("${{{}}}/policies/{}", p_str, name_val))
+                         string_to_hcl_expr(&format!("${{{}}}/policies/{}", p_str, name_val))
                      } else {
-                         crate::transpiler::Transpiler::string_to_hcl_expr(name_val)
+                         string_to_hcl_expr(name_val)
                      }
                 }
-                _ => crate::transpiler::Transpiler::string_to_hcl_expr(name_val),
+                _ => string_to_hcl_expr(name_val),
             }
         } else {
-            crate::transpiler::Transpiler::string_to_hcl_expr(name_val)
+            string_to_hcl_expr(name_val)
         };
 
         block_builder = block_builder.add_attribute(("name", final_name));
@@ -844,4 +843,198 @@ pub(crate) fn project_provider_block(
         .add_attribute(("project", project_id.to_string()));
     let builder = configure_google_provider(builder, Some(project_id.to_string()), false, false, deps);
     builder.add_attribute(("region", "europe-west3")).build()
+}
+
+// ---------------------------------------------------------------------------
+// Cloud Identity group naming + HCL string helpers (moved from the retired walk)
+//
+// Shared with the adopter, which has to address exactly the resources the
+// emitter emits. Keeping the derivation in one place is what stops it from
+// computing a group email or a Terraform address the generated HCL does not use.
+// ---------------------------------------------------------------------------
+
+/// Terraform label for a group's YAML key (`-` is not legal in an identifier).
+pub(crate) fn group_resource_label(yaml_key: &str) -> String {
+    yaml_key.replace('-', "_")
+}
+
+/// Full Terraform address of the `google_cloud_identity_group` emitted for `yaml_key`.
+pub(crate) fn group_resource_address(yaml_key: &str) -> String {
+    format!("google_cloud_identity_group.{}", group_resource_label(yaml_key))
+}
+
+/// The group's `group_key.id`: an explicit `id`, else an explicit `email`, else the YAML
+/// key at the customer's primary domain.
+pub(crate) fn group_email(
+    yaml_key: &str,
+    attrs: &serde_yaml::Mapping,
+    customer_domain: &str,
+) -> String {
+    attrs
+        .get(serde_yaml::Value::String("id".to_string()))
+        .or_else(|| attrs.get(serde_yaml::Value::String("email".to_string())))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("{}@{}", yaml_key, customer_domain))
+}
+
+/// The YAML keys that contribute members, and the roles each implies.
+pub(crate) const GROUP_ROLE_KEYS: [(&str, &[&str]); 3] = [
+    ("member", &["MEMBER"]),
+    ("manager", &["MEMBER", "MANAGER"]),
+    ("owner", &["MEMBER", "OWNER"]),
+];
+
+/// One entry of a group's `member` / `manager` / `owner` list: the raw member
+/// string (`user:a@example.com`), or an object `{ id = "user:a@…",
+/// "import-id" = "groups/<g>/memberships/<m>" }` when the membership is adopted.
+fn group_member_entry(v: &serde_yaml::Value) -> Option<(String, Option<String>)> {
+    match v {
+        serde_yaml::Value::String(s) => Some((s.clone(), None)),
+        serde_yaml::Value::Mapping(m) => {
+            let raw = m.get(serde_yaml::Value::String("id".into()))?.as_str()?.to_string();
+            let import_id = m
+                .get(serde_yaml::Value::String("import-id".into()))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Some((raw, import_id))
+        }
+        _ => None,
+    }
+}
+
+/// Members a group declares, as `raw YAML string -> roles`. Keyed by the raw string
+/// (`user:a@example.com`), matching how the emitted resource label is derived.
+pub(crate) fn aggregate_group_members(
+    attrs: &serde_yaml::Mapping,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut aggregated: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for (key, roles) in GROUP_ROLE_KEYS {
+        let Some(val) = attrs.get(serde_yaml::Value::String(key.to_string())) else {
+            continue;
+        };
+        let members_vals = match val {
+            serde_yaml::Value::Sequence(seq) => seq.clone(),
+            serde_yaml::Value::String(s) => vec![serde_yaml::Value::String(s.clone())],
+            _ => continue,
+        };
+        for member_val in members_vals {
+            if let Some((member_raw, _)) = group_member_entry(&member_val) {
+                let entry = aggregated.entry(member_raw).or_default();
+                for role in roles {
+                    entry.insert((*role).to_string());
+                }
+            }
+        }
+    }
+    aggregated
+}
+
+/// The memberships a group adopts: `raw member string -> import id`, from the
+/// object form of a member entry. Both pipelines emit one `import` block per
+/// entry, addressed by `membership_resource_address`.
+pub(crate) fn group_member_import_ids(
+    attrs: &serde_yaml::Mapping,
+) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for (key, _) in GROUP_ROLE_KEYS {
+        let Some(serde_yaml::Value::Sequence(seq)) = attrs.get(serde_yaml::Value::String(key.to_string())) else {
+            continue;
+        };
+        for v in seq {
+            if let Some((raw, Some(id))) = group_member_entry(v) {
+                out.insert(raw, id);
+            }
+        }
+    }
+    out
+}
+
+/// Strip a `user:` / `group:` / `serviceAccount:` prefix to get the bare member email.
+pub(crate) fn member_email(member_raw: &str) -> &str {
+    match member_raw.find(':') {
+        Some(idx) => &member_raw[idx + 1..],
+        None => member_raw,
+    }
+}
+
+/// Terraform label for a membership. Hashed because a member email is not a legal
+/// identifier; `DefaultHasher::new()` has a fixed key, so this is stable across runs.
+pub(crate) fn membership_resource_label(group_yaml_key: &str, member_raw: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    group_yaml_key.hash(&mut hasher);
+    member_raw.hash(&mut hasher);
+    format!(
+        "membership_{}_{:x}",
+        group_resource_label(group_yaml_key),
+        hasher.finish()
+    )
+}
+
+/// Full Terraform address of the membership emitted for `member_raw` in `group_yaml_key`.
+pub(crate) fn membership_resource_address(group_yaml_key: &str, member_raw: &str) -> String {
+    format!(
+        "google_cloud_identity_group_membership.{}",
+        membership_resource_label(group_yaml_key, member_raw)
+    )
+}
+
+/// Escape a string for use as HCL quoted-template source (`TemplateExpr::QuotedString`),
+/// which the hcl crate emits between quotes verbatim. Literal `"` and `\\` must arrive
+/// pre-escaped or the output is invalid HCL (`filter = "metric.type="…""`). Content
+/// inside `${…}`/`%{…}` is expression context where quotes are legal raw, so it is left
+/// untouched; `$${`/`%%{` are the literal escape sequences, not interpolation starts.
+fn escape_template_literals(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i] as char;
+        if depth == 0
+            && (c == '$' || c == '%')
+            && i + 2 < b.len()
+            && b[i + 1] == b[i]
+            && b[i + 2] == b'{'
+        {
+            out.push(c);
+            out.push(c);
+            out.push('{');
+            i += 3;
+            continue;
+        }
+        if (c == '$' || c == '%') && i + 1 < b.len() && b[i + 1] == b'{' {
+            depth += 1;
+            out.push(c);
+            out.push('{');
+            i += 2;
+            continue;
+        }
+        if c == '}' && depth > 0 {
+            depth -= 1;
+            out.push('}');
+            i += 1;
+            continue;
+        }
+        if depth == 0 && (c == '"' || c == '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// A user-supplied string as an HCL expression: a template when it carries
+/// `${…}`/`%{…}` interpolation, else a plain string literal — serialising a
+/// reference as a literal would escape `${` to `$${` and silently break it.
+pub(crate) fn string_to_hcl_expr(s: &str) -> hcl::Expression {
+    if s.contains("${") || s.contains("%{") {
+        hcl::Expression::TemplateExpr(Box::new(hcl::TemplateExpr::QuotedString(escape_template_literals(s))))
+    } else {
+        hcl::Expression::from(s.to_string())
+    }
 }

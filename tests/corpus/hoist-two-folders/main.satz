@@ -1,5 +1,5 @@
-// Satz twin of main.yaml — the differential harness proves it equivalent by
-// running pipeline A over THIS file and asserting the existing snapshot.
+// Corpus case: intrinsic-scope resources declared under two folders hoist to
+// their real scope exactly once. Snapshot-gated.
 
 estate corpus_hoist_two_folders
 

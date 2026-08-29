@@ -117,15 +117,16 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name` |
 | `bootstrap <CONFIG_FILE>` | `--dry-run` |
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
-| `diff-organizational-policies <CONFIG_FILE>` | `--preset`, `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`) |
+| `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report` |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables` |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
-| `discover-from-state` | `--satz` (write a Satz estate), `--state-json`, `--output`, `--add-import-id`, `--add-import-id-as-comment`, `--discovery-config` |
-| `discover-from-organization` | `--satz`, `--customer-organization-id` (required), `--output`, `--add-import-id`, `--add-import-id-as-comment`, `--discovery-config` |
+| `discover-from-state` | `--state-json`, `--output` (default: `discovered.satz`), `--discovery-config` |
+| `discover-from-organization` | `--customer-organization-id` (required), `--output` (default: `discovered.satz`), `--discovery-config` |
 | `migrate <INPUT>` | `--mode` |
+| `migrate-to-satz <FILE>.yaml` | `--kind` (`estate`\|`pack`), `--gate <estate>.satz`, `--output` — the only command that reads the legacy YAML dialect |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--no-live` |
@@ -198,7 +199,7 @@ satz bootstrap <CONFIG_FILE> [options]
     - **Import**: Automatically imports the created Folder, Project, and Bucket into the local state.
 
 ### Transpile (`transpile`)
-Compile your estate to production-ready HCL. Input is `.satz`; the legacy `.yaml` dialect is still accepted.
+Compile your estate to production-ready HCL. Input is a `.satz` estate; a legacy `.yaml` estate is refused with a pointer to `migrate-to-satz`.
 
 ```bash
 satz transpile <INPUT> [options]
@@ -225,9 +226,8 @@ This will correctly look for `../yaml/my-infra.satz` and update the files in the
 A `.satz` input compiles through the stage-B fragment pipeline: every source
 file (estate + each `use`d pack) becomes its own fragment, the composition
 algebra folds them (grant union, deep-equal idempotence, conflicts reported
-with every contributing origin), and HCL is emitted from the folded result.
-Output is equivalent to the legacy path (differential-gated) with deterministic
-ordering.
+with every contributing origin), and HCL is emitted from the folded result,
+with deterministic ordering (snapshot-gated by `tests/corpus/`).
 
 **Subtractive overrides (`suppress`, satz estates only):**
 An estate can remove something a used pack contributes — without forking:
@@ -243,8 +243,7 @@ suppress google_organization_iam_member "group:sec@example.com" role "roles/view
 Rules: interpolations (`{param}`) work in the name; a suppress that matches
 nothing is a **hard error** (stale subtractive config must surface, never
 silently deploy); a suppressed resource that was the witness of a compliance
-claim shows up as broken in `require` — deliberately. The YAML dialect cannot
-express suppressions; the legacy path refuses such files.
+claim shows up as broken in `require` — deliberately.
 
 **Raw HCL passthrough (`hcl { … }`, satz only):**
 The escape hatch for anything the resource model does not cover yet — Terraform
@@ -274,14 +273,12 @@ level of an estate **or a pack**, and are appended in visit order. Every block
 **warns on each transpile**; `trust "<reason>"` downgrades that to a note
 without changing what is emitted. Nothing inside an `hcl` block becomes an
 entity, so it never participates in the fold, can never conflict — and can
-never carry a claim. The YAML dialect cannot carry raw HCL; the legacy path
-refuses such files.
+never carry a claim.
 
-**Under the Hood (YAML dialect):**
-- Reads the YAML file and processes any `!include` tags recursively.
-- Collects all `variables:` blocks found anywhere in the document tree (including from included files) into a single global variable table. The main file's `variables:` block takes precedence over variables from included files on key conflicts.
-- Strict validation: Checks the YAML against the loaded provider schemas `schemas/*.json` to ensure all required fields are present.
-- Merges variables from the global variable table into the configuration.
+**Under the Hood:**
+- Parses the estate and every pack it `use`s into per-file fragments; params are lexically scoped declarations, sorted by dependency.
+- Folds the fragments by Terraform address (⊕): the same address with the same body collapses, with a different body the transpile aborts naming both files.
+- Schema-typed: every resource key and block key is checked against `schemas/*.json` at parse time.
 - Generates four files in the output directory:
     - `main.tf`: Resources.
     - `providers.tf`: Provider configurations and aliases.
@@ -337,24 +334,23 @@ Run `gcloud auth application-default login` and set a quota project first.
 
 #### Export current state (`export-organizational-policies`)
 
-Snapshot the live policies into a re-importable preset (same schema the transpiler
-consumes):
+Snapshot the live policies into a pack:
 
 ```bash
-satz export-organizational-policies C01234567.yaml --customer-organization-id 123456789012
-# -> yaml/<customer-id>-orgpolicies.yaml
+satz export-organizational-policies C0example.satz --customer-organization-id 123456789012
+# -> yaml/<customer-id>-orgpolicies.yaml   (legacy pack dialect; convert with
+#    `migrate-to-satz --kind pack` — a `.satz` export is the next step, roadmap M5.5)
 ```
 
 #### Diff desired vs. live (`diff-organizational-policies`)
 
 ```bash
-# Compare a preset against live:
-satz diff-organizational-policies C01234567.yaml \
-  --preset presets/CIS-GCP-Foundation-4.0.satz --format markdown --report diff.md
-
-# Or, with no --preset, compare everything the config declares against live:
-satz diff-organizational-policies C01234567.yaml
+# Everything the estate declares (its own blocks and the packs it uses) against live:
+satz diff-organizational-policies C0example.satz --format markdown --report diff.md
 ```
+
+The desired set is read off the compiled estate — the same `google_org_policy_policy`
+resources `transpile` emits. To diff one pack, write an estate that `use`s only that pack.
 
 Each constraint is classified: `MISSING (needs activation)` (managed), `MISSING
 (creatable)`, `MATCHES`, `DIFFERS`, or `CURRENT-ONLY`. The diff is semantic — it normalizes
@@ -364,7 +360,7 @@ object so it doesn't report false changes.
 #### Report with explanatory text (`report-organizational-policies`)
 
 ```bash
-satz report-organizational-policies C01234567.yaml --scope full --format markdown
+satz report-organizational-policies C0example.satz --scope full --format markdown
 ```
 
 `--scope`: `active` (set policies), `inactive` (available but unset), or `full` (both,
@@ -386,30 +382,38 @@ placement**: during transpile they are collected from everywhere in the tree and
 exactly once at their real scope. That makes a fragment file *cohesive* — a project can
 travel with its org-level companions in one file, included at one position:
 
-```yaml
-# logging-project.yaml — one file, one concern
-project:
-  logging-prj:
-    project_id: !format ["{}-logging", *customer-prefix]
-organization_iam_member:
-  "group:log-admins@example.com":
-    - roles/logging.admin
-cloud_identity_group:
-  log-admins:
-    display_name: Log Admins
+```
+// logging-project.satz — one file, one concern
+pack logging_project version "1.0"
+
+google_project {
+  logging_prj {
+    project_id = "{customer_shortname}-logging"
+  }
+}
+google_organization_iam_member {
+  "group:log-admins@{customer_domain}" = ["roles/logging.admin"]
+}
+google_cloud_identity_group {
+  log_admins {
+    display_name = "Log Admins"
+  }
+}
 ```
 
-```yaml
-# main config — the hierarchy decides where the project lands
-folder:
-  shared-services:
-    display_name: "Shared Services"
-    !include logging-project.yaml
+```
+// the estate — the hierarchy decides where the project lands
+google_folder {
+  shared_services {
+    display_name = "Shared Services"
+    use "logging-project.satz"
+  }
+}
 ```
 
 The project is created in `shared-services`; the group and the grant are hoisted to their
-intrinsic scopes. Placement is always **by include position** — fragments never name their
-parent folder, so the main file stays the single source of hierarchy truth.
+intrinsic scopes. Placement is always **by `use` position** — fragments never name their
+parent folder, so the estate stays the single source of hierarchy truth.
 
 Merge rules when several fragments declare the same thing:
 
@@ -427,7 +431,7 @@ Project- and folder-scoped IAM types (`project_iam_member`, `folder_iam_member`)
 hoisted — their position in the tree is their parent, as before.
 
 Every other resource type is position-independent whenever its parent is explicit in the
-YAML (`org_id:`, `parent:`, `billing_account:`), so it needs no hoisting. What all types
+source (`org_id`, `parent`, `billing_account`), so it needs no hoisting. What all types
 get instead is the **duplicate-address guard**: a Terraform address may be emitted once.
 Byte-identical duplicate definitions — the same "highlander" resource (org audit config,
 sink, contact) included from several fragments — collapse to a single emission with a
@@ -435,32 +439,31 @@ printed note; the same address with *different* content aborts the transpile, na
 address and the first differing line. Attribute-level merging is deliberately not
 attempted — it would only hand the same conflict one recursion level down.
 
-**Cross-file resource-key merging:** two Form A includes (or the main file and an
-include) may declare the *same top-level resource-type key* — the entries merge id by
-id: distinct ids union, a deep-equal id collapses with a printed note, the same id with
-different content aborts naming the entry. This is how e.g. the audit-logsink preset and
-the CIS central monitoring preset each declare their own
-`google_logging_organization_sink:` and coexist at root level. Two conditions: the key
-must be a resource type known to the provider schemas (schema-driven, no name
-heuristics — without schemas, `satz update-schema`, the strict duplicate-key error
-remains), and structural keys (`folder`, `project`, `terraform`, `providers`) never
-merge. Merging steps into the ids, deliberately not into attributes — attribute-level
-merging would only hand the same conflict one recursion level down.
+**Cross-file merging is the fold.** Two packs (or the estate and a pack) may declare
+the same resource type at the same position — the fragments compose by address:
+distinct labels union, the same label with an identical body collapses, the same label
+with a different body aborts the transpile naming both files. This is how the
+audit-logsink pack and the CIS central-monitoring pack each declare their own
+`google_logging_organization_sink` and coexist. Merging steps into the labels,
+deliberately not into attributes — attribute-level merging would only hand the same
+conflict one recursion level down.
 
 ### Resource Lifecycle
 
 Any resource may declare a `lifecycle` block, which is rendered as a top-level
 [`lifecycle` meta-argument](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle) block in the generated HCL:
 
-```yaml
-google_cloud_identity_group:
-  my_group:
-    display_name: "My Group"
-    initial_group_config: "EMPTY"
-    lifecycle:
-      ignore_changes:
-        - initial_group_config
-      prevent_destroy: true
+```
+google_cloud_identity_group {
+  my_group {
+    display_name = "My Group"
+    initial_group_config = "EMPTY"
+    lifecycle {
+      ignore_changes = ["initial_group_config"]
+      prevent_destroy = true
+    }
+  }
+}
 ```
 
 Generates:
@@ -490,56 +493,49 @@ satz migrate <INPUT> --mode <MODE>
 ```
 
 **Parameters:**
-- `<INPUT>`: Name of the input YAML file.
+- `<INPUT>`: Name of the estate file (`.satz`).
 - `--mode, -m <MODE>`: Target mode (`local` or `cloud`).
 
 **Under the Hood:**
-- **Update YAML**: Modifies the `deployment-mode` anchor in the source YAML file.
+- **Update the estate**: Rewrites the `deployment_mode` param in the `.satz` file (an estate without one is refused).
 - **Regenerate**: Runs `transpile` to update the backend configuration (Local vs GCS) and provider authentication (ADC vs Impersonation).
 - **Migrate State**: Executes `tofu init -migrate-state` to safely move your terraform state to the new backend.
 
 ### Infrastructure Discovery
 
-`satz` provides two discovery commands to generate an estate from existing infrastructure. With `--satz` the result is a Satz estate that compiles as-is: a local backend, `customer_organization_id` inferred from the resources, every resource carrying its `"import-id"`, shorthand keys normalised to provider type names. Without it the legacy YAML dialect is written (convert later with `migrate-to-satz`).
+`satz` provides two discovery commands that write a Satz estate from existing infrastructure. The result compiles as-is: a local backend, `customer_organization_id` inferred from the resources, every resource carrying its `"import-id"`, keys normalised to provider type names. Review it, `satz transpile`, `tofu plan`.
 
 #### Discover from Terraform State (`discover-from-state`)
 Read an existing Terraform/OpenTofu state and generate a corresponding estate.
 
 ```bash
-satz discover-from-state --satz                          # yaml/discovered.satz
-satz discover-from-state --output discovered.yaml        # legacy dialect
+satz discover-from-state                                  # yaml/discovered.satz
+satz discover-from-state --state-json state.json -o found.satz
 ```
 
 **Parameters:**
-- `--satz`: Write a Satz estate (implies `--add-import-id`; a `.yaml` output name becomes `.satz`).
 - `--state-json <FILE>`: Path to Terraform state JSON file (optional). If omitted, runs `tofu show -json`.
-- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.yaml`).
-- `--add-import-id`: Add `import-id` to every resource for declarative imports.
-- `--add-import-id-as-comment`: Add `import-id` as a comment to every resource (YAML output only).
+- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.satz`; the extension is always `.satz`).
 - `--discovery-config <FILE>`: Path to discovery configuration YAML file (default: `presets/discovery-config.yaml`).
 
 **Under the Hood:**
 - Reads the current state (either from a file or by running `tofu show -json`).
-- Reverse-engineers the resources to match the `satz` YAML structure.
 - **Configurable Filtering**: respects `presets/discovery-config.yaml` to include/exclude specific resources and attributes.
   - Resource types can be globally enabled/disabled (`import: true/false`).
   - Specific attributes can be filtered via `exclude` and `include` lists per resource.
 - **Schema Validation**: Automatically validates discovered data against the Terraform Provider Schema, dropping read-only or computed fields that would cause HCL generation errors.
-- **IAM Heuristics**: Intelligently maps complex IAM resources (like `google_storage_bucket_iam_member`) to simplified, project-nested YAML structures.
+- **IAM Heuristics**: Maps complex IAM resources (like `google_storage_bucket_iam_member`) to the nested grant form.
 
 #### Discover from GCP Organization (`discover-from-organization`)
-Discover infrastructure directly from a GCP Organization using the Cloud Asset API and generate a YAML configuration.
+Discover infrastructure directly from a GCP Organization using the Cloud Asset API.
 
 ```bash
-satz discover-from-organization --customer-organization-id "123456789012" --satz
+satz discover-from-organization --customer-organization-id "123456789012"
 ```
 
 **Parameters:**
-- `--satz`: Write a Satz estate (implies `--add-import-id`).
 - `--customer-organization-id <ID>`: Numeric GCP Organization ID (required).
-- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.yaml`, `.satz` with `--satz`).
-- `--add-import-id`: Add `import-id` to every resource for declarative imports.
-- `--add-import-id-as-comment`: Add `import-id` as a comment to every resource (YAML output only).
+- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.satz`).
 - `--discovery-config <FILE>`: Path to discovery configuration YAML file (default: `presets/discovery-config.yaml`).
 
 **Under the Hood:**
@@ -840,7 +836,7 @@ Every local preset is compared against its pristine upstream version and classif
   their upstream deltas live in `X.diff.satz`.
 - **local-only** / **missing locally** — customer-own files and new upstream presets.
 
-Presets actually used by `<INPUT>` (via `use`, or any `!include` form in a YAML estate) are tagged
+Presets actually used by `<INPUT>` (via `use`) are tagged
 `[included]`; drift in an included preset makes the command exit non-zero, so it can
 gate CI. `use … when` packs whose condition is off count as not included.
 
@@ -1009,9 +1005,9 @@ tofu apply
 #### 1. Perform State Migration
 Toggle to `cloud` mode and move state to the GCS bucket:
 ```bash
-satz migrate C01234567.yaml --mode cloud
+satz migrate C0example.satz --mode cloud
 ```
-The tool automatically updates the YAML, switches to **Service Account Impersonation**, and runs `tofu init -migrate-state`.
+The tool rewrites the estate's `deployment_mode`, switches to **Service Account Impersonation**, and runs `tofu init -migrate-state`.
 
 #### 2. Verification
 In `cloud` mode, verify that you can plan/apply using the restricted service account identity:
@@ -1052,85 +1048,6 @@ satz transpile my-infra.satz
 - **Run from anywhere**: All paths are resolved relative to the configuration file's directory.
 - **Automatic Schema Sync**: The tool will automatically fetch missing provider schemas via `tofu/terraform` during transpilation.
 
-## The legacy YAML dialect
-
-Everything in this chapter and in "YAML dialect features" below describes the **legacy `.yaml` input**, which `transpile` and `migrate-to-satz` still accept. New estates are written in Satz — see [docs/satz-language.md](docs/satz-language.md). The input file is the source of truth for your infrastructure.
-
-### Terraform & Backend
-The `terraform` block is mandatory and used primarily for backend configuration.
-
-```yaml
-terraform:
-  backend:
-    gcs:
-      bucket: "my-infra-bucket"
-      prefix: "project-a"
-```
-
-### Providers
-Define one or more provider instances.
-
-```yaml
-providers:
-  google:
-    region: "europe-west3"
-    zone: "europe-west3-a"
-  google: # Support for multiple aliased providers
-    - alias: "secondary"
-      region: "us-central1"
-```
-
-### Variables
-Declare variables in a `variables` block. They are automatically merged to the root context and can be referenced anywhere in the file with YAML anchors.
-
-```yaml
-variables:
-  customer-id: &customer-id "C34projectroot"
-  region: &region "europe-west3"
-
-google_project:
-  my-project:
-    project_id: *customer-id
-```
-- Variables are declared as `string` types in `_variables.tf`.
-- Values are written to `.tfvars`.
-
-#### Variables in Included Files
-
-`variables:` blocks defined inside included files are merged into the same global variable table. This works for both include forms:
-
-```yaml
-# shared-vars.yaml — a standalone include (Form A)
-variables:
-  shared-region: &shared-region "europe-west3"
-  shared-project: &shared-project "my-infra-project"
-```
-
-```yaml
-# main.yaml
-!include shared-vars.yaml
-
-variables:
-  customer-id: &customer-id "C01234567"  # overrides any same-named key from includes
-
-google_project:
-  my-project:
-    project_id: *shared-project   # resolved from shared-vars.yaml
-    region: *shared-region
-```
-
-**Priority rules:**
-- The main file's `variables:` block has the **highest** priority.
-- Variables from Form A included files (inserted at the root level) have medium priority.
-- Variables from Form B included files (`key: !include file.yaml`, nested under a key) have the lowest priority.
-- On key conflicts, shallower (closer to root) definitions always win.
-
-Use `--print-variables` to inspect the resolved variable table after a transpile:
-
-```bash
-satz transpile my-infra.yaml --print-variables
-```
-
 ### 3. Update Schemas
 Refresh provider schemas manually.
 ```bash
@@ -1154,7 +1071,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 | `hcl_dir` | `"hcl"` | Target directory for generated HCL |
 | `schema_dir` | `"schemas"` | Directory where provider schemas are cached |
 | `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; `--preset` and the discovery-config default resolve here |
-| `include_dirs` | `[".", "yaml"]` | Search paths for `use` / `!include` files |
+| `include_dirs` | `[".", "yaml"]` | Search paths for `use`d packs |
 | `tf_tool` | `"tofu"` | The binary used to fetch schemas |
 | `google_providers` | `["google", "google-beta"]` | List of Google providers |
 | `provider_version` | `"7.12.0"` | Provider version to use |
@@ -1199,172 +1116,11 @@ claim "cis-gcp" "4.0" "2.2" implements {
 so claims and witnesses can never disagree. Coverage is `implements`, `contributes` or
 `deviates`; witnesses are mandatory on the first two. Literal Terraform `${…}` references
 inside strings need doubled braces (`"${{google_project.x.project_id}}"`) since `{…}`
-interpolates params. `require` and `report-compliance` accept only `.satz`; `transpile`
-also accepts the legacy YAML dialect (being retired), and `migrate-to-satz` converts it,
+interpolates params. Every command reads `.satz`. The legacy YAML dialect that
+preceded Satz exists only as input to `migrate-to-satz`, which converts an estate or a pack,
 gated by compiling the result through the fragment pipeline and reporting what it emits —
-a migrated estate may need a manual edit; `tofu plan` has the last word.
-
-## YAML dialect features (legacy input)
-
-### Custom YAML Tags
-Enhance your configuration with dynamic logic:
-- **`!include <file>`**: Recursively include other YAML snippets. Two forms are supported:
-  - **Form A** — standalone, inserts content at the same level: `!include shared.yaml`
-  - **Form B** — under a key, inserts content indented under that key: `defaults: !include defaults.yaml`
-
-  `variables:` blocks in included files are automatically hoisted into the global variable table regardless of which form is used. See [Variables in Included Files](#variables-in-included-files) for details.
-
-  Included files' `variables:` blocks provide **overridable defaults** — see
-  [Overriding variable defaults](#overriding-variable-defaults) for the full rules.
-- **`!include-if <anchor> <file>`**: include the file only if `<anchor>` is defined
-  earlier in the document (the sigil is optional: `!include-if logsink-project-name …`
-  and `!include-if *logsink-project-name …` are equivalent). When the anchor is not
-  defined, the line is replaced by a `# satz:skipped:` marker and the file does not
-  even need to exist. This turns a main config into a template whose optional parts
-  activate by defining a single variable:
-
-  ```yaml
-  # Pulls in the full audit-logsink stack only when a logsink project is named:
-  !include-if logsink-project-name presets/monitoring/organization-audit-logsink.yaml
-  ```
-- **`!format [template, arg1, arg2]`**: Dynamic string formatting using placeholders (`{}`).
-  ```yaml
-  member: !format
-    - "serviceAccount:svc-iac-001@{}.iam.gserviceaccount.com"
-    - *infra-project-name
-  ```
-- **`!join [arg1, arg2, ...]`**: Concatenate multiple values into a single string.
-- **`!expr <expression>`**: Emit a Terraform expression reference instead of a literal string. See [Expression References](#expression-references-expr) below.
-
-### Overriding variable defaults
-
-An included file's (typically a preset's) top-level `variables:` block provides
-**defaults**. The including file overrides one by defining the **same anchor name**
-*before* the include line — first definition wins:
-
-```yaml
-# main.yaml
-variables:
-  customer-shortname: &customer-shortname "acme"
-  # override — same anchor name the preset uses:
-  logsink-bucket-location: &logsink-bucket-location "europe-west1"
-
-!include presets/monitoring/organization-audit-logsink.yaml
-```
-
-When the anchor is already defined above the include, the preset's own redefinition is
-stripped during include expansion, so every alias inside the preset resolves to your
-value. Undefined anchors keep the preset's default. Each variable is independent —
-override two, leave the rest on defaults. (Plain YAML would do the opposite: aliases
-bind to the *nearest preceding* anchor, which would make preset defaults
-unoverridable.)
-
-**The rules:**
-
-1. **Position** — the override must be textually *above* the `!include` line, and any
-   anchors it references must be defined above *it* (YAML aliases only look backward).
-   One `variables:` block at the top of the main file, base values first, derived
-   values after, includes below, satisfies both.
-2. **Exact anchor name** — the same name the preset uses; each preset's names are
-   listed in [presets/README.md](presets/README.md).
-3. **Full anchor syntax** — `key: &key value`. A plain `key: value` line defines no
-   anchor and overrides nothing.
-
-**Override values may be composed** from other anchors with `!format`:
-
-```yaml
-variables:
-  customer-shortname: &customer-shortname "acme"
-  logsink-bucket-name: &logsink-bucket-name !format ["{}-org-audit-logs", *customer-shortname]
-```
-
-**Renaming a variable (anchor-of-an-alias) needs the identity wrapper.** This is
-invalid YAML — the spec forbids putting an anchor on an alias node, and every parser
-rejects it:
-
-```yaml
-variables:
-  cis-bucket-project: &cis-bucket-project *logsink-project-name     # ✗ parse error
-```
-
-Wrap the alias in a single-argument `!format` instead. The tagged node may legally
-carry the anchor, and `{}` with one argument passes the value through unchanged:
-
-```yaml
-variables:
-  cis-bucket-project: &cis-bucket-project !format ["{}", *logsink-project-name]   # ✓
-```
-
-No wrapper is needed for plain *use* of a variable (`project: *logsink-project-name`)
-or for a same-name override with a literal value — only for defining a **new** anchor
-whose value is another anchor.
-
-### Expression References (`!expr`)
-
-YAML values are literals: `member: google_service_account.x.member` puts that exact
-*text* into the generated HCL, and Terraform will try to bind the IAM role to a
-"user" of that name. When you need a **reference** to another resource — so Terraform
-resolves the real value at apply time *and orders the operations accordingly* — mark
-the value with `!expr`:
-
-```yaml
-member: !expr google_service_account.otel_collector.member
-```
-
-renders as
-
-```hcl
-member = "${google_service_account.otel_collector.member}"
-```
-
-which is semantically the bare expression: Terraform sees the dependency and creates
-the service account before the binding.
-
-**As a mapping key.** The compact IAM style keys on the member, and the member is often
-exactly the thing that must be a reference. `!expr` works in key position:
-
-```yaml
-google_project_service_identity:
-  pubsub:
-    provider: google-beta
-    service: pubsub.googleapis.com
-
-google_project_iam_member:
-  !expr 'google_project_service_identity.pubsub.member':
-    - roles/bigquery.dataEditor
-    - roles/pubsub.publisher
-```
-
-Each role explodes into its own `google_project_iam_member` resource whose `member`
-references the service identity — guaranteed to exist before the bindings are applied.
-(Quote the expression when it is used as a key, as above: a bare `key:` containing
-dots is fine for YAML, but the quotes keep the `:` after the tag unambiguous.)
-
-**Choosing between the three string mechanisms:**
-
-| You want | Use | Renders as |
-|---|---|---|
-| Plain text assembled from variables | `!format ["user:{}@{}", *first-admin, *customer-domain]` | `"user:alice@example.com"` — a literal; no dependency |
-| A reference to another resource's attribute | `!expr google_service_account.x.member` | `"${google_service_account.x.member}"` — dependency tracked |
-| Text and references mixed | a plain string with `${...}` inside: `"serviceAccount:${google_service_account.x.email}"` | kept as-is — dependency tracked |
-
-Rules of thumb:
-
-- `!format` resolves at **transpile time** from your `variables:` — the output is fixed text.
-  If the value only exists after `tofu apply` (emails of created service accounts, service
-  identity members, project numbers), it must be `!expr` or a `${...}` string.
-- `!expr` and `${...}` strings are equivalent; `!expr` is the explicit form for a bare
-  reference, `${...}` embeds references inside longer text. Input to `!expr` that already
-  contains `${...}` is passed through unchanged, never double-wrapped.
-- The result is always string-typed in HCL — which is what members, names and ids expect.
-
-### Conditional Folding
-Setting a folder's `display_name` to an empty string (`""`) will skip the `google_folder` resource and "implode" its contents into the parent context. This is useful for conditionally creating folders based on variables.
-
-### Compact Explosion (CEX)
-Resources named with a `CEX_` prefix (or listed in `auto_explode`) support compact definition styles:
-- **IAM**: Define many roles for one member in a simple block.
-- **Services**: Enable lists of GCP services in one block.
+a migrated estate may need a manual edit; `tofu plan` has the last word
+(see [docs/satz-language.md §12](docs/satz-language.md)).
 
 ## Core Principles
 
@@ -1374,7 +1130,7 @@ The tool follows a central design philosophy based on **Hierarchy Context**, **A
 Resources are defined within the context of their parent in the organization hierarchy:
 - **Project Context**: Resources that require a project (e.g., Buckets, VMs, Networks) are usually nested directly within a `google_project` definition.
 - **Folder Context**: Resources belonging to a folder (e.g., Folder IAM members) are usually nested within a `google_folder` block.
-- **Organization Context**: Organization-wide resources (e.g., Group memberships, Org IAM) are defined at the root level of the YAML.
+- **Organization Context**: Organization-wide resources (e.g., Group memberships, Org IAM) are defined at the root level of the estate.
 - **Explicit Placement**: Any resource can be defined outside its logical hierarchy container if the identifying parameter (e.g., `project_id`, `folder`) is provided explicitly.
 
 ### 2. Attribute Inheritance (Narrowest Context)
@@ -1384,7 +1140,7 @@ Nested resources automatically inherit identity attributes from their surroundin
     - A resource inside a Project context inherits the Project ID.
     - A resource inside a Folder context inherits the Folder ID.
 - **Narrowest First**: If a resource is defined in a scope where multiple contexts apply (e.g., inside a Project which is inside a Folder), it inherits from the **most specific (narrowest)** context available.
-- **Explicit Override**: Explicitly provided attributes in the YAML always take precedence over inherited context values.
+- **Explicit Override**: Explicitly provided attributes in the source always take precedence over inherited context values.
 
 ### 3. Context Validation & Typo Detection
 To ensure configuration correctness, nested blocks are strictly validated:
@@ -1507,35 +1263,36 @@ The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that 
 
 ## Architecture
 
-`satz` compiles Satz estates (and, for `transpile`, the legacy YAML dialect) into production-ready OpenTofu/Terraform HCL. It prioritizes structure, inheritance, and validation.
+`satz` compiles Satz estates into production-ready OpenTofu/Terraform HCL. It prioritizes structure, inheritance, and validation.
 
 ### Core Components
 
-#### 1. Transpiler (`src/transpiler.rs`)
-The heart of the tool. It processes the YAML tree and generates `main.tf`, `providers.tf`, `variables.tf`, and `terraform.tfvars`.
-- **Context Awareness**: Tracks the current Organization, Folder, and Project context as it descends the YAML tree.
-- **Attribute Inheritance**: Automatically injects identifiers (like `project_id`) into nested resources based on the closest parent context.
-- **Conditional Folding**: Implements "implosion" logic where folders with empty display names are skipped, promoting their children to the parent context.
+#### 1. Fragment pipeline (`crates/satz-core`, `src/emitter.rs`)
+The heart of the tool. `satz.rs` parses each `.satz` file, `pipeline.rs` resolves params
+and `use`s into per-file fragments, `algebra.rs` folds them by Terraform address (⊕), and
+the emitter renders the folded IR as `main.tf`, `providers.tf`, `variables.tf`,
+`terraform.tfvars` and `imports.tf`.
+- **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block.
+- **Intrinsic scopes**: groups, org grants and billing grants hoist to their real scope wherever they are written.
+- **Conditional Folding**: folders with an empty display name are skipped, promoting their children to the parent context.
 
 #### 2. Schema Registry (`src/schema.rs`)
 Manages Terraform provider schemas (loaded as JSON).
-- **Validation**: Ensures that all required attributes and blocks are present in the YAML.
-- **Translation**: Maps YAML keys to correct HCL resource types (e.g., automatically adding the `google_` prefix).
+- **Typing**: every resource key and block key is checked against the schema at parse time — an unknown key is an error, not a guess.
 
 #### 3. Template Generator (`src/template.rs`)
 Provides a consistent starting point for new customer rollouts.
 - **Declarative Bootstrap**: Generates the Satz estate representing the Day 0 infrastructure (Project, Services, Bucket, SA) under the labels `bootstrap` imports by name.
 
-#### 4. Custom YAML Processing (`src/main.rs`, `src/include_processor.rs`)
-Implements custom tags to extend YAML's expressiveness:
-- `!include`: Recursive file inclusion.
-- `!format`: Placeholder-based string construction.
-- `!join`: String concatenation.
-- `!expr`: Terraform expression references (resolved to `"${...}"` interpolation strings).
-- Includes are recorded in a manifest of resolved paths, which is how `check-presets` learns which presets a YAML estate uses. `!include` has no side effects; the old transpile-time `!import-include` was removed — its job is `satz adopt`, and the tag is a loud error now.
+#### 4. Migration (`crates/satz-core/src/migrate.rs`)
+The only reader of the legacy YAML dialect: `migrate-to-satz` converts an estate or a pack
+(`!include` → `use`, anchors → params, `!format` → `"{param}"` interpolation, `!expr` →
+`"${{…}}"`), then compiles the result through the fragment pipeline and reports what it
+emits. An old `!import-include` becomes `use` plus a `NEEDS ADOPTION` note — its job is
+`satz adopt`.
 
 #### 5. Discovery Engine
-The `discover` commands reverse-engineer YAML from existing Google Cloud assets.
+The `discover` commands reverse-engineer a Satz estate from existing Google Cloud assets.
 - **Asset Ingestion**: Consumes CAI (Cloud Asset Inventory) export streams.
 - **Configurable Filtering**: Uses `discovery-config.yaml` to include/exclude resources and attribute fields.
 - **Schema Validation**: Validates discovered data against Terraform schemas, automatically filtering read-only or computed fields to ensure valid HCL generation.
