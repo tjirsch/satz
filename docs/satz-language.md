@@ -1243,7 +1243,9 @@ still accepted — `transpile` emits HCL for a `.yaml` estate through the legacy
 walk, and `migrate-to-satz` converts — so converting is a choice each repo
 makes when ready, not a toll on using the tool. This section is everything a
 reader coming from that dialect needs, and nothing a reader who never used it
-does.
+does. (Brownfield estates never need the dialect: `discover-from-state --satz`
+and `discover-from-organization --satz` write a Satz estate directly, through
+the same printer `migrate-to-satz` uses.)
 
 **What a YAML estate cannot have**, because these are fragment-pipeline
 features: `suppress`, `hcl { … }`, `claim` / `deviates` (and therefore

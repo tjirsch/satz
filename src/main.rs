@@ -302,36 +302,46 @@ enum Commands {
         #[arg(long)]
         tf_tool: Option<String>,
     },
-    /// Discover infrastructure and generate YAML config from Terraform state
+    /// Discover infrastructure from Terraform state and write it as an estate
+    /// (Satz with --satz, else the legacy YAML dialect)
     DiscoverFromState {
         /// Path to Terraform state JSON file
         #[arg(long)]
         state_json: Option<PathBuf>,
-        /// Path to output YAML file
+        /// Output file (with --satz a .yaml default becomes .satz)
         #[arg(long, default_value = "discovered.yaml")]
         output: PathBuf,
-        /// Add import ID to every resource
+        /// Write a Satz estate: terraform block, customer_organization_id param
+        /// inferred from the resources, "import-id" on every resource
+        #[arg(long)]
+        satz: bool,
+        /// Add import ID to every resource (implied by --satz)
         #[arg(long)]
         add_import_id: bool,
-        /// Add import ID as a comment to every resource
+        /// Add import ID as a comment to every resource (YAML output only)
         #[arg(long)]
         add_import_id_as_comment: bool,
         /// Path to discovery configuration YAML file
         #[arg(long)]
         discovery_config: Option<PathBuf>,
     },
-    /// Discover infrastructure and generate YAML config from GCP Organization
+    /// Discover infrastructure from a GCP organization (Cloud Asset Inventory)
+    /// and write it as an estate (Satz with --satz, else the legacy YAML dialect)
     DiscoverFromOrganization {
         /// Numeric Organization ID
         #[arg(long)]
         customer_organization_id: String,
-        /// Path to output YAML file
+        /// Output file (with --satz a .yaml default becomes .satz)
         #[arg(long, default_value = "discovered.yaml")]
         output: PathBuf,
-        /// Add import ID to every resource
+        /// Write a Satz estate: terraform block, customer_organization_id param,
+        /// "import-id" on every resource
+        #[arg(long)]
+        satz: bool,
+        /// Add import ID to every resource (implied by --satz)
         #[arg(long)]
         add_import_id: bool,
-        /// Add import ID as a comment to every resource
+        /// Add import ID as a comment to every resource (YAML output only)
         #[arg(long)]
         add_import_id_as_comment: bool,
         /// Path to discovery configuration YAML file
@@ -1040,7 +1050,8 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::DiscoverFromState { state_json, output, add_import_id, add_import_id_as_comment, discovery_config } => {
+        Commands::DiscoverFromState { state_json, output, satz, add_import_id, add_import_id_as_comment, discovery_config } => {
+            let add_import_id = add_import_id || satz;
             let discovery_config_obj = load_discovery_config(discovery_config, &tool_config, &runtime_config.presets_dir)?
                 .ok_or_else(|| {
                     let err: Box<dyn std::error::Error> = format!(
@@ -1071,8 +1082,23 @@ Thumbs.db
             let s_dir = PathBuf::from(&runtime_config.schema_dir);
             let registry = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
 
+            let is_type = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
             let discoverer = crate::discovery::Discoverer::new(state_val, registry, cli.verbose, add_import_id, add_import_id_as_comment, enabled_types);
             let config = discoverer.discover()?;
+
+            if satz {
+                let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+                let text = discovered_to_satz(&config, "discovered", &|t| is_type.as_ref().is_some_and(|r| r.resources.contains_key(t)))?;
+                if let Some(parent) = final_output.parent() {
+                    fsx::create_dir_all(parent)?;
+                }
+                fsx::write(&final_output, text)?;
+                println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
+                if cli.verbose {
+                    crate::discovery::Discoverer::print_summary(&config, Some(discoverer.filtered_count.get()));
+                }
+                return Ok(());
+            }
 
             let mut yaml = serde_yaml::to_string(&config)?;
 
@@ -1109,12 +1135,14 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::DiscoverFromOrganization { customer_organization_id, output, add_import_id, add_import_id_as_comment, discovery_config } => {
+        Commands::DiscoverFromOrganization { customer_organization_id, output, satz, add_import_id, add_import_id_as_comment, discovery_config } => {
+            let add_import_id = add_import_id || satz;
             // runtime_config, not tool_config: the sibling DiscoverFromState already
             // uses the resolved directory, so --config was silently ignored here.
             let s_dir = PathBuf::from(&runtime_config.schema_dir);
             let registry = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas"))
                 .map_err(|e| format!("Failed to load resource registry from {}: {}", s_dir.display(), e))?;
+            let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
 
             let discovery_config_obj = load_discovery_config(discovery_config, &tool_config, &runtime_config.presets_dir)?
                 .ok_or_else(|| {
@@ -1126,6 +1154,18 @@ Thumbs.db
                      err
                 })?;
             let config = crate::discovery::Discoverer::discover_from_org(&customer_organization_id, cli.verbose, add_import_id, add_import_id_as_comment, Some(discovery_config_obj), Some(registry)).await?;
+
+            if satz {
+                let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+                let text = discovered_to_satz(&config, "discovered", &|t| type_names.contains(t))?;
+                if let Some(parent) = final_output.parent() {
+                    fsx::create_dir_all(parent)?;
+                }
+                fsx::write(&final_output, text)?;
+                println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
+                return Ok(());
+            }
+
             let mut yaml = serde_yaml::to_string(&config)?;
 
             if add_import_id_as_comment {
@@ -1944,6 +1984,81 @@ fn reject_yaml_estate(input: &Path, what: &str) -> Result<(), Box<dyn std::error
 /// be written to disk. The emission manifest, not the rendered text, is what
 /// the compliance plane reads: a witness inside a raw `hcl { … }` block is
 /// therefore not a witness, as documented.
+/// Where `discover-* --satz` writes: the given path inside `yaml_dir`, with the
+/// legacy `.yaml` default turned into `.satz`.
+fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
+    let output = if output.extension().and_then(|e| e.to_str()) == Some("yaml") {
+        output.with_extension("satz")
+    } else {
+        output
+    };
+    if output.is_absolute() {
+        output
+    } else {
+        PathBuf::from(yaml_dir).join(output)
+    }
+}
+
+/// A discovered `Config` as a Satz estate that compiles as-is: the local
+/// backend the emitter requires, `customer_organization_id` inferred from the
+/// resources (every `organizations/<n>` reference or `org_id` names it), the
+/// data printed by the same printer `migrate-to-satz` uses, and shorthand
+/// type keys (`folder`, `project`) normalised to provider names.
+///
+/// Discovery emits plain data — no anchors, tags, includes or nulls — so no
+/// dialect pre-pass is needed; that is what makes the direct route possible.
+fn discovered_to_satz(
+    config: &Config,
+    name: &str,
+    is_type: &dyn Fn(&str) -> bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut top = match serde_yaml::to_value(config)? {
+        serde_yaml::Value::Mapping(m) => m,
+        other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
+    };
+    if !top.contains_key(serde_yaml::Value::String("terraform".into())) {
+        let backend: serde_yaml::Value =
+            serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n")?;
+        top.insert(serde_yaml::Value::String("terraform".into()), backend);
+    }
+    let mut params = Vec::new();
+    match infer_org_id(&serde_yaml::Value::Mapping(top.clone())) {
+        Some(org) => params.push(("customer_organization_id".to_string(), format!("\"{}\"", org))),
+        None => eprintln!(
+            "warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand"
+        ),
+    }
+    let header = vec![
+        "Discovered estate — review before use: hierarchy is as found, names are the".to_string(),
+        "Terraform labels, every resource carries its \"import-id\". `satz transpile`, then".to_string(),
+        "`tofu plan` should show imports and no creates.".to_string(),
+    ];
+    let satz = satz_core::migrate::convert_value(&top, "estate", name, &params, &header)?;
+    Ok(satz_core::migrate::normalize_type_keys(&satz, is_type))
+}
+
+/// The first organization number the tree names: an `organizations/<n>`
+/// string anywhere, or an `org_id` value. Depth-first, document order.
+fn infer_org_id(v: &serde_yaml::Value) -> Option<String> {
+    match v {
+        serde_yaml::Value::String(s) => {
+            let n = s.strip_prefix("organizations/")?;
+            let digits: String = n.chars().take_while(|c| c.is_ascii_digit()).collect();
+            (!digits.is_empty() && digits.len() == n.len()).then_some(digits)
+        }
+        serde_yaml::Value::Mapping(m) => {
+            if let Some(serde_yaml::Value::String(id)) = m.get(serde_yaml::Value::String("org_id".into())) {
+                if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                    return Some(id.clone());
+                }
+            }
+            m.values().find_map(infer_org_id)
+        }
+        serde_yaml::Value::Sequence(s) => s.iter().find_map(infer_org_id),
+        _ => None,
+    }
+}
+
 /// `satz adopt`: compile, resolve every declared resource against the live
 /// org, report, and — only with `--execute` — write the verified ids into the
 /// estate or import them into state now.
@@ -4454,6 +4569,73 @@ google_cloud_identity_group {
         let got = crate::emitter::reconciled_edges(&merged).unwrap();
         assert_eq!(got.len(), 1, "with and without an id is one binding");
         assert_eq!(got[0].import_id, "x");
+    }
+}
+
+#[cfg(test)]
+mod discover_satz {
+    //! `discover-* --satz`: the discovered data must come out as an estate the
+    //! fragment pipeline compiles, with the preamble the emitter requires and
+    //! every discovered id carried as an import.
+    use super::*;
+
+    #[test]
+    fn discovered_config_becomes_an_estate_that_compiles_and_imports() {
+        let yaml = r#"
+folder:
+  workloads:
+    display_name: Workloads
+    import-id: folders/111
+    project:
+      infra:
+        project_id: acme-infra-001
+        name: acme-infra-001
+        import-id: acme-infra-001
+google_storage_bucket:
+  state:
+    name: acme-state
+    location: EU
+    import-id: acme-state
+google_organization_iam_audit_config:
+  all:
+    org_id: "123456789012"
+    service: allServices
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let reg = super::corpus::registry();
+        let text = discovered_to_satz(&config, "discovered", &|t| reg.resources.contains_key(t)).unwrap();
+        assert!(text.contains("customer_organization_id = \"123456789012\""), "{}", text);
+        assert!(text.contains("terraform {"), "{}", text);
+        assert!(text.contains("google_folder {"), "shorthand keys must be normalised:\n{}", text);
+
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("discovered estate does not compile: {:?}\n{}", e, text));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        assert!(folded.conflicts().is_empty());
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs = out.manifest.addresses();
+        for a in ["google_folder.workloads", "google_project.infra", "google_storage_bucket.state", "google_organization_iam_audit_config.all"] {
+            assert!(addrs.contains(a), "missing {} in {:?}", a, addrs);
+        }
+        for id in ["folders/111", "acme-infra-001", "acme-state"] {
+            assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
+        }
+        assert!(!out.main_tf.contains("import-id"));
+    }
+
+    #[test]
+    fn org_id_is_inferred_from_references_or_org_id_keys() {
+        let v: serde_yaml::Value = serde_yaml::from_str("a:\n  parent: organizations/123456789012\n").unwrap();
+        assert_eq!(infer_org_id(&v).as_deref(), Some("123456789012"));
+        let v: serde_yaml::Value = serde_yaml::from_str("a:\n  b:\n    org_id: \"222222222222\"\n").unwrap();
+        assert_eq!(infer_org_id(&v).as_deref(), Some("222222222222"));
+        let v: serde_yaml::Value = serde_yaml::from_str("a:\n  name: organizations/1/policies/x\n").unwrap();
+        assert_eq!(infer_org_id(&v), None, "a policy name is not an org reference");
+        assert_eq!(satz_output_path("yaml", PathBuf::from("discovered.yaml")), PathBuf::from("yaml/discovered.satz"));
+        assert_eq!(satz_output_path("yaml", PathBuf::from("/abs/x.satz")), PathBuf::from("/abs/x.satz"));
     }
 }
 

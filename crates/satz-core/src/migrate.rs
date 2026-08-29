@@ -691,32 +691,49 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
         serde_yaml::Value::Null => serde_yaml::Mapping::new(),
         _ => return err("top level is not a mapping"),
     };
+    let mut header = pre.header.clone();
+    header.push(String::new());
+    header.push("Converted by `satz migrate-to-satz` — interior comments were not carried.".to_string());
+    convert_value(&top, kind_keyword, name, &pre.params, &header)
+}
 
+/// Print an already-parsed document as Satz: the printer behind `convert`,
+/// for callers that hold plain data rather than dialect text — discovery
+/// hands it a `Config` with no anchors, tags or includes. `params` are
+/// `(name, already-rendered value)` pairs; `header` lines become leading
+/// `//` comments (an empty line stays a blank comment line).
+pub fn convert_value(
+    top: &serde_yaml::Mapping,
+    kind_keyword: &str,
+    name: &str,
+    params: &[(String, String)],
+    header: &[String],
+) -> Result<String, MigrateError> {
     let mut out = String::new();
-    for h in &pre.header {
-        let _ = writeln!(out, "// {}", h);
+    for h in header {
+        if h.is_empty() {
+            out.push('\n');
+        } else {
+            let _ = writeln!(out, "// {}", h);
+        }
     }
-    if !pre.header.is_empty() {
+    if !header.is_empty() {
         out.push('\n');
     }
-    let _ = writeln!(
-        out,
-        "// Converted by `satz migrate-to-satz` — interior comments were not carried.\n"
-    );
     let _ = writeln!(out, "{} {}\n", kind_keyword, snake(name));
 
-    if !pre.params.is_empty() {
+    if !params.is_empty() {
         out.push_str("params {\n");
-        for (name, value) in &pre.params {
+        for (name, value) in params {
             let _ = writeln!(out, "  {} = {}", name, value);
         }
         out.push_str("}\n\n");
     }
 
     let param_names: std::collections::HashSet<&str> =
-        pre.params.iter().map(|(n, _)| n.as_str()).collect();
+        params.iter().map(|(n, _)| n.as_str()).collect();
 
-    for (k, v) in &top {
+    for (k, v) in top {
         // Form A use at top level
         if let Some(ks) = k.as_str() {
             if ks.starts_with(USE_K) {

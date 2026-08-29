@@ -123,8 +123,8 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
-| `discover-from-state` | `--state-json`, `--output`, `--add-import-id`, `--add-import-id-as-comment`, `--discovery-config` |
-| `discover-from-organization` | `--customer-organization-id` (required), `--output`, `--add-import-id`, `--add-import-id-as-comment`, `--discovery-config` |
+| `discover-from-state` | `--satz` (write a Satz estate), `--state-json`, `--output`, `--add-import-id`, `--add-import-id-as-comment`, `--discovery-config` |
+| `discover-from-organization` | `--satz`, `--customer-organization-id` (required), `--output`, `--add-import-id`, `--add-import-id-as-comment`, `--discovery-config` |
 | `migrate <INPUT>` | `--mode` |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
@@ -500,20 +500,22 @@ satz migrate <INPUT> --mode <MODE>
 
 ### Infrastructure Discovery
 
-`satz` provides two discovery commands to generate YAML configurations from existing infrastructure.
+`satz` provides two discovery commands to generate an estate from existing infrastructure. With `--satz` the result is a Satz estate that compiles as-is: a local backend, `customer_organization_id` inferred from the resources, every resource carrying its `"import-id"`, shorthand keys normalised to provider type names. Without it the legacy YAML dialect is written (convert later with `migrate-to-satz`).
 
 #### Discover from Terraform State (`discover-from-state`)
-Read an existing Terraform/OpenTofu state and generate a corresponding YAML configuration.
+Read an existing Terraform/OpenTofu state and generate a corresponding estate.
 
 ```bash
-satz discover-from-state --output discovered.yaml
+satz discover-from-state --satz                          # yaml/discovered.satz
+satz discover-from-state --output discovered.yaml        # legacy dialect
 ```
 
 **Parameters:**
+- `--satz`: Write a Satz estate (implies `--add-import-id`; a `.yaml` output name becomes `.satz`).
 - `--state-json <FILE>`: Path to Terraform state JSON file (optional). If omitted, runs `tofu show -json`.
-- `--output, -o <FILE>`: Path to output YAML file (default: `discovered.yaml`).
-- `--add-import-id`: Add `import-id` tag to every resource for declarative imports.
-- `--add-import-id-as-comment`: Add `import-id` as a comment to every resource.
+- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.yaml`).
+- `--add-import-id`: Add `import-id` to every resource for declarative imports.
+- `--add-import-id-as-comment`: Add `import-id` as a comment to every resource (YAML output only).
 - `--discovery-config <FILE>`: Path to discovery configuration YAML file (default: `presets/discovery-config.yaml`).
 
 **Under the Hood:**
@@ -529,14 +531,15 @@ satz discover-from-state --output discovered.yaml
 Discover infrastructure directly from a GCP Organization using the Cloud Asset API and generate a YAML configuration.
 
 ```bash
-satz discover-from-organization --customer-organization-id "123456789012" --output discovered.yaml
+satz discover-from-organization --customer-organization-id "123456789012" --satz
 ```
 
 **Parameters:**
+- `--satz`: Write a Satz estate (implies `--add-import-id`).
 - `--customer-organization-id <ID>`: Numeric GCP Organization ID (required).
-- `--output, -o <FILE>`: Path to output YAML file (default: `discovered.yaml`).
-- `--add-import-id`: Add `import-id` tag to every resource for declarative imports.
-- `--add-import-id-as-comment`: Add `import-id` as a comment to every resource.
+- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.yaml`, `.satz` with `--satz`).
+- `--add-import-id`: Add `import-id` to every resource for declarative imports.
+- `--add-import-id-as-comment`: Add `import-id` as a comment to every resource (YAML output only).
 - `--discovery-config <FILE>`: Path to discovery configuration YAML file (default: `presets/discovery-config.yaml`).
 
 **Under the Hood:**
@@ -1442,16 +1445,19 @@ This section outlines the general process for migrating existing infrastructure 
 Begin by capturing the current infrastructure state. If you have an existing Terraform/OpenTofu project, generate a JSON state file and use the discovery tool:
 ```bash
 tofu show -json > state.json
-satz discover-from-state --state-json state.json --output yaml/migration-discovery.yaml
+satz discover-from-state --state-json state.json --satz --output migration-discovery.satz
 ```
 
 Alternatively, if you want to discover infrastructure directly from GCP without Terraform state:
 ```bash
-satz discover-from-organization --customer-organization-id "123456789012" --output yaml/migration-discovery.yaml
+satz discover-from-organization --customer-organization-id "123456789012" --satz --output migration-discovery.satz
 ```
 
+Only the resource types marked `import: true` in `presets/discovery-config.yaml` are
+discovered; enable more rows as needed.
+
 ### 2. Hierarchical Refinement
-The discovery tool produces a relatively flat YAML-dialect file. Convert it with `satz migrate-to-satz migration-discovery.yaml`, then organize the result into the `satz` hierarchical format:
+The discovered estate compiles as-is, but it is as found. Organize it into the `satz` hierarchical format:
 - Move projects into their respective folders.
 - Nest resources (Buckets, Networks, etc.) inside their projects to leverage **Attribute Inheritance**.
 - Remove redundant attributes (like `project_id`) that are now inherited from the context.
