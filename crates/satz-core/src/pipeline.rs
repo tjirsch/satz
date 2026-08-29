@@ -561,7 +561,15 @@ impl Walk<'_> {
         for item in items {
             match item {
                 // Estate-level scalar attrs (customer ids …) are config layer in v0.
-                Entry::Attr { .. } => {}
+                // A bare attribute at the top of a file belongs to nothing —
+                // silently ignoring it once made 22 project services vanish.
+                Entry::Attr { key, line, .. } => {
+                    return perr(
+                        file_name,
+                        *line,
+                        format!("`{:?}` is an attribute at the top level of the file — attributes live inside a resource block", key),
+                    );
+                }
                 Entry::Use { path: use_path, as_key, when, line } => {
                     if let Some(p) = when {
                         if !truthy(self.genv.get(p)) {
