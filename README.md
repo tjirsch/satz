@@ -186,8 +186,8 @@ satz bootstrap <CONFIG_FILE> [options]
 
 **Under the Hood:**
 1.  **Authentication**: Uses Application Default Credentials (ADC).
-2.  **Infrastructure Folder**: Checks availability or creates the top-level folder (requires `Folder Admin`).
-3.  **Project Shell**: Creates the management project (project-id defaults to `shortname-iac-infra`) inside the folder.
+2.  **Infrastructure Folder**: Lists every folder under the parent (all pages) and reuses the one whose display name matches — exactly one; two folders with that name is an error, not a guess — or creates it (requires `Folder Admin`).
+3.  **Project Shell**: Creates the management project (project-id defaults to `shortname-iac-infra`) inside the folder, or reuses an existing one, and prints its **project number**.
 4.  **Billing Link**: Links the project to the specified Billing Account.
 5.  **Enable APIs**: Enables the foundation APIs (Service Usage, Cloud Resource Manager, IAM, IAM Credentials, Storage, Cloud Billing, Cloud Identity, Cloud Asset, Logging, Org Policy, Essential Contacts).
 6.  **State Bucket**: Creates the GCS bucket for Terraform state (with versioning, uniform access).

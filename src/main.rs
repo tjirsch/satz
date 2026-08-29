@@ -9,6 +9,7 @@ mod state_migration;
 mod discovery;
 mod template;
 mod bootstrap;
+mod gcp;
 mod org_policy;
 mod cloud_identity;
 mod compliance;
@@ -1458,7 +1459,9 @@ Thumbs.db
             let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
             ctx.registry = Some(&registry);
             let b_out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
-            let b_main = b_out.main_tf;
+            // Same as transpile: the raw passthrough is part of what B writes,
+            // so leaving it off here reported every `hcl { … }` block as drift.
+            let b_main = append_hcl_passthrough(b_out.main_tf, &fe.hcl);
             let b_imports = b_out.imports_tf;
             let b_tfvars = crate::emitter::emit_tfvars(&fe.tfvars);
             let (provider_sources, provider_versions) = provider_maps(&tool_config);
