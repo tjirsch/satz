@@ -82,11 +82,14 @@ fi
 
 step "import, hcl shape (translate): literal resources become Satz, positional ones wrap"
 "$satz" --config . import tf -o imported-hcl2.satz --verbose | tee tmp/import-hcl2.txt
-grep -q '1 block(s) translated' tmp/import-hcl2.txt || fail "the bucket should translate:\n$(cat tmp/import-hcl2.txt)"
-grep -q 'google_folder.*positional' tmp/import-hcl2.txt || fail "the folder should wrap as positional"
-grep -q '^google_storage_bucket {' yaml/imported-hcl2.satz || fail "no translated bucket in the estate"
+grep -q '6 block(s) translated' tmp/import-hcl2.txt || fail "folder, project, service, grants and bucket should translate:\n$(cat tmp/import-hcl2.txt)"
+grep -q '^google_folder {' yaml/imported-hcl2.satz || fail "no translated folder in the estate"
+grep -q 'customer_organization_id = "123456789012"' yaml/imported-hcl2.satz || fail "the organisation id was not inferred"
 "$satz" --config . transpile imported-hcl2.satz --output "$PWD/tmp/imported-hcl2-hcl" 2>&1 | tee tmp/transpile-hcl2.txt
 grep -q 'lifecycle_rule {' tmp/imported-hcl2-hcl/main.tf || fail "the translated bucket lost its lifecycle_rule"
+grep -q 'folder_id *= *google_folder.workloads.name' tmp/imported-hcl2-hcl/main.tf || fail "the project was not nested under its folder"
+grep -q 'resource "google_project_service" "infra_iam_googleapis_com"' tmp/imported-hcl2-hcl/main.tf || fail "the service did not become the project's"
+grep -q 'resource "google_organization_iam_member"' tmp/imported-hcl2-hcl/main.tf || fail "the org grant was not emitted"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/imported-hcl2-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
 fi

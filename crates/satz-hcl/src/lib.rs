@@ -2,24 +2,28 @@
 //! `.tf` — hand-written, `gcloud … bulk-export --resource-format=terraform`,
 //! `tofu plan -generate-config-out` — becomes a Satz estate.
 //!
-//! Two tiers, one pass. **Translate**: a `resource` block of a schema-known,
-//! non-positional type whose every value is a literal becomes a Satz
-//! resource — attributes as written, nested blocks as lists of objects, the
-//! label kept (so a wrapped block that references it still resolves).
+//! Two tiers, one pass. **Translate**: a `resource` block of a schema-known
+//! type whose values are literals becomes a Satz resource — attributes as
+//! written, nested blocks as lists of objects, the label kept (so a wrapped
+//! block that references it still resolves). Positional types are placed:
+//! a folder whose `parent` is the organisation goes to the top, one whose
+//! parent references another folder nests under it; a project nests under
+//! the folder its `folder_id` references (or sits at the top when its
+//! `org_id` is the organisation); a project's services, IAM grants and
+//! project-scoped resources that reference it by `project` move inside it;
+//! folder and organisation grants likewise. Those identity references are
+//! the ONLY expressions a translated block may contain.
 //! **Wrap**: everything else is carried verbatim as
 //! `hcl trust "imported from <file>:<line>" { … }` — it deploys exactly as
 //! written, the compliance plane cannot see into it, the fold cannot compose
-//! it — and the report says why. `terraform` and `provider` blocks are
+//! it — and the report says why. A block whose parent is wrapped is wrapped
+//! too (closure by dependency). `terraform` and `provider` blocks are
 //! dropped with a note: the emitter owns `providers.tf`. Every block is
 //! accounted for — an import may be partial, never silent.
 //!
-//! Positional types — folders, projects, groups, memberships, services, IAM
-//! grants — are wrapped for now: their Satz form is their PLACE in the tree,
-//! which the flat resource list of a `.tf` does not carry (3.1c).
-//!
 //! This crate keeps `hcl-rs`/`hcl-edit` out of satz-core.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use hcl::edit::expr::{Expression, ObjectKey};
 use hcl::edit::parser::parse_body;
@@ -58,42 +62,56 @@ pub struct Input {
     pub text: String,
 }
 
-/// Types whose Satz form is positional (their place in the tree) or a
-/// special arm of the emitter — wrapped until 3.1c recovers nesting.
-fn positional(tf_type: &str) -> bool {
-    matches!(
-        tf_type,
-        "google_folder" | "google_project" | "google_project_service" | "google_cloud_identity_group" | "google_cloud_identity_group_membership"
-    ) || tf_type.ends_with("_iam_member")
-        || tf_type.ends_with("_iam_binding")
-        || tf_type.ends_with("_iam_policy")
-        || tf_type.ends_with("_iam_audit_config")
-}
-
 const META_BLOCKS: &[&str] = &["dynamic", "provisioner", "connection"];
 const META_ATTRS: &[&str] = &["count", "for_each", "provider", "depends_on"];
+
+/// Where a translated resource lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Place {
+    /// top level (the organisation)
+    Top,
+    Folder(String),
+    Project(String),
+}
+
+/// A resource block after classification.
+struct Res {
+    tf_type: String,
+    label: String,
+    file: String,
+    line: usize,
+    what: String,
+    text: String,
+    /// literal body (parent/scope attrs removed), when translatable
+    body: Option<serde_yaml::Mapping>,
+    place: Place,
+    /// why it cannot translate on its own
+    reason: Option<String>,
+}
 
 /// Import every file. `wrap_all` skips translation; `is_type` answers
 /// whether a Terraform type is in the provider schema.
 pub fn import(inputs: &[Input], name: &str, wrap_all: bool, is_type: &dyn Fn(&str) -> bool) -> Result<Imported, String> {
-    let mut translated: BTreeMap<String, serde_yaml::Mapping> = BTreeMap::new();
+    let mut resources: Vec<Res> = Vec::new();
     let mut wrapped = String::new();
     let mut rows = Vec::new();
+    let mut org_ids: BTreeSet<String> = BTreeSet::new();
+
     for input in inputs {
         let body = parse_body(&input.text).map_err(|e| format!("{}: {}", input.path, e))?;
         for s in body.iter() {
             let Some(span) = s.span() else {
                 return Err(format!("{}: a structure without a span (not parsed from text?)", input.path));
             };
-            let text = input.text[span.clone()].trim_end();
+            let text = input.text[span.clone()].trim_end().to_string();
             let line = input.text[..span.start].matches('\n').count() + 1;
             let what = describe(s);
-            let mut wrap = |reason: String, rows: &mut Vec<Row>| {
-                wrapped.push_str(&format!("hcl trust \"imported from {}:{}\" {{\n{}\n}}\n\n", input.path, line, indent(text)));
+            let wrap_now = |reason: String, wrapped: &mut String, rows: &mut Vec<Row>| {
+                wrapped.push_str(&wrap_block(&input.path, line, &text));
                 rows.push(Row { file: input.path.clone(), line, what: what.clone(), action: Action::Wrapped(reason) });
             };
             let Some(block) = s.as_block() else {
-                wrap("a top-level attribute".into(), &mut rows);
+                wrap_now("a top-level attribute".into(), &mut wrapped, &mut rows);
                 continue;
             };
             let ident = block.ident.to_string();
@@ -107,48 +125,108 @@ pub fn import(inputs: &[Input], name: &str, wrap_all: bool, is_type: &dyn Fn(&st
                 continue;
             }
             if wrap_all {
-                wrap("--wrap-all".into(), &mut rows);
+                wrap_now("--wrap-all".into(), &mut wrapped, &mut rows);
                 continue;
             }
             if ident != "resource" {
-                wrap(format!("`{}` blocks stay verbatim", ident), &mut rows);
+                wrap_now(format!("`{}` blocks stay verbatim", ident), &mut wrapped, &mut rows);
                 continue;
             }
             let (tf_type, label) = match block.labels.as_slice() {
                 [t, l] => (t.as_str().to_string(), l.as_str().to_string()),
                 _ => {
-                    wrap("a resource block needs exactly two labels".into(), &mut rows);
+                    wrap_now("a resource block needs exactly two labels".into(), &mut wrapped, &mut rows);
                     continue;
                 }
             };
-            match translate_reason(&tf_type, &label, block, is_type) {
-                Some(reason) => wrap(reason, &mut rows),
-                None => {
-                    let body = literal_body(&block.body).expect("checked literal");
-                    translated.entry(tf_type).or_default().insert(serde_yaml::Value::String(label), serde_yaml::Value::Mapping(body));
-                    rows.push(Row { file: input.path.clone(), line, what, action: Action::Translated });
-                }
-            }
+            let classified = classify(&tf_type, &label, block, is_type, &mut org_ids);
+            resources.push(Res {
+                tf_type,
+                label,
+                file: input.path.clone(),
+                line,
+                what,
+                text,
+                body: classified.body,
+                place: classified.place,
+                reason: classified.reason,
+            });
         }
     }
 
+    // closure by dependency: a resource under a wrapped container is wrapped
+    let mut wrapped_idx: BTreeSet<usize> = resources.iter().enumerate().filter(|(_, r)| r.reason.is_some()).map(|(i, _)| i).collect();
+    loop {
+        let mut changed = false;
+        for i in 0..resources.len() {
+            if wrapped_idx.contains(&i) {
+                continue;
+            }
+            let parent = match &resources[i].place {
+                Place::Top => None,
+                Place::Folder(l) => resources.iter().position(|r| r.tf_type == "google_folder" && &r.label == l),
+                Place::Project(l) => resources.iter().position(|r| r.tf_type == "google_project" && &r.label == l),
+            };
+            match (&resources[i].place, parent) {
+                (Place::Top, _) => {}
+                (place, None) => {
+                    resources[i].reason = Some(format!("its parent {:?} is not among the imported resources", place_name(place)));
+                    wrapped_idx.insert(i);
+                    changed = true;
+                }
+                (_, Some(p)) if wrapped_idx.contains(&p) => {
+                    resources[i].reason = Some(format!("its parent {} is wrapped", resources[p].what));
+                    wrapped_idx.insert(i);
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // wrapped resources, in source order
+    for (i, r) in resources.iter().enumerate() {
+        if wrapped_idx.contains(&i) {
+            wrapped.push_str(&wrap_block(&r.file, r.line, &r.text));
+            rows.push(Row { file: r.file.clone(), line: r.line, what: r.what.clone(), action: Action::Wrapped(r.reason.clone().unwrap_or_default()) });
+        } else {
+            rows.push(Row { file: r.file.clone(), line: r.line, what: r.what.clone(), action: Action::Translated });
+        }
+    }
+    rows.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
+
+    // the tree
+    let translated: Vec<&Res> = resources.iter().enumerate().filter(|(i, _)| !wrapped_idx.contains(i)).map(|(_, r)| r).collect();
     let mut top = serde_yaml::Mapping::new();
     top.insert("terraform".into(), serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n").map_err(|e| e.to_string())?);
     top.insert(
         "providers".into(),
         serde_yaml::from_str("google:\n  alias: google\ngoogle-beta:\n  alias: google-beta\n").map_err(|e| e.to_string())?,
     );
-    for (t, entries) in translated {
-        top.insert(serde_yaml::Value::String(t), serde_yaml::Value::Mapping(entries));
+    for r in &translated {
+        if r.place == Place::Top {
+            place_into(&mut top, r, &translated);
+        }
     }
-    let header = vec![
+
+    let params: Vec<(String, String)> = match org_ids.iter().next() {
+        Some(org) => vec![("customer_organization_id".to_string(), format!("\"{}\"", org))],
+        None => Vec::new(),
+    };
+    let mut header = vec![
         "Imported from existing Terraform. Resource blocks with literal values are Satz".to_string(),
-        "resources; everything else is carried verbatim inside `hcl trust` (it deploys as".to_string(),
-        "written; the compliance plane cannot see into it) — the import report says why.".to_string(),
-        "`satz transpile`, then `tofu plan` against the source's state must show no changes;".to_string(),
-        "`satz adopt` resolves the import ids afterwards.".to_string(),
+        "resources, placed by the folder/project they reference; everything else is carried".to_string(),
+        "verbatim inside `hcl trust` (it deploys as written; the compliance plane cannot see".to_string(),
+        "into it) — the import report says why. `satz transpile`, then `tofu plan` against the".to_string(),
+        "source's state must show no changes; `satz adopt` resolves the import ids afterwards.".to_string(),
     ];
-    let mut satz = satz_core::migrate::convert_value(&top, "estate", &sanitize_name(name), &[], &header).map_err(|e| e.to_string())?;
+    if params.is_empty() {
+        header.push("No organisation id was found among the literals — add `customer_organization_id` to `params` by hand.".to_string());
+    }
+    let mut satz = satz_core::migrate::convert_value(&top, "estate", &sanitize_name(name), &params, &header).map_err(|e| e.to_string())?;
     if !satz.ends_with("\n\n") {
         satz.push('\n');
     }
@@ -156,47 +234,251 @@ pub fn import(inputs: &[Input], name: &str, wrap_all: bool, is_type: &dyn Fn(&st
     Ok(Imported { satz, rows })
 }
 
-/// Why this resource block cannot be translated — `None` when it can.
-fn translate_reason(tf_type: &str, label: &str, block: &Block, is_type: &dyn Fn(&str) -> bool) -> Option<String> {
-    if !is_type(tf_type) {
-        return Some(format!("`{}` is not in the provider schema", tf_type));
+fn place_name(p: &Place) -> String {
+    match p {
+        Place::Top => "the organisation".into(),
+        Place::Folder(l) => format!("google_folder.{}", l),
+        Place::Project(l) => format!("google_project.{}", l),
     }
-    if positional(tf_type) {
-        return Some(format!("`{}` is positional in Satz (its place in the tree) — translated with nesting in 3.1c", tf_type));
+}
+
+/// Put `r` into `into` (a folder body, a project body, or the top level),
+/// with its own children placed under it.
+fn place_into(into: &mut serde_yaml::Mapping, r: &Res, all: &[&Res]) {
+    let mut body = r.body.clone().unwrap_or_default();
+    let key = |s: &str| serde_yaml::Value::String(s.to_string());
+    match r.tf_type.as_str() {
+        "google_folder" => {
+            for c in all.iter().filter(|c| c.place == Place::Folder(r.label.clone())) {
+                place_into(&mut body, c, all);
+            }
+            let m = into.entry(key("google_folder")).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+            if let serde_yaml::Value::Mapping(m) = m {
+                m.insert(key(&r.label), serde_yaml::Value::Mapping(body));
+            }
+        }
+        "google_project" => {
+            for c in all.iter().filter(|c| c.place == Place::Project(r.label.clone())) {
+                place_into(&mut body, c, all);
+            }
+            let m = into.entry(key("google_project")).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+            if let serde_yaml::Value::Mapping(m) = m {
+                m.insert(key(&r.label), serde_yaml::Value::Mapping(body));
+            }
+        }
+        "google_project_service" => {
+            let svc = body.get("service").and_then(|v| v.as_str()).map(String::from).unwrap_or_default();
+            let list = into.entry(key("project_service")).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+            if let serde_yaml::Value::Sequence(seq) = list {
+                seq.push(serde_yaml::Value::String(svc));
+            }
+        }
+        t if t.ends_with("_iam_member") => {
+            let member = body.get("member").and_then(|v| v.as_str()).map(String::from).unwrap_or_default();
+            let role = body.get("role").and_then(|v| v.as_str()).map(String::from).unwrap_or_default();
+            let m = into.entry(key(t)).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+            if let serde_yaml::Value::Mapping(m) = m {
+                let roles = m.entry(key(&member)).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+                if let serde_yaml::Value::Sequence(seq) = roles {
+                    let v = serde_yaml::Value::String(role);
+                    if !seq.contains(&v) {
+                        seq.push(v);
+                    }
+                }
+            }
+        }
+        t => {
+            let m = into.entry(key(t)).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+            if let serde_yaml::Value::Mapping(m) = m {
+                m.insert(key(&r.label), serde_yaml::Value::Mapping(body));
+            }
+        }
+    }
+}
+
+struct Classified {
+    body: Option<serde_yaml::Mapping>,
+    place: Place,
+    reason: Option<String>,
+}
+
+fn wrapped(reason: String) -> Classified {
+    Classified { body: None, place: Place::Top, reason: Some(reason) }
+}
+
+/// Classify one resource block: translatable (with its body and place) or
+/// the reason it is not.
+fn classify(tf_type: &str, label: &str, block: &Block, is_type: &dyn Fn(&str) -> bool, org_ids: &mut BTreeSet<String>) -> Classified {
+    if !is_type(tf_type) {
+        return wrapped(format!("`{}` is not in the provider schema", tf_type));
     }
     if !is_identifier(label) {
-        return Some(format!("label `{}` is not a Satz identifier (a rename would break references)", label));
+        return wrapped(format!("label `{}` is not a Satz identifier (a rename would break references)", label));
     }
+    if matches!(tf_type, "google_cloud_identity_group" | "google_cloud_identity_group_membership")
+        || tf_type.ends_with("_iam_binding")
+        || tf_type.ends_with("_iam_policy")
+        || tf_type.ends_with("_iam_audit_config")
+        || tf_type == "google_storage_bucket_iam_member"
+        || tf_type == "google_billing_account_iam_member"
+    {
+        return wrapped(format!("`{}` has a special Satz form not derived from HCL yet", tf_type));
+    }
+    // meta-arguments and non-literal values
     for s in block.body.iter() {
         match s {
             Structure::Attribute(a) => {
                 let k = a.key.to_string();
                 if META_ATTRS.contains(&k.as_str()) {
-                    return Some(format!("uses `{}`", k));
+                    return wrapped(format!("uses `{}`", k));
+                }
+                if is_scope_attr(tf_type, &k) {
+                    continue; // judged below
                 }
                 if literal(&a.value).is_none() {
-                    return Some(format!("`{}` is an expression, not a literal", k));
+                    return wrapped(format!("`{}` is an expression, not a literal", k));
                 }
             }
             Structure::Block(b) => {
                 let id = b.ident.to_string();
                 if META_BLOCKS.contains(&id.as_str()) {
-                    return Some(format!("uses `{}`", id));
+                    return wrapped(format!("uses `{}`", id));
                 }
                 if id == "lifecycle" {
                     if lifecycle_body(&b.body).is_none() {
-                        return Some("a `lifecycle` block satz cannot express".into());
+                        return wrapped("a `lifecycle` block satz cannot express".into());
                     }
                     continue;
                 }
                 if !b.labels.is_empty() {
-                    return Some(format!("nested block `{}` carries labels", id));
+                    return wrapped(format!("nested block `{}` carries labels", id));
                 }
                 if literal_body(&b.body).is_none() {
-                    return Some(format!("nested block `{}` holds an expression", id));
+                    return wrapped(format!("nested block `{}` holds an expression", id));
                 }
             }
         }
+    }
+    let mut body = literal_body_skipping(&block.body, |k| is_scope_attr(tf_type, k)).expect("checked literal");
+    // the scope attribute decides the place
+    let scope = scope_attr_value(tf_type, block);
+    let place = match tf_type {
+        "google_folder" => match scope {
+            Some(ScopeRef::Org(o)) => {
+                org_ids.insert(o);
+                Place::Top
+            }
+            Some(ScopeRef::Folder(f)) => Place::Folder(f),
+            None => return wrapped("a folder needs a literal `parent`".into()),
+            Some(other) => return wrapped(format!("`parent` = {} cannot be placed", other.describe())),
+        },
+        "google_project" => match scope {
+            Some(ScopeRef::Org(o)) => {
+                org_ids.insert(o);
+                Place::Top
+            }
+            Some(ScopeRef::Folder(f)) => Place::Folder(f),
+            None => Place::Top,
+            Some(other) => return wrapped(format!("`folder_id`/`org_id` = {} cannot be placed (a folder number is not a folder in this input)", other.describe())),
+        },
+        "google_organization_iam_member" => match scope {
+            Some(ScopeRef::Org(o)) => {
+                org_ids.insert(o);
+                Place::Top
+            }
+            _ => return wrapped("an organisation grant needs a literal `org_id`".into()),
+        },
+        "google_folder_iam_member" => match scope {
+            Some(ScopeRef::Folder(f)) => Place::Folder(f),
+            _ => return wrapped("a folder grant must reference a folder in this input".into()),
+        },
+        "google_project_iam_member" | "google_project_service" => match scope {
+            Some(ScopeRef::Project(p)) => Place::Project(p),
+            _ => return wrapped(format!("`{}` must reference a project in this input", tf_type)),
+        },
+        _ => match scope {
+            Some(ScopeRef::Project(p)) => Place::Project(p),
+            Some(ScopeRef::Literal(v)) => {
+                // a project-scoped resource naming its project by id stays where
+                // it is, with the literal — Satz is position-independent there
+                body.insert("project".into(), serde_yaml::Value::String(v));
+                Place::Top
+            }
+            _ => Place::Top,
+        },
+    };
+    if tf_type == "google_org_policy_policy" {
+        if let Some(p) = body.get("parent").and_then(|v| v.as_str()).and_then(|p| p.strip_prefix("organizations/")) {
+            org_ids.insert(p.to_string());
+        }
+    }
+    Classified { body: Some(body), place, reason: None }
+}
+
+enum ScopeRef {
+    Org(String),
+    Folder(String),
+    Project(String),
+    Literal(String),
+    Other(String),
+}
+
+impl ScopeRef {
+    fn describe(&self) -> String {
+        match self {
+            ScopeRef::Org(o) => format!("organizations/{}", o),
+            ScopeRef::Folder(f) => format!("google_folder.{}", f),
+            ScopeRef::Project(p) => format!("google_project.{}", p),
+            ScopeRef::Literal(v) | ScopeRef::Other(v) => v.clone(),
+        }
+    }
+}
+
+/// The attribute that carries a resource's place.
+fn is_scope_attr(tf_type: &str, key: &str) -> bool {
+    match tf_type {
+        "google_folder" => key == "parent",
+        "google_project" => key == "folder_id" || key == "org_id",
+        "google_organization_iam_member" => key == "org_id",
+        "google_folder_iam_member" => key == "folder",
+        "google_org_policy_policy" => false,
+        _ => key == "project",
+    }
+}
+
+/// The scope attribute's meaning: the organisation, a folder or project of
+/// this input (by identity reference), a literal, or something else.
+fn scope_attr_value(tf_type: &str, block: &Block) -> Option<ScopeRef> {
+    for s in block.body.iter() {
+        let Structure::Attribute(a) = s else { continue };
+        let k = a.key.to_string();
+        if !is_scope_attr(tf_type, &k) {
+            continue;
+        }
+        return Some(match &a.value {
+            Expression::String(s) => {
+                let v = s.value().to_string();
+                if let Some(o) = v.strip_prefix("organizations/") {
+                    ScopeRef::Org(o.to_string())
+                } else if k == "org_id" && v.chars().all(|c| c.is_ascii_digit()) {
+                    ScopeRef::Org(v)
+                } else if v.starts_with("folders/") || (k == "folder_id" && v.chars().all(|c| c.is_ascii_digit())) {
+                    ScopeRef::Other(v)
+                } else {
+                    ScopeRef::Literal(v)
+                }
+            }
+            Expression::Traversal(_) => {
+                let text = a.value.to_string().trim().to_string();
+                let parts: Vec<&str> = text.split('.').collect();
+                match parts.as_slice() {
+                    ["google_folder", l, "name" | "id" | "folder_id"] => ScopeRef::Folder((*l).to_string()),
+                    ["google_project", l, "project_id" | "id" | "name"] => ScopeRef::Project((*l).to_string()),
+                    _ => ScopeRef::Other(text),
+                }
+            }
+            e => ScopeRef::Other(e.to_string().trim().to_string()),
+        });
     }
     None
 }
@@ -205,11 +487,19 @@ fn translate_reason(tf_type: &str, label: &str, block: &Block, is_type: &dyn Fn(
 /// written, nested blocks as lists of objects (repeated blocks append),
 /// `lifecycle` as a mapping.
 fn literal_body(body: &Body) -> Option<serde_yaml::Mapping> {
+    literal_body_skipping(body, |_| false)
+}
+
+fn literal_body_skipping(body: &Body, skip: impl Fn(&str) -> bool) -> Option<serde_yaml::Mapping> {
     let mut m = serde_yaml::Mapping::new();
     for s in body.iter() {
         match s {
             Structure::Attribute(a) => {
-                m.insert(serde_yaml::Value::String(a.key.to_string()), literal(&a.value)?);
+                let k = a.key.to_string();
+                if skip(&k) {
+                    continue;
+                }
+                m.insert(serde_yaml::Value::String(k), literal(&a.value)?);
             }
             Structure::Block(b) => {
                 let id = b.ident.to_string();
@@ -282,6 +572,10 @@ fn literal(e: &Expression) -> Option<serde_yaml::Value> {
     })
 }
 
+fn wrap_block(path: &str, line: usize, text: &str) -> String {
+    format!("hcl trust \"imported from {}:{}\" {{\n{}\n}}\n\n", path, line, indent(text))
+}
+
 fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_lowercase())
@@ -345,47 +639,74 @@ resource "google_folder" "workloads" {
   parent       = "organizations/123456789012"
 }
 
+resource "google_folder" "team" {
+  display_name = "Team"
+  parent       = google_folder.workloads.name
+}
+
+resource "google_project" "infra" {
+  name       = "Infra"
+  project_id = "acme-infra-001"
+  folder_id  = google_folder.team.name
+}
+
+resource "google_project" "orphan" {
+  name       = "Orphan"
+  project_id = "acme-orphan-001"
+  folder_id  = "folders/999"
+}
+
+resource "google_project_service" "infra_iam" {
+  project = google_project.infra.project_id
+  service = "iam.googleapis.com"
+}
+
+resource "google_project_iam_member" "infra_viewer" {
+  project = google_project.infra.project_id
+  role    = "roles/viewer"
+  member  = "group:auditors@example.com"
+}
+
+resource "google_folder_iam_member" "team_viewer" {
+  folder = google_folder.team.name
+  role   = "roles/viewer"
+  member = "group:team@example.com"
+}
+
+resource "google_organization_iam_member" "org_admin" {
+  org_id = "123456789012"
+  role   = "roles/resourcemanager.organizationAdmin"
+  member = "group:admins@example.com"
+}
+
 resource "google_storage_bucket" "logs" {
   name     = "acme-logs-001"
   location = "EU"
-  project  = "acme-infra-001"
-  labels   = { env = "prod" }
-
-  uniform_bucket_level_access = true
-
+  project  = google_project.infra.project_id
   lifecycle_rule {
-    action {
-      type = "Delete"
-    }
-    condition {
-      age = 30
-    }
-  }
-  lifecycle_rule {
-    action {
-      type = "SetStorageClass"
-      storage_class = "NEARLINE"
-    }
-    condition {
-      age = 7
-    }
-  }
-  lifecycle {
-    ignore_changes = [labels]
+    action { type = "Delete" }
+    condition { age = 30 }
   }
 }
 
-resource "google_storage_bucket" "derived" {
-  name     = "${google_storage_bucket.logs.name}-copy"
-  location = google_storage_bucket.logs.location
+resource "google_storage_bucket" "elsewhere" {
+  name     = "acme-elsewhere"
+  location = "EU"
+  project  = "some-other-project"
 }
 
-resource "google_storage_bucket" "with-dash" {
-  name = "x"
+resource "google_storage_bucket" "orphaned" {
+  name     = "acme-orphaned"
+  location = "EU"
+  project  = google_project.orphan.project_id
 }
 
-resource "google_widget" "w" {
-  name = "w"
+resource "google_org_policy_policy" "skip_default" {
+  name   = "organizations/123456789012/policies/compute.skipDefaultNetworkCreation"
+  parent = "organizations/123456789012"
+  spec {
+    rules { enforce = "TRUE" }
+  }
 }
 
 module "vpc" {
@@ -394,31 +715,44 @@ module "vpc" {
 "#;
 
     fn known(t: &str) -> bool {
-        matches!(t, "google_folder" | "google_storage_bucket")
+        matches!(
+            t,
+            "google_folder"
+                | "google_project"
+                | "google_project_service"
+                | "google_project_iam_member"
+                | "google_folder_iam_member"
+                | "google_organization_iam_member"
+                | "google_storage_bucket"
+                | "google_org_policy_policy"
+        )
     }
 
     #[test]
-    fn literal_resources_translate_and_the_rest_is_wrapped_with_a_reason() {
+    fn resources_are_placed_by_the_folder_and_project_they_reference() {
         let imported = import(&[Input { path: "main.tf".into(), text: TF.into() }], "acme", false, &known).unwrap();
         let s = &imported.satz;
-        assert!(s.contains("estate acme\n"), "{}", s);
-        assert!(s.contains("google_storage_bucket {\n  logs {\n"), "{}", s);
-        assert!(s.contains("uniform_bucket_level_access = true"), "{}", s);
-        assert!(s.contains("lifecycle_rule = [\n"), "repeated blocks become a list:\n{}", s);
-        assert!(s.contains("storage_class = \"NEARLINE\""), "{}", s);
-        assert!(s.contains("ignore_changes = [\n      \"labels\",") || s.contains("ignore_changes = [\"labels\"]") || s.contains("ignore_changes = [\n        \"labels\","), "{}", s);
-        assert!(s.contains("hcl trust \"imported from main.tf:11\" {\n  resource \"google_folder\""), "the folder is positional → wrapped:\n{}", s);
-        assert!(s.contains("hcl trust \"imported from main.tf:46\""), "the derived bucket references another → wrapped:\n{}", s);
-        let by_what: BTreeMap<&str, &Action> = imported.rows.iter().map(|r| (r.what.as_str(), &r.action)).collect();
-        assert_eq!(by_what["resource \"google_storage_bucket\" \"logs\""], &Action::Translated);
-        assert!(matches!(by_what["resource \"google_folder\" \"workloads\""], Action::Wrapped(r) if r.contains("positional")));
-        assert!(matches!(by_what["resource \"google_storage_bucket\" \"derived\""], Action::Wrapped(r) if r.contains("expression")));
-        assert!(matches!(by_what["resource \"google_storage_bucket\" \"with-dash\""], Action::Wrapped(r) if r.contains("identifier")));
-        assert!(matches!(by_what["resource \"google_widget\" \"w\""], Action::Wrapped(r) if r.contains("provider schema")));
-        assert!(matches!(by_what["module \"vpc\""], Action::Wrapped(r) if r.contains("verbatim")));
-        assert!(matches!(by_what["terraform"], Action::Dropped(_)));
-        assert_eq!(summary(&imported.rows), "import: 1 block(s) translated to Satz, 5 wrapped verbatim, 2 dropped (terraform/provider)");
-        // the estate parses
+        assert!(s.contains("customer_organization_id = \"123456789012\""), "{}", s);
+        // team nests under workloads, infra under team, the bucket/service/grant under infra
+        let i_workloads = s.find("  workloads {").expect("workloads");
+        let i_team = s.find("    team {").expect("team nested");
+        let i_infra = s.find("      infra {").expect("infra nested under team");
+        assert!(i_workloads < i_team && i_team < i_infra, "{}", s);
+        let c: String = s.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(c.contains("project_service=[\"iam.googleapis.com\",]"), "{}", s);
+        assert!(c.contains("google_project_iam_member{\"group:auditors@example.com\"=[\"roles/viewer\",]}"), "{}", s);
+        assert!(c.contains("google_folder_iam_member{\"group:team@example.com\"=[\"roles/viewer\",]}"), "{}", s);
+        assert!(c.contains("google_organization_iam_member{\"group:admins@example.com\"=[\"roles/resourcemanager.organizationAdmin\",]}"), "{}", s);
+        assert!(c.contains("google_storage_bucket{logs{name=\"acme-logs-001\"location=\"EU\"lifecycle_rule=[{action=[{type=\"Delete\"},]condition=[{age=30},]},]}}"), "bucket inside the project:\n{}", s);
+        assert!(!c.contains("project=\"acme-infra-001\""), "the project reference became placement, not an attribute:\n{}", s);
+        assert!(c.contains("google_storage_bucket{elsewhere{name=\"acme-elsewhere\"location=\"EU\"project=\"some-other-project\"}}"), "a literal project stays explicit at the top:\n{}", s);
+        assert!(c.contains("google_org_policy_policy{skip_default{"), "{}", s);
+        // wrapped, with reasons
+        let by_what: std::collections::BTreeMap<&str, &Action> = imported.rows.iter().map(|r| (r.what.as_str(), &r.action)).collect();
+        assert!(matches!(by_what["resource \"google_project\" \"orphan\""], Action::Wrapped(r) if r.contains("folder number")), "{:?}", by_what["resource \"google_project\" \"orphan\""]);
+        assert!(matches!(by_what["resource \"google_storage_bucket\" \"orphaned\""], Action::Wrapped(r) if r.contains("is wrapped")), "closure by dependency: {:?}", by_what["resource \"google_storage_bucket\" \"orphaned\""]);
+        assert!(matches!(by_what["module \"vpc\""], Action::Wrapped(_)));
+        assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 10);
         satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
     }
 
@@ -426,7 +760,7 @@ module "vpc" {
     fn wrap_all_wraps_everything_that_is_not_dropped() {
         let imported = import(&[Input { path: "main.tf".into(), text: TF.into() }], "acme", true, &known).unwrap();
         assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 0);
-        assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 6);
+        assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 13);
         satz_core::satz::parse(&imported.satz).unwrap();
     }
 
