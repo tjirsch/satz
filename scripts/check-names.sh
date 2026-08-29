@@ -60,7 +60,14 @@ if [[ "$mode" == "--staged" ]]; then
   bad=""; for e in "$a" "$c"; do echo "$e" | grep -q -E "^($ALLOW_IDENT)$" || bad="$bad$e"$'\n'; done
   report "commit identity is not the maintainer or a GitHub noreply address (set: git config user.email …)" "$bad"
 elif [[ -n "$range" ]]; then
-  bad=$(git log --format='%h %ae %ce' "$range" | awk -v re="^($ALLOW_IDENT)$" '{ if ($2 !~ re || $3 !~ re) print }')
+  # Not via `awk -v`: it processes backslash escapes, so `\+` in the noreply
+  # pattern lost its literal `+` and every GitHub squash-merge author
+  # (`<id>+<user>@users.noreply.github.com`) was rejected.
+  bad=$(git log --format='%h %ae %ce' "$range" | while read -r h a c; do
+    for e in "$a" "$c"; do
+      echo "$e" | grep -q -E "^($ALLOW_IDENT)$" || { echo "$h $a $c"; break; }
+    done
+  done)
   report "commit identity in $range is not the maintainer or a GitHub noreply address" "$bad"
   # commit messages in the range go through the same content rules as files
   msgs=$(git log --format='%h %B' "$range")
