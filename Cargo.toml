@@ -21,6 +21,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 satz-core = { path = "crates/satz-core" }
+satz-hcl = { path = "crates/satz-hcl" }
 hcl-rs = "0.19.8"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_yaml = "0.9.34"
@@ -50,4 +51,4 @@ panic = "abort"          # removes unwinding machinery (~50-100KB)
 # Workspace root: the satz binary plus the satz-core library (the typed
 # composition core growing strangler-fig style; see the private roadmap).
 [workspace]
-members = ["crates/satz-core"]
+members = ["crates/satz-core", "crates/satz-hcl"]

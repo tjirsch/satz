@@ -1,0 +1,10 @@
+[package]
+name = "satz-hcl"
+version = "0.1.0"
+edition = "2021"
+description = "The HCL input shape of `satz import`: existing Terraform into a Satz estate"
+license = "MIT"
+publish = false
+
+[dependencies]
+hcl-rs = "0.19.8"

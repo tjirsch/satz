@@ -2174,6 +2174,7 @@ dependencies = [
  "regex",
  "reqwest",
  "satz-core",
+ "satz-hcl",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -2189,6 +2190,13 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "serde_yaml",
+]
+
+[[package]]
+name = "satz-hcl"
+version = "0.1.0"
+dependencies = [
+ "hcl-rs",
 ]
 
 [[package]]

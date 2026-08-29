@@ -887,12 +887,14 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_through_satz_compiler() {
-        // The gate in miniature: converted output must parse as Satz and compile.
+    fn converted_output_parses_as_satz() {
+        // The gate in miniature: converted output must parse as Satz (the full
+        // compile is the yaml_estate_gate in the binary).
         let y = "variables:\n  v: &v \"x\"\nsection:\n  a:\n    k: *v\n    n: [1, 2]\n";
         let s = convert(y, "pack", "t").unwrap();
-        let compiled = crate::satz::compile(&s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
-        assert!(compiled.yaml.contains("v: &v \"x\""), "{}", compiled.yaml);
+        let f = crate::satz::parse(&s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
+        assert!(f.params.iter().any(|(n, _, _)| n == "v"), "{}", s);
+        assert!(s.contains("k = v"), "{}", s);
     }
 }
 

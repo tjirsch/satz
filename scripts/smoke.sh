@@ -65,6 +65,17 @@ if "$satz" --config . import tmp/still/main.yaml --kind estate >tmp/still.txt 2>
 fi
 grep -q 'convert them first' tmp/still.txt || fail "refusal did not name the packs to convert:\n$(cat tmp/still.txt)"
 
+step "import, hcl shape (--wrap-all): every block verbatim, then transpile"
+"$satz" --config . import tf --wrap-all -o imported-hcl.satz --verbose | tee tmp/import-hcl.txt
+grep -q 'wrapped verbatim' tmp/import-hcl.txt || fail "hcl import printed no summary"
+grep -q 'dropped .*provider' tmp/import-hcl.txt || fail "the provider block was not reported as dropped"
+"$satz" --config . transpile imported-hcl.satz --output "$PWD/tmp/imported-hcl-hcl" 2>&1 | tee tmp/transpile-hcl.txt
+grep -q 'resource "google_storage_bucket" "logs"' tmp/imported-hcl-hcl/main.tf || fail "the wrapped bucket did not reach main.tf"
+grep -q 'raw HCL passthrough' tmp/transpile-hcl.txt || fail "passthrough blocks must be announced"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/imported-hcl-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
+fi
+
 step "adopt, offline dry run must refuse without ADC rather than guess"
 if "$satz" --config . adopt smoke.satz --only google_folder >tmp/adopt.txt 2>&1; then
   grep -q 'to import' tmp/adopt.txt || fail "adopt ran but printed no table"
@@ -73,7 +84,7 @@ else
 fi
 
 step "corpus + unit tests"
-(cd "$root" && cargo test --quiet 2>&1 | tail -3)
+(cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)
 
 rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz evidence
 printf '\nsmoke: every command ran.\n'
