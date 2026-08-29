@@ -383,9 +383,10 @@ enum Commands {
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
     },
-    /// Convert a YAML-dialect file (estate or pack) to Satz, then GATE it:
-    /// transpile the gate estate before and after and require sorted-identical
-    /// output. Only PROVEN conversions are kept.
+    /// Convert a legacy YAML-dialect file (estate or pack) to Satz and compile
+    /// the result through the fragment pipeline (an estate on itself, a pack
+    /// in the `--gate` estate), reporting what it emits. Migrated estates may
+    /// need a manual edit; an old `!import-include` becomes `satz adopt`.
     MigrateToSatz {
         /// File to convert (estate yaml, or a pack under presets_dir)
         input: PathBuf,
@@ -1414,88 +1415,60 @@ Thumbs.db
                 src_path.with_extension("satz")
             };
 
-            // Gate estate: explicit, or the input itself for estates.
-            let gate_path = match &gate {
-                Some(g) => resolve(g),
-                None if kind == "estate" => src_path.clone(),
-                None => return Err("packs need --gate <estate> for the differential proof".into()),
-            };
-            let include_paths: Vec<PathBuf> =
-                runtime_config.include_dirs.iter().map(PathBuf::from).collect();
-            // a .satz gate estate must be compiled to its generated yaml first
-            let gate_path = if gate_path.extension().is_some_and(|e| e == "satz") {
-                resolve_satz_input(gate_path, &runtime_config.include_dirs)?
-            } else {
-                gate_path
-            };
-            let before = transpile_sorted(&gate_path, &include_paths, &runtime_config)?;
-
             fsx::write(&satz_path, satz.as_bytes())?;
             println!("converted {} -> {}", src_path.display(), satz_path.display());
-
-            // After: for a pack, the gate estate must see the CONVERTED content —
-            // rebuild the .yaml twin from the new .satz in place (originals in git).
-            let original = fsx::read_to_string(&src_path)?;
-            let after = if kind == "estate" {
-                let gen = resolve_satz_input(satz_path.clone(), &runtime_config.include_dirs)?;
-                transpile_sorted(&gen, &include_paths, &runtime_config)?
-            } else {
-                let compiled = satz_core::satz::compile(&satz)
-                    .map_err(|e| format!("{} in {}", e, satz_path.display()))?;
-                let header = twin_header(
-                    &satz_path.file_name().unwrap_or_default().to_string_lossy(),
-                    &compiled.yaml,
-                );
-                fsx::write(&src_path, format!("{}{}", header, compiled.yaml).as_bytes())?;
-                match transpile_sorted(&gate_path, &include_paths, &runtime_config) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        fsx::write(&src_path, original.as_bytes())?; // restore on failure
-                        let _ = std::fs::remove_file(&satz_path);
-                        return Err(format!("gate transpile failed after conversion (restored): {}", e).into());
-                    }
-                }
-            };
-
-            // The gate above proves "same HCL", but it proves it through the
-            // LEGACY walk — which still accepts the YAML shorthand. That made it
-            // blind to the output simply not being valid Satz: it reported PROVEN
-            // on an estate `transpile` then refused. So the conversion must also
-            // compile as Satz, through the pipeline that will actually read it.
-            if kind == "estate" {
-                if let Err(e) = pipeline_b_generate(&satz_path, &tool_config, &runtime_config) {
-                    fsx::write(&src_path, original.as_bytes())?;
-                    let _ = std::fs::remove_file(&satz_path);
-                    return Err(format!(
-                        "conversion produced Satz that does not compile (restored): {}",
-                        e
-                    )
-                    .into());
-                }
+            if satz.contains("// NEEDS ADOPTION") {
+                println!("note: the source used `!import-include` — run `satz adopt` on the converted estate to import what already exists.");
             }
 
-            if before == after {
-                if fork {
-                    // fork proven: keep only the .local.satz; the original twin
-                    // (and any claims sidecar we wrote) revert to pristine state
-                    fsx::write(&src_path, original.as_bytes())?;
-                    println!("PROVEN: fork holds — {} written; {} restored (repoint the estate `use` to the fork).",
-                        satz_path.display(), src_path.display());
-                } else {
-                    println!("PROVEN: gate estate output identical — conversion holds.");
+            // The gate (M5, 2026-08-29): the conversion must compile through the
+            // pipeline that will actually read it, and the operator sees what it
+            // emits. The old byte-identity proof through the legacy walk is gone
+            // with the walk — a conversion may need manual edits, and says so.
+            let gate_estate = match &gate {
+                Some(g) => Some(resolve(g)),
+                None if kind == "estate" => Some(satz_path.clone()),
+                None => None,
+            };
+            match gate_estate {
+                Some(estate) if estate.extension().is_some_and(|e| e == "satz") => {
+                    match pipeline_b_generate(&estate, &tool_config, &runtime_config) {
+                        Ok(out) => {
+                            let n = out.manifest.resources.len();
+                            let mut by_type: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+                            for r in out.manifest.resources.values() {
+                                *by_type.entry(r.tf_type.as_str()).or_default() += 1;
+                            }
+                            println!("CONVERTED: {} compiles — {} resources emitted:", estate.display(), n);
+                            for (t, c) in by_type {
+                                println!("  {:4} {}", c, t);
+                            }
+                            println!("Review the .satz, then `satz transpile` and `tofu plan`: the plan must show no destroy for what the old estate managed.");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&satz_path);
+                            Err(format!("conversion produced Satz that does not compile (removed): {}", e).into())
+                        }
+                    }
                 }
-                Ok(())
-            } else {
-                if kind != "estate" {
-                    // restore the ORIGINAL twin; keep .satz for inspection
-                    fsx::write(&src_path, original.as_bytes())?;
-                    let d = tempfile_diff(&before, &after);
-                    println!("NEEDS-REVIEW: output differs. First differences:\n{}", d);
-                    return Err("conversion not proven — original restored, .satz kept for review".into());
+                Some(estate) => {
+                    println!(
+                        "NEEDS-REVIEW: the gate estate {} is still YAML, so the pack cannot be compiled in context — convert the estate too, then re-run with --gate <estate>.satz.",
+                        estate.display()
+                    );
+                    Ok(())
                 }
-                let d = tempfile_diff(&before, &after);
-                println!("NEEDS-REVIEW: output differs. First differences:\n{}", d);
-                Err("conversion not proven — .satz kept for review, original untouched".into())
+                None => {
+                    // A pack on its own: it must at least parse as Satz.
+                    satz_core::satz::parse(&satz)
+                        .map_err(|e| format!("conversion produced Satz that does not parse: {} in {}", e, satz_path.display()))?;
+                    println!("CONVERTED: {} parses — pass --gate <estate>.satz to compile it in context.", satz_path.display());
+                    if fork {
+                        println!("fork written; repoint the estate `use` to {}.", satz_path.display());
+                    }
+                    Ok(())
+                }
             }
         }
         Commands::MergePresets { pristine_dir, estate, report_only, adopt } => {
@@ -2333,84 +2306,6 @@ pub(crate) fn satz_org_policy_bodies(
     Ok(pipeline_b_generate(input, runtime_config, runtime_config)?.org_policies)
 }
 
-pub(crate) fn resolve_satz_input(input_path: PathBuf, include_dirs: &[String]) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if input_path.extension().and_then(|e| e.to_str()) != Some("satz") {
-        return Ok(input_path);
-    }
-    // Compile the whole .satz tree: the estate plus every `use`d .satz pack,
-    // recursively. Each file gets a .gen.yaml sibling; the emitted includes point
-    // at the siblings, so resolution and first-definition-wins work exactly as
-    // for YAML packs.
-    let mut queue = vec![input_path.clone()];
-    let mut done: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    while let Some(path) = queue.pop() {
-        let canon = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-        if !done.insert(canon) {
-            continue;
-        }
-        let src = fsx::read_to_string(&path)?;
-        let compiled = satz_core::satz::compile(&src)
-            .map_err(|e| format!("{} in {}", e, path.display()))?;
-        if compiled.has_suppressions {
-            return Err(format!(
-                "{}: `suppress` requires the fragment pipeline — this command still runs the YAML path, which cannot honor suppressions",
-                path.display()
-            )
-            .into());
-        }
-        if compiled.has_hcl {
-            return Err(format!(
-                "{}: `hcl {{ … }}` requires the fragment pipeline — this command still runs the YAML path, which cannot carry raw HCL",
-                path.display()
-            )
-            .into());
-        }
-        let gen_path = path.with_extension("gen.yaml");
-        fsx::write(&gen_path, compiled.yaml.as_bytes())?;
-        println!("satz: compiled {} -> {}", path.display(), gen_path.display());
-        // No claims sidecar: since R5 the compliance plane reads claims from the
-        // `.satz` source through the front end. Writing one meant a read-only
-        // command like `report-organizational-policies` left an untracked file in
-        // a customer repo — and estate `.gitignore`s cover `*.gen.yaml`, which
-        // does not match `*.gen.claims.yaml`.
-        let parent = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        for dep in compiled.satz_deps {
-            // Same search order as includes: relative to the using file, then the
-            // configured include dirs — so packs resolve identically in both worlds.
-            let mut candidates = vec![parent.join(&dep)];
-            candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(&dep)));
-            match candidates.into_iter().find(|c| c.exists()) {
-                Some(dep_path) => queue.push(dep_path),
-                None => {
-                    return Err(format!(
-                        "use \"{}\" in {}: file not found (searched beside the file and include_dirs)",
-                        dep,
-                        path.display()
-                    )
-                    .into())
-                }
-            }
-        }
-    }
-    Ok(input_path.with_extension("gen.yaml"))
-}
-
-/// Header for a generated pack twin. Content packs get the customer-facing
-/// wording: their local copy is MEANT to be edited; updates come via merge-presets.
-pub(crate) fn twin_header(src_name: &str, yaml: &str) -> String {
-    if yaml.contains("# satz-mode: content") {
-        format!(
-            "# GENERATED scaffold from {} \u{2014} customers EDIT THEIR COPY in place;\n# updates arrive via `satz merge-presets` (three-way against your base).\n",
-            src_name
-        )
-    } else {
-        format!(
-            "# GENERATED by `satz migrate-to-satz` from {} \u{2014} do not edit; edit the .satz source.\n",
-            src_name
-        )
-    }
-}
-
 /// Transpile an estate through the standard pipeline and return sorted
 /// main.tf + tfvars — the comparison form every differential gate uses.
 /// Emit a YAML-dialect estate through the legacy walk.
@@ -2516,18 +2411,6 @@ pub(crate) fn transpile_sorted_b(
         .join("\n---\n"))
 }
 
-fn tempfile_diff(before: &str, after: &str) -> String {
-    let b: std::collections::BTreeSet<&str> = before.lines().collect();
-    let a: std::collections::BTreeSet<&str> = after.lines().collect();
-    let mut out = String::new();
-    for l in b.difference(&a).take(5) {
-        out.push_str(&format!("  - {}\n", l));
-    }
-    for l in a.difference(&b).take(5) {
-        out.push_str(&format!("  + {}\n", l));
-    }
-    out
-}
 
 /// Load the provider schemas' resource names and install them for cross-file merging
 /// (see include_processor::set_resource_types). Missing schema dir => empty set =>
@@ -3746,21 +3629,10 @@ mod satz_vars_parity {
         );
 
         let via_pipeline = satz_estate_params(&estate, &[]).expect("pipeline route");
-        let gen = resolve_satz_input(estate.clone(), &[]).expect("compile twin");
-        let via_yaml = crate::org_policy::resolve_config_vars(&gen, &[]).expect("yaml route");
 
-        let sorted = |m: &HashMap<String, serde_yaml::Value>| {
-            let mut v: Vec<(String, String)> = m
-                .iter()
-                .map(|(k, val)| (k.clone(), serde_yaml::to_string(val).unwrap_or_default()))
-                .collect();
-            v.sort();
-            v
-        };
-        assert_eq!(sorted(&via_pipeline), sorted(&via_yaml), "variable tables diverged");
-
-        // The facts the assertion is worth nothing without: kebab keys reach the
-        // table, first-definition-wins held, and interpolation was resolved.
+        // The facts that matter: kebab keys reach the table, first-definition-wins
+        // held, and interpolation was resolved. (This used to also compare against
+        // the YAML-twin route; that route is retired with the walk — M5.)
         assert_eq!(
             via_pipeline.get("customer-organization-id").and_then(|v| v.as_str()),
             Some("123456789")

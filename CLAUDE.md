@@ -50,15 +50,16 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **Everyone is on the CURRENT version.** A release IS the migration: a
   breaking language change ships together with the estate edits that satisfy
   it. No deprecation periods, no dual-accept paths for old binaries.
-- **YAML input stays served.** `transpile` and `migrate-to-satz` both accept
-  the legacy `.yaml` dialect and both keep working — converting is a user's
-  choice, not a toll. If the YAML path ever blocks a design decision, raise it
-  as an explicit decision (keep / drop / carve out) and record it here; never
-  work around it quietly. New estates are Satz: `discover-from-state` /
-  `discover-from-organization --satz` write a Satz estate directly (the YAML
-  output stays as the legacy form). `tests/corpus/yaml-estate/` is the gate: a YAML
-  fixture through the legacy walk AND a full `migrate-to-satz` round trip that
-  must compile as Satz and emit the same resource set.
+- **YAML exists only to be migrated (2026-08-29).** `migrate-to-satz` must keep
+  converting old estates and packs for as long as legacy orgs exist; that is
+  the whole YAML surface. No new functionality grows a YAML arm, YAML is never
+  generated, and a YAML code path that a cleanup breaks is deleted, not
+  repaired — the legacy walk, the `.gen.yaml` twin and the YAML `transpile`
+  arm are being retired (private roadmap M5). A conversion is reported as
+  NEEDS-REVIEW where it cannot be proven; migrated estates may need manual
+  edits (an old `!import-include` becomes `!include` plus `satz adopt`).
+  `tests/corpus/yaml-estate/` is the converter's gate: a YAML fixture through
+  `migrate-to-satz` must compile as Satz and emit the expected resource set.
 - **`cargo test` does NOT rebuild the debug binary** — `cargo build` before a
   live test, or a stale binary shadows the fix. Same family: an edit to
   `crates/satz-core/` was once not picked up — `touch` the file and confirm
