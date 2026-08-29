@@ -690,16 +690,55 @@ folder is dropped without a warning today. Projects are not affected.
 
 ### 6.7 Adoption of existing resources
 
-`"import-id"` records the live id so the tool adopts rather than creates:
+`"import-id"` records the live id so the tool adopts rather than creates. It
+is the only adoption surface in the language — the *result* of resolving a
+live resource, declarative and visible in `tofu plan` — and it is honoured on
+every resource the compiler emits:
 
 ```
 google_folder {
   workloads {
     "import-id"  = "folders/123456789"
     display_name = "workloads"
+    google_project {
+      infra {
+        "import-id"     = "acme-infra-001"
+        project_id      = "acme-infra-001"
+        project_service = [
+          "logging.googleapis.com",
+          { service = "storage.googleapis.com" "import-id" = "acme-infra-001/storage.googleapis.com" },
+        ]
+      }
+    }
+  }
+}
+
+google_organization_iam_member {
+  "group:gcp-org-admins@{customer_domain}" = [
+    "roles/viewer",
+    { role = "roles/browser" "import-id" = "123456789012 roles/browser group:gcp-org-admins@example.com" },
+  ]
+}
+
+google_cloud_identity_group {
+  gcp_auditors {
+    "import-id" = "groups/00abc"
+    member = [
+      "user:a@{customer_domain}",
+      { id = "user:b@{customer_domain}" "import-id" = "groups/00abc/memberships/111" },
+    ]
   }
 }
 ```
+
+Every `"import-id"` becomes one `import { to = <address> id = "…" }` block in
+`hcl/imports.tf`, addressed exactly as the resource is emitted (hashed labels
+for bindings and memberships included), and is stripped from the resource
+body. Where the resource is an *entry* rather than a block — a role in a
+grant list, a service in `project_service`, a member of a group — the entry
+takes its object form and carries the id there. An IAM binding declared with
+and without an id (a pack's grant that the estate adopts) is one resource;
+two different ids for the same binding is an error.
 
 For **org policies** prefer `satz adopt-org-policies`, which resolves ids
 live and activates managed constraints the organisation has never had.

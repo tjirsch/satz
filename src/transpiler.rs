@@ -68,6 +68,24 @@ pub(crate) const GROUP_ROLE_KEYS: [(&str, &[&str]); 3] = [
     ("owner", &["MEMBER", "OWNER"]),
 ];
 
+/// One entry of a group's `member` / `manager` / `owner` list: the raw member
+/// string (`user:a@example.com`), or an object `{ id = "user:a@…",
+/// "import-id" = "groups/<g>/memberships/<m>" }` when the membership is adopted.
+fn group_member_entry(v: &serde_yaml::Value) -> Option<(String, Option<String>)> {
+    match v {
+        serde_yaml::Value::String(s) => Some((s.clone(), None)),
+        serde_yaml::Value::Mapping(m) => {
+            let raw = m.get(serde_yaml::Value::String("id".into()))?.as_str()?.to_string();
+            let import_id = m
+                .get(serde_yaml::Value::String("import-id".into()))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Some((raw, import_id))
+        }
+        _ => None,
+    }
+}
+
 /// Members a group declares, as `raw YAML string -> roles`. Keyed by the raw string
 /// (`user:a@example.com`), matching how the emitted resource label is derived.
 pub(crate) fn aggregate_group_members(
@@ -85,8 +103,8 @@ pub(crate) fn aggregate_group_members(
             _ => continue,
         };
         for member_val in members_vals {
-            if let Some(member_raw) = member_val.as_str() {
-                let entry = aggregated.entry(member_raw.to_string()).or_default();
+            if let Some((member_raw, _)) = group_member_entry(&member_val) {
+                let entry = aggregated.entry(member_raw).or_default();
                 for role in roles {
                     entry.insert((*role).to_string());
                 }
@@ -94,6 +112,26 @@ pub(crate) fn aggregate_group_members(
         }
     }
     aggregated
+}
+
+/// The memberships a group adopts: `raw member string -> import id`, from the
+/// object form of a member entry. Both pipelines emit one `import` block per
+/// entry, addressed by `membership_resource_address`.
+pub(crate) fn group_member_import_ids(
+    attrs: &serde_yaml::Mapping,
+) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for (key, _) in GROUP_ROLE_KEYS {
+        let Some(serde_yaml::Value::Sequence(seq)) = attrs.get(serde_yaml::Value::String(key.to_string())) else {
+            continue;
+        };
+        for v in seq {
+            if let Some((raw, Some(id))) = group_member_entry(v) {
+                out.insert(raw, id);
+            }
+        }
+    }
+    out
 }
 
 /// Strip a `user:` / `group:` / `serviceAccount:` prefix to get the bare member email.
@@ -120,7 +158,6 @@ pub(crate) fn membership_resource_label(group_yaml_key: &str, member_raw: &str) 
 }
 
 /// Full Terraform address of the membership emitted for `member_raw` in `group_yaml_key`.
-#[allow(dead_code)]
 pub(crate) fn membership_resource_address(group_yaml_key: &str, member_raw: &str) -> String {
     format!(
         "google_cloud_identity_group_membership.{}",
@@ -373,6 +410,7 @@ impl HoistedResources {
                 member: member.to_string(),
                 role: serde_yaml::to_string(e).unwrap_or_default(),
                 condition: String::new(),
+                import_id: String::new(),
             })
             .collect();
         self.one(satz_core::algebra::Entity {
@@ -1654,6 +1692,12 @@ impl<'a> Transpiler<'a> {
             // Handle Memberships - Aggregate roles by unique member email
             let _ = resource_name;
             blocks.extend(crate::emit_shared::membership_blocks(group_name, attrs, provider_alias));
+            for (member_raw, id) in group_member_import_ids(attrs) {
+                import_blocks.push(hcl::Block::builder("import")
+                    .add_attribute(("to", self.parse_hcl_expr(&membership_resource_address(group_name, &member_raw))))
+                    .add_attribute(("id", id))
+                    .build());
+            }
         }
     }
 }

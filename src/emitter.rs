@@ -98,15 +98,48 @@ fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Option<serde_yaml::Va
     serde_yaml::from_str(&edge.condition).ok()
 }
 
+/// A Terraform `import { to id }` block — the carried result of adoption.
+fn import_block(to: &str, id: &str) -> hcl::Block {
+    hcl::Block::builder("import")
+        .add_attribute(("to", crate::emit_shared::parse_expr(to)))
+        .add_attribute(("id", id.to_string()))
+        .build()
+}
+
+/// Grant edges by binding identity (member, role, condition), each with the one
+/// `"import-id"` declared for it. `import_id` is not part of `GrantEdge`'s
+/// identity for a reason: the same binding declared twice — once by a pack,
+/// once by the estate that adopts it — is one resource. Two DIFFERENT ids for
+/// one binding is a contradiction and refuses.
+pub(crate) fn reconciled_edges(
+    edges: &std::collections::BTreeSet<satz_core::algebra::GrantEdge>,
+) -> Result<Vec<satz_core::algebra::GrantEdge>, String> {
+    let mut by_identity: std::collections::BTreeMap<(String, String, String), satz_core::algebra::GrantEdge> =
+        std::collections::BTreeMap::new();
+    for e in edges {
+        let key = (e.member.clone(), e.role.clone(), e.condition.clone());
+        match by_identity.get_mut(&key) {
+            None => {
+                by_identity.insert(key, e.clone());
+            }
+            Some(existing) => {
+                if existing.import_id.is_empty() {
+                    existing.import_id = e.import_id.clone();
+                } else if !e.import_id.is_empty() && existing.import_id != e.import_id {
+                    return Err(format!(
+                        "binding {} {} declares two different import-ids: {} and {}",
+                        e.member, e.role, existing.import_id, e.import_id
+                    ));
+                }
+            }
+        }
+    }
+    Ok(by_identity.into_values().collect())
+}
+
 pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     let mut blocks: Vec<hcl::Block> = Vec::new();
     let mut imports: Vec<hcl::Block> = Vec::new();
-    let import_block = |to: &str, id: &str| {
-        hcl::Block::builder("import")
-            .add_attribute(("to", crate::emit_shared::parse_expr(to)))
-            .add_attribute(("id", id.to_string()))
-            .build()
-    };
     let attr_import = |attrs: &serde_yaml::Mapping| -> Option<String> {
         attrs
             .get(serde_yaml::Value::String("import-id".into()))
@@ -178,10 +211,16 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     attrs,
                     Some("google.google"),
                 ));
+                for (member_raw, id) in crate::transpiler::group_member_import_ids(attrs) {
+                    imports.push(import_block(
+                        &crate::transpiler::membership_resource_address(&addr.label, &member_raw),
+                        &id,
+                    ));
+                }
             }
             ("google_organization_iam_member", Body::Grant(edges)) => {
-                for e in edges {
-                    let cond = edge_condition(e);
+                for e in reconciled_edges(edges)? {
+                    let cond = edge_condition(&e);
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref());
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -194,6 +233,9 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         cond_block,
                         Some("google.google"),
                     ));
+                    if !e.import_id.is_empty() {
+                        imports.push(import_block(&format!("google_organization_iam_member.{}", label), &e.import_id));
+                    }
                 }
             }
             (BILLING_ID_TYPE, _) => {} // consumed below, never emitted
@@ -211,8 +253,8 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     });
                 let fallback = ctx.billing_fallback.as_ref().and_then(|v| v.as_str()).unwrap_or("");
                 let billing_id = pinned.as_deref().unwrap_or(fallback);
-                for e in edges {
-                    let cond = edge_condition(e);
+                for e in reconciled_edges(edges)? {
+                    let cond = edge_condition(&e);
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref());
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -225,6 +267,9 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         cond_block,
                         Some("google.google"),
                     ));
+                    if !e.import_id.is_empty() {
+                        imports.push(import_block(&format!("google_billing_account_iam_member.{}", label), &e.import_id));
+                    }
                 }
             }
             // Node-scoped grant maps (project_iam_member inside a project, …):
@@ -244,8 +289,8 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     ("id", None)
                 };
                 let parent_expr = crate::emit_shared::parse_expr(parent.as_deref().unwrap_or(""));
-                for e in edges {
-                    let cond = edge_condition(e);
+                for e in reconciled_edges(edges)? {
+                    let cond = edge_condition(&e);
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref());
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -258,13 +303,16 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         cond_block,
                         Some(&galias),
                     ));
+                    if !e.import_id.is_empty() {
+                        imports.push(import_block(&format!("{}.{}", t, label), &e.import_id));
+                    }
                 }
             }
             ("google_project", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
                 if let Some(id) = attr_import(attrs) {
                     imports.push(import_block(&format!("google_project.{}", addr.label.replace('-', "_")), &id));
                 }
-                emit_project(&mut blocks, addr, attrs, path, ctx)?;
+                emit_project(&mut blocks, &mut imports, addr, attrs, path, ctx)?;
             }
             (t, Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
                 let schema = ctx.registry.and_then(|r| r.find_resource(t)).map(|(_, s)| s);
@@ -313,6 +361,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
 /// transpile_google_project (context comes from node_path, not walk position).
 fn emit_project(
     blocks: &mut Vec<hcl::Block>,
+    imports: &mut Vec<hcl::Block>,
     addr: &satz_core::Address,
     attrs: &serde_yaml::Mapping,
     path: &[String],
@@ -397,8 +446,9 @@ fn emit_project(
                 },
                 _ => continue,
             };
+            let label = format!("{}_{}", resource_name, service.replace('.', "_"));
             blocks.push(crate::emit_shared::project_service_block(
-                &format!("{}_{}", resource_name, service.replace('.', "_")),
+                &label,
                 crate::emit_shared::traversal_expr(&format!(
                     "google_project.{}.project_id",
                     resource_name
@@ -408,6 +458,12 @@ fn emit_project(
                 Some(&alias_for(path)),
                 &|_| None,
             ));
+            if let Some(id) = service_attrs
+                .and_then(|m| m.get(serde_yaml::Value::String("import-id".into())))
+                .and_then(|v| v.as_str())
+            {
+                imports.push(import_block(&format!("google_project_service.{}", label), id));
+            }
         }
     }
     Ok(())
