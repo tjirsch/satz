@@ -948,7 +948,13 @@ resource "google_compute_address" "legacy_trusted" {
 }
 ```
 
-Escape hatch by design, visible by design.
+Escape hatch by design, visible by design. "Opaque" is a property the compiler
+enforces, not a convention: the compliance plane reads the *emission manifest*
+— the resources the compiler itself built — never the rendered `main.tf`, and
+the passthrough is appended to the text after emission. A resource that exists
+only inside `hcl { … }` therefore deploys but is **not a witness**; a claim
+that names it reports **‼ broken claim**, exactly as if the resource were
+missing.
 
 ### 6.13 Provenance: pristine, fork, ledger
 
