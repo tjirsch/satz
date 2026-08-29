@@ -560,7 +560,7 @@ pub(crate) fn resolve_config_vars(
     // HCL cannot disagree about what a param resolves to.
     if config_path.extension().and_then(|e| e.to_str()) != Some("satz") {
         return Err(format!(
-            "{} is not a Satz estate — the org-policy commands read Satz only; convert with `satz migrate-to-satz`",
+            "{} is not a Satz estate — the org-policy commands read Satz only; convert with `satz import <file>.yaml`",
             config_path.display()
         )
         .into());

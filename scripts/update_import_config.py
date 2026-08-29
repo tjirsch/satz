@@ -8,7 +8,7 @@ import sys
 try:
     from ruamel.yaml import YAML
 except ImportError:
-    print("ruamel.yaml not found. Please run with 'uv run --with ruamel.yaml scripts/update_discovery_config.py ...'")
+    print("ruamel.yaml not found. Please run with 'uv run --with ruamel.yaml scripts/update_import_config.py ...'")
     sys.exit(1)
 
 
@@ -86,9 +86,9 @@ def update_config(config_path, schema_resources):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Update discovery-config.yaml from Terraform schemas.")
+    parser = argparse.ArgumentParser(description="Update import-config.yaml (the type table satz import and satz adopt read) from Terraform schemas.")
     parser.add_argument("--schema-dir", required=True, help="Directory containing provider schema JSON files.")
-    parser.add_argument("--config-file", required=True, help="Path to discovery-config.yaml.")
+    parser.add_argument("--config-file", required=True, help="Path to import-config.yaml.")
 
     args = parser.parse_args()
 

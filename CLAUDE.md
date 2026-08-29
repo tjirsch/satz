@@ -50,16 +50,16 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **Everyone is on the CURRENT version.** A release IS the migration: a
   breaking language change ships together with the estate edits that satisfy
   it. No deprecation periods, no dual-accept paths for old binaries.
-- **YAML exists only to be migrated (2026-08-29).** `migrate-to-satz` must keep
-  converting old estates and packs for as long as legacy orgs exist; that is
-  the whole YAML surface. No new functionality grows a YAML arm, YAML is never
+- **YAML exists only to be migrated (2026-08-29).** `satz import <file>.yaml` (the
+  old `migrate-to-satz`) must keep converting old estates and packs for as
+  long as legacy orgs exist; that is the whole YAML surface. No new functionality grows a YAML arm, YAML is never
   generated, and a YAML code path that a cleanup breaks is deleted, not
   repaired — the legacy walk, the `.gen.yaml` twin and every YAML command arm
   are gone since v0.46.14. A conversion is reported as NEEDS-REVIEW where it
   cannot be proven; migrated estates may need manual edits (an old
   `!import-include` becomes `use` plus `satz adopt`).
   `tests/corpus/yaml-estate/` is the converter's gate: a YAML fixture through
-  `migrate-to-satz` must compile as Satz and emit the expected resource set.
+  the converter must compile as Satz and emit the expected resource set.
 - **`cargo test` does NOT rebuild the debug binary** — `cargo build` before a
   live test, or a stale binary shadows the fix. Same family: an edit to
   `crates/satz-core/` was once not picked up — `touch` the file and confirm
@@ -83,7 +83,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `src/manifest.rs`, not `main.tf` text).
 - Adoption: `satz adopt` resolves live ids over the emission manifest (natural-key
   lookups for folders/groups/memberships/org policies, `import_id`/`match_on`
-  rules per type in `presets/discovery-config.yaml` for the rest), never
+  rules per type in `presets/import-config.yaml` for the rest), never
   guesses (one candidate resolves, many is ambiguous), and `--execute` writes
   verified ids back as `"import-id"` — the only adoption surface in the
   language. `adopt-org-policies` is an alias.

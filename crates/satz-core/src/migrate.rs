@@ -1,4 +1,4 @@
-//! migrate-to-satz: mechanical conversion of the YAML dialect to Satz.
+//! The yaml shape of `satz import`: mechanical conversion of the YAML dialect to Satz.
 //!
 //! This is the repeatable half of the migration loop: convert, then the caller
 //! GATES the result (transpile old vs new, sorted-compare) and only a PROVEN
@@ -708,7 +708,7 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
     };
     let mut header = pre.header.clone();
     header.push(String::new());
-    header.push("Converted by `satz migrate-to-satz` — interior comments were not carried.".to_string());
+    header.push("Converted by `satz import` — interior comments were not carried.".to_string());
     if pre.import_include_seen {
         header.push("NEEDS ADOPTION: the source used `!import-include` (a transpile-time live import).".to_string());
         header.push("It is a plain `use` here; run `satz adopt <estate> --execute` after converting to import what already exists.".to_string());

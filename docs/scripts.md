@@ -8,7 +8,7 @@ that maintain the repo's own data files.
 | script | kind | what it does |
 |---|---|---|
 | `scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below |
-| `update_discovery_config.py` | helper | add newly-seen provider types to `presets/discovery-config.yaml` |
+| `update_import_config.py` | helper | add newly-seen provider types to `presets/import-config.yaml` |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build-satz-doc.py` | helper | render `docs/satz-language.md` as a self-contained HTML page with the layers diagram inlined |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/example-customers.md`); CI on every push, `--staged` from the pre-commit hook |
@@ -113,17 +113,17 @@ default, so no `mapfile` and no unguarded empty-array expansion.
 
 ---
 
-## `update_discovery_config.py` — keep the type table current
+## `update_import_config.py` — keep the type table current
 
 Reads every provider schema JSON in a directory and adds any resource type that
-`presets/discovery-config.yaml` does not yet list, as an auto-generated entry
+`presets/import-config.yaml` does not yet list, as an auto-generated entry
 with `asset_type: TODO/UNKNOWN` for a human to fill in. Existing entries are
 never rewritten, and comments survive (it uses `ruamel.yaml`).
 
 ```bash
-uv run --with ruamel.yaml scripts/update_discovery_config.py \
+uv run --with ruamel.yaml scripts/update_import_config.py \
   --schema-dir <dir-of-schema-json> \
-  --config-file presets/discovery-config.yaml
+  --config-file presets/import-config.yaml
 ```
 
 ## `inspect_schema.py` — look at one type

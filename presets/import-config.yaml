@@ -1,11 +1,17 @@
-# Google Cloud Discovery Configuration
-# Use this file to enable or disable which resource types to import during discovery.
-# Each resource type can have an 'import' boolean and a 'description'.
-# The resource type is the name of the resource type as it is returned by the Asset API.
-# The description is a human-readable description of the resource type.
-# The import boolean is a boolean that determines whether the resource type should be imported.
-# If the import boolean is false, the resource type will not be imported.
+# satz import configuration — read by `satz import` and `satz adopt`.
 #
+# Optional top-level sections (the command line overrides them):
+#
+#   root:                               # live shape (`satz import` with no source)
+#     organization: "123456789012"
+#     folder: { path: "Shared Services/Prod" }   # or { id: "456789" } — exactly one
+#     project: my-prj
+#   only: [google_folder, google_project, "google_*_iam_member"]
+#
+# Per resource type: `import` (taken or not), `asset_type` + `content_type` (how
+# Cloud Asset Inventory names it), attribute `include`/`exclude`, and the
+# adoption rules `satz adopt` reads (`import_id` template, `match_on`,
+# `activate: managed`). Keys are the Terraform provider type names.
 resource_types:
   google_access_context_manager_access_level:
     description: Access level for Access Context Manager

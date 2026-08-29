@@ -65,12 +65,34 @@ pub(crate) fn find_folder_by_display_name(
         [] => Ok(None),
         [one] => Ok(Some((*one).to_string())),
         many => Err(format!(
-            "{} folders are called {:?}: {} — pin the one you mean with \"import-id\"",
+            "{} folders are called {:?}: {} — name the one you mean by its id",
             many.len(),
             display_name,
             many.join(", ")
         )),
     }
+}
+
+/// A display-name path from the organization (`"Shared Services/Prod"`) to
+/// the `folders/<n>` it names, one segment at a time: under the resolved
+/// parent exactly one folder may carry the name — none is an error, several
+/// is AMBIGUOUS with the candidates listed. Never a guess.
+pub(crate) async fn resolve_folder_path(
+    client: &reqwest::Client,
+    token: &str,
+    organization: &str,
+    path: &str,
+) -> Result<String, String> {
+    let mut parent = format!("organizations/{}", organization.trim_start_matches("organizations/"));
+    for segment in path.split('/').map(str::trim).filter(|s| !s.is_empty()) {
+        let folders = list_folders(client, token, &parent).await?;
+        parent = find_folder_by_display_name(&folders, segment)?
+            .ok_or_else(|| format!("no folder {:?} under {}", segment, parent))?;
+    }
+    if parent.starts_with("organizations/") {
+        return Err(format!("folder path {:?} is empty", path));
+    }
+    Ok(parent)
 }
 
 /// `projects.get`: the project's resource name `projects/<number>`, or `None`

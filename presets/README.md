@@ -486,12 +486,12 @@ Compliance catalogs (`cis-gcp-4.0.yaml`, `cis-gcp-5.0.yaml`): control ids with t
 project's own paraphrases, read by `require` and `report-compliance`. YAML data, not
 packs.
 
-## discovery-config.yaml
+## import-config.yaml
 
-Not a pack: per resource type, the discovery filter (`import`, `asset_type`,
-attribute include/exclude) consumed by the `discover-from-*` commands **and the
-adoption rules `satz adopt` reads** — `import_id` templates for user-chosen ids,
-`match_on` keys for GCP-assigned ones, `activate: managed` for org policies. A type
-without a rule is reported by `adopt` as "no rule"; adding one is a one-line change
-here. Referenced automatically from `presets_dir`, or explicitly via
-`--discovery-config`.
+Not a pack: the configuration `satz import` reads — an optional `root` (organization,
+folder by id or display-name path, project) and `only` list, and per resource type the
+import filter (`import`, `asset_type`, attribute include/exclude) **plus the adoption
+rules `satz adopt` reads** — `import_id` templates for user-chosen ids, `match_on` keys
+for GCP-assigned ones, `activate: managed` for org policies. A type without a rule is
+reported by `adopt` as "no rule"; adding one is a one-line change here. Referenced
+automatically from `presets_dir`, or explicitly via `--import-config`.
