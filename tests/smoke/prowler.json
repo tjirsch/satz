@@ -1,0 +1,12 @@
+[
+  {"status_code":"FAIL","severity":"High","finding_info":{"uid":"1","title":"Bucket is publicly accessible"},
+   "unmapped":{"check_id":"storage_bucket_public_access","compliance":{"CIS-4.0-GCP":["5.1"]}},
+   "resources":[{"uid":"//storage.googleapis.com/corp-infra-001-state","name":"corp-infra-001-state","type":"bucket"}],
+   "cloud":{"project":{"uid":"corp-infra-001"}}},
+  {"status_code":"FAIL","severity":"Medium","finding_info":{"uid":"2","title":"Cloud SQL instance without backup"},
+   "unmapped":{"check_id":"cloudsql_instance_backup","compliance":{"CIS-4.0-GCP":["2.12"]}},
+   "resources":[{"uid":"//sqladmin.googleapis.com/projects/corp-infra-001/instances/db1","type":"instance"}],
+   "cloud":{"project":{"uid":"corp-infra-001"}}},
+  {"status_code":"MANUAL","severity":"Low","finding_info":{"uid":"3","title":"Review IAM allowlist"},
+   "unmapped":{"check_id":"iam_review","compliance":{"CIS-4.0-GCP":["1.1"]}}}
+]

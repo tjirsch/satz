@@ -501,6 +501,24 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Sort every Prowler FAIL into the bucket that says who fixes it and how
+    /// (a pack covers it / Satz declares it / accepted exception / bring
+    /// under management / manual) — the skeleton of the remediation plan
+    Triage {
+        /// Catalog id, e.g. cis-gcp-4.0
+        framework: String,
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Prowler export (OCSF or legacy JSON)
+        #[arg(long)]
+        prowler: PathBuf,
+        /// markdown (default) or json
+        #[arg(long, default_value = "markdown")]
+        format: String,
+        /// Write the plan here instead of stdout
+        #[arg(long)]
+        report: Option<PathBuf>,
+    },
     /// Run Checkov over the emitted HCL in hcl_dir and point each finding at
     /// the Satz block that declared the resource. Failed checks exit 1
     Scan {
@@ -669,7 +687,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::Triage { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1406,6 +1424,11 @@ Thumbs.db
                 &runtime_config,
             )
             .await
+        }
+        Commands::Triage { framework, input, prowler, format, report } => {
+            let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
+            let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, &format, report)
         }
         Commands::Scan { estate } => {
             let manifest = match estate {

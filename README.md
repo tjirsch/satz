@@ -120,6 +120,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report` |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
+| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
@@ -799,6 +800,7 @@ corroboration (`--prowler findings.json` — Prowler's OCSF output or its legacy
 satz report-compliance cis-gcp-4.0 C0example.satz            # markdown + history
 satz report-compliance cis-gcp-4.0 C0example.satz --format pdf --prowler prowler.json
 satz report-compliance cis-gcp-4.0 C0example.satz --checkov   # + a Checkov column: failed checks on a control's witnesses
+satz triage cis-gcp-4.0 C0example.satz --prowler prowler.json  # the remediation-plan skeleton: A pack covers it / B Satz declares it / C accepted exception / D bring under management / E manual
 ```
 
 Row statuses: **verified** (all witnesses live), `verified*` (some witness types have
