@@ -104,11 +104,18 @@ fn resolve_ref(v: &serde_json::Value, schemas: &serde_json::Value) -> serde_json
     }
 }
 
+/// `storageClass` → `storage_class`, `IPProtocol` → `ip_protocol`: CAI data
+/// and the Discovery Documents carry the API's camelCase keys, the provider
+/// schema is snake_case. A run of capitals is one word (an acronym) until its
+/// last letter starts the next word.
 pub(crate) fn snake(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len() + 4);
-    for (i, c) in s.chars().enumerate() {
+    for (i, &c) in chars.iter().enumerate() {
         if c.is_ascii_uppercase() {
-            if i > 0 {
+            let prev_lower = i > 0 && !chars[i - 1].is_ascii_uppercase() && chars[i - 1] != '_';
+            let next_lower = i > 0 && chars[i - 1].is_ascii_uppercase() && chars.get(i + 1).is_some_and(|n| n.is_ascii_lowercase());
+            if prev_lower || next_lower {
                 out.push('_');
             }
             out.push(c.to_ascii_lowercase());
@@ -379,5 +386,14 @@ mod tests {
         assert!(out.contains("lifecycle_rule:\n- action:"), "{}", out);
         assert!(!out.contains("billing:"), "emptied wrapper pruned:\n{}", out);
         assert!(out.contains("lockedTime: x"), "an unmapped sibling stays where it was (the schema filter drops it later):\n{}", out);
+    }
+
+    #[test]
+    fn snake_keeps_acronyms_as_one_word() {
+        assert_eq!(snake("storageClass"), "storage_class");
+        assert_eq!(snake("IPProtocol"), "ip_protocol");
+        assert_eq!(snake("enableCDN"), "enable_cdn");
+        assert_eq!(snake("uniformBucketLevelAccess"), "uniform_bucket_level_access");
+        assert_eq!(snake("name"), "name");
     }
 }

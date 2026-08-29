@@ -8,7 +8,7 @@ that maintain the repo's own data files.
 | script | kind | what it does |
 |---|---|---|
 | `scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below |
-| `update_import_config.py` | helper | add newly-seen provider types to `presets/import-config.yaml` |
+| `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build-satz-doc.py` | helper | render `docs/satz-language.md` as a self-contained HTML page with the layers diagram inlined |
@@ -116,16 +116,39 @@ default, so no `mapfile` and no unguarded empty-array expansion.
 
 ## `update_import_config.py` — keep the type table current
 
-Reads every provider schema JSON in a directory and adds any resource type that
-`presets/import-config.yaml` does not yet list, as an auto-generated entry
-with `asset_type: TODO/UNKNOWN` for a human to fill in. Existing entries are
-never rewritten, and comments survive (it uses `ruamel.yaml`).
+Two passes over `presets/import-config.yaml`, both from data, never by hand;
+existing rows are never rewritten and comments survive (`ruamel.yaml`):
+
+- `--schema-dir <dir>` reads every provider schema JSON there and adds a row
+  for each resource type the table lacks (`import: false`,
+  `asset_type: TODO/UNKNOWN`).
+- `--cai-types presets/cai-asset-types.txt` resolves the `TODO/UNKNOWN` rows:
+  the Cloud Asset Inventory name is derived from the Terraform type
+  (`google_dns_managed_zone` → `dns.googleapis.com/ManagedZone`, with an alias
+  table for the services whose provider name is not their API host) and kept
+  ONLY when it is in Google's published list — `cai-asset-types.txt` is that
+  list, dated in its header. Rows that are not Cloud Asset resources at all
+  (IAM members/bindings, org-policy v1 shapes, provider constructs) lose the
+  `asset_type` key: known, not unknown. What stays `TODO/UNKNOWN` is printed
+  with what was tried. The smoke matrix runs this pass and fails when the
+  table is behind the list.
 
 ```bash
 uv run --with ruamel.yaml scripts/update_import_config.py \
+  --config-file presets/import-config.yaml \
   --schema-dir <dir-of-schema-json> \
-  --config-file presets/import-config.yaml
+  --cai-types presets/cai-asset-types.txt
 ```
+
+To refresh the list itself: the page
+<https://docs.cloud.google.com/asset-inventory/docs/asset-types> renders its
+table client-side, so copy the rendered text and keep one
+`service.googleapis.com/Kind` per line; update the date in the header.
+
+At the live shape an enabled row with `asset_type: TODO/UNKNOWN` (or an
+unknown `content_type`) is a hard error; an enabled row with no `asset_type`
+(a type Cloud Asset does not carry — Cloud Identity groups, say) is reported
+once as "state shape only" and skipped there.
 
 ## `inspect_schema.py` — look at one type
 

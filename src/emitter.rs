@@ -182,12 +182,22 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     .get(serde_yaml::Value::String("display_name".into()))
                     .and_then(|v| v.as_str())
                     .unwrap_or(&addr.label);
-                let parent = match last_with_prefix(path, "folder:") {
-                    Some(f) => crate::emit_shared::traversal_expr(&format!(
+                let explicit_parent = attrs.get(serde_yaml::Value::String("parent".into())).and_then(|v| v.as_str());
+                let parent = match (last_with_prefix(path, "folder:"), explicit_parent) {
+                    (Some(f), None) => crate::emit_shared::traversal_expr(&format!(
                         "google_folder.{}.name",
                         f.replace('-', "_")
                     )),
-                    None => hcl::Expression::from(format!("organizations/{}", ctx.org_id)),
+                    (Some(f), Some(p)) => {
+                        return Err(format!(
+                            "folder `{}`: `parent = \"{}\"` is declared, but the folder is nested under `{}` — the parent is the nesting; remove the attribute",
+                            addr.label, p, f
+                        ))
+                    }
+                    // a top-level folder whose parent is another folder outside
+                    // this estate (a partial import) says so explicitly
+                    (None, Some(p)) => hcl::Expression::from(p.to_string()),
+                    (None, None) => hcl::Expression::from(format!("organizations/{}", ctx.org_id)),
                 };
                 if let Some(id) = attr_import(attrs) {
                     imports.push(import_block(&format!("google_folder.{}", addr.label.replace('-', "_")), &id));

@@ -286,17 +286,21 @@ async fn resolve_match<L: Live>(
 /// The scope to list under: the resource's `parent`, else its project,
 /// folder or organization attribute.
 fn match_scope(r: &EmittedResource, manifest: &Manifest, resolved_ids: &BTreeMap<String, String>) -> Result<String, String> {
-    if let Ok(p) = value_of(r, "parent", manifest, resolved_ids) {
-        return Ok(p);
+    // the first scope attribute the resource HAS decides; a present attribute
+    // that cannot be resolved (its folder is ambiguous, say) is an error, not a
+    // reason to try the next one and search the wrong scope
+    let has = |k: &str| r.attrs.contains_key(k) || r.refs.contains_key(k);
+    if has("parent") {
+        return value_of(r, "parent", manifest, resolved_ids);
     }
-    if let Ok(p) = value_of(r, "project", manifest, resolved_ids) {
-        return Ok(format!("projects/{}", p.trim_start_matches("projects/")));
+    if has("project") {
+        return value_of(r, "project", manifest, resolved_ids).map(|p| format!("projects/{}", p.trim_start_matches("projects/")));
     }
-    if let Ok(f) = value_of(r, "folder", manifest, resolved_ids) {
-        return Ok(format!("folders/{}", f.trim_start_matches("folders/")));
+    if has("folder") {
+        return value_of(r, "folder", manifest, resolved_ids).map(|f| format!("folders/{}", f.trim_start_matches("folders/")));
     }
-    if let Ok(o) = value_of(r, "org_id", manifest, resolved_ids) {
-        return Ok(format!("organizations/{}", o.trim_start_matches("organizations/")));
+    if has("org_id") {
+        return value_of(r, "org_id", manifest, resolved_ids).map(|o| format!("organizations/{}", o.trim_start_matches("organizations/")));
     }
     Err(format!("{} has no parent, project, folder or org_id to scope the lookup", r.address()))
 }
@@ -493,11 +497,10 @@ pub(crate) fn summary(resolutions: &[Resolution]) -> String {
 }
 
 /// Insert `"import-id" = "<id>"` into the source file right after the
-/// declaring `label {` line, for every VERIFIED resolution that has an origin.
-/// Derived (unverified) ids are not written: an `import` block for an object
-/// that does not exist fails the whole `tofu plan`, so those go through
-/// `--import`, which verifies per resource. Returns (written, not written) —
-/// the latter with the exact snippet to add by hand.
+/// declaring `label {` line, for every resolution that has an origin —
+/// derived (unverified) ids included: `tofu plan` on the import block is the
+/// validator of their existence. Returns (written, not written) — the latter
+/// with the exact snippet to add by hand.
 /// One id to write: (line, address, id, (tf_type, natural_key)).
 type Edit = (u32, String, String, (String, String));
 
@@ -731,12 +734,10 @@ impl Live for RealLive {
         let mut out = Vec::new();
         while let Some(asset) = stream.next().await {
             let asset: google_cloud_asset_v1::model::Asset = asset.map_err(|e| e.to_string())?;
-            let data = asset
-                .resource
-                .as_ref()
-                .and_then(|r| r.data.as_ref())
-                .and_then(|d| serde_json::to_value(d).ok())
-                .unwrap_or(serde_json::Value::Null);
+            let data = match asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
+                Some(d) => serde_json::to_value(d).map_err(|e| format!("{}: asset data is not JSON: {}", asset.name, e))?,
+                None => serde_json::Value::Null,
+            };
             let path = asset
                 .name
                 .strip_prefix("//")

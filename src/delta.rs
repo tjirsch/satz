@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::adopt::{Outcome, Resolution};
 
 /// What the estate already covers, by live id.
+#[derive(Default)]
 pub(crate) struct Declared {
     /// live id → declared address
     pub ids: BTreeMap<String, String>,
@@ -23,10 +24,16 @@ pub(crate) struct Declared {
     pub containers: BTreeMap<String, (String, Option<(String, u32)>)>,
     /// declared, looked up live, provably absent — `apply` will create these
     pub not_live: Vec<String>,
+    /// declared, but the resolution did not produce a live id (lookup failed,
+    /// ambiguous, unresolvable): the sweep cannot subtract these, so a delta
+    /// import must not proceed — it would re-declare what the estate owns
+    pub blocked: Vec<(String, String)>,
+    /// declared with no adoption rule: not subtractable either, reported
+    pub no_rule: Vec<String>,
 }
 
 pub(crate) fn declared_from(resolutions: &[Resolution]) -> Declared {
-    let mut d = Declared { ids: BTreeMap::new(), containers: BTreeMap::new(), not_live: Vec::new() };
+    let mut d = Declared::default();
     for r in resolutions {
         let id = match &r.outcome {
             Outcome::AlreadyAdopted(id) | Outcome::Resolved { id, .. } | Outcome::NeedsActivation { id, .. } => id.clone(),
@@ -34,7 +41,19 @@ pub(crate) fn declared_from(resolutions: &[Resolution]) -> Declared {
                 d.not_live.push(r.address.clone());
                 continue;
             }
-            _ => continue,
+            Outcome::Failed(why) | Outcome::Unresolvable(why) | Outcome::NeedsLookup(why) => {
+                d.blocked.push((r.address.clone(), why.clone()));
+                continue;
+            }
+            Outcome::Ambiguous(c) => {
+                d.blocked.push((r.address.clone(), format!("ambiguous: {}", c.join(", "))));
+                continue;
+            }
+            Outcome::NoRule => {
+                d.no_rule.push(r.address.clone());
+                continue;
+            }
+            Outcome::Skipped => continue,
         };
         if r.tf_type == "google_folder" || r.tf_type == "google_project" {
             d.containers.insert(id.clone(), (r.address.clone(), r.origin.clone()));
@@ -59,10 +78,6 @@ pub(crate) struct Delta {
 
 fn import_id_of(v: &serde_yaml::Value) -> Option<String> {
     v.as_mapping()?.get("import-id")?.as_str().map(String::from)
-}
-
-fn grant_id_of(v: &serde_yaml::Value) -> Option<String> {
-    import_id_of(v)
 }
 
 fn is_container_key(k: &str) -> bool {
@@ -154,7 +169,7 @@ fn prune(map: &mut serde_yaml::Mapping, declared: &Declared, project_ctx: Option
                 let member_keys: Vec<serde_yaml::Value> = members.keys().cloned().collect();
                 for mk in member_keys {
                     if let Some(serde_yaml::Value::Sequence(roles)) = members.get_mut(&mk) {
-                        roles.retain(|r| match grant_id_of(r).and_then(|id| declared.ids.get(&id).map(|a| (id, a.clone()))) {
+                        roles.retain(|r| match import_id_of(r).and_then(|id| declared.ids.get(&id).map(|a| (id, a.clone()))) {
                             Some((id, address)) => {
                                 delta.already.push((id, address));
                                 false
@@ -321,7 +336,7 @@ mod tests {
     }
 
     fn declared(ids: &[(&str, &str)], containers: &[(&str, &str, u32)]) -> Declared {
-        let mut d = Declared { ids: BTreeMap::new(), containers: BTreeMap::new(), not_live: vec![] };
+        let mut d = Declared::default();
         for (id, a) in ids {
             d.ids.insert(id.to_string(), a.to_string());
         }
@@ -406,5 +421,22 @@ folder:
     fn pack_names_are_stable_slugs() {
         assert_eq!(pack_name("organizations/123", None), "imported-organizations-123.satz");
         assert_eq!(pack_name("folders/4", Some("google_folder.infra-x")), "imported-folders-4-google_folder_infra_x.satz");
+    }
+
+    #[test]
+    fn a_failed_lookup_blocks_the_delta_instead_of_reading_as_undeclared() {
+        use crate::adopt::{Outcome, Resolution};
+        let mk = |a: &str, o: Outcome| Resolution {
+            address: a.into(), tf_type: "google_storage_bucket".into(), natural_key: String::new(), outcome: o, origin: None, org_policy: None,
+        };
+        let d = declared_from(&[
+            mk("google_storage_bucket.a", Outcome::Resolved { id: "a".into(), verified: true }),
+            mk("google_storage_bucket.b", Outcome::Failed("500".into())),
+            mk("google_storage_bucket.c", Outcome::Ambiguous(vec!["c1".into(), "c2".into()])),
+            mk("google_storage_bucket.d", Outcome::NoRule),
+        ]);
+        assert_eq!(d.ids.len(), 1);
+        assert_eq!(d.blocked.len(), 2, "{:?}", d.blocked);
+        assert_eq!(d.no_rule, vec!["google_storage_bucket.d"]);
     }
 }

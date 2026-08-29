@@ -16,7 +16,7 @@ pub(crate) async fn project_billing_account(
         .await
         .map_err(|e| e.to_string())?;
     if !res.status().is_success() {
-        return Err(res.text().await.unwrap_or_default());
+        return Err(http_error(res).await);
     }
     let info: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
     Ok(info
@@ -24,4 +24,13 @@ pub(crate) async fn project_billing_account(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.trim_start_matches("billingAccounts/").to_string()))
+}
+
+/// `403 Forbidden: <body>` — the status is part of the error, and an empty
+/// body never yields an empty error.
+async fn http_error(res: reqwest::Response) -> String {
+    let status = res.status();
+    let body = res.text().await.unwrap_or_else(|e| format!("(body unreadable: {})", e));
+    let body = if body.trim().is_empty() { "(empty body)".to_string() } else { body };
+    format!("{} {}: {}", status.as_u16(), status.canonical_reason().unwrap_or(""), body)
 }

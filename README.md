@@ -1273,7 +1273,23 @@ satz import organizations/123456789012 -o migration-discovery.satz
 ```
 
 Only the resource types marked `import: true` in `presets/import-config.yaml` are
-taken (`--only` narrows further); enable more rows as needed.
+taken (`--only` narrows further); enable more rows as needed — every row with an
+`asset_type` can be switched on. The table covers the provider's 895 resource
+types: 389 with their Cloud Asset Inventory name (derived from the type name
+and checked against Google's list, `presets/cai-asset-types.txt`), 296 that are
+not Cloud Asset resources (IAM members, org-policy v1 shapes; state shape only),
+209 still `TODO/UNKNOWN` (Cloud Asset does not inventory them, or the name
+could not be derived — `scripts/update_import_config.py` prints what it tried).
+A live resource whose provider block would not plan is never written: a
+required attribute the asset data lacks is derived where it can be (`parent`,
+`org_id`/`folder`/`project` from the asset path, a service account's
+`account_id` from its email) and the resource is otherwise skipped with the
+attribute named. Import ids of live resources are the asset path, with the
+project named by id (the provider keeps a project NUMBER on import and the
+declared id would then force a replacement). Verified on a test organization
+with folders, projects, services, buckets, IAM, org policies, org/folder/project
+log sinks, a service account and an essential contact: `tofu plan` = every
+resource imported, nothing added or destroyed.
 
 ### 2. Hierarchical Refinement
 The discovered estate compiles as-is, but it is as found. Organize it into the `satz` hierarchical format:

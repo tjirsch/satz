@@ -9,7 +9,6 @@ use google_cloud_gax::paginator::ItemPaginator;
 pub struct Discoverer {
     pub state: Value,
     pub registry: Option<ResourceRegistry>,
-    pub _verbose: bool, // Renamed to silence warning
     pub enabled_types: Option<HashSet<String>>,
     /// Types the run's `--only` / `only:` switched off — reported as
     /// "filtered", not "type off".
@@ -141,14 +140,12 @@ impl Discoverer {
     pub fn new(
         state_json: Value,
         registry: Option<ResourceRegistry>,
-        verbose: bool,
         enabled_types: Option<HashSet<String>>,
         filtered_types: HashSet<String>,
     ) -> Self {
         Self {
             state: state_json,
             registry,
-            _verbose: verbose,
             enabled_types,
             filtered_types,
         }
@@ -246,8 +243,8 @@ impl Discoverer {
             }
         }
         
-        link_projects_to_folders(&project_id_to_parent, &gcp_id_to_yaml_name, &mut project_map, &mut folder_map);
-        link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map);
+        link_projects_to_folders(&project_id_to_parent, &gcp_id_to_yaml_name, &mut project_map, &mut folder_map)?;
+        link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map)?;
 
         if !folder_map.is_empty() { config.folder = Some(folder_map); }
         if !project_map.is_empty() { config.project = Some(project_map); }
@@ -261,7 +258,7 @@ impl Discoverer {
             if let Some(p_id) = values["project"].as_str() {
                 let p_yaml = gcp_id_to_yaml_name.get(p_id).map(|s| s.as_str()).unwrap_or(p_id);
                 match Self::find_project_mut(&mut config, p_yaml) {
-                    Some(project) => self.add_resource_to_project(project, tf_type, tf_name, values, schema),
+                    Some(project) => self.add_resource_to_project(project, tf_type, tf_name, values, schema)?,
                     None => skipped.push(Skipped {
                         tf_type: tf_type.to_string(),
                         what: tf_name.to_string(),
@@ -272,7 +269,7 @@ impl Discoverer {
                 let f_norm = if f_id.starts_with("folders/") { f_id.to_string() } else { format!("folders/{}", f_id) };
                 let f_yaml = gcp_id_to_yaml_name.get(&f_norm).map(|s| s.as_str()).unwrap_or(f_id);
                 match Self::find_folder_mut(&mut config, f_yaml) {
-                    Some(folder) => self.add_resource_to_folder(folder, tf_type, tf_name, values, schema),
+                    Some(folder) => self.add_resource_to_folder(folder, tf_type, tf_name, values, schema)?,
                     None => skipped.push(Skipped {
                         tf_type: tf_type.to_string(),
                         what: tf_name.to_string(),
@@ -280,7 +277,7 @@ impl Discoverer {
                     }),
                 }
             } else {
-                self.add_resource_to_config(&mut config, tf_type, tf_name, values, schema);
+                self.add_resource_to_config(&mut config, tf_type, tf_name, values, schema)?;
             }
         }
 
@@ -342,23 +339,6 @@ impl Discoverer {
         yaml_val
     }
 
-    /// `storageClass` → `storage_class`: CAI data carries the API's camelCase
-    /// keys, the provider schema is snake_case. The plain rename is the base
-    /// rule of the API→Terraform vocabulary; what it does not cover is F5.
-    fn snake_key(k: &str) -> String {
-        let mut out = String::with_capacity(k.len() + 4);
-        for (i, c) in k.chars().enumerate() {
-            if c.is_ascii_uppercase() {
-                if i > 0 {
-                    out.push('_');
-                }
-                out.push(c.to_ascii_lowercase());
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    }
 
     fn filter_recursive(val: &mut serde_yaml::Value, schema: Option<&BlockSchema>, blacklist: &[String], tf_type: &str, at: &str) {
         if let serde_yaml::Value::Mapping(map) = val {
@@ -366,7 +346,7 @@ impl Discoverer {
                 let renamed: serde_yaml::Mapping = std::mem::take(map)
                     .into_iter()
                     .map(|(k, v)| match k.as_str() {
-                        Some(ks) => (serde_yaml::Value::String(Self::snake_key(ks)), v),
+                        Some(ks) => (serde_yaml::Value::String(crate::align::snake(ks)), v),
                         None => (k, v),
                     })
                     .collect();
@@ -405,7 +385,7 @@ impl Discoverer {
                                 if !keep_computed.contains(&k_str.as_str()) { return false; }
                             }
                             if attr.optional && !attr.required
-                                && Self::is_zero_value(v) { return false; }
+                                && Self::is_absent_value(v) { return false; }
                         }
                         if let Some(block_type) = s.block_types.get(k_str) {
                             if let Some(min) = block_type.min_items {
@@ -455,13 +435,13 @@ impl Discoverer {
             || v.as_mapping().is_some_and(|m| m.is_empty())
     }
 
-    fn is_zero_value(v: &serde_yaml::Value) -> bool {
+    /// Unset, not "zero": `false`, `0`, `""` and `"default"` are values —
+    /// where they differ from the provider default they must be written, or
+    /// the plan flips them back.
+    fn is_absent_value(v: &serde_yaml::Value) -> bool {
         match v {
-            serde_yaml::Value::Bool(false) => true,
-            serde_yaml::Value::String(st) => st.is_empty() || st == "default" || st == "STANDARD",
-            serde_yaml::Value::Number(n) => n.as_f64() == Some(0.0) || n.as_i64() == Some(0) || n.as_u64() == Some(0),
-            serde_yaml::Value::Sequence(seq) if seq.is_empty() => true,
-            serde_yaml::Value::Mapping(m) if m.is_empty() => true,
+            serde_yaml::Value::Sequence(seq) => seq.is_empty(),
+            serde_yaml::Value::Mapping(m) => m.is_empty(),
             serde_yaml::Value::Null => true,
             _ => false,
         }
@@ -511,10 +491,9 @@ impl Discoverer {
         None
     }
 
-    fn add_resource_to_project(&self, p: &mut Project, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) {
+    fn add_resource_to_project(&self, p: &mut Project, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) -> Result<(), String> {
         if tf_type.ends_with("_iam_member") {
-            let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
-            let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
+            let (role, member) = grant_identity(tf_type, tf_name, values)?;
             let parent = if tf_type == "google_storage_bucket_iam_member" {
                 values["bucket"].as_str().unwrap_or("").to_string()
             } else {
@@ -529,7 +508,7 @@ impl Discoverer {
                     push_grant(roles, &role, Some(id));
                 }
             }
-            return;
+            return Ok(());
         }
         let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
         if tf_type == "google_project_service" {
@@ -541,12 +520,12 @@ impl Discoverer {
                 type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
             }
         }
+        Ok(())
     }
 
-    fn add_resource_to_folder(&self, f: &mut Folder, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) {
+    fn add_resource_to_folder(&self, f: &mut Folder, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) -> Result<(), String> {
         if tf_type.ends_with("_iam_member") {
-            let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
-            let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
+            let (role, member) = grant_identity(tf_type, tf_name, values)?;
             let parent = f.import_id.clone().unwrap_or_else(|| values["folder"].as_str().unwrap_or("").to_string());
             let id = grant_import_id(tf_type, &parent, &role, &member);
             if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
@@ -557,19 +536,19 @@ impl Discoverer {
                     push_grant(roles, &role, Some(id));
                 }
             }
-            return;
+            return Ok(());
         }
         let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
         if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = f.extra.get_mut(tf_type) {
              type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
         }
+        Ok(())
     }
 
-    fn add_resource_to_config(&self, c: &mut Config, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) {
+    fn add_resource_to_config(&self, c: &mut Config, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) -> Result<(), String> {
         if tf_type.ends_with("_iam_member") {
-            let role = values["role"].as_str().unwrap_or("unknown_role").to_string();
-            let member = values["member"].as_str().unwrap_or("unknown_member").to_string();
+            let (role, member) = grant_identity(tf_type, tf_name, values)?;
             let parent = ["org_id", "billing_account_id", "folder", "project", "bucket"]
                 .iter()
                 .find_map(|k| values[*k].as_str().filter(|s| !s.is_empty()))
@@ -593,13 +572,14 @@ impl Discoverer {
                     }
                 }
             }
-            return;
+            return Ok(());
         }
         let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
         if !c.extra.contains_key(tf_type) { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = c.extra.get_mut(tf_type) {
             type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
         }
+        Ok(())
     }
 
     fn gather_resources(module: &Value, all: &mut Vec<Value>) {
@@ -658,28 +638,43 @@ impl Discoverer {
         
         let mut type_map: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
         
+        // the enabled rows decide what is swept; a row that cannot be swept
+        // is an error (TODO asset type, unknown content type) or, for types
+        // Cloud Asset Inventory does not carry at all, reported once
+        let mut not_inventoried: Vec<&str> = Vec::new();
         if let Some(config) = &discovery_config {
-            for resource_config in config.resource_types.values() {
+            for (tf_type, resource_config) in &config.resource_types {
                 if !resource_config.import { continue; }
-                
-                if let (Some(cat), Some(ct)) = (&resource_config.asset_type, &resource_config.content_type) {
-                     let ctype_enum = match ct.to_uppercase().as_str() {
-                         "IAM_POLICY" => ContentType::IamPolicy,
-                         "RESOURCE" | "RESOURCES" => ContentType::Resource,
-                         _ => ContentType::Unspecified,
-                     };
-                     
-                     let idx = match ctype_enum {
-                         ContentType::Resource => 1,
-                         ContentType::IamPolicy => 2,
-                         _ => 0,
-                     };
-                     
-                     if idx > 0 {
-                         type_map.entry(idx).or_default().insert(cat.clone());
-                     }
+                let Some(cat) = resource_config.asset_type.as_deref() else {
+                    not_inventoried.push(tf_type);
+                    continue;
+                };
+                if cat.starts_with("TODO") {
+                    return Err(format!(
+                        "import-config: `{}` has import: true but its asset_type is still {} — \
+                         run `scripts/update_import_config.py --cai-types presets/cai-asset-types.txt` or fill it by hand",
+                        tf_type, cat
+                    ).into());
                 }
+                let idx = match resource_config.content_type.as_deref().map(|c| c.to_uppercase()).as_deref() {
+                    Some("RESOURCE") => 1,
+                    Some("IAM_POLICY") => 2,
+                    other => {
+                        return Err(format!(
+                            "import-config: `{}` has content_type {:?}; expected RESOURCE or IAM_POLICY",
+                            tf_type, other
+                        ).into())
+                    }
+                };
+                type_map.entry(idx).or_default().insert(cat.to_string());
             }
+        }
+        if !not_inventoried.is_empty() {
+            println!(
+                "import: {} enabled type(s) are not Cloud Asset Inventory resources and cannot come from the live shape (state shape only): {}",
+                not_inventoried.len(),
+                not_inventoried.join(", ")
+            );
         }
 
         let mut all_assets = Vec::new();
@@ -777,17 +772,16 @@ impl Discoverer {
         }
 
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
-        let (config, skipped) = Self::construct_config_from_assets(all_assets, verbose, registry.as_ref(), discovery_config.as_ref());
+        let (config, skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
 
         Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization })
     }
 
     fn construct_config_from_assets(
-        assets: Vec<Asset>, 
-        _verbose: bool,
+        assets: Vec<Asset>,
         registry: Option<&ResourceRegistry>,
         discovery_config: Option<&ImportConfig>,
-    ) -> (Config, Vec<Skipped>) {
+    ) -> Result<(Config, Vec<Skipped>), String> {
         let mut config = Config::default();
         let mut skipped: Vec<Skipped> = Vec::new();
         let mut deprecated_seen = HashSet::new();
@@ -903,13 +897,13 @@ impl Discoverer {
                  Self::discover_iam_policy(tf_type, asset, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if tf_type == "google_project_service" {
                  Self::discover_google_project_service(tf_type, asset, res_config, registry, &scope_id, &mut project_map, &gcp_id_to_yaml_name);
-             } else {
-                 Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
+             } else if let Err(reason) = Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name }) {
+                 skipped.push(Skipped { tf_type: tf_type.to_string(), what: asset.name.clone(), reason });
              }
         }
         
-        link_projects_to_folders(&project_id_to_parent, &gcp_id_to_yaml_name, &mut project_map, &mut folder_map);
-        link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map);
+        link_projects_to_folders(&project_id_to_parent, &gcp_id_to_yaml_name, &mut project_map, &mut folder_map)?;
+        link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map)?;
 
         if !folder_map.is_empty() { config.folder = Some(folder_map); }
         if !project_map.is_empty() { config.project = Some(project_map); }
@@ -918,7 +912,7 @@ impl Discoverer {
             eprintln!("Warning: Resource type '{}' is deprecated.", deprecated_type);
         }
 
-        (config, skipped)
+        Ok((config, skipped))
     }
 
     fn discover_google_folder(
@@ -1308,6 +1302,9 @@ impl Discoverer {
          }
     }
 
+    /// A resource that is not a container, a policy or a grant. Returns the
+    /// reason when it cannot be expressed — the caller records it; nothing
+    /// is dropped in silence.
     fn discover_generic_resource(
          tf_type: &str,
          asset: &Asset,
@@ -1316,7 +1313,7 @@ impl Discoverer {
          scope: &str,
          scope_id: &str,
          sinks: Sinks<'_>,
-    ) {
+    ) -> Result<(), SkipReason> {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
           let name = &asset.name;
           let raw_key = if let Some(field) = &res_config.derive_yaml_key_from {
@@ -1339,33 +1336,112 @@ impl Discoverer {
                }
           }
           
-          if resource_val.is_empty() { return; }
-          let policy_map_val = serde_yaml::Value::Mapping(resource_val);
-
-          if scope == "organization" {
-               config.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-               if let Some(serde_yaml::Value::Mapping(m)) = config.extra.get_mut(tf_type) {
-                    m.insert(serde_yaml::Value::String(sanitized_key.clone()), policy_map_val);
-               }
-          } else if scope == "folder" {
-                if let Some(f_yaml) = gcp_id_to_yaml_name.get(scope_id) {
-                    if let Some(f) = folder_map.get_mut(f_yaml) {
-                        f.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-                        if let Some(serde_yaml::Value::Mapping(m)) = f.extra.get_mut(tf_type) {
-                            m.insert(serde_yaml::Value::String(sanitized_key.clone()), policy_map_val);
-                        }
-                    }
-                }
-          } else if scope == "project" {
-                if let Some(p_yaml) = gcp_id_to_yaml_name.get(scope_id) {
-                    if let Some(p) = project_map.get_mut(p_yaml) {
-                         p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-                         if let Some(serde_yaml::Value::Mapping(m)) = p.extra.get_mut(tf_type) {
-                             m.insert(serde_yaml::Value::String(sanitized_key.clone()), policy_map_val);
-                         }
-                    }
-                }
+          if resource_val.is_empty() {
+              return Err(SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()));
           }
+          Self::complete_required(tf_type, asset, registry, &mut resource_val)?;
+          // the live shape has no `id` field (that is the state shape's); the
+          // asset path IS the resource name the provider imports by —
+          // `tofu plan` on the import block validates it
+          let id_key = serde_yaml::Value::String("import-id".into());
+          let (extra, project_id) = match scope {
+              "organization" => (&mut config.extra, None),
+              "folder" => {
+                  let f = gcp_id_to_yaml_name.get(scope_id).and_then(|f_yaml| folder_map.get_mut(f_yaml));
+                  (&mut f.ok_or_else(|| SkipReason::ParentNotFound(scope_id.to_string()))?.extra, None)
+              }
+              "project" => {
+                  let p = gcp_id_to_yaml_name.get(scope_id).and_then(|p_yaml| project_map.get_mut(p_yaml));
+                  let p = p.ok_or_else(|| SkipReason::ParentNotFound(scope_id.to_string()))?;
+                  let id = p.project_id.clone();
+                  (&mut p.extra, Some(id))
+              }
+              other => return Err(SkipReason::Unmapped(format!("asset scope `{}` has no place in the estate", other))),
+          };
+          if !resource_val.contains_key(&id_key) {
+              // Cloud Asset names project-scoped resources by project NUMBER;
+              // imported that way the provider keeps the number as `project`
+              // and the declared id then forces a replacement — so the import
+              // id names the project by id
+              let mut path = Self::asset_path(asset).to_string();
+              if let Some(pid) = &project_id {
+                  let by_number = format!("projects/{}/", scope_id);
+                  if path.starts_with(&by_number) {
+                      path = format!("projects/{}/{}", pid, &path[by_number.len()..]);
+                  }
+              }
+              let mut with_id = serde_yaml::Mapping::new();
+              with_id.insert(id_key, serde_yaml::Value::String(path));
+              with_id.extend(resource_val);
+              resource_val = with_id;
+          }
+          let policy_map_val = serde_yaml::Value::Mapping(resource_val);
+          extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+          if let Some(serde_yaml::Value::Mapping(m)) = extra.get_mut(tf_type) {
+              m.insert(serde_yaml::Value::String(sanitized_key), policy_map_val);
+          }
+          Ok(())
+    }
+
+    /// `//logging.googleapis.com/projects/p/sinks/x` → `projects/p/sinks/x`
+    fn asset_path(asset: &Asset) -> &str {
+        let path = asset.name.trim_start_matches("//");
+        path.split_once('/').map(|(_, p)| p).unwrap_or(path)
+    }
+
+    /// Every attribute the provider REQUIRES must be present, or the block
+    /// cannot plan. Cloud Asset Inventory data carries a few of them only
+    /// implicitly: `parent` is the asset name minus its own collection and id
+    /// (`…/organizations/1/contacts/0` → `organizations/1`); a service
+    /// account's `account_id` is the local part of its email. Anything else
+    /// still missing is not expressible from the asset — the resource is
+    /// skipped with the attribute named.
+    fn complete_required(
+        tf_type: &str,
+        asset: &Asset,
+        registry: Option<&ResourceRegistry>,
+        values: &mut serde_yaml::Mapping,
+    ) -> Result<(), SkipReason> {
+        let Some(schema) = registry.and_then(|r| r.find_resource(tf_type)).map(|(_, s)| s) else { return Ok(()) };
+        let mut required: Vec<&String> = schema.block.attributes.iter().filter(|(_, a)| a.required).map(|(k, _)| k).collect();
+        required.sort();
+        let path = Self::asset_path(asset);
+        let segs: Vec<&str> = path.split('/').collect();
+        // `organizations/1/…` → ("organizations", "1")
+        let scope = (segs.len() >= 2).then(|| (segs[0], segs[1]));
+        let raw = asset.resource.as_ref().and_then(|r| r.data.as_ref());
+        for key in required {
+            let k = serde_yaml::Value::String(key.clone());
+            if values.contains_key(&k) {
+                continue;
+            }
+            let derived = match key.as_str() {
+                "parent" => (segs.len() >= 3).then(|| segs[..segs.len() - 2].join("/")),
+                "org_id" => scope.filter(|(c, _)| *c == "organizations").map(|(_, id)| id.to_string()),
+                "folder" => scope.filter(|(c, _)| *c == "folders").map(|(_, id)| id.to_string()),
+                "project" => scope.filter(|(c, _)| *c == "projects").map(|(_, id)| id.to_string()),
+                // the email is `computed` in the schema (filtered above), the
+                // account id is its local part
+                "account_id" if tf_type == "google_service_account" => raw
+                    .and_then(|d| d.get("email"))
+                    .and_then(|e| e.as_str())
+                    .and_then(|e| e.split_once('@'))
+                    .map(|(local, _)| local.to_string()),
+                _ => None,
+            };
+            match derived {
+                Some(v) => {
+                    values.insert(k, serde_yaml::Value::String(v));
+                }
+                None => {
+                    return Err(SkipReason::Unmapped(format!(
+                        "required `{}` is not in the asset data and cannot be derived",
+                        key
+                    )))
+                }
+            }
+        }
+        Ok(())
     }
     
 
@@ -1531,61 +1607,138 @@ impl Discoverer {
     }
 }
 
+/// `role` and `member` of a grant record — both structural: a record without
+/// them is corrupt input, never a placeholder in the estate.
+fn grant_identity(tf_type: &str, tf_name: &str, values: &Value) -> Result<(String, String), String> {
+    let take = |k: &str| {
+        values[k]
+            .as_str()
+            .filter(|v| !v.is_empty())
+            .map(String::from)
+            .ok_or_else(|| format!("state: {} `{}` has no `{}`", tf_type, tf_name, k))
+    };
+    Ok((take("role")?, take("member")?))
+}
+
 /// Nest each discovered project under its parent folder.
 ///
 /// A project can have a surviving parent edge while its own record was filtered out —
 /// e.g. Cloud Asset returned the ancestry but the asset itself was excluded by the
 /// discovery config, or the caller lacked read access to it. That is normal partial
 /// input, so an unresolvable id is reported and skipped rather than panicking.
+///
+/// A parent folder that is not in the sweep (`satz import projects/x` under a
+/// folder, a folder root whose projects sit in sub-folders the filter dropped)
+/// cannot nest the project, so the project keeps it as an explicit `folder_id`
+/// — re-parenting it to the organization would make `apply` MOVE the project.
 fn link_projects_to_folders(
     project_id_to_parent: &HashMap<String, String>,
     gcp_id_to_yaml_name: &HashMap<String, String>,
     project_map: &mut HashMap<String, Project>,
     folder_map: &mut HashMap<String, Folder>,
-) {
-    let project_ids: Vec<String> = project_id_to_parent.keys().cloned().collect();
+) -> Result<(), String> {
+    let mut project_ids: Vec<&String> = project_id_to_parent.keys().collect();
+    project_ids.sort();
+    let mut kept_explicit = Vec::new();
     for p_id in project_ids {
-        let f_id = &project_id_to_parent[&p_id];
-        let Some(p_yaml) = gcp_id_to_yaml_name.get(&p_id).cloned() else {
+        let f_id = &project_id_to_parent[p_id];
+        let Some(p_yaml) = gcp_id_to_yaml_name.get(p_id).cloned() else {
             eprintln!("Warning: skipping project '{}' — it has a parent but no discovered resource record.", p_id);
             continue;
         };
-
-        if let Some(f_yaml) = gcp_id_to_yaml_name.get(f_id) {
-            if let (Some(project), Some(folder)) = (project_map.remove(&p_yaml), folder_map.get_mut(f_yaml)) {
+        match gcp_id_to_yaml_name.get(f_id) {
+            Some(f_yaml) => {
+                let Some(folder) = folder_map.get_mut(f_yaml) else {
+                    return Err(format!("import: folder {} ({}) is the parent of project {} but has no record to nest under", f_id, f_yaml, p_id));
+                };
+                let Some(project) = project_map.remove(&p_yaml) else {
+                    return Err(format!("import: project {} ({}) has a parent but no record to move", p_id, p_yaml));
+                };
                 folder.project.get_or_insert_with(HashMap::new).insert(p_yaml, project);
+            }
+            None => {
+                let Some(project) = project_map.get_mut(&p_yaml) else {
+                    return Err(format!("import: project {} ({}) has a parent but no record to annotate", p_id, p_yaml));
+                };
+                project.extra.insert("folder_id".into(), serde_yaml::Value::String(f_id.trim_start_matches("folders/").to_string()));
+                kept_explicit.push(format!("{} → {}", p_id, f_id));
             }
         }
     }
+    if !kept_explicit.is_empty() {
+        println!(
+            "import: {} project(s) sit under a folder outside this sweep; kept as an explicit folder_id: {}",
+            kept_explicit.len(),
+            kept_explicit.join(", ")
+        );
+    }
+    Ok(())
 }
 
-/// Nest each discovered folder under its parent folder, deepest first so a child is
-/// always moved before the folder containing it. Unresolvable ids are skipped as above.
+/// Nest each discovered folder under its parent folder, deepest first (depth
+/// walked over the parent map — never inferred from the id) so a child is
+/// always moved before the folder containing it. A folder whose parent is not
+/// in the sweep keeps that parent explicitly, for the same reason as above.
 fn link_folders_to_parents(
     folder_id_to_parent: &HashMap<String, String>,
     gcp_id_to_yaml_name: &HashMap<String, String>,
     folder_map: &mut HashMap<String, Folder>,
-) {
-    let mut sorted_folder_ids: Vec<String> = folder_id_to_parent.keys().cloned().collect();
-    sorted_folder_ids.sort_by_key(|id| std::cmp::Reverse(id.len()));
+) -> Result<(), String> {
+    let depth = |id: &String| -> usize {
+        let mut d = 0;
+        let mut cur = id;
+        while let Some(parent) = folder_id_to_parent.get(cur) {
+            d += 1;
+            cur = parent;
+            if d > 64 {
+                break;
+            }
+        }
+        d
+    };
+    let mut sorted_folder_ids: Vec<&String> = folder_id_to_parent.keys().collect();
+    sorted_folder_ids.sort_by_key(|id| (std::cmp::Reverse(depth(id)), (*id).clone()));
+    let mut kept_explicit = Vec::new();
 
     for child_id in sorted_folder_ids {
-        let parent_id = &folder_id_to_parent[&child_id];
-        let Some(child_yaml) = gcp_id_to_yaml_name.get(&child_id).cloned() else {
+        let parent_id = &folder_id_to_parent[child_id];
+        let Some(child_yaml) = gcp_id_to_yaml_name.get(child_id).cloned() else {
             eprintln!("Warning: skipping folder '{}' — it has a parent but no discovered resource record.", child_id);
             continue;
         };
-
-        if let Some(parent_yaml) = gcp_id_to_yaml_name.get(parent_id) {
-            if let Some(child_folder) = folder_map.remove(&child_yaml) {
-                if let Some(parent_folder) = folder_map.get_mut(parent_yaml) {
-                    parent_folder.folder.get_or_insert_with(HashMap::new).insert(child_yaml, child_folder);
-                } else {
-                    folder_map.insert(child_yaml, child_folder);
-                }
+        if !parent_id.starts_with("folders/") {
+            continue; // organization root: the emitter derives it
+        }
+        match gcp_id_to_yaml_name.get(parent_id) {
+            Some(parent_yaml) => {
+                let Some(child_folder) = folder_map.remove(&child_yaml) else {
+                    return Err(format!("import: folder {} ({}) has a parent but no record to move", child_id, child_yaml));
+                };
+                let Some(parent_folder) = folder_map.get_mut(parent_yaml) else {
+                    return Err(format!(
+                        "import: folder {} ({}) is the parent of {} but is not at the top level any more — nesting order is broken",
+                        parent_id, parent_yaml, child_id
+                    ));
+                };
+                parent_folder.folder.get_or_insert_with(HashMap::new).insert(child_yaml, child_folder);
+            }
+            None => {
+                let Some(child_folder) = folder_map.get_mut(&child_yaml) else {
+                    return Err(format!("import: folder {} ({}) has a parent but no record to annotate", child_id, child_yaml));
+                };
+                child_folder.parent = Some(parent_id.clone());
+                kept_explicit.push(format!("{} → {}", child_id, parent_id));
             }
         }
     }
+    if !kept_explicit.is_empty() {
+        println!(
+            "import: {} folder(s) sit under a folder outside this sweep; kept as an explicit parent: {}",
+            kept_explicit.len(),
+            kept_explicit.join(", ")
+        );
+    }
+    Ok(())
 }
 
 /// The end of every import: what was left out, and why. Never silent — a
@@ -1642,5 +1795,75 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
         }
     } else {
         println!("  (--verbose lists every one; `import: false` rows and `--only` are the levers)");
+    }
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    //! Folder nesting used to order by id STRING LENGTH and re-insert a child at
+    //! the top level when its parent was already nested — a folder three levels
+    //! deep was emitted under the organization, and `apply` would have moved it.
+    use super::*;
+
+    fn folder(name: &str) -> Folder {
+        Folder { import_id: None, display_name: name.into(), parent: None, folder: None, project: None, extra: HashMap::new() }
+    }
+
+    #[test]
+    fn folders_nest_by_depth_whatever_their_ids_look_like() {
+        // A (short id) → B (long id) → C (medium id)
+        let parents: HashMap<String, String> = [
+            ("folders/1", "organizations/1"),
+            ("folders/2000000002", "folders/1"),
+            ("folders/30000003", "folders/2000000002"),
+        ]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        let names: HashMap<String, String> = [
+            ("folders/1", "a"),
+            ("folders/2000000002", "b"),
+            ("folders/30000003", "c"),
+        ]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        let mut map: HashMap<String, Folder> = ["a", "b", "c"].into_iter().map(|n| (n.to_string(), folder(n))).collect();
+        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        assert_eq!(map.keys().collect::<Vec<_>>(), vec!["a"]);
+        let b = &map["a"].folder.as_ref().unwrap()["b"];
+        assert!(b.folder.as_ref().unwrap().contains_key("c"), "c nests under b under a");
+    }
+
+    #[test]
+    fn a_parent_outside_the_sweep_stays_explicit() {
+        let parents: HashMap<String, String> = [("folders/30000003", "folders/999999999")]
+            .into_iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let names: HashMap<String, String> = [("folders/30000003", "c")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut map: HashMap<String, Folder> = [("c".to_string(), folder("c"))].into_iter().collect();
+        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        assert_eq!(map["c"].parent.as_deref(), Some("folders/999999999"));
+
+        let pparents: HashMap<String, String> = [("projects/p1", "folders/999999999")]
+            .into_iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let pnames: HashMap<String, String> = [("projects/p1", "p1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut projects: HashMap<String, Project> = [("p1".to_string(), Project {
+            import_id: None, name: None, project_id: "p1".into(), billing_account: None, labels: None, tags: None,
+            deletion_policy: None, project_service: None, extra: HashMap::new(),
+        })].into_iter().collect();
+        let mut folders: HashMap<String, Folder> = HashMap::new();
+        link_projects_to_folders(&pparents, &pnames, &mut projects, &mut folders).unwrap();
+        assert_eq!(projects["p1"].extra.get("folder_id").and_then(|v| v.as_str()), Some("999999999"));
+    }
+
+    #[test]
+    fn a_grant_without_role_is_corrupt_input_not_a_placeholder() {
+        let v: serde_json::Value = serde_json::json!({"member": "user:a@example.com"});
+        let err = grant_identity("google_project_iam_member", "x", &v).unwrap_err();
+        assert!(err.contains("has no `role`"), "{}", err);
     }
 }
