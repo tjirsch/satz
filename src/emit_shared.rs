@@ -112,6 +112,32 @@ pub(crate) fn group_block(
     builder.build()
 }
 
+/// A group's `lifecycle` block, always ignoring `initial_group_config`: it is a
+/// create-only attribute the live group does not report, so without this an
+/// ADOPTED group plans as "must be replaced" — destroyed and recreated, with
+/// its memberships (live-run F15). Merged with whatever lifecycle the block
+/// declares; `ignore_changes = all` is left alone.
+pub(crate) fn group_lifecycle(attrs: &serde_yaml::Mapping) -> Option<hcl::Block> {
+    let mut lc = match attrs.get(serde_yaml::Value::String("lifecycle".into())) {
+        Some(serde_yaml::Value::Mapping(m)) => m.clone(),
+        _ => serde_yaml::Mapping::new(),
+    };
+    let key = serde_yaml::Value::String("ignore_changes".into());
+    let igc = serde_yaml::Value::String("initial_group_config".into());
+    match lc.get_mut(&key) {
+        Some(serde_yaml::Value::Sequence(seq)) => {
+            if !seq.contains(&igc) {
+                seq.push(igc);
+            }
+        }
+        Some(serde_yaml::Value::String(_)) => {}
+        _ => {
+            lc.insert(key, serde_yaml::Value::Sequence(vec![igc]));
+        }
+    }
+    lifecycle_block(&serde_yaml::Value::Mapping(lc), &|_| None)
+}
+
 /// The folder resource block: display_name, parent, provider, optional labels
 /// and lifecycle.
 pub(crate) fn folder_block(
