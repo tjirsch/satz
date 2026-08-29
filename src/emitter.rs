@@ -437,6 +437,13 @@ fn emit_project(
         }
     }
     let has_org = get("org_id").is_some() || get("org").is_some() || get("folder_id").is_some();
+    // An explicit parent on the project is written as declared — it used to
+    // be dropped silently (skipped below), leaving the project without one.
+    for k in ["org_id", "folder_id"] {
+        if let Some(v) = get(k).and_then(|v| crate::emit_shared::render_value(v, &|_| None)) {
+            b = b.add_attribute(hcl::Attribute::new(k, v));
+        }
+    }
     if !has_org {
         if let Some(folder) = last_with_prefix(path, "folder:") {
             b = b.add_attribute(hcl::Attribute::new(

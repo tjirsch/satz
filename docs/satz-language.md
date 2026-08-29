@@ -1258,7 +1258,8 @@ vanishes. `--wrap-all` wraps everything.
 | HCL | Becomes |
 |---|---|
 | `resource` of a schema-known type, literal values, identifier label | a Satz resource: attributes as written, repeated nested blocks → a list of objects, `lifecycle` as declared, the label kept (a wrapped block referencing it still resolves) |
-| positional types — `google_folder`, `google_project`, `google_project_service`, groups, memberships, `*_iam_member` / `_binding` / `_policy` | wrapped: their Satz form is their place in the tree, which a flat `.tf` does not carry (nesting recovery is 3.1c) |
+| `google_folder` (`parent` = the organisation, or a reference to a folder in the input), `google_project` (`folder_id` a folder reference, or `org_id`), `google_project_service` / `google_project_iam_member` / any project-scoped resource whose `project` references a project in the input, `google_folder_iam_member`, `google_organization_iam_member` | placed: nested under the folder/project they reference (that identity reference is the one expression allowed); grants become grant-map entries, services the project's `project_service` list; `customer_organization_id` is inferred from the literals |
+| a project whose `folder_id` is a folder *number*, a resource whose parent is wrapped, groups, memberships, `*_iam_binding` / `_policy`, bucket and billing grants | wrapped, with the reason (closure by dependency: a child of a wrapped container is wrapped too) |
 | a `resource` with an expression — a reference, `${…}`, a function, `count`/`for_each`/`dynamic`/`provider`/`depends_on`, a type not in the schema, a label that is not an identifier | wrapped, with the reason |
 | `module`, `locals`, `data`, `variable`, `output`, `moved`, `import` | wrapped |
 | `terraform`, `provider` | dropped (one note each) |
