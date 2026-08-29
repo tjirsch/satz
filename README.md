@@ -131,6 +131,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--no-live` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
+| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
 | `self-update` | `--no-download-readme`, `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `open-readme` | *(none)* |
 | `completion [SHELL]` | `--install` |
@@ -715,26 +716,52 @@ deviations are disclosed decisions and do not fail it.
 Full specification, grammar and lookup: **`docs/satz-language.md`** — derived from
 the parser (`crates/satz-core/src/satz.rs`), with every example verified to compile.
 
-### Adopting existing org policies (brownfield)
+### Adopting what already exists (`adopt`, brownfield)
 
-A first `apply` against an organisation that already has org policies fails one
-policy at a time with `Error 409: A Policy of constraint ... already exists`. Worse,
-GCP **managed** constraints cannot be imported at all until the organisation has
-activated them. Both are one command:
+A first `apply` against an organisation that already has folders, groups, org
+policies or a state bucket fails one resource at a time with `409 … already
+exists` — or, worse, recreates them. `satz adopt` resolves the live id of every
+resource the estate declares and brings it under management:
 
 ```bash
-satz adopt-org-policies C0example1.satz --dry-run   # show the plan
-satz adopt-org-policies C0example1.satz             # activate + import
+satz adopt C0example1.satz                                   # dry run: the resolution table
+satz adopt C0example1.satz --execute                         # write verified "import-id"s into the estate
+satz adopt C0example1.satz --execute --import --activate     # tofu import now; activate managed constraints
+satz adopt C0example1.satz --only google_folder,google_cloud_identity_group
 ```
 
-It reads the policies out of the emitted `main.tf` — the same list `apply` acts on —
-then for each: activates a managed constraint the org has never had (using the
-enforcement the estate declares, so the following apply is a no-op), imports anything
-that exists, and leaves a not-yet-existing legacy constraint for `apply` to create.
-Imports are idempotent; re-running is safe.
+How a resource is resolved depends on who chose its identity:
 
-It is a separate command on purpose. It makes live API calls and activates
-constraints, so it is never a side effect of `transpile`, which stays pure.
+- **User-chosen id** (project, bucket, service account, IAM bindings, sinks,
+  metrics, custom roles, `project_service`, …): the import id is rendered
+  offline from a template on the type's row in `presets/discovery-config.yaml`
+  (`import_id: "projects/{project}/serviceAccounts/{account_id}@…"`), with
+  `{placeholders}` filled from the emitted attributes and resolved references.
+  Reported as *derived*; its existence is verified by the import itself.
+- **GCP-assigned id**: looked up by natural key under the resolved parent —
+  folders by display name, groups by email, memberships by group + email, org
+  policies by constraint. Resolution is top-down, so a folder's number is known
+  before its children ask for it.
+- A type with neither rule is reported as **no rule** — add `import_id:` or
+  `match_on:` to its row; that is a one-line data change, not code.
+
+It **never guesses**: exactly one live candidate resolves; none means *on apply*
+(Terraform will create it); more than one is **AMBIGUOUS**, the candidates are
+listed, and you pin `"import-id"` by hand. Managed org-policy constraints the
+organisation has never had need `--activate` (they cannot be imported before
+activation; this mutates the org). `--execute` writes only *verified* ids into
+the `.satz` (an `import` block for a non-existent object would fail the whole
+plan); `--execute --import` runs `tofu import` for derived ids too and reports
+each failure. Entry-level resources (IAM bindings, services, memberships) get a
+printed snippet rather than an in-place edit — see the language reference §6.7.
+
+`adopt-org-policies` remains as an alias of
+`adopt --only google_org_policy_policy --activate --execute --import`.
+
+It is a separate command on purpose: it makes live API calls and, with
+`--activate`, changes the organisation, so it is never a side effect of
+`transpile`, which stays pure. The only trace it leaves in the language is the
+`"import-id"` it writes.
 
 ### Running from anywhere
 

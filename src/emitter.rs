@@ -98,6 +98,17 @@ fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Option<serde_yaml::Va
     serde_yaml::from_str(&edge.condition).ok()
 }
 
+/// `<type>.<label>` of a resource block.
+fn block_address(b: &hcl::Block) -> Option<String> {
+    if b.identifier() != "resource" {
+        return None;
+    }
+    match b.labels() {
+        [t, l] => Some(format!("{}.{}", t.as_str(), l.as_str())),
+        _ => None,
+    }
+}
+
 /// A Terraform `import { to id }` block — the carried result of adoption.
 fn import_block(to: &str, id: &str) -> hcl::Block {
     hcl::Block::builder("import")
@@ -147,6 +158,9 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             .map(|s| s.to_string())
     };
 
+    // (address, file, line): where each directly-declared block came from, so
+    // `adopt --write` can put a resolved id back into the source.
+    let mut origins: Vec<(String, String, u32)> = Vec::new();
     for (addr, slot) in &folded.slots {
         let entity = match slot {
             Slot::Ok(e) => e,
@@ -161,6 +175,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         };
         let path = &entity.node_path;
         let alias = alias_for(path);
+        let first_block = blocks.len();
         match (addr.tf_type.as_str(), &entity.body) {
             ("google_folder", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
                 let display_name = attrs
@@ -336,9 +351,29 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             }
             (t, _) => return Err(format!("emitter has no rule for {} yet (label {})", t, addr.label)),
         }
+        // The entity's own block is the first one its arm pushed; blocks after
+        // it (memberships, services, exploded grants) are derived and have no
+        // line of their own. A grant map's blocks are all derived, and its
+        // provenance is the member line — recorded on each, so a grant can at
+        // least be pointed at.
+        if let Some(span) = entity.provenance.first() {
+            let derived_all = matches!(entity.body, Body::Grant(_));
+            for b in &blocks[first_block..] {
+                if let Some(a) = block_address(b) {
+                    origins.push((a, span.file.clone(), span.line));
+                }
+                if !derived_all {
+                    break;
+                }
+            }
+        }
     }
 
-    let manifest = crate::manifest::Manifest::from_blocks(&blocks);
+    let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
+    manifest.attach_imports(&imports);
+    for (a, f, l) in &origins {
+        manifest.set_origin(a, f, *l);
+    }
     let mut body = hcl::Body::builder();
     for b in blocks {
         body = body.add_block(b);

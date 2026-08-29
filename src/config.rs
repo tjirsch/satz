@@ -97,6 +97,21 @@ pub struct DiscoveryResourceConfig {
     pub derive_yaml_key_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<bool>,
+    /// Adoption rule for a type whose Terraform import id is user-chosen: a
+    /// template over the emitted resource's attributes and resolved
+    /// references, e.g. `projects/{project}/serviceAccounts/{account_id}@…`.
+    /// Rendered offline, no API call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub import_id: Option<String>,
+    /// Adoption rule for a type whose id GCP assigns: the attributes to match
+    /// a live asset on (under the resolved parent), the live `name` being the
+    /// import id. Needs `asset_type`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_on: Option<Vec<String>>,
+    /// `managed`: a missing constraint must be activated before import
+    /// (org policies only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activate: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

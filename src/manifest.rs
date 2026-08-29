@@ -23,10 +23,25 @@ pub(crate) struct EmittedResource {
     /// Nested blocks are deliberately not flattened in: an alert policy's
     /// `conditions { display_name }` must not shadow the resource's own.
     pub attrs: BTreeMap<String, String>,
+    /// Top-level attributes whose value is a traversal, rendered as text
+    /// (`parent = google_folder.x.name` → `"google_folder.x.name"`). These are
+    /// the references adoption follows to resolve a parent before a child.
+    pub refs: BTreeMap<String, String>,
+    /// String attributes of nested blocks, dotted (`group_key.id`,
+    /// `preferred_member_key.id`); first occurrence wins. Adoption's natural
+    /// keys for groups and memberships live one level down.
+    pub nested: BTreeMap<String, String>,
     /// The single `enforce` the block declares anywhere in its body, when it
     /// declares exactly one. Several, none, or a list constraint yield `None`:
     /// no verdict is better than a wrong one.
     pub enforce: Option<bool>,
+    /// The `import { to id }` block emitted for this resource, if any — i.e.
+    /// the estate already adopted it.
+    pub import_id: Option<String>,
+    /// Where the declaring block starts in the source: (file, 1-based line of
+    /// the `label {` line). `None` for resources derived from another block
+    /// (memberships, exploded grants, project services).
+    pub origin: Option<(String, u32)>,
 }
 
 impl EmittedResource {
@@ -51,6 +66,37 @@ impl Manifest {
             }
         }
         Manifest { resources }
+    }
+
+    /// Record the `import` blocks the emitter built beside the resources.
+    pub fn attach_imports<'a>(&mut self, imports: impl IntoIterator<Item = &'a hcl::Block>) {
+        for b in imports {
+            if b.identifier() != "import" {
+                continue;
+            }
+            let mut to = None;
+            let mut id = None;
+            for a in b.body().attributes() {
+                match a.key() {
+                    "to" => to = hcl::format::to_string(a.expr()).ok(),
+                    "id" => id = string_value(a.expr()),
+                    _ => {}
+                }
+            }
+            if let (Some(to), Some(id)) = (to, id) {
+                if let Some(r) = self.resources.get_mut(to.trim()) {
+                    r.import_id = Some(id);
+                }
+            }
+        }
+    }
+
+    /// Record where a resource was declared. Called by the emitter per fold
+    /// entity for the block(s) that entity produced directly.
+    pub fn set_origin(&mut self, address: &str, file: &str, line: u32) {
+        if let Some(r) = self.resources.get_mut(address) {
+            r.origin = Some((file.to_string(), line));
+        }
     }
 
     /// The same reduction over `hcl::parse` output. Production goes through
@@ -96,18 +142,41 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
     if tf_type.is_empty() || label.is_empty() {
         return None;
     }
-    let attrs = b
-        .body()
-        .attributes()
-        .filter_map(|a| string_value(a.expr()).map(|v| (a.key().to_string(), v)))
-        .collect();
+    let mut attrs = BTreeMap::new();
+    let mut refs = BTreeMap::new();
+    for a in b.body().attributes() {
+        if let Some(v) = string_value(a.expr()) {
+            attrs.insert(a.key().to_string(), v);
+        } else if let hcl::Expression::Traversal(_) = a.expr() {
+            if let Ok(t) = hcl::format::to_string(a.expr()) {
+                refs.insert(a.key().to_string(), t.trim().to_string());
+            }
+        }
+    }
+    let mut nested = BTreeMap::new();
+    for nb in b.body().blocks() {
+        for a in nb.body().attributes() {
+            if let Some(v) = string_value(a.expr()) {
+                nested.entry(format!("{}.{}", nb.identifier(), a.key())).or_insert(v);
+            }
+        }
+    }
     let mut found = Vec::new();
     collect_enforce(b.body(), &mut found);
     let enforce = match found.as_slice() {
         [only] => Some(*only),
         _ => None,
     };
-    Some(EmittedResource { tf_type: tf_type.to_string(), label: label.to_string(), attrs, enforce })
+    Some(EmittedResource {
+        tf_type: tf_type.to_string(),
+        label: label.to_string(),
+        attrs,
+        refs,
+        nested,
+        enforce,
+        import_id: None,
+        origin: None,
+    })
 }
 
 /// A plain string, or a template string rendered back to its `${…}` text —
@@ -262,6 +331,27 @@ resource "google_org_policy_policy" "p" {
             r.attrs.get("name").map(String::as_str),
             Some("${google_folder.x.name}/policies/compute.managed.requireOsLogin")
         );
+        // a traversal is not a string attr — it is a reference
         assert_eq!(r.attrs.get("parent"), None);
+        assert_eq!(r.refs.get("parent").map(String::as_str), Some("google_folder.x.name"));
+    }
+
+    #[test]
+    fn imports_attach_to_their_resource() {
+        let body = hcl::parse(
+            r#"
+resource "google_folder" "x" {
+  display_name = "X"
+}
+import {
+  to = google_folder.x
+  id = "folders/123"
+}
+"#,
+        )
+        .unwrap();
+        let mut m = Manifest::from_blocks(body.blocks());
+        m.attach_imports(body.blocks());
+        assert_eq!(m.resources["google_folder.x"].import_id.as_deref(), Some("folders/123"));
     }
 }

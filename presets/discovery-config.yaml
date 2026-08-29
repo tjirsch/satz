@@ -44,12 +44,14 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_artifact_registry_repository:
+    import_id: "projects/{project}/locations/{location}/repositories/{repository_id}"
     description: Artifact Registry repository
     import: false
     asset_type: artifactregistry.googleapis.com/Repository
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_bigquery_dataset:
+    import_id: "projects/{project}/datasets/{dataset_id}"
     description: BigQuery dataset
     import: false
     asset_type: bigquery.googleapis.com/Dataset
@@ -74,6 +76,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_billing_account_iam_member:
+    import_id: "{billing_account_id} {role} {member}"
     description: IAM policy for a billing account
     import: false
     asset_type: cloudbilling.googleapis.com/BillingAccount
@@ -98,12 +101,14 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_cloud_identity_group:
+    match_on: [group_key.id]
     description: Cloud Identity group
     import: false
     asset_type: cloudidentity.googleapis.com/Group
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_cloud_identity_group_membership:
+    match_on: [group, preferred_member_key.id]
     description: Membership in a Cloud Identity group
     import: false
     asset_type: cloudidentity.googleapis.com/Membership
@@ -140,6 +145,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_address:
+    import_id: "projects/{project}/regions/{region}/addresses/{name}"
     description: Compute Engine static IP address
     import: false
     asset_type: compute.googleapis.com/Address
@@ -176,6 +182,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_firewall:
+    import_id: "projects/{project}/global/firewalls/{name}"
     description: Compute Engine firewall rule
     import: false
     asset_type: compute.googleapis.com/Firewall
@@ -194,6 +201,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_global_address:
+    import_id: "projects/{project}/global/addresses/{name}"
     description: Compute Engine global static IP address
     import: false
     asset_type: compute.googleapis.com/GlobalAddress
@@ -272,6 +280,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_network:
+    import_id: "projects/{project}/global/networks/{name}"
     description: Compute Engine VPC network
     import: false
     asset_type: compute.googleapis.com/Network
@@ -362,6 +371,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_router:
+    import_id: "projects/{project}/regions/{region}/routers/{name}"
     description: Compute Engine Cloud Router
     import: false
     asset_type: compute.googleapis.com/Router
@@ -422,6 +432,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_subnetwork:
+    import_id: "projects/{project}/regions/{region}/subnetworks/{name}"
     description: Compute Engine VPC subnet
     import: false
     asset_type: compute.googleapis.com/Subnetwork
@@ -554,6 +565,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_dns_managed_zone:
+    import_id: "projects/{project}/managedZones/{name}"
     description: Cloud DNS managed zone
     import: false
     asset_type: dns.googleapis.com/ManagedZone
@@ -578,6 +590,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_essential_contacts_contact:
+    match_on: [email]
     description: Essential contact for a resource
     import: false
     asset_type: essentialcontacts.googleapis.com/Contact
@@ -596,6 +609,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_folder:
+    match_on: [display_name]
     description: "Folders managed as resources"
     import: true
     asset_type: "cloudresourcemanager.googleapis.com/Folder"
@@ -603,6 +617,7 @@ resource_types:
     derive_yaml_key_from: "displayName"
     exclude: []
   google_folder_iam_member:
+    import_id: "{folder} {role} {member}"
     description: IAM policy for a folder
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Folder
@@ -647,6 +662,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_iam_workload_identity_pool:
+    import_id: "projects/{project}/locations/global/workloadIdentityPools/{workload_identity_pool_id}"
     description: IAM workload identity pool
     import: false
     asset_type: iam.googleapis.com/WorkloadIdentityPool
@@ -677,6 +693,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_kms_crypto_key:
+    import_id: "{key_ring}/cryptoKeys/{name}"
     description: Cloud KMS crypto key
     import: false
     asset_type: cloudkms.googleapis.com/CryptoKey
@@ -689,6 +706,7 @@ resource_types:
     content_type: IAM_POLICY
     derive_yaml_key_from: name
   google_kms_key_ring:
+    import_id: "projects/{project}/locations/{location}/keyRings/{name}"
     description: Cloud KMS key ring
     import: false
     asset_type: cloudkms.googleapis.com/KeyRing
@@ -707,24 +725,28 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_logging_folder_sink:
+    import_id: "folders/{folder}/sinks/{name}"
     description: Cloud Logging sink for a folder
     import: false
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_logging_metric:
+    import_id: "{project} {name}"
     description: Cloud Logging user-defined metric
     import: false
     asset_type: logging.googleapis.com/LogMetric
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_logging_organization_sink:
+    import_id: "organizations/{org_id}/sinks/{name}"
     description: Cloud Logging sink for an organization
     import: false
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_logging_project_sink:
+    import_id: "projects/{project}/sinks/{name}"
     description: Cloud Logging sink for a project
     import: false
     asset_type: logging.googleapis.com/LogSink
@@ -743,6 +765,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_monitoring_alert_policy:
+    match_on: [display_name]
     description: Cloud Monitoring alert policy
     import: false
     asset_type: monitoring.googleapis.com/AlertPolicy
@@ -773,6 +796,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_monitoring_notification_channel:
+    match_on: [display_name, type]
     description: Cloud Monitoring notification channel
     import: false
     asset_type: monitoring.googleapis.com/NotificationChannel
@@ -803,6 +827,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_organization_iam_member:
+    import_id: "{org_id} {role} {member}"
     description: IAM policy for an organization
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Organization
@@ -841,6 +866,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_project:
+    import_id: "{project_id}"
     description: Google Cloud Resource Manager project
     import: true
 
@@ -849,6 +875,7 @@ resource_types:
     derive_yaml_key_from: projectId
     exclude: []
   google_project_iam_member:
+    import_id: "{project} {role} {member}"
     description: IAM policy for a project
     import: false
     asset_type: cloudresourcemanager.googleapis.com/Project
@@ -862,6 +889,7 @@ resource_types:
     derive_yaml_key_from: name
     deprecated: true
   google_project_service:
+    import_id: "{project}/{service}"
     description: Google Cloud service enabled for a project
     import: true
     asset_type: serviceusage.googleapis.com/Service
@@ -887,6 +915,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_pubsub_subscription:
+    import_id: "projects/{project}/subscriptions/{name}"
     description: Pub/Sub subscription
     import: false
     asset_type: pubsub.googleapis.com/Subscription
@@ -899,6 +928,7 @@ resource_types:
     content_type: IAM_POLICY
     derive_yaml_key_from: name
   google_pubsub_topic:
+    import_id: "projects/{project}/topics/{name}"
     description: Pub/Sub topic
     import: false
     asset_type: pubsub.googleapis.com/Topic
@@ -923,6 +953,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_secret_manager_secret:
+    import_id: "projects/{project}/secrets/{secret_id}"
     description: Secret Manager secret
     import: false
     asset_type: secretmanager.googleapis.com/Secret
@@ -977,6 +1008,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_sql_database_instance:
+    import_id: "projects/{project}/instances/{name}"
     description: Cloud SQL instance
     import: false
     asset_type: sqladmin.googleapis.com/Instance
@@ -989,6 +1021,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_storage_bucket:
+    import_id: "{name}"
     description: Cloud Storage bucket
     import: true
     asset_type: storage.googleapis.com/Bucket
@@ -996,6 +1029,7 @@ resource_types:
     derive_yaml_key_from: name
     exclude: [timeCreated, updated, metageneration, owner, projectNumber]
   google_storage_bucket_iam_member:
+    import_id: "b/{bucket} {role} {member}"
     description: IAM policy for a Cloud Storage bucket
     import: true
     asset_type: storage.googleapis.com/Bucket
@@ -1728,6 +1762,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_billing_budget:
+    match_on: [display_name]
     description: Auto-generated entry for google_billing_budget
     import: false
     asset_type: TODO/UNKNOWN
@@ -3836,6 +3871,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_iam_workload_identity_pool_provider:
+    import_id: "projects/{project}/locations/global/workloadIdentityPools/{workload_identity_pool_id}/providers/{workload_identity_pool_provider_id}"
     description: Auto-generated entry for 
       google_iam_workload_identity_pool_provider
     import: false
@@ -4276,6 +4312,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_logging_project_bucket_config:
+    import_id: "projects/{project}/locations/{location}/buckets/{bucket_id}"
     description: Auto-generated entry for google_logging_project_bucket_config
     import: false
     asset_type: TODO/UNKNOWN
@@ -4636,6 +4673,8 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_org_policy_policy:
+    import_id: "{parent}/policies/{name}"
+    activate: "managed"
     description: Organization Policy V2
     import: true
     asset_type: orgpolicy.googleapis.com/Policy
@@ -4650,6 +4689,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_organization_iam_audit_config:
+    import_id: "{org_id} {service}"
     description: Auto-generated entry for google_organization_iam_audit_config
     import: false
     asset_type: TODO/UNKNOWN
@@ -4662,6 +4702,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_organization_iam_custom_role:
+    import_id: "organizations/{org_id}/roles/{role_id}"
     description: Auto-generated entry for google_organization_iam_custom_role
     import: false
     asset_type: TODO/UNKNOWN
@@ -4764,6 +4805,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_project_iam_custom_role:
+    import_id: "projects/{project}/roles/{role_id}"
     description: Auto-generated entry for google_project_iam_custom_role
     import: false
     asset_type: TODO/UNKNOWN
@@ -5192,6 +5234,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_service_account:
+    import_id: "projects/{project}/serviceAccounts/{account_id}@{project}.iam.gserviceaccount.com"
     description: Auto-generated entry for google_service_account
     import: false
     asset_type: TODO/UNKNOWN
