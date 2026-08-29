@@ -666,8 +666,11 @@ How a resource is resolved depends on who chose its identity:
   Reported as *derived*; its existence is verified by the import itself.
 - **GCP-assigned id**: looked up by natural key under the resolved parent —
   folders by display name, groups by email, memberships by group + email, org
-  policies by constraint. Resolution is top-down, so a folder's number is known
-  before its children ask for it.
+  policies by constraint; every other type with a `match_on:` row (essential
+  contacts by email, alert policies and notification channels by display
+  name, …) through one Cloud Asset Inventory listing of the row's `asset_type`
+  under the resource's own scope. Resolution is top-down, so a folder's number
+  is known before its children ask for it.
 - A type with neither rule is reported as **no rule** — add `import_id:` or
   `match_on:` to its row; that is a one-line data change, not code.
 
