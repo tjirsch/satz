@@ -67,7 +67,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `docs/satz-language.md` compiles; where the doc and the parser disagree, the
   parser is right and the doc is a bug.
 
-## Language state (v0, satz v0.46.0)
+## Language state (v0, satz v0.46.4)
 
 - The fragment pipeline parses Satz directly: per-file fragments, the ⊕ fold
   (same address, different body = hard error naming both files), schema-typed
@@ -75,7 +75,9 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `use … when`, `suppress` (subtractive; a suppression that matches nothing is
   a hard error), `claim` with `implements` / `contributes` / `deviates`
   (`reason` mandatory on a deviation), `hcl { … }` raw passthrough that warns
-  on every transpile unless `hcl trust "…"`.
+  on every transpile unless `hcl trust "…"` and is never a witness (the
+  compliance plane and `adopt-org-policies` read the emission manifest,
+  `src/manifest.rs`, not `main.tf` text).
 - Compliance plane: `require` is text only and judges the DECLARED estate;
   `report-compliance` verifies witnesses through Cloud Asset Inventory and
   compares org policies by VALUE — a policy that exists but is switched off

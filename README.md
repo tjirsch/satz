@@ -702,7 +702,7 @@ satz require cis-gcp-4.0 C0example.satz
 ```
 
 Per control: **✓ satisfied** (an `implements` claim from an included pack, every witness
-present in the transpiled estate), **◐ partial** (witnesses present but manual duties
+emitted by the compiler — a resource written inside a raw `hcl { … }` block never counts), **◐ partial** (witnesses present but manual duties
 open, or only `contributes` claims), **⚠ deviation** (the estate deliberately does not
 meet this control and says why — see below), **✗ unmet** (with the packs that would
 provide it — remediation as suggestion), **‼ broken claim** (a pack claims witnesses the
