@@ -744,7 +744,7 @@ You rarely write these by hand: `satz adopt <estate>` resolves the live ids of
 everything the estate declares — folders by display name under their parent,
 groups by email, org policies by constraint (activating managed constraints
 with `--activate`), user-chosen ids from the rules in
-`presets/discovery-config.yaml` — and `--execute` writes the verified ones back
+`presets/import-config.yaml` — and `--execute` writes the verified ones back
 as `"import-id"`. A resolution with more than one live candidate is reported as
 ambiguous and left for you to pin; nothing is ever guessed.
 
@@ -1189,7 +1189,7 @@ never legal conformity.
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `tf-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
-| `migrate-to-satz <file>.yaml [--kind estate] [--gate <estate>.satz]` | — | convert from the legacy dialect; gated by compiling through the fragment pipeline (§12) |
+| `import [<source>] [--only t,…] [--import-config f]` | — | create an estate from what exists: a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, or a legacy `.yaml` file (`--kind`, `--gate`; §12); checked by `transpile` + `tofu plan` |
 
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere.
 The estate file is a positional argument, relative to `yaml_dir`.
@@ -1240,12 +1240,12 @@ composition conflicts: <type>.<label>: 2 disagreeing definitions
 ## 12. Migration from the YAML dialect
 
 satz's first surface language was a YAML dialect with custom tags. Since
-v0.46.14 nothing reads it but `migrate-to-satz`: `transpile` and every other
+v0.46.14 nothing reads it but `satz import <file>.yaml`: `transpile` and every other
 command take `.satz` and refuse a `.yaml` estate with a pointer to the
 converter. This section is everything a reader coming from that dialect needs,
 and nothing a reader who never used it does. (Brownfield estates never need
-the dialect: `discover-from-state` and `discover-from-organization` write a
-Satz estate directly, through the same printer `migrate-to-satz` uses.)
+the dialect: `satz import <state.json>` and `satz import organizations/<n>` write a
+Satz estate directly, through the same printer `satz import <file>.yaml` uses.)
 
 **What changed at the surface:**
 
@@ -1282,7 +1282,7 @@ iam-managed-disableServiceAccountKeyCreation:
 }
 ```
 
-**How a conversion is checked.** `migrate-to-satz` converts a file and compiles
+**How a conversion is checked.** `satz import <file>.yaml` converts a file and compiles
 the result through the fragment pipeline — the pipeline that will actually read
 it — and prints the emitted resource set (`CONVERTED: … N resources emitted`).
 An estate is gated on itself; a pack is gated on the `.satz` estate you pass
@@ -1295,7 +1295,7 @@ a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
 
 **A limit worth knowing:** `use "x.yaml"` is accepted by the parser, but the
 fragment pipeline cannot load a YAML pack — it reports `unexpected character
-':'`. Convert the pack (`migrate-to-satz x.yaml --kind pack`).
+':'`. Convert the pack (`satz import x.yaml --kind pack`).
 
 **Why the dialect still parses at all:** to be migrated. That is the whole of
 its support (owner decision, 2026-08-29): YAML is never transpiled or generated

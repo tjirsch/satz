@@ -82,7 +82,7 @@ pub(crate) enum Drift {
 // ---------------------------------------------------------------------------
 
 /// Every pack SOURCE under `dir`: the `.satz` files. (`.yaml` files in a presets
-/// dir — catalogs, `discovery-config.yaml` — are data refreshed as artifacts,
+/// dir — catalogs, `import-config.yaml` — are data refreshed as artifacts,
 /// not packs to classify; the YAML pack dialect is gone.)
 fn walk_preset_sources(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> Result<(), BoxErr> {
     for entry in std::fs::read_dir(dir)? {
@@ -119,7 +119,7 @@ fn used_preset_files(
     let mut used = BTreeSet::new();
 
     if input.extension().and_then(|e| e.to_str()) != Some("satz") {
-        return Err(format!("{}: not a Satz estate — YAML estates are migrated with `migrate-to-satz`, not checked", input.display()).into());
+        return Err(format!("{}: not a Satz estate — YAML estates are converted with `satz import <file>.yaml`, not checked", input.display()).into());
     }
 
     // Walk the `use` graph the same way the compiler resolves it: relative to the
@@ -630,7 +630,7 @@ pub(crate) async fn run_merge_presets(
         if lo == up { current += 1; continue; }
 
         let fname = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
-        // docs and data (catalogs, discovery-config) are artifacts: upstream
+        // docs and data (catalogs, import-config) are artifacts: upstream
         // owns them, nothing to fork
         let is_artifact = fname.ends_with(".md") || fname.ends_with(".yaml");
         if is_artifact {

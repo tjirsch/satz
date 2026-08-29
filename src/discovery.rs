@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, BTreeMap};
 use serde_json::Value;
-use crate::config::{Config, DiscoveryConfig, Folder, Project};
+use crate::config::{Config, ImportConfig, Folder, Project};
 use crate::schema::{ResourceRegistry, ResourceSchema, BlockSchema};
 use google_cloud_asset_v1::client::AssetService;
 use google_cloud_asset_v1::model::{Asset, ContentType};
@@ -463,10 +463,12 @@ impl Discoverer {
         ("organization".to_string(), "".to_string())
     }
 
+    /// `parent` is any Cloud Asset Inventory scope: `organizations/<n>`,
+    /// `folders/<n>` or `projects/<id>`.
     pub async fn discover_from_org(
-        org_id: &str,
+        parent: &str,
         verbose: bool,
-        discovery_config: Option<DiscoveryConfig>,
+        discovery_config: Option<ImportConfig>,
         registry: Option<ResourceRegistry>,
     ) -> Result<Config, Box<dyn std::error::Error>> {
         
@@ -517,7 +519,7 @@ impl Discoverer {
                  println!("Fetching assets for type: {} (Content: {:?})", display_type, ctype);
 
                  let mut stream = client.list_assets()
-                    .set_parent(format!("organizations/{}", org_id))
+                    .set_parent(parent.to_string())
                     .set_asset_types(asset_types_vec)
                     .set_content_type(ctype.clone())
                     .set_page_size(1000)
@@ -587,7 +589,7 @@ impl Discoverer {
         assets: Vec<Asset>, 
         _verbose: bool,
         registry: Option<&ResourceRegistry>,
-        discovery_config: Option<&DiscoveryConfig>,
+        discovery_config: Option<&ImportConfig>,
     ) -> Config {
         let mut config = Config::default();
         let mut deprecated_seen = HashSet::new();
@@ -597,7 +599,7 @@ impl Discoverer {
         let mut project_id_to_parent: HashMap<String, String> = HashMap::new();
         let mut gcp_id_to_yaml_name: HashMap<String, String> = HashMap::new();
         
-        let mut asset_type_to_config: HashMap<String, Vec<(String, &crate::config::DiscoveryResourceConfig)>> = HashMap::new();
+        let mut asset_type_to_config: HashMap<String, Vec<(String, &crate::config::ImportResourceConfig)>> = HashMap::new();
         if let Some(config) = discovery_config {
              for (tf_type, resource_config) in &config.resource_types {
                  if let Some(cat) = &resource_config.asset_type {
@@ -716,7 +718,7 @@ impl Discoverer {
 
     fn discover_google_folder(
         asset: &Asset,
-        _res_config: &crate::config::DiscoveryResourceConfig,
+        _res_config: &crate::config::ImportResourceConfig,
         folder_map: &mut HashMap<String, Folder>,
         folder_id_to_parent: &mut HashMap<String, String>,
         gcp_id_to_yaml_name: &mut HashMap<String, String>,
@@ -776,7 +778,7 @@ impl Discoverer {
 
     fn discover_google_project(
         asset: &Asset,
-        res_config: &crate::config::DiscoveryResourceConfig,
+        res_config: &crate::config::ImportResourceConfig,
         project_map: &mut HashMap<String, Project>,
         project_id_to_parent: &mut HashMap<String, String>,
         gcp_id_to_yaml_name: &mut HashMap<String, String>,
@@ -883,7 +885,7 @@ impl Discoverer {
     fn discover_google_project_service(
          tf_type: &str,
          asset: &Asset,
-         res_config: &crate::config::DiscoveryResourceConfig,
+         res_config: &crate::config::ImportResourceConfig,
          registry: Option<&ResourceRegistry>,
          scope_id: &str,
          project_map: &mut HashMap<String, Project>,
@@ -920,7 +922,7 @@ impl Discoverer {
     fn discover_organization_policy(
          tf_type: &str,
          asset: &Asset,
-         res_config: &crate::config::DiscoveryResourceConfig,
+         res_config: &crate::config::ImportResourceConfig,
          registry: Option<&ResourceRegistry>,
          scope: &str,
          scope_id: &str,
@@ -1081,7 +1083,7 @@ impl Discoverer {
     fn discover_generic_resource(
          tf_type: &str,
          asset: &Asset,
-         res_config: &crate::config::DiscoveryResourceConfig,
+         res_config: &crate::config::ImportResourceConfig,
          registry: Option<&ResourceRegistry>,
          scope: &str,
          scope_id: &str,

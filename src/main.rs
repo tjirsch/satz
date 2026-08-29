@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use crate::schema::ResourceRegistry;
-use crate::config::{Config, DiscoveryConfig};
+use crate::config::{Config, ImportConfig};
 
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +59,7 @@ pub struct ToolConfig {
     #[serde(default = "default_validation_level")]
     pub validation_level: String,
     #[serde(default)]
-    pub discovery_config: Option<String>,
+    pub import_config: Option<String>,
 }
 
 impl ToolConfig {
@@ -295,32 +295,57 @@ enum Commands {
         #[arg(long)]
         tf_tool: Option<String>,
     },
-    /// Discover infrastructure from Terraform state and write it as a Satz
-    /// estate: terraform block, customer_organization_id param inferred from
-    /// the resources, "import-id" on every resource
+    /// Create a Satz estate from what exists. The source decides the shape:
+    /// a state file (`state.json`, `*.tfstate`, `-` for `tofu show -json` on
+    /// stdin), a live scope (`organizations/<n>`, `folders/<n>`,
+    /// `projects/<id>`), or a legacy YAML-dialect file. With no source the
+    /// live root comes from the import config. Every import ends with
+    /// `satz transpile` and `tofu plan` — the plan is the check
+    Import {
+        /// What to import from (see above); omit to use the import config's `root`
+        source: Option<String>,
+        /// Force the shape when the source does not tell: state | org | yaml | hcl
+        #[arg(long)]
+        from: Option<String>,
+        /// Resource types to import, comma-separated, `*` wildcards allowed
+        /// (overrides `only` in the import config)
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Output file inside yaml_dir (state/live shapes; default discovered.satz)
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+        /// Import configuration (default: <presets_dir>/import-config.yaml)
+        #[arg(long)]
+        import_config: Option<PathBuf>,
+        /// yaml shape: estate used to compile a converted pack in context
+        #[arg(long)]
+        gate: Option<PathBuf>,
+        /// yaml shape: declared kind of the converted file
+        #[arg(long, default_value = "pack")]
+        kind: String,
+        /// yaml shape: write the conversion as a `<stem>.local.satz` fork
+        #[arg(long)]
+        fork: bool,
+    },
+    /// Alias of `satz import <state.json>` — removed in the next release
+    #[command(hide = true)]
     DiscoverFromState {
-        /// Path to Terraform state JSON file
         #[arg(long)]
         state_json: Option<PathBuf>,
-        /// Output file inside yaml_dir
         #[arg(long, default_value = "discovered.satz")]
         output: PathBuf,
-        /// Path to discovery configuration YAML file
         #[arg(long)]
-        discovery_config: Option<PathBuf>,
+        import_config: Option<PathBuf>,
     },
-    /// Discover infrastructure from a GCP organization (Cloud Asset Inventory)
-    /// and write it as a Satz estate
+    /// Alias of `satz import organizations/<n>` — removed in the next release
+    #[command(hide = true)]
     DiscoverFromOrganization {
-        /// Numeric Organization ID
         #[arg(long)]
         customer_organization_id: String,
-        /// Output file inside yaml_dir
         #[arg(long, default_value = "discovered.satz")]
         output: PathBuf,
-        /// Path to discovery configuration YAML file
         #[arg(long)]
-        discovery_config: Option<PathBuf>,
+        import_config: Option<PathBuf>,
     },
     /// Migrate state and configuration between local and cloud modes
     Migrate {
@@ -357,10 +382,8 @@ enum Commands {
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
     },
-    /// Convert a legacy YAML-dialect file (estate or pack) to Satz and compile
-    /// the result through the fragment pipeline (an estate on itself, a pack
-    /// in the `--gate` estate), reporting what it emits. Migrated estates may
-    /// need a manual edit; an old `!import-include` becomes `satz adopt`.
+    /// Alias of `satz import <file>.yaml` — removed in the next release
+    #[command(hide = true)]
     MigrateToSatz {
         /// File to convert (estate yaml, or a pack under presets_dir)
         input: PathBuf,
@@ -450,7 +473,7 @@ enum Commands {
     },
     /// Adopt what already exists: resolve the live ids of the resources this
     /// estate declares (folders by name, groups by email, org policies by
-    /// constraint, everything else by its rule in discovery-config.yaml) and
+    /// constraint, everything else by its rule in import-config.yaml) and
     /// bring them under management. A dry run unless --execute
     Adopt {
         /// Estate file (.satz, inside yaml_dir if relative)
@@ -639,7 +662,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::DiscoverFromState { .. } | Commands::DiscoverFromOrganization { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MigrateToSatz { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::DiscoverFromState { .. } | Commands::DiscoverFromOrganization { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MigrateToSatz { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -691,7 +714,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             provider_version: default_version(),
             auto_explode: default_auto_explode(),
             validation_level: default_validation_level(),
-            discovery_config: None,
+            import_config: None,
         }
     };
 
@@ -994,79 +1017,55 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::DiscoverFromState { state_json, output, discovery_config } => {
-            let discovery_config_obj = load_discovery_config(discovery_config, &tool_config, &runtime_config.presets_dir)?
-                .ok_or_else(|| {
-                    let err: Box<dyn std::error::Error> = format!(
-                        "Discovery configuration not found. Provide --discovery-config, or run 'satz get-presets' \
-                         so that '{}/discovery-config.yaml' exists, or set discovery_config in config.toml.",
-                        runtime_config.presets_dir
-                    ).into();
-                     err
-                })?;
-            let enabled_types = Some(discovery_config_obj.resource_types.into_iter().filter(|(_,v)| v.import).map(|(k,_)| k).collect());
-
-            println!("Reading infrastructure state...");
-            let state_val: serde_json::Value = if let Some(path) = state_json {
-                let content = fsx::read_to_string(&path)?;
-                serde_json::from_str(&content)?
-            } else {
-                let output = std::process::Command::new(&tool_config.tf_tool)
-                    .arg("show")
-                    .arg("-json")
-                    .output()?;
-                if !output.status.success() {
-                    let err = String::from_utf8_lossy(&output.stderr);
-                    return Err(format!("Failed to run {} show -json: {}", tool_config.tf_tool, err).into());
-                }
-                serde_json::from_slice(&output.stdout)?
+        Commands::Import { source, from, only, output, import_config, gate, kind, fork } => {
+            let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
+            let shape = match from {
+                Some(f) => f,
+                None => detect_import_shape(source.as_deref(), cfg_opt.as_ref().and_then(|c| c.root.as_ref()))?,
             };
-
-            let s_dir = PathBuf::from(&runtime_config.schema_dir);
-            let registry = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
-            let is_type = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas")).ok();
-            let discoverer = crate::discovery::Discoverer::new(state_val, registry, cli.verbose, enabled_types);
-            let config = discoverer.discover()?;
-
-            let final_output = satz_output_path(&runtime_config.yaml_dir, output);
-            let text = discovered_to_satz(&config, "discovered", &|t| is_type.as_ref().is_some_and(|r| r.resources.contains_key(t)))?;
-            if let Some(parent) = final_output.parent() {
-                fsx::create_dir_all(parent)?;
+            match shape.as_str() {
+                "yaml" => {
+                    let src = source.ok_or("the yaml shape needs a file to convert")?;
+                    convert_yaml_to_satz(PathBuf::from(src), gate, kind, fork, &tool_config, &runtime_config)
+                }
+                "hcl" => Err("importing HCL is not implemented yet (roadmap phase 3). Import the estate's state instead: `tofu show -json > state.json`, then `satz import state.json`".into()),
+                "state" | "org" => {
+                    let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
+                    let filter: Vec<String> = if only.is_empty() { cfg.only.clone().unwrap_or_default() } else { only };
+                    if !filter.is_empty() {
+                        let off = cfg.apply_only(&filter);
+                        println!("import: only {} — {} type(s) switched off by the filter", filter.join(","), off.len());
+                        if cli.verbose {
+                            for t in &off { println!("  filtered: {}", t); }
+                        }
+                    }
+                    let output = output.unwrap_or_else(|| PathBuf::from("discovered.satz"));
+                    if shape == "state" {
+                        let state_json = match source.as_deref() {
+                            None | Some("-") => None,
+                            Some(p) => Some(PathBuf::from(p)),
+                        };
+                        import_state(state_json, output, cfg, cli.verbose, &tool_config, &runtime_config)
+                    } else {
+                        let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
+                        import_org(&parent, output, cfg, cli.verbose, &runtime_config).await
+                    }
+                }
+                other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
             }
-            fsx::write(&final_output, text)?;
-            println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
-            if cli.verbose {
-                crate::discovery::Discoverer::print_summary(&config, Some(discoverer.filtered_count.get()));
-            }
-            Ok(())
         }
-        Commands::DiscoverFromOrganization { customer_organization_id, output, discovery_config } => {
-            // runtime_config, not tool_config: the sibling DiscoverFromState already
-            // uses the resolved directory, so --config was silently ignored here.
-            let s_dir = PathBuf::from(&runtime_config.schema_dir);
-            let registry = ResourceRegistry::load_all(s_dir.to_str().unwrap_or("schemas"))
-                .map_err(|e| format!("Failed to load resource registry from {}: {}", s_dir.display(), e))?;
-            let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
-
-            let discovery_config_obj = load_discovery_config(discovery_config, &tool_config, &runtime_config.presets_dir)?
-                .ok_or_else(|| {
-                    let err: Box<dyn std::error::Error> = format!(
-                        "Discovery configuration not found. Provide --discovery-config, or run 'satz get-presets' \
-                         so that '{}/discovery-config.yaml' exists, or set discovery_config in config.toml.",
-                        runtime_config.presets_dir
-                    ).into();
-                     err
-                })?;
-            let config = crate::discovery::Discoverer::discover_from_org(&customer_organization_id, cli.verbose, Some(discovery_config_obj), Some(registry)).await?;
-
-            let final_output = satz_output_path(&runtime_config.yaml_dir, output);
-            let text = discovered_to_satz(&config, "discovered", &|t| type_names.contains(t))?;
-            if let Some(parent) = final_output.parent() {
-                fsx::create_dir_all(parent)?;
-            }
-            fsx::write(&final_output, text)?;
-            println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
-            Ok(())
+        Commands::DiscoverFromState { state_json, output, import_config } => {
+            eprintln!("note: `discover-from-state` is now `satz import <state.json>` — this alias goes away in the next release.");
+            let cfg = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?
+                .ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
+            import_state(state_json, output, cfg, cli.verbose, &tool_config, &runtime_config)
+        }
+        Commands::DiscoverFromOrganization { customer_organization_id, output, import_config } => {
+            eprintln!("note: `discover-from-organization` is now `satz import organizations/<n>` — this alias goes away in the next release.");
+            let cfg = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?
+                .ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
+            let parent = format!("organizations/{}", customer_organization_id.trim_start_matches("organizations/"));
+            import_org(&parent, output, cfg, cli.verbose, &runtime_config).await
         }
         Commands::Bootstrap { estate, dry_run } => {
             // Satz-native: no .gen.yaml twin build. The vars table and the
@@ -1219,100 +1218,8 @@ Thumbs.db
             crate::presets::run_get_presets(&runtime_config.presets_dir, &runtime_config, force, pristine_dir).await
         }
         Commands::MigrateToSatz { input, gate, kind, fork } => {
-            // Resolve the file: as given, else under yaml_dir, else presets_dir.
-            let resolve = |p: &PathBuf| -> PathBuf {
-                if p.exists() { return p.clone(); }
-                let y = Path::new(&runtime_config.yaml_dir).join(p);
-                if y.exists() { return y; }
-                Path::new(&runtime_config.presets_dir).join(p)
-            };
-            let src_path = resolve(&input);
-            let src = fsx::read_to_string(&src_path)?;
-            let name = src_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("converted")
-                .replace(['-', '.'], "_");
-            let satz = satz_core::migrate::convert(&src, &kind, &name)
-                .map_err(|e| format!("{} ({})", e, src_path.display()))?;
-            // The dialect's implicit `google_` prefix is not Satz, so a verbatim
-            // copy of the YAML keys would not compile. Schemas decide.
-            let type_registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-            let satz = satz_core::migrate::normalize_type_keys(&satz, &|t: &str| {
-                type_registry.as_ref().is_some_and(|r| r.resources.contains_key(t))
-            });
-            // …and point `use` at converted packs, resolved the way the compiler
-            // resolves a use-path: beside the file first, then the include dirs.
-            let use_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-            let use_dirs = runtime_config.include_dirs.clone();
-            let satz = satz_core::migrate::retarget_uses(&satz, &|p: &str| {
-                use_base.join(p).exists() || use_dirs.iter().any(|d| Path::new(d).join(p).exists())
-            });
-            let satz_path = if fork {
-                if kind == "estate" {
-                    return Err("--fork applies to packs, not estates".into());
-                }
-                let stem = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("converted");
-                src_path.with_file_name(format!("{}.local.satz", stem))
-            } else {
-                src_path.with_extension("satz")
-            };
-
-            fsx::write(&satz_path, satz.as_bytes())?;
-            println!("converted {} -> {}", src_path.display(), satz_path.display());
-            if satz.contains("// NEEDS ADOPTION") {
-                println!("note: the source used `!import-include` — run `satz adopt` on the converted estate to import what already exists.");
-            }
-
-            // The gate (M5, 2026-08-29): the conversion must compile through the
-            // pipeline that will actually read it, and the operator sees what it
-            // emits. The old byte-identity proof through the legacy walk is gone
-            // with the walk — a conversion may need manual edits, and says so.
-            let gate_estate = match &gate {
-                Some(g) => Some(resolve(g)),
-                None if kind == "estate" => Some(satz_path.clone()),
-                None => None,
-            };
-            match gate_estate {
-                Some(estate) if estate.extension().is_some_and(|e| e == "satz") => {
-                    match pipeline_b_generate(&estate, &tool_config, &runtime_config) {
-                        Ok(out) => {
-                            let n = out.manifest.resources.len();
-                            let mut by_type: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-                            for r in out.manifest.resources.values() {
-                                *by_type.entry(r.tf_type.as_str()).or_default() += 1;
-                            }
-                            println!("CONVERTED: {} compiles — {} resources emitted:", estate.display(), n);
-                            for (t, c) in by_type {
-                                println!("  {:4} {}", c, t);
-                            }
-                            println!("Review the .satz, then `satz transpile` and `tofu plan`: the plan must show no destroy for what the old estate managed.");
-                            Ok(())
-                        }
-                        Err(e) => {
-                            let _ = std::fs::remove_file(&satz_path);
-                            Err(format!("conversion produced Satz that does not compile (removed): {}", e).into())
-                        }
-                    }
-                }
-                Some(estate) => {
-                    println!(
-                        "NEEDS-REVIEW: the gate estate {} is still YAML, so the pack cannot be compiled in context — convert the estate too, then re-run with --gate <estate>.satz.",
-                        estate.display()
-                    );
-                    Ok(())
-                }
-                None => {
-                    // A pack on its own: it must at least parse as Satz.
-                    satz_core::satz::parse(&satz)
-                        .map_err(|e| format!("conversion produced Satz that does not parse: {} in {}", e, satz_path.display()))?;
-                    println!("CONVERTED: {} parses — pass --gate <estate>.satz to compile it in context.", satz_path.display());
-                    if fork {
-                        println!("fork written; repoint the estate `use` to {}.", satz_path.display());
-                    }
-                    Ok(())
-                }
-            }
+            eprintln!("note: `migrate-to-satz` is now `satz import <file>.yaml` — this alias goes away in the next release.");
+            convert_yaml_to_satz(input, gate, kind, fork, &tool_config, &runtime_config)
         }
         Commands::MergePresets { pristine_dir, estate, report_only, adopt } => {
             let attention = crate::presets::run_merge_presets(
@@ -1756,16 +1663,14 @@ fn reject_yaml_estate(input: &Path, what: &str) -> Result<(), Box<dyn std::error
     // Printed rather than returned: `main` renders a returned error with `Debug`,
     // which escapes the newlines into literal \n.
     eprintln!(
-        "\n{}: {} is a YAML-dialect estate, and this command needs the fragment\n\
-         pipeline (claims and the compliance plane are Satz-only). `transpile`\n\
-         still accepts YAML.\n\
-         Convert once — the conversion proves itself by transpiling before and\n\
-         after and requiring identical output:\n\n    satz migrate-to-satz {} --kind estate\n",
+        "\n{}: {} is a YAML-dialect estate. Every command reads Satz; the dialect\n\
+         exists only to be converted. Convert once — the conversion compiles the\n\
+         result through the fragment pipeline and reports what it emits:\n\n    satz import {} --kind estate\n",
         what,
         input.display(),
         input.file_name().unwrap_or_default().to_string_lossy()
     );
-    Err("YAML-dialect estate: convert it with `migrate-to-satz` first".into())
+    Err("YAML-dialect estate: convert it with `satz import <file>.yaml` first".into())
 }
 
 /// The two facts `require` and `report-compliance` need: the emitted `main.tf`
@@ -1778,6 +1683,251 @@ fn reject_yaml_estate(input: &Path, what: &str) -> Result<(), Box<dyn std::error
 /// therefore not a witness, as documented.
 /// Where `discover-* --satz` writes: the given path inside `yaml_dir`, with the
 /// legacy `.yaml` default turned into `.satz`.
+/// The yaml shape of `satz import`: convert a legacy-dialect file (estate or
+/// pack) to Satz and compile the result through the fragment pipeline (an
+/// estate on itself, a pack in the `gate` estate), reporting what it emits.
+/// A migrated estate may need a manual edit; an old `!import-include`
+/// becomes `satz adopt`.
+fn convert_yaml_to_satz(
+    input: PathBuf,
+    gate: Option<PathBuf>,
+    kind: String,
+    fork: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Resolve the file: as given, else under yaml_dir, else presets_dir.
+    let resolve = |p: &PathBuf| -> PathBuf {
+        if p.exists() { return p.clone(); }
+        let y = Path::new(&runtime_config.yaml_dir).join(p);
+        if y.exists() { return y; }
+        Path::new(&runtime_config.presets_dir).join(p)
+    };
+    let src_path = resolve(&input);
+    let src = fsx::read_to_string(&src_path)?;
+    let name = src_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("converted")
+        .replace(['-', '.'], "_");
+    let satz = satz_core::migrate::convert(&src, &kind, &name)
+        .map_err(|e| format!("{} ({})", e, src_path.display()))?;
+    // The dialect's implicit `google_` prefix is not Satz, so a verbatim
+    // copy of the YAML keys would not compile. Schemas decide.
+    let type_registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
+    let satz = satz_core::migrate::normalize_type_keys(&satz, &|t: &str| {
+        type_registry.as_ref().is_some_and(|r| r.resources.contains_key(t))
+    });
+    // …and point `use` at converted packs, resolved the way the compiler
+    // resolves a use-path: beside the file first, then the include dirs.
+    let use_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let use_dirs = runtime_config.include_dirs.clone();
+    let satz = satz_core::migrate::retarget_uses(&satz, &|p: &str| {
+        use_base.join(p).exists() || use_dirs.iter().any(|d| Path::new(d).join(p).exists())
+    });
+    let satz_path = if fork {
+        if kind == "estate" {
+            return Err("--fork applies to packs, not estates".into());
+        }
+        let stem = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("converted");
+        src_path.with_file_name(format!("{}.local.satz", stem))
+    } else {
+        src_path.with_extension("satz")
+    };
+
+    fsx::write(&satz_path, satz.as_bytes())?;
+    println!("converted {} -> {}", src_path.display(), satz_path.display());
+    if satz.contains("// NEEDS ADOPTION") {
+        println!("note: the source used `!import-include` — run `satz adopt` on the converted estate to import what already exists.");
+    }
+
+    // The gate (M5, 2026-08-29): the conversion must compile through the
+    // pipeline that will actually read it, and the operator sees what it
+    // emits. The old byte-identity proof through the legacy walk is gone
+    // with the walk — a conversion may need manual edits, and says so.
+    let gate_estate = match &gate {
+        Some(g) => Some(resolve(g)),
+        None if kind == "estate" => Some(satz_path.clone()),
+        None => None,
+    };
+    match gate_estate {
+        Some(estate) if estate.extension().is_some_and(|e| e == "satz") => {
+            match pipeline_b_generate(&estate, tool_config, runtime_config) {
+                Ok(out) => {
+                    let n = out.manifest.resources.len();
+                    let mut by_type: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+                    for r in out.manifest.resources.values() {
+                        *by_type.entry(r.tf_type.as_str()).or_default() += 1;
+                    }
+                    println!("CONVERTED: {} compiles — {} resources emitted:", estate.display(), n);
+                    for (t, c) in by_type {
+                        println!("  {:4} {}", c, t);
+                    }
+                    println!("Review the .satz, then `satz transpile` and `tofu plan`: the plan must show no destroy for what the old estate managed.");
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&satz_path);
+                    Err(format!("conversion produced Satz that does not compile (removed): {}", e).into())
+                }
+            }
+        }
+        Some(estate) => {
+            println!(
+                "NEEDS-REVIEW: the gate estate {} is still YAML, so the pack cannot be compiled in context — convert the estate too, then re-run with --gate <estate>.satz.",
+                estate.display()
+            );
+            Ok(())
+        }
+        None => {
+            // A pack on its own: it must at least parse as Satz.
+            satz_core::satz::parse(&satz)
+                .map_err(|e| format!("conversion produced Satz that does not parse: {} in {}", e, satz_path.display()))?;
+            println!("CONVERTED: {} parses — pass --gate <estate>.satz to compile it in context.", satz_path.display());
+            if fork {
+                println!("fork written; repoint the estate `use` to {}.", satz_path.display());
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The state shape of `satz import`: `tofu show -json` (a file, or run now).
+fn import_state(
+    state_json: Option<PathBuf>,
+    output: PathBuf,
+    cfg: ImportConfig,
+    verbose: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let enabled_types = Some(cfg.resource_types.into_iter().filter(|(_, v)| v.import).map(|(k, _)| k).collect());
+    println!("Reading infrastructure state...");
+    let state_val: serde_json::Value = if let Some(path) = state_json {
+        let content = fsx::read_to_string(&path)?;
+        serde_json::from_str(&content)?
+    } else {
+        let out = std::process::Command::new(&tool_config.tf_tool).arg("show").arg("-json").output()?;
+        if !out.status.success() {
+            return Err(format!("Failed to run {} show -json: {}", tool_config.tf_tool, String::from_utf8_lossy(&out.stderr)).into());
+        }
+        serde_json::from_slice(&out.stdout)?
+    };
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
+    let type_names: std::collections::HashSet<String> =
+        registry.as_ref().map(|r| r.resources.keys().cloned().collect()).unwrap_or_default();
+    let discoverer = crate::discovery::Discoverer::new(state_val, registry, verbose, enabled_types);
+    let config = discoverer.discover()?;
+    write_imported(&config, output, None, &|t| type_names.contains(t), runtime_config)?;
+    if verbose {
+        crate::discovery::Discoverer::print_summary(&config, Some(discoverer.filtered_count.get()));
+    }
+    Ok(())
+}
+
+/// The live shape of `satz import`: one Cloud Asset Inventory sweep under
+/// `parent` (`organizations/<n>`, `folders/<n>` or `projects/<id>`).
+async fn import_org(
+    parent: &str,
+    output: PathBuf,
+    cfg: ImportConfig,
+    verbose: bool,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("import: root {}", parent);
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
+    let org_hint = cfg.root.as_ref().and_then(|r| r.organization.clone())
+        .or_else(|| parent.strip_prefix("organizations/").map(String::from));
+    let config = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    write_imported(&config, output, org_hint.as_deref(), &|t| type_names.contains(t), runtime_config)
+}
+
+fn write_imported(
+    config: &Config,
+    output: PathBuf,
+    org_hint: Option<&str>,
+    is_type: &dyn Fn(&str) -> bool,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+    let text = discovered_to_satz(config, "discovered", org_hint, is_type)?;
+    if let Some(parent) = final_output.parent() {
+        fsx::create_dir_all(parent)?;
+    }
+    fsx::write(&final_output, text)?;
+    println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
+    Ok(())
+}
+
+fn missing_import_config(presets_dir: &str) -> Box<dyn std::error::Error> {
+    format!(
+        "import configuration not found. Provide --import-config, or run `satz get-presets` so that '{}/import-config.yaml' exists, or set import_config in config.toml.",
+        presets_dir
+    )
+    .into()
+}
+
+/// Which shape a source is, from its form alone. `--from` overrides.
+fn detect_import_shape(source: Option<&str>, root: Option<&crate::config::ImportRoot>) -> Result<String, Box<dyn std::error::Error>> {
+    let Some(src) = source else {
+        return if root.is_some_and(|r| r.organization.is_some() || r.folder.is_some() || r.project.is_some()) {
+            Ok("org".into())
+        } else {
+            Err("nothing to import: give a source (a state file, organizations/<n>, folders/<n>, projects/<id>, a .yaml file) or set `root` in the import config".into())
+        };
+    };
+    if src == "-" {
+        return Ok("state".into());
+    }
+    if src.starts_with("organizations/") || src.starts_with("folders/") || src.starts_with("projects/") {
+        return Ok("org".into());
+    }
+    let path = Path::new(src);
+    if path.is_dir() {
+        return Ok("hcl".into());
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("yaml") | Some("yml") => Ok("yaml".into()),
+        Some("tf") => Ok("hcl".into()),
+        Some("json") | Some("tfstate") => Ok("state".into()),
+        _ => Err(format!("cannot tell what {:?} is — pass --from state|org|yaml|hcl", src).into()),
+    }
+}
+
+/// The CAI scope to import from: the command line's source when given, else
+/// the import config's `root` (project > folder > organization). A folder by
+/// `path` is resolved live, one segment at a time, never guessed.
+async fn resolve_import_parent(
+    source: Option<&str>,
+    root: Option<&crate::config::ImportRoot>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(s) = source {
+        return Ok(s.to_string());
+    }
+    let root = root.ok_or("no live root: pass organizations/<n>, folders/<n> or projects/<id>, or set `root` in the import config")?;
+    if let Some(p) = &root.project {
+        return Ok(format!("projects/{}", p.trim_start_matches("projects/")));
+    }
+    if let Some(f) = &root.folder {
+        return match (&f.id, &f.path) {
+            (Some(id), None) => Ok(format!("folders/{}", id.trim_start_matches("folders/"))),
+            (None, Some(path)) => {
+                let org = root.organization.as_deref().ok_or("root.folder.path needs root.organization to start from")?;
+                let token = crate::gcp::access_token().await?;
+                let http = reqwest::Client::new();
+                let name = crate::gcp::resourcemanager::resolve_folder_path(&http, &token, org, path).await?;
+                println!("import: folder path {:?} is {}", path, name);
+                Ok(name)
+            }
+            _ => Err("root.folder needs exactly one of `id` or `path`".into()),
+        };
+    }
+    let org = root.organization.as_deref().ok_or("root has neither organization, folder nor project")?;
+    Ok(format!("organizations/{}", org.trim_start_matches("organizations/")))
+}
+
 fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
     let output = if output.extension().and_then(|e| e.to_str()) == Some("yaml") {
         output.with_extension("satz")
@@ -1794,7 +1944,7 @@ fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
 /// A discovered `Config` as a Satz estate that compiles as-is: the local
 /// backend the emitter requires, `customer_organization_id` inferred from the
 /// resources (every `organizations/<n>` reference or `org_id` names it), the
-/// data printed by the same printer `migrate-to-satz` uses, and shorthand
+/// data printed by the same printer the yaml import uses, and shorthand
 /// type keys (`folder`, `project`) normalised to provider names.
 ///
 /// Discovery emits plain data — no anchors, tags, includes or nulls — so no
@@ -1802,6 +1952,7 @@ fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
 fn discovered_to_satz(
     config: &Config,
     name: &str,
+    org_hint: Option<&str>,
     is_type: &dyn Fn(&str) -> bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut top = match serde_yaml::to_value(config)? {
@@ -1814,7 +1965,7 @@ fn discovered_to_satz(
         top.insert(serde_yaml::Value::String("terraform".into()), backend);
     }
     let mut params = Vec::new();
-    match infer_org_id(&serde_yaml::Value::Mapping(top.clone())) {
+    match infer_org_id(&serde_yaml::Value::Mapping(top.clone())).or_else(|| org_hint.map(String::from)) {
         Some(org) => params.push(("customer_organization_id".to_string(), format!("\"{}\"", org))),
         None => eprintln!(
             "warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand"
@@ -1873,8 +2024,8 @@ async fn run_adopt(
     // Same compile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
     let out = pipeline_b_generate(&input_path, tool_config, runtime_config)?;
-    let rules = load_discovery_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
-        "adoption rules live in <presets_dir>/discovery-config.yaml — run `satz get-presets` so it exists",
+    let rules = load_import_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
+        "adoption rules live in <presets_dir>/import-config.yaml — run `satz get-presets` so it exists",
     )?;
     let opts = adopt::Options { only: only.into_iter().collect(), activate };
     let mut live = adopt::RealLive::new(&out.customer_id).await?;
@@ -2206,18 +2357,18 @@ pub(crate) fn resolve_against(base: &str, path: PathBuf) -> PathBuf {
 /// `presets_dir` must come from `runtime_config` so `--config <dir>/config.toml` is honoured.
 /// No fallback to pre-presets_dir layouts — if the library is not where the config says,
 /// this fails visibly rather than quietly reading from a legacy location.
-fn load_discovery_config(
+fn load_import_config(
     path: Option<PathBuf>,
     tool_config: &ToolConfig,
     presets_dir: &str,
-) -> Result<Option<DiscoveryConfig>, Box<dyn std::error::Error>> {
+) -> Result<Option<ImportConfig>, Box<dyn std::error::Error>> {
     let config_path = if let Some(p) = path {
         resolve_against(presets_dir, p)
-    } else if let Some(p_str) = &tool_config.discovery_config {
+    } else if let Some(p_str) = &tool_config.import_config {
         resolve_against(presets_dir, PathBuf::from(p_str))
     } else {
         // `get-presets` writes the presets library to presets_dir (beside config.toml).
-        let default = resolve_against(presets_dir, PathBuf::from("discovery-config.yaml"));
+        let default = resolve_against(presets_dir, PathBuf::from("import-config.yaml"));
         if default.exists() {
             default
         } else {
@@ -2226,15 +2377,15 @@ fn load_discovery_config(
     };
 
     if !config_path.exists() {
-         return Err(format!("Discovery configuration file not found at: {}", config_path.display()).into());
+         return Err(format!("import configuration file not found at: {}", config_path.display()).into());
     }
 
     let content = fsx::read_to_string(&config_path)?;
-    let config: DiscoveryConfig = serde_yaml::from_str(&content)?;
+    let config: ImportConfig = serde_yaml::from_str(&content)?;
 
     let total_types = config.resource_types.len();
     let enabled_types = config.resource_types.values().filter(|v| v.import).count();
-    println!("Loaded {} resource types from discovery config file '{}' ({} enabled for import).", total_types, config_path.display(), enabled_types);
+    println!("Loaded {} resource types from import config '{}' ({} enabled for import).", total_types, config_path.display(), enabled_types);
 
     Ok(Some(config))
 }
@@ -2937,7 +3088,7 @@ mod corpus {
 #[cfg(test)]
 mod yaml_estate_gate {
     //! THE gate for the legacy YAML dialect. The dialect is migration input
-    //! only (owner, 2026-08-29): nothing transpiles it, `migrate-to-satz`
+    //! only (owner, 2026-08-29): nothing transpiles it, `satz import <file>.yaml`
     //! converts it. So what must keep working is the CONVERSION — the fixture
     //! and its `!include` pack become Satz that compiles through the fragment
     //! pipeline and declares every resource the YAML declared.
@@ -3523,7 +3674,7 @@ google_organization_iam_audit_config:
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         let reg = super::corpus::registry();
-        let text = discovered_to_satz(&config, "discovered", &|t| reg.resources.contains_key(t)).unwrap();
+        let text = discovered_to_satz(&config, "discovered", None, &|t| reg.resources.contains_key(t)).unwrap();
         assert!(text.contains("customer_organization_id = \"123456789012\""), "{}", text);
         assert!(text.contains("terraform {"), "{}", text);
         assert!(text.contains("google_folder {"), "shorthand keys must be normalised:\n{}", text);
@@ -3695,8 +3846,8 @@ mod path_resolution_tests {
             PathBuf::from("/proj/yaml/CIS-GCP-Foundation-4.0.yaml")
         );
         assert_eq!(
-            resolve_against("/proj/yaml", PathBuf::from("presets/discovery-config.yaml")),
-            PathBuf::from("/proj/yaml/presets/discovery-config.yaml")
+            resolve_against("/proj/yaml", PathBuf::from("presets/import-config.yaml")),
+            PathBuf::from("/proj/yaml/presets/import-config.yaml")
         );
     }
 
@@ -3741,7 +3892,7 @@ mod presets_dir_tests {
     const MINI_DISCOVERY: &str = "resource_types:\n  google_project:\n    description: p\n    import: true\n";
 
     #[test]
-    fn discovery_config_resolves_only_in_presets_dir() {
+    fn import_config_resolves_only_in_presets_dir() {
         // Deliberately NO fallback to the pre-presets_dir layout (<yaml_dir>/presets):
         // if the library is not where config.toml says, that should be visible, not
         // silently papered over by reading a legacy location.
@@ -3754,12 +3905,12 @@ mod presets_dir_tests {
         let p_dir = presets.to_str().unwrap().to_string();
 
         // A file in the legacy location alone must NOT be found.
-        std::fs::write(yaml_legacy.join("discovery-config.yaml"), MINI_DISCOVERY).unwrap();
-        assert!(load_discovery_config(None, &cfg, &p_dir).unwrap().is_none());
+        std::fs::write(yaml_legacy.join("import-config.yaml"), MINI_DISCOVERY).unwrap();
+        assert!(load_import_config(None, &cfg, &p_dir).unwrap().is_none());
 
         // The presets library is the one and only default location.
-        std::fs::write(presets.join("discovery-config.yaml"), MINI_DISCOVERY).unwrap();
-        assert!(load_discovery_config(None, &cfg, &p_dir).unwrap().is_some());
+        std::fs::write(presets.join("import-config.yaml"), MINI_DISCOVERY).unwrap();
+        assert!(load_import_config(None, &cfg, &p_dir).unwrap().is_some());
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -78,7 +78,7 @@ pub struct Project {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct DiscoveryResourceConfig {
+pub struct ImportResourceConfig {
     pub description: String,
     pub import: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,7 +110,105 @@ pub struct DiscoveryResourceConfig {
     pub activate: Option<String>,
 }
 
+/// Where a live import starts. `organization` is required for the live shape;
+/// `folder` (by number, or by display-name path from the org) and `project`
+/// narrow it. Exactly one of `folder.id` / `folder.path`.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct ImportRoot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<FolderRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct FolderRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// `import-config.yaml`: what `satz import` reads. YAML on purpose — it is
+/// data that configures an import, not an estate. `root` and `only` are the
+/// repeatable form of the command line (`satz import <source> --only …`),
+/// which overrides them when given.
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct DiscoveryConfig {
-    pub resource_types: HashMap<String, DiscoveryResourceConfig>,
+pub struct ImportConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<ImportRoot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only: Option<Vec<String>>,
+    pub resource_types: HashMap<String, ImportResourceConfig>,
+}
+
+impl ImportConfig {
+    /// Restrict the import to the types matching `globs` (`*` wildcard);
+    /// every other type has `import` switched off. Returns the names that
+    /// were on and are now off, so the run can say what was filtered.
+    pub fn apply_only(&mut self, globs: &[String]) -> Vec<String> {
+        let mut off = Vec::new();
+        for (name, rc) in self.resource_types.iter_mut() {
+            if rc.import && !globs.iter().any(|g| glob_match(g, name)) {
+                rc.import = false;
+                off.push(name.clone());
+            }
+        }
+        off.sort();
+        off
+    }
+}
+
+/// `*`-only glob: `google_*_iam_member` matches every IAM member type.
+pub fn glob_match(pattern: &str, s: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == s;
+    }
+    let mut rest = s;
+    for (i, part) in parts.iter().enumerate() {
+        if i == 0 {
+            match rest.strip_prefix(part) {
+                Some(r) => rest = r,
+                None => return false,
+            }
+        } else if i == parts.len() - 1 {
+            return rest.ends_with(part);
+        } else if !part.is_empty() {
+            match rest.find(part) {
+                Some(at) => rest = &rest[at + part.len()..],
+                None => return false,
+            }
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod glob_tests {
+    use super::*;
+
+    #[test]
+    fn globs() {
+        assert!(glob_match("google_folder", "google_folder"));
+        assert!(!glob_match("google_folder", "google_folder_iam_member"));
+        assert!(glob_match("google_*_iam_member", "google_folder_iam_member"));
+        assert!(glob_match("google_*", "google_project"));
+        assert!(!glob_match("google_*_iam_member", "google_project"));
+        assert!(glob_match("*", "anything"));
+    }
+
+    #[test]
+    fn only_switches_off_everything_else_and_names_it() {
+        let mut cfg: ImportConfig = serde_yaml::from_str(
+            "resource_types:\n  google_folder: {description: f, import: true}\n  google_project: {description: p, import: true}\n  google_x: {description: x, import: false}\n",
+        )
+        .unwrap();
+        let off = cfg.apply_only(&["google_folder".to_string()]);
+        assert_eq!(off, vec!["google_project".to_string()]);
+        assert!(cfg.resource_types["google_folder"].import);
+        assert!(!cfg.resource_types["google_project"].import);
+    }
 }

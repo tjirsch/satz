@@ -6,7 +6,7 @@
 //! - the input is the **emission manifest** — the resources `apply` will act
 //!   on, with their attributes and references — never the source text;
 //! - identity splits: a type whose import id is user-chosen renders it from a
-//!   template in `discovery-config.yaml` (`import_id:`), offline; a type whose
+//!   template in `import-config.yaml` (`import_id:`), offline; a type whose
 //!   id GCP assigns is looked up by its natural key (folder by display name
 //!   under the resolved parent, group by email, membership by group + email,
 //!   org policy by constraint under its parent);
@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::DiscoveryConfig;
+use crate::config::ImportConfig;
 use crate::manifest::{EmittedResource, Manifest};
 
 /// What a natural-key lookup found.
@@ -86,14 +86,14 @@ pub(crate) struct Options {
     pub activate: bool,
 }
 
-/// Rule for one resource type, from `discovery-config.yaml`.
+/// Rule for one resource type, from `import-config.yaml`.
 enum Rule {
     Template(String),
     Match(Vec<String>),
     None,
 }
 
-fn rule_for(rules: &DiscoveryConfig, tf_type: &str) -> Rule {
+fn rule_for(rules: &ImportConfig, tf_type: &str) -> Rule {
     match rules.resource_types.get(tf_type) {
         Some(r) if r.import_id.is_some() => Rule::Template(r.import_id.clone().unwrap()),
         Some(r) if r.match_on.is_some() => Rule::Match(r.match_on.clone().unwrap()),
@@ -105,7 +105,7 @@ fn rule_for(rules: &DiscoveryConfig, tf_type: &str) -> Rule {
 /// a child's parent reference is already answered when it is reached.
 pub(crate) async fn resolve<L: Live>(
     manifest: &Manifest,
-    rules: &DiscoveryConfig,
+    rules: &ImportConfig,
     opts: &Options,
     live: &mut L,
 ) -> Vec<Resolution> {
@@ -353,7 +353,7 @@ pub(crate) fn render_table(resolutions: &[Resolution]) -> String {
             Outcome::OnApply => ("on apply", "not live — apply creates it".into()),
             Outcome::Ambiguous(c) => ("AMBIGUOUS", format!("{} candidates: {} — pin \"import-id\" by hand", c.len(), c.join(", "))),
             Outcome::NeedsLookup(why) => ("needs lookup", why.clone()),
-            Outcome::NoRule => ("no rule", format!("add import_id or match_on for {} to discovery-config.yaml", r.tf_type)),
+            Outcome::NoRule => ("no rule", format!("add import_id or match_on for {} to import-config.yaml", r.tf_type)),
             Outcome::Unresolvable(why) => ("unresolvable", why.clone()),
             Outcome::Failed(e) => ("FAILED", e.clone()),
             Outcome::Skipped => continue,
@@ -452,15 +452,10 @@ pub(crate) struct RealLive {
 
 impl RealLive {
     pub(crate) async fn new(customer_id: &str) -> Result<Self, String> {
-        use google_cloud_auth::credentials::Builder;
-        let credentials = Builder::default()
-            .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
-            .build_access_token_credentials()
-            .map_err(|e| e.to_string())?;
-        let token = credentials.access_token().await.map_err(|e| e.to_string())?;
+        let token = crate::gcp::access_token().await?;
         Ok(Self {
             http: reqwest::Client::new(),
-            token: token.token,
+            token,
             customer_id: customer_id.to_string(),
             groups: None,
             org_policy: None,
@@ -518,7 +513,7 @@ impl Live for RealLive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::DiscoveryResourceConfig;
+    use crate::config::ImportResourceConfig;
 
     struct Fake {
         folders: BTreeMap<(String, String), Lookup>,
@@ -550,12 +545,12 @@ mod tests {
     /// (type, import_id template, match_on attrs)
     type RuleRow<'a> = (&'a str, Option<&'a str>, Option<&'a [&'a str]>);
 
-    fn rules(rows: &[RuleRow]) -> DiscoveryConfig {
+    fn rules(rows: &[RuleRow]) -> ImportConfig {
         let mut resource_types = std::collections::HashMap::new();
         for (t, template, on) in rows {
             resource_types.insert(
                 t.to_string(),
-                DiscoveryResourceConfig {
+                ImportResourceConfig {
                     description: String::new(),
                     import: false,
                     asset_type: None,
@@ -570,7 +565,7 @@ mod tests {
                 },
             );
         }
-        DiscoveryConfig { resource_types }
+        ImportConfig { root: None, only: None, resource_types }
     }
 
     const MAIN_TF: &str = r#"
@@ -730,9 +725,9 @@ import {
     /// The shipped rules are data the engine depends on: they must parse, and
     /// the types every fleet estate declares must have one.
     #[test]
-    fn shipped_discovery_config_carries_rules_for_the_fleet_types() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presets/discovery-config.yaml");
-        let cfg: DiscoveryConfig = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).expect("discovery-config.yaml parses");
+    fn shipped_import_config_carries_rules_for_the_fleet_types() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presets/import-config.yaml");
+        let cfg: ImportConfig = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).expect("import-config.yaml parses");
         for t in [
             "google_project",
             "google_project_service",

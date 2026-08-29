@@ -123,10 +123,8 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
-| `discover-from-state` | `--state-json`, `--output` (default: `discovered.satz`), `--discovery-config` |
-| `discover-from-organization` | `--customer-organization-id` (required), `--output` (default: `discovered.satz`), `--discovery-config` |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`; yaml shape: `--kind`, `--gate`, `--fork` |
 | `migrate <INPUT>` | `--mode` |
-| `migrate-to-satz <FILE>.yaml` | `--kind` (`estate`\|`pack`), `--gate <estate>.satz`, `--output` — the only command that reads the legacy YAML dialect |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--no-live` |
@@ -199,7 +197,7 @@ satz bootstrap <CONFIG_FILE> [options]
     - **Import**: Automatically imports the created Folder, Project, and Bucket into the local state.
 
 ### Transpile (`transpile`)
-Compile your estate to production-ready HCL. Input is a `.satz` estate; a legacy `.yaml` estate is refused with a pointer to `migrate-to-satz`.
+Compile your estate to production-ready HCL. Input is a `.satz` estate; a legacy `.yaml` estate is refused with a pointer to `satz import`.
 
 ```bash
 satz transpile <INPUT> [options]
@@ -505,48 +503,55 @@ satz migrate <INPUT> --mode <MODE>
 - **Regenerate**: Runs `transpile` to update the backend configuration (Local vs GCS) and provider authentication (ADC vs Impersonation).
 - **Migrate State**: Executes `tofu init -migrate-state` to safely move your terraform state to the new backend.
 
-### Infrastructure Discovery
+### Creating an estate from what exists (`import`)
 
-`satz` provides two discovery commands that write a Satz estate from existing infrastructure. The result compiles as-is: a local backend, `customer_organization_id` inferred from the resources, every resource carrying its `"import-id"`, keys normalised to provider type names. Review it, `satz transpile`, `tofu plan`.
-
-#### Discover from Terraform State (`discover-from-state`)
-Read an existing Terraform/OpenTofu state and generate a corresponding estate.
+One verb, three input shapes — you pick by what you have. The result is a Satz
+estate that compiles as-is: a local backend, `customer_organization_id`, every
+resource carrying its `"import-id"`, keys normalised to provider type names.
+Review it, `satz transpile`, then `tofu plan` — the plan is the check: no destroy,
+no unexpected create.
 
 ```bash
-satz discover-from-state                                  # yaml/discovered.satz
-satz discover-from-state --state-json state.json -o found.satz
+satz import state.json                       # a state file (tofu show -json / *.tfstate)
+tofu show -json | satz import -              # …or on stdin
+satz import organizations/123456789012       # live, whole org (Cloud Asset Inventory)
+satz import folders/456789                   # live, one folder
+satz import projects/my-prj                  # live, one project
+satz import old-estate.yaml --kind estate    # the legacy YAML dialect (until the last org is moved)
+satz import                                  # live, root taken from the import config
 ```
 
 **Parameters:**
-- `--state-json <FILE>`: Path to Terraform state JSON file (optional). If omitted, runs `tofu show -json`.
-- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.satz`; the extension is always `.satz`).
-- `--discovery-config <FILE>`: Path to discovery configuration YAML file (default: `presets/discovery-config.yaml`).
+- `SOURCE`: what to import from; the shape is read off its form (`--from state|org|yaml|hcl` when it cannot tell). Omit it to use the import config's `root`.
+- `--only <types>`: comma-separated resource types, `*` wildcards allowed (`google_*_iam_member`); everything else is switched off for this run. Overrides `only` in the import config.
+- `--output, -o <FILE>`: output inside `yaml_dir` (default `discovered.satz`; the extension is always `.satz`).
+- `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
+- yaml shape: `--kind estate|pack`, `--gate <estate>.satz` (compile a converted pack in context), `--fork` (write `<stem>.local.satz`).
 
-**Under the Hood:**
-- Reads the current state (either from a file or by running `tofu show -json`).
-- **Configurable Filtering**: respects `presets/discovery-config.yaml` to include/exclude specific resources and attributes.
-  - Resource types can be globally enabled/disabled (`import: true/false`).
-  - Specific attributes can be filtered via `exclude` and `include` lists per resource.
-- **Schema Validation**: Automatically validates discovered data against the Terraform Provider Schema, dropping read-only or computed fields that would cause HCL generation errors.
-- **IAM Heuristics**: Maps complex IAM resources (like `google_storage_bucket_iam_member`) to the nested grant form.
+**The import config** (`presets/import-config.yaml`, YAML — it is data that
+configures an import, not an estate) is the repeatable form of the command line:
 
-#### Discover from GCP Organization (`discover-from-organization`)
-Discover infrastructure directly from a GCP Organization using the Cloud Asset API.
-
-```bash
-satz discover-from-organization --customer-organization-id "123456789012"
+```yaml
+root:                              # live shape; the command-line SOURCE overrides it
+  organization: "123456789012"
+  folder: { path: "Shared Services/Prod" }   # or { id: "456789" } — exactly one
+  project: my-prj                  # narrows further
+only: [google_folder, google_project, "google_*_iam_member"]
+resource_types:                    # per type: import on/off, attribute include/exclude,
+  google_project:                  # asset_type, and the rules `satz adopt` reads
+    import: true
 ```
 
-**Parameters:**
-- `--customer-organization-id <ID>`: Numeric GCP Organization ID (required).
-- `--output, -o <FILE>`: Output file inside `yaml_dir` (default: `discovered.satz`).
-- `--discovery-config <FILE>`: Path to discovery configuration YAML file (default: `presets/discovery-config.yaml`).
+A folder `path` is resolved live from the organization, one segment at a time —
+exactly one folder may carry each name, otherwise the run stops and lists the
+candidates; nothing is guessed. The run prints the effective root and filter.
 
 **Under the Hood:**
-- Uses Google Cloud Asset API to enumerate all resources in the organization.
-- Requires appropriate IAM permissions (`cloudasset.assets.searchAllResources`).
-- Applies the same filtering and validation as `discover-from-state`.
-- Useful for discovering infrastructure that isn't managed by Terraform/OpenTofu yet.
+- state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
+- live: one Cloud Asset Inventory sweep under the root; needs `cloudasset.assets.searchAllResources`; useful for infrastructure nobody manages with Terraform yet. Only asset types the config maps are seen.
+- yaml: the legacy-dialect converter (`!include` → `use`, anchors → params, `!format` → interpolation), compiled through the fragment pipeline afterwards and reporting what it emits; an old `!import-include` becomes `use` plus `satz adopt`.
+- hcl: not yet — import the estate's state instead (roadmap).
+- `discover-from-state`, `discover-from-organization` and `migrate-to-satz` still work as hidden aliases for one release and print the `import` form to use.
 
 ### Update Schemas (`update-schema`)
 Refresh local provider schemas to get the latest resource definitions.
@@ -628,7 +633,7 @@ How a resource is resolved depends on who chose its identity:
 
 - **User-chosen id** (project, bucket, service account, IAM bindings, sinks,
   metrics, custom roles, `project_service`, …): the import id is rendered
-  offline from a template on the type's row in `presets/discovery-config.yaml`
+  offline from a template on the type's row in `presets/import-config.yaml`
   (`import_id: "projects/{project}/serviceAccounts/{account_id}@…"`), with
   `{placeholders}` filled from the emitted attributes and resolved references.
   Reported as *derived*; its existence is verified by the import itself.
@@ -1074,7 +1079,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 | `yaml_dir` | `"yaml"` | Source directory for estate files |
 | `hcl_dir` | `"hcl"` | Target directory for generated HCL |
 | `schema_dir` | `"schemas"` | Directory where provider schemas are cached |
-| `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; `--preset` and the discovery-config default resolve here |
+| `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; `--preset` and the import-config default resolve here |
 | `include_dirs` | `[".", "yaml"]` | Search paths for `use`d packs |
 | `tf_tool` | `"tofu"` | The binary used to fetch schemas |
 | `google_providers` | `["google", "google-beta"]` | List of Google providers |
@@ -1121,7 +1126,7 @@ so claims and witnesses can never disagree. Coverage is `implements`, `contribut
 `deviates`; witnesses are mandatory on the first two. Literal Terraform `${…}` references
 inside strings need doubled braces (`"${{google_project.x.project_id}}"`) since `{…}`
 interpolates params. Every command reads `.satz`. The legacy YAML dialect that
-preceded Satz exists only as input to `migrate-to-satz`, which converts an estate or a pack,
+preceded Satz exists only as input to `satz import <file>.yaml`, which converts an estate or a pack,
 gated by compiling the result through the fragment pipeline and reporting what it emits —
 a migrated estate may need a manual edit; `tofu plan` has the last word
 (see [docs/satz-language.md §12](docs/satz-language.md)).
@@ -1207,16 +1212,16 @@ This section outlines the general process for migrating existing infrastructure 
 Begin by capturing the current infrastructure state. If you have an existing Terraform/OpenTofu project, generate a JSON state file and use the discovery tool:
 ```bash
 tofu show -json > state.json
-satz discover-from-state --state-json state.json --satz --output migration-discovery.satz
+satz import state.json -o migration-discovery.satz
 ```
 
 Alternatively, if you want to discover infrastructure directly from GCP without Terraform state:
 ```bash
-satz discover-from-organization --customer-organization-id "123456789012" --satz --output migration-discovery.satz
+satz import organizations/123456789012 -o migration-discovery.satz
 ```
 
-Only the resource types marked `import: true` in `presets/discovery-config.yaml` are
-discovered; enable more rows as needed.
+Only the resource types marked `import: true` in `presets/import-config.yaml` are
+taken (`--only` narrows further); enable more rows as needed.
 
 ### 2. Hierarchical Refinement
 The discovered estate compiles as-is, but it is as found. Organize it into the `satz` hierarchical format:
@@ -1289,7 +1294,7 @@ Provides a consistent starting point for new customer rollouts.
 - **Declarative Bootstrap**: Generates the Satz estate representing the Day 0 infrastructure (Project, Services, Bucket, SA) under the labels `bootstrap` imports by name.
 
 #### 4. Migration (`crates/satz-core/src/migrate.rs`)
-The only reader of the legacy YAML dialect: `migrate-to-satz` converts an estate or a pack
+The only reader of the legacy YAML dialect: `satz import <file>.yaml` converts an estate or a pack
 (`!include` → `use`, anchors → params, `!format` → `"{param}"` interpolation, `!expr` →
 `"${{…}}"`), then compiles the result through the fragment pipeline and reports what it
 emits. An old `!import-include` becomes `use` plus a `NEEDS ADOPTION` note — its job is
@@ -1298,7 +1303,7 @@ emits. An old `!import-include` becomes `use` plus a `NEEDS ADOPTION` note — i
 #### 5. Discovery Engine
 The `discover` commands reverse-engineer a Satz estate from existing Google Cloud assets.
 - **Asset Ingestion**: Consumes CAI (Cloud Asset Inventory) export streams.
-- **Configurable Filtering**: Uses `discovery-config.yaml` to include/exclude resources and attribute fields.
+- **Configurable Filtering**: Uses `import-config.yaml` to include/exclude resources and attribute fields.
 - **Schema Validation**: Validates discovered data against Terraform schemas, automatically filtering read-only or computed fields to ensure valid HCL generation.
 - **Heuristics**: Intelligent mapping of IAM policies (e.g., `google_storage_bucket_iam_member`) and key generation.
 

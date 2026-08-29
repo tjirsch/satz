@@ -312,7 +312,7 @@ fn load_bootstrap_yaml(
     // it exactly.
     if config_file.extension().and_then(|e| e.to_str()) != Some("satz") {
         return Err(format!(
-            "{} is not a Satz estate — bootstrap reads Satz only; convert with `satz migrate-to-satz`",
+            "{} is not a Satz estate — bootstrap reads Satz only; convert with `satz import <file>.yaml`",
             config_file.display()
         )
         .into());
