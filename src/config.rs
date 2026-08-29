@@ -36,8 +36,6 @@ pub struct Config {
 pub struct Folder {
     #[serde(rename = "import-id", skip_serializing_if = "Option::is_none")]
     pub import_id: Option<String>,
-    #[serde(rename = "import-id-comment", skip_serializing_if = "Option::is_none")]
-    pub import_id_comment: Option<String>,
     pub display_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
@@ -58,8 +56,6 @@ pub struct Folder {
 pub struct Project {
     #[serde(rename = "import-id", skip_serializing_if = "Option::is_none")]
     pub import_id: Option<String>,
-    #[serde(rename = "import-id-comment", skip_serializing_if = "Option::is_none")]
-    pub import_id_comment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub project_id: String,

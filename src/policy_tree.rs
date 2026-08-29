@@ -726,16 +726,22 @@ pub fn render_console_tree(
     let root = &tree.nodes[&tree.root];
     s.push_str(&format!("{} ({})\n", root.id, root.display_name));
 
+    /// What every node of the rendered tree is looked up against.
+    struct RenderCtx<'a> {
+        override_nodes: &'a std::collections::HashSet<&'a str>,
+        clean_roots: &'a HashMap<&'a str, &'a CleanSubtree>,
+        by_node: &'a HashMap<&'a str, &'a NodeReport>,
+    }
+
     fn walk(
         tree: &PolicyTree,
         id: &str,
         prefix: &str,
         is_last: bool,
-        override_nodes: &std::collections::HashSet<&str>,
-        clean_roots: &HashMap<&str, &CleanSubtree>,
-        by_node: &HashMap<&str, &NodeReport>,
+        ctx: &RenderCtx<'_>,
         out: &mut String,
     ) {
+        let RenderCtx { override_nodes, clean_roots, by_node } = ctx;
         let node = &tree.nodes[id];
         let branch = if is_last { "└─ " } else { "├─ " };
         let child_prefix = format!("{}{}", prefix, if is_last { "   " } else { "│  " });
@@ -780,9 +786,7 @@ pub fn render_console_tree(
                 child,
                 &child_prefix,
                 i + 1 == children.len(),
-                override_nodes,
-                clean_roots,
-                by_node,
+                ctx,
                 out,
             );
         }
@@ -795,9 +799,7 @@ pub fn render_console_tree(
             child,
             "",
             i + 1 == children.len(),
-            &override_nodes,
-            &clean_roots,
-            &by_node,
+            &RenderCtx { override_nodes: &override_nodes, clean_roots: &clean_roots, by_node: &by_node },
             &mut s,
         );
     }

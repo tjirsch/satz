@@ -130,18 +130,14 @@ fn is_match(res_type: &str, before: &Value, after: &Value) -> bool {
         let b_val = before.get(key);
         let a_val = after.get(key);
         
-        match (b_val, a_val) {
-            (Some(b), Some(a)) => {
-                let b_str = val_to_string(b).to_lowercase();
-                let a_str = val_to_string(a).to_lowercase();
-                if b_str != a_str && !fuzzy_match(&b_str, &a_str) {
-                    return false;
-                }
+        // Relaxed: only fail when both exist and differ — a key missing on one
+        // side is ignored, as defaults cause mismatches in the plan JSON.
+        if let (Some(b), Some(a)) = (b_val, a_val) {
+            let b_str = val_to_string(b).to_lowercase();
+            let a_str = val_to_string(a).to_lowercase();
+            if b_str != a_str && !fuzzy_match(&b_str, &a_str) {
+                return false;
             }
-            // Relaxed: only fail if both exist and don't match, or if one exists and is significantly different
-            // (e.g. not null or empty). Actually, let's just ignore if one is missing for now, 
-            // as defaults can cause mismatches in the plan JSON.
-            _ => {}
         }
     }
     true
