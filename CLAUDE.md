@@ -25,7 +25,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `attestations.yaml`, `evidence/`) if they are ever staged; and it rejects
   any commit whose author or committer is not the maintainer's private
   identity or a GitHub noreply address. CI runs it on every push and PR
-  (`.github/workflows/names-gate.yml`); the pre-commit hook runs it locally —
+  (`.github/workflows/names-gate.yml`), beside the smoke matrix
+  (`scripts/smoke.sh`, `.github/workflows/smoke.yml`: every estate-consuming
+  command end to end against `tests/smoke/` — a new command gets a step there
+  in the same PR); the pre-commit hook runs the gate locally —
   enable once per clone with `git config core.hooksPath .githooks`. Examples
   use ONLY the four example customers. If an example needs a value the table
   does not have, add it to the table in the same commit.

@@ -1,0 +1,10 @@
+# The smoke fixture: every estate-consuming command runs against this estate
+# in CI (scripts/smoke.sh). Paths resolve against this file's directory.
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+include_dirs = [".", "yaml", "../.."]
+schema_dir = "../schemas"
+presets_dir = "../../presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"

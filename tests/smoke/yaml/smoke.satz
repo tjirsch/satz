@@ -1,0 +1,109 @@
+// The smoke estate: one of everything the commands touch — the shipped CIS
+// and contacts packs, the monitoring packs under a folder, a group with a
+// member, org grants, a project with services and a bucket. Example values
+// only (docs/example-customers.md).
+
+estate smoke
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0TEST"
+  customer_domain = "example.com"
+  customer_shortname = "corp"
+  customer_longname = "Example Corp"
+  infra_folder_name = "Infrastructure"
+  infra_project_name = "corp-infra-001"
+  infra_bucket_name = "corp-infra-001-state"
+  svc_iac_account = "svc-iac-001"
+  svc_iac_users_group = "svc-iac-001-users"
+  first_admin = "admin@example.com"
+  billing_account_infra = "01AA-BB-CC"
+  logsink_project_name = "corp-log-infra-001"
+  cis_central_bucket_project = logsink_project_name
+  deployment_engine = "tofu"
+  deployment_mode = "local"
+  default_region = "europe-west3"
+  default_zone = "europe-west3-a"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+providers {
+  google {
+    alias = "google"
+    project = infra_project_name
+    region = default_region
+    user_project_override = true
+    billing_project = infra_project_name
+  }
+  "google-beta" {
+    alias = "google-beta"
+    project = infra_project_name
+    region = default_region
+    user_project_override = true
+    billing_project = infra_project_name
+  }
+}
+
+google_essential_contacts_contact {
+  use "presets/essential-contacts-organization.satz"
+}
+
+google_org_policy_policy {
+  use "presets/CIS-GCP-Foundation-4.0.satz"
+}
+
+google_cloud_identity_group {
+  "{svc_iac_users_group}" {
+    display_name = "Service Account IaC Users"
+    member = [
+      first_admin,
+    ]
+  }
+}
+
+google_organization_iam_member {
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/resourcemanager.organizationAdmin",
+    "roles/orgpolicy.policyAdmin",
+  ]
+  "group:{svc_iac_users_group}@{customer_domain}" = [
+    "roles/iam.serviceAccountTokenCreator",
+  ]
+}
+
+google_folder {
+  infra_folder {
+    display_name = infra_folder_name
+    google_project {
+      infra {
+        name = "corp-IaC"
+        project_id = infra_project_name
+        billing_account = billing_account_infra
+        project_service = [
+          "cloudresourcemanager.googleapis.com",
+          "iam.googleapis.com",
+        ]
+        google_storage_bucket {
+          state {
+            name = infra_bucket_name
+            location = "EU"
+            uniform_bucket_level_access = true
+            versioning {
+              enabled = true
+            }
+          }
+        }
+      }
+    }
+  }
+  logging {
+    display_name = "Logging"
+    use "presets/monitoring/organization-audit-logsink.satz"
+    use "presets/monitoring/organization-cis-log-alerts-central.satz"
+  }
+}
