@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::config::Config;
+use crate::manifest::Manifest;
 use crate::include_processor::IncludeBinding;
 use crate::ToolConfig;
 
@@ -1707,7 +1708,7 @@ pub async fn run_import_includes(
 // Adoption: get a set of org policies under management (R1)
 // ---------------------------------------------------------------------------
 
-/// One org policy the estate declares, read from the emitted HCL.
+/// One org policy the estate declares, read from the emission manifest.
 #[derive(Debug, PartialEq)]
 pub(crate) struct DeclaredOrgPolicy {
     /// Terraform address, e.g. `google_org_policy_policy.compute_managed_requireOsLogin`
@@ -1720,65 +1721,27 @@ pub(crate) struct DeclaredOrgPolicy {
     pub enforce: Option<bool>,
 }
 
-/// Read the org policies an estate declares straight out of the emitted `main.tf`.
-///
-/// main.tf is the right source here precisely because it is what `tofu apply`
-/// will act on: adoption exists to stop that apply colliding with policies that
-/// already exist, so the two must be reading the same list.
-pub(crate) fn declared_org_policies(main_tf: &str) -> Vec<DeclaredOrgPolicy> {
-    let mut out = Vec::new();
-    let mut cur: Option<(String, String, String, Vec<bool>)> = None;
-    let mut depth = 0usize;
-    for line in main_tf.lines() {
-        let t = line.trim();
-        if cur.is_none() {
-            if let Some(rest) = t.strip_prefix(r#"resource "google_org_policy_policy" ""#) {
-                if let Some(label) = rest.split('"').next() {
-                    cur = Some((
-                        format!("google_org_policy_policy.{}", label),
-                        String::new(),
-                        String::new(),
-                        Vec::new(),
-                    ));
-                    depth = t.matches('{').count() - t.matches('}').count();
-                }
+/// The org policies an estate declares, read from the emission manifest — the
+/// structured form of the very blocks `main.tf` renders. That is the right
+/// source precisely because it is what `tofu apply` will act on: adoption exists
+/// to stop that apply colliding with policies that already exist, so the two
+/// must be reading the same list.
+pub(crate) fn declared_org_policies(manifest: &Manifest) -> Vec<DeclaredOrgPolicy> {
+    manifest
+        .of_type("google_org_policy_policy")
+        .filter_map(|r| {
+            let name = r.attrs.get("name").map(String::as_str).unwrap_or("");
+            if name.is_empty() {
+                return None;
             }
-            continue;
-        }
-        depth = depth + t.matches('{').count() - t.matches('}').count();
-        if let Some((_, name, parent, enf)) = cur.as_mut() {
-            if let Some(v) = t.strip_prefix("name") {
-                let v = v.trim_start_matches([' ', '=']).trim().trim_matches('"');
-                if !v.is_empty() {
-                    *name = constraint_name(v).to_string();
-                }
-            } else if let Some(v) = t.strip_prefix("parent") {
-                let v = v.trim_start_matches([' ', '=']).trim().trim_matches('"');
-                if !v.is_empty() {
-                    *parent = v.to_string();
-                }
-            } else if let Some(v) = t.strip_prefix("enforce") {
-                match v.trim_start_matches([' ', '=']).trim().trim_matches('"').to_ascii_uppercase().as_str() {
-                    "TRUE" => enf.push(true),
-                    "FALSE" => enf.push(false),
-                    _ => {}
-                }
-            }
-        }
-        if depth == 0 {
-            if let Some((address, constraint, parent, enf)) = cur.take() {
-                if !constraint.is_empty() {
-                    out.push(DeclaredOrgPolicy {
-                        address,
-                        constraint,
-                        parent,
-                        enforce: if enf.len() == 1 { Some(enf[0]) } else { None },
-                    });
-                }
-            }
-        }
-    }
-    out
+            Some(DeclaredOrgPolicy {
+                address: r.address(),
+                constraint: constraint_name(name).to_string(),
+                parent: r.attrs.get("parent").cloned().unwrap_or_default(),
+                enforce: r.enforce,
+            })
+        })
+        .collect()
 }
 
 /// `adopt-org-policies`: bring the org policies an estate declares under
@@ -1794,13 +1757,13 @@ pub(crate) fn declared_org_policies(main_tf: &str) -> Vec<DeclaredOrgPolicy> {
 /// ACTIVATES constraints, so it must never be a side effect of `transpile`,
 /// which runs constantly and stays pure.
 pub async fn adopt_org_policies(
-    main_tf: &str,
+    manifest: &Manifest,
     org_id: &str,
     runtime_config: &ToolConfig,
     hcl_dir: &Path,
     dry_run: bool,
 ) -> Result<(), BoxErr> {
-    let declared = declared_org_policies(main_tf);
+    let declared = declared_org_policies(manifest);
     if declared.is_empty() {
         println!("No org policies declared by this estate — nothing to adopt.");
         return Ok(());
@@ -1917,12 +1880,12 @@ mod tests {
         serde_json::from_str(s).unwrap()
     }
 
-    /// Adoption reads the policies straight out of the emitted HCL, because that
+    /// Adoption reads the policies out of the emission manifest, because that
     /// is exactly what `apply` will act on. Shapes here are copied from real
     /// estate output: a managed constraint with nested enforce, and a legacy list
     /// constraint with no boolean at all.
     #[test]
-    fn declared_org_policies_reads_emitted_hcl() {
+    fn declared_org_policies_reads_emitted_resources() {
         let tf = r#"
 resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
   provider = google.google
@@ -1956,7 +1919,7 @@ resource "google_storage_bucket" "not_a_policy" {
   name = "irrelevant"
 }
 "#;
-        let got = declared_org_policies(tf);
+        let got = declared_org_policies(&Manifest::parse(tf));
         assert_eq!(got.len(), 2, "only org policies, got {:?}", got);
 
         assert_eq!(got[0].address, "google_org_policy_policy.compute_managed_requireOsLogin");

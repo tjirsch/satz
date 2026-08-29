@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::manifest::Manifest;
+
 type BoxErr = Box<dyn std::error::Error>;
 
 // ---------------------------------------------------------------------------
@@ -244,24 +246,6 @@ pub(crate) fn resolve_goals(
     goals
 }
 
-/// Extract emitted Terraform resource addresses from generated HCL.
-pub(crate) fn emitted_addresses(main_tf: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for line in main_tf.lines() {
-        let t = line.trim_start();
-        if let Some(rest) = t.strip_prefix("resource \"") {
-            let mut parts = rest.split('"');
-            let tf_type = parts.next().unwrap_or("");
-            parts.next(); // space between labels
-            let label = parts.next().unwrap_or("");
-            if !tf_type.is_empty() && !label.is_empty() {
-                out.insert(format!("{}.{}", tf_type, label));
-            }
-        }
-    }
-    out
-}
-
 // ---------------------------------------------------------------------------
 // IO layer: the `require` command
 // ---------------------------------------------------------------------------
@@ -368,11 +352,11 @@ pub(crate) fn run_require(
     input: &Path,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
-    main_tf: &str,
+    manifest: &Manifest,
 ) -> Result<bool, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
-    let emitted = emitted_addresses(main_tf);
+    let emitted = manifest.addresses();
     let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
 
     println!(
@@ -512,55 +496,6 @@ controls:
         assert!(matches!(goals["9.9"], Goal::Organizational));
     }
 
-    /// The declared side of R7. `enforce` sits two levels down in
-    /// `spec { rules { … } }`, which `extract_witness_attrs` deliberately cannot
-    /// see, so enforcement needs its own extractor.
-    #[test]
-    fn declared_enforcement_reads_nested_enforce_per_policy() {
-        let tf = r#"
-resource "google_org_policy_policy" "on" {
-  name = "organizations/1/policies/compute.managed.requireOsLogin"
-
-  spec {
-    rules {
-      enforce = "TRUE"
-    }
-  }
-}
-
-resource "google_org_policy_policy" "off" {
-  name = "organizations/1/policies/compute.managed.vmCanIpForward"
-
-  spec {
-    rules {
-      enforce = "FALSE"
-    }
-  }
-}
-
-resource "google_org_policy_policy" "listy" {
-  name = "organizations/1/policies/iam.allowedPolicyMemberDomains"
-
-  spec {
-    rules {
-      values {
-        allowed_values = [
-          "C0example"
-        ]
-      }
-    }
-  }
-}
-"#;
-        let d = declared_enforcement(tf);
-        assert_eq!(d.get("google_org_policy_policy.on"), Some(&true));
-        assert_eq!(d.get("google_org_policy_policy.off"), Some(&false));
-        // A list constraint has no single boolean — comparing it would be worse
-        // than not comparing it, so it must be absent rather than guessed.
-        assert_eq!(d.get("google_org_policy_policy.listy"), None);
-        assert_eq!(d.len(), 2);
-    }
-
     /// The live side. Shape verified against the Org Policy API on a real org:
     /// `enforce` is a JSON BOOL live while HCL spells it "TRUE"/"FALSE".
     #[test]
@@ -607,7 +542,7 @@ resource "google_org_policy_policy" "os_login" {
   }
 }
 "#;
-        let declared = declared_enforcement(tf);
+        let declared = Manifest::parse(tf).declared_enforcement();
         let live: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":false}]}}"#).unwrap();
         let want = declared.get("google_org_policy_policy.os_login").copied();
@@ -709,41 +644,6 @@ resource "google_org_policy_policy" "os_login" {
         }
     }
 
-    #[test]
-    fn witness_attrs_ignore_nested_block_shadowing() {
-        let hcl = r#"
-resource "google_monitoring_alert_policy" "cis_central_2_8_firewall_rule" {
-  display_name = "CIS 2.8 — VPC firewall rule changes (org-wide)"
-  combiner = "OR"
-  conditions {
-    display_name = "Firewall rule changed"
-    condition_matched_log {
-      filter = "x"
-    }
-  }
-}
-"#;
-        let attrs = extract_witness_attrs(hcl);
-        let policy = &attrs["google_monitoring_alert_policy.cis_central_2_8_firewall_rule"];
-        assert_eq!(
-            policy.get("display_name").map(String::as_str),
-            Some("CIS 2.8 — VPC firewall rule changes (org-wide)")
-        );
-    }
-
-    #[test]
-    fn addresses_parse_from_hcl() {
-        let hcl = r#"
-resource "google_logging_metric" "cis_central_2_5_project_ownership" {
-  name = "x"
-}
-resource "google_storage_bucket" "org_audit_logs" {}
-"#;
-        let set = emitted_addresses(hcl);
-        assert!(set.contains("google_logging_metric.cis_central_2_5_project_ownership"));
-        assert!(set.contains("google_storage_bucket.org_audit_logs"));
-        assert_eq!(set.len(), 2);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -786,55 +686,6 @@ fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str)> {
         "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name")),
         _ => None,
     }
-}
-
-/// Extract, per emitted resource address, the simple string attributes of its HCL
-/// block (enough to know each witness's live identifier: name / display_name).
-pub(crate) fn extract_witness_attrs(
-    main_tf: &str,
-) -> BTreeMap<String, BTreeMap<String, String>> {
-    let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    let mut current: Option<String> = None;
-    let mut depth = 0usize;
-    for line in main_tf.lines() {
-        let t = line.trim();
-        if let Some(rest) = t.strip_prefix("resource \"") {
-            let mut parts = rest.split('"');
-            let tf_type = parts.next().unwrap_or("");
-            parts.next();
-            let label = parts.next().unwrap_or("");
-            current = Some(format!("{}.{}", tf_type, label));
-            out.entry(current.clone().unwrap()).or_default();
-            depth = 1;
-            continue;
-        }
-        if current.is_none() {
-            continue;
-        }
-        if t == "}" || t == "},"{
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                current = None;
-            }
-            continue;
-        }
-        // Top-level attrs only: a nested block (e.g. an alert policy's conditions)
-        // may reuse attr names like display_name and must not shadow the resource's.
-        if depth == 1 {
-            if let (Some(addr), Some(eq)) = (&current, t.find(" = \"")) {
-                let key = t[..eq].trim().to_string();
-                let val = t[eq + 4..].trim_end_matches('"').to_string();
-                // Only simple one-line string attrs; that's all the matchers need.
-                if !key.contains(' ') && !val.contains('"') {
-                    out.get_mut(addr).unwrap().insert(key, val);
-                }
-            }
-        }
-        if t.ends_with('{') {
-            depth += 1;
-        }
-    }
-    out
 }
 
 /// Live inventory relevant to the witnesses: for each needed CAI asset type, the set
@@ -886,51 +737,6 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
         out.insert(at.clone(), ids);
     }
     Ok(out)
-}
-
-/// The single `enforce` value declared for an org-policy resource, if it declares
-/// exactly one.
-///
-/// Deliberately conservative: a policy with several rules, or none, or one that
-/// sets `values`/`allowed_values` instead (the legacy list constraints) has no
-/// single boolean to compare, and a wrong comparison here would be worse than no
-/// comparison at all. `extract_witness_attrs` cannot supply this — it stops at the
-/// resource's top level so nested blocks can't shadow it, and `enforce` lives two
-/// levels down in `spec { rules { … } }`.
-pub(crate) fn declared_enforcement(main_tf: &str) -> BTreeMap<String, bool> {
-    let mut out = BTreeMap::new();
-    let mut current: Option<String> = None;
-    let mut depth = 0usize;
-    let mut found: Vec<bool> = Vec::new();
-    for line in main_tf.lines() {
-        let t = line.trim();
-        if current.is_none() {
-            if let Some(rest) = t.strip_prefix(r#"resource "google_org_policy_policy" ""#) {
-                if let Some(label) = rest.split('\"').next() {
-                    current = Some(format!("google_org_policy_policy.{}", label));
-                    depth = t.matches('{').count() - t.matches('}').count();
-                    found.clear();
-                }
-            }
-            continue;
-        }
-        depth = depth + t.matches('{').count() - t.matches('}').count();
-        if let Some(v) = t.strip_prefix("enforce") {
-            let v = v.trim_start_matches([' ', '=']).trim().trim_matches('\"');
-            match v.to_ascii_uppercase().as_str() {
-                "TRUE" => found.push(true),
-                "FALSE" => found.push(false),
-                _ => {}
-            }
-        }
-        if depth == 0 {
-            if let (Some(addr), [only]) = (current.take(), found.as_slice()) {
-                out.insert(addr, *only);
-            }
-            found.clear();
-        }
-    }
-    out
 }
 
 /// The single `enforce` value the LIVE policy carries, if it carries exactly one.
@@ -1013,7 +819,7 @@ pub(crate) async fn run_report_compliance(
     input: &Path,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
-    main_tf: &str,
+    manifest: &Manifest,
     org_id: Option<&str>,
     config_dir: &Path,
     format: &str,
@@ -1023,14 +829,14 @@ pub(crate) async fn run_report_compliance(
 ) -> Result<(), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
-    let emitted = emitted_addresses(main_tf);
+    let emitted = manifest.addresses();
     let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
-    let attrs = extract_witness_attrs(main_tf);
+    let attrs = manifest.witness_attrs();
 
     // ---- live verification (degrades to Unverifiable, never fails the report) ----
     let verified_at = chrono_free_timestamp();
     let mut live: BTreeMap<String, LiveState> = BTreeMap::new();
-    let declared = declared_enforcement(main_tf);
+    let declared = manifest.declared_enforcement();
     if !no_live {
         // Which asset types do the satisfied/partial witnesses need?
         let mut needed: BTreeSet<String> = BTreeSet::new();
