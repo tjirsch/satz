@@ -39,41 +39,21 @@ fn is_mergeable_resource_key(key: &str) -> bool {
     types.contains(key) || types.contains(&format!("google_{}", key))
 }
 
-/// The operation an include line requests. `!include` only inlines the file;
-/// `!import-include` additionally marks the file so that `transpile` imports the resources
-/// it contributes into state (see `crate::classify_import_binding` for the dispatch).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IncludeOp {
-    /// `!include` — inline only, no import side effects.
-    Plain,
-    /// `!import-include` — inline AND, at transpile time, look the included resources up
-    /// live and `tofu import` the ones that already exist into state.
-    Import,
-}
-
-/// A resolved `!import-include` discovered while expanding a config.
+/// One file an include directive pulled in while expanding a config — the
+/// include manifest `check-presets` reads to learn which presets an estate uses.
 #[derive(Debug, Clone)]
-/// `op`/`key` are read by the R1 material in `classify_import_binding`.
-#[allow(dead_code)]
 pub struct IncludeBinding {
-    pub op: IncludeOp,
     pub path: PathBuf,
-    /// The YAML key the included content is nested under (Form B). A nested Form A include
-    /// inherits it from the enclosing include, because its content lands under that same
-    /// key. `None` only for a bare Form A include at the top level of the main config.
-    /// This is what tells `transpile` which kind of resource the preset contributes.
-    pub key: Option<String>,
 }
 
 /// Expand all includes in `file_path`, returning the merged YAML text.
-/// (Operation-tagged includes are inlined just like `!include`; use
-/// `process_includes_with_ops` if you also need the operations manifest.)
+/// (Use `process_includes_with_ops` if you also need the include manifest.)
 pub fn process_includes(file_path: &Path, include_paths: &[PathBuf]) -> Result<String, Box<dyn std::error::Error>> {
     Ok(process_includes_with_ops(file_path, include_paths)?.0)
 }
 
-/// Like `process_includes`, but also returns the manifest of `!import-include` directives
-/// encountered, in document order.
+/// Like `process_includes`, but also returns the manifest of included files,
+/// in document order.
 pub fn process_includes_with_ops(
     file_path: &Path,
     include_paths: &[PathBuf],
@@ -82,7 +62,7 @@ pub fn process_includes_with_ops(
     let mut bindings = Vec::new();
     let mut stack = Vec::new();
     let mut seen_anchors = std::collections::HashSet::new();
-    let text = process_includes_inner(file_path, include_paths, &mut counter, &mut bindings, &mut stack, None, &mut seen_anchors)?;
+    let text = process_includes_inner(file_path, include_paths, &mut counter, &mut bindings, &mut stack, &mut seen_anchors)?;
     Ok((rename_duplicate_resource_keys(&text, &is_mergeable_resource_key), bindings))
 }
 
@@ -179,9 +159,6 @@ fn process_includes_inner(
     counter: &mut usize,
     bindings: &mut Vec<IncludeBinding>,
     stack: &mut Vec<PathBuf>,
-    // The key `file_path`'s own content is nested under, so that a Form A include inside
-    // it reports the key its content actually ends up under rather than `None`.
-    enclosing_key: Option<&str>,
     // Anchors defined so far in the merged document, in emission order. Drives two
     // things: `!include-if <anchor> <file>` (include only if defined), and
     // first-definition-wins for preset defaults (see the variables handling below).
@@ -204,18 +181,24 @@ fn process_includes_inner(
     let content = crate::fsx::read_to_string(file_path)?;
     let mut result = Vec::new();
     let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    // Open mapping keys above the current line, innermost last. Lets a Form A include
-    // written *under* a key (`org_policy_policy:` on its own line, directive indented
-    // beneath it) report that key, which is how the directive is most naturally written.
-    let mut key_stack: Vec<(usize, String)> = Vec::new();
     // Only included files get their variables-block defaults overridden; the root file
     // is the overrider, never the overridden.
     let is_included_file = stack.len() > 1;
     let mut in_vars_block = false;
 
     for line in content.lines() {
+        // The transpile-time live import that rode on this tag is gone; its job is
+        // `satz adopt`. Loud, because the alternative is serde_yaml choking on an
+        // unknown tag several layers away from the cause.
+        if line.trim_start().contains("!import-include ") && !line.trim_start().starts_with('#') {
+            return Err(format!(
+                "{}: `!import-include` was removed — write a plain `!include` and run `satz adopt` to import what already exists",
+                file_path.display()
+            )
+            .into());
+        }
         if let Some(caps) = find_include(line) {
-            let (indent, key, include_file, op, condition) = caps;
+            let (indent, key, include_file, condition) = caps;
 
             // `!include-if <anchor> <file>`: only include when the anchor is already
             // defined above this line. The file does not even need to exist otherwise —
@@ -235,27 +218,9 @@ fn process_includes_inner(
             let resolved_path = resolve_include_path(parent_dir, include_file, include_paths)
                 .ok_or_else(|| format!("Could not resolve include file: {}", include_file))?;
 
-            // Form B names the key on the same line; otherwise the content lands under the
-            // nearest enclosing key of this file, or failing that under whatever key this
-            // whole file was included beneath.
-            let effective_key = key
-                .map(|k| k.to_string())
-                .or_else(|| {
-                    key_stack
-                        .iter()
-                        .rev()
-                        .find(|(i, _)| *i < indent)
-                        .map(|(_, k)| k.clone())
-                })
-                .or_else(|| enclosing_key.map(|k| k.to_string()));
-
-            // Every include is recorded — consumers filter by op. Plain entries give
-            // commands like check-presets the resolved path of each included file.
-            bindings.push(IncludeBinding {
-                op,
-                path: resolved_path.clone(),
-                key: effective_key.clone(),
-            });
+            // Every include is recorded: this is how check-presets learns the
+            // resolved path of each file the estate uses.
+            bindings.push(IncludeBinding { path: resolved_path.clone() });
 
             let included_content = process_includes_inner(
                 &resolved_path,
@@ -263,7 +228,6 @@ fn process_includes_inner(
                 counter,
                 bindings,
                 stack,
-                effective_key.as_deref(),
                 seen_anchors,
             )?;
 
@@ -300,13 +264,6 @@ fn process_includes_inner(
                 result.push(format!("# satz:source-end: {}", resolved_path.display()));
             }
         } else {
-            if let Some((indent, key)) = bare_mapping_key(line) {
-                while key_stack.last().is_some_and(|(i, _)| *i >= indent) {
-                    key_stack.pop();
-                }
-                key_stack.push((indent, key));
-            }
-
             // Track whether we are inside this file's top-level `variables:` block.
             let trimmed = line.trim_start();
             let at_top_level = !line.starts_with(' ') && !trimmed.is_empty() && !trimmed.starts_with('#');
@@ -355,21 +312,10 @@ fn rename_top_level_variables(content: &str, idx: usize) -> String {
         .join("\n")
 }
 
-/// Recognized include directives. `!include` and `!import-include` are distinct prefixes,
-/// so match order does not matter.
-const DIRECTIVES: &[(&str, IncludeOp)] = &[
-    ("!include ", IncludeOp::Plain),
-    ("!import-include ", IncludeOp::Import),
-];
-
-fn match_directive(s: &str) -> Option<(IncludeOp, &str)> {
-    for (token, op) in DIRECTIVES {
-        if let Some(rest) = s.strip_prefix(token) {
-            let filename = rest.trim().trim_matches(|c| c == '"' || c == '\'');
-            return Some((*op, filename));
-        }
-    }
-    None
+/// `!include <file>` — the file name, unquoted.
+fn match_directive(s: &str) -> Option<&str> {
+    let rest = s.strip_prefix("!include ")?;
+    Some(rest.trim().trim_matches(|c| c == '"' || c == '\''))
 }
 
 /// `!include-if <anchor> <file>` — a plain include gated on the anchor being defined
@@ -385,8 +331,10 @@ fn match_conditional(s: &str) -> Option<(&str, &str)> {
     Some((cond, file))
 }
 
-/// (indent, Form B key, file, op, include-if condition)
-type FoundInclude<'a> = (usize, Option<&'a str>, &'a str, IncludeOp, Option<&'a str>);
+/// (indent, Form B key, file, include-if condition). The key is what the
+/// inlined content is nested under (`key: !include file` inlines the file's
+/// body one level deeper, beneath `key:`).
+type FoundInclude<'a> = (usize, Option<&'a str>, &'a str, Option<&'a str>);
 
 fn find_include(line: &str) -> Option<FoundInclude<'_>> {
     let trimmed = line.trim_start();
@@ -400,10 +348,10 @@ fn find_include(line: &str) -> Option<FoundInclude<'_>> {
     // Form A: <directive> file.yaml   (`!include-if` first: "!include " is not its prefix,
     // but checking it first keeps the intent obvious)
     if let Some((cond, filename)) = match_conditional(trimmed) {
-        return Some((indent, None, filename, IncludeOp::Plain, Some(cond)));
+        return Some((indent, None, filename, Some(cond)));
     }
-    if let Some((op, filename)) = match_directive(trimmed) {
-        return Some((indent, None, filename, op, None));
+    if let Some(filename) = match_directive(trimmed) {
+        return Some((indent, None, filename, None));
     }
 
     // Form B: key: <directive> file.yaml
@@ -411,10 +359,10 @@ fn find_include(line: &str) -> Option<FoundInclude<'_>> {
         let key = trimmed[..colon_pos].trim();
         let rest = trimmed[colon_pos + 1..].trim();
         if let Some((cond, filename)) = match_conditional(rest) {
-            return Some((indent, Some(key), filename, IncludeOp::Plain, Some(cond)));
+            return Some((indent, Some(key), filename, Some(cond)));
         }
-        if let Some((op, filename)) = match_directive(rest) {
-            return Some((indent, Some(key), filename, op, None));
+        if let Some(filename) = match_directive(rest) {
+            return Some((indent, Some(key), filename, None));
         }
     }
 
@@ -423,7 +371,7 @@ fn find_include(line: &str) -> Option<FoundInclude<'_>> {
 
 /// A line that opens a nested mapping — `some_key:` and nothing else. Deliberately strict:
 /// sequence items, inline values and comments are not keys anything gets nested under, and
-/// a wrong guess here would misroute an import rather than merely fail to help.
+/// a wrong guess here would merge the wrong siblings rather than merely fail to help.
 fn bare_mapping_key(line: &str) -> Option<(usize, String)> {
     let trimmed = line.trim_start();
     if trimmed.starts_with('#') || trimmed.starts_with('-') {
@@ -464,31 +412,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_plain_and_import_directives() {
-        assert_eq!(find_include("!include a.yaml").unwrap().3, IncludeOp::Plain);
-        assert_eq!(find_include("!import-include a.yaml").unwrap().3, IncludeOp::Import);
-        assert_eq!(
-            find_include("  !import-include a.yaml").unwrap().3,
-            IncludeOp::Import
-        );
-        let (_indent, key, file, op, cond) = find_include("key: !import-include \"p.yaml\"").unwrap();
+    fn parses_plain_directives_in_both_forms() {
+        assert_eq!(find_include("!include a.yaml").unwrap().2, "a.yaml");
+        assert_eq!(find_include("  !include a.yaml").unwrap().0, 2);
+        let (_indent, key, file, cond) = find_include("key: !include \"p.yaml\"").unwrap();
         assert_eq!(key, Some("key"));
         assert_eq!(file, "p.yaml");
-        assert_eq!(op, IncludeOp::Import);
         assert_eq!(cond, None);
     }
 
     #[test]
     fn parses_conditional_includes() {
-        let (_i, key, file, op, cond) = find_include("!include-if logsink-project-name logsink.yaml").unwrap();
-        assert_eq!((key, file, op, cond), (None, "logsink.yaml", IncludeOp::Plain, Some("logsink-project-name")));
+        let (_i, key, file, cond) = find_include("!include-if logsink-project-name logsink.yaml").unwrap();
+        assert_eq!((key, file, cond), (None, "logsink.yaml", Some("logsink-project-name")));
 
         // Anchor sigils are tolerated, Form B works, and a plain !include has no condition.
-        let (_i, _k, _f, _op, cond) = find_include("!include-if *logsink-project-name logsink.yaml").unwrap();
+        let (_i, _k, _f, cond) = find_include("!include-if *logsink-project-name logsink.yaml").unwrap();
         assert_eq!(cond, Some("logsink-project-name"));
-        let (_i, key, file, _op, cond) = find_include("audit: !include-if logsink-name \"l.yaml\"").unwrap();
+        let (_i, key, file, cond) = find_include("audit: !include-if logsink-name \"l.yaml\"").unwrap();
         assert_eq!((key, file, cond), (Some("audit"), "l.yaml", Some("logsink-name")));
-        assert_eq!(find_include("!include a.yaml").unwrap().4, None);
+        assert_eq!(find_include("!include a.yaml").unwrap().3, None);
+    }
+
+    #[test]
+    fn import_include_is_a_loud_error_pointing_at_adopt() {
+        let dir = scratch("import-include-removed");
+        let main = dir.join("main.yaml");
+        std::fs::write(&main, "org_policy_policy: !import-include preset.yaml\n").unwrap();
+        std::fs::write(dir.join("preset.yaml"), "x:\n  name: y\n").unwrap();
+        let err = process_includes_with_ops(&main, &[]).unwrap_err().to_string();
+        assert!(err.contains("`!import-include` was removed") && err.contains("satz adopt"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -503,7 +457,7 @@ mod tests {
         // include makes the file include itself.
         assert!(find_include("# !include other.yaml").is_none());
         assert!(find_include("#   cloud_identity_group: !include self.yaml").is_none());
-        assert!(find_include("  # org_policy_policy: !import-include self.yaml").is_none());
+        assert!(find_include("  # org_policy_policy: !include self.yaml").is_none());
     }
 
     /// Scratch directory unique to this process and test name, so tests that write
@@ -658,88 +612,6 @@ mod tests {
         let out = rename_duplicate_resource_keys(text, &is_resource);
         assert!(out.contains("_satz_merge_0_project:"), "{out}");
         assert!(serde_yaml::from_str::<serde_yaml::Value>(&out).is_ok(), "{out}");
-    }
-
-    #[test]
-    fn form_b_key_recorded_in_binding() {
-        // The wrapper key is what tells `transpile` which importer to run, so it has to
-        // survive into the manifest rather than being consumed by the inliner.
-        let dir = scratch("formb");
-        let main = dir.join("main.yaml");
-        std::fs::write(&main, "cloud_identity_group: !import-include groups.yaml\n").unwrap();
-        std::fs::write(dir.join("groups.yaml"), "admins:\n  display_name: A\n").unwrap();
-
-        let (_text, bindings) = process_includes_with_ops(&main, &[]).unwrap();
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].key.as_deref(), Some("cloud_identity_group"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn nested_form_a_inherits_enclosing_key() {
-        // A Form A include nested inside a Form B one has no key of its own, but its
-        // content still lands under the outer key — reporting `None` would misroute it.
-        let dir = scratch("nested");
-        let main = dir.join("main.yaml");
-        std::fs::write(&main, "cloud_identity_group: !include outer.yaml\n").unwrap();
-        std::fs::write(dir.join("outer.yaml"), "!import-include inner.yaml\n").unwrap();
-        std::fs::write(dir.join("inner.yaml"), "admins:\n  display_name: A\n").unwrap();
-
-        let (_text, bindings) = process_includes_with_ops(&main, &[]).unwrap();
-        let imports: Vec<_> = bindings.iter().filter(|b| b.op == IncludeOp::Import).collect();
-        assert_eq!(imports.len(), 1);
-        assert_eq!(imports[0].key.as_deref(), Some("cloud_identity_group"));
-        // The plain outer include is recorded too, with its resolved path.
-        assert_eq!(bindings.len(), 2);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn form_a_indented_under_a_key_reports_that_key() {
-        // The directive is most naturally written on its own line beneath the key rather
-        // than inline after it; both spellings must route to the same importer.
-        let dir = scratch("underkey");
-        let main = dir.join("main.yaml");
-        std::fs::write(&main, "cloud_identity_group:\n  !import-include groups.yaml\n").unwrap();
-        std::fs::write(dir.join("groups.yaml"), "admins:\n  display_name: A\n").unwrap();
-
-        let (_text, bindings) = process_includes_with_ops(&main, &[]).unwrap();
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].key.as_deref(), Some("cloud_identity_group"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn sibling_key_above_does_not_capture_a_top_level_include() {
-        // A key that closed before the include starts must not claim it — the include is
-        // its sibling, not its child.
-        let dir = scratch("sibling");
-        let main = dir.join("main.yaml");
-        std::fs::write(&main, "org_policy_policy:\n  foo:\n    name: x\n!import-include p.yaml\n").unwrap();
-        std::fs::write(dir.join("p.yaml"), "bar: baz\n").unwrap();
-
-        let (_text, bindings) = process_includes_with_ops(&main, &[]).unwrap();
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].key, None);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn top_level_form_a_has_no_key() {
-        let dir = scratch("forma");
-        let main = dir.join("main.yaml");
-        std::fs::write(&main, "!import-include p.yaml\n").unwrap();
-        std::fs::write(dir.join("p.yaml"), "foo: bar\n").unwrap();
-
-        let (_text, bindings) = process_includes_with_ops(&main, &[]).unwrap();
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].key, None);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

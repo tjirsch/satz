@@ -1645,37 +1645,6 @@ Thumbs.db
     Ok(())
 }
 
-/// Which importer an `!import-include` preset belongs to. The YAML key the preset is
-/// included under already names the resource kind, so no content sniffing is needed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// R1 material: the `!import-include` classifier. Dead since M3 (see the note at
-/// the top of `cloud_identity.rs`); kept for the Satz adoption mechanism.
-#[allow(dead_code)]
-pub(crate) enum ImportTarget {
-    OrgPolicy,
-    CloudIdentityGroup,
-    /// A key the transpiler renders but no importer can address.
-    Unsupported(String),
-}
-
-/// `!import-include` predates having more than one importer, so an unrecognised or absent
-/// key keeps its original meaning (org policies) rather than becoming an error.
-#[allow(dead_code)]
-pub(crate) fn classify_import_binding(binding: &include_processor::IncludeBinding) -> ImportTarget {
-    match binding.key.as_deref() {
-        Some(cloud_identity::GROUP_WRAPPER_KEY) => ImportTarget::CloudIdentityGroup,
-        // The long form goes through the generic schema path, where attributes are raw
-        // Terraform (explicit `group_key`/`parent`) and none of the group-email derivation
-        // applies — so it cannot be imported by group name.
-        Some("google_cloud_identity_group") => ImportTarget::Unsupported(
-            "google_cloud_identity_group: !import-include is not supported — use the compact \
-             `cloud_identity_group:` form, which is what the group importer addresses"
-                .to_string(),
-        ),
-        _ => ImportTarget::OrgPolicy,
-    }
-}
-
 /// Satz front-end, shared by every command that takes an estate input: a .satz file
 /// compiles to its generated .gen.yaml sibling (inspectable, never hand-edited) and
 /// the returned path feeds the unchanged YAML pipeline.
@@ -3527,54 +3496,6 @@ variables:
         let vars = extract_variables(&resolve_yaml_custom_tags(raw));
         assert_eq!(vars.get("bucket-name").and_then(|v| v.as_str()), Some("acme-audit-logs"));
         assert_eq!(vars.get("bucket-url").and_then(|v| v.as_str()), Some("gs://acme-audit-logs"));
-    }
-}
-
-#[cfg(test)]
-mod import_target_tests {
-    use super::*;
-    use crate::include_processor::{IncludeBinding, IncludeOp};
-
-    fn binding(key: Option<&str>) -> IncludeBinding {
-        IncludeBinding {
-            op: IncludeOp::Import,
-            path: PathBuf::from("preset.yaml"),
-            key: key.map(|k| k.to_string()),
-        }
-    }
-
-    #[test]
-    fn group_key_routes_to_the_group_importer() {
-        assert_eq!(
-            classify_import_binding(&binding(Some("cloud_identity_group"))),
-            ImportTarget::CloudIdentityGroup
-        );
-    }
-
-    #[test]
-    fn unknown_and_absent_keys_keep_the_original_org_policy_meaning() {
-        // `!import-include` shipped org-policy-only, so anything not explicitly claimed by
-        // another importer must keep behaving exactly as it did before.
-        for key in [None, Some("org_policy_policy"), Some("google_org_policy_policy"), Some("something_else")] {
-            assert_eq!(
-                classify_import_binding(&binding(key)),
-                ImportTarget::OrgPolicy,
-                "key {key:?} should route to org policy"
-            );
-        }
-    }
-
-    #[test]
-    fn long_group_form_is_rejected_rather_than_silently_misrouted() {
-        // It renders through the generic schema path with raw Terraform attributes, so the
-        // group importer cannot address it; failing loudly beats importing nothing.
-        match classify_import_binding(&binding(Some("google_cloud_identity_group"))) {
-            ImportTarget::Unsupported(why) => assert!(
-                why.contains("cloud_identity_group"),
-                "message should name the supported form: {why}"
-            ),
-            other => panic!("expected Unsupported, got {other:?}"),
-        }
     }
 }
 

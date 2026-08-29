@@ -3,9 +3,10 @@
 // 
 // cloud_identity_group: !include presets/security-group-models/s1-group-definitions-1.0.yaml
 // 
-// To adopt groups that already exist in the tenant, use !import-include instead of
-// !include for one transpile: each group is looked up by email over the Cloud Identity
-// API and the ones that exist are imported into state. That is why no group ids are
+// To adopt groups that already exist in the tenant, run
+//   satz adopt <estate> --only google_cloud_identity_group --execute
+// each group is looked up by email over the Cloud Identity API and the verified
+// ids are written into the estate as "import-id". That is why no group ids are
 // hard-coded here — they are tenant-specific and do not belong in a shared preset.
 // Memberships are deliberately NOT part of this preset (v1.1): presets define
 // groups, humans grant membership. Estates that need managed memberships declare
