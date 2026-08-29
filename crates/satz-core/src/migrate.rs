@@ -38,7 +38,7 @@ const USE_L: &str = "\u{ab}U:";  // «U:form|path|cond»
 const USE_K: &str = "\u{ab}UK";  // «UK<n>» — synthetic key for Form A in mappings
 
 fn snake(name: &str) -> String {
-    name.replace('-', "_").replace('.', "_")
+    name.replace(['-', '.'], "_")
 }
 
 /// Replace `*alias` tokens (value or key position) with sentinel strings so the
@@ -474,9 +474,9 @@ fn value_expr(v: &serde_yaml::Value, indent: usize) -> Result<String, MigrateErr
                 match item {
                     serde_yaml::Value::Mapping(m) => {
                         let m = normalise_conditional_binding(m);
-                        let _ = write!(out, "{}{{\n", pad);
+                        let _ = writeln!(out, "{}{{", pad);
                         emit_entries(&m, &mut out, indent + 4)?;
-                        let _ = write!(out, "{}}},\n", pad);
+                        let _ = writeln!(out, "{}}},", pad);
                     }
                     other => {
                         let _ = writeln!(out, "{}{},", pad, value_expr(other, indent + 2)?);
@@ -521,7 +521,7 @@ fn is_use_sentinel(v: &serde_yaml::Value) -> Option<(String, String, Option<Stri
     let mut parts = inner.splitn(3, '|');
     let form = parts.next()?.to_string();
     let path = parts.next()?.to_string();
-    let cond = parts.next().filter(|c| !c.is_empty()).map(|c| snake(c));
+    let cond = parts.next().filter(|c| !c.is_empty()).map(snake);
     Some((form, path, cond))
 }
 
@@ -714,6 +714,21 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
         header.push("It is a plain `use` here; run `satz adopt <estate> --execute` after converting to import what already exists.".to_string());
     }
     convert_value(&top, kind_keyword, name, &pre.params, &header)
+}
+
+/// A value that prints as an interpolated Satz string: `template` with one
+/// `{}` per name in `params`, each becoming a `{param}` reference — for
+/// callers building documents for `convert_value` that must reference a
+/// param rather than carry a literal (an exported pack's `parent`).
+pub fn interpolated(template: &str, params: &[&str]) -> serde_yaml::Value {
+    let mut seq = vec![serde_yaml::Value::String(template.to_string())];
+    for p in params {
+        seq.push(serde_yaml::Value::String(format!("{}{}{}", REF_L, p, REF_R)));
+    }
+    serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue {
+        tag: serde_yaml::value::Tag::new("format"),
+        value: serde_yaml::Value::Sequence(seq),
+    }))
 }
 
 /// Print an already-parsed document as Satz: the printer behind `convert`,

@@ -811,7 +811,7 @@ impl Walk<'_> {
             let (mut attrs, children) = self.split_body(pbody, file_name)?;
             // project_service may arrive as an Attr list (already in attrs) or as
             // a Map — split_body routed non-resource maps into attrs already.
-            if !attrs.contains_key(&serde_yaml::Value::String("project_id".into())) {
+            if !attrs.contains_key(serde_yaml::Value::String("project_id".into())) {
                 attrs.insert(
                     serde_yaml::Value::String("project_id".into()),
                     serde_yaml::Value::String(pname.clone()),
