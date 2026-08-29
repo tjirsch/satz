@@ -684,10 +684,6 @@ Read the two `{ }` bodies inside `alpha_prod` against each other:
 `labels { … }` is an attribute and became `labels = { … }`. Same syntax; the
 schema decided.
 
-Known v0 defect (#33): the folder emitter writes `display_name`, `parent`,
-`provider`, `labels` and `lifecycle` only — `deletion_protection` written on a
-folder is dropped without a warning today. Projects are not affected.
-
 ### 6.7 Adoption of existing resources
 
 `"import-id"` records the live id so the tool adopts rather than creates. It
@@ -1224,8 +1220,6 @@ composition conflicts: <type>.<label>: 2 disagreeing definitions
 - **No list concatenation.** Overriding a list param replaces it.
 - **Repeated block keys in one body last-win silently** (#34). Write repeated
   blocks as a list of objects.
-- **`google_folder` emits a fixed attribute set** — `display_name`, `parent`,
-  `labels`, `lifecycle`; `deletion_protection` is dropped (#33).
 - **`use … when` is followed unconditionally when computing which presets an
   estate uses** (`check-presets`), so a conditionally-disabled pack may be
   reported as included. Over-reporting drift is the safe direction.

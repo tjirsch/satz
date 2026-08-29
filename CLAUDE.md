@@ -93,10 +93,9 @@ and in the maintainer's notes. Nothing in this file names a customer.
   reads NOT ENFORCED, which outranks DRIFTED. `--prowler` currently reads
   Prowler's legacy JSON only (OCSF is not parsed) — see the integration
   proposal.
-- Known v0 defects, documented in the language reference: the `google_folder`
-  emitter drops every attribute except `display_name` / `parent` / `labels` /
-  `lifecycle`; a repeated block key inside one body silently last-wins (write
-  repeated blocks as a list of objects).
+- Known v0 defect, documented in the language reference: a repeated block key
+  inside one body silently last-wins (write repeated blocks as a list of
+  objects). (The folder emitter's fixed attribute set, #33, is fixed.)
 
 ## Scripts
 

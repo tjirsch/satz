@@ -1032,12 +1032,14 @@ Thumbs.db
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
                     let filter: Vec<String> = if only.is_empty() { cfg.only.clone().unwrap_or_default() } else { only };
+                    let mut filtered: std::collections::HashSet<String> = std::collections::HashSet::new();
                     if !filter.is_empty() {
                         let off = cfg.apply_only(&filter);
                         println!("import: only {} — {} type(s) switched off by the filter", filter.join(","), off.len());
                         if cli.verbose {
                             for t in &off { println!("  filtered: {}", t); }
                         }
+                        filtered = off.into_iter().collect();
                     }
                     let output = output.unwrap_or_else(|| PathBuf::from("discovered.satz"));
                     if shape == "state" {
@@ -1045,7 +1047,7 @@ Thumbs.db
                             None | Some("-") => None,
                             Some(p) => Some(PathBuf::from(p)),
                         };
-                        import_state(state_json, output, cfg, cli.verbose, &tool_config, &runtime_config)
+                        import_state(state_json, output, cfg, filtered, cli.verbose, &tool_config, &runtime_config)
                     } else {
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         import_org(&parent, output, cfg, cli.verbose, &runtime_config).await
@@ -1058,7 +1060,7 @@ Thumbs.db
             eprintln!("note: `discover-from-state` is now `satz import <state.json>` — this alias goes away in the next release.");
             let cfg = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?
                 .ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
-            import_state(state_json, output, cfg, cli.verbose, &tool_config, &runtime_config)
+            import_state(state_json, output, cfg, Default::default(), cli.verbose, &tool_config, &runtime_config)
         }
         Commands::DiscoverFromOrganization { customer_organization_id, output, import_config } => {
             eprintln!("note: `discover-from-organization` is now `satz import organizations/<n>` — this alias goes away in the next release.");
@@ -1797,6 +1799,7 @@ fn import_state(
     state_json: Option<PathBuf>,
     output: PathBuf,
     cfg: ImportConfig,
+    filtered: std::collections::HashSet<String>,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -1816,11 +1819,12 @@ fn import_state(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
     let type_names: std::collections::HashSet<String> =
         registry.as_ref().map(|r| r.resources.keys().cloned().collect()).unwrap_or_default();
-    let discoverer = crate::discovery::Discoverer::new(state_val, registry, verbose, enabled_types);
-    let config = discoverer.discover()?;
-    write_imported(&config, output, None, &|t| type_names.contains(t), runtime_config)?;
+    let discoverer = crate::discovery::Discoverer::new(state_val, registry, verbose, enabled_types, filtered);
+    let found = discoverer.discover()?;
+    write_imported(&found.config, output, None, &|t| type_names.contains(t), runtime_config)?;
+    crate::discovery::report_skipped(&found.skipped, verbose);
     if verbose {
-        crate::discovery::Discoverer::print_summary(&config, Some(discoverer.filtered_count.get()));
+        crate::discovery::Discoverer::print_summary(&found.config);
     }
     Ok(())
 }
@@ -1840,8 +1844,10 @@ async fn import_org(
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let org_hint = cfg.root.as_ref().and_then(|r| r.organization.clone())
         .or_else(|| parent.strip_prefix("organizations/").map(String::from));
-    let config = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
-    write_imported(&config, output, org_hint.as_deref(), &|t| type_names.contains(t), runtime_config)
+    let found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    write_imported(&found.config, output, org_hint.as_deref(), &|t| type_names.contains(t), runtime_config)?;
+    crate::discovery::report_skipped(&found.skipped, verbose);
+    Ok(())
 }
 
 fn write_imported(
@@ -3570,6 +3576,27 @@ google_cloud_identity_group {
         assert_eq!(b.manifest.of_type("google_cloud_identity_group_membership").count(), 2);
     }
 
+    /// Defect #33, closed: a folder's attributes beyond the fixed set used to
+    /// be dropped without a warning.
+    #[test]
+    fn folder_emits_every_attribute_it_declares() {
+        let reg = super::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let src = ESTATE.replace(
+            "google_project {",
+            "google_folder {\n  shared {\n    display_name = \"Shared\"\n    deletion_protection = false\n    tags = { \"123/env\" = \"prod\" }\n  }\n}\n\ngoogle_project {",
+        );
+        let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
+            .expect("front-end");
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        assert!(out.main_tf.contains("deletion_protection = false"), "{}", out.main_tf);
+        assert!(out.main_tf.contains("\"123/env\" = \"prod\""), "{}", out.main_tf);
+        assert!(out.main_tf.contains("display_name = \"Shared\""), "{}", out.main_tf);
+    }
+
     #[test]
     fn two_different_ids_for_one_binding_refuse() {
         use satz_core::algebra::GrantEdge;
@@ -3586,6 +3613,43 @@ google_cloud_identity_group {
         let got = crate::emitter::reconciled_edges(&merged).unwrap();
         assert_eq!(got.len(), 1, "with and without an id is one binding");
         assert_eq!(got[0].import_id, "x");
+    }
+}
+
+#[cfg(test)]
+mod import_skipped_report {
+    //! An import may be partial; it may not be silent about it. Every
+    //! resource the state had and the estate does not is named with a reason.
+    use crate::discovery::{Discoverer, SkipReason};
+
+    const STATE: &str = r#"{"values":{"root_module":{"resources":[
+      {"type":"google_project","name":"infra","values":{"project_id":"acme-infra","name":"Infra"}},
+      {"type":"google_storage_bucket","name":"logs","values":{"name":"acme-logs","project":"acme-infra"}},
+      {"type":"google_storage_bucket","name":"stray","values":{"name":"acme-stray","project":"not-imported"}},
+      {"type":"google_compute_network","name":"vpc","values":{"name":"vpc","project":"acme-infra"}},
+      {"type":"google_pubsub_topic","name":"t","values":{"name":"t","project":"acme-infra"}}
+    ]}}}"#;
+
+    #[test]
+    fn every_left_out_resource_is_named_with_its_reason() {
+        let state: serde_json::Value = serde_json::from_str(STATE).unwrap();
+        let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
+        let filtered = ["google_compute_network"].into_iter().map(String::from).collect();
+        let found = Discoverer::new(state, None, false, Some(enabled), filtered).discover().unwrap();
+        let mut got: Vec<(String, String, SkipReason)> =
+            found.skipped.iter().map(|s| (s.tf_type.clone(), s.what.clone(), s.reason.clone())).collect();
+        got.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        assert_eq!(
+            got,
+            vec![
+                ("google_compute_network".into(), "vpc".into(), SkipReason::Filtered),
+                ("google_pubsub_topic".into(), "t".into(), SkipReason::TypeOff),
+                ("google_storage_bucket".into(), "stray".into(), SkipReason::ParentNotFound("project not-imported".into())),
+            ]
+        );
+        // and the one that fit is in the estate
+        let infra = &found.config.project.as_ref().unwrap()["infra"];
+        assert!(infra.extra.contains_key("google_storage_bucket"), "{:?}", infra.extra.keys().collect::<Vec<_>>());
     }
 }
 

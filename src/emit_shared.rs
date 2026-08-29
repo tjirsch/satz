@@ -121,12 +121,20 @@ pub(crate) fn folder_block(
     provider_alias: Option<&str>,
     labels: Option<&serde_yaml::Value>,
     lifecycle_block: Option<hcl::Block>,
+    extra_attrs: &[(String, serde_yaml::Value)],
 ) -> hcl::Block {
     let mut builder = hcl::Block::builder("resource")
         .add_label("google_folder")
         .add_label(resource_name)
         .add_attribute(("display_name", display_name.to_owned()))
         .add_attribute(hcl::Attribute::new("parent", parent_expr));
+    // Every other attribute the folder declares (`deletion_protection`, `tags`,
+    // …), rendered like any resource's — the fixed set above was defect #33.
+    for (k, v) in extra_attrs {
+        if let Some(expr) = render_value(v, &|_| None) {
+            builder = builder.add_attribute(hcl::Attribute::new(k.as_str(), expr));
+        }
+    }
     if let Some(alias) = provider_alias {
         if let Ok(expr) = alias.parse::<hcl::Expression>() {
             builder = builder.add_attribute(("provider", expr));

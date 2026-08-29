@@ -546,6 +546,13 @@ A folder `path` is resolved live from the organization, one segment at a time â€
 exactly one folder may carry each name, otherwise the run stops and lists the
 candidates; nothing is guessed. The run prints the effective root and filter.
 
+**An import may be partial; it is never silent about it.** Every run ends with
+the skipped list â€” each resource the source had and the estate does not, with
+its reason: `type off (import: false)`, `filtered by --only`, `unmapped` (no
+import-config row fits the asset), or `parent not imported`. Counts by reason
+always; every name with `--verbose`. The levers are the `import:` rows and
+`--only`.
+
 **Under the Hood:**
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
 - live: one Cloud Asset Inventory sweep under the root; needs `cloudasset.assets.searchAllResources`; useful for infrastructure nobody manages with Terraform yet. Only asset types the config maps are seen.
