@@ -439,6 +439,10 @@ enum Commands {
         /// Prowler native-JSON findings file to ingest as corroboration
         #[arg(long)]
         prowler: Option<PathBuf>,
+        /// Run Checkov over hcl_dir (transpile first) and add a column: failed
+        /// checks on a control's witnesses are evidence against it
+        #[arg(long)]
+        checkov: bool,
         /// Skip live verification (declared-estate report only)
         #[arg(long)]
         no_live: bool,
@@ -1355,7 +1359,7 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::ReportCompliance { framework, input, format, report, prowler, no_live } => {
+        Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov } => {
             let input_path = if Path::new(&input).is_absolute() {
                 PathBuf::from(&input)
             } else {
@@ -1364,6 +1368,7 @@ Thumbs.db
             // Reports, never emits — see the note in `require`.
             let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
 
             crate::compliance::run_report_compliance(
                 &framework,
@@ -1376,6 +1381,7 @@ Thumbs.db
                 &format,
                 report,
                 prowler,
+                checkov_report.as_ref(),
                 no_live,
             )
             .await?;

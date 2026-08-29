@@ -100,6 +100,8 @@ if command -v checkov >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
   "$satz" --config . scan smoke.satz > tmp/scan.txt 2>&1 || true
   grep -q '^scan: Checkov' tmp/scan.txt || fail "scan printed no summary:\n$(cat tmp/scan.txt)"
   grep -q 'declared at' tmp/scan.txt || fail "findings were not pointed at the Satz source:\n$(cat tmp/scan.txt)"
+  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --checkov --report tmp/evidence.md >/dev/null 2>&1 || fail "report-compliance --checkov failed"
+  grep -q '| Checkov |' tmp/evidence.md || fail "the evidence report has no Checkov column"
 else
   step "neither checkov nor uvx on PATH — scan skipped"
 fi

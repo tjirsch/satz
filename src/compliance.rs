@@ -825,9 +825,21 @@ pub(crate) async fn run_report_compliance(
     format: &str,
     report_path: Option<PathBuf>,
     prowler_path: Option<PathBuf>,
+    checkov: Option<&crate::scan::Report>,
     no_live: bool,
 ) -> Result<(), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
+    // Checkov findings by emitted address: a failed check on a WITNESS is
+    // evidence against the control it witnesses
+    let checkov_by_res: BTreeMap<String, Vec<String>> = checkov
+        .map(|r| {
+            let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for f in &r.findings {
+                m.entry(f.resource.clone()).or_default().push(f.check_id.clone());
+            }
+            m
+        })
+        .unwrap_or_default();
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
     let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
@@ -960,8 +972,8 @@ pub(crate) async fn run_report_compliance(
          > This report states **check semantics** (\"a resource with these properties was \
          verified at this time\"), never legal conformity. Satisfaction = claims ∧ manual \
          duties ∧ attestations.\n\n\
-         | Control | Title | Status | Witnesses (declared → live) | Duties | Prowler |\n\
-         |---|---|---|---|---|---|\n",
+         | Control | Title | Status | Witnesses (declared → live) | Duties | Prowler | Checkov |\n\
+         |---|---|---|---|---|---|---|\n",
         catalog.catalog,
         catalog.version,
         input.display(),
@@ -1065,14 +1077,26 @@ pub(crate) async fn run_report_compliance(
             .get(id)
             .map(|(p, f)| format!("{} PASS / {} FAIL", p, f))
             .unwrap_or_else(|| "–".into());
+        let checkov_cell = match (checkov, goal) {
+            (None, _) => "–".to_string(),
+            (Some(_), Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. }) => {
+                let hits: Vec<String> = witnesses
+                    .iter()
+                    .filter_map(|w| checkov_by_res.get(w).map(|ids| format!("`{}`: **{}**", w, ids.join(", "))))
+                    .collect();
+                if hits.is_empty() { "clean".to_string() } else { hits.join("<br>") }
+            }
+            (Some(_), _) => "–".to_string(),
+        };
         md.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} |\n",
-            id, control.title, status, witness_cell, duty_cell, prowler_cell
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            id, control.title, status, witness_cell, duty_cell, prowler_cell, checkov_cell
         ));
         json_rows.push(serde_json::json!({
             "control": id, "title": control.title, "status": status.replace("**",""),
             "witnesses": witness_cell.replace("**","").replace('`',""),
             "duties": duty_cell, "prowler": prowler_cell,
+            "checkov": checkov_cell.replace("**","").replace('`',""),
         }));
     }
 

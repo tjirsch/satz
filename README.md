@@ -129,7 +129,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `migrate <INPUT>` | `--mode` |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
-| `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--no-live` |
+| `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
@@ -798,6 +798,7 @@ corroboration (`--prowler findings.json`).
 ```bash
 satz report-compliance cis-gcp-4.0 C0example.satz            # markdown + history
 satz report-compliance cis-gcp-4.0 C0example.satz --format pdf --prowler prowler.json
+satz report-compliance cis-gcp-4.0 C0example.satz --checkov   # + a Checkov column: failed checks on a control's witnesses
 ```
 
 Row statuses: **verified** (all witnesses live), `verified*` (some witness types have
