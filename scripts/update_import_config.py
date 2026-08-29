@@ -1,101 +1,815 @@
 #!/usr/bin/env python3
+"""Maintain presets/import-config.yaml (the type table `satz import` and
+`satz adopt` read) from data, never by hand:
+
+  --schema-dir DIR   add a row for every provider resource type the schemas
+                     know and the table lacks (asset_type TODO/UNKNOWN,
+                     import: false)
+  --cai-types FILE   resolve TODO/UNKNOWN rows: derive the Cloud Asset
+                     Inventory name from the Terraform type and keep it only
+                     when it is in FILE (presets/cai-asset-types.txt, Google's
+                     published list); print what stayed unresolved and why
+
+Run with: uv run --with ruamel.yaml scripts/update_import_config.py …
+Comments and row order in the YAML survive (ruamel round-trip).
+"""
+
 import argparse
 import json
-import os
+import re
 import sys
+from pathlib import Path
 
-# Try to import ruamel.yaml for comment preservation
 try:
     from ruamel.yaml import YAML
 except ImportError:
-    print("ruamel.yaml not found. Please run with 'uv run --with ruamel.yaml scripts/update_import_config.py ...'")
+    print("ruamel.yaml not found: run with 'uv run --with ruamel.yaml scripts/update_import_config.py …'")
     sys.exit(1)
 
+TODO = "TODO/UNKNOWN"
 
-def load_schemas(schema_dir):
-    resources = set()
-    if not os.path.exists(schema_dir):
+# Terraform type prefix → CAI service. Only where the provider's name is not
+# the API's host name; everything else derives (google_dns_… → dns.googleapis.com).
+SERVICE_ALIASES = {
+    "folder": "cloudresourcemanager",
+    "project": "cloudresourcemanager",
+    "organization": "cloudresourcemanager",
+    "tags": "cloudresourcemanager",
+    "resource_manager": "cloudresourcemanager",
+    "org_policy": "orgpolicy",
+    "billing": "cloudbilling",
+    "kms": "cloudkms",
+    "cloud_tasks": "cloudtasks",
+    "cloud_asset": "cloudasset",
+    "cloud_quotas": "cloudquotas",
+    "cloud_run_v2": "run",
+    "cloud_run": "run",
+    "cloudfunctions2": "cloudfunctions",
+    "cloudbuild": "cloudbuild",
+    "sql_database": "sqladmin",
+    "sql": "sqladmin",
+    "bigtable": "bigtableadmin",
+    "secret_manager": "secretmanager",
+    "artifact_registry": "artifactregistry",
+    "container": "container",
+    "filestore": "file",
+    "service_account": "iam",
+    "iam": "iam",
+    "essential_contacts": "essentialcontacts",
+    "access_context_manager": "accesscontextmanager",
+    "vpc_access": "vpcaccess",
+    "network_connectivity": "networkconnectivity",
+    "network_security": "networksecurity",
+    "network_services": "networkservices",
+    "network_management": "networkmanagement",
+    "certificate_manager": "certificatemanager",
+    "dialogflow_cx": "dialogflow",
+    "gke_hub": "gkehub",
+    "gke_backup": "gkebackup",
+    "api_gateway": "apigateway",
+    "app_engine": "appengine",
+    "document_ai": "documentai",
+    "data_fusion": "datafusion",
+    "data_loss_prevention": "dlp",
+    "vertex_ai": "aiplatform",
+    "os_config": "osconfig",
+    "identity_platform": "identitytoolkit",
+    "scc": "securitycenter",
+    "scc_management": "securitycentermanagement",
+    "binary_authorization": "binaryauthorization",
+    "secure_source_manager": "securesourcemanager",
+    "managed_kafka": "managedkafka",
+    "backup_dr": "backupdr",
+    "discovery_engine": "discoveryengine",
+    "privileged_access_manager": "privilegedaccessmanager",
+    "recaptcha_enterprise": "recaptchaenterprise",
+    "storage_transfer": "storagetransfer",
+    "storage_insights": "storageinsights",
+    "developer_connect": "developerconnect",
+    "assured_workloads": "assuredworkloads",
+    "parameter_manager": "parametermanager",
+    "blockchain_node_engine": "blockchainnodeengine",
+    "active_directory": "managedidentities",
+    "dataproc_metastore": "metastore",
+    "workbench": "notebooks",
+    "colab": "aiplatform",
+    "firebase_data_connect": "firebasedataconnect",
+    "firebaserules": "firebaserules",
+    "beyondcorp": "beyondcorp",
+    "apphub": "apphub",
+    "apihub": "apihub",
+    "clouddeploy": "clouddeploy",
+    "memorystore": "memorystore",
+    "logging": "logging",
+    "monitoring": "monitoring",
+    "pubsub": "pubsub",
+    "bigquery": "bigquery",
+    "bigquery_datapolicy": "bigquerydatapolicy",
+    "bigquery_analytics_hub": "analyticshub",
+    "bigquery_data_transfer": "bigquerydatatransfer",
+    "bigquery_reservation": "bigqueryreservation",
+    "data_catalog": "datacatalog",
+    "dataplex": "dataplex",
+    "healthcare": "healthcare",
+    "notebooks": "notebooks",
+    "redis": "redis",
+    "spanner": "spanner",
+    "storage": "storage",
+    "compute": "compute",
+    "dns": "dns",
+    "iap": "iap",
+    "ids": "ids",
+    "eventarc": "eventarc",
+    "apigee": "apigee",
+    "alloydb": "alloydb",
+    "memcache": "memcache",
+    "netapp": "netapp",
+    "looker": "looker",
+    "lustre": "lustre",
+    "parallelstore": "parallelstore",
+    "vmwareengine": "vmwareengine",
+    "tpu": "tpu",
+    "tpu_v2": "tpu",
+    "transcoder": "transcoder",
+    "integrations": "integrations",
+    "workstations": "workstations",
+    "dataflow": "dataflow",
+    "dataform": "dataform",
+    "datastream": "datastream",
+    "dataproc": "dataproc",
+    "database_migration_service": "datamigration",
+    "privateca": "privateca",
+    "service_directory": "servicedirectory",
+    "service_networking": "servicenetworking",
+    "service_usage": "serviceusage",
+    "endpoints": "servicemanagement",
+    "composer": "composer",
+    "batch": "batch",
+    "firestore": "firestore",
+    "firebase": "firebase",
+    "apikeys": "apikeys",
+    "access_approval": "accessapproval",
+    "securityposture": "securityposture",
+    "video_stitcher": "videostitcher",
+    "livestream": "livestream",
+    "vmmigration": "vmmigration",
+    "oracle_database": "oracledatabase",
+    "model_armor": "modelarmor",
+    "contact_center_insights": "contactcenterinsights",
+    "gemini": "cloudaicompanion",
+    "saas_runtime": "saasservicemgmt",
+    "chronicle": "chronicle",
+    "migration_center": "migrationcenter",
+    "edgecontainer": "edgecontainer",
+    "edgenetwork": "edgenetwork",
+    "kubernetes": "container",
+}
+
+# Kind spellings the API uses where CamelCase of the Terraform tokens is wrong.
+KIND_OVERRIDES = {
+    "google_project_service": "Service",
+    "google_service_account": "ServiceAccount",
+    "google_service_account_key": "ServiceAccountKey",
+    "google_sql_database_instance": "Instance",
+    "google_sql_database": "Database",
+    "google_sql_user": "User",
+    "google_dns_record_set": "ResourceRecordSet",
+    "google_tags_tag_key": "TagKey",
+    "google_tags_tag_value": "TagValue",
+    "google_tags_tag_binding": "TagBinding",
+    "google_org_policy_policy": "Policy",
+    "google_kms_key_ring": "KeyRing",
+    "google_kms_crypto_key": "CryptoKey",
+    "google_kms_crypto_key_version": "CryptoKeyVersion",
+    "google_cloud_run_v2_service": "Service",
+    "google_cloud_run_v2_job": "Job",
+    "google_cloud_run_service": "Service",
+    "google_cloudfunctions2_function": "Function",
+    "google_cloudfunctions_function": "CloudFunction",
+    "google_container_cluster": "Cluster",
+    "google_container_node_pool": "NodePool",
+    "google_bigtable_instance": "Instance",
+    "google_bigtable_table": "Table",
+    "google_filestore_instance": "Instance",
+    "google_secret_manager_secret": "Secret",
+    "google_secret_manager_secret_version": "SecretVersion",
+    "google_artifact_registry_repository": "Repository",
+    "google_iam_workload_identity_pool": "WorkloadIdentityPool",
+    "google_iam_workload_identity_pool_provider": "WorkloadIdentityPoolProvider",
+    "google_essential_contacts_contact": "Contact",
+    "google_logging_project_sink": "LogSink",
+    "google_logging_folder_sink": "LogSink",
+    "google_logging_organization_sink": "LogSink",
+    "google_logging_billing_account_sink": "LogSink",
+    "google_logging_metric": "LogMetric",
+    "google_logging_project_bucket_config": "LogBucket",
+    "google_logging_folder_bucket_config": "LogBucket",
+    "google_logging_organization_bucket_config": "LogBucket",
+    "google_logging_billing_account_bucket_config": "LogBucket",
+    "google_logging_log_view": "LogView",
+    "google_logging_organization_settings": "Settings",
+    "google_logging_folder_settings": "Settings",
+    "google_logging_project_settings": "Settings",
+    "google_logging_billing_account_settings": "Settings",
+    "google_logging_organization_exclusion": "LogExclusion",
+    "google_logging_folder_exclusion": "LogExclusion",
+    "google_logging_project_exclusion": "LogExclusion",
+    "google_logging_billing_account_exclusion": "LogExclusion",
+    "google_billing_account": "BillingAccount",
+    "google_billing_budget": "Budget",
+    "google_vpc_access_connector": "Connector",
+    "google_pubsub_topic": "Topic",
+    "google_pubsub_subscription": "Subscription",
+    "google_pubsub_schema": "Schema",
+    "google_pubsub_lite_topic": "Topic",
+    "google_pubsub_lite_subscription": "Subscription",
+    "google_bigquery_dataset": "Dataset",
+    "google_bigquery_table": "Table",
+    "google_bigquery_routine": "Routine",
+    "google_bigquery_job": "Job",
+    "google_bigquery_connection": "Connection",
+    "google_bigquery_reservation": "Reservation",
+    "google_bigquery_capacity_commitment": "CapacityCommitment",
+    "google_bigquery_reservation_assignment": "Assignment",
+    "google_bigquery_data_transfer_config": "TransferConfig",
+    "google_bigquery_analytics_hub_data_exchange": "DataExchange",
+    "google_bigquery_analytics_hub_listing": "Listing",
+    "google_storage_bucket": "Bucket",
+    "google_compute_instance": "Instance",
+    "google_compute_network": "Network",
+    "google_compute_subnetwork": "Subnetwork",
+    "google_compute_firewall": "Firewall",
+    "google_compute_firewall_policy": "FirewallPolicy",
+    "google_compute_network_firewall_policy": "FirewallPolicy",
+    "google_compute_region_network_firewall_policy": "RegionFirewallPolicy",
+    "google_compute_ssl_certificate": "SslCertificate",
+    "google_compute_ssl_policy": "SslPolicy",
+    "google_compute_vpn_gateway": "VpnGateway",
+    "google_compute_ha_vpn_gateway": "VpnGateway",
+    "google_compute_vpn_tunnel": "VpnTunnel",
+    "google_compute_target_https_proxy": "TargetHttpsProxy",
+    "google_compute_target_http_proxy": "TargetHttpProxy",
+    "google_compute_target_ssl_proxy": "TargetSslProxy",
+    "google_compute_target_tcp_proxy": "TargetTcpProxy",
+    "google_compute_url_map": "UrlMap",
+    "google_compute_health_check": "HealthCheck",
+    "google_compute_http_health_check": "HttpHealthCheck",
+    "google_compute_https_health_check": "HttpsHealthCheck",
+    "google_compute_instance_group_manager": "InstanceGroupManager",
+    "google_compute_region_instance_group_manager": "RegionInstanceGroupManager",
+    "google_compute_instance_template": "InstanceTemplate",
+    "google_compute_region_instance_template": "RegionInstanceTemplate",
+    "google_compute_project_metadata": "Project",
+    "google_compute_shared_vpc_host_project": "Project",
+    "google_compute_shared_vpc_service_project": "Project",
+    "google_compute_interconnect_attachment": "InterconnectAttachment",
+    "google_compute_packet_mirroring": "PacketMirroring",
+    "google_compute_node_group": "NodeGroup",
+    "google_compute_node_template": "NodeTemplate",
+    "google_compute_resource_policy": "ResourcePolicy",
+    "google_compute_region_disk": "RegionDisk",
+    "google_compute_region_ssl_certificate": "RegionSslCertificate",
+    "google_compute_global_address": "GlobalAddress",
+    "google_compute_global_forwarding_rule": "GlobalForwardingRule",
+    "google_compute_external_vpn_gateway": "ExternalVpnGateway",
+    "google_compute_security_policy": "SecurityPolicy",
+    "google_compute_region_security_policy": "RegionSecurityPolicy",
+    "google_compute_network_endpoint_group": "NetworkEndpointGroup",
+    "google_compute_global_network_endpoint_group": "GlobalNetworkEndpointGroup",
+    "google_compute_region_network_endpoint_group": "RegionNetworkEndpointGroup",
+    "google_compute_backend_bucket": "BackendBucket",
+    "google_compute_backend_service": "BackendService",
+    "google_compute_region_backend_service": "RegionBackendService",
+    "google_compute_region_url_map": "RegionUrlMap",
+    "google_compute_region_health_check": "RegionHealthCheck",
+    "google_compute_region_target_http_proxy": "RegionTargetHttpProxy",
+    "google_compute_region_target_https_proxy": "RegionTargetHttpsProxy",
+    "google_compute_region_target_tcp_proxy": "RegionTargetTcpProxy",
+    "google_compute_router_nat": "Router",
+    "google_compute_router_interface": "Router",
+    "google_compute_router_peer": "Router",
+    "google_compute_route": "Route",
+    "google_compute_router": "Router",
+    "google_compute_address": "Address",
+    "google_compute_disk": "Disk",
+    "google_compute_image": "Image",
+    "google_compute_snapshot": "Snapshot",
+    "google_compute_autoscaler": "Autoscaler",
+    "google_compute_region_autoscaler": "RegionAutoscaler",
+    "google_compute_target_pool": "TargetPool",
+    "google_compute_target_instance": "TargetInstance",
+    "google_compute_forwarding_rule": "ForwardingRule",
+    "google_compute_reservation": "Reservation",
+    "google_compute_service_attachment": "ServiceAttachment",
+    "google_compute_network_peering": "Network",
+    "google_compute_instance_group": "InstanceGroup",
+    "google_compute_region_commitment": "Commitment",
+    "google_compute_machine_image": "MachineImage",
+    "google_compute_target_grpc_proxy": "TargetGrpcProxy",
+    "google_compute_interconnect": "Interconnect",
+    "google_compute_public_advertised_prefix": "PublicAdvertisedPrefix",
+    "google_compute_public_delegated_prefix": "PublicDelegatedPrefix",
+    "google_compute_network_edge_security_service": "NetworkEdgeSecurityService",
+    "google_compute_region_network_endpoint": "RegionNetworkEndpointGroup",
+    "google_compute_storage_pool": "StoragePool",
+    "google_compute_instant_snapshot": "InstantSnapshot",
+    "google_compute_network_attachment": "NetworkAttachment",
+    "google_compute_region_resize_request": "ResizeRequest",
+    "google_compute_resize_request": "ResizeRequest",
+    "google_compute_security_policy_rule": "SecurityPolicy",
+    "google_compute_region_security_policy_rule": "RegionSecurityPolicy",
+    "google_compute_project_default_network_tier": "Project",
+    "google_compute_project_cloud_armor_tier": "Project",
+    "google_monitoring_alert_policy": "AlertPolicy",
+    "google_monitoring_notification_channel": "NotificationChannel",
+    "google_monitoring_uptime_check_config": "UptimeCheckConfig",
+    "google_monitoring_dashboard": "Dashboard",
+    "google_dns_managed_zone": "ManagedZone",
+    "google_dns_policy": "Policy",
+    "google_dns_response_policy": "ResponsePolicy",
+    "google_dns_response_policy_rule": "ResponsePolicyRule",
+    "google_redis_instance": "Instance",
+    "google_redis_cluster": "Cluster",
+    "google_spanner_instance": "Instance",
+    "google_spanner_database": "Database",
+    "google_spanner_backup_schedule": "BackupSchedule",
+    "google_cloud_tasks_queue": "Queue",
+    "google_cloud_asset_project_feed": "Feed",
+    "google_cloud_asset_folder_feed": "Feed",
+    "google_cloud_asset_organization_feed": "Feed",
+    "google_cloud_quotas_quota_preference": "QuotaPreference",
+    "google_composer_environment": "Environment",
+    "google_data_loss_prevention_inspect_template": "InspectTemplate",
+    "google_data_loss_prevention_deidentify_template": "DeidentifyTemplate",
+    "google_data_loss_prevention_job_trigger": "JobTrigger",
+    "google_data_loss_prevention_stored_info_type": "StoredInfoType",
+    "google_data_loss_prevention_discovery_config": "DiscoveryConfig",
+    "google_dataproc_cluster": "Cluster",
+    "google_dataproc_job": "Job",
+    "google_dataproc_autoscaling_policy": "AutoscalingPolicy",
+    "google_dataproc_workflow_template": "WorkflowTemplate",
+    "google_dataproc_batch": "Batch",
+    "google_dataflow_job": "Job",
+    "google_dataflow_flex_template_job": "Job",
+    "google_datastream_stream": "Stream",
+    "google_datastream_connection_profile": "ConnectionProfile",
+    "google_datastream_private_connection": "PrivateConnection",
+    "google_dataplex_lake": "Lake",
+    "google_dataplex_zone": "Zone",
+    "google_dataplex_asset": "Asset",
+    "google_dataplex_task": "Task",
+    "google_dataplex_datascan": "DataScan",
+    "google_dataplex_entry_group": "EntryGroup",
+    "google_dataplex_entry_type": "EntryType",
+    "google_dataplex_aspect_type": "AspectType",
+    "google_dataplex_glossary": "Glossary",
+    "google_dataplex_entry": "Entry",
+    "google_apigee_organization": "Organization",
+    "google_apigee_environment": "Environment",
+    "google_apigee_instance": "Instance",
+    "google_active_directory_domain": "Domain",
+    "google_healthcare_dataset": "Dataset",
+    "google_healthcare_dicom_store": "DicomStore",
+    "google_healthcare_fhir_store": "FhirStore",
+    "google_healthcare_hl7_v2_store": "Hl7V2Store",
+    "google_healthcare_consent_store": "ConsentStore",
+    "google_privateca_ca_pool": "CaPool",
+    "google_privateca_certificate_authority": "CertificateAuthority",
+    "google_privateca_certificate": "Certificate",
+    "google_privateca_certificate_template": "CertificateTemplate",
+    "google_gke_hub_membership": "Membership",
+    "google_gke_hub_feature": "Feature",
+    "google_gke_hub_fleet": "Fleet",
+    "google_gke_hub_scope": "Scope",
+    "google_gke_hub_namespace": "Namespace",
+    "google_gke_hub_membership_binding": "MembershipBinding",
+    "google_gke_backup_backup_plan": "BackupPlan",
+    "google_gke_backup_restore_plan": "RestorePlan",
+    "google_iap_tunnel_instance_iam_member": None,
+    "google_scc_source": "Source",
+    "google_scc_mute_config": "MuteConfig",
+    "google_scc_notification_config": "NotificationConfig",
+    "google_scc_folder_custom_module": "SecurityHealthAnalyticsCustomModule",
+    "google_scc_organization_custom_module": "SecurityHealthAnalyticsCustomModule",
+    "google_scc_project_custom_module": "SecurityHealthAnalyticsCustomModule",
+    "google_binary_authorization_policy": "Policy",
+    "google_binary_authorization_attestor": "Attestor",
+    "google_app_engine_application": "Application",
+    "google_app_engine_standard_app_version": "Version",
+    "google_app_engine_flexible_app_version": "Version",
+    "google_app_engine_service_split_traffic": "Service",
+    "google_app_engine_service_network_settings": "Service",
+    "google_app_engine_application_url_dispatch_rules": "Application",
+    "google_app_engine_domain_mapping": "DomainMapping",
+    "google_app_engine_firewall_rule": "FirewallRule",
+    "google_api_gateway_api": "Api",
+    "google_api_gateway_api_config": "ApiConfig",
+    "google_api_gateway_gateway": "Gateway",
+    "google_cloudbuild_trigger": "BuildTrigger",
+    "google_cloudbuild_worker_pool": "WorkerPool",
+    "google_cloudbuild_bitbucket_server_config": "BitbucketServerConfig",
+    "google_cloudbuildv2_connection": "Connection",
+    "google_cloudbuildv2_repository": "Repository",
+    "google_service_directory_namespace": "Namespace",
+    "google_service_directory_service": "Service",
+    "google_service_directory_endpoint": "Endpoint",
+    "google_vertex_ai_dataset": "Dataset",
+    "google_vertex_ai_endpoint": "Endpoint",
+    "google_vertex_ai_featurestore": "Featurestore",
+    "google_vertex_ai_index": "Index",
+    "google_vertex_ai_index_endpoint": "IndexEndpoint",
+    "google_vertex_ai_metadata_store": "MetadataStore",
+    "google_vertex_ai_tensorboard": "Tensorboard",
+    "google_vertex_ai_feature_group": "FeatureGroup",
+    "google_vertex_ai_feature_online_store": "FeatureOnlineStore",
+    "google_vertex_ai_deployment_resource_pool": "DeploymentResourcePool",
+    "google_workbench_instance": "Instance",
+    "google_notebooks_instance": "Instance",
+    "google_notebooks_runtime": "Runtime",
+    "google_notebooks_environment": "Environment",
+    "google_workstations_workstation_cluster": "WorkstationCluster",
+    "google_workstations_workstation_config": "WorkstationConfig",
+    "google_workstations_workstation": "Workstation",
+    "google_eventarc_trigger": "Trigger",
+    "google_eventarc_channel": "Channel",
+    "google_eventarc_google_channel_config": "GoogleChannelConfig",
+    "google_eventarc_message_bus": "MessageBus",
+    "google_eventarc_pipeline": "Pipeline",
+    "google_eventarc_enrollment": "Enrollment",
+    "google_eventarc_google_api_source": "GoogleApiSource",
+    "google_certificate_manager_certificate": "Certificate",
+    "google_certificate_manager_certificate_map": "CertificateMap",
+    "google_certificate_manager_certificate_map_entry": "CertificateMapEntry",
+    "google_certificate_manager_dns_authorization": "DnsAuthorization",
+    "google_certificate_manager_certificate_issuance_config": "CertificateIssuanceConfig",
+    "google_certificate_manager_trust_config": "TrustConfig",
+    "google_network_connectivity_hub": "Hub",
+    "google_network_connectivity_spoke": "Spoke",
+    "google_network_connectivity_internal_range": "InternalRange",
+    "google_network_connectivity_policy_based_route": "PolicyBasedRoute",
+    "google_network_connectivity_regional_endpoint": "RegionalEndpoint",
+    "google_network_connectivity_group": "Group",
+    "google_network_management_connectivity_test": "ConnectivityTest",
+    "google_apikeys_key": "Key",
+    "google_access_context_manager_access_policy": "AccessPolicy",
+    "google_access_context_manager_access_level": "AccessLevel",
+    "google_access_context_manager_service_perimeter": "ServicePerimeter",
+    "google_access_context_manager_authorized_orgs_desc": "AuthorizedOrgsDesc",
+    "google_access_approval_organization_settings": "AccessApprovalSettings",
+    "google_access_approval_folder_settings": "AccessApprovalSettings",
+    "google_access_approval_project_settings": "AccessApprovalSettings",
+    "google_sql_source_representation_instance": "Instance",
+    "google_iam_deny_policy": "Policy",
+    "google_folder": "Folder",
+    "google_project": "Project",
+    "google_organization": "Organization",
+    "google_resource_manager_lien": "Lien",
+    "google_dialogflow_cx_agent": "Agent",
+    "google_document_ai_processor": "Processor",
+    "google_data_fusion_instance": "Instance",
+    "google_alloydb_cluster": "Cluster",
+    "google_alloydb_instance": "Instance",
+    "google_alloydb_backup": "Backup",
+    "google_memcache_instance": "Instance",
+    "google_memorystore_instance": "Instance",
+    "google_os_config_patch_deployment": "PatchDeployment",
+    "google_os_config_os_policy_assignment": "OSPolicyAssignment",
+    "google_os_config_guest_policies": "GuestPolicy",
+    "google_identity_platform_config": "Config",
+    "google_identity_platform_tenant": "Tenant",
+    "google_iap_brand": "Brand",
+    "google_iap_client": "Client",
+    "google_iap_settings": "Settings",
+    "google_ids_endpoint": "Endpoint",
+    "google_firestore_database": "Database",
+    "google_firestore_index": "Index",
+    "google_firebase_project": "FirebaseProject",
+    "google_firebase_web_app": "WebApp",
+    "google_firebase_android_app": "AndroidApp",
+    "google_firebase_apple_app": "IosApp",
+    "google_firebase_database_instance": "DatabaseInstance",
+    "google_firebase_hosting_site": "Site",
+    "google_firebaserules_ruleset": "Ruleset",
+    "google_firebaserules_release": "Release",
+    "google_firebase_app_check_app_attest_config": "AppAttestConfig",
+    "google_secure_source_manager_instance": "Instance",
+    "google_secure_source_manager_repository": "Repository",
+    "google_tpu_node": "Node",
+    "google_tpu_v2_vm": "Node",
+    "google_transcoder_job": "Job",
+    "google_transcoder_job_template": "JobTemplate",
+    "google_looker_instance": "Instance",
+    "google_netapp_storage_pool": "StoragePool",
+    "google_netapp_volume": "Volume",
+    "google_netapp_backup_vault": "BackupVault",
+    "google_netapp_backup_policy": "BackupPolicy",
+    "google_netapp_backup": "Backup",
+    "google_netapp_active_directory": "ActiveDirectory",
+    "google_netapp_kmsconfig": "KmsConfig",
+    "google_netapp_volume_replication": "Replication",
+    "google_netapp_volume_snapshot": "Snapshot",
+    "google_vmwareengine_private_cloud": "PrivateCloud",
+    "google_vmwareengine_cluster": "Cluster",
+    "google_vmwareengine_network": "VmwareEngineNetwork",
+    "google_vmwareengine_network_policy": "NetworkPolicy",
+    "google_vmwareengine_network_peering": "NetworkPeering",
+    "google_vmwareengine_external_address": "ExternalAddress",
+    "google_vmwareengine_external_access_rule": "ExternalAccessRule",
+    "google_vmwareengine_subnet": "Subnet",
+    "google_privileged_access_manager_entitlement": "Entitlement",
+    "google_backup_dr_backup_vault": "BackupVault",
+    "google_backup_dr_backup_plan": "BackupPlan",
+    "google_backup_dr_management_server": "ManagementServer",
+    "google_backup_dr_backup_plan_association": "BackupPlanAssociation",
+    "google_storage_transfer_job": "TransferJob",
+    "google_storage_transfer_agent_pool": "AgentPool",
+    "google_storage_insights_report_config": "ReportConfig",
+    "google_developer_connect_connection": "Connection",
+    "google_developer_connect_git_repository_link": "GitRepositoryLink",
+    "google_assured_workloads_workload": "Workload",
+    "google_parameter_manager_parameter": "Parameter",
+    "google_parameter_manager_parameter_version": "ParameterVersion",
+    "google_parameter_manager_regional_parameter": "Parameter",
+    "google_parameter_manager_regional_parameter_version": "ParameterVersion",
+    "google_blockchain_node_engine_blockchain_nodes": "BlockchainNode",
+    "google_clouddeploy_delivery_pipeline": "DeliveryPipeline",
+    "google_clouddeploy_target": "Target",
+    "google_clouddeploy_custom_target_type": "CustomTargetType",
+    "google_clouddeploy_automation": "Automation",
+    "google_clouddeploy_deploy_policy": "DeployPolicy",
+    "google_dataform_repository": "Repository",
+    "google_dataform_repository_release_config": "ReleaseConfig",
+    "google_dataform_repository_workflow_config": "WorkflowConfig",
+    "google_database_migration_service_connection_profile": "ConnectionProfile",
+    "google_database_migration_service_migration_job": "MigrationJob",
+    "google_database_migration_service_private_connection": "PrivateConnection",
+    "google_dataproc_metastore_service": "Service",
+    "google_dataproc_metastore_federation": "Federation",
+    "google_managed_kafka_cluster": "Cluster",
+    "google_managed_kafka_topic": "Topic",
+    "google_managed_kafka_connect_cluster": "ConnectCluster",
+    "google_managed_kafka_connector": "Connector",
+    "google_discovery_engine_data_store": "DataStore",
+    "google_discovery_engine_search_engine": "Engine",
+    "google_discovery_engine_chat_engine": "Engine",
+    "google_beyondcorp_app_connector": "AppConnector",
+    "google_beyondcorp_app_connection": "AppConnection",
+    "google_beyondcorp_app_gateway": "AppGateway",
+    "google_beyondcorp_security_gateway": "SecurityGateway",
+    "google_apphub_application": "Application",
+    "google_apphub_service": "Service",
+    "google_apphub_workload": "Workload",
+    "google_apphub_service_project_attachment": "ServiceProjectAttachment",
+    "google_apihub_api_hub_instance": "ApiHubInstance",
+    "google_apihub_plugin": "Plugin",
+    "google_apihub_plugin_instance": "PluginInstance",
+    "google_apihub_curation": "Curation",
+    "google_recaptcha_enterprise_key": "Key",
+    "google_network_security_address_group": "AddressGroup",
+    "google_network_security_authorization_policy": "AuthorizationPolicy",
+    "google_network_security_client_tls_policy": "ClientTlsPolicy",
+    "google_network_security_server_tls_policy": "ServerTlsPolicy",
+    "google_network_security_security_profile": "SecurityProfile",
+    "google_network_security_security_profile_group": "SecurityProfileGroup",
+    "google_network_security_firewall_endpoint": "FirewallEndpoint",
+    "google_network_security_firewall_endpoint_association": "FirewallEndpointAssociation",
+    "google_network_security_gateway_security_policy": "GatewaySecurityPolicy",
+    "google_network_security_gateway_security_policy_rule": "GatewaySecurityPolicyRule",
+    "google_network_security_url_lists": "UrlList",
+    "google_network_security_tls_inspection_policy": "TlsInspectionPolicy",
+    "google_network_security_mirroring_endpoint_group": "MirroringEndpointGroup",
+    "google_network_security_mirroring_deployment_group": "MirroringDeploymentGroup",
+    "google_network_security_mirroring_deployment": "MirroringDeployment",
+    "google_network_security_mirroring_endpoint_group_association": "MirroringEndpointGroupAssociation",
+    "google_network_security_intercept_endpoint_group": "InterceptEndpointGroup",
+    "google_network_security_intercept_deployment_group": "InterceptDeploymentGroup",
+    "google_network_security_intercept_deployment": "InterceptDeployment",
+    "google_network_security_intercept_endpoint_group_association": "InterceptEndpointGroupAssociation",
+    "google_network_services_gateway": "Gateway",
+    "google_network_services_mesh": "Mesh",
+    "google_network_services_http_route": "HttpRoute",
+    "google_network_services_grpc_route": "GrpcRoute",
+    "google_network_services_tcp_route": "TcpRoute",
+    "google_network_services_tls_route": "TlsRoute",
+    "google_network_services_service_binding": "ServiceBinding",
+    "google_network_services_endpoint_policy": "EndpointPolicy",
+    "google_network_services_edge_cache_keyset": "EdgeCacheKeyset",
+    "google_network_services_edge_cache_origin": "EdgeCacheOrigin",
+    "google_network_services_edge_cache_service": "EdgeCacheService",
+    "google_network_services_lb_traffic_extension": "LbTrafficExtension",
+    "google_network_services_lb_route_extension": "LbRouteExtension",
+    "google_network_services_authz_extension": "AuthzExtension",
+    "google_network_services_service_lb_policies": "ServiceLbPolicy",
+    "google_network_services_wasm_plugin": "WasmPlugin",
+    "google_service_networking_connection": "Connection",
+    "google_service_networking_peered_dns_domain": "PeeredDnsDomain",
+    "google_endpoints_service": "ManagedService",
+    "google_batch_job": "Job",
+    "google_integrations_client": "Client",
+    "google_integrations_auth_config": "AuthConfig",
+    "google_lustre_instance": "Instance",
+    "google_parallelstore_instance": "Instance",
+    "google_livestream_channel": "Channel",
+    "google_livestream_input": "Input",
+    "google_video_stitcher_cdn_key": "CdnKey",
+    "google_video_stitcher_slate": "Slate",
+    "google_vmmigration_source": "Source",
+    "google_vmmigration_group": "Group",
+    "google_oracle_database_cloud_exadata_infrastructure": "CloudExadataInfrastructure",
+    "google_oracle_database_cloud_vm_cluster": "CloudVmCluster",
+    "google_oracle_database_autonomous_database": "AutonomousDatabase",
+    "google_oracle_database_odb_network": "OdbNetwork",
+    "google_oracle_database_odb_subnet": "OdbSubnet",
+    "google_contact_center_insights_view": "View",
+    "google_contact_center_insights_analysis_rule": "AnalysisRule",
+    "google_colab_runtime": "NotebookRuntime",
+    "google_colab_runtime_template": "NotebookRuntimeTemplate",
+    "google_colab_notebook_execution": "NotebookExecutionJob",
+    "google_colab_schedule": "Schedule",
+    "google_gemini_code_repository_index": "CodeRepositoryIndex",
+    "google_gemini_repository_group": "RepositoryGroup",
+    "google_gemini_gemini_gcp_enablement_setting": "GeminiGcpEnablementSetting",
+    "google_gemini_data_sharing_with_google_setting": "DataSharingWithGoogleSetting",
+    "google_gemini_logging_setting": "LoggingSetting",
+    "google_gemini_release_channel_setting": "ReleaseChannelSetting",
+    "google_gemini_code_tools_setting": "CodeToolsSetting",
+    "google_gemini_gemini_gcp_enablement_setting_binding": "GeminiGcpEnablementSettingBinding",
+    "google_gemini_data_sharing_with_google_setting_binding": "DataSharingWithGoogleSettingBinding",
+    "google_gemini_logging_setting_binding": "LoggingSettingBinding",
+    "google_gemini_release_channel_setting_binding": "ReleaseChannelSettingBinding",
+    "google_gemini_code_tools_setting_binding": "CodeToolsSettingBinding",
+    "google_saas_runtime_saas": "Saas",
+    "google_saas_runtime_tenant": "Tenant",
+    "google_saas_runtime_unit_kind": "UnitKind",
+    "google_saas_runtime_unit": "Unit",
+    "google_saas_runtime_unit_operation": "UnitOperation",
+    "google_saas_runtime_release": "Release",
+    "google_saas_runtime_rollout": "Rollout",
+    "google_saas_runtime_rollout_kind": "RolloutKind",
+    "google_securityposture_posture": "Posture",
+    "google_securityposture_posture_deployment": "PostureDeployment",
+    "google_scc_management_organization_security_health_analytics_custom_module": "SecurityHealthAnalyticsCustomModule",
+    "google_scc_management_folder_security_health_analytics_custom_module": "SecurityHealthAnalyticsCustomModule",
+    "google_scc_management_project_security_health_analytics_custom_module": "SecurityHealthAnalyticsCustomModule",
+    "google_scc_management_organization_event_threat_detection_custom_module": "EventThreatDetectionCustomModule",
+    "google_scc_v2_organization_source": "Source",
+    "google_scc_v2_organization_mute_config": "MuteConfig",
+    "google_scc_v2_folder_mute_config": "MuteConfig",
+    "google_scc_v2_project_mute_config": "MuteConfig",
+    "google_scc_v2_organization_notification_config": "NotificationConfig",
+    "google_scc_v2_folder_notification_config": "NotificationConfig",
+    "google_scc_v2_project_notification_config": "NotificationConfig",
+    "google_scc_v2_organization_scc_big_query_export": "BigQueryExport",
+    "google_scc_v2_folder_scc_big_query_export": "BigQueryExport",
+    "google_scc_v2_project_scc_big_query_export": "BigQueryExport",
+    "google_scc_organization_scc_big_query_export": "BigQueryExport",
+    "google_scc_folder_scc_big_query_export": "BigQueryExport",
+    "google_scc_project_scc_big_query_export": "BigQueryExport",
+    "google_scc_event_threat_detection_custom_module": "EventThreatDetectionCustomModule",
+    "google_kms_autokey_config": "AutokeyConfig",
+    "google_kms_key_handle": "KeyHandle",
+    "google_kms_ekm_connection": "EkmConnection",
+    "google_kms_key_ring_import_job": "ImportJob",
+    "google_bigquery_datapolicy_data_policy": "DataPolicy",
+    "google_bigquery_analytics_hub_data_exchange_subscription": "Subscription",
+    "google_pubsub_topic_iam_member": None,
+    "google_project_service_identity": None,
+    "google_project_default_service_accounts": None,
+    "google_project_usage_export_bucket": None,
+    "google_project_access_approval_settings": "AccessApprovalSettings",
+    "google_folder_access_approval_settings": "AccessApprovalSettings",
+    "google_organization_access_approval_settings": "AccessApprovalSettings",
+    "google_organization_policy": None,
+    "google_folder_organization_policy": None,
+    "google_project_organization_policy": None,
+}
+
+# Terraform types that are not a Cloud Asset Inventory RESOURCE — IAM
+# bindings/members/policies and audit configs (IAM_POLICY on the parent),
+# organization-policy v1 shapes, and pure provider constructs. They keep
+# TODO/UNKNOWN on purpose and are reported as "no CAI shape".
+NOT_A_CAI_RESOURCE = re.compile(
+    r"_(iam_(member|binding|policy|audit_config)|organization_policy|service_identity|default_service_accounts|usage_export_bucket)$"
+)
+
+
+def load_schemas(schema_dir: Path) -> set[str]:
+    resources: set[str] = set()
+    if not schema_dir.exists():
         print(f"Schema directory {schema_dir} does not exist.")
         return resources
-
-    for filename in os.listdir(schema_dir):
-        if filename.endswith(".json"):
-            path = os.path.join(schema_dir, filename)
-            try:
-                with open(path, "r") as f:
-                    data = json.load(f)
-                    for provider in data.get("provider_schemas", {}).values():
-                        for resource_name in provider.get("resource_schemas", {}).keys():
-                            resources.add(resource_name)
-            except Exception as e:
-                print(f"Error loading {filename}: {e}")
+    for path in schema_dir.glob("*.json"):
+        data = json.loads(path.read_text())
+        for provider in data.get("provider_schemas", {}).values():
+            resources.update(provider.get("resource_schemas", {}).keys())
     return resources
 
 
-def update_config(config_path, schema_resources):
+def camel(tokens: list[str]) -> str:
+    return "".join(t[:1].upper() + t[1:] for t in tokens)
+
+
+def derive(tf_type: str, cai: set[str]) -> tuple[str | None, str]:
+    """(asset_type, reason). Exact hits only; the reason names why not."""
+    if NOT_A_CAI_RESOURCE.search(tf_type):
+        return None, "no CAI shape (policy or provider construct)"
+    kind = KIND_OVERRIDES.get(tf_type, "?")
+    if kind is None:
+        return None, "no CAI shape (policy or provider construct)"
+    rest = tf_type.removeprefix("google_")
+    tokens = rest.split("_")
+    # longest alias prefix first, then the first token as the service
+    services: list[tuple[str, list[str]]] = []
+    for n in range(len(tokens), 0, -1):
+        pfx = "_".join(tokens[:n])
+        if pfx in SERVICE_ALIASES:
+            services.append((SERVICE_ALIASES[pfx], tokens[n:]))
+    if not services:
+        services.append((tokens[0], tokens[1:]))
+    for service, remainder in services:
+        kinds = ([kind] if kind != "?" else []) + ([camel(remainder)] if remainder else [])
+        for k in kinds:
+            for host in (f"{service}.googleapis.com", f"identity.{service}.googleapis.com"):
+                cand = f"{host}/{k}"
+                if cand in cai:
+                    return cand, "derived"
+    tried = ", ".join(f"{s}/{camel(r) if r else kind}" for s, r in services)
+    return None, f"not in the CAI list (tried {tried})"
+
+
+def fill_asset_types(config, cai: set[str]) -> tuple[int, list[tuple[str, str]]]:
+    filled = 0
+    unresolved: list[tuple[str, str]] = []
+    for tf_type, row in config["resource_types"].items():
+        if "asset_type" not in row or row["asset_type"] != TODO:
+            continue
+        asset_type, reason = derive(tf_type, cai)
+        if asset_type:
+            row["asset_type"] = asset_type
+            filled += 1
+        elif reason.startswith("no CAI shape"):
+            # known: nothing to look up — the row carries no asset_type at all
+            del row["asset_type"]
+            unresolved.append((tf_type, reason))
+        else:
+            unresolved.append((tf_type, reason))
+    return filled, unresolved
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--schema-dir", type=Path, help="Directory containing provider schema JSON files.")
+    parser.add_argument("--config-file", type=Path, required=True, help="Path to import-config.yaml.")
+    parser.add_argument("--cai-types", type=Path, help="presets/cai-asset-types.txt: resolve TODO/UNKNOWN rows against it.")
+    args = parser.parse_args()
+    if not args.schema_dir and not args.cai_types:
+        parser.error("nothing to do: pass --schema-dir and/or --cai-types")
+    if not args.config_file.exists():
+        sys.exit(f"Config file {args.config_file} does not exist.")
+
     yaml = YAML()
     yaml.preserve_quotes = True
+    yaml.width = 4096
     yaml.indent(mapping=2, sequence=4, offset=2)
-
-    if not os.path.exists(config_path):
-        print(f"Config file {config_path} does not exist.")
-        return
-
-    with open(config_path, "r") as f:
+    with args.config_file.open() as f:
         config = yaml.load(f)
+    config.setdefault("resource_types", {})
+    changed = False
 
-    if "resource_types" not in config:
-        config["resource_types"] = {}
-
-    current_resources = config["resource_types"]
-    added_count = 0
-
-    for res in sorted(schema_resources):
-        if res not in current_resources:
-            # Add new resource
-            print(f"Adding new resource: {res}")
-            entry = {
+    if args.schema_dir:
+        resources = load_schemas(args.schema_dir)
+        print(f"Loaded {len(resources)} resources from schemas.")
+        added = 0
+        for res in sorted(resources):
+            if res in config["resource_types"]:
+                continue
+            config["resource_types"][res] = {
                 "description": f"Auto-generated entry for {res}",
                 "import": False,
-                "asset_type": "TODO/UNKNOWN",  # Placeholder
+                "asset_type": TODO,
                 "content_type": "RESOURCE",
                 "derive_yaml_key_from": "name",
             }
+            added += 1
+        print(f"Added {added} new resource row(s).")
+        changed |= added > 0
 
-            # Special heuristics
-            if res == "google_org_policy_policy":
-                entry["asset_type"] = "orgpolicy.googleapis.com/Policy"
-                entry["description"] = "Organization Policy V2"
-                # Enable import by default for this requested type?
-                # User said "inclined to support org_policy_policy only".
-                # Maybe default import to True? Let's leave False for safety unless specified.
+    if args.cai_types:
+        cai = {line.strip() for line in args.cai_types.read_text().splitlines() if line.strip() and not line.startswith("#")}
+        filled, unresolved = fill_asset_types(config, cai)
+        no_shape = [t for t, r in unresolved if r.startswith("no CAI shape")]
+        missing = [(t, r) for t, r in unresolved if not r.startswith("no CAI shape")]
+        print(f"asset_type filled: {filled}; no CAI shape: {len(no_shape)}; unresolved: {len(missing)}")
+        for t, r in missing:
+            print(f"  {t}: {r}")
+        changed |= filled > 0
 
-            if res.startswith("google_folder_organization_policy"):
-                # Update comment or description?
-                pass
-
-            current_resources[res] = entry
-            added_count += 1
-
-    if added_count > 0:
-        print(f"Added {added_count} new resources to {config_path}")
-        with open(config_path, "w") as f:
+    if changed:
+        with args.config_file.open("w") as f:
             yaml.dump(config, f)
+        print(f"wrote {args.config_file}")
     else:
-        print("No new resources found in schemas.")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Update import-config.yaml (the type table satz import and satz adopt read) from Terraform schemas.")
-    parser.add_argument("--schema-dir", required=True, help="Directory containing provider schema JSON files.")
-    parser.add_argument("--config-file", required=True, help="Path to import-config.yaml.")
-
-    args = parser.parse_args()
-
-    resources = load_schemas(args.schema_dir)
-    print(f"Loaded {len(resources)} resources from schemas.")
-
-    update_config(args.config_file, resources)
+        print("nothing changed")
 
 
 if __name__ == "__main__":

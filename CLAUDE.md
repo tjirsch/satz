@@ -85,7 +85,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `src/manifest.rs`, not `main.tf` text).
 - Adoption: `satz adopt` resolves live ids over the emission manifest (natural-key
   lookups for folders/groups/memberships/org policies, `import_id`/`match_on`
-  rules per type in `presets/import-config.yaml` for the rest), never
+  rules per type in `presets/import-config.yaml` for the rest — its
+  `asset_type` column is filled from `presets/cai-asset-types.txt` by
+  `scripts/update_import_config.py --cai-types`, never by hand; the smoke
+  matrix fails when the table is behind the list), never
   guesses (one candidate resolves, many is ambiguous), and `--execute` writes
   verified ids back as `"import-id"` — the only adoption surface in the
   language. `adopt-org-policies` is an alias.

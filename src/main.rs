@@ -1094,6 +1094,9 @@ Thumbs.db
                             for t in &off { println!("  filtered: {}", t); }
                         }
                         filtered = off.into_iter().collect();
+                        if !cfg.resource_types.values().any(|r| r.import) {
+                            return Err(format!("import: --only {} matches no enabled type — nothing would be imported", filter.join(",")).into());
+                        }
                     }
                     let output = output.unwrap_or_else(|| PathBuf::from("discovered.satz"));
                     if into.is_some() && shape != "org" {
@@ -1910,7 +1913,7 @@ fn import_state(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
     let type_names: std::collections::HashSet<String> =
         registry.as_ref().map(|r| r.resources.keys().cloned().collect()).unwrap_or_default();
-    let discoverer = crate::discovery::Discoverer::new(state_val, registry, verbose, enabled_types, filtered);
+    let discoverer = crate::discovery::Discoverer::new(state_val, registry, enabled_types, filtered);
     let found = discoverer.discover()?;
     write_imported(&found.config, output, None, &|t| type_names.contains(t), runtime_config)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
@@ -2265,6 +2268,20 @@ async fn import_delta(
     let resolutions: Vec<_> = resolutions.into_iter().filter(|r| !delta::from_imported_pack(&r.origin)).collect();
     let declared = delta::declared_from(&resolutions);
     println!("import: {} declared resource(s) resolved to live ids", declared.ids.len());
+    if !declared.no_rule.is_empty() {
+        println!(
+            "import: {} declared resource(s) have no adoption rule and cannot be subtracted from the sweep — they may come back as new: {}",
+            declared.no_rule.len(),
+            declared.no_rule.join(", ")
+        );
+    }
+    if !declared.blocked.is_empty() {
+        let mut msg = format!("import --into: {} declared resource(s) could not be resolved to a live id; the sweep cannot be subtracted, nothing written:", declared.blocked.len());
+        for (a, why) in &declared.blocked {
+            msg.push_str(&format!("\n  {}: {}", a, why));
+        }
+        return Err(msg.into());
+    }
 
     // 2. the sweep
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
@@ -2325,7 +2342,7 @@ async fn import_delta(
         fsx::write(yaml_dir.join(&name), satz)?;
         let origin = declared.containers.values().find(|(a, _)| a == address).and_then(|(_, o)| o.clone());
         match origin {
-            Some((file, line)) if Path::new(&file) == estate.as_path() || file.ends_with(&estate.to_string_lossy().to_string()) => {
+            Some((file, line)) if Path::new(&file) == estate.as_path() || Path::new(&file).ends_with(&estate) => {
                 inserts.push((line, name.clone()));
             }
             Some((file, line)) => hints.push(format!("{} is declared in {}:{} (not the estate) — add `use \"{}\"` inside that block by hand", address, file, line, name)),
@@ -4123,7 +4140,7 @@ mod import_skipped_report {
         let state: serde_json::Value = serde_json::from_str(STATE).unwrap();
         let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
         let filtered = ["google_compute_network"].into_iter().map(String::from).collect();
-        let found = Discoverer::new(state, None, false, Some(enabled), filtered).discover().unwrap();
+        let found = Discoverer::new(state, None, Some(enabled), filtered).discover().unwrap();
         let mut got: Vec<(String, String, SkipReason)> =
             found.skipped.iter().map(|s| (s.tf_type.clone(), s.what.clone(), s.reason.clone())).collect();
         got.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
@@ -4152,7 +4169,7 @@ mod import_skipped_report {
              "versioning":{"enabled":true}}}
         ]}}}"#).unwrap();
         let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
-        let found = Discoverer::new(state, Some(reg), false, Some(enabled), Default::default()).discover().unwrap();
+        let found = Discoverer::new(state, Some(reg), Some(enabled), Default::default()).discover().unwrap();
         assert_eq!(found.dropped_attrs, vec![("google_storage_bucket".to_string(), "lifecycle".to_string())]);
         let bucket = &found.config.project.as_ref().unwrap()["infra"].extra["google_storage_bucket"];
         let text = serde_yaml::to_string(bucket).unwrap();

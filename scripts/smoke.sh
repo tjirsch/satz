@@ -54,6 +54,11 @@ grep -q 'declared as `google_storage_bucket' tmp/triage.md || fail "the bucket f
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --report tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
 grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
 
+step "import-config: every derivable asset_type is filled (the CAI list is the source)"
+cp "$root/presets/import-config.yaml" tmp/import-config.yaml
+uv run --with ruamel.yaml "$root/scripts/update_import_config.py" --config-file tmp/import-config.yaml --cai-types "$root/presets/cai-asset-types.txt" | tee tmp/fill.txt
+grep -q '^asset_type filled: 0;' tmp/fill.txt || fail "presets/import-config.yaml is behind presets/cai-asset-types.txt — run the fill and commit it"
+
 step "check-presets against the repository's own presets (must be clean)"
 "$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz
 

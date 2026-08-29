@@ -20,10 +20,10 @@ pub(crate) fn split_asset_type(asset_type: &str) -> Option<(String, String)> {
 /// directory. Returns the document and its `revision`.
 pub(crate) async fn document(client: &reqwest::Client, cache_dir: &Path, service: &str) -> Result<serde_json::Value, String> {
     let cache = cache_dir.join(format!("{}.json", service));
-    if let Ok(text) = std::fs::read_to_string(&cache) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-            return Ok(v);
-        }
+    if cache.exists() {
+        let text = std::fs::read_to_string(&cache).map_err(|e| format!("{}: {}", cache.display(), e))?;
+        return serde_json::from_str::<serde_json::Value>(&text)
+            .map_err(|e| format!("{}: cached Discovery Document is not JSON ({}) — delete the file to refetch", cache.display(), e));
     }
     let dir: serde_json::Value = client
         .get(DIRECTORY)
