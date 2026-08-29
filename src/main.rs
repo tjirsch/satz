@@ -2122,6 +2122,8 @@ async fn import_delta(
     let opts = crate::adopt::Options { only: Default::default(), activate: false };
     let mut live = crate::adopt::RealLive::new(&out.customer_id).await?;
     let resolutions = crate::adopt::resolve(&out.manifest, &cfg, &opts, &mut live).await;
+    // what an earlier delta import wrote is re-derived now, not "declared"
+    let resolutions: Vec<_> = resolutions.into_iter().filter(|r| !delta::from_imported_pack(&r.origin)).collect();
     let declared = delta::declared_from(&resolutions);
     println!("import: {} declared resource(s) resolved to live ids", declared.ids.len());
 
@@ -2152,6 +2154,17 @@ async fn import_delta(
         ]
     };
     let is_type = |t: &str| type_names.contains(t);
+    let top_name = delta::pack_name(parent, None);
+    if d.top.is_empty() {
+        // nothing left at the top level: an earlier run's pack goes, with its use
+        if yaml_dir.join(&top_name).exists() {
+            fsx::remove_file(yaml_dir.join(&top_name))?;
+            if let Some(t) = delta::remove_use(&estate_text, &top_name) {
+                estate_text = t;
+            }
+            println!("  removed {} (nothing left to import at the top level)", yaml_dir.join(&top_name).display());
+        }
+    }
     if !d.top.is_empty() {
         let name = delta::pack_name(parent, None);
         let satz = satz_core::migrate::convert_value(&d.top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
@@ -2185,6 +2198,20 @@ async fn import_delta(
     for (line, name) in inserts {
         if let Some(t) = delta::add_use(&estate_text, &name, Some(line))? {
             estate_text = t;
+        }
+    }
+    // declared containers that have no residue any more: their earlier pack goes
+    for (address, _) in declared.containers.values() {
+        if d.under.contains_key(address) {
+            continue;
+        }
+        let name = delta::pack_name(parent, Some(address));
+        if yaml_dir.join(&name).exists() {
+            fsx::remove_file(yaml_dir.join(&name))?;
+            if let Some(t) = delta::remove_use(&estate_text, &name) {
+                estate_text = t;
+            }
+            println!("  removed {} (nothing left to import under {})", yaml_dir.join(&name).display(), address);
         }
     }
     fsx::write(&estate, estate_text)?;
