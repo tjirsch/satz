@@ -332,26 +332,7 @@ enum Commands {
         #[arg(long)]
         into: Option<PathBuf>,
     },
-    /// Alias of `satz import <state.json>` — removed in the next release
-    #[command(hide = true)]
-    DiscoverFromState {
-        #[arg(long)]
-        state_json: Option<PathBuf>,
-        #[arg(long, default_value = "discovered.satz")]
-        output: PathBuf,
-        #[arg(long)]
-        import_config: Option<PathBuf>,
-    },
-    /// Alias of `satz import organizations/<n>` — removed in the next release
-    #[command(hide = true)]
-    DiscoverFromOrganization {
-        #[arg(long)]
-        customer_organization_id: String,
-        #[arg(long, default_value = "discovered.satz")]
-        output: PathBuf,
-        #[arg(long)]
-        import_config: Option<PathBuf>,
-    },
+
     /// Migrate state and configuration between local and cloud modes
     Migrate {
         /// Estate file (inside yaml_dir if relative): rewrites `deployment_mode` in
@@ -386,25 +367,6 @@ enum Commands {
         /// Take the library from this directory instead of downloading it
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
-    },
-    /// Alias of `satz import <file>.yaml` — removed in the next release
-    #[command(hide = true)]
-    MigrateToSatz {
-        /// File to convert (estate yaml, or a pack under presets_dir)
-        input: PathBuf,
-        /// Estate used for the differential gate (defaults to `input` when the
-        /// input itself is an estate)
-        #[arg(long)]
-        gate: Option<PathBuf>,
-        /// Declared kind in the emitted file
-        #[arg(long, default_value = "pack")]
-        kind: String,
-        /// Convert a hand-drifted copy of an upstream pack into a fork:
-        /// output goes to `<stem>.local.satz` and the original .yaml stays
-        /// untouched (forks have no twin duty; upstream deltas flow to the
-        /// `.diff.satz` ledger via merge-presets)
-        #[arg(long)]
-        fork: bool,
     },
     /// Reconciling preset update: install new packs (recording base snapshots),
     /// silently upgrade unmodified ones, emit variable-migration hints for
@@ -667,7 +629,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::DiscoverFromState { .. } | Commands::DiscoverFromOrganization { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MigrateToSatz { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1069,19 +1031,6 @@ Thumbs.db
                 other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
             }
         }
-        Commands::DiscoverFromState { state_json, output, import_config } => {
-            eprintln!("note: `discover-from-state` is now `satz import <state.json>` — this alias goes away in the next release.");
-            let cfg = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?
-                .ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
-            import_state(state_json, output, cfg, Default::default(), cli.verbose, &tool_config, &runtime_config)
-        }
-        Commands::DiscoverFromOrganization { customer_organization_id, output, import_config } => {
-            eprintln!("note: `discover-from-organization` is now `satz import organizations/<n>` — this alias goes away in the next release.");
-            let cfg = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?
-                .ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
-            let parent = format!("organizations/{}", customer_organization_id.trim_start_matches("organizations/"));
-            import_org(&parent, output, cfg, Default::default(), cli.verbose, &runtime_config).await
-        }
         Commands::Bootstrap { estate, dry_run } => {
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
@@ -1231,10 +1180,6 @@ Thumbs.db
         }
         Commands::GetPresets { force, pristine_dir } => {
             crate::presets::run_get_presets(&runtime_config.presets_dir, &runtime_config, force, pristine_dir).await
-        }
-        Commands::MigrateToSatz { input, gate, kind, fork } => {
-            eprintln!("note: `migrate-to-satz` is now `satz import <file>.yaml` — this alias goes away in the next release.");
-            convert_yaml_to_satz(input, gate, kind, fork, &tool_config, &runtime_config)
         }
         Commands::MergePresets { pristine_dir, estate, report_only, adopt } => {
             let attention = crate::presets::run_merge_presets(
@@ -1740,6 +1685,26 @@ fn convert_yaml_to_satz(
     let satz = satz_core::migrate::retarget_uses(&satz, &|p: &str| {
         use_base.join(p).exists() || use_dirs.iter().any(|d| Path::new(d).join(p).exists())
     });
+    // A `use` that still points at a YAML pack cannot compile; say which and
+    // how to fix it rather than letting the parser report `unexpected
+    // character ':'` on a line of that pack (live-run F6).
+    let yaml_uses: Vec<String> = satz
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("use \""))
+        .filter_map(|rest| rest.split('"').next())
+        .filter(|p| p.ends_with(".yaml") || p.ends_with(".yml"))
+        .map(String::from)
+        .collect();
+    if !yaml_uses.is_empty() {
+        // Printed rather than returned: `main` renders a returned error with
+        // `Debug`, which escapes the newlines.
+        eprintln!("\n{} still `use`s {} YAML pack(s) — convert them first, then re-run:", src_path.display(), yaml_uses.len());
+        for p in &yaml_uses {
+            eprintln!("    satz import {} --kind pack", p);
+        }
+        eprintln!();
+        return Err(format!("{} YAML pack(s) still in use — convert them first", yaml_uses.len()).into());
+    }
     let satz_path = if fork {
         if kind == "estate" {
             return Err("--fork applies to packs, not estates".into());
