@@ -54,6 +54,21 @@ NAV_CSS = """
 """
 
 
+def command_anchors(body: str) -> str:
+    """A heading that names a command in backticks — `### Transpile (`transpile`)` —
+    gets a stable `id="cmd-transpile"` so `satz <cmd> --html-help` can open it.
+    The rendered heading keeps its own generated id as a nested anchor."""
+
+    def repl(m: "re.Match[str]") -> str:
+        level, attrs, inner = m.group(1), m.group(2), m.group(3)
+        cmds = re.findall(r"<code>([a-z][a-z0-9-]*)</code>", inner)
+        if not cmds:
+            return m.group(0)
+        return f'<h{level}{attrs} id="cmd-{cmds[0]}">{inner}</h{level}>'
+
+    return re.sub(r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="[^"]*")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>', repl, body)
+
+
 def rewrite_links(body: str, src_rel: Path) -> str:
     """`docs/x.md` / `../README.md` / `#anchor` links → the rendered twins."""
     targets = {str(src.relative_to(ROOT)): rel for src, rel, _ in PAGES}
@@ -89,6 +104,7 @@ def main() -> None:
         body = body.replace("<table>", '<div class="tablewrap"><table>').replace("</table>", "</table></div>")
         body = doc.inline_images(body)
         body = rewrite_links(body, src.relative_to(ROOT))
+        body = command_anchors(body)
         out = OUT / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
