@@ -17,10 +17,8 @@ pub struct AttributeSchema {
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
-    #[allow(dead_code)]
     pub optional: bool,
     #[serde(default)]
-    #[allow(dead_code)]
     pub computed: bool,
     #[serde(default)]
     pub default: Option<serde_json::Value>,
@@ -44,9 +42,6 @@ pub struct ResourceSchema {
 #[derive(Debug, Deserialize, Clone)]
 pub struct BlockTypeSchema {
     pub min_items: Option<u64>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub max_items: Option<u64>,
     pub block: BlockSchema,
 }
 

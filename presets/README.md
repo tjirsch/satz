@@ -480,6 +480,32 @@ google_essential_contacts_contact { use "presets/essential-contacts-organization
 |---|---|---|
 | `essential_contacts_email` | `"essential-contacts-all@{customer_domain}"` | the contact address |
 
+## A big resource is a pack
+
+A resource with a long literal (a custom role with 1,400 permissions, an
+allowlist shared by several resources) goes into its own pack — the whole
+resource, not just the value:
+
+```
+// presets/roles/application-owner-connected.satz
+pack roles.application_owner_connected version "1.0"
+params { application_owner_connected_role_id = "ApplicationOwnerConnected" }
+google_organization_iam_custom_role {
+  ApplicationOwnerConnected {
+    role_id = application_owner_connected_role_id
+    title = "ApplicationOwnerConnected"
+    permissions = [ "accessapproval.requests.get", … ]
+  }
+}
+```
+
+and the estate says `use "presets/roles/application-owner-connected.satz"`.
+The resource gains a name, a version and a ledger entry, `merge-presets` can
+track it, and any estate can share it. A params-only pack (`permissions =
+<param>`) is the shape when the LIST itself is the shared thing. There is no
+value-position include in Satz on purpose: `use` is a language construct
+(params, provenance, claims), not a preprocessor splice.
+
 ## catalogs/
 
 Compliance catalogs (`cis-gcp-4.0.yaml`, `cis-gcp-5.0.yaml`): control ids with this

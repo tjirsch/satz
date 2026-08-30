@@ -5,10 +5,6 @@
 //! structural context (folder/project chain) comes from `Entity::node_path`
 //! instead of walk position — scope as data, not as interception.
 //!
-//! Reached only from the differential harness and `diff-pipelines` until
-//! increment I4 flips the default pipeline — hence the allow.
-#![allow(dead_code)]
-
 use satz_core::algebra::{Body, Folded, Slot};
 use satz_core::pipeline::{Env, BILLING_ID_TYPE, GRANT_SCOPE_SEP};
 

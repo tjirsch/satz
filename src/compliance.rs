@@ -46,8 +46,9 @@ pub(crate) struct Catalog {
 #[derive(Debug, Deserialize)]
 pub(crate) struct Control {
     pub title: String,
+    /// this project's own one-line reading of the control (the catalog's
+    /// voice, not the framework's prose) — rendered under the title
     #[serde(default)]
-    #[allow(dead_code)] // read by the evidence report (Phase 1b)
     pub paraphrase: String,
     #[serde(default = "default_automatability")]
     pub automatability: String,
@@ -73,15 +74,16 @@ pub(crate) struct Claim {
     pub reason: String,
     #[serde(rename = "manual-duties", default)]
     pub manual_duties: Vec<ManualDuty>,
+    /// what the claim's resources prove, in the pack author's words —
+    /// rendered under the witnesses
     #[serde(default)]
-    #[allow(dead_code)] // shown in the evidence report (Phase 1b)
     pub interpretation: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct ManualDuty {
     pub id: String,
-    #[allow(dead_code)]
+    /// what a human has to do — rendered beside the id in the evidence report
     pub duty: String,
 }
 
@@ -1220,7 +1222,15 @@ pub(crate) async fn run_report_compliance(
                     else if any_unver { format!("verified* ({} of {})", n_verified, witnesses.len()) }
                     else if no_live || live.is_empty() { "declared".to_string() }
                     else { "**verified**".to_string() };
-                let duties = open.iter().map(|d| format!("open: {}", d))
+                let duty_text = |id: &str| {
+                    included_claims
+                        .iter()
+                        .flat_map(|(_, c)| c.manual_duties.iter())
+                        .find(|m| m.id == id)
+                        .map(|m| format!(" — {}", m.duty))
+                        .unwrap_or_default()
+                };
+                let duties = open.iter().map(|d| format!("open: {}{}", d, duty_text(d)))
                     .chain(attested.iter().map(|d| {
                         let a = &attestations.duties[*d];
                         format!("attested: {} ({}, {})", d, a.by, a.date)
@@ -1274,12 +1284,32 @@ pub(crate) async fn run_report_compliance(
             }
             (Some(_), _) => "–".to_string(),
         };
+        // the catalog's own reading of the control, and what the included
+        // claims say their resources prove — the two human sentences an
+        // auditor reads before the identifiers
+        let title_cell = if control.paraphrase.is_empty() {
+            control.title.clone()
+        } else {
+            format!("{}<br><small>{}</small>", control.title, control.paraphrase)
+        };
+        let interpretations: Vec<String> = included_claims
+            .iter()
+            .filter(|(_, c)| &c.control == id && !c.interpretation.is_empty())
+            .map(|(_, c)| c.interpretation.clone())
+            .collect();
+        let witness_cell = if interpretations.is_empty() {
+            witness_cell
+        } else {
+            format!("{}<br><small>{}</small>", witness_cell, interpretations.join(" · "))
+        };
         md.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} |\n",
-            id, control.title, status, witness_cell, duty_cell, prowler_cell, checkov_cell
+            id, title_cell, status, witness_cell, duty_cell, prowler_cell, checkov_cell
         ));
         json_rows.push(serde_json::json!({
-            "control": id, "title": control.title, "status": status.replace("**",""),
+            "control": id, "title": control.title, "paraphrase": control.paraphrase,
+            "interpretation": interpretations.join(" · "),
+            "status": status.replace("**",""),
             "witnesses": witness_cell.replace("**","").replace('`',""),
             "duties": duty_cell, "prowler": prowler_cell.replace("**",""),
             "prowler_findings": prowler_findings.cloned().unwrap_or_default(),

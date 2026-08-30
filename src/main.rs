@@ -152,9 +152,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Compile an estate to HCL (.satz; the legacy .yaml dialect is still accepted)
+    /// Compile an estate to HCL (a `.yaml` estate is migrated with `satz import`, never transpiled)
     Transpile {
-        /// Estate file — .satz, or a legacy .yaml (inside yaml_dir if relative).
+        /// Estate file, .satz (inside yaml_dir if relative).
         /// Not the tool config — that is --config
         input: String,
         /// Name of the output file (inside hcl_dir if relative)
@@ -351,8 +351,8 @@ enum Commands {
 
     /// Migrate state and configuration between local and cloud modes
     Migrate {
-        /// Estate file (inside yaml_dir if relative): rewrites `deployment_mode` in
-        /// params (Satz) or the `deployment-mode` anchor (legacy YAML)
+        /// Estate file (inside yaml_dir if relative): rewrites `deployment_mode`
+        /// in its params
         input: String,
         /// Target mode (local or cloud)
         #[arg(long)]
@@ -406,12 +406,6 @@ enum Commands {
         /// edit, and it must be named explicitly.
         #[arg(long)]
         adopt: Vec<String>,
-    },
-    /// (dev) Stage B differential: run pipeline B (satz -> fragments -> fold -> emit)
-    /// over an estate and compare against the on-disk hcl/main.tf + terraform.tfvars.
-    DiffPipelines {
-        /// The estate .satz (relative paths resolve against yaml_dir)
-        input: String,
     },
     /// Goal view against a compliance framework: which catalog controls are
     /// satisfied / partial / unmet by the declared estate, with witnesses and,
@@ -692,7 +686,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::Triage { .. } | Commands::AdoptOrgPolicies { .. } | Commands::DiffPipelines { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::Triage { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1280,83 +1274,6 @@ Thumbs.db
             ).await?;
             if attention {
                 std::process::exit(1);
-            }
-            Ok(())
-        }
-        Commands::DiffPipelines { input } => {
-            let input_path = if Path::new(&input).is_absolute() {
-                PathBuf::from(&input)
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(&input)
-            };
-            let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)?;
-
-            let resolver = EstateResolver { registry: &registry };
-            let src = fsx::read_to_string(&input_path)?;
-            let base_dir = input_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-            let include_dirs = runtime_config.include_dirs.clone();
-            let loader = move |p: &str| -> Result<String, String> {
-                let mut candidates = vec![base_dir.join(p)];
-                candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(p)));
-                for c in candidates {
-                    if c.exists() {
-                        return std::fs::read_to_string(&c).map_err(|e| e.to_string());
-                    }
-                }
-                Err(format!("use \"{}\": file not found", p))
-            };
-            let fe = satz_core::pipeline::compile_estate(
-                &input_path.to_string_lossy(),
-                &src,
-                &resolver,
-                &loader,
-            )?;
-            let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-            for c in folded.conflicts() {
-                eprintln!("CONFLICT: {}.{} ({} candidates)", c.addr.tf_type, c.addr.label, c.candidates.len());
-            }
-            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-            ctx.registry = Some(&registry);
-            let b_out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
-            // Same as transpile: the raw passthrough is part of what B writes,
-            // so leaving it off here reported every `hcl { … }` block as drift.
-            let b_main = append_hcl_passthrough(b_out.main_tf, &fe.hcl);
-            let b_imports = b_out.imports_tf;
-            let b_tfvars = crate::emitter::emit_tfvars(&fe.tfvars);
-            let (provider_sources, provider_versions) = provider_maps(&tool_config);
-            let b_providers = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
-                .map_err(|e| format!("emit_providers: {}", e))?;
-            let b_variables = crate::emitter::emit_variables(&fe.tfvars);
-
-            let a_main = fsx::read_to_string(Path::new(&runtime_config.hcl_dir).join("main.tf"))?;
-            let a_tfvars = fsx::read_to_string(Path::new(&runtime_config.hcl_dir).join("terraform.tfvars"))?;
-            let a_providers = fsx::read_to_string(Path::new(&runtime_config.hcl_dir).join("providers.tf"))?;
-            let a_variables = fsx::read_to_string(Path::new(&runtime_config.hcl_dir).join("variables.tf"))?;
-            let a_imports = fsx::read_to_string(Path::new(&runtime_config.hcl_dir).join("imports.tf")).unwrap_or_default();
-            let lines = |s: &str| -> std::collections::BTreeSet<String> {
-                s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.to_string()).collect()
-            };
-            for (name, a, b) in [
-                ("main.tf", &a_main, &b_main),
-                ("tfvars", &a_tfvars, &b_tfvars),
-                ("providers.tf", &a_providers, &b_providers),
-                ("variables.tf", &a_variables, &b_variables),
-                ("imports.tf", &a_imports, &b_imports),
-            ] {
-                let (a, b) = (lines(a), lines(b));
-                let only_a: Vec<_> = a.difference(&b).collect();
-                let only_b: Vec<_> = b.difference(&a).collect();
-                println!(
-                    "diff-pipelines[{}]: {} matched, {} only in A (walk), {} only in B (fold)",
-                    name,
-                    a.intersection(&b).count(),
-                    only_a.len(),
-                    only_b.len()
-                );
-                if std::env::var("DIFF_DETAIL").is_ok() {
-                    for l in only_a { println!("A| {}", l); }
-                    for l in only_b { println!("B| {}", l); }
-                }
             }
             Ok(())
         }
@@ -2776,69 +2693,6 @@ pub(crate) fn transpile_sorted_b(
 
 
 
-/// Provider-schema sync, previously driven by the YAML estate's `providers:`
-/// block. The Satz path resolves providers through the fragment pipeline and does
-/// not call this; `update-schema` remains the explicit door.
-#[allow(dead_code)]
-fn sync_schemas(tool_config: &mut ToolConfig, runtime_config: &ToolConfig, provider_names: &[String], config_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut updated = false;
-    let all_known = tool_config.all_providers(); // Just names
-
-    for p in provider_names {
-        // Categorize if not already known
-        let (p_name, _) = ToolConfig::parse_provider_string(p);
-        
-        if !all_known.contains(&p_name) {
-             // Add purely as name for now, or assume default version if added dynamically
-            if p_name.starts_with("google") {
-                if !tool_config.google_providers.iter().any(|existing| ToolConfig::parse_provider_string(existing).0 == p_name) {
-                    tool_config.google_providers.push(p.to_string());
-                    updated = true;
-                }
-            } else if p_name.starts_with("aws") {
-                if !tool_config.aws_providers.iter().any(|existing| ToolConfig::parse_provider_string(existing).0 == p_name) {
-                    tool_config.aws_providers.push(p.to_string());
-                    updated = true;
-                }
-            } else if p_name.starts_with("az") {
-                if !tool_config.azure_providers.iter().any(|existing| ToolConfig::parse_provider_string(existing).0 == p_name) {
-                    tool_config.azure_providers.push(p.to_string());
-                    updated = true;
-                }
-            } else if p_name.starts_with("ali")
-                 && !tool_config.alibaba_providers.iter().any(|existing| ToolConfig::parse_provider_string(existing).0 == p_name) {
-                    tool_config.alibaba_providers.push(p.to_string());
-                    updated = true;
-                }
-        }
-
-        // Generate schema if file missing
-        // For schema generation, we need the version.
-        // If it's a new provider just added, it uses the global default or whatever is in the string.
-        // We need to resolve the version from the tool_config (which might have been just updated)
-        
-        let (p_name_resolved, p_ver_resolved) = tool_config.parsed_providers().into_iter().find(|(n,_)| n == &p_name)
-             .unwrap_or_else(|| ToolConfig::parse_provider_string_with_default(p, &tool_config.provider_version));
-
-        let out_name = p_name_resolved.split('/').next_back().unwrap_or(&p_name_resolved);
-        let schema_path = PathBuf::from(&runtime_config.schema_dir).join(format!("{}.json", out_name));
-        if !schema_path.exists() {
-            // Ensure schema directory exists
-            fsx::create_dir_all(&runtime_config.schema_dir)?;
-
-            println!("Generating schema for provider: {} version {}...", p_name_resolved, p_ver_resolved);
-            ResourceRegistry::generate_schema(&runtime_config.tf_tool, &p_name_resolved, &p_ver_resolved, schema_path.to_str().unwrap())?;
-            updated = true;
-        }
-    }
-
-    if updated {
-        tool_config.save(config_path)?;
-        println!("Updated config.toml and schemas.");
-    }
-
-    Ok(())
-}
 
 /// Resolve a user-supplied path against the directory that owns its kind — estates against
 /// `yaml_dir`, schemas against `schema_dir` — leaving absolute paths untouched.
