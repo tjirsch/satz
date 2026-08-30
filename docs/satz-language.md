@@ -550,9 +550,11 @@ resource "google_storage_bucket" "audit_logs" {
 }
 ```
 
-**A repeated block is a list of objects.** Do not write `lifecycle_rule { … }`
-twice: in v0 that parses and keeps only the last one, silently (#34). The list
-form is the only correct one.
+**A repeated block is a list of objects.** `lifecycle_rule { … }` written
+twice in one body is an error naming both lines (a repeat used to keep only
+the last one, silently). The list form is the only one. Resource-type maps
+(`google_…`) may repeat — two `google_org_policy_policy { … }` groups in one
+file are one map, folded by address.
 
 `google_cloud_identity_group` is a satz abstraction that shares a Terraform
 type name: it is expanded into a group resource (deriving `group_key`, `parent =
@@ -1241,8 +1243,6 @@ composition conflicts: <type>.<label>: 2 disagreeing definitions
 - **Param scoping is document-ordered, not lexical.** Packs see every earlier
   file's params. True lexical scoping is a future semantics change.
 - **No list concatenation.** Overriding a list param replaces it.
-- **Repeated block keys in one body last-win silently** (#34). Write repeated
-  blocks as a list of objects.
 - **`use … when` is followed unconditionally when computing which presets an
   estate uses** (`check-presets`), so a conditionally-disabled pack may be
   reported as included. Over-reporting drift is the safe direction.

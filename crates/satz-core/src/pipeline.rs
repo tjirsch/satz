@@ -199,6 +199,8 @@ pub struct ResolvedSuppression {
     pub tf_type: String,
     pub label: String,
     pub role: Option<String>,
+    /// the estate file that declares it — errors point there, not at "suppress"
+    pub file: String,
     pub line: usize,
 }
 
@@ -235,7 +237,7 @@ pub fn apply_suppressions(
             .collect();
         if matching.is_empty() {
             return Err(PipelineError {
-                file: "suppress".to_string(),
+                file: sup.file.clone(),
                 line: sup.line,
                 msg: format!(
                     "suppress {} \"{}\" matches nothing — stale suppression (typo or upstream rename)",
@@ -251,7 +253,7 @@ pub fn apply_suppressions(
                 Some(role) => {
                     let Some(crate::algebra::Slot::Ok(entity)) = folded.slots.get_mut(&addr) else {
                         return Err(PipelineError {
-                            file: "suppress".to_string(),
+                            file: sup.file.clone(),
                             line: sup.line,
                             msg: format!(
                                 "suppress … role on {} \"{}\": the address is in conflict (⊥); suppress the whole member or resolve the conflict first",
@@ -261,7 +263,7 @@ pub fn apply_suppressions(
                     };
                     let Body::Grant(edges) = &mut entity.body else {
                         return Err(PipelineError {
-                            file: "suppress".to_string(),
+                            file: sup.file.clone(),
                             line: sup.line,
                             msg: format!(
                                 "suppress … role on {} \"{}\": not a grant",
@@ -273,7 +275,7 @@ pub fn apply_suppressions(
                     edges.retain(|e| &e.role != role);
                     if edges.len() == before {
                         return Err(PipelineError {
-                            file: "suppress".to_string(),
+                            file: sup.file.clone(),
                             line: sup.line,
                             msg: format!(
                                 "suppress {} \"{}\" role \"{}\" matches no edge",
@@ -328,6 +330,7 @@ pub fn compile_estate(
                 .as_ref()
                 .map(|r| resolve_str(r, &env, file_name, sup.line))
                 .transpose()?,
+            file: file_name.to_string(),
             line: sup.line,
         });
     }
@@ -411,6 +414,9 @@ fn collect_params(
                     if !truthy(env.get(p)) {
                         continue;
                     }
+                }
+                if path.ends_with(".yaml") || path.ends_with(".yml") {
+                    return perr(file_name, *line, format!("use \"{}\": packs are Satz — convert it first: `satz import {} --kind pack`", path, path));
                 }
                 let src = (load)(path)
                     .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
@@ -583,6 +589,9 @@ impl Walk<'_> {
     /// on the chain. A path already on the chain is a cycle, named in full.
     /// The caller pops the chain after descending.
     fn enter_use(&mut self, use_path: &str, file_name: &str, line: usize) -> Result<satz::File, PipelineError> {
+        if use_path.ends_with(".yaml") || use_path.ends_with(".yml") {
+            return perr(file_name, line, format!("use \"{}\": packs are Satz — convert it first: `satz import {} --kind pack`", use_path, use_path));
+        }
         if self.use_chain.iter().any(|f| f == use_path) {
             return perr(
                 file_name,
@@ -1719,10 +1728,15 @@ mod review_2026_08_29_tests {
 
     #[test]
     fn the_same_address_twice_in_one_file_with_different_bodies_is_an_error() {
+        // inside ONE map block the parser already refuses the repeated label
         let src = format!("{}google_org_policy_policy {{ p {{ name = \"first\" }} p {{ name = \"second\" }} }}\n", HEAD);
         let err = compile(&src).must_fail("second body must not be dropped");
+        assert!(err.msg.contains("given twice"), "{}", err.msg);
+        // across two blocks of the same map it is the fold's same-address rule
+        let src = format!("{}google_org_policy_policy {{ p {{ name = \"first\" }} }}\ngoogle_org_policy_policy {{ p {{ name = \"second\" }} }}\n", HEAD);
+        let err = compile(&src).must_fail("second body must not be dropped");
         assert!(err.msg.contains("declared twice"), "{}", err.msg);
-        let same = format!("{}google_org_policy_policy {{ p {{ name = \"x\" }} p {{ name = \"x\" }} }}\n", HEAD);
+        let same = format!("{}google_org_policy_policy {{ p {{ name = \"x\" }} }}\ngoogle_org_policy_policy {{ p {{ name = \"x\" }} }}\n", HEAD);
         compile(&same).expect("an identical repeat is idempotent");
     }
 
@@ -1731,6 +1745,13 @@ mod review_2026_08_29_tests {
         let src = format!("{}use \"a.satz\"\n", HEAD);
         let err = compile_with(&src, &[("a.satz", "pack a\nuse \"b.satz\"\n"), ("b.satz", "pack b\nuse \"a.satz\"\n")]).must_fail("must not overflow");
         assert!(err.msg.contains("cyclic `use`: main.satz → a.satz → b.satz → a.satz"), "{}", err.msg);
+    }
+
+    #[test]
+    fn using_a_yaml_pack_names_the_converter() {
+        let src = format!("{}use \"old-pack.yaml\"\n", HEAD);
+        let err = compile_with(&src, &[("old-pack.yaml", "variables:\n  a: 1\n")]).must_fail("a YAML pack must not be parsed as Satz");
+        assert!(err.msg.contains("satz import old-pack.yaml --kind pack"), "{}", err.msg);
     }
 
     #[test]

@@ -45,6 +45,10 @@ pub(crate) trait Live {
     /// the `//<service>/` prefix — which is the Terraform import id for the
     /// types that carry one) and its resource data.
     async fn search(&mut self, scope: &str, asset_type: &str) -> Result<Vec<(String, serde_json::Value)>, String>;
+    /// Every budget of a billing account: (resource name
+    /// `billingAccounts/<id>/budgets/<uuid>`, display name). Budgets are not
+    /// in Cloud Asset Inventory — the Billing Budgets API is the only lookup.
+    async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +146,7 @@ pub(crate) async fn resolve<L: Live>(
             "google_cloud_identity_group" => resolve_group(r, live).await,
             "google_cloud_identity_group_membership" => resolve_membership(r, &resolved_ids, live).await,
             "google_org_policy_policy" => resolve_org_policy(r, manifest, &resolved_ids, opts, live, &mut res).await,
+            "google_billing_budget" => resolve_budget(r, live).await,
             _ => match rule_for(rules, &r.tf_type) {
                 Rule::Template(t) => render_template(&t, r, manifest, &resolved_ids),
                 Rule::Match(on, asset_type) => resolve_match(r, &on, asset_type.as_deref(), manifest, &resolved_ids, live).await,
@@ -364,6 +369,30 @@ async fn resolve_group<L: Live>(r: &EmittedResource, live: &mut L) -> (String, O
         Ok(Some(id)) => (email, Outcome::Resolved { id, verified: true }),
         Ok(None) => (email, Outcome::OnApply),
         Err(e) => (email, Outcome::Failed(e)),
+    }
+}
+
+/// A budget's id is a UUID Google assigns; the natural key is the display
+/// name under the billing account it is declared for. One live budget with
+/// that name resolves, several are ambiguous, none means `apply` creates it.
+async fn resolve_budget<L: Live>(r: &EmittedResource, live: &mut L) -> (String, Outcome) {
+    let Some(account) = r.attrs.get("billing_account").map(|a| a.trim_start_matches("billingAccounts/").to_string()) else {
+        return (String::new(), Outcome::Unresolvable(format!("{} emits no literal billing_account", r.address())));
+    };
+    let Some(display_name) = r.attrs.get("display_name").cloned() else {
+        return (String::new(), Outcome::Unresolvable(format!("{} emits no display_name to match on", r.address())));
+    };
+    let key = format!("{} @ billingAccounts/{}", display_name, account);
+    match live.budgets(&account).await {
+        Err(e) => (key, Outcome::Failed(e)),
+        Ok(list) => {
+            let hits: Vec<String> = list.into_iter().filter(|(_, dn)| *dn == display_name).map(|(name, _)| name).collect();
+            match hits.as_slice() {
+                [] => (key, Outcome::OnApply),
+                [one] => (key, Outcome::Resolved { id: one.clone(), verified: true }),
+                many => (key, Outcome::Ambiguous(many.to_vec())),
+            }
+        }
     }
 }
 
@@ -757,6 +786,10 @@ impl Live for RealLive {
         }
         Ok(self.policies[parent].contains_key(constraint))
     }
+
+    async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String> {
+        crate::gcp::billing::list_budgets(&self.http, &self.token, billing_account).await
+    }
 }
 
 #[cfg(test)]
@@ -770,6 +803,7 @@ mod tests {
         memberships: BTreeMap<(String, String), String>,
         policies: BTreeSet<(String, String)>,
         searches: BTreeMap<(String, String), Vec<(String, serde_json::Value)>>,
+        budgets: BTreeMap<String, Vec<(String, String)>>,
         calls: Vec<String>,
     }
 
@@ -793,6 +827,10 @@ mod tests {
         async fn search(&mut self, scope: &str, asset_type: &str) -> Result<Vec<(String, serde_json::Value)>, String> {
             self.calls.push(format!("search {} {}", scope, asset_type));
             Ok(self.searches.get(&(scope.to_string(), asset_type.to_string())).cloned().unwrap_or_default())
+        }
+        async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String> {
+            self.calls.push(format!("budgets {}", billing_account));
+            Ok(self.budgets.get(billing_account).cloned().unwrap_or_default())
         }
     }
 
@@ -899,7 +937,7 @@ import {
     }
 
     fn fake() -> Fake {
-        let mut f = Fake { folders: BTreeMap::new(), groups: BTreeMap::new(), memberships: BTreeMap::new(), policies: BTreeSet::new(), searches: BTreeMap::new(), calls: vec![] };
+        let mut f = Fake { folders: BTreeMap::new(), groups: BTreeMap::new(), memberships: BTreeMap::new(), policies: BTreeSet::new(), searches: BTreeMap::new(), budgets: BTreeMap::new(), calls: vec![] };
         f.searches.insert(
             ("projects/acme-infra-001".into(), "test.googleapis.com/google_monitoring_alert_policy".into()),
             vec![
@@ -1067,5 +1105,28 @@ import {
         assert!(!std::fs::read_to_string(&pack).unwrap().contains("import-id"), "a pristine pack is never edited");
         let _ = std::fs::remove_file(&tmp);
         let _ = std::fs::remove_dir_all(&presets);
+    }
+
+    #[tokio::test]
+    async fn a_budget_resolves_by_display_name_under_its_billing_account() {
+        let manifest = Manifest::parse(
+            "resource \"google_billing_budget\" \"infra\" {\n  billing_account = \"012345-6789AB-CDEF01\"\n  display_name = \"Infra monthly\"\n}\n\
+             resource \"google_billing_budget\" \"twice\" {\n  billing_account = \"012345-6789AB-CDEF01\"\n  display_name = \"Dup\"\n}\n",
+        );
+        let mut f = Fake { folders: BTreeMap::new(), groups: BTreeMap::new(), memberships: BTreeMap::new(), policies: BTreeSet::new(), searches: BTreeMap::new(), budgets: BTreeMap::new(), calls: vec![] };
+        f.budgets.insert(
+            "012345-6789AB-CDEF01".into(),
+            vec![
+                ("billingAccounts/012345-6789AB-CDEF01/budgets/aaaa".into(), "Infra monthly".into()),
+                ("billingAccounts/012345-6789AB-CDEF01/budgets/bbbb".into(), "Dup".into()),
+                ("billingAccounts/012345-6789AB-CDEF01/budgets/cccc".into(), "Dup".into()),
+            ],
+        );
+        let cfg: ImportConfig = serde_yaml::from_str("resource_types: {}").unwrap();
+        let rs = resolve(&manifest, &cfg, &Options { only: Default::default(), activate: false }, &mut f).await;
+        let by = |a: &str| rs.iter().find(|r| r.address == a).unwrap().outcome.clone();
+        assert_eq!(by("google_billing_budget.infra"), Outcome::Resolved { id: "billingAccounts/012345-6789AB-CDEF01/budgets/aaaa".into(), verified: true });
+        assert!(matches!(by("google_billing_budget.twice"), Outcome::Ambiguous(ref c) if c.len() == 2));
+        assert!(f.calls.iter().any(|c| c == "budgets 012345-6789AB-CDEF01"), "{:?}", f.calls);
     }
 }
