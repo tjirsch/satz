@@ -64,7 +64,6 @@ User-level **parameters** (e.g. when to check for updates) live in **`~/.config/
 | Option | Default | Description |
 |--------|---------|-------------|
 | `self_update_frequency` | `"always"` | When to check for updates on normal runs: `never`, `always`, or `daily` (at most once per 24 hours). The check is check-only (no install, no README). |
-| `preferred_editor` | *(none)* | Editor command used to open files (e.g. `"zed"`, `"code"`, `"vim"`). Falls back to `$EDITOR` env var, then the OS default app. String values must be quoted. |
 
 **Project config** (paths, providers, etc.) stays in **`config.toml`** per project; see [Configuration](#configuration) below.
 
@@ -72,7 +71,6 @@ Example (optional; the file is created automatically when needed):
 
 ```toml
 self_update_frequency = "daily"
-preferred_editor = "zed"
 ```
 
 ## Installation
@@ -134,10 +132,9 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
-| `self-update` | `--no-download-readme`, `--no-open-readme`, `--check-only`, `--skip-checksum` |
-| `open-readme` | *(none)* |
+| `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
+| `open-readme` | *(none)* — opens the documentation site |
 | `completion [SHELL]` | `--install` |
-| `set-preferred-editor [EDITOR]` | `--clear` |
 
 Details for each command are below.
 
@@ -920,23 +917,23 @@ satz self-update
 satz self-update --check-only
 
 # Skip downloading README after install, or skip opening it
-satz self-update --no-download-readme
-satz self-update --no-download-readme --no-open-readme
+satz self-update --no-open-readme
 ```
 
-**Self-update options:** `--no-download-readme`, `--no-open-readme`, `--check-only`, `--skip-checksum`. The program can also check for updates automatically when you run other commands; this is controlled by the [user settings](#user-settings-configsatzsatztoml) file `~/.config/satz/satz.toml` (`self_update_frequency`: `never`, `always`, or `daily`).
+**Self-update options:** `--no-open-readme` (do not open the documentation site after installing), `--check-only`, `--skip-checksum`. The program can also check for updates on start-up (`self_update_frequency` in the global settings).
 
 **Under the Hood:**
 - Fetches the latest release from the GitHub API and compares versions. When a newer version is available it downloads `satz-installer.sh` and `satz-installer.sh.sha256` from that same release, verifies the SHA-256 digest, and only then runs the installer. A checksum mismatch aborts; a release without the sidecar aborts too, unless you pass `--skip-checksum`. On success, optionally downloads `README.md` from the repo and prints its path (e.g. `README: /Users/you/Downloads/satz-0.4.9-README.md`).
 
-### Open README (`open-readme`)
-Download the latest `README.md` from the main branch and open it with your configured editor (see [user settings](#user-settings-configsatzsatztoml)).
+### Open the documentation (`open-readme`)
 
 ```bash
 satz open-readme
 ```
 
-The README is saved to your Downloads folder (e.g. `~/Downloads/satz-latest-README.md`). The editor used follows the same priority as all file-open operations: `preferred_editor` in `~/.config/satz/satz.toml` → `$EDITOR` env var → OS default app.
+Opens the documentation site — <https://tjirsch.github.io/satz/> — in the
+browser: this README, the language reference and the preset docs, rendered
+from the repository's Markdown on every release tag (`.github/workflows/pages.yml`).
 
 ### Shell Completion (`completion`)
 Generate a tab-completion script for your shell. Supports `bash`, `zsh`, `fish`, and `powershell`.
@@ -976,24 +973,6 @@ For zsh, add this to `~/.zshrc` if not already present:
 fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit && compinit
 ```
-
-### Set Preferred Editor (`set-preferred-editor`)
-Set, clear, or show the `preferred_editor` option in `~/.config/satz/satz.toml` without editing the file manually.
-
-```bash
-# Set the editor
-satz set-preferred-editor code
-satz set-preferred-editor zed
-satz set-preferred-editor /usr/local/bin/vim
-
-# Clear the setting (fall back to $EDITOR / OS default)
-satz set-preferred-editor --clear
-
-# Show the current setting
-satz set-preferred-editor
-```
-
-The editor is used when opening files from `open-readme` and `self-update` (post-install README). The priority chain is: `preferred_editor` config → `$EDITOR` env var → OS default app.
 
 ## Day 0 Onboarding Playbook
 

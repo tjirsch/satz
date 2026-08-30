@@ -74,6 +74,17 @@ and in the maintainer's notes. Nothing in this file names a customer.
   "Compiling satz-core" before trusting a live run.
 - **Corpus (`tests/corpus/`) is snapshot-gated:** `UPDATE_CORPUS=1` + review
   the diff.
+- **Docs ship with the change, in two renderings.** A change to the language,
+  a command, a flag or a pack updates `README.md`, `docs/*.md` and
+  `presets/README.md` in the same PR (the language reference cites
+  `tests/smoke/yaml/showcase.satz` — a new feature gets its example there
+  first). The HTML site <https://tjirsch.github.io/satz/> is rendered from
+  exactly those files by `scripts/build-site.py` and published by
+  `.github/workflows/pages.yml` on every release tag; nothing is written for
+  the site separately, and a doc that is not in the repo is not documentation.
+  Run it locally before a docs PR: `uv run --with markdown
+  scripts/build-site.py _site` and open `_site/index.html`. `satz open-readme`
+  and the post-install step open that site.
 - **Docs are derived from the parser, not from intent.** Every example in
   `docs/satz-language.md` compiles; where the doc and the parser disagree, the
   parser is right and the doc is a bug.

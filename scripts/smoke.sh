@@ -155,6 +155,11 @@ grep -q 'corp-private-host' tmp/gate.txt || fail "the gate did not name the priv
 if bash "$root/scripts/check-names.sh" tmp/does-not-exist.txt >/dev/null 2>&1; then fail "a missing file passed the gate"; fi
 if bash "$root/scripts/check-names.sh" --commits deadbeef..HEAD >tmp/gate2.txt 2>&1; then fail "an unusable commit range passed the gate"; fi
 
+step "documentation site renders (what pages.yml publishes)"
+uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
+for f in index.html docs/satz-language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
+grep -q 'href="docs/satz-language.html"' tmp/site/index.html || fail "site: README link to the language reference was not rewritten to HTML"
+
 step "corpus + unit tests"
 (cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)
 

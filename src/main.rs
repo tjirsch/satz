@@ -360,10 +360,7 @@ enum Commands {
     },
     /// Check for and install new releases from GitHub
     SelfUpdate {
-        /// Do not download README.md after installing
-        #[arg(long)]
-        no_download_readme: bool,
-        /// Do not open README.md after downloading (only applies if download runs)
+        /// Do not open the documentation site after installing
         #[arg(long)]
         no_open_readme: bool,
         /// Only check if an update is available; do not install or download README
@@ -543,7 +540,7 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Download and open the latest README from the repository
+    /// Open the documentation site in the browser
     OpenReadme,
     /// Generate shell completion script
     Completion {
@@ -554,14 +551,6 @@ enum Commands {
         /// (auto-enabled on macOS when no shell is specified)
         #[arg(long)]
         install: bool,
-    },
-    /// Set (or clear) the preferred editor in global settings
-    SetPreferredEditor {
-        /// Editor command to use (e.g. "code", "zed", "vim"). Omit to show current value.
-        editor: Option<String>,
-        /// Remove the preferred_editor setting (fall back to $EDITOR / OS default)
-        #[arg(long)]
-        clear: bool,
     },
 }
 
@@ -574,10 +563,6 @@ struct GlobalSettings {
     /// Last time we ran an update check (unix timestamp string). Used for "daily" throttle.
     #[serde(skip_serializing_if = "Option::is_none")]
     last_update_check: Option<String>,
-    /// Preferred editor command for opening files (e.g. "code", "vim", "nano").
-    /// Falls back to $EDITOR env var, then the OS default app.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    preferred_editor: Option<String>,
 }
 
 impl Default for GlobalSettings {
@@ -585,7 +570,6 @@ impl Default for GlobalSettings {
         Self {
             self_update_frequency: default_self_update_frequency(),
             last_update_check: None,
-            preferred_editor: None,
         }
     }
 }
@@ -600,29 +584,26 @@ fn global_settings_path() -> Option<PathBuf> {
 }
 
 /// Load global settings. If the file does not exist, create ~/.config/satz/satz.toml with default values.
-fn load_global_settings() -> GlobalSettings {
+/// The global settings (`~/.config/satz/satz.toml`), created with defaults
+/// when absent. A file that exists but cannot be read or parsed is an error —
+/// "defaults" would be a silent reset that the next save writes back.
+fn load_global_settings() -> Result<GlobalSettings, Box<dyn std::error::Error>> {
     let path = match global_settings_path() {
         Some(p) => p,
-        None => return GlobalSettings::default(),
+        None => return Ok(GlobalSettings::default()),
     };
     if path.exists() {
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("⚠️  Warning: Could not read {}: {}", path.display(), e);
-                return GlobalSettings::default();
-            }
-        };
-        return toml::from_str(&content).unwrap_or_else(|e| {
-            eprintln!("⚠️  Warning: Could not parse {}: {}", path.display(), e);
-            eprintln!("   String values must be quoted, e.g.  preferred_editor = \"zed\"");
-            GlobalSettings::default()
+        let content = fs::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
+        // a settings file that does not parse is not "defaults": the next
+        // save would overwrite what the user wrote
+        return toml::from_str(&content).map_err(|e| {
+            format!("{}: not valid TOML ({}) — fix the file or delete it to start from defaults", path.display(), e).into()
         });
     }
     // First run: create directory and write defaults
     let defaults = GlobalSettings::default();
-    let _ = save_global_settings(&defaults);
-    defaults
+    save_global_settings(&defaults)?;
+    Ok(defaults)
 }
 
 fn save_global_settings(settings: &GlobalSettings) -> Result<(), Box<dyn std::error::Error>> {
@@ -644,7 +625,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Load/create global settings on first run (creates ~/.config/satz/satz.toml with defaults)
-    let mut global_settings = load_global_settings();
+    let mut global_settings = load_global_settings()?;
 
     let cmd_choice = match cli.command {
         Some(c) => c,
@@ -700,7 +681,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
-                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::SetPreferredEditor { .. } => {
+                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }
@@ -709,7 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Optional: check for updates per global settings (skip for SelfUpdate and Init)
-    if !matches!(cmd_choice, Commands::SelfUpdate { .. } | Commands::Init { .. } | Commands::SetPreferredEditor { .. }) {
+    if !matches!(cmd_choice, Commands::SelfUpdate { .. } | Commands::Init { .. }) {
         let _ = maybe_check_for_updates(&mut global_settings).await;
     }
 
@@ -1262,8 +1243,8 @@ Thumbs.db
             println!("Migration to {} mode complete.", target_mode);
             Ok(())
         }
-        Commands::SelfUpdate { no_download_readme, no_open_readme, check_only, skip_checksum } => {
-            run_self_update(!no_download_readme, !no_open_readme, check_only, skip_checksum, global_settings.preferred_editor.as_deref()).await
+        Commands::SelfUpdate { no_open_readme, check_only, skip_checksum } => {
+            run_self_update(!no_open_readme, check_only, skip_checksum).await
         }
         Commands::GetPresets { force, pristine_dir } => {
             crate::presets::run_get_presets(&runtime_config.presets_dir, &runtime_config, force, pristine_dir).await
@@ -1393,7 +1374,7 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::OpenReadme => run_open_readme(global_settings.preferred_editor.as_deref()).await,
+        Commands::OpenReadme => open_url(DOCS_URL),
         Commands::Completion { shell, install } => {
             let using_default = shell.is_none();
             let shell = match shell {
@@ -1403,23 +1384,6 @@ Thumbs.db
             // Mirror gcloud-switch: a bare `completion` on macOS installs straight away.
             let install = install || (using_default && cfg!(target_os = "macos"));
             run_completion(&shell, install)
-        }
-        Commands::SetPreferredEditor { editor, clear } => {
-            if clear {
-                global_settings.preferred_editor = None;
-                save_global_settings(&global_settings)?;
-                println!("✅ preferred_editor cleared (will fall back to $EDITOR / OS default).");
-            } else if let Some(e) = editor {
-                global_settings.preferred_editor = Some(e.clone());
-                save_global_settings(&global_settings)?;
-                println!("✅ preferred_editor set to \"{}\".", e);
-            } else {
-                match &global_settings.preferred_editor {
-                    Some(e) => println!("preferred_editor = \"{}\"", e),
-                    None => println!("preferred_editor is not set (using $EDITOR / OS default)."),
-                }
-            }
-            Ok(())
         }
     }?;
 
@@ -2785,7 +2749,7 @@ fn print_recursive_help(cmd: &mut clap::Command) {
 }
 
 
-use crate::github::{api_error, api_get, API_URL, REPO};
+use crate::github::{api_error, api_get, API_URL, DOCS_URL, REPO};
 
 /// Fetches latest release from GitHub and returns (latest_version, html_url) if an update is available.
 async fn check_update_available(client: &reqwest::Client) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
@@ -2853,7 +2817,7 @@ async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Bo
     Ok(())
 }
 
-async fn run_self_update(download_readme: bool, open_readme: bool, check_only: bool, skip_checksum: bool, preferred_editor: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     let current_version = env!("CARGO_PKG_VERSION");
     println!("Current version: {}", current_version);
@@ -3001,12 +2965,9 @@ async fn run_self_update(download_readme: bool, open_readme: bool, check_only: b
                 println!("✅ Update installed successfully!");
                 println!("   Please restart your terminal or run: source ~/.profile");
 
-                if download_readme {
-                    match download_and_open_readme(&client, REPO, latest_version, open_readme, preferred_editor).await {
-                        Ok(Some(path)) => println!("README: {}", path.display()),
-                        Ok(None) => {}
-                        Err(e) => eprintln!("⚠️  Warning: Could not download README: {}", e),
-                    }
+                println!("   Documentation: {}", DOCS_URL);
+                if open_docs {
+                    open_url(DOCS_URL)?;
                 }
             } else {
                 return Err("Failed to run installer script".into());
@@ -3024,122 +2985,26 @@ async fn run_self_update(download_readme: bool, open_readme: bool, check_only: b
     Ok(())
 }
 
-async fn download_and_open_readme(
-    client: &reqwest::Client,
-    repo: &str,
-    version: &str,
-    open_after_download: bool,
-    preferred_editor: Option<&str>,
-) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
-    let download_dir = get_download_dir()?;
-    let readme_path = download_dir.join(format!("satz-{}-README.md", version));
-    let readme_url = format!("https://raw.githubusercontent.com/{}/main/README.md", repo);
-    println!("\n📄 Downloading README to '{}'...", readme_path.display());
-    let readme_content = client.get(&readme_url).send().await?.text().await?;
-    fsx::write(&readme_path, &readme_content)?;
-    if open_after_download {
-        open_file(&readme_path, preferred_editor)?;
-    }
-    Ok(Some(readme_path))
-}
 
-fn get_download_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+
+/// Open a URL in the default browser (never an editor).
+fn open_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Opening {}", url);
     #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME")?;
-        Ok(PathBuf::from(home).join("Downloads"))
-    }
-    
+    let status = std::process::Command::new("open").arg(url).status();
     #[cfg(target_os = "linux")]
-    {
-        // Try XDG_DOWNLOAD_DIR first, fallback to ~/Downloads
-        if let Ok(dir) = std::env::var("XDG_DOWNLOAD_DIR") {
-            Ok(PathBuf::from(dir))
-        } else {
-            let home = std::env::var("HOME")?;
-            Ok(PathBuf::from(home).join("Downloads"))
-        }
-    }
-    
+    let status = std::process::Command::new("xdg-open").arg(url).status();
     #[cfg(target_os = "windows")]
-    {
-        use std::env;
-        let user_profile = env::var("USERPROFILE")?;
-        Ok(PathBuf::from(user_profile).join("Downloads"))
-    }
-    
+    let status = std::process::Command::new("cmd").args(["/C", "start", "", url]).status();
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        Err("Unsupported platform for download directory".into())
+    let status: std::io::Result<std::process::ExitStatus> = Err(std::io::Error::other("no browser opener on this platform"));
+    match status {
+        Ok(st) if st.success() => Ok(()),
+        Ok(st) => Err(format!("could not open {}: the opener exited with {}", url, st).into()),
+        Err(e) => Err(format!("could not open {}: {}", url, e).into()),
     }
 }
 
-fn open_file(path: &Path, preferred_editor: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let path_str = path.to_str()
-        .ok_or_else(|| format!("File path {:?} contains non-UTF-8 characters", path))?;
-
-    let editor_env = std::env::var("EDITOR").ok();
-    let editor = preferred_editor.or(editor_env.as_deref());
-
-    if let Some(editor) = editor {
-        println!("   Opening '{}' with '{}'...", path_str, editor);
-        // Try direct invocation first — works when the editor binary is in PATH
-        let result = std::process::Command::new(editor).arg(path).status();
-        match result {
-            Ok(_) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // On macOS, fall back to `open -a <editor> <file>` so GUI apps
-                // (like Zed, VS Code) can be found by app-bundle name even when
-                // their CLI wrapper is not on the system PATH.
-                #[cfg(target_os = "macos")]
-                {
-                    let open_result = std::process::Command::new("open")
-                        .args(["-a", editor, path_str])
-                        .status();
-                    if open_result.map(|s| s.success()).unwrap_or(false) {
-                        return Ok(());
-                    }
-                }
-                return Err(format!(
-                    "Editor '{}' not found — is it installed and on your PATH?\n\
-                     Hint: set preferred_editor to the full path in ~/.config/satz/satz.toml\n\
-                     e.g.  preferred_editor = \"/usr/local/bin/zed\"",
-                    editor
-                ).into());
-            }
-            Err(e) => return Err(format!("Failed to launch editor '{}': {}", editor, e).into()),
-        }
-    }
-
-    // No editor configured — use OS default
-    #[cfg(target_os = "macos")]
-    {
-        println!("   Opening '{}' with system default app...", path_str);
-        std::process::Command::new("open")
-            .arg(path_str)
-            .status()
-            .map_err(|e| format!("Failed to open '{}' with 'open': {}", path_str, e))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        println!("   Opening '{}' with xdg-open...", path_str);
-        if std::process::Command::new("xdg-open").arg(path_str).status().is_err() {
-            return Err(format!(
-                "Could not open '{}': xdg-open failed and neither preferred_editor nor $EDITOR is set",
-                path_str
-            ).into());
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        println!("   Opening '{}' with system default app...", path_str);
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", path_str])
-            .status()
-            .map_err(|e| format!("Failed to open '{}': {}", path_str, e))?;
-    }
-    Ok(())
-}
 
 /// Ordering of two dotted numeric versions. A component that is not a number
 /// (`0.46.15-rc1`, a malformed tag) is an error — read as 0 it would call a
@@ -3259,17 +3124,6 @@ fn run_completion(shell_str: &str, install: bool) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-async fn run_open_readme(preferred_editor: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::builder()
-        .user_agent("satz-open-readme")
-        .build()?;
-    match download_and_open_readme(&client, REPO, "latest", true, preferred_editor).await {
-        Ok(Some(path)) => println!("README saved to: {}", path.display()),
-        Ok(None) => {}
-        Err(e) => return Err(e),
-    }
-    Ok(())
-}
 
 fn completion_install_path(shell: CompletionShell) -> Result<(PathBuf, Option<String>), Box<dyn std::error::Error>> {
     use clap_complete::Shell;
