@@ -809,6 +809,10 @@ satz report-compliance cis-gcp-4.0 C0example.satz --checkov   # + a Checkov colu
 satz triage cis-gcp-4.0 C0example.satz --prowler prowler.json  # the remediation-plan skeleton: A pack covers it / B Satz declares it / C accepted exception / D bring under management / E manual
 ```
 
+Each row carries the catalog's own one-line `paraphrase` of the control under
+its title and, under the witnesses, the `interpretation` the included claims
+give of what their resources prove; open duties print their text beside the id.
+
 Row statuses: **verified** (all witnesses live), `verified* (n of m)` (some witness
 types have no live check yet — stated, never faked), **unverified** (no witness
 could be checked at all — no ADC, inventory unavailable — never spelled

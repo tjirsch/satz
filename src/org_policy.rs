@@ -268,9 +268,6 @@ pub enum PlannedAction {
     ActivateThenImportThenApply,
     CreateViaApply,
     ImportThenApply,
-    /// Reserved: present-and-differing where state membership is already known.
-    #[allow(dead_code)]
-    UpdateViaApply,
     NoOp,
     Ignore,
 }
@@ -449,7 +446,6 @@ fn action_label(a: &PlannedAction) -> &'static str {
         PlannedAction::ActivateThenImportThenApply => "activate -> import -> apply",
         PlannedAction::CreateViaApply => "create (apply)",
         PlannedAction::ImportThenApply => "import -> apply",
-        PlannedAction::UpdateViaApply => "update (apply)",
         PlannedAction::NoOp => "no-op",
         PlannedAction::Ignore => "ignore (not desired)",
     }
@@ -888,21 +884,6 @@ impl OrgPolicyClient {
         Ok(out)
     }
 
-    /// Get a single explicitly-set policy; `None` on 404 (not set).
-    #[allow(dead_code)]
-    pub async fn get_policy(&self, parent: &str, constraint: &str) -> Result<Option<Value>, BoxErr> {
-        let url = format!("{}/v2/{}/policies/{}", ORGPOLICY_HOST, parent, constraint);
-        let res = self.auth(self.http.get(&url)).send().await?;
-        if res.status().as_u16() == 404 {
-            return Ok(None);
-        }
-        if !res.status().is_success() {
-            let status = res.status();
-            let body = res.text().await.unwrap_or_default();
-            return Err(format!("get_policy {} failed ({}): {}", constraint, status, body).into());
-        }
-        Ok(Some(res.json().await?))
-    }
 
     /// Create (activate) a policy. 409 (already exists) is treated as success.
     pub async fn create_policy(

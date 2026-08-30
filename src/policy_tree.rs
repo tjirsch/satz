@@ -77,10 +77,6 @@ pub struct TreeNode {
 pub struct PolicyTree {
     pub root: String,
     pub nodes: BTreeMap<String, TreeNode>,
-    /// `"123456"` -> `"my-project"`; policy scopes and ancestors use numbers.
-    /// Retained on the built tree for callers; the walk itself resolves through it.
-    #[allow(dead_code)]
-    pub number_to_project_id: HashMap<String, String>,
     /// Non-fatal oddities: policies on unknown nodes, unresolvable project numbers.
     pub warnings: Vec<String>,
 }
@@ -437,7 +433,7 @@ pub fn assemble_tree(org: &str, assets: Vec<RawAsset>) -> Result<PolicyTree, Box
         }
     }
 
-    Ok(PolicyTree { root: root_id, nodes, number_to_project_id, warnings })
+    Ok(PolicyTree { root: root_id, nodes, warnings })
 }
 
 // ---------------------------------------------------------------------------
@@ -1100,7 +1096,6 @@ mod tests {
     fn assemble_tree_normalizes_project_numbers() {
         // The policy asset is scoped projects/111 (number); it must land on projects/p-one.
         let tree = assemble_tree("organizations/1", fixture()).unwrap();
-        assert_eq!(tree.number_to_project_id.get("111").map(String::as_str), Some("p-one"));
         assert!(tree.nodes["projects/p-one"].policies.contains_key("compute.vmExternalIpAccess"));
         assert!(tree.warnings.is_empty(), "unexpected warnings: {:?}", tree.warnings);
     }
