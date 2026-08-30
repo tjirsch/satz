@@ -13,9 +13,12 @@ on:
 
 jobs:
   prune:
-    # Only run on successful tag-based releases; skip PR runs
+    # Only a successful TAG PUSH release. The Release workflow also runs on
+    # pull_request, where head_branch is the branch NAME — a PR from a branch
+    # called `v2-rework` used to reach this job and delete releases and tags.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
       startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
     permissions:
@@ -26,7 +29,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
+          case "$HEAD_BRANCH" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "not a release tag: $HEAD_BRANCH"; exit 0 ;;
+          esac
           gh release list --repo "$REPO" --limit 100 --json tagName \
             --jq '.[5:][].tagName' \
           | xargs -r -I{} gh release delete {} \

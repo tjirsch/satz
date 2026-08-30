@@ -8,6 +8,7 @@
 #   scripts/check-names.sh                       # whole tree (CI)
 #   scripts/check-names.sh --staged              # staged files + the identity about to commit (pre-commit hook)
 #   scripts/check-names.sh --commits A..B        # identities and messages of a commit range (CI)
+#   scripts/check-names.sh --message FILE        # one commit message (commit-msg hook)
 #   scripts/check-names.sh FILE...               # specific files
 #
 # Optional LOCAL denylist (never committed): $NAMES_DENYLIST, or
@@ -16,6 +17,7 @@
 #
 # bash 3.2 compatible (macOS default).
 set -uo pipefail
+orig_pwd="$PWD"
 cd "$(git rev-parse --show-toplevel)"
 
 # ---- allowlists ---------------------------------------------------------------
@@ -30,13 +32,30 @@ ALLOW_DOMAIN='example\.(com|org|net)|[a-z0-9.-]+\.(example|test|invalid|localhos
 ALLOW_MAILDOM="$ALLOW_DOMAIN"
 
 # ---- mode ----------------------------------------------------------------------
-mode="${1:-}"; range=""
+mode="${1:-}"; range=""; msgfile=""
 case "$mode" in
   --staged)  files=$(git diff --cached --name-only --diff-filter=ACMR) ;;
   --commits) range="${2:?usage: --commits A..B}"; files="" ;;
+  --message) msgfile="${2:?usage: --message FILE}"; files="" ;;
   "")        files=$(git ls-files) ;;
-  *)         files="$*" ;;
+  *)
+    # explicit files: resolved against the caller's directory (we cd to the
+    # repository root above), and a file that does not exist is an error —
+    # checking nothing must never read as OK
+    files=""
+    for f in "$@"; do
+      case "$f" in /*) abs="$f" ;; *) abs="$orig_pwd/$f" ;; esac
+      [[ -f "$abs" ]] || { echo "check-names: no such file: $f"; exit 1; }
+      abs="$(cd "$(dirname "$abs")" && pwd)/$(basename "$abs")"
+      files="$files${abs#"$PWD"/}"$'\n'  # inside the repository: relative to its root
+    done ;;
 esac
+# an unusable range must FAIL, not pass with nothing checked
+if [[ -n "$range" ]]; then
+  for r in "${range%%..*}" "${range##*..}"; do
+    git rev-parse --verify --quiet "$r^{commit}" >/dev/null || { echo "check-names: unusable commit range '$range' ($r does not resolve)"; exit 1; }
+  done
+fi
 files=$(printf '%s\n' $files | grep -v -E '^(Cargo\.lock|tests/schemas/.*|.*\.(png|jpg|gif|svg))$' || true)
 
 fail=0
@@ -44,13 +63,24 @@ report() { # $1 rule, $2 matching lines — no subshell, the flag must survive
   [[ -n "$2" ]] || return 0
   fail=1; echo "✗ $1"; printf '%s\n' "$2" | cut -c1-160 | sed 's/^/    /'
 }
-g() { # grep -n ERE over the file list; staged mode reads the index
+g() { # grep -Hn ERE over the file list; staged mode reads the index
   [[ -n "$files" ]] || return 0
   if [[ "$mode" == "--staged" ]]; then
     for f in $files; do git show ":$f" 2>/dev/null | grep -n -E "$1" | sed "s|^|$f:|"; done
   else
-    grep -n -E "$1" $files 2>/dev/null
+    grep -H -n -E "$1" $files 2>/dev/null
   fi
+  return 0
+}
+# tokens PATTERN ALLOW-ERE: from `file:line:content` lines on stdin, print
+# `file:line: token` for every token matching PATTERN that does NOT match the
+# allowlist. Per TOKEN — one allowed address on a line never shields another.
+tokens() {
+  local pat="$1" allow="$2" l pre
+  while IFS= read -r l; do
+    pre="${l%%:*}:$(printf '%s' "$l" | cut -d: -f2)"
+    printf '%s' "$l" | cut -d: -f3- | grep -o -E "$pat" | grep -i -v -E "$allow" | sed "s|^|$pre: |"
+  done
   return 0
 }
 
@@ -71,8 +101,11 @@ elif [[ -n "$range" ]]; then
   report "commit identity in $range is not the maintainer or a GitHub noreply address" "$bad"
   # commit messages in the range go through the same content rules as files
   msgs=$(git log --format='%h %B' "$range")
-  report "directory id (C0…) in a commit message"      "$(printf '%s\n' "$msgs" | grep -E '\bC0[0-9a-z]{7}\b' | grep -v -E "\b($ALLOW_DIR)\b")"
-  report "11–13 digit number in a commit message"       "$(printf '%s\n' "$msgs" | grep -E '\b[0-9]{11,13}\b' | grep -v -E "\b($ALLOW_NUM)\b")"
+fi
+[[ -z "$msgfile" ]] || msgs=$(cat "$msgfile")
+if [[ -n "$range" || -n "$msgfile" ]]; then
+  report "directory id (C0…) in a commit message"      "$(printf '%s\n' "$msgs" | grep -o -E '\bC0[0-9a-z]{7}\b' | grep -v -E "\b($ALLOW_DIR)\b")"
+  report "11–13 digit number in a commit message"       "$(printf '%s\n' "$msgs" | sed -E 's/[0-9a-fA-F]{20,}//g' | grep -o -E '\b[0-9]{11,13}\b' | grep -v -E "\b($ALLOW_NUM)\b")"
   report "e-mail outside allowed domains in a message"  "$(printf '%s\n' "$msgs" | grep -o -E '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | grep -i -v -E "@($ALLOW_MAILDOM)\b")"
 fi
 
@@ -80,14 +113,14 @@ fi
 report "directory id (C0…) that is not an example value" \
   "$(g '\bC0[0-9a-z]{7}\b' | grep -v -E "\b($ALLOW_DIR)\b")"
 report "11–13 digit number (org/project/folder id) that is not an example value" \
-  "$(g '\b[0-9]{11,13}\b' | grep -v -E "\b($ALLOW_NUM)\b" | grep -v -E '[0-9a-f]{20,}')"
+  "$(g '\b[0-9]{11,13}\b' | sed -E 's/[0-9a-fA-F]{20,}//g' | tokens '\b[0-9]{11,13}\b' "\b($ALLOW_NUM)\b")"
 report "billing account id that is not an example value" \
   "$(g '\b[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}\b' | grep -v -E "($ALLOW_BILL)")"
 report "e-mail address outside reserved/vendor domains (placeholders like <customer-domain> are fine)" \
-  "$(g '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | grep -v -E '@<' | grep -i -v -E "@($ALLOW_MAILDOM)\b")"
+  "$(g '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | tokens '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "@($ALLOW_MAILDOM)\b")"
 report "domain that is neither IANA-reserved nor a known vendor host (a real company's domain?)" \
   "$(g '\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|io|dev|de|eu|ch|at|uk|us|fr|it|nl|cloud|app|ai|co)\b' \
-     | grep -o -E '^[^:]+:[0-9]+:.*' | grep -i -v -E "\b($ALLOW_DOMAIN)\b" )"
+     | tokens '\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|io|dev|de|eu|ch|at|uk|us|fr|it|nl|cloud|app|ai|co)\b' "^($ALLOW_DOMAIN)$")"
 report "customer repository URL or checkout path" \
   "$(g 'source\.developers\.google\.com|~/projects/(organizations|[a-z]+/[a-z]+-C0)')"
 

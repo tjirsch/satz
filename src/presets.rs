@@ -47,7 +47,6 @@ static DOWNLOADED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 /// One changed param default: its name and the canonical value text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VarEntry {
-    pub key: String,
     pub value: String,
 }
 
@@ -134,8 +133,11 @@ fn used_preset_files(
         if let Ok(rel) = canon.strip_prefix(&canon_presets) {
             used.insert(rel.to_path_buf());
         }
-        let Ok(src) = crate::fsx::read_to_string(&path) else { continue };
-        let Ok(file) = satz_core::satz::parse(&src) else { continue };
+        // a file on the `use` graph that cannot be read or parsed leaves the
+        // "used" set incomplete — and an incomplete set disarms the guard
+        // (drift would read [unused], merge would overwrite a used pack)
+        let src = crate::fsx::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
+        let file = satz_core::satz::parse(&src).map_err(|e| format!("{}:{}: {}", path.display(), e.line, e.msg))?;
         let parent = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         for dep in satz_core::satz::use_paths(&file) {
             let mut candidates = vec![parent.join(&dep)];
@@ -156,7 +158,7 @@ fn used_preset_files(
 /// exactly the distinction the report needs. This is the SAME canonical
 /// comparison `merge-presets` makes, so the two commands cannot disagree about
 /// whether a pack drifted.
-fn classify_source(_rel: &Path, local: &str, pristine: &str) -> Drift {
+fn classify_source(local: &str, pristine: &str) -> Drift {
     if local == pristine {
         return Drift::Clean;
     }
@@ -190,7 +192,7 @@ fn classify_source(_rel: &Path, local: &str, pristine: &str) -> Drift {
         .params
         .iter()
         .filter(|(n, v)| pristine_vals.get(n.as_str()) != Some(&v.as_str()))
-        .map(|(n, v)| (n.clone(), VarEntry { key: n.clone(), value: v.clone() }))
+        .map(|(n, v)| (n.clone(), VarEntry { value: v.clone() }))
         .collect();
     if changed.is_empty() {
         Drift::Clean
@@ -332,7 +334,7 @@ pub(crate) async fn run_check_presets(
             (true, true) => {
                 let local_text = crate::fsx::read_to_string(local_base.join(rel))?;
                 let pristine_text = crate::fsx::read_to_string(pristine_base.join(rel))?;
-                let drift = classify_source(rel, &local_text, &pristine_text);
+                let drift = classify_source(&local_text, &pristine_text);
                 // Two independent axes, and conflating them is what made the old
                 // report unhelpful: the VERSION line says whether a newer release
                 // exists, the content comparison says whether anyone edited this
@@ -472,7 +474,9 @@ pub(crate) async fn run_get_presets(
             let p = e.path();
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
-            if name.ends_with(".md") {
+            // the library is more than packs: docs, the import config and
+            // catalogs (.yaml), the CAI asset-type list (.txt)
+            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") {
                 extra.push(p.strip_prefix(&tmp)?.to_path_buf());
             }
         }
@@ -585,7 +589,10 @@ pub(crate) async fn run_merge_presets(
         (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config)?),
         _ => None,
     };
-    let estate_dirty = estate.as_deref().map(is_git_dirty).unwrap_or(false);
+    let estate_dirty = match estate.as_deref() {
+        Some(e) => is_git_dirty(e)?,
+        None => false,
+    };
 
     // ---- upstream inventory --------------------------------------------------
     let mut upstream_files = Vec::new();
@@ -596,7 +603,12 @@ pub(crate) async fn run_merge_presets(
             let p = e.path();
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
-            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") {
+            // a fork or a delta in the UPSTREAM tree would make pack_stem
+            // collapse it onto the user's own `.local.satz` and overwrite it
+            if name.ends_with(".local.satz") || name.ends_with(".diff.satz") {
+                return Err(format!("merge-presets: {} is a local fork/delta inside the pristine dir — upstream carries pristine packs only", p.display()).into());
+            }
+            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") {
                 upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
             }
         }
@@ -776,10 +788,22 @@ pub(crate) async fn run_merge_presets(
     // the self-verifying estate edit: output must be byte-identical
     if estate_edited {
         let est = estate.clone().unwrap();
-        let after = crate::transpile_sorted_b(&est, tool_config, runtime_config)?;
-        if baseline.as_deref() != Some(after.as_str()) {
-            for p in &created { let _ = std::fs::remove_file(p); }
+        let rollback = |journal: &Vec<(PathBuf, String)>, created: &Vec<PathBuf>| -> Result<(), BoxErr> {
+            for p in created { let _ = std::fs::remove_file(p); }
             for (p, content) in journal.iter().rev() { crate::fsx::write(p, content.as_bytes())?; }
+            Ok(())
+        };
+        // a repoint that does not even transpile is rolled back the same way
+        // as one that transpiles differently — the estate is never left edited
+        let after = match crate::transpile_sorted_b(&est, tool_config, runtime_config) {
+            Ok(a) => a,
+            Err(e) => {
+                rollback(&journal, &created)?;
+                return Err(format!("merge-presets: the repointed estate does not transpile ({}) — rolled back everything", e).into());
+            }
+        };
+        if baseline.as_deref() != Some(after.as_str()) {
+            rollback(&journal, &created)?;
             return Err("merge-presets: estate repoint changed the transpiled output — rolled back everything (this should be impossible; please report)".into());
         }
         println!("  estate repoint verified: transpiled output identical.");
@@ -895,15 +919,24 @@ fn version_arrow(a: &Option<String>, b: &Option<String>) -> String {
     }
 }
 
-fn is_git_dirty(path: &Path) -> bool {
-    let Some(dir) = path.parent() else { return false };
-    std::process::Command::new("git")
+/// "clean" is an answer git gave, never a fallback: outside a repository or
+/// without git the estate edit has no undo, so the question is an error.
+fn is_git_dirty(path: &Path) -> Result<bool, String> {
+    let dir = path.parent().ok_or_else(|| format!("{}: no parent directory", path.display()))?;
+    let out = std::process::Command::new("git")
         .arg("-C").arg(dir)
         .args(["status", "--porcelain", "--"])
         .arg(path)
         .output()
-        .map(|o| o.status.success() && !o.stdout.is_empty())
-        .unwrap_or(false)
+        .map_err(|e| format!("git status on {}: {} — merge-presets edits the estate and needs git for the undo", path.display(), e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git status on {} failed: {} — merge-presets edits the estate and needs a repository for the undo",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(!out.stdout.is_empty())
 }
 
 /// Repoint every estate `use "..."` that resolves to `target` at `fork_rel`
@@ -1091,10 +1124,9 @@ params {
     /// compiled form, the same comparison `merge-presets` makes.
     #[test]
     fn satz_pack_drift_is_detected_structurally() {
-        let rel = Path::new("CIS.satz");
         let drifted = PACK.replace(r#"enforce = "TRUE""#, r#"enforce = "FALSE""#);
         assert_ne!(drifted, PACK, "the fixture must actually change");
-        match classify_source(rel, &drifted, PACK) {
+        match classify_source(&drifted, PACK) {
             Drift::Structural { .. } => {}
             other => panic!("expected Structural drift for a satz pack, got {:?}", other),
         }
@@ -1105,9 +1137,8 @@ params {
     /// pristine) applies to Satz packs — under the param's own name.
     #[test]
     fn satz_param_drift_is_variables_only() {
-        let rel = Path::new("CIS.satz");
         let drifted = PACK.replace(r#""demo-audit""#, r#""customer-audit""#);
-        match classify_source(rel, &drifted, PACK) {
+        match classify_source(&drifted, PACK) {
             Drift::VariablesOnly(changed) => {
                 assert_eq!(changed.len(), 1);
                 assert_eq!(changed[0].0, "bucket_name");
@@ -1122,20 +1153,18 @@ params {
     /// silently as comment-only.
     #[test]
     fn satz_version_bump_alone_is_clean() {
-        let rel = Path::new("CIS.satz");
         let bumped = PACK.replacen("version \"", "version \"9", 1);
         assert_ne!(bumped, PACK);
-        assert_eq!(classify_source(rel, &bumped, PACK), Drift::Clean);
+        assert_eq!(classify_source(&bumped, PACK), Drift::Clean);
     }
 
     /// Comment and formatting churn upgrades silently — same rule `merge-presets`
     /// applies, so the two commands agree.
     #[test]
     fn satz_comment_churn_is_clean() {
-        let rel = Path::new("CIS.satz");
         let commented = format!("// a local note
 {}", PACK);
-        assert_eq!(classify_source(rel, &commented, PACK), Drift::Clean);
+        assert_eq!(classify_source(&commented, PACK), Drift::Clean);
     }
 
 }

@@ -125,6 +125,15 @@ else
   grep -qi 'credential\|token\|auth\|ADC' tmp/adopt.txt || fail "adopt failed for a reason other than credentials:\n$(cat tmp/adopt.txt)"
 fi
 
+step "the privacy gate judges tokens, not lines, and refuses an unusable range"
+# the private-looking address is assembled at runtime so the fixture itself
+# never carries a domain the gate would reject
+printf 'contact ops@example.com or admin@%s.%s\n' "corp-private-host" "de" > tmp/leak.txt
+if bash "$root/scripts/check-names.sh" tmp/leak.txt >tmp/gate.txt 2>&1; then fail "an allowed address on the same line shielded a private one"; fi
+grep -q 'corp-private-host' tmp/gate.txt || fail "the gate did not name the private address:\n$(cat tmp/gate.txt)"
+if bash "$root/scripts/check-names.sh" tmp/does-not-exist.txt >/dev/null 2>&1; then fail "a missing file passed the gate"; fi
+if bash "$root/scripts/check-names.sh" --commits deadbeef..HEAD >tmp/gate2.txt 2>&1; then fail "an unusable commit range passed the gate"; fi
+
 step "corpus + unit tests"
 (cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)
 

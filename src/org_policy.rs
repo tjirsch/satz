@@ -536,7 +536,7 @@ pub fn render_markdown(report: &DiffReport) -> String {
 
 pub fn render_report(report: &DiffReport, format: &str) -> String {
     match format {
-        "json" => serde_json::to_string_pretty(report).unwrap_or_default(),
+        "json" => serde_json::to_string_pretty(report).expect("a DiffReport serialises"),
         "markdown" => render_markdown(report),
         _ => render_console(report),
     }
@@ -919,8 +919,9 @@ impl OrgPolicyClient {
             }
             let res = req.send().await?;
             if !res.status().is_success() {
-                // Constraints listing is best-effort; return what we have.
-                break;
+                let status = res.status();
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("list_constraints {} failed ({}): {}", parent, status, text).into());
             }
             let json: Value = res.json().await?;
             if let Some(arr) = json.get("constraints").and_then(|p| p.as_array()) {
@@ -1018,7 +1019,7 @@ fn live_spec_to_yaml(spec: &Value) -> serde_yaml::Value {
 }
 
 fn json_to_yaml(v: &Value) -> serde_yaml::Value {
-    serde_yaml::to_value(v).unwrap_or(serde_yaml::Value::Null)
+    serde_yaml::to_value(v).expect("JSON is a subset of YAML")
 }
 
 
@@ -1192,7 +1193,7 @@ pub async fn report_org_policies(
     if recursive {
         let tree = crate::policy_tree::sweep_and_assemble(&parent).await?;
         let client = OrgPolicyClient::new().await?;
-        let constraints = client.list_constraints(&parent).await.unwrap_or_default();
+        let constraints = client.list_constraints(&parent).await?;
         let mut descriptions: HashMap<String, (String, String)> = HashMap::new();
         for c in &constraints {
             if let Some(name) = c.get("name").and_then(|v| v.as_str()) {
@@ -1231,7 +1232,7 @@ pub async fn report_org_policies(
 
     let client = OrgPolicyClient::new().await?;
     let current = fetch_current(&client, &parent).await?;
-    let constraints = client.list_constraints(&parent).await.unwrap_or_default();
+    let constraints = client.list_constraints(&parent).await?;
 
     // Build description lookup keyed by bare constraint name.
     let mut descriptions: HashMap<String, (String, String)> = HashMap::new();

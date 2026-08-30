@@ -1085,12 +1085,14 @@ pub(crate) async fn run_report_compliance(
                 let mut any_missing = false;
                 let mut any_unver = false;
                 let mut any_diverged = false;
+                let mut n_verified = 0usize;
+                let mut first_unver = String::new();
                 for w in witnesses {
                     match live.get(w) {
-                        Some(LiveState::Verified(idn)) => wcells.push(format!("`{}` → ✓ `{}`", w, idn)),
+                        Some(LiveState::Verified(idn)) => { n_verified += 1; wcells.push(format!("`{}` → ✓ `{}`", w, idn)) }
                         Some(LiveState::Missing) => { any_missing = true; wcells.push(format!("`{}` → **✗ not live**", w)); }
                         Some(LiveState::Diverged(d)) => { any_diverged = true; wcells.push(format!("`{}` → **✗ {}**", w, d)); }
-                        Some(LiveState::Unverifiable(r)) => { any_unver = true; wcells.push(format!("`{}` → – ({})", w, r)); }
+                        Some(LiveState::Unverifiable(r)) => { any_unver = true; if first_unver.is_empty() { first_unver = r.clone(); } wcells.push(format!("`{}` → – ({})", w, r)); }
                         None => wcells.push(format!("`{}` (declared)", w)),
                     }
                 }
@@ -1107,7 +1109,10 @@ pub(crate) async fn run_report_compliance(
                     else if any_missing { "**DRIFTED**".to_string() }
                     else if !open.is_empty() { "partial (open duty)".to_string() }
                     else if matches!(goal, Goal::Partial { contributes_only: true, .. }) { "partial (contributes)".to_string() }
-                    else if any_unver { "verified*".to_string() }
+                    // "verified*" must mean SOME witness was verified live; when
+                    // none was (no ADC, inventory down) the honest word is unverified
+                    else if any_unver && n_verified == 0 { format!("**unverified** ({})", first_unver) }
+                    else if any_unver { format!("verified* ({} of {})", n_verified, witnesses.len()) }
                     else if no_live || live.is_empty() { "declared".to_string() }
                     else { "**verified**".to_string() };
                 let duties = open.iter().map(|d| format!("open: {}", d))
@@ -1207,8 +1212,8 @@ pub(crate) async fn run_report_compliance(
 pub(crate) fn chrono_free_timestamp() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .expect("system clock is before 1970 — an evidence timestamp cannot be fabricated")
+        .as_secs();
     // days since epoch → civil date (Howard Hinnant's algorithm)
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
@@ -1344,20 +1349,35 @@ pub(crate) fn bucket_for(goal: Option<&Goal>, status: &str, has_resource: bool) 
     }
 }
 
-/// The emitted address whose attributes name this resource, if any — the
-/// reverse index from a live id to the block that declares it.
+/// The emitted address whose IDENTIFIER names this resource — the reverse
+/// index from a live id to the block that declares it. Only the attribute the
+/// live matcher keys the type on counts (`name`, `display_name`), matched on
+/// a path-segment boundary: a `project = "x"` attribute must never claim a
+/// finding on project x. Several candidates are reported, never picked.
 fn declared_address(resource: &str, attrs: &BTreeMap<String, BTreeMap<String, String>>) -> Option<String> {
     if resource.is_empty() {
         return None;
     }
     let r = resource.trim_start_matches("//");
+    let segment_match = |v: &str| {
+        let v = v.trim_start_matches("//");
+        !v.is_empty() && (r == v || r.ends_with(&format!("/{}", v)))
+    };
     let mut hits: Vec<&String> = attrs
         .iter()
-        .filter(|(_, a)| a.values().any(|v| !v.is_empty() && (r.ends_with(v.trim_start_matches("//")) || v.ends_with(r))))
+        .filter(|(addr, a)| {
+            let tf_type = addr.split('.').next().unwrap_or("");
+            let key = live_matcher(tf_type).map(|(_, attr)| attr).unwrap_or("name");
+            a.get(key).is_some_and(|v| segment_match(v))
+        })
         .map(|(addr, _)| addr)
         .collect();
     hits.sort();
-    hits.first().map(|a| (*a).clone())
+    match hits.as_slice() {
+        [] => None,
+        [one] => Some((*one).clone()),
+        many => Some(format!("ambiguous: {}", many.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(" | "))),
+    }
 }
 
 pub(crate) fn triage(

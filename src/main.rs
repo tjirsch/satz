@@ -2943,7 +2943,7 @@ async fn check_update_available(client: &reqwest::Client) -> Result<Option<(Stri
     let release: Release = response.json().await?;
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     let current = env!("CARGO_PKG_VERSION");
-    if compare_versions(current, &latest_version) < 0 {
+    if compare_versions(current, &latest_version)? < 0 {
         Ok(Some((latest_version, release.html_url)))
     } else {
         Ok(None)
@@ -3034,7 +3034,7 @@ async fn run_self_update(download_readme: bool, open_readme: bool, check_only: b
     let latest_version = release.tag_name.trim_start_matches('v');
     println!("Latest version: {}", latest_version);
 
-    if compare_versions(current_version, latest_version) < 0 {
+    if compare_versions(current_version, latest_version)? < 0 {
         println!("\n⚠️  A new version is available!");
         println!("   Current: {}", current_version);
         println!("   Latest:  {}", latest_version);
@@ -3057,15 +3057,28 @@ async fn run_self_update(download_readme: bool, open_readme: bool, check_only: b
             ))?;
 
         // Download installer as bytes for checksum verification
-        let installer_bytes = client.get(&installer_asset.browser_download_url).send().await?.bytes().await?;
+        let installer_bytes = client
+            .get(&installer_asset.browser_download_url)
+            .send()
+            .await?
+            .error_for_status()
+            .map_err(|e| format!("installer download failed: {}", e))?
+            .bytes()
+            .await?;
 
         // Checksum verification
         let checksum_asset = release.assets.iter()
             .find(|a| a.name == "satz-installer.sh.sha256");
         match checksum_asset {
             Some(asset) => {
-                let expected_raw = client.get(&asset.browser_download_url)
-                    .send().await?.text().await?;
+                let expected_raw = client
+                    .get(&asset.browser_download_url)
+                    .send()
+                    .await?
+                    .error_for_status()
+                    .map_err(|e| format!("checksum download failed: {}", e))?
+                    .text()
+                    .await?;
                 let expected = expected_raw.split_whitespace().next().unwrap_or("").to_lowercase();
                 use sha2::{Digest, Sha256};
                 let actual = hex::encode(Sha256::digest(&installer_bytes));
@@ -3097,7 +3110,20 @@ async fn run_self_update(download_readme: bool, open_readme: bool, check_only: b
         }
 
         // Write to temp file and execute
-        let temp_file = std::env::temp_dir().join(format!("satz-installer-{}.sh", std::process::id()));
+        // a private, unpredictable directory: on a shared /tmp a pre-created
+        // file at a guessable path could be swapped between write and run
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let temp_dir = std::env::temp_dir().join(format!("satz-self-update-{}-{}", std::process::id(), nonce));
+        {
+            let mut b = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                b.mode(0o700);
+            }
+            b.create(&temp_dir).map_err(|e| format!("{}: {}", temp_dir.display(), e))?;
+        }
+        let temp_file = temp_dir.join("satz-installer.sh");
         fsx::write(&temp_file, &installer_bytes)?;
 
         #[cfg(unix)]
@@ -3108,7 +3134,7 @@ async fn run_self_update(download_readme: bool, open_readme: bool, check_only: b
             let status = std::process::Command::new("sh")
                 .arg(&temp_file)
                 .status()?;
-            let _ = std::fs::remove_file(&temp_file);
+            let _ = std::fs::remove_dir_all(&temp_dir);
 
             if status.success() {
                 println!("✅ Update installed successfully!");
@@ -3254,30 +3280,29 @@ fn open_file(path: &Path, preferred_editor: Option<&str>) -> Result<(), Box<dyn 
     Ok(())
 }
 
-fn compare_versions(v1: &str, v2: &str) -> i32 {
-    let parse_version = |v: &str| -> Vec<u32> {
+/// Ordering of two dotted numeric versions. A component that is not a number
+/// (`0.46.15-rc1`, a malformed tag) is an error — read as 0 it would call a
+/// newer release "older" and print "you are on the latest version".
+fn compare_versions(v1: &str, v2: &str) -> Result<i32, String> {
+    let parse_version = |v: &str| -> Result<Vec<u32>, String> {
         v.split('.')
-            .map(|s| s.parse::<u32>().unwrap_or(0))
+            .map(|s| s.parse::<u32>().map_err(|_| format!("version `{}` has a non-numeric component `{}`", v, s)))
             .collect()
     };
-    
-    let v1_parts = parse_version(v1);
-    let v2_parts = parse_version(v2);
-    
+    let v1_parts = parse_version(v1)?;
+    let v2_parts = parse_version(v2)?;
     let max_len = v1_parts.len().max(v2_parts.len());
-    
     for i in 0..max_len {
         let v1_val = v1_parts.get(i).copied().unwrap_or(0);
         let v2_val = v2_parts.get(i).copied().unwrap_or(0);
-        
         if v1_val < v2_val {
-            return -1;
-        } else if v1_val > v2_val {
-            return 1;
+            return Ok(-1);
+        }
+        if v1_val > v2_val {
+            return Ok(1);
         }
     }
-    
-    0
+    Ok(0)
 }
 
 /// Turn a TOML parse failure into something actionable: which line, what is on it, and —

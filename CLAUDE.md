@@ -28,8 +28,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   (`.github/workflows/names-gate.yml`), beside the smoke matrix
   (`scripts/smoke.sh`, `.github/workflows/smoke.yml`: every estate-consuming
   command end to end against `tests/smoke/` — a new command gets a step there
-  in the same PR); the pre-commit hook runs the gate locally —
-  enable once per clone with `git config core.hooksPath .githooks`. Examples
+  in the same PR — plus a `checks` job: `clippy -D warnings` and
+  `cargo test --workspace --locked`); the pre-commit and commit-msg hooks run
+  the gate locally — enable once per clone with
+  `git config core.hooksPath .githooks`. The gate judges tokens, not lines,
+  and an unusable range or a missing file is a failure, never a pass. Examples
   use ONLY the four example customers. If an example needs a value the table
   does not have, add it to the table in the same commit.
 - **Release flow:** work commits on `main`; `cargo release patch|minor
