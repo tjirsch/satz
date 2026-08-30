@@ -17,6 +17,7 @@ mod org_policy;
 mod cloud_identity;
 mod compliance;
 mod presets;
+mod doc_packs;
 mod github;
 mod policy_tree;
 
@@ -527,6 +528,17 @@ enum Commands {
         /// locations of the findings; without it, findings name the HCL only
         estate: Option<String>,
     },
+    /// One Markdown page per pristine pack, derived from the pack file
+    /// (purpose, params, resources, claims, duties) plus an index — into
+    /// `<presets_dir>/docs/`. `--check` fails when the pages are behind the packs
+    DocPacks {
+        /// Output directory (default: `<presets_dir>/docs`)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Verify instead of write: exit 1 when a page is behind its pack
+        #[arg(long)]
+        check: bool,
+    },
     /// Run `<tf_tool> plan` in the estate's hcl dir (extra args are passed through)
     Plan {
         /// Arguments passed straight to the tool, e.g. `-target=…`, `-out=plan.tfplan`
@@ -679,7 +691,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::Triage { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1348,6 +1360,11 @@ Thumbs.db
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, &format, report)
+        }
+        Commands::DocPacks { out, check } => {
+            let presets = PathBuf::from(&runtime_config.presets_dir);
+            let out = out.unwrap_or_else(|| presets.join("docs"));
+            crate::doc_packs::run(&presets, &out, check)
         }
         Commands::Scan { estate } => {
             let manifest = match estate {

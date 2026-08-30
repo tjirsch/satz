@@ -5,9 +5,6 @@
 //
 // Required from the estate: customer_organization_id, billing_account_infra,
 // customer_shortname, default_region.
-//
-// The YAML twin (organization-audit-logsink-1.0.yaml) is the same pack for
-// YAML-dialect estates; they stay in lockstep until the migrator retires it.
 
 pack monitoring.organization_audit_logsink version "1.1"
 
