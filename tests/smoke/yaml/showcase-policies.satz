@@ -1,0 +1,28 @@
+// A bare-list pack: labels at the top level, no type. The estate keys it with
+// `use "…" as google_org_policy_policy`. One of the three is suppressed by the
+// estate, one is the subject of its `deviates` claim.
+pack showcase_policies version "1.0"
+
+"compute-managed-requireOsLogin" {
+  name   = "compute.managed.requireOsLogin"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [ { enforce = "TRUE" } ]
+  }
+}
+
+"compute-managed-vmExternalIpAccess" {
+  name   = "compute.managed.vmExternalIpAccess"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [ { enforce = "TRUE" } ]
+  }
+}
+
+"iam-managed-disableServiceAccountKeyCreation" {
+  name   = "iam.managed.disableServiceAccountKeyCreation"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [ { enforce = "TRUE" } ]
+  }
+}

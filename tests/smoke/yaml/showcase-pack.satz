@@ -1,0 +1,20 @@
+// A pack with a param default the estate overrides, one resource, and a
+// claim that travels with the file (claims are attributed to the pack that
+// is actually `use`d — a `.local` fork carries its own).
+pack showcase_pack version "1.0"
+
+params {
+  pack_bucket_location = "EU"
+}
+
+google_storage_bucket {
+  pack_bucket {
+    name                        = "{customer_shortname}-pack-bucket-001"
+    location                    = pack_bucket_location
+    uniform_bucket_level_access = true
+  }
+}
+
+claim "cis-gcp" "4.0" "5.2" contributes {
+  resources = ["google_storage_bucket.pack_bucket"]
+}

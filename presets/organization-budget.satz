@@ -4,7 +4,7 @@
 // Include in the YAML file
 // 
 
-// Converted by `satz migrate-to-satz` — interior comments were not carried.
+// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
 pack organization_budget version "1.0"
 

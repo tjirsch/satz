@@ -43,6 +43,27 @@ else
   step "tofu not on PATH — validate skipped"
 fi
 
+step "showcase: every language feature in one estate (the reference cites it)"
+"$satz" --config . transpile showcase.satz --output "$PWD/tmp/showcase-hcl" >/dev/null
+sc=tmp/showcase-hcl/main.tf
+grep -q 'vmExternalIpAccess' "$sc" && fail "suppressed policy was emitted"
+grep -q 'compute.managed.requireOsLogin' "$sc" || fail "policy from the \`as\` pack missing"
+grep -q 'roles/browser' "$sc" && fail "suppressed role was emitted"
+grep -q 'roles/iam.securityReviewer' "$sc" || fail "the member's other role vanished with the suppressed one"
+grep -q 'audit-objects-only' "$sc" || fail "conditional grant missing"
+grep -q 'trusted: reviewed' "$sc" || fail "hcl trust reason missing"
+grep -q 'optional-001' "$sc" && fail "a \`when\`=false pack was pulled in"
+grep -q 'corp-pack-bucket-001' "$sc" || fail "top-level pack resource missing"
+grep -q 'location = "europe-west3"' "$sc" || fail "estate param did not override the pack default"
+grep -q 'groups/01abcdef2ghijk3' tmp/showcase-hcl/imports.tf || fail "import-id did not reach imports.tf"
+grep -q 'num_newer_versions' "$sc" || fail "list-of-objects lifecycle rules missing"
+grep -q 'google_storage_bucket_iam_member' "$sc" || fail "bucket-scoped grant missing"
+"$satz" --config . require cis-gcp-4.0 showcase.satz > tmp/showcase-require.txt 2>&1 || true
+grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not read as a deviation"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
+fi
+
 step "require cis-gcp-4.0 (goal view, offline)"
 "$satz" --config . require cis-gcp-4.0 smoke.satz | tee tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"

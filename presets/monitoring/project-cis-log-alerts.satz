@@ -92,7 +92,7 @@
 // gcloud iam roles delete cis_probe --project=<p>
 // # expect an alert from the 2.7 policy within ~5 minutes
 
-// Converted by `satz migrate-to-satz` — interior comments were not carried.
+// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
 pack project_cis_log_alerts version "1.0"
 

@@ -117,8 +117,8 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name` |
 | `bootstrap <CONFIG_FILE>` | `--dry-run` |
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
-| `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`) |
-| `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report` |
+| `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
+| `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
@@ -236,7 +236,7 @@ with deterministic ordering (snapshot-gated by `tests/corpus/`).
 An estate can remove something a used pack contributes — without forking:
 
 ```
-use "presets/CIS-GCP-Foundation-4.0.satz" as org_policy_policy
+use "presets/CIS-GCP-Foundation-4.0.satz" as google_org_policy_policy
 
 // drop one pack resource; grant-edge form removes a single role
 suppress google_org_policy_policy "iam-allowedPolicyMemberDomains"
@@ -279,7 +279,7 @@ entity, so it never participates in the fold, can never conflict — and can
 never carry a claim.
 
 **Under the Hood:**
-- Parses the estate and every pack it `use`s into per-file fragments; params are lexically scoped declarations, sorted by dependency.
+- Parses the estate and every pack it `use`s into per-file fragments; params are declarations in one document-ordered namespace (the using file's binding wins over a pack's default), sorted by dependency.
 - Folds the fragments by Terraform address (⊕): the same address with the same body collapses, with a different body the transpile aborts naming both files.
 - Schema-typed: every resource key and block key is checked against `schemas/*.json` at parse time.
 - Generates four files in the output directory:
@@ -299,8 +299,10 @@ To import an existing resource, add the `"import-id"` attribute to its definitio
 
 ```
 google_org_policy_policy {
-  iam.disableServiceAccountKeyCreation {
-    "import-id" = "organizations/12345/policies/iam.disableServiceAccountKeyCreation"
+  "iam-managed-disableServiceAccountKeyCreation" {
+    "import-id" = "organizations/123456789012/policies/iam.managed.disableServiceAccountKeyCreation"
+    name   = "iam.managed.disableServiceAccountKeyCreation"
+    parent = "organizations/{customer_organization_id}"
     spec { rules = [{ enforce = "TRUE" }] }
   }
 }
@@ -404,7 +406,7 @@ google_organization_iam_member {
   "group:log-admins@{customer_domain}" = ["roles/logging.admin"]
 }
 google_cloud_identity_group {
-  log_admins {
+  "log-admins" {
     display_name = "Log Admins"
   }
 }
@@ -431,8 +433,8 @@ Merge rules when several fragments declare the same thing:
   conflict state.
 - **Groups must agree.** The same group key with a deep-equal body is deduped (including
   the same fragment twice is idempotent); with a *different* body the transpile aborts
-  before writing any file: `cloud_identity_group 'log-admins' is defined differently at
-  folder 'observability' and at folder 'shared_services'`.
+  before writing any file: `composition conflicts: google_cloud_identity_group.log-admins:
+  2 disagreeing definitions`, naming both files and lines.
 - Hoisted output is sorted, so moving a fragment between folders does not churn the
   generated HCL.
 
@@ -477,17 +479,10 @@ google_cloud_identity_group {
 
 Generates:
 
-```hcl
-resource "google_cloud_identity_group" "my_group" {
-  display_name         = "My Group"
-  initial_group_config = "EMPTY"
-
-  lifecycle {
-    ignore_changes        = [initial_group_config]
-    prevent_destroy       = true
-  }
-}
-```
+Generates a `google_cloud_identity_group` with `group_key { id = "my-group@<domain>" }`,
+`parent = "customers/<id>"`, the discussion-forum labels, `initial_group_config`, and a
+`lifecycle` block carrying `ignore_changes = [initial_group_config]` merged with the one
+declared (`prevent_destroy = true` here).
 
 **Notes:**
 - `ignore_changes` and `replace_triggered_by` entries are emitted as **bare** HCL identifiers/expressions (e.g. `initial_group_config`, `labels["env"]`), not quoted strings.
@@ -667,10 +662,10 @@ exists` — or, worse, recreates them. `satz adopt` resolves the live id of ever
 resource the estate declares and brings it under management:
 
 ```bash
-satz adopt C0example1.satz                                   # dry run: the resolution table
-satz adopt C0example1.satz --execute                         # write verified "import-id"s into the estate
-satz adopt C0example1.satz --execute --import --activate     # tofu import now; activate managed constraints
-satz adopt C0example1.satz --only google_folder,google_cloud_identity_group
+satz adopt C0example.satz                                   # dry run: the resolution table
+satz adopt C0example.satz --execute                         # write verified "import-id"s into the estate
+satz adopt C0example.satz --execute --import --activate     # tofu import now; activate managed constraints
+satz adopt C0example.satz --only google_folder,google_cloud_identity_group
 ```
 
 How a resource is resolved depends on who chose its identity:
@@ -721,8 +716,8 @@ path inside the config resolves against the config's own directory — so any co
 from any working directory:
 
 ```bash
-satz transpile C0example1.satz --config ~/estates/acme
-satz require cis-gcp-4.0 C0example1.satz --config ~/estates/acme
+satz transpile C0example.satz --config ~/estates/acme
+satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme
 satz plan  --config ~/estates/acme
 satz apply --config ~/estates/acme
 ```
@@ -786,7 +781,7 @@ pack fork or by the estate itself.
 
 The vocabulary is deliberate: the output never says "compliant" — this judges the
 *declared* estate; verification against the *live* estate is the evidence report
-(roadmap). Catalogs carry no framework text (CIS/ISO prose is license-restricted),
+(next section). Catalogs carry no framework text (CIS/ISO prose is license-restricted),
 only IDs and paraphrases.
 
 ### Evidence report (`report-compliance`)
@@ -830,7 +825,7 @@ One `presets/` folder; the **filename suffix declares provenance**:
 
 | file | meaning | on `merge-presets` |
 |---|---|---|
-| `X.satz` (+ generated `.yaml` twin) | upstream-owned, pristine | always overwritable |
+| `X.satz` | upstream-owned, pristine | always overwritable |
 | `X.local.satz` | your fork — the *rename is the fork declaration* | **never touched** |
 | `X.diff.satz` | the CURRENT adoption delta: `diff(X.local, pristine X)` | rewritten on every run |
 | `<own>.satz` | no upstream counterpart | local-only, kept |
@@ -911,7 +906,8 @@ Every local preset is compared against its pristine upstream version and classif
 
 Presets actually used by `<INPUT>` (via `use`) are tagged
 `[included]`; drift in an included preset makes the command exit non-zero, so it can
-gate CI. `use … when` packs whose condition is off count as not included.
+gate CI. `use … when` is followed unconditionally here: a pack whose switch is off
+still counts as included (over-reporting drift is the safe direction).
 
 ### Self-update (`self-update`)
 Check for and install a new release from GitHub. After a successful install, the tool downloads the release README and prints its full path, then opens it unless you pass the options below.
@@ -1143,7 +1139,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 | `yaml_dir` | `"yaml"` | Source directory for estate files |
 | `hcl_dir` | `"hcl"` | Target directory for generated HCL |
 | `schema_dir` | `"schemas"` | Directory where provider schemas are cached |
-| `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; `--preset` and the import-config default resolve here |
+| `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; the import-config default resolves here |
 | `include_dirs` | `[".", "yaml"]` | Search paths for `use`d packs |
 | `tf_tool` | `"tofu"` | The binary used to fetch schemas |
 | `google_providers` | `["google", "google-beta"]` | List of Google providers |
@@ -1170,8 +1166,8 @@ You can control the strictness via CLI `--validation` or `config.toml`.
 ## Satz
 
 Estates are written in **Satz** (`.satz` files) — the language reference is
-[docs/satz-language.md](docs/satz-language.md). Params are lexically scoped declarations
-(no anchors), `"{param}"` interpolates (no `!format`), `use "pack.satz" [as key] [when param]`
+[docs/satz-language.md](docs/satz-language.md). Params are declarations in one
+document-ordered namespace (no anchors), `"{param}"` interpolates (no `!format`), `use "pack.satz" [as key] [when param]`
 includes, blocks nest with braces, and resource attribute names are **1:1 the Terraform
 provider names** — the registry docs are the docs. A `.satz` estate is parsed directly by
 the fragment pipeline (per-file fragments, folded by address, emitted as HCL); packs are
@@ -1220,8 +1216,8 @@ To ensure configuration correctness, nested blocks are strictly validated:
 - **Attribute vs. Resource**: Every key within a `Project` or `Folder` block must be either:
     - A valid native attribute/block of the parent resource (e.g., `name` for a project).
     - A valid resource type from the cloud provider schema.
-- **Error Detection**: Any key that is neither a known attribute nor a known resource type is treated as a typo and triggers a **Warning**.
-- **Missing Context**: Resources that require a project or folder identifier but are defined outside such a context (without an explicit identifier provided) will trigger a **Warning**.
+- **Error Detection**: Any key that is neither a known attribute nor a known resource type is a **hard error** naming the file and line (a typo never deletes infrastructure silently).
+- **Missing Context**: Resources that require a project or folder identifier but are defined outside such a context (without an explicit identifier provided) trigger a warning on stderr; `tofu validate` then fails on the missing attribute.
 
 ### 4. Flexible Placement
 While the tool encourages a clean hierarchy, it allows placing cross-context resources (like `google_cloud_identity_group`) inside a Project block for configuration convenience (e.g., defining project-relevant groups near the project). The transpiler will process these correctly, ignoring the project context where it doesn't apply to the resource's schema.
@@ -1363,7 +1359,6 @@ the emitter renders the folded IR as `main.tf`, `providers.tf`, `variables.tf`,
 `terraform.tfvars` and `imports.tf`.
 - **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block.
 - **Intrinsic scopes**: groups, org grants and billing grants hoist to their real scope wherever they are written.
-- **Conditional Folding**: folders with an empty display name are skipped, promoting their children to the parent context.
 
 #### 2. Schema Registry (`src/schema.rs`)
 Manages Terraform provider schemas (loaded as JSON).
@@ -1381,7 +1376,7 @@ emits. An old `!import-include` becomes `use` plus a `NEEDS ADOPTION` note — i
 `satz adopt`.
 
 #### 5. Discovery Engine
-The `discover` commands reverse-engineer a Satz estate from existing Google Cloud assets.
+`satz import organizations/<n>` (and the `folders/`, `projects/`, `state.json` shapes) reverse-engineer a Satz estate from what exists.
 - **Asset Ingestion**: Consumes CAI (Cloud Asset Inventory) export streams.
 - **Configurable Filtering**: Uses `import-config.yaml` to include/exclude resources and attribute fields.
 - **Schema Validation**: Validates discovered data against Terraform schemas, automatically filtering read-only or computed fields to ensure valid HCL generation.
@@ -1403,8 +1398,8 @@ The group and membership resolvers `satz adopt` uses. A groups pack declares gro
 
 ### Bootstrap Workflow (Declarative Tofu)
 Instead of hardcoded setup scripts, `satz` uses a two-phase Tofu approach:
-1. **Local Phase**: `deployment-mode: local`. Runs under User ADC. Creates the management project and initial Service Account.
-2. **Cloud Phase**: `deployment-mode: cloud`. Uses Service Account impersonation and a GCS backend for all subsequent operations.
+1. **Local Phase**: `deployment_mode = "local"`. Runs under User ADC. Creates the management project and initial Service Account.
+2. **Cloud Phase**: `deployment_mode = "cloud"` (`satz migrate <estate> --mode cloud`). Uses Service Account impersonation and a GCS backend for all subsequent operations.
 
 ## License
 

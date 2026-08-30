@@ -1,6 +1,6 @@
 # Satz — language specification
 
-**Version:** v0, as implemented in `crates/satz-core/src/satz.rs` (satz v0.46.0).
+**Version:** v0, as implemented in `crates/satz-core/src/satz.rs` (satz v0.46.41).
 This document is derived from the parser, not from intent: where the two
 disagree, the parser is right and this file is a bug. Every example below was
 compiled on 2026-08-24 and the HCL shown is what came out — or it is lifted from
@@ -128,7 +128,8 @@ it differs for a reason:
 
 ### 2.2 The complete list of transformations
 
-Nine, all syntactic. If it is not on this list, Satz did not change it.
+Nine syntactic ones — and, below them, the short list of attributes the emitter
+*derives* for you. If it is not on either list, Satz did not change it.
 
 1. `resource "T" "L" {` → `T { L { } }`. Label quoted only when it is not an
    identifier; `-` → `_` in the emitted address.
@@ -150,6 +151,23 @@ Nine, all syntactic. If it is not on this list, Satz did not change it.
    (`compute.managed.requireOsLogin`) and emitted as the full
    `organizations/<id>/policies/<constraint>` — the one attribute whose *value*
    is expanded.
+
+**Derived, never written** (each is a consequence of context, not a rewrite):
+
+- a project without `billing_account` gets `billing_account_infra`; a project
+  without `name` gets its `project_id`;
+- a `google_cloud_identity_group` label becomes `group_key { id = "<label>@{customer_domain}" }`,
+  `parent = "customers/{customer_id}"`, the discussion-forum labels, and
+  `lifecycle { ignore_changes = [initial_group_config] }` (merged with a
+  declared `lifecycle`); its `member` / `manager` / `owner` lists become
+  `google_cloud_identity_group_membership` resources (§6.4);
+- `project_service = [ … ]` explodes into one `google_project_service` per
+  service; a project gets its own provider alias when it needs one;
+- an org policy's structured `parameters { … }` is JSON-encoded into the
+  string the provider wants;
+- the backend is chosen by `deployment_mode` (§6.8); `"import-id"` becomes an
+  `import` block in `imports.tf` (§6.7); param names are kebab-cased in
+  `variables.tf` / `terraform.tfvars`.
 
 That is the whole tax. Everything else is registry knowledge, unchanged.
 
@@ -195,11 +213,12 @@ claim "cis-gcp" "4.0" "4.4" deviates {
 }
 ```
 
-**Include a bare list as a map's content**, or **conditionally**:
+**Include a bare list as a map's content**, or **conditionally**
+(`tests/smoke/yaml/showcase.satz`, lines 48–54):
 
 ```
-use "presets/policies-pack.satz" as google_org_policy_policy
-use "presets/optional-pack.satz" when want_optional
+use "showcase-policies.satz" as google_org_policy_policy
+use "showcase-optional.satz" when want_optional
 ```
 
 Fourteen organisations run that same pristine pack today. The differences
@@ -277,6 +296,27 @@ Where line count is not the point, **what you have to touch** is:
 
 ## 6. Language reference
 
+Two complete estates compile in CI on every push and are the examples the
+sections below cite instead of carrying loose snippets:
+
+- **the smallest complete estate** — `tests/corpus/override-chain/main.satz`
+  (18 lines: header, `params`, `terraform`, one `use`, one `use … when` with a
+  declared-false switch) with `pack.satz` and `optional.satz` beside it;
+  snapshot-gated (`tests/corpus/override-chain/expected.sorted.txt`).
+- **the showcase** — `tests/smoke/yaml/showcase.satz` with
+  `showcase-pack.satz`, `showcase-policies.satz`, `showcase-optional.satz`:
+  comments of all three kinds, params of every shape, `terraform` +
+  `providers`, `use` in all three positions (`as`, `when`), two `suppress`
+  forms, a group with a member and an `"import-id"`, grants incl. a
+  conditional one, folder → project → bucket nesting with a list-of-objects
+  block, a bucket-scoped labelled grant, `hcl trust`, and claims of all three
+  kinds with duties and an `interpretation`. `scripts/smoke.sh` transpiles it,
+  validates the HCL and checks each feature's effect.
+
+Every snippet in this section is either one of those files or compiles the
+same way (`terraform { backend { … } }` is required by the emitter — the
+snippets omit it for brevity where they are fragments of a larger estate).
+
 Every example in this section compiled on 2026-08-24 against the full
 google/google-beta 7.12.0 schema; where HCL is shown, it is the emitted text.
 
@@ -291,14 +331,15 @@ google/google-beta 7.12.0 schema; where HCL is shown, it is the emitted text.
    may span lines */
 ```
 
-**Identifiers** — `[A-Za-z_][A-Za-z0-9_]*`, conventionally `snake_case`. Used for
-param names, block keywords, resource types, map keys and param references.
+**Identifiers** — `[A-Za-z_][A-Za-z0-9_.]*`, conventionally `snake_case`; the
+dot is for dotted pack names (`pack monitoring.audit_logsink`). Used for param
+names, block keywords, resource types, map keys and param references.
 
 **Numbers and booleans** — bare literals (`400`, `1.5`) and `true` / `false`.
 
 **Strings** — single-line, double-quoted; multi-line, triple-quoted (the only
 form that may contain a raw newline; `{param}` interpolates in both forms —
-see §6.2 for the escape):
+the doubled-brace escape is under **Interpolation** below):
 
 ```
 "europe-west3"
@@ -760,7 +801,11 @@ left for you to pin; nothing is ever guessed.
 
 ### 6.8 Estate configuration blocks
 
-`terraform` and `providers` are configuration, not resources:
+`terraform` and `providers` are configuration, not resources. **`terraform` is
+required** — an estate without it does not compile (`Missing 'terraform' block`).
+A backend may list both `local` and `gcs`; the emitter writes the ONE that
+`deployment_mode` selects (`"local"` / `"cloud"`, see the `migrate` command),
+never both:
 
 ```
 terraform {
@@ -787,10 +832,14 @@ providers {
 ### 6.9 `use` — composition
 
 ```
-use "presets/CIS-GCP-Foundation-4.0.satz"
-use "presets/CIS-GCP-Foundation-4.0.satz" as google_org_policy_policy
-use "presets/optional-pack.satz" when want_optional
+google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }   # inside a map
+use "presets/CIS-GCP-Foundation-4.0.satz" as google_org_policy_policy    # as: same thing
+use "showcase-optional.satz" when want_optional                          # conditionally
 ```
+
+(The CIS pack is a bare list of policy labels, so it needs the map — bare at
+the top level it is `unknown resource type`; a pack whose entries are typed
+maps, like `showcase-pack.satz`, is `use`d bare.)
 
 - **Path** is a plain string, never interpolated. Resolved relative to the using
   file first, then the configured `include_dirs`.
@@ -801,58 +850,23 @@ use "presets/optional-pack.satz" when want_optional
 
 `use` is valid at three places, and all three behave identically with respect
 to params, claims and `hcl` blocks: top level; inside a `google_folder { … }`
-block; and inside a resource map, **the most common form in real estates**.
+block (where `as` is honoured too — the pack becomes that resource map, scoped
+to the folder); and inside a resource map, **the most common form in real
+estates** (there the map's type IS the key: an `as` naming another type is an
+error). A `use` cycle is an error naming the chain; `when` on a param no file
+declares is an error, not `false`; a top-level attribute in a file `use`d
+without `as` is an error.
 
-**Proving** — a pack with a default, an estate that overrides it, and a bare-list
-pack included `as` a map. `pack.satz`:
-
-```
-pack docs_example_pack version "1.0"
-
-params {
-  pack_bucket_location = "EU"
-}
-
-google_storage_bucket {
-  pack_bucket {
-    name     = "{customer_shortname}-pack-bucket-001"
-    location = pack_bucket_location
-  }
-}
-```
-
-`policies-pack.satz` — labels at the top level, no type:
-
-```
-pack docs_policies_pack version "1.0"
-
-"compute-managed-requireOsLogin" {
-  name   = "compute.managed.requireOsLogin"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [ { enforce = "TRUE" } ]
-  }
-}
-```
-
-The estate:
-
-```
-estate acme
-
-params {
-  customer_organization_id = "123456789012"
-  customer_shortname       = "acme"
-  pack_bucket_location     = "europe-west3"     # overrides the pack's "EU"
-}
-
-use "pack.satz"
-use "policies-pack.satz" as google_org_policy_policy
-```
-
-Emits `google_storage_bucket.pack_bucket` with `location = "europe-west3"`
-(remove the estate's param and it emits `"EU"` — verified both ways) and the
-same `google_org_policy_policy.compute_managed_requireOsLogin` block as §6.4.
+**Proving** — the showcase does exactly this. `showcase-pack.satz` declares
+`pack_bucket_location = "EU"` and a bucket that uses it; the estate binds
+`pack_bucket_location = "europe-west3"` and `use`s the pack bare, so the bucket
+emits with `europe-west3` (remove the estate's param and it emits `"EU"`).
+`showcase-policies.satz` is a bare list of three policy labels, keyed by
+`use "showcase-policies.satz" as google_org_policy_policy`; one of the three is
+then removed by `suppress` (§6.10) and one is the subject of a `deviates`
+claim (§6.11). `showcase-optional.satz` sits behind `when want_optional`,
+declared `false`, and contributes nothing — the smoke run asserts its bucket
+is absent.
 
 Composition is a **fold**: two files may contribute to the same resource map
 and the results merge. Two files defining the *same address differently* is a
@@ -1044,11 +1058,11 @@ controls the estate *as written* discharges — and refuses to be fooled by a
 claim whose witness is not there.
 
 ```
-satz require cis-gcp-4.0 C0example1.satz --config ~/estates/acme
+satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme
 ```
 
 ```
-require cis-gcp 4.0 — goal view for …/acme/yaml/C0example1.satz
+require cis-gcp 4.0 — goal view for …/acme/yaml/C0example.satz
 
   ◐ 1.1   Corporate login credentials only              — open duties: legacy-superseded, review-allowlist
   ✓ 1.4   Only GCP-managed service account keys         — google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation, google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload
@@ -1089,8 +1103,8 @@ provide it:
 | ✓ | satisfied | ≥1 `implements` claim from an included pack, every witness emitted, no open duties |
 | ◐ | partial | witnesses present but duties open, or only `contributes` claims |
 | ⚠ | deviation | a deliberate non-conformance with a stated reason — disclosed, never counted as a gap |
-| ✗ | unmet | no included pack claims it; names the packs in the library that would |
-| ‼ | broken claim | an included pack claims it but its declared witnesses are not emitted — worse than unmet |
+| ✗ | unmet | no included claim discharges it (none, or only ones that contributed zero witnesses); names the packs in the library that would |
+| ‼ | broken claim | an included claim's declared witnesses are not emitted — worse than unmet. A `deviates` claim whose declared witness vanished reads ‼ too, not ⚠; and ‼ yields to ✓/◐ when another included claim supplied the witnesses |
 | ○ | organizational | the catalog marks it as having no IaC witness |
 
 Exit code is **1 when anything is unmet or broken**, 0 otherwise. Deviations do
@@ -1113,16 +1127,21 @@ value**, because a policy that exists and is switched off looks healthy in
 every inventory.
 
 ```
-satz report-compliance cis-gcp-4.0 C0example1.satz --config ~/estates/acme
+satz report-compliance cis-gcp-4.0 C0example.satz --config ~/estates/acme
 ```
 
-Three rows from estate 1's report, one of each shape:
+The report has seven columns — `Control | Title | Status | Witnesses (declared →
+live) | Duties | Prowler | Checkov`; the title cell carries the catalog's own
+`paraphrase` of the control under it, the witness cell the `interpretation` the
+included claims give of what their resources prove, and an open duty prints
+its text beside its id. Three rows from estate 1's report, one of each shape
+(the two tool columns omitted):
 
 | Control | Status | Witnesses (declared → live) | Duties |
 |---|---|---|---|
 | 1.4 | **verified** | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation` → ✓ `organizations/123456789012/policies/iam.managed.disableServiceAccountKeyCreation` · `…KeyUpload` → ✓ `…KeyUpload` | – |
-| 2.1 | verified* | two org policies → ✓ · `google_organization_iam_audit_config.org_all_services` → – (no live check for this type yet) | – |
-| 2.3 | partial (open duty) | `google_storage_bucket.org_audit_logs` → ✓ `acme-organization-audit-bucket` | open: validate-then-lock |
+| 2.1 | verified* (2 of 3) | two org policies → ✓ · `google_organization_iam_audit_config.org_all_services` → – (no live check for this type yet) | – |
+| 2.3 | partial (open duty) | `google_storage_bucket.org_audit_logs` → ✓ `acme-organization-audit-bucket` | open: validate-then-lock — apply the bucket lock after the 30-day validation |
 
 Status precedence, highest first:
 
@@ -1132,10 +1151,16 @@ Status precedence, highest first:
 2. **DRIFTED** — a declared witness is not live.
 3. **partial (open duty)** — unattested duties remain.
 4. **partial (contributes)** — only `contributes` claims.
-5. **verified\*** — at least one witness has no live check for its type yet.
-   Stated, never faked.
-6. **declared** — `--no-live`, or an empty inventory.
-7. **verified** — every witness matched live.
+5. **unverified (reason)** — no witness of the row could be checked at all
+   (no credentials, inventory unavailable, no `project` to scope a witness).
+   Never spelled "verified".
+6. **verified\* (n of m)** — some witnesses matched live, the rest have no
+   live check for their type yet. Stated, never faked.
+7. **declared** — `--no-live`.
+8. **verified** — every witness matched live.
+
+(An inventory that was fetched and is simply empty is not "declared": the
+witnesses are then *missing*, and the row reads DRIFTED.)
 
 Plus **deviation (accepted)**, **deviation is STALE** (declared as a deviation,
 but the live policy actually enforces — the fork is behind reality), **BROKEN
@@ -1161,10 +1186,15 @@ control at partial. No estate in the fleet has one yet.
 **Evidence history.** Every run appends `evidence/<framework>-<timestamp>.json`
 beside the config — `estate`, `framework`, `version`, `live`, `verified_at`,
 and one row per control with `control`, `title`, `status`, `witnesses`,
-`duties`, `prowler` — and writes the report (`evidence/<framework>-latest.md`,
-or `--format pdf`). `--prowler findings.json` ingests a Prowler export (OCSF or legacy JSON) as
-corroboration. `--no-live` produces a declared-only report (statuses read
-*declared*) but still appends to the history. The report states check
+`duties`, `paraphrase`, `interpretation`, `prowler`, `checkov` — and writes
+the report (`evidence/<framework>-latest.md`, or `--format pdf`; `--format
+json` writes only the history entry, no markdown). `--prowler findings.json`
+ingests a Prowler export (OCSF or legacy JSON) as corroboration; `--checkov`
+adds a column from a Checkov run over `hcl_dir`. `--no-live` produces a
+declared-only report (statuses read *declared*) but still appends to the
+history. The exit code is 0 whatever the verdicts; `--fail-on
+not-enforced,drifted` (any status word, or `any`) makes the run fail for CI
+after the report is written. The report states check
 semantics — "a resource with these properties was verified at this time" —
 never legal conformity.
 
@@ -1203,14 +1233,20 @@ never legal conformity.
 
 | command | layer | does |
 |---|---|---|
-| `transpile <estate>.satz` | Satz → HCL | emit `hcl/` |
+| `transpile <estate>.satz` | Satz → HCL | emit `hcl/`; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars |
 | `require <framework> <estate>.satz` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
 | `report-compliance <framework> <estate>.satz` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--format pdf`, `--fail-on <statuses>` (exit code as the CI gate) |
 | `check-presets <estate>.satz` | Satz | drift of packs vs upstream |
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `tf-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
-| `import [<source>] [--only t,…] [--import-config f] [--into <estate>] [--wrap-all]` | — | create an estate from what exists: a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, a directory of `.tf` (`--wrap-all`: every block verbatim in `hcl trust`, §12), or a legacy `.yaml` file (`--kind`, `--gate`; §12); `--into` imports only what the estate does not declare, as packs it `use`s; checked by `transpile` + `tofu plan` |
+| `import [<source>] [--only t,…] [--import-config f] [-o <file>] [--into <estate>] [--wrap-all] [--kind estate\|pack] [--gate <estate>] [--fork]` | — | create an estate from what exists (§12): a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, a directory of `.tf`, or a legacy `.yaml` file; `--from` forces the shape; `--into` imports only what the estate does not declare, as packs it `use`s; checked by `transpile` + `tofu plan` |
+| `triage <framework> <estate>.satz --prowler f` | Evidence | every Prowler FAIL sorted into buckets A–E (a pack covers it / Satz declares it / declared exception / unmanaged / manual) — the remediation plan's skeleton |
+| `scan [<estate>.satz]` | HCL | Checkov over `hcl_dir`, findings pointed at the Satz line that declared the resource; failed checks exit 1 |
+| `map-types [--only t,…]` | — | derive the API→Terraform field map per type into `presets/type-map.yaml` (from the Discovery Documents and the provider schema) |
+| `bootstrap <estate>.satz [--dry-run]` | Satz | first apply for a new organisation: management project, state bucket, service account |
+| `migrate <estate>.satz --mode local\|cloud` | Satz | rewrite `deployment_mode` in the estate's params and move the state |
+| `export-` / `diff-` / `report-organizational-policies <estate>.satz [--recursive]` | Evidence | the org-policy specialist tools: snapshot live policies as a pack, diff desired vs live by (parent, constraint), inventory report |
 
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere.
 The estate file is a positional argument, relative to `yaml_dir`.
@@ -1219,22 +1255,42 @@ The estate file is a positional argument, relative to `yaml_dir`.
 
 ## 10. Errors
 
-Every error carries a line number and, where a fix exists, names it. Verbatim:
+Every error carries the file and line and, where a fix exists, names it.
+Verbatim:
 
 ```
 unterminated interpolation '{custome
 empty interpolation {} (use {{}} for a literal brace)
 newline in single-line string (use """ for multi-line)
+unterminated block comment
+malformed number `1.2.3`
 unknown param 'no_such_param'
-block `folder`: unknown resource type. Satz names Terraform types in full — write `google_folder`.
+params: `a` is declared twice — the second binding would be ignored
+a second `estate` header (f) — the file is already `e`
+use ... as: given twice
+`lifecycle_rule` is given twice in this block (first at line 12) — a repeated key would silently last-win; write a list (`lifecycle_rule = [ … ]`) or remove one
+block `folder`: unknown resource type. Satz names Terraform types in full — write `google_folder`. (Leaving the provider prefix off is a YAML-dialect shorthand; it is not Satz.)
+`x` is an attribute at the top level of the file — attributes live inside a resource block
+use … when want_cs: unknown param `want_cs` — a `when` on a param nobody declares would silently drop the pack
+use … as google_cloud_identity_group inside `google_org_policy_policy { … }`: the pack is this map's content; move the `use` to the folder or top level to re-key it
+use "old-pack.yaml": packs are Satz — convert it first: `satz import old-pack.yaml --kind pack`
+use "x.satz": file not found
+cyclic `use`: main.satz → a.satz → b.satz → a.satz
+`terraform` is declared twice — one block per estate
+google_org_policy_policy.p is declared twice in this file with different bodies (first at line 7)
+grant: unknown key `description` in a conditional grant object — the keys are `role`, `condition`, "import-id"
 claim: resources = [...] is required (a claim ships its witnesses)
 claim … deviates: reason = "…" is required (a deviation is a disclosed decision, and the report carries the reason)
 suppress google_org_policy_policy "x" matches nothing — stale suppression (typo or upstream rename)
-use "x.satz": file not found (searched beside the file and include_dirs)
+suppress … role on google_organization_iam_member "group:x@example.com": the address is in conflict (⊥); suppress the whole member or resolve the conflict first
 composition conflicts: <type>.<label>: 2 disagreeing definitions
   - a.satz:12
   - b.satz:40
+transpile: `estate.yaml` is the legacy YAML dialect — convert it: `satz import estate.yaml --kind estate`
 ```
+
+The same address declared twice in one file with the SAME body is idempotent;
+across files it is the fold's conflict above.
 
 ---
 
@@ -1254,39 +1310,48 @@ composition conflicts: <type>.<label>: 2 disagreeing definitions
 
 ---
 
-## 12a. Importing existing Terraform (`satz import <dir> --wrap-all`)
+## 12. Importing what exists
 
-A directory of `.tf` — hand-written, or generated by `gcloud beta resource-config
-bulk-export --resource-format=terraform` or `tofu plan -generate-config-out` —
-becomes one estate. A `resource` block of a schema-known, non-positional type
-whose values are all literals becomes a **Satz resource**; every other block is
+`satz import <source>` writes a Satz estate from something that already
+exists. The shape is read off the source; the check is always the same —
+`satz transpile`, then `tofu plan` against the real state must show no
+destroy for what was already managed. Import ids for the live shape are the
+asset path; for the others, `satz adopt` resolves them afterwards.
+
+| shape | when | what you get | limitations |
+|---|---|---|---|
+| `import state.json` (or `-` for `tofu show -json` on stdin) | you already run Terraform/OpenTofu and want the estate that reproduces its state | folders/projects nested, grants collapsed to member → roles, services into `project_service`, every resource with its `"import-id"` from the state id | only `tofu show -json` output (a raw `.tfstate` is refused); a resource without `id` gets no import id; grant conditions are not carried; the import-config's `exclude`/`map` are not applied to this shape; rows with `import: false` are skipped and listed (`type off`) |
+| `import organizations/<n>` \| `folders/<n>` \| `projects/<id>` (or bare `import` with `root:` in `import-config.yaml`) | brownfield: nothing is in Terraform yet | one Cloud Asset sweep of the scope; every enabled type; import ids = the asset path with the project named by ID; required attributes the asset lacks derived (`parent`, `org_id`/`folder`/`project`, a service account's `account_id`) | only rows with `import: true` AND an `asset_type` are swept (14 enabled by default; `--only` narrows, never widens; an enabled row with `asset_type: TODO` is an error); IAM conditions are not carried; no Cloud Identity groups (not in Cloud Asset — state shape or `adopt`); a resource whose required attribute cannot be derived is skipped and named; one fetch error aborts the run; a page is 1000 assets |
+| `--into <estate>` | the estate exists; take over what it does not declare yet | packs `imported-<scope>[-<container>].satz` plus `use` lines inserted at the declaring folder/project | live shape only; if ANY declared resource fails to resolve live (error, ambiguity), nothing is written; the packs are regenerated wholesale on every run — hand edits go into the estate, never into an `imported-*` pack; a `use` is inserted automatically only where the container is declared in the estate file itself |
+| `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out`) | literal, schema-known, identifier-labelled `resource` blocks as Satz resources placed under the folder/project they reference; everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block | `terraform`/`provider` blocks are always dropped (the emitter writes them), `--wrap-all` included; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit; no import ids (`adopt`) |
+| `import <file>.yaml --kind estate\|pack [--gate <estate>] [--fork]` | the legacy YAML dialect (until the last org is moved) | `<stem>.satz` beside the source, proven by compiling it (`CONVERTED … N resources emitted`) | refuses while a `use` still points at a YAML pack (each named — convert packs first); a result that does not compile is deleted and reported; `--fork` writes `<stem>.local.satz` (packs only); a pack without `--gate` is only parsed; interior comments are not carried; a `!include` in a `!format` value is refused (inline it) |
+
+### 12.1 From existing Terraform (`./hcl/`)
+
+A `resource` block of a schema-known type whose values are all literals becomes a
+**Satz resource**; the folder/project it references (`parent`, `folder_id`,
+`project` as a `google_folder.x.name` / `google_project.y.project_id` traversal —
+the one expression allowed) decides where it is placed. Every other block is
 carried **verbatim** inside `hcl trust "imported from <file>:<line>" { … }` — it
-deploys exactly as written, but the fold cannot compose it and the compliance plane
-cannot see into it — and the import report says why. `terraform` and `provider`
-blocks are dropped with a note: the emitter writes `providers.tf` from the estate's
-own `terraform` and `providers` blocks. Every block is accounted for; nothing
-vanishes. `--wrap-all` wraps everything.
+deploys exactly as written, but the fold cannot compose it and the compliance
+plane cannot see into it. Every block is accounted for; nothing vanishes.
 
 | HCL | Becomes |
 |---|---|
-| `resource` of a schema-known type, literal values, identifier label | a Satz resource: attributes as written, repeated nested blocks → a list of objects, `lifecycle` as declared, the label kept (a wrapped block referencing it still resolves) |
-| `google_folder` (`parent` = the organisation, or a reference to a folder in the input), `google_project` (`folder_id` a folder reference, or `org_id`), `google_project_service` / `google_project_iam_member` / any project-scoped resource whose `project` references a project in the input, `google_folder_iam_member`, `google_organization_iam_member` | placed: nested under the folder/project they reference (that identity reference is the one expression allowed); grants become grant-map entries, services the project's `project_service` list; `customer_organization_id` is inferred from the literals |
-| a project whose `folder_id` is a folder *number*, a resource whose parent is wrapped, groups, memberships, `*_iam_binding` / `_policy`, bucket and billing grants | wrapped, with the reason (closure by dependency: a child of a wrapped container is wrapped too) |
+| `resource` of a schema-known type, literal values, identifier label | a Satz resource: attributes as written, repeated nested blocks → a list of objects, `lifecycle` as declared; the label kept for plain resources (services and grants become list/map entries and lose theirs) |
+| `google_folder` (`parent` = the organisation, or a reference to a folder in the input), `google_project` (`folder_id` a folder reference, or `org_id`), `google_project_service` / `google_project_iam_member` / any project-scoped resource whose `project` references a project in the input, `google_folder_iam_member`, `google_organization_iam_member` | placed: nested under the folder/project they reference; grants become grant-map entries (a `condition` block travels in the object form), services the project's `project_service` list; `customer_organization_id` is inferred from the literals |
+| a project whose `folder_id` is a folder *number*, a resource whose parent is wrapped, a scope written as any other expression, groups, memberships, `*_iam_binding` / `_policy`, bucket and billing grants, a grant without literal `member`/`role`, a `project_service` carrying more than `service` | wrapped, with the reason (closure by dependency: a child of a wrapped container is wrapped too) |
 | a `resource` with an expression — a reference, `${…}`, a function, `count`/`for_each`/`dynamic`/`provider`/`depends_on`, a type not in the schema, a label that is not an identifier | wrapped, with the reason |
 | `module`, `locals`, `data`, `variable`, `output`, `moved`, `import` | wrapped |
-| `terraform`, `provider` | dropped (one note each) |
+| `terraform`, `provider` | dropped (one note each), also under `--wrap-all` |
 
-Import ids are not in the source; run `satz adopt` afterwards, as after any import.
-
-## 12. Migration from the YAML dialect
+### 12.2 From the YAML dialect
 
 satz's first surface language was a YAML dialect with custom tags. Since
-v0.46.14 nothing reads it but `satz import <file>.yaml`: `transpile` and every other
-command take `.satz` and refuse a `.yaml` estate with a pointer to the
-converter. This section is everything a reader coming from that dialect needs,
-and nothing a reader who never used it does. (Brownfield estates never need
-the dialect: `satz import <state.json>` and `satz import organizations/<n>` write a
-Satz estate directly, through the same printer `satz import <file>.yaml` uses.)
+v0.46.14 nothing reads it but `satz import <file>.yaml`: `transpile` and every
+other command take `.satz` and refuse a `.yaml` estate with a pointer to the
+converter. (Brownfield estates never need the dialect: the state and live
+shapes above write a Satz estate directly, through the same printer.)
 
 **What changed at the surface:**
 
@@ -1323,20 +1388,20 @@ iam-managed-disableServiceAccountKeyCreation:
 }
 ```
 
-**How a conversion is checked.** `satz import <file>.yaml` converts a file and compiles
-the result through the fragment pipeline — the pipeline that will actually read
-it — and prints the emitted resource set (`CONVERTED: … N resources emitted`).
-An estate is gated on itself; a pack is gated on the `.satz` estate you pass
-with `--gate`, or only parsed when there is none. A conversion that cannot be
-checked in context says `NEEDS-REVIEW`; the last word is `satz transpile` and a
-`tofu plan` that shows no destroy for what the old estate managed. Interior
-comments are not carried; the converter says so at the top of its output. An
-estate that used the dialect's `!import-include` converts to a plain `use` with
-a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
+**How a conversion is checked.** `satz import <file>.yaml` converts a file and
+compiles the result through the fragment pipeline — the pipeline that will
+actually read it — and prints the emitted resource set (`CONVERTED: … N
+resources emitted`). An estate is gated on itself; a pack is gated on the
+`.satz` estate you pass with `--gate`, or only parsed when there is none. A
+result that does not compile is deleted and reported; a conversion that cannot
+be checked in context says `NEEDS-REVIEW`; the last word is `satz transpile`
+and a `tofu plan` that shows no destroy for what the old estate managed. An
+estate that used the dialect's `!import-include` converts to a plain `use`
+with a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
 
-**A limit worth knowing:** `use "x.yaml"` is accepted by the parser, but the
-fragment pipeline cannot load a YAML pack — it reports `unexpected character
-':'`. Convert the pack (`satz import x.yaml --kind pack`).
+**Packs first.** An estate whose `use` still points at `x.yaml` is refused by
+the converter and by the compiler alike (`use "x.yaml": packs are Satz —
+convert it first: satz import x.yaml --kind pack`).
 
 **Why the dialect still parses at all:** to be migrated. That is the whole of
 its support (owner decision, 2026-08-29): YAML is never transpiled or generated

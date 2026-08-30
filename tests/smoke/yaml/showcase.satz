@@ -1,0 +1,165 @@
+// The showcase estate — every language feature in one compilable file. The
+// reference (docs/satz-language.md) cites this file by section instead of
+// carrying loose snippets; scripts/smoke.sh transpiles it on every push.
+// Example values only (docs/example-customers.md).
+
+/* A block comment spans lines. `#` and `//` comments run to the end of a line. */
+
+estate showcase
+
+// --- Params: the only thing an estate needs to say to fit a pristine pack. ---
+params {
+  customer_organization_id = "123456789012"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  customer_shortname       = "corp"
+  infra_project_name       = "corp-infra-001"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  default_region           = "europe-west3"
+  audit_retention_days     = 400            # a number; interpolates like a string
+  want_optional            = false          # a `use … when` switch, declared here
+  pack_bucket_location     = "europe-west3" # overrides showcase-pack's "EU" default
+}
+
+// --- Estate configuration blocks: emitted as providers.tf / the backend. -----
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+providers {
+  google {
+    alias                 = "google"
+    project               = infra_project_name
+    region                = default_region
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+  "google-beta" {
+    alias                 = "google-beta"
+    project               = infra_project_name
+    region                = default_region
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+}
+
+// --- `use`, in its three positions. ------------------------------------------
+// 1. top level: the pack's entries land where they are declared
+use "showcase-pack.satz"
+// 2. `as`: a bare-list pack becomes the CONTENT of a resource map
+use "showcase-policies.satz" as google_org_policy_policy
+// 3. `when`: pulled in only if the (declared) param is truthy — here it is not
+use "showcase-optional.satz" when want_optional
+
+// --- `suppress`: decline what a pack provides, without forking it. -----------
+// The pack declares this policy; the estate does not want it. A suppression
+// that stops matching (typo, upstream rename) is a hard error.
+suppress google_org_policy_policy "compute-managed-vmExternalIpAccess"
+// One role of one grant — the member keeps its other roles.
+suppress google_organization_iam_member "group:gcp-auditors@{customer_domain}" role "roles/browser"
+
+// --- A group, its member, and the adoption id of one that already exists. ---
+google_cloud_identity_group {
+  "gcp-auditors" {
+    "import-id"  = "groups/01abcdef2ghijk3"   // resolved by `satz adopt`, written back here
+    display_name = "GCP Auditors"
+    member = [
+      "audit.lead@{customer_domain}",
+    ]
+  }
+}
+
+// --- IAM grants: member → roles; a role is a string or a conditional object. --
+google_organization_iam_member {
+  "group:gcp-auditors@{customer_domain}" = [
+    "roles/browser",                        // suppressed above — never emitted
+    "roles/iam.securityReviewer",
+    {
+      role = "roles/storage.objectViewer"
+      condition {
+        title      = "audit-objects-only"
+        expression = "resource.name.startsWith(\"projects/_/buckets/{customer_shortname}-audit-logs\")"
+      }
+    },
+  ]
+}
+
+// --- Hierarchy: folder → project → resources; scope attributes are derived. --
+google_folder {
+  infra {
+    display_name = "Infrastructure"
+    google_project {
+      infra {
+        name            = "corp-IaC"
+        project_id      = infra_project_name
+        billing_account = billing_account_infra
+        project_service = [
+          "cloudresourcemanager.googleapis.com",
+          "storage.googleapis.com",
+        ]
+        google_storage_bucket {
+          audit_logs {
+            name                        = "{customer_shortname}-audit-logs"
+            location                    = "EU"
+            uniform_bucket_level_access = true
+            // a repeated block is a LIST of objects — twice the same key is an error
+            lifecycle_rule = [
+              {
+                action { type = "Delete" }
+                condition { age = audit_retention_days }
+              },
+              {
+                action { type = "Delete" }
+                condition {
+                  num_newer_versions = 100
+                  with_state         = "ARCHIVED"
+                }
+              },
+            ]
+          }
+        }
+        // A bucket-scoped grant is a labelled resource (its scope is `bucket`,
+        // not the node path), never a member map.
+        google_storage_bucket_iam_member {
+          auditors_read {
+            bucket = "${{google_storage_bucket.audit_logs.name}}"
+            role   = "roles/storage.objectViewer"
+            member = "group:gcp-auditors@{customer_domain}"
+          }
+        }
+        google_project_iam_member {
+          "group:gcp-auditors@{customer_domain}" = [
+            "roles/viewer",
+          ]
+        }
+      }
+    }
+  }
+}
+
+// --- `hcl`: raw passthrough, verbatim, never interpolated, opaque to claims. --
+hcl trust "reviewed 2026-08-30: static address until the provider gap closes" {
+  resource "google_compute_address" "legacy_ip" {
+    name   = "legacy-ip"
+    region = "europe-west3"
+  }
+}
+
+// --- Claims: what this estate proves, and what it declines on purpose. -------
+claim "cis-gcp" "4.0" "5.1" implements {
+  resources      = ["google_storage_bucket.audit_logs"]
+  interpretation = "Uniform bucket-level access on the audit bucket; no ACL-granted public access is possible."
+  duty_public_check = "Confirm public_access_prevention is enforced at the org level."
+}
+
+claim "cis-gcp" "4.0" "5.2" contributes {
+  resources = ["google_storage_bucket.audit_logs"]
+}
+
+claim "cis-gcp" "4.0" "4.4" deviates {
+  resources     = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  reason        = "A service here depends on metadata SSH keys; enforcing OS Login breaks it."
+  duty_reassess = "Re-assess when that service supports OS Login."
+}
