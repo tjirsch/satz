@@ -130,7 +130,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `migrate <INPUT>` | `--mode` |
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
-| `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live` |
+| `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
@@ -359,8 +359,10 @@ satz diff-organizational-policies C0example.satz --format markdown --report diff
 The desired set is read off the compiled estate — the same `google_org_policy_policy`
 resources `transpile` emits. To diff one pack, write an estate that `use`s only that pack.
 
-Each constraint is classified: `MISSING (needs activation)` (managed), `MISSING
-(creatable)`, `MATCHES`, `DIFFERS`, or `CURRENT-ONLY`. The diff is semantic — it normalizes
+Each policy — a constraint **at a parent**: the same constraint declared on the
+organization and again on a folder is two policies, each compared with the live
+policy at its own parent — is classified: `MISSING (needs activation)` (managed),
+`MISSING (creatable)`, `MATCHES`, `DIFFERS`, or `CURRENT-ONLY`. The diff is semantic — it normalizes
 `enforce: "TRUE"` vs `true`, `allowed_values` ordering, and `parameters` JSON-string vs
 object so it doesn't report false changes.
 
@@ -795,6 +797,10 @@ policies, notification channels, buckets — matched by name/display name extrac
 the generated HCL). Manual duties merge with `attestations.yaml` beside config.toml
 (`duty-id: {by, date, note}`), and a Prowler native-JSON export can be ingested as
 corroboration (`--prowler findings.json` — Prowler's OCSF output or its legacy JSON; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it).
+
+The exit code is 0 whatever the verdicts — the report is the deliverable;
+`--fail-on not-enforced,drifted` (any status word; `any` = everything that is
+not verified/declared) makes the run fail for CI after the report is written.
 
 ```bash
 satz report-compliance cis-gcp-4.0 C0example.satz            # markdown + history

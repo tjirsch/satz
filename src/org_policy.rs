@@ -307,8 +307,7 @@ pub struct DiffReport {
 #[derive(Debug, Clone)]
 pub struct DesiredPolicy {
     pub yaml_key: String,
-    /// Bare constraint name; redundant with the map key but handy for tests/diagnostics.
-    #[allow(dead_code)]
+    /// Bare constraint name (the map key is `parent|constraint`).
     pub constraint: String,
     pub parent: String,
     /// Full policy body as JSON (with `spec` / `dry_run_spec`).
@@ -327,12 +326,19 @@ pub fn compute_diff(
 ) -> DiffReport {
     let mut entries = Vec::new();
 
-    // Desired-driven entries
-    for (constraint, dp) in desired {
+    // Desired-driven entries, looked up live at the parent they are declared
+    // on (the report parent when the body names none)
+    let declared_keys: std::collections::BTreeSet<String> = desired
+        .values()
+        .map(|dp| policy_key(if dp.parent.is_empty() { parent } else { &dp.parent }, &dp.constraint))
+        .collect();
+    for dp in desired.values() {
+        let constraint = &dp.constraint;
+        let effective_parent = if dp.parent.is_empty() { parent.to_string() } else { dp.parent.clone() };
         let managed = is_managed(constraint);
         let desired_canon = canonical_policy(&dp.policy);
 
-        let (classification, action, current_spec) = match current.get(constraint) {
+        let (classification, action, current_spec) = match current.get(&policy_key(&effective_parent, constraint)) {
             None => {
                 if managed {
                     (
@@ -368,7 +374,7 @@ pub fn compute_diff(
 
         entries.push(ConstraintDiff {
             constraint: constraint.clone(),
-            parent: dp.parent.clone(),
+            parent: effective_parent,
             yaml_key: dp.yaml_key.clone(),
             managed,
             current_spec,
@@ -378,11 +384,12 @@ pub fn compute_diff(
         });
     }
 
-    // Current-only entries (live but not desired)
-    for (constraint, live) in current {
-        if desired.contains_key(constraint) {
+    // Current-only entries (live but not desired at that parent)
+    for (key, live) in current {
+        if declared_keys.contains(key) {
             continue;
         }
+        let constraint = &key.rsplit_once('|').map(|(_, c)| c.to_string()).unwrap_or_else(|| key.clone());
         // The live policy's own name says where it is set; the report-level parent is
         // only a fallback. `current` can hold policies fetched from several parents, so
         // attributing them all to the report parent mislabelled folder-sourced entries.
@@ -405,7 +412,7 @@ pub fn compute_diff(
         });
     }
 
-    entries.sort_by(|a, b| a.constraint.cmp(&b.constraint));
+    entries.sort_by(|a, b| (&a.parent, &a.constraint).cmp(&(&b.parent, &b.constraint)));
 
     DiffReport {
         parent: parent.to_string(),
@@ -602,11 +609,18 @@ fn yaml_scalar_to_string(v: &serde_yaml::Value) -> Option<String> {
     }
 }
 
-/// Convert a parsed `Config.org_policy_policy` map into desired policies keyed by bare
-/// constraint name.
-/// The same mapping as `desired_from_config`, from (label, body) pairs rather
-/// than a parsed `Config`. Both end at `DesiredPolicy`; only the source of the
-/// bodies differs.
+/// `parent|constraint`: a policy is identified by WHERE it is set as much as
+/// by its constraint — an estate declares `requireOsLogin` on the org and
+/// again, differently, on a sandbox folder, and a diff keyed by the bare
+/// constraint kept only one of them and compared it against the wrong live
+/// policy.
+pub(crate) fn policy_key(parent: &str, constraint: &str) -> String {
+    format!("{}|{}", parent, constraint)
+}
+
+/// The desired policies of an estate from (label, body) pairs, keyed by
+/// `policy_key(parent, constraint)`. The parent is the body's own, normalised;
+/// empty when the body has none (the report parent applies then).
 fn desired_from_bodies(
     bodies: Vec<(String, serde_yaml::Value)>,
 ) -> Result<BTreeMap<String, DesiredPolicy>, BoxErr> {
@@ -620,12 +634,13 @@ fn desired_from_bodies(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_default();
+        let parent = normalize_parent(&parent);
         desired.insert(
-            constraint.clone(),
+            policy_key(&parent, &constraint),
             DesiredPolicy {
                 yaml_key,
                 constraint,
-                parent: normalize_parent(&parent),
+                parent,
                 policy: body_json,
             },
         );
@@ -671,7 +686,7 @@ async fn prepare(
             continue;
         }
         for (k, v) in fetch_current(&client, p).await? {
-            current.entry(k).or_insert(v);
+            current.insert(policy_key(p, &k), v);
         }
     }
 
@@ -708,13 +723,20 @@ async fn prepare_recursive(
         }
         if let Some(node) = tree.nodes.get(p) {
             for (k, v) in &node.policies {
-                current.entry(k.clone()).or_insert_with(|| v.clone());
+                current.insert(policy_key(p, k), v.clone());
             }
         }
     }
 
     let mut report = compute_diff(&parent, &label, &now_stamp(), &current, &desired);
-    let (nodes, summary) = crate::policy_tree::classify_tree(&tree, &desired);
+    // the tree classifies every node's policy against the ORGANIZATION-level
+    // baseline, by constraint
+    let org_baseline: BTreeMap<String, DesiredPolicy> = desired
+        .values()
+        .filter(|d| d.parent.is_empty() || d.parent == parent)
+        .map(|d| (d.constraint.clone(), d.clone()))
+        .collect();
+    let (nodes, summary) = crate::policy_tree::classify_tree(&tree, &org_baseline);
     report.nodes = Some(nodes);
     report.tree_summary = Some(summary);
     // The tree rides along for the console/markdown renderers, which need the full
@@ -1435,7 +1457,7 @@ mod tests {
         let mut m = BTreeMap::new();
         for (c, p, body) in entries {
             m.insert(
-                c.to_string(),
+                policy_key(p, c),
                 DesiredPolicy {
                     yaml_key: sanitize_yaml_key(c),
                     constraint: c.to_string(),
@@ -1463,19 +1485,46 @@ mod tests {
         assert_eq!(plain.action, PlannedAction::CreateViaApply);
     }
 
+    /// The review found the diff keyed by BARE constraint: an estate declaring
+    /// `compute.x` on the org AND, differently, on a folder kept one of them,
+    /// and the merged live set let the folder's policy answer for the org's.
+    #[test]
+    fn the_same_constraint_on_two_parents_is_two_policies() {
+        let mut current = BTreeMap::new();
+        current.insert(
+            policy_key("organizations/1", "compute.x"),
+            jv(r#"{"name":"organizations/1/policies/compute.x","spec":{"rules":[{"enforce":true}]}}"#),
+        );
+        current.insert(
+            policy_key("folders/2", "compute.x"),
+            jv(r#"{"name":"folders/2/policies/compute.x","spec":{"rules":[{"enforce":true}]}}"#),
+        );
+        let desired = desired_map(&[
+            ("compute.x", "organizations/1", r#"{"spec":{"rules":[{"enforce":"TRUE"}]}}"#),
+            ("compute.x", "folders/2", r#"{"spec":{"rules":[{"enforce":"FALSE"}]}}"#),
+        ]);
+        assert_eq!(desired.len(), 2, "both declarations survive");
+        let r = compute_diff("organizations/1", "p", "t", &current, &desired);
+        let org = r.entries.iter().find(|e| e.constraint == "compute.x" && e.parent == "organizations/1").unwrap();
+        let folder = r.entries.iter().find(|e| e.constraint == "compute.x" && e.parent == "folders/2").unwrap();
+        assert_eq!(org.classification, Classification::PresentMatches);
+        assert_eq!(folder.classification, Classification::PresentDiffers, "the folder's own live policy is compared, not the org's");
+        assert!(r.entries.iter().all(|e| e.classification != Classification::CurrentOnly), "{:?}", r.entries.iter().map(|e| (&e.parent, &e.constraint, &e.classification)).collect::<Vec<_>>());
+    }
+
     #[test]
     fn classify_matches_and_differs_and_current_only() {
         let mut current = BTreeMap::new();
         current.insert(
-            "compute.x".to_string(),
+            policy_key("organizations/1", "compute.x"),
             jv(r#"{"name":"organizations/1/policies/compute.x","spec":{"rules":[{"enforce":true}]}}"#),
         );
         current.insert(
-            "compute.y".to_string(),
+            policy_key("organizations/1", "compute.y"),
             jv(r#"{"name":"organizations/1/policies/compute.y","spec":{"rules":[{"enforce":true}]}}"#),
         );
         current.insert(
-            "stray.z".to_string(),
+            policy_key("organizations/1", "stray.z"),
             jv(r#"{"name":"organizations/1/policies/stray.z","spec":{"rules":[{"enforce":true}]}}"#),
         );
         let desired = desired_map(&[
@@ -1553,14 +1602,14 @@ mod tests {
 
         // A managed boolean constraint is present and flagged managed.
         let m = desired
-            .get("iam.managed.disableServiceAccountKeyCreation")
+            .get(&policy_key("organizations/123456789", "iam.managed.disableServiceAccountKeyCreation"))
             .expect("managed constraint present");
         assert!(is_managed(&m.constraint));
         assert_eq!(m.parent, "organizations/123456789");
 
         // The parameterized managed constraint resolved its JSON parameters.
         let ec = desired
-            .get("essentialcontacts.managed.allowedContactDomains")
+            .get(&policy_key("organizations/123456789", "essentialcontacts.managed.allowedContactDomains"))
             .expect("parameterized constraint present");
         let params = ec.policy["spec"]["rules"][0]["parameters"]
             .as_str()

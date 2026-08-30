@@ -71,12 +71,12 @@ enum ApiKind {
 
 /// Every field of a Discovery schema, depth-first, paths dotted. `$ref`s are
 /// followed through `schemas` (one level, to keep cycles out).
-fn api_fields(schema: &serde_json::Value, schemas: &serde_json::Value, prefix: &str, depth: usize, out: &mut Vec<ApiField>) {
-    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else { return };
+fn api_fields(schema: &serde_json::Value, schemas: &serde_json::Value, prefix: &str, depth: usize, out: &mut Vec<ApiField>) -> Result<(), String> {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else { return Ok(()) };
     for (name, prop) in props {
         let path = if prefix.is_empty() { name.clone() } else { format!("{}.{}", prefix, name) };
-        let resolved = resolve_ref(prop, schemas);
-        let item = resolved.get("items").map(|i| resolve_ref(i, schemas));
+        let resolved = resolve_ref(prop, schemas)?;
+        let item = resolved.get("items").map(|i| resolve_ref(i, schemas)).transpose()?;
         let (kind, sub) = match (resolved.get("type").and_then(|t| t.as_str()), &item) {
             (Some("object"), _) if resolved.get("properties").is_some() => (ApiKind::Object, Some(resolved.clone())),
             (Some("array"), Some(it)) if it.get("properties").is_some() => (ApiKind::ArrayOfObjects, Some(it.clone())),
@@ -91,16 +91,17 @@ fn api_fields(schema: &serde_json::Value, schemas: &serde_json::Value, prefix: &
         out.push(ApiField { path: path.clone(), name: name.clone(), kind: kind.clone(), props });
         if let Some(s) = sub {
             if depth < 4 {
-                api_fields(&s, schemas, &path, depth + 1, out);
+                api_fields(&s, schemas, &path, depth + 1, out)?;
             }
         }
     }
+    Ok(())
 }
 
-fn resolve_ref(v: &serde_json::Value, schemas: &serde_json::Value) -> serde_json::Value {
+fn resolve_ref(v: &serde_json::Value, schemas: &serde_json::Value) -> Result<serde_json::Value, String> {
     match v.get("$ref").and_then(|r| r.as_str()) {
-        Some(r) => schemas.get(r).cloned().unwrap_or_else(|| v.clone()),
-        None => v.clone(),
+        Some(r) => schemas.get(r).cloned().ok_or_else(|| format!("Discovery Document references schema `{}`, which it does not define", r)),
+        None => Ok(v.clone()),
     }
 }
 
@@ -128,9 +129,9 @@ pub(crate) fn snake(s: &str) -> String {
 
 /// Align one API schema (a Discovery `schemas.<Name>` object, with the
 /// document's `schemas` for `$ref`s) against one Terraform block.
-pub fn align(api_schema: &serde_json::Value, schemas: &serde_json::Value, tf: &BlockSchema) -> TypeMap {
+pub fn align(api_schema: &serde_json::Value, schemas: &serde_json::Value, tf: &BlockSchema) -> Result<TypeMap, String> {
     let mut fields = Vec::new();
-    api_fields(api_schema, schemas, "", 0, &mut fields);
+    api_fields(api_schema, schemas, "", 0, &mut fields)?;
     let mut tm = TypeMap::default();
     let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     align_block(&fields, tf, "", "", &mut tm, &mut used);
@@ -144,7 +145,7 @@ pub fn align(api_schema: &serde_json::Value, schemas: &serde_json::Value, tf: &B
             tm.unmatched.push(f.path.clone());
         }
     }
-    tm
+    Ok(tm)
 }
 
 /// Align the Terraform block at `tf_prefix` against the API subtree at
@@ -357,7 +358,7 @@ mod tests {
     #[test]
     fn bucket_aligns_into_exact_flattened_renamed_and_unmatched() {
         let schemas = api();
-        let tm = align(&schemas["Bucket"], &schemas, &tf());
+        let tm = align(&schemas["Bucket"], &schemas, &tf()).unwrap();
         assert_eq!(tm.map.get("iamConfiguration.uniformBucketLevelAccess.enabled").map(String::as_str), Some("uniform_bucket_level_access"));
         assert_eq!(tm.map.get("iamConfiguration.publicAccessPrevention").map(String::as_str), Some("public_access_prevention"));
         assert_eq!(tm.map.get("billing.requesterPays").map(String::as_str), Some("requester_pays"));
@@ -373,7 +374,7 @@ mod tests {
     #[test]
     fn apply_moves_values_and_prunes_the_emptied_wrappers() {
         let schemas = api();
-        let tm = align(&schemas["Bucket"], &schemas, &tf());
+        let tm = align(&schemas["Bucket"], &schemas, &tf()).unwrap();
         let mut data: serde_yaml::Mapping = serde_yaml::from_str(
             "name: b\niamConfiguration:\n  uniformBucketLevelAccess:\n    enabled: true\n    lockedTime: x\n  publicAccessPrevention: enforced\nbilling:\n  requesterPays: false\nlifecycle:\n  rule:\n    - action: {type: Delete}\n      condition: {age: 30}\n",
         )

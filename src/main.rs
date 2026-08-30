@@ -446,6 +446,11 @@ enum Commands {
         /// Skip live verification (declared-estate report only)
         #[arg(long)]
         no_live: bool,
+        /// Exit non-zero when a row's status contains one of these (comma
+        /// list, e.g. `not-enforced,drifted,unmet`; `any` = anything that is
+        /// not verified/declared). The report is written either way.
+        #[arg(long, value_delimiter = ',')]
+        fail_on: Vec<String>,
     },
     /// Compare local presets against the pristine upstream library and report drift:
     /// which included presets were edited locally, and the params block to add to
@@ -1380,7 +1385,7 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov } => {
+        Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov, fail_on } => {
             let input_path = if Path::new(&input).is_absolute() {
                 PathBuf::from(&input)
             } else {
@@ -1404,6 +1409,7 @@ Thumbs.db
                 prowler,
                 checkov_report.as_ref(),
                 no_live,
+                &fail_on,
             )
             .await?;
             Ok(())
@@ -2162,7 +2168,7 @@ async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: bool, runtime_
             }
         };
         let schemas = doc.get("schemas").cloned().unwrap_or(serde_json::Value::Null);
-        let tm = crate::align::align(schema, &schemas, &tf.block);
+        let tm = crate::align::align(schema, &schemas, &tf.block)?;
         let revision = doc.get("revision").and_then(|r| r.as_str()).unwrap_or("?");
         println!(
             "{:48} {}/{} rev {}: {} exact, {} mapped ({} renamed), {} API-only, {} TF-only",
