@@ -96,30 +96,4 @@ pub enum MergeClass {
     Grant,
     /// Flat lattice: identical is idempotent, different is a conflict.
     Entity,
-    /// Structural: grafted at a path, never merged.
-    Tree,
-}
-
-/// Parameter binding strength. Order matters: `Default < Set < Force`.
-/// `Force` is reserved for the subtractive-override channel (private roadmap, Phase 2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Priority {
-    /// A preset's overridable default.
-    Default,
-    /// The including document's binding.
-    Set,
-    /// Reserved: unconditional override / suppression.
-    Force,
-}
-
-#[cfg(test)]
-mod contract {
-    use super::*;
-
-    /// The priority order is the load-bearing fact of the parameter layer.
-    #[test]
-    fn priority_order_is_default_set_force() {
-        assert!(Priority::Default < Priority::Set);
-        assert!(Priority::Set < Priority::Force);
-    }
 }

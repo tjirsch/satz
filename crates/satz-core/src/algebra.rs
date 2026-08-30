@@ -64,7 +64,7 @@ pub enum Slot {
 }
 
 /// A fragment's resource layer. (The parameter layer lives with the front-ends;
-/// its priority semantics are in the crate root docs and `Priority`.)
+/// its priority semantics are in the crate root docs.)
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Fragment {
     pub entities: BTreeMap<Address, Entity>,
@@ -119,10 +119,8 @@ fn merge_slot(class: MergeClass, a: Slot, b: Slot) -> Slot {
                 ea.provenance.extend(eb.provenance);
                 Slot::Ok(ea)
             }
-            MergeClass::Entity | MergeClass::Tree => {
+            MergeClass::Entity => {
                 // Flat lattice: canonical-equal is idempotent, different is ⊥.
-                // (Tree types never reach the fold with equal addresses in the
-                // front-end; treating them flatly here keeps the operator total.)
                 if ea.body == eb.body {
                     ea.provenance.extend(eb.provenance);
                     Slot::Ok(ea)

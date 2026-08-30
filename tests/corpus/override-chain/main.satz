@@ -5,6 +5,7 @@ estate corpus_override_chain
 params {
   customer_organization_id = "123456789"
   widget_name = "overridden-widget"
+  with_optional = false
 }
 
 terraform {
@@ -14,4 +15,4 @@ terraform {
 }
 
 use "pack.satz"
-use "optional.satz" when never_defined
+use "optional.satz" when with_optional

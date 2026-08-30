@@ -267,22 +267,38 @@ fn place_into(into: &mut serde_yaml::Mapping, r: &Res, all: &[&Res]) {
             }
         }
         "google_project_service" => {
-            let svc = body.get("service").and_then(|v| v.as_str()).map(String::from).unwrap_or_default();
+            // `classify` guarantees a literal `service`
+            let svc = body.get("service").and_then(|v| v.as_str()).map(String::from).expect("classified project_service has a service");
             let list = into.entry(key("project_service")).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
             if let serde_yaml::Value::Sequence(seq) = list {
                 seq.push(serde_yaml::Value::String(svc));
             }
         }
         t if t.ends_with("_iam_member") => {
-            let member = body.get("member").and_then(|v| v.as_str()).map(String::from).unwrap_or_default();
-            let role = body.get("role").and_then(|v| v.as_str()).map(String::from).unwrap_or_default();
+            // `classify` guarantees literal `member` and `role`; a `condition`
+            // rides along in the object form — dropping it would widen the grant
+            let member = body.get("member").and_then(|v| v.as_str()).map(String::from).expect("classified iam member has a member");
+            let role = body.get("role").and_then(|v| v.as_str()).map(String::from).expect("classified iam member has a role");
+            let entry = match body.get("condition") {
+                Some(cond) => {
+                    let mut o = serde_yaml::Mapping::new();
+                    o.insert(key("role"), serde_yaml::Value::String(role));
+                    // an HCL block is a list of one object; the grant form takes the object
+                    let cond = match cond {
+                        serde_yaml::Value::Sequence(items) if items.len() == 1 => items[0].clone(),
+                        other => other.clone(),
+                    };
+                    o.insert(key("condition"), cond);
+                    serde_yaml::Value::Mapping(o)
+                }
+                None => serde_yaml::Value::String(role),
+            };
             let m = into.entry(key(t)).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
             if let serde_yaml::Value::Mapping(m) = m {
                 let roles = m.entry(key(&member)).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
                 if let serde_yaml::Value::Sequence(seq) = roles {
-                    let v = serde_yaml::Value::String(role);
-                    if !seq.contains(&v) {
-                        seq.push(v);
+                    if !seq.contains(&entry) {
+                        seq.push(entry);
                     }
                 }
             }
@@ -323,6 +339,34 @@ fn classify(tf_type: &str, label: &str, block: &Block, is_type: &dyn Fn(&str) ->
         || tf_type == "google_billing_account_iam_member"
     {
         return wrapped(format!("`{}` has a special Satz form not derived from HCL yet", tf_type));
+    }
+    // the attributes Satz's special forms are keyed by must be literal strings
+    let literal_str = |k: &str| {
+        block.body.iter().find_map(|s| match s {
+            Structure::Attribute(a) if a.key.to_string() == k => literal(&a.value).and_then(|v| v.as_str().map(String::from)),
+            _ => None,
+        })
+    };
+    if tf_type.ends_with("_iam_member") {
+        for k in ["member", "role"] {
+            if literal_str(k).is_none() {
+                return wrapped(format!("`{}` is not a literal string", k));
+            }
+        }
+        // anything beyond member/role/condition and the scope attribute is not
+        // part of Satz's grant form — say so rather than drop it
+        for s in block.body.iter() {
+            let k = match s {
+                Structure::Attribute(a) => a.key.to_string(),
+                Structure::Block(b) => b.ident.to_string(),
+            };
+            if !matches!(k.as_str(), "member" | "role" | "condition") && !is_scope_attr(tf_type, &k) {
+                return wrapped(format!("`{}` has no place in a Satz grant", k));
+            }
+        }
+    }
+    if tf_type == "google_project_service" && literal_str("service").is_none() {
+        return wrapped("`service` is not a literal string".into());
     }
     // meta-arguments and non-literal values
     for s in block.body.iter() {
@@ -768,5 +812,37 @@ module "vpc" {
     fn a_syntax_error_names_the_file() {
         let e = import(&[Input { path: "bad.tf".into(), text: "resource \"x\" {".into() }], "e", true, &known).unwrap_err();
         assert!(e.starts_with("bad.tf: "), "{}", e);
+    }
+
+    /// The review found a conditional binding imported as an unconditional one,
+    /// reported Translated — a silent privilege widening.
+    #[test]
+    fn a_conditional_grant_keeps_its_condition_and_a_partial_one_is_wrapped() {
+        let tf = r#"
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "acme-infra-001"
+  org_id     = "123456789012"
+}
+resource "google_project_iam_member" "cond" {
+  project = google_project.p.project_id
+  role    = "roles/viewer"
+  member  = "group:auditors@example.com"
+  condition {
+    title      = "office-hours"
+    expression = "request.time.getHours(\"Europe/Berlin\") >= 8"
+  }
+}
+resource "google_project_iam_member" "no_member" {
+  project = google_project.p.project_id
+  role    = "roles/viewer"
+}
+"#;
+        let imported = import(&[Input { path: "main.tf".into(), text: tf.into() }], "acme", false, &known).unwrap();
+        let c: String = imported.satz.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(c.contains("\"group:auditors@example.com\"=[{role=\"roles/viewer\"condition{title=\"office-hours\""), "{:?}
+{}", imported.rows, imported.satz);
+        let row = imported.rows.iter().find(|r| r.what.contains("no_member")).unwrap();
+        assert!(matches!(&row.action, Action::Wrapped(r) if r.contains("`member`")), "{:?}", row.action);
     }
 }

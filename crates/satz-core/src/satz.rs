@@ -408,6 +408,23 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                     i += 1;
                 }
             }
+            '/' if b.get(i + 1) == Some(&'*') => {
+                let start = line;
+                i += 2;
+                loop {
+                    if i >= b.len() {
+                        return Err(SatzError { line: start, msg: "unterminated block comment".into() });
+                    }
+                    if b[i] == '*' && b.get(i + 1) == Some(&'/') {
+                        i += 2;
+                        break;
+                    }
+                    if b[i] == '\n' {
+                        line += 1;
+                    }
+                    i += 1;
+                }
+            }
             '#' => {
                 while i < b.len() && b[i] != '\n' {
                     i += 1;
@@ -522,6 +539,10 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                 while i < b.len() && (b[i].is_ascii_digit() || b[i] == '.') {
                     n.push(b[i]);
                     i += 1;
+                }
+                let dots = n.matches('.').count();
+                if dots > 1 || n.ends_with('.') {
+                    return Err(SatzError { line, msg: format!("malformed number `{}`", n) });
                 }
                 toks.push((Tok::Num(n), line));
             }
@@ -718,10 +739,10 @@ impl P {
                 Entry::Map { key: Key::Ident(k), name: Some(Key::Str(idp)), body, .. } if k == "duty" => {
                     // rare form duty "id" { text = "..." } — accept but prefer attr form
                     let _ = (idp, body);
-                    return err(line, "duty: use `duty \"id\" = \"text\"`");
+                    return err(line, "duty: write it as an attribute, `duty_<id> = \"text\"`");
                 }
                 Entry::Attr { key: Key::Str(_), .. } => {
-                    return err(line, "claim: unexpected string key (did you mean `duty \"id\" = \"text\"`? prefix with duty)")
+                    return err(line, "claim: unexpected string key (a duty is `duty_<id> = \"text\"`)")
                 }
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k.starts_with("duty_") || k == "duty" => {
                     let _ = l;
@@ -763,6 +784,9 @@ impl P {
             match self.peek() {
                 Some(Tok::Ident(id)) if id == "as" => {
                     self.next();
+                    if as_key.is_some() {
+                        return err(line, "use ... as: given twice");
+                    }
                     match self.next() {
                         Some(Tok::Ident(k)) => as_key = Some(k),
                         other => return err(line, format!("use ... as: expected identifier, found {:?}", other)),
@@ -770,6 +794,9 @@ impl P {
                 }
                 Some(Tok::Ident(id)) if id == "when" => {
                     self.next();
+                    if when.is_some() {
+                        return err(line, "use ... when: given twice");
+                    }
                     match self.next() {
                         Some(Tok::Ident(p)) => when = Some(p),
                         other => return err(line, format!("use ... when: expected param name, found {:?}", other)),
@@ -792,9 +819,13 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
             None => break,
             Some(Tok::Ident(id)) if id == "estate" || id == "pack" => {
                 let is_pack = id == "pack";
+                let keyword = if is_pack { "pack" } else { "estate" };
                 p.next();
                 match p.next() {
                     Some(Tok::Ident(name)) => {
+                        if let Some(first) = &file.estate {
+                            return err(line, format!("a second `{}` header ({}) — the file is already `{}`", keyword, name, first));
+                        }
                         file.estate = Some(name);
                         file.is_pack = is_pack;
                     }
@@ -837,6 +868,9 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                             };
                             p.expect(Tok::Eq, "'=' in param")?;
                             let v = p.value()?;
+                            if file.params.iter().any(|(n, _, _)| n == &name) {
+                                return err(line, format!("params: `{}` is declared twice — the second binding would be ignored", name));
+                            }
                             file.params.push((name, v, line));
                         }
                         other => return err(line, format!("params: expected name or '}}', found {:?}", other)),
@@ -922,8 +956,8 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
 
 /// Params in dependency order (stable Kahn topological sort): a param may reference
 /// any other param regardless of declaration order — the emitter linearizes so YAML's
-/// backward-only aliases always resolve. Cycles fall back to source order and are
-/// caught by the YAML parse with its line context.
+/// backward-only aliases always resolve. Cycles fall back to source order; the
+/// pipeline then reports the first unresolvable reference as an unknown param.
 pub(crate) fn sort_params_by_deps(
     params: &[(String, Value, usize)],
 ) -> Vec<&(String, Value, usize)> {
@@ -1358,5 +1392,26 @@ mod empty_collection_tests {
 
         let deps = use_paths(&parse("estate e\nuse \"a.satz\"\ngoogle_folder { f { use \"b.satz\" } }\n").unwrap());
         assert_eq!(deps, vec!["a.satz".to_string(), "b.satz".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod review_2026_08_29_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_params_and_headers_are_errors() {
+        assert!(parse("estate e\nparams { a = \"1\" a = \"2\" }\n").unwrap_err().msg.contains("declared twice"));
+        assert!(parse("estate e\nestate f\n").unwrap_err().msg.contains("second `estate` header"));
+        assert!(parse("estate e\nuse \"p\" as x as y\n").unwrap_err().msg.contains("given twice"));
+    }
+
+    #[test]
+    fn malformed_numbers_are_errors_and_block_comments_lex() {
+        assert!(parse("estate e\ngoogle_x { a { v = 1.2.3 } }\n").unwrap_err().msg.contains("malformed number"));
+        assert!(parse("estate e\ngoogle_x { a { v = 1. } }\n").unwrap_err().msg.contains("malformed number"));
+        let f = parse("estate e\n/* a block\n   comment */\ngoogle_x { a { v = 1 } }\n").unwrap();
+        assert_eq!(f.items.len(), 1);
+        assert!(parse("estate e\n/* never closed\n").unwrap_err().msg.contains("unterminated"));
     }
 }
