@@ -35,6 +35,11 @@ back as `"import-id"`. Pack headers that mention adoption mean that command.
 
 ---
 
+**Per-pack reference:** [`docs/README.md`](docs/README.md) — one page per pack,
+derived from the pack file by `satz doc-packs` (purpose, params with defaults,
+resources, claims with duties); hand-written notes live in each page's notes
+region. **History:** [`CHANGELOG.md`](CHANGELOG.md), one row per pack version.
+
 ## monitoring/organization-audit-logsink.satz
 
 Organization-wide audit trail: enables Data Access audit logs for **all** services

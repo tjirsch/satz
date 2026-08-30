@@ -30,8 +30,11 @@ for md in sorted((ROOT / "docs").glob("*.md")):
 PAGES.append((ROOT / "presets/README.md", "presets/index.html", "presets"))
 if (ROOT / "presets/CHANGELOG.md").exists():
     PAGES.append((ROOT / "presets/CHANGELOG.md", "presets/changelog.html", "presets changelog"))
+PACK_PAGES: list[tuple[Path, str]] = []  # derived per-pack pages: rendered, linked from the index, not in the nav
+for md in sorted((ROOT / "presets/docs").glob("*.md")):
+    PACK_PAGES.append((md, f"presets/docs/{'index' if md.stem == 'README' else md.stem}.html"))
 
-NAV_ORDER = ["satz", "satz-language", "presets", "presets changelog", "presets-workflow", "scripts", "security-toolset-integration"]
+NAV_ORDER = ["satz", "satz-language", "presets", "pack pages", "presets changelog", "presets-workflow", "scripts", "security-toolset-integration"]
 
 
 def nav_html(current_rel: str) -> str:
@@ -39,6 +42,8 @@ def nav_html(current_rel: str) -> str:
     up = "../" * depth
     items = []
     by_label = {label: rel for _, rel, label in PAGES}
+    if any(rel == "presets/docs/index.html" for _, rel in PACK_PAGES):
+        by_label["pack pages"] = "presets/docs/index.html"
     ordered = [l for l in NAV_ORDER if l in by_label] + sorted(l for l in by_label if l not in NAV_ORDER)
     for label in ordered:
         rel = by_label[label]
@@ -72,6 +77,7 @@ def command_anchors(body: str) -> str:
 def rewrite_links(body: str, src_rel: Path) -> str:
     """`docs/x.md` / `../README.md` / `#anchor` links → the rendered twins."""
     targets = {str(src.relative_to(ROOT)): rel for src, rel, _ in PAGES}
+    targets.update({str(src.relative_to(ROOT)): rel for src, rel in PACK_PAGES})
 
     def repl(m: "re.Match[str]") -> str:
         href = m.group(1)
@@ -95,7 +101,7 @@ def main() -> None:
     if OUT.exists():
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True)
-    for src, rel, _label in PAGES:
+    for src, rel, _label in PAGES + [(s, r, "") for s, r in PACK_PAGES]:
         text = src.read_text(encoding="utf-8")
         m = re.search(r"^# (.+)$", text, re.M)
         title = m.group(1).strip() if m else src.stem

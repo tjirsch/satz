@@ -5,8 +5,7 @@
 //
 // Required from the estate: customer_organization_id, customer_shortname,
 // customer_domain, default_region.
-// The YAML twin (organization-cis-log-alerts-central-1.0.yaml) stays in lockstep
-// until the migrator retires it. Filters are verbatim CIS/Prowler strings; alert
+// Filters are verbatim CIS/Prowler strings; alert
 // filters reference metric names (dependency edge) and pin resource.type=
 // "logging_bucket" (bucket-scoped metrics report against it — verified live).
 
