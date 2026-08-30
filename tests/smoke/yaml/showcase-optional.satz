@@ -1,0 +1,10 @@
+// Pulled in only when the estate's `want_optional` is true — it is not, so
+// nothing here reaches main.tf: no resource, no param, no claim.
+pack showcase_optional version "1.0"
+
+google_storage_bucket {
+  optional_bucket {
+    name     = "{customer_shortname}-optional-001"
+    location = "EU"
+  }
+}

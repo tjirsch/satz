@@ -365,8 +365,21 @@ fn classify(tf_type: &str, label: &str, block: &Block, is_type: &dyn Fn(&str) ->
             }
         }
     }
-    if tf_type == "google_project_service" && literal_str("service").is_none() {
-        return wrapped("`service` is not a literal string".into());
+    if tf_type == "google_project_service" {
+        if literal_str("service").is_none() {
+            return wrapped("`service` is not a literal string".into());
+        }
+        // the estate form is a bare service list under the project; any
+        // other attribute (disable_on_destroy, …) has no place in it
+        for s in block.body.iter() {
+            let k = match s {
+                Structure::Attribute(a) => a.key.to_string(),
+                Structure::Block(b) => b.ident.to_string(),
+            };
+            if !matches!(k.as_str(), "service" | "project") {
+                return wrapped(format!("`{}` has no place in a project's service list", k));
+            }
+        }
     }
     // meta-arguments and non-literal values
     for s in block.body.iter() {
@@ -448,7 +461,10 @@ fn classify(tf_type: &str, label: &str, block: &Block, is_type: &dyn Fn(&str) ->
                 body.insert("project".into(), serde_yaml::Value::String(v));
                 Place::Top
             }
-            _ => Place::Top,
+            None => Place::Top,
+            // a scope written as an expression satz cannot place — dropping it
+            // would move the resource to the organisation
+            Some(other) => return wrapped(format!("scope attribute = {} cannot be placed", other.describe())),
         },
     };
     if tf_type == "google_org_policy_policy" {

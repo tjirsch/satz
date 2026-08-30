@@ -1429,8 +1429,9 @@ Thumbs.db
 /// Satz front-end, shared by every command that takes an estate input: a .satz file
 /// compiles to its generated .gen.yaml sibling (inspectable, never hand-edited) and
 /// the returned path feeds the unchanged YAML pipeline.
-/// Stage B generation: satz estate -> fragments -> fold -> emit, schema-driven.
-/// Returns every generated file. Used by the transpile flip and diff-pipelines.
+/// Generation: satz estate -> fragments -> fold -> emit, schema-driven.
+/// Returns every generated file; every command that reads an estate goes
+/// through it (transpile, require, report-compliance, adopt, import --into).
 struct PipelineBOut {
     main_tf: String,
     /// What `main_tf` contains, as structure (resource blocks only — the raw

@@ -4,7 +4,7 @@
 // Combine notification categories, each email may only be used once
 // 
 
-// Converted by `satz migrate-to-satz` — interior comments were not carried.
+// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
 pack essential_contacts_organization version "1.1" content
 

@@ -168,6 +168,12 @@ impl Discoverer {
         let mut gcp_id_to_yaml_name: HashMap<String, String> = HashMap::new();
         let mut orphan_resources: Vec<Value> = Vec::new();
 
+        // `tofu show -json` documents carry `values.root_module`; a raw
+        // `.tfstate` (or any other JSON) does not, and used to yield an empty
+        // estate in silence
+        if self.state.get("values").and_then(|v| v.get("root_module")).is_none() {
+            return Err("state: not a `tofu show -json` document (no `values.root_module`) — a raw .tfstate? run `tofu show -json > state.json`".into());
+        }
         let mut all_resources = Vec::new();
         Self::gather_resources(&self.state["values"]["root_module"], &mut all_resources);
 
@@ -676,6 +682,7 @@ impl Discoverer {
         let mut all_assets = Vec::new();
         let mut stats: HashMap<String, usize> = HashMap::new();
         let mut fetch_errors: Vec<String> = Vec::new();
+        let mut unscoped: Vec<(String, String)> = Vec::new();
 
         for (ctype_int, asset_types) in type_map {
             let ctype = ContentType::from(ctype_int as i32);
@@ -705,7 +712,7 @@ impl Discoverer {
                              if verbose { println!("DEBUG: Found asset: {} ({})", asset.name, asset.asset_type); }
                              
                              let Some((scope, _scope_id)) = Self::get_asset_scope(&asset) else {
-                                 eprintln!("Warning: {} has no organization/folder/project scope — not filed", asset.name);
+                                 unscoped.push((asset.asset_type.clone(), asset.name.clone()));
                                  continue;
                              };
 
@@ -771,7 +778,14 @@ impl Discoverer {
         }
 
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
-        let (config, skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
+        let (config, mut skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
+        for (tf_type, name) in unscoped {
+            skipped.push(Skipped {
+                tf_type,
+                what: name,
+                reason: SkipReason::Unmapped("no organization/folder/project scope in the asset name or its ancestors".into()),
+            });
+        }
 
         Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization })
     }

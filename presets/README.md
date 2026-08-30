@@ -17,8 +17,9 @@ param is upstream debt — lift the param into the pack instead** (that is how
 `allowed_policy_member_*` and `essential_contacts_email` came to exist).
 
 Optional packs are gated on a single param: `use "presets/x.satz" when
-logsink_project_name` — undefined or falsy skips the pack entirely (no resources,
-no params, no claims).
+logsink_project_name` — a falsy value skips the pack entirely (no resources, no
+params, no claims). The param must be DECLARED somewhere (`params { … }` of the
+estate or a pack): a `when` on a param nobody declares is an error, not `false`.
 
 Multi-resource-type packs (marked below) rely on **hoisted scopes**: org/customer/
 billing-scoped types (`google_cloud_identity_group`, `google_organization_iam_member`,
