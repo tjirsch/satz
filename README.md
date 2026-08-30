@@ -3,6 +3,11 @@
 **Infrastructure with a constitution — proven live.** Satz compiles an estate — written in a language whose resource types and attributes are the Terraform provider's — to OpenTofu/Terraform HCL, and proves the controls it declares against the live Google Cloud organisation. It succeeds the tool that began as `cfg2hcl`.
 Builtin functions to bootstrap a Google Cloud Organization and do state import, migration and discovery of an existing GCP Organization from state or live infrastructure.
 
+> **📖 Documentation: <https://tjirsch.github.io/satz/>** — this README, the
+> [language reference](https://tjirsch.github.io/satz/docs/satz-language.html) and the
+> [preset pack pages](https://tjirsch.github.io/satz/presets/docs/index.html), searchable,
+> rebuilt on every release. Also: `satz open-readme`, or `satz <command> --html-help`.
+
 ## Folder Structure
 
 The project is structured such that `satz` (the tool) is kept separate from customer-specific definitions. Each customer repository follows this layout:
