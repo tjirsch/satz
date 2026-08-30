@@ -9,7 +9,10 @@ by value). `docs/satz-language.md` is the language reference;
 
 This file holds the rules that apply to every contributor. The maintainer's
 private working state (fleet, customers, runbooks, task list) lives OUTSIDE
-this repository — in `CLAUDE.local.md`, which is git-ignored and gate-rejected,
+this repository — in `CLAUDE.local.md`, which is git-ignored and gate-rejected
+and is a SYMLINK into the maintainer's private notes so every machine reads
+the same file (`ln -sfn <private-notes>/satz-private/CLAUDE.local.md
+CLAUDE.local.md` in the checkout; the exact command is in that file's header),
 and in the maintainer's notes. Nothing in this file names a customer.
 
 ## Rules
