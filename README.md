@@ -803,8 +803,10 @@ satz report-compliance cis-gcp-4.0 C0example.satz --checkov   # + a Checkov colu
 satz triage cis-gcp-4.0 C0example.satz --prowler prowler.json  # the remediation-plan skeleton: A pack covers it / B Satz declares it / C accepted exception / D bring under management / E manual
 ```
 
-Row statuses: **verified** (all witnesses live), `verified*` (some witness types have
-no live check yet — stated, never faked), **DRIFTED** (declared but not live),
+Row statuses: **verified** (all witnesses live), `verified* (n of m)` (some witness
+types have no live check yet — stated, never faked), **unverified** (no witness
+could be checked at all — no ADC, inventory unavailable — never spelled
+"verified"), **DRIFTED** (declared but not live),
 partial (open/attested duties), unmet, broken claim. Each run appends
 `evidence/<framework>-<timestamp>.json` beside the config — the evidence history —
 and writes the report (pandoc PDF like `report-organizational-policies`). Without

@@ -7,7 +7,22 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: tests
+        run: cargo test --workspace --locked
   smoke:
     runs-on: ubuntu-latest
     steps:
@@ -19,6 +34,6 @@ jobs:
           tofu_wrapper: false
       - uses: astral-sh/setup-uv@v6
       - name: build
-        run: cargo build --release --quiet
+        run: cargo build --release --quiet --locked
       - name: smoke matrix
         run: bash scripts/smoke.sh

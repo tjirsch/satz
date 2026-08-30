@@ -12,7 +12,7 @@ that maintain the repo's own data files.
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build-satz-doc.py` | helper | render `docs/satz-language.md` as a self-contained HTML page with the layers diagram inlined |
-| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/example-customers.md`); CI on every push, `--staged` from the pre-commit hook |
+| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/example-customers.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every push (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
 
 ---
 

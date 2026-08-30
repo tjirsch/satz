@@ -419,8 +419,21 @@ pub fn assemble_tree(org: &str, assets: Vec<RawAsset>) -> Result<PolicyTree, Box
                 .then_with(|| na.display_name.cmp(&nb.display_name))
                 .then_with(|| na.id.cmp(&nb.id))
         });
-        if let Some(p) = nodes.get_mut(&parent) {
-            p.children = kids;
+        match nodes.get_mut(&parent) {
+            Some(p) => p.children = kids,
+            // the parent asset was not returned (no permission on it, or a
+            // folder outside the sweep): the children would otherwise vanish
+            // from every renderer while still being counted
+            None => {
+                warnings.push(format!(
+                    "{} node(s) under '{}' are attached to the root: their parent is not part of the visible tree",
+                    kids.len(),
+                    parent
+                ));
+                if let Some(root) = nodes.get_mut(&root_id) {
+                    root.children.extend(kids);
+                }
+            }
         }
     }
 
