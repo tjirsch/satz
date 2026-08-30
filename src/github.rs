@@ -23,6 +23,10 @@ type BoxErr = Box<dyn std::error::Error>;
 /// the other direction — GitHub 301-redirects a renamed repo on every API path,
 /// including deep ones, so this keeps resolving after the repo becomes `satz`.
 pub(crate) const REPO: &str = "tjirsch/satz";
+/// The documentation site — README, language reference and preset docs,
+/// rendered from this repository's Markdown on every release tag
+/// (`.github/workflows/pages.yml`).
+pub(crate) const DOCS_URL: &str = "https://tjirsch.github.io/satz/";
 pub(crate) const API_URL: &str = "https://api.github.com/repos";
 
 /// Appended to a quota message by the three preset commands, all of which can
