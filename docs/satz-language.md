@@ -1101,9 +1101,14 @@ record does not.
 ## 8. Evidence: `report-compliance`
 
 **What you gain:** the goal view joined with the cloud. Every witness of a
-satisfied or partial control is looked up through Cloud Asset Inventory — and
-for org policies, compared **by value**, because a policy that exists and is
-switched off looks healthy in every inventory.
+satisfied or partial control is looked up through Cloud Asset Inventory **in
+its own scope** — a log metric by `projects/<number>/metrics/<name>` from the
+`project` it is emitted with, an organization sink under the organization, a
+bucket by its global name; a same-named resource in another project never
+verifies a witness, and a project-scoped witness emitted without a `project`
+reads *unverifiable* with that reason — and for org policies, compared **by
+value**, because a policy that exists and is switched off looks healthy in
+every inventory.
 
 ```
 satz report-compliance cis-gcp-4.0 C0example1.satz --config ~/estates/acme
@@ -1198,7 +1203,7 @@ never legal conformity.
 |---|---|---|
 | `transpile <estate>.satz` | Satz → HCL | emit `hcl/` |
 | `require <framework> <estate>.satz` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
-| `report-compliance <framework> <estate>.satz` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--format pdf` |
+| `report-compliance <framework> <estate>.satz` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--format pdf`, `--fail-on <statuses>` (exit code as the CI gate) |
 | `check-presets <estate>.satz` | Satz | drift of packs vs upstream |
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |

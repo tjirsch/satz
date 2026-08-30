@@ -670,22 +670,121 @@ pub(crate) enum LiveState {
 /// HCL attribute carries the matchable identifier.
 /// Alert policies and notification channels have server-assigned names, so their
 /// identifier is the display_name (read from CAI resource data).
-fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str)> {
+/// How a witness type is found live: the CAI asset type, the emitted
+/// attribute that identifies it, and the SCOPE the identifier is unique in.
+/// A same-named metric in another project is not this witness — the scope
+/// is part of the key, never inferred.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WitnessScope {
+    /// unique within a project (`project` attribute → project number)
+    Project,
+    /// unique within the organization (`org_id`, or the customer organization)
+    Organization,
+    /// globally unique by name (buckets)
+    Global,
+    /// the attribute IS the asset path (`organizations/1/policies/x`)
+    Path,
+}
+
+fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessScope)> {
     match tf_type {
-        "google_logging_organization_sink" => Some(("logging.googleapis.com/LogSink", "name")),
-        "google_logging_metric" => Some(("logging.googleapis.com/LogMetric", "name")),
-        "google_storage_bucket" => Some(("storage.googleapis.com/Bucket", "name")),
-        "google_monitoring_alert_policy" => {
-            Some(("monitoring.googleapis.com/AlertPolicy", "display_name"))
-        }
+        "google_logging_organization_sink" => Some(("logging.googleapis.com/LogSink", "name", WitnessScope::Organization)),
+        "google_logging_metric" => Some(("logging.googleapis.com/LogMetric", "name", WitnessScope::Project)),
+        "google_storage_bucket" => Some(("storage.googleapis.com/Bucket", "name", WitnessScope::Global)),
+        "google_monitoring_alert_policy" => Some(("monitoring.googleapis.com/AlertPolicy", "display_name", WitnessScope::Project)),
         "google_monitoring_notification_channel" => {
-            Some(("monitoring.googleapis.com/NotificationChannel", "display_name"))
+            Some(("monitoring.googleapis.com/NotificationChannel", "display_name", WitnessScope::Project))
         }
         // The emitted `name` is `organizations/<org>/policies/<constraint>`, which
         // is exactly the CAI asset name minus its `//service/` prefix.
-        "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name")),
+        "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name", WitnessScope::Path)),
         _ => None,
     }
+}
+
+/// The inventory key a live asset is filed under, per scope: its CAI path
+/// (`projects/<number>/metrics/<name>`, `organizations/<org>/sinks/<name>`,
+/// `<bucket>`), and for display-name-keyed types `projects/<number>|<displayName>`.
+fn inventory_keys(asset_name: &str, data: &serde_json::Value) -> Vec<String> {
+    let mut keys = Vec::new();
+    let Some(path) = asset_name.strip_prefix("//").and_then(|r| r.split_once('/')).map(|(_, p)| p) else { return keys };
+    keys.push(path.to_string());
+    if let Some(dn) = data.get("displayName").and_then(|d| d.as_str()) {
+        let segs: Vec<&str> = path.split('/').collect();
+        if segs.len() >= 2 {
+            keys.push(format!("{}/{}|{}", segs[0], segs[1], dn));
+        }
+    }
+    keys
+}
+
+/// The key the DECLARED witness must be found under, built from its own
+/// attributes — the `project`/`org_id` it is emitted with, resolved to the
+/// form Cloud Asset uses (project NUMBER). `Err` names what is missing.
+fn expected_key(
+    w: &str,
+    attr: &str,
+    scope: WitnessScope,
+    attrs: &BTreeMap<String, BTreeMap<String, String>>,
+    manifest: &Manifest,
+    org_id: &str,
+    numbers: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let a = attrs.get(w).ok_or_else(|| format!("{} is not in the emission manifest", w))?;
+    let id = a.get(attr).ok_or_else(|| format!("identifier attribute '{}' not extractable from HCL", attr))?;
+    let tf_type = w.split('.').next().unwrap_or("");
+    match scope {
+        WitnessScope::Path | WitnessScope::Global => Ok(id.clone()),
+        WitnessScope::Organization => {
+            let org = a.get("org_id").map(|o| o.trim_start_matches("organizations/").to_string()).unwrap_or_else(|| org_id.to_string());
+            let collection = match tf_type {
+                "google_logging_organization_sink" => "sinks",
+                other => return Err(format!("no organization-scoped path rule for {}", other)),
+            };
+            Ok(format!("organizations/{}/{}/{}", org, collection, id))
+        }
+        WitnessScope::Project => {
+            let project_id = witness_project(w, manifest).ok_or_else(|| "no `project` attribute to scope the witness — a same-named resource elsewhere must not verify it".to_string())?;
+            let number = numbers.get(&project_id).ok_or_else(|| format!("project `{}` could not be resolved to its number", project_id))?;
+            Ok(match tf_type {
+                "google_logging_metric" => format!("projects/{}/metrics/{}", number, id),
+                "google_monitoring_alert_policy" | "google_monitoring_notification_channel" => format!("projects/{}|{}", number, id),
+                other => return Err(format!("no project-scoped path rule for {}", other)),
+            })
+        }
+    }
+}
+
+/// The project id a witness is emitted with: a literal `project`, or a
+/// `google_project.<x>.project_id` reference followed to that project's id.
+fn witness_project(w: &str, manifest: &Manifest) -> Option<String> {
+    let r = manifest.resources.get(w)?;
+    if let Some(p) = r.attrs.get("project") {
+        return Some(p.trim_start_matches("projects/").to_string());
+    }
+    let traversal = r.refs.get("project")?;
+    let target = traversal.strip_suffix(".project_id").or_else(|| traversal.strip_suffix(".id"))?;
+    manifest.resources.get(target)?.attrs.get("project_id").cloned()
+}
+
+/// Project id → number for every project the witnesses are scoped to, one
+/// `projects.get` each. A lookup failure is an error (the verdicts depend on it).
+async fn project_numbers(ids: &BTreeSet<String>) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    let token = crate::gcp::access_token().await?;
+    let client = reqwest::Client::new();
+    for id in ids {
+        match crate::gcp::resourcemanager::get_project_number(&client, &token, id).await? {
+            Some(name) => {
+                out.insert(id.clone(), name.trim_start_matches("projects/").to_string());
+            }
+            None => return Err(format!("project `{}` does not exist (or is not visible)", id)),
+        }
+    }
+    Ok(out)
 }
 
 /// Live inventory relevant to the witnesses: for each needed CAI asset type, the set
@@ -721,17 +820,11 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
                 .and_then(|r| r.data.as_ref())
                 .and_then(|d| serde_json::to_value(d).ok())
                 .unwrap_or(serde_json::Value::Null);
-            if let Some(seg) = asset.name.rsplit('/').next() {
-                ids.insert(seg.to_string(), data.clone());
-            }
-            // CAI names are `//<service>/<path>`; the path is what an org policy's
-            // emitted `name` attribute holds verbatim.
-            if let Some(path) = asset.name.strip_prefix("//").and_then(|r| r.split_once('/')) {
-                ids.insert(path.1.to_string(), data.clone());
-            }
-            // display_name lives in the resource data (alert policies, channels)
-            if let Some(dn) = data.get("displayName").and_then(|d| d.as_str()) {
-                ids.insert(dn.to_string(), data.clone());
+            // scoped keys only: the bare terminal segment and the bare
+            // displayName used to be keys too, and a same-named resource in
+            // another project verified the witness
+            for k in inventory_keys(&asset.name, &data) {
+                ids.insert(k, data.clone());
             }
         }
         out.insert(at.clone(), ids);
@@ -885,6 +978,7 @@ pub(crate) async fn run_report_compliance(
     prowler_path: Option<PathBuf>,
     checkov: Option<&crate::scan::Report>,
     no_live: bool,
+    fail_on: &[String],
 ) -> Result<(), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     // Checkov findings by emitted address: a failed check on a WITNESS is
@@ -910,6 +1004,7 @@ pub(crate) async fn run_report_compliance(
     if !no_live {
         // Which asset types do the satisfied/partial witnesses need?
         let mut needed: BTreeSet<String> = BTreeSet::new();
+        let mut needed_projects: BTreeSet<String> = BTreeSet::new();
         for goal in goals.values() {
             let ws = match goal {
                 Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. } => witnesses,
@@ -922,12 +1017,24 @@ pub(crate) async fn run_report_compliance(
             };
             for w in ws {
                 if let Some(tf_type) = w.split('.').next() {
-                    if let Some((at, _)) = live_matcher(tf_type) {
+                    if let Some((at, _, scope)) = live_matcher(tf_type) {
                         needed.insert(at.to_string());
+                        if scope == WitnessScope::Project {
+                            if let Some(p) = witness_project(w, manifest) {
+                                needed_projects.insert(p);
+                            }
+                        }
                     }
                 }
             }
         }
+        let numbers = match project_numbers(&needed_projects).await {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("warning: project numbers unavailable ({}); project-scoped witnesses read unverifiable", e);
+                BTreeMap::new()
+            }
+        };
         let inventory = match org_id {
             Some(org) if !needed.is_empty() => match live_inventory(org, &needed).await {
                 Ok(inv) => Some(inv),
@@ -955,17 +1062,15 @@ pub(crate) async fn run_report_compliance(
                         "no live check for {} yet (org IAM auditConfig etc. — roadmap)",
                         tf_type
                     )),
-                    Some((at, attr)) => {
-                        let id = attrs.get(w).and_then(|a| a.get(attr)).cloned();
-                        match (&inventory, id) {
+                    Some((at, attr, scope)) => {
+                        let key = expected_key(w, attr, scope, &attrs, manifest, org_id.unwrap_or(""), &numbers);
+                        match (&inventory, key) {
                             (None, _) => LiveState::Unverifiable(
                                 if org_id.is_none() { "no customer-organization-id".into() }
                                 else { "live inventory unavailable".into() },
                             ),
-                            (Some(_), None) => LiveState::Unverifiable(format!(
-                                "identifier attribute '{}' not extractable from HCL", attr
-                            )),
-                            (Some(inv), Some(id)) => match inv.get(at).and_then(|ids| ids.get(&id)) {
+                            (Some(_), Err(why)) => LiveState::Unverifiable(why),
+                            (Some(inv), Ok(id)) => match inv.get(at).and_then(|ids| ids.get(&id)) {
                                 None => LiveState::Missing,
                                 Some(data) => {
                                     // Existence is not the control. For an org
@@ -979,7 +1084,7 @@ pub(crate) async fn run_report_compliance(
                                                 if got { "ON" } else { "OFF" }
                                             ))
                                         }
-                                        (Some(_), Some(_)) => LiveState::Verified(id),
+                                        (Some(_), Some(_)) => LiveState::Verified(id.clone()),
                                         // We declare an enforcement value but could
                                         // not read the live one. Reporting "verified"
                                         // here would be the exact dishonesty this
@@ -992,7 +1097,7 @@ pub(crate) async fn run_report_compliance(
                                         // Nothing enforcement-shaped was declared
                                         // (list constraints, non-policy types):
                                         // existence IS the whole claim.
-                                        (None, _) => LiveState::Verified(id),
+                                        (None, _) => LiveState::Verified(id.clone()),
                                     }
                                 }
                             },
@@ -1205,6 +1310,22 @@ pub(crate) async fn run_report_compliance(
             }
         }
     }
+    // the report is written whatever the verdicts; the EXIT CODE is the gate,
+    // opted into per status so CI can fail on what the operator decides
+    if !fail_on.is_empty() {
+        let wanted: Vec<String> = fail_on.iter().map(|s| s.trim().to_lowercase().replace('-', " ")).collect();
+        let hits: Vec<String> = json_rows
+            .iter()
+            .filter_map(|r| {
+                let status = r.get("status").and_then(|s| s.as_str()).unwrap_or("").to_lowercase();
+                wanted.iter().any(|w| w == "any" && !status.starts_with("verified") && status != "declared" || status.contains(w.as_str()))
+                    .then(|| format!("{} ({})", r.get("control").and_then(|c| c.as_str()).unwrap_or("?"), status))
+            })
+            .collect();
+        if !hits.is_empty() {
+            return Err(format!("report-compliance: --fail-on {}: {} row(s): {}", fail_on.join(","), hits.len(), hits.join(", ")).into());
+        }
+    }
     Ok(())
 }
 
@@ -1367,7 +1488,7 @@ fn declared_address(resource: &str, attrs: &BTreeMap<String, BTreeMap<String, St
         .iter()
         .filter(|(addr, a)| {
             let tf_type = addr.split('.').next().unwrap_or("");
-            let key = live_matcher(tf_type).map(|(_, attr)| attr).unwrap_or("name");
+            let key = live_matcher(tf_type).map(|(_, attr, _)| attr).unwrap_or("name");
             a.get(key).is_some_and(|v| segment_match(v))
         })
         .map(|(addr, _)| addr)
@@ -1521,5 +1642,41 @@ mod triage_tests {
         assert_eq!(declared_address("//storage.googleapis.com/corp-audit-logs", &attrs).as_deref(), Some("google_storage_bucket.logs"));
         assert_eq!(declared_address("//storage.googleapis.com/other", &attrs), None);
         assert_eq!(declared_address("", &attrs), None);
+    }
+}
+
+#[cfg(test)]
+mod witness_scope_tests {
+    //! The review found live witnesses keyed by their terminal name segment
+    //! and bare displayName: a same-named metric in ANOTHER project verified
+    //! the claim. Keys carry the scope now, and the declared side must name it.
+    use super::*;
+
+    #[test]
+    fn inventory_keys_carry_the_project_number_never_the_bare_name() {
+        let data = serde_json::json!({"displayName": "CIS 2.5 audit config"});
+        let keys = inventory_keys("//monitoring.googleapis.com/projects/100000000001/alertPolicies/17", &data);
+        assert_eq!(keys, vec!["projects/100000000001/alertPolicies/17".to_string(), "projects/100000000001|CIS 2.5 audit config".to_string()]);
+        let keys = inventory_keys("//logging.googleapis.com/projects/100000000001/metrics/cis-2-5", &serde_json::Value::Null);
+        assert_eq!(keys, vec!["projects/100000000001/metrics/cis-2-5".to_string()]);
+        assert!(!keys.iter().any(|k| k == "cis-2-5"), "the bare name is not a key");
+    }
+
+    #[test]
+    fn a_project_scoped_witness_without_a_project_is_unverifiable_not_matched() {
+        let manifest = Manifest::parse(
+            "resource \"google_logging_metric\" \"m\" {\n  name = \"cis-2-5\"\n}\n\
+             resource \"google_logging_metric\" \"n\" {\n  name = \"cis-2-6\"\n  project = \"corp-log-infra-001\"\n}\n",
+        );
+        let attrs = manifest.witness_attrs();
+        let mut numbers = BTreeMap::new();
+        numbers.insert("corp-log-infra-001".to_string(), "100000000001".to_string());
+        let err = expected_key("google_logging_metric.m", "name", WitnessScope::Project, &attrs, &manifest, "1", &numbers).unwrap_err();
+        assert!(err.contains("no `project` attribute"), "{}", err);
+        let key = expected_key("google_logging_metric.n", "name", WitnessScope::Project, &attrs, &manifest, "1", &numbers).unwrap();
+        assert_eq!(key, "projects/100000000001/metrics/cis-2-6");
+        let sink = Manifest::parse("resource \"google_logging_organization_sink\" \"s\" {\n  name = \"audit\"\n  org_id = \"1\"\n}\n");
+        let key = expected_key("google_logging_organization_sink.s", "name", WitnessScope::Organization, &sink.witness_attrs(), &sink, "1", &numbers).unwrap();
+        assert_eq!(key, "organizations/1/sinks/audit");
     }
 }

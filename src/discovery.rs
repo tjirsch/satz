@@ -591,39 +591,35 @@ impl Discoverer {
         }
     }
 
-    fn get_asset_scope(asset: &Asset) -> (String, String) {
+    /// (`organization`|`folder`|`project`, id) from the asset name, else from
+    /// its ancestors. `None` when neither says — an asset with no scope has no
+    /// place in the estate and is skipped with that reason, never filed under
+    /// the organization with an empty id.
+    fn get_asset_scope(asset: &Asset) -> Option<(String, String)> {
         let name = &asset.name;
         if name.contains("/projects/") {
             let after = name.split("/projects/").last().unwrap_or("");
             let pid = after.split('/').next().unwrap_or(after).to_string();
-            return ("project".to_string(), pid);
+            return Some(("project".to_string(), pid));
         } else if name.contains("/folders/") {
             let after = name.split("/folders/").last().unwrap_or("");
             let fid = after.split('/').next().unwrap_or(after);
-            let full_fid = format!("folders/{}", fid);
-            return ("folder".to_string(), full_fid);
+            return Some(("folder".to_string(), format!("folders/{}", fid)));
         } else if name.contains("/organizations/") {
             let after = name.split("/organizations/").last().unwrap_or("");
             let oid = after.split('/').next().unwrap_or(after).to_string();
-            return ("organization".to_string(), oid);
+            return Some(("organization".to_string(), oid));
         }
-
-        // Fallback: Check ancestors
-        if !asset.ancestors.is_empty() {
-             for ancestor in &asset.ancestors {
-                 if ancestor.starts_with("projects/") {
-                     let pid = ancestor.trim_start_matches("projects/");
-                     return ("project".to_string(), pid.to_string());
-                 } else if ancestor.starts_with("folders/") {
-                     return ("folder".to_string(), ancestor.to_string());
-                 } else if ancestor.starts_with("organizations/") {
-                     let oid = ancestor.trim_start_matches("organizations/");
-                     return ("organization".to_string(), oid.to_string());
-                 }
-             }
+        for ancestor in &asset.ancestors {
+            if let Some(pid) = ancestor.strip_prefix("projects/") {
+                return Some(("project".to_string(), pid.to_string()));
+            } else if ancestor.starts_with("folders/") {
+                return Some(("folder".to_string(), ancestor.to_string()));
+            } else if let Some(oid) = ancestor.strip_prefix("organizations/") {
+                return Some(("organization".to_string(), oid.to_string()));
+            }
         }
-        
-        ("organization".to_string(), "".to_string())
+        None
     }
 
     /// `parent` is any Cloud Asset Inventory scope: `organizations/<n>`,
@@ -708,7 +704,10 @@ impl Discoverer {
                          Ok(asset) => {
                              if verbose { println!("DEBUG: Found asset: {} ({})", asset.name, asset.asset_type); }
                              
-                             let (scope, _scope_id) = Self::get_asset_scope(&asset);
+                             let Some((scope, _scope_id)) = Self::get_asset_scope(&asset) else {
+                                 eprintln!("Warning: {} has no organization/folder/project scope — not filed", asset.name);
+                                 continue;
+                             };
 
                              if let Some(config) = &discovery_config {
                                   for (tf_type, r_config) in &config.resource_types {
@@ -847,7 +846,14 @@ impl Discoverer {
                  continue;
              };
 
-             let (scope, scope_id) = Self::get_asset_scope(asset);
+             let Some((scope, scope_id)) = Self::get_asset_scope(asset) else {
+                 skipped.push(Skipped {
+                     tf_type: asset.asset_type.clone(),
+                     what: asset.name.clone(),
+                     reason: SkipReason::Unmapped("no organization/folder/project scope in the asset name or its ancestors".into()),
+                 });
+                 continue;
+             };
 
              let matched_config = configs.iter().find(|(tf_type, c)| {
                  // Skip projects and folders as they are already handled
