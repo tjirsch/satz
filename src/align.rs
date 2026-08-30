@@ -228,7 +228,7 @@ fn align_block(
             .map(|f| (f.props.iter().filter(|p| block_names.contains(&snake(p))).count(), f))
             .filter(|(n, f)| *n > 0 && *n * 2 >= block_names.len().min(f.props.len()).max(1))
             .collect();
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.sort_by_key(|a| std::cmp::Reverse(a.0));
         match scored.as_slice() {
             [(n, f), rest @ ..] if rest.first().map(|(m, _)| m < n).unwrap_or(true) => {
                 tm.map.insert(f.path.clone(), tf_path(name));
@@ -247,7 +247,7 @@ fn align_block(
 pub fn apply_map(data: &mut serde_yaml::Mapping, map: &BTreeMap<String, String>) {
     // longest source paths first so a moved parent does not hide its children
     let mut rows: Vec<(&String, &String)> = map.iter().collect();
-    rows.sort_by(|a, b| b.0.matches('.').count().cmp(&a.0.matches('.').count()));
+    rows.sort_by_key(|a| std::cmp::Reverse(a.0.matches('.').count()));
     for (src, dst) in rows {
         if let Some(v) = take_path(data, src) {
             put_path(data, dst, v);

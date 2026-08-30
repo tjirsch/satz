@@ -531,7 +531,7 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
         let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {}", file, e))?;
         let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
         // bottom-up so earlier line numbers stay valid
-        edits.sort_by(|a, b| b.0.cmp(&a.0));
+        edits.sort_by_key(|a| std::cmp::Reverse(a.0));
         for (line, address, id, (tf_type, natural_key)) in edits {
             let idx = line as usize - 1;
             let Some(decl) = lines.get(idx) else {

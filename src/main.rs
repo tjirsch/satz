@@ -2350,7 +2350,7 @@ async fn import_delta(
         }
         written.push(name);
     }
-    inserts.sort_by(|a, b| b.0.cmp(&a.0));
+    inserts.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (line, name) in inserts {
         if let Some(t) = delta::add_use(&estate_text, &name, Some(line))? {
             estate_text = t;
