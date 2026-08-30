@@ -142,6 +142,11 @@ struct Cli {
     #[arg(long, global = true)]
     validation: Option<String>,
 
+    /// Open the documentation site in the browser at this command's section
+    /// (`satz transpile --html-help`); alone, the site's front page
+    #[arg(long, global = true)]
+    html_help: bool,
+
     /// Enable verbose output
     #[arg(long, global = true)]
     verbose: bool,
@@ -622,7 +627,14 @@ fn save_global_settings(settings: &GlobalSettings) -> Result<(), Box<dyn std::er
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("satz v{} (built {})", env!("CARGO_PKG_VERSION"), env!("BUILD_DATE"));
-    let cli = Cli::parse();
+    // parse into matches first: the subcommand NAME is what --html-help needs,
+    // and clap only hands it out at this level
+    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let subcommand = matches.subcommand_name().map(|s| s.to_string());
+    let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
+    if cli.html_help {
+        return open_html_help(subcommand.as_deref());
+    }
 
     // Load/create global settings on first run (creates ~/.config/satz/satz.toml with defaults)
     let mut global_settings = load_global_settings()?;
@@ -2986,6 +2998,25 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
 }
 
 
+
+/// `--html-help`: the documentation site, at the section of the invoked
+/// command when the README has one (`id="cmd-<name>"`, stamped by
+/// `scripts/build-site.py`), else the front page — said, not assumed.
+fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    const DOCUMENTED: &[&str] = &[
+        "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
+        "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
+        "scan-plan", "generate-migration",
+    ];
+    match subcommand {
+        Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
+        Some(cmd) => {
+            println!("no dedicated section for `{}` in the README yet — opening the command table", cmd);
+            open_url(&format!("{}#cli-usage", DOCS_URL))
+        }
+        None => open_url(DOCS_URL),
+    }
+}
 
 /// Open a URL in the default browser (never an editor).
 fn open_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
