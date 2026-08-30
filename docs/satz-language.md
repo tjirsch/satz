@@ -297,7 +297,8 @@ param names, block keywords, resource types, map keys and param references.
 **Numbers and booleans** — bare literals (`400`, `1.5`) and `true` / `false`.
 
 **Strings** — single-line, double-quoted; multi-line, triple-quoted (the only
-form that may contain a raw newline; content is literal):
+form that may contain a raw newline; `{param}` interpolates in both forms —
+see §6.2 for the escape):
 
 ```
 "europe-west3"
@@ -867,6 +868,12 @@ suppress google_organization_iam_member "group:sec@{customer_domain}" role "role
 - Type is the **full** Terraform type name; the label may interpolate.
 - `role "<role>"` narrows the suppression to one edge of a grant instead of the
   whole member.
+- A grant inside a folder or project is addressed by its node: a bare member
+  (`"group:x@…"`) suppresses that member on EVERY node that grants it; a
+  node-qualified label (`"shared/prod::group:x@…"`, the folder/project labels
+  joined by `/`) suppresses it on that one node.
+- `role` on an address that is in conflict (⊥) is an error: suppress the whole
+  member, or resolve the conflict.
 
 Against the estate above, the first line removes the policy from `main.tf` and
 nothing else changes. Suppressions apply before conflict detection, so

@@ -52,7 +52,7 @@ fn perr<T>(file: &str, line: usize, msg: impl Into<String>) -> Result<T, Pipelin
 
 /// A resolved parameter environment: name → canonical value. Built once per
 /// source file — the using file's bindings win over the pack's defaults
-/// (`Priority::Default < Set`, the parameter layer's load-bearing fact).
+/// (Default < Set: the using document's binding wins).
 pub type Env = BTreeMap<String, serde_yaml::Value>;
 
 fn resolve_str(parts: &[StrPart], env: &Env, file: &str, line: usize) -> Result<String, PipelineError> {
@@ -225,9 +225,11 @@ pub fn apply_suppressions(
             .filter(|a| {
                 a.tf_type == tf
                     && (a.label == sup.label
+                        // `suppress t "folder-a/prj-b::member"` names one node's grant;
+                        // a bare member matches that member on every node
                         || a.label
                             .split_once(GRANT_SCOPE_SEP)
-                            .is_some_and(|(_, m)| m == sup.label))
+                            .is_some_and(|(node, m)| m == sup.label || format!("{}::{}", node, m) == sup.label))
             })
             .cloned()
             .collect();
@@ -248,7 +250,14 @@ pub fn apply_suppressions(
                 }
                 Some(role) => {
                     let Some(crate::algebra::Slot::Ok(entity)) = folded.slots.get_mut(&addr) else {
-                        continue;
+                        return Err(PipelineError {
+                            file: "suppress".to_string(),
+                            line: sup.line,
+                            msg: format!(
+                                "suppress … role on {} \"{}\": the address is in conflict (⊥); suppress the whole member or resolve the conflict first",
+                                sup.tf_type, sup.label
+                            ),
+                        });
                     };
                     let Body::Grant(edges) = &mut entity.body else {
                         return Err(PipelineError {
@@ -294,7 +303,7 @@ pub fn compile_estate(
     let env = build_env(&file, &Env::new(), file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new() };
+    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     let tfvars = w.genv;
     let config = w.config;
@@ -336,7 +345,7 @@ pub fn compile_estate(
 fn pack_claims(file: &satz::File, file_name: &str) -> PackClaims {
     PackClaims {
         pack: file.estate.clone().unwrap_or_default(),
-        version: file.version.clone().unwrap_or_else(|| "1.0".to_string()),
+        version: file.version.clone().unwrap_or_else(|| "unversioned".to_string()),
         file: file_name.to_string(),
         claims: file.claims.clone(),
     }
@@ -396,6 +405,9 @@ fn collect_params(
             Entry::Attr { .. } => {}
             Entry::Use { path, when, line, .. } => {
                 if let Some(p) = when {
+                    if !env.contains_key(p) {
+                        return perr(file_name, *line, format!("use … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the pack", p, p));
+                    }
                     if !truthy(env.get(p)) {
                         continue;
                     }
@@ -477,7 +489,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new() };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -506,6 +518,10 @@ struct Walk<'a> {
     /// Estate-level config blocks (terraform, providers) — resolved values,
     /// consumed by the providers/variables emitters.
     config: BTreeMap<String, serde_yaml::Value>,
+    /// The `use` chain from the estate down to the file being walked — a path
+    /// already on it is a cycle, reported with the chain instead of a stack
+    /// overflow.
+    use_chain: Vec<String>,
     /// Raw HCL collected from every file the walk visits.
     hcl: Vec<HclPassthrough>,
     claims: Vec<PackClaims>,
@@ -550,6 +566,39 @@ impl Walk<'_> {
 }
 
 impl Walk<'_> {
+    /// `use … when <param>`: a param nobody declares is an error, not `false`
+    /// — a typo would otherwise drop the pack without a word.
+    fn when_holds(&self, param: &str, file_name: &str, line: usize) -> Result<bool, PipelineError> {
+        if !self.genv.contains_key(param) {
+            return perr(
+                file_name,
+                line,
+                format!("use … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the pack", param, param),
+            );
+        }
+        Ok(truthy(self.genv.get(param)))
+    }
+
+    /// Load and parse a `use`d file, absorb its params/hcl/claims, and put it
+    /// on the chain. A path already on the chain is a cycle, named in full.
+    /// The caller pops the chain after descending.
+    fn enter_use(&mut self, use_path: &str, file_name: &str, line: usize) -> Result<satz::File, PipelineError> {
+        if self.use_chain.iter().any(|f| f == use_path) {
+            return perr(
+                file_name,
+                line,
+                format!("cyclic `use`: {} → {}", self.use_chain.join(" → "), use_path),
+            );
+        }
+        let src = (self.load)(use_path).map_err(|e| PipelineError { file: file_name.to_string(), line, msg: e })?;
+        let file = satz::parse(&src).map_err(|e| PipelineError { file: use_path.to_string(), line: e.line, msg: e.msg })?;
+        self.absorb_params(&file, use_path)?;
+        self.absorb_hcl(&file, use_path);
+        self.absorb_claims(&file, use_path);
+        self.use_chain.push(use_path.to_string());
+        Ok(file)
+    }
+
     fn items(
         &mut self,
         items: &[Entry],
@@ -572,17 +621,11 @@ impl Walk<'_> {
                 }
                 Entry::Use { path: use_path, as_key, when, line } => {
                     if let Some(p) = when {
-                        if !truthy(self.genv.get(p)) {
+                        if !self.when_holds(p, file_name, *line)? {
                             continue;
                         }
                     }
-                    let src = (self.load)(use_path)
-                        .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
-                    let file = satz::parse(&src)
-                        .map_err(|e| PipelineError { file: use_path.to_string(), line: e.line, msg: e.msg })?;
-                    self.absorb_params(&file, use_path)?;
-                    self.absorb_hcl(&file, use_path);
-                    self.absorb_claims(&file, use_path);
+                    let file = self.enter_use(use_path, file_name, *line)?;
                     let mut child_own = Fragment::default();
                     match as_key {
                         // `use "…" as key`: the pack's top-level entries are the
@@ -595,6 +638,7 @@ impl Walk<'_> {
                         },
                         None => self.items(&file.items, use_path, &mut child_own, all, path)?,
                     }
+                    self.use_chain.pop();
                     all.push(child_own);
                 }
                 Entry::Map { key, name, body, line } => {
@@ -618,7 +662,10 @@ impl Walk<'_> {
                         None => {
                             if k == "terraform" || k == "providers" {
                                 let resolved = serde_yaml::Value::Mapping(resolve_obj(body, &self.genv, file_name)?);
-                                self.config.entry(k).or_insert(resolved);
+                                if self.config.contains_key(&k) {
+                                    return perr(file_name, *line, format!("`{}` is declared twice — one block per estate", k));
+                                }
+                                self.config.insert(k, resolved);
                             } else {
                                 // Previously ignored. Silently dropping a block the
                                 // author wrote means a typo — or a dialect shorthand —
@@ -663,27 +710,24 @@ impl Walk<'_> {
                         }
                         // `google_folder { use "…" }` — the pack's items are folder-map
                         // content (named folder nodes), in their own fragment.
-                        Entry::Use { path: use_path, when, line, .. } => {
+                        Entry::Use { path: use_path, as_key, when, line } => {
                             if let Some(p) = when {
-                                if !truthy(self.genv.get(p)) {
+                                if !self.when_holds(p, file_name, *line)? {
                                     continue;
                                 }
                             }
-                            let src = (self.load)(use_path).map_err(|e| PipelineError {
-                                file: file_name.to_string(),
-                                line: *line,
-                                msg: e,
-                            })?;
-                            let file = satz::parse(&src).map_err(|e| PipelineError {
-                                file: use_path.to_string(),
-                                line: e.line,
-                                msg: e.msg,
-                            })?;
-                            self.absorb_params(&file, use_path)?;
-                            self.absorb_hcl(&file, use_path);
-                            self.absorb_claims(&file, use_path);
+                            let file = self.enter_use(use_path, file_name, *line)?;
                             let mut child_own = Fragment::default();
-                            self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?;
+                            match as_key {
+                                // `use "…" as <type>` inside a folder: the pack is the
+                                // content of that resource map, scoped to the folder
+                                Some(k) => match self.types.resolve(k) {
+                                    Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path)?,
+                                    None => return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as")),
+                                },
+                                None => self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?,
+                            }
+                            self.use_chain.pop();
                             all.push(child_own);
                         }
                         other => {
@@ -727,7 +771,7 @@ impl Walk<'_> {
             file_name,
             line,
             path,
-        );
+        )?;
         let mut child_path = path.to_vec();
         child_path.push(format!("folder:{}", fname));
         self.items(&children, file_name, own, all, &child_path)
@@ -761,8 +805,12 @@ impl Walk<'_> {
                     // change quietly deleted 60 folder_iam_member bindings from
                     // one estate's bindings and most of another's project resources: transpile
                     // returned 0 and the HCL just got smaller.
+                    // A key spelled like a provider type is a child whether or
+                    // not it resolves: an unknown `google_…` is a typo `items`
+                    // rejects by name, never an attribute of its parent.
                     let is_child = k == "google_folder"
                         || k == "google_project"
+                        || k.starts_with("google_")
                         || (k != "project_service"
                             && (self.types.resolve(&k).is_some()
                                 || self.types.resolve(&normalized_tf_type(&k)).is_some()));
@@ -833,7 +881,7 @@ impl Walk<'_> {
                 file_name,
                 pline,
                 path,
-            );
+            )?;
             let mut child_path = path.to_vec();
             child_path.push(format!("project:{}", pname));
             self.items(&children, file_name, own, all, &child_path)?;
@@ -885,34 +933,34 @@ impl Walk<'_> {
                                     file_name,
                                     *line,
                                     path,
-                                );
+                                )?;
                                 continue;
                             }
                             insert_grant(own, rt, &member, &roles, file_name, *line, path)?;
                             continue;
                         }
-                        Entry::Use { path: use_path, when, line, .. } => {
+                        Entry::Use { path: use_path, as_key, when, line } => {
                             if let Some(p) = when {
-                                if !truthy(self.genv.get(p)) {
+                                if !self.when_holds(p, file_name, *line)? {
                                     continue;
                                 }
                             }
-                            let src = (self.load)(use_path).map_err(|e| PipelineError {
-                                file: file_name.to_string(),
-                                line: *line,
-                                msg: e,
-                            })?;
-                            let file = satz::parse(&src).map_err(|e| PipelineError {
-                                file: use_path.to_string(),
-                                line: e.line,
-                                msg: e.msg,
-                            })?;
-                            self.absorb_params(&file, use_path)?;
-                            self.absorb_hcl(&file, use_path);
-                            self.absorb_claims(&file, use_path);
+                            // inside a resource map the map's type IS the key; an
+                            // `as` naming another type cannot be honoured here
+                            if let Some(k) = as_key {
+                                if self.types.resolve(k).map(|t| t.tf_type) != Some(rt.tf_type.clone()) {
+                                    return perr(
+                                        file_name,
+                                        *line,
+                                        format!("use … as {} inside `{} {{ … }}`: the pack is this map's content; move the `use` to the folder or top level to re-key it", k, rt.tf_type),
+                                    );
+                                }
+                            }
+                            let file = self.enter_use(use_path, file_name, *line)?;
                             // pack content lands in this same fragment-map scope;
                             // its own file identity is preserved via provenance.
                             self.resource_map(rt, None, &file.items, use_path, own, *line, path)?;
+                            self.use_chain.pop();
                             continue;
                         }
                         other => {
@@ -937,7 +985,7 @@ impl Walk<'_> {
                 file_name,
                 line,
                 path,
-            );
+            )?;
         }
         Ok(())
     }
@@ -991,9 +1039,28 @@ fn insert_grant(
                         // Adoption of an existing binding: rides the edge to the
                         // emitter, which writes the `import` block. Used to be
                         // dropped here without a word.
-                        "import-id" => import_id = v.as_str().unwrap_or_default().to_string(),
-                        "role" => role = v.as_str().unwrap_or_default().to_string(),
-                        other => role = other.to_string(),
+                        "import-id" => {
+                            import_id = match v.as_str() {
+                                Some(id) => id.to_string(),
+                                None => return perr(file_name, line, format!("grant: \"import-id\" must be a string, got {:?}", v)),
+                            }
+                        }
+                        "role" => {
+                            role = match v.as_str() {
+                                Some(r) => r.to_string(),
+                                None => return perr(file_name, line, format!("grant: `role` must be a string, got {:?}", v)),
+                            }
+                        }
+                        // the legacy dialect's null-valued role key beside a
+                        // `condition` — the ONLY other key accepted
+                        other if v.is_null() && role.is_empty() => role = other.to_string(),
+                        other => {
+                            return perr(
+                                file_name,
+                                line,
+                                format!("grant: unknown key `{}` in a conditional grant object — the keys are `role`, `condition`, \"import-id\"", other),
+                            )
+                        }
                     }
                 }
                 if role.is_empty() {
@@ -1037,18 +1104,29 @@ fn insert_entity(
     file: &str,
     line: usize,
     node_path: &[String],
-) {
+) -> Result<(), PipelineError> {
     let span = Span { file: file.to_string(), line: line as u32 };
-    // Within one source file the same address may legitimately recur (two folder
-    // blocks contributing to one map elsewhere is a front-end concern; here we
-    // keep first-wins and let the FOLD raise the conflict across fragments).
-    own.entities.entry(addr.clone()).or_insert(Entity {
-        addr,
-        scope,
-        body,
-        provenance: vec![span],
-        node_path: node_path.to_vec(),
-    });
+    // Within one source file the same address may recur only with the SAME
+    // body (idempotent, provenance accumulates); a different body is the
+    // conflict the fold would raise across files, raised here with both lines.
+    match own.entities.get_mut(&addr) {
+        Some(existing) if existing.body == body => existing.provenance.push(span),
+        Some(existing) => {
+            let first = existing.provenance.first().map(|s| s.line).unwrap_or(0);
+            return perr(
+                file,
+                line,
+                format!("{}.{} is declared twice in this file with different bodies (first at line {})", addr.tf_type, addr.label, first),
+            );
+        }
+        None => {
+            own.entities.insert(
+                addr.clone(),
+                Entity { addr, scope, body, provenance: vec![span], node_path: node_path.to_vec() },
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Fold the fragments. Thin wrapper so callers never touch `algebra` directly.
@@ -1549,5 +1627,116 @@ mod full_type_name_tests {
              labels {\n      costcenter = \"cc1\"\n    }\n  }\n}\n",
         )
         .unwrap_or_else(|e| panic!("labels is an attribute block, not a resource type: {:?}", e));
+    }
+}
+
+#[cfg(test)]
+mod review_2026_08_29_tests {
+    //! The review found a family of "not understood → dropped" paths in the
+    //! front-end. Each is now an error; these pin them.
+    use super::*;
+
+    struct Table;
+    impl TypeResolver for Table {
+        fn resolve(&self, key: &str) -> Option<ResolvedType> {
+            let entity = |t: &str, scope: Scope| Some(ResolvedType { tf_type: t.into(), class: MergeClass::Entity, scope });
+            match key {
+                "google_folder" => entity("google_folder", Scope::Node),
+                "google_storage_bucket" => entity("google_storage_bucket", Scope::Node),
+                "google_cloud_identity_group" => entity("google_cloud_identity_group", Scope::Customer),
+                "google_org_policy_policy" => entity("google_org_policy_policy", Scope::Node),
+                "google_organization_iam_member" => Some(ResolvedType { tf_type: "google_organization_iam_member".into(), class: MergeClass::Grant, scope: Scope::Org }),
+                _ => None,
+            }
+        }
+    }
+    impl TypeTable for Table {
+        fn merge_class(&self, t: &str) -> MergeClass {
+            if t.ends_with("_iam_member") { MergeClass::Grant } else { MergeClass::Entity }
+        }
+        fn scope(&self, _t: &str) -> Scope {
+            Scope::Node
+        }
+    }
+
+    fn compile_with(src: &str, files: &[(&str, &str)]) -> Result<FrontEnd, PipelineError> {
+        let load = |p: &str| files.iter().find(|(n, _)| *n == p).map(|(_, s)| s.to_string()).ok_or_else(|| format!("no such file {}", p));
+        compile_estate("main.satz", src, &Table, &load)
+    }
+    fn compile(src: &str) -> Result<FrontEnd, PipelineError> {
+        compile_with(src, &[])
+    }
+    trait MustFail {
+        fn must_fail(self, why: &str) -> PipelineError;
+    }
+    impl MustFail for Result<FrontEnd, PipelineError> {
+        fn must_fail(self, why: &str) -> PipelineError {
+            match self {
+                Err(e) => e,
+                Ok(_) => panic!("{}", why),
+            }
+        }
+    }
+    const HEAD: &str = "estate e\nparams { customer_organization_id = \"1\" }\n";
+
+    #[test]
+    fn an_unknown_full_type_name_nested_in_a_folder_is_rejected_not_absorbed() {
+        let src = format!("{}google_folder {{ f {{ display_name = \"F\" google_stroage_bucket {{ b {{ name = \"b\" }} }} }} }}\n", HEAD);
+        let err = compile(&src).must_fail("a typo'd nested type must not compile");
+        assert!(err.msg.contains("google_stroage_bucket"), "{}", err.msg);
+    }
+
+    #[test]
+    fn use_as_inside_a_folder_keys_the_pack_by_that_type() {
+        let src = format!("{}google_folder {{ f {{ display_name = \"F\" use \"g.satz\" as google_cloud_identity_group }} }}\n", HEAD);
+        let fe = compile_with(&src, &[("g.satz", "pack g\n\"log-admins\" { display_name = \"LA\" }\n")]).unwrap();
+        let folded = fold_fragments(&Table, &fe.fragments);
+        let kinds: Vec<&str> = folded.slots.keys().map(|a| a.tf_type.as_str()).collect();
+        assert!(kinds.contains(&"google_cloud_identity_group"), "{:?}", kinds);
+        assert!(!folded.slots.keys().any(|a| a.tf_type == "google_folder" && a.label == "log-admins"), "the pack must not become folders");
+    }
+
+    #[test]
+    fn use_as_another_type_inside_a_resource_map_is_an_error() {
+        let src = format!("{}google_org_policy_policy {{ use \"g.satz\" as google_cloud_identity_group }}\n", HEAD);
+        let err = compile_with(&src, &[("g.satz", "pack g\n")]).must_fail("must not be silently ignored");
+        assert!(err.msg.contains("use … as"), "{}", err.msg);
+    }
+
+    #[test]
+    fn when_on_an_undeclared_param_is_an_error() {
+        let src = format!("{}use \"p.satz\" when want_cs\n", HEAD);
+        let err = compile_with(&src, &[("p.satz", "pack p\n")]).must_fail("typo must not drop the pack");
+        assert!(err.msg.contains("unknown param `want_cs`"), "{}", err.msg);
+    }
+
+    #[test]
+    fn an_unknown_key_in_a_grant_object_is_an_error() {
+        let src = format!("{}google_organization_iam_member {{ \"user:a@b.c\" = [ {{ role = \"roles/viewer\" description = \"why\" }} ] }}\n", HEAD);
+        let err = compile(&src).must_fail("the role must not become `description`");
+        assert!(err.msg.contains("unknown key `description`"), "{}", err.msg);
+    }
+
+    #[test]
+    fn the_same_address_twice_in_one_file_with_different_bodies_is_an_error() {
+        let src = format!("{}google_org_policy_policy {{ p {{ name = \"first\" }} p {{ name = \"second\" }} }}\n", HEAD);
+        let err = compile(&src).must_fail("second body must not be dropped");
+        assert!(err.msg.contains("declared twice"), "{}", err.msg);
+        let same = format!("{}google_org_policy_policy {{ p {{ name = \"x\" }} p {{ name = \"x\" }} }}\n", HEAD);
+        compile(&same).expect("an identical repeat is idempotent");
+    }
+
+    #[test]
+    fn a_cyclic_use_is_reported_with_its_chain() {
+        let src = format!("{}use \"a.satz\"\n", HEAD);
+        let err = compile_with(&src, &[("a.satz", "pack a\nuse \"b.satz\"\n"), ("b.satz", "pack b\nuse \"a.satz\"\n")]).must_fail("must not overflow");
+        assert!(err.msg.contains("cyclic `use`: main.satz → a.satz → b.satz → a.satz"), "{}", err.msg);
+    }
+
+    #[test]
+    fn a_second_terraform_block_is_an_error() {
+        let src = format!("{}terraform {{ backend {{ local {{ path = \"a\" }} }} }}\nterraform {{ backend {{ local {{ path = \"b\" }} }} }}\n", HEAD);
+        let err = compile(&src).must_fail("second block must not be dropped");
+        assert!(err.msg.contains("declared twice"), "{}", err.msg);
     }
 }

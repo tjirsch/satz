@@ -380,6 +380,9 @@ fn format_to_interpolation(vals: &[serde_yaml::Value]) -> Result<String, Migrate
             i += 1;
         }
     }
+    if args.next().is_some() {
+        return Err(MigrateError { msg: format!("!format: more args than {{}} in '{}'", template) });
+    }
     Ok(out)
 }
 
