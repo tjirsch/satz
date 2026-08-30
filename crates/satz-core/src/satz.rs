@@ -637,6 +637,12 @@ impl P {
     /// Entries until the matching `}` (consumed).
     fn entries(&mut self) -> Result<Vec<Entry>, SatzError> {
         let mut out = Vec::new();
+        // (key, name) → first line. A key that repeats inside ONE body used to
+        // last-win silently (`lifecycle_rule { A } lifecycle_rule { B }` emitted
+        // only B); it is an error naming both lines now. Resource-type maps
+        // (`google_…`) may repeat — two `google_org_policy_policy { … }` groups
+        // in one file are the same map, folded by address.
+        let mut seen: Vec<(String, Option<String>, usize)> = Vec::new();
         loop {
             let line = self.line();
             match self.peek() {
@@ -659,11 +665,13 @@ impl P {
                         Some(Tok::Eq) => {
                             self.next();
                             let value = self.value()?;
+                            note_key(&mut seen, &key, None, line)?;
                             out.push(Entry::Attr { key, value, line });
                         }
                         Some(Tok::LBrace) => {
                             self.next();
                             let body = self.entries()?;
+                            note_key(&mut seen, &key, None, line)?;
                             out.push(Entry::Map { key, name: None, body, line });
                         }
                         Some(Tok::Ident(_)) | Some(Tok::Str(_)) => {
@@ -674,6 +682,7 @@ impl P {
                             };
                             self.expect(Tok::LBrace, "'{' after map entry name")?;
                             let body = self.entries()?;
+                            note_key(&mut seen, &key, Some(&name), line)?;
                             out.push(Entry::Map { key, name: Some(name), body, line });
                         }
                         other => {
@@ -807,6 +816,39 @@ impl P {
         }
         Ok(Entry::Use { path, as_key, when, line })
     }
+}
+
+/// The text of a key for the duplicate check: an identifier as is, a string
+/// key by its literal parts with `{…}` for an interpolation.
+fn key_text(k: &Key) -> String {
+    match k {
+        Key::Ident(s) => s.clone(),
+        Key::Str(parts) => parts
+            .iter()
+            .map(|p| match p {
+                StrPart::Lit(s) => s.clone(),
+                StrPart::Param(r) => format!("{{{}}}", r),
+            })
+            .collect(),
+    }
+}
+
+/// Record a body entry's key; a repeat of a non-resource key is an error.
+fn note_key(seen: &mut Vec<(String, Option<String>, usize)>, key: &Key, name: Option<&Key>, line: usize) -> Result<(), SatzError> {
+    let k = key_text(key);
+    if k.starts_with("google_") {
+        return Ok(());
+    }
+    let n = name.map(key_text);
+    if let Some((_, _, first)) = seen.iter().find(|(sk, sn, _)| *sk == k && *sn == n) {
+        let what = match &n {
+            Some(n) => format!("`{} {}`", k, n),
+            None => format!("`{}`", k),
+        };
+        return err(line, format!("{} is given twice in this block (first at line {}) — a repeated key would silently last-win; write a list (`{} = [ … ]`) or remove one", what, first, k));
+    }
+    seen.push((k, n, line));
+    Ok(())
 }
 
 pub fn parse(src: &str) -> Result<File, SatzError> {
@@ -1413,5 +1455,15 @@ mod review_2026_08_29_tests {
         let f = parse("estate e\n/* a block\n   comment */\ngoogle_x { a { v = 1 } }\n").unwrap();
         assert_eq!(f.items.len(), 1);
         assert!(parse("estate e\n/* never closed\n").unwrap_err().msg.contains("unterminated"));
+    }
+
+    #[test]
+    fn a_repeated_key_in_one_body_is_an_error_but_resource_maps_may_repeat() {
+        let e = parse("estate e\ngoogle_storage_bucket { b { name = \"x\" lifecycle_rule { action { type = \"Delete\" } } lifecycle_rule { action { type = \"Delete\" } } } }\n").unwrap_err();
+        assert!(e.msg.contains("`lifecycle_rule` is given twice") && e.msg.contains("first at line 2"), "{}", e.msg);
+        let e = parse("estate e\ngoogle_storage_bucket { b { name = \"x\"\n name = \"y\" } }\n").unwrap_err();
+        assert!(e.msg.contains("`name` is given twice"), "{}", e.msg);
+        parse("estate e\ngoogle_org_policy_policy { a { name = \"a\" } }\ngoogle_org_policy_policy { b { name = \"b\" } }\n").expect("two groups of one resource type are one map");
+        parse("estate e\ngoogle_folder { a { display_name = \"A\" } b { display_name = \"B\" } }\n").expect("different labels");
     }
 }

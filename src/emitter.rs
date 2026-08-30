@@ -319,7 +319,14 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 } else if t.contains("folder") {
                     ("folder", rc.folder_ref.clone().or(rc.folder_id.clone()))
                 } else {
-                    ("id", None)
+                    // a bucket / service-account / … scoped grant has no scope
+                    // to inherit from the node path; the map form used to emit
+                    // an `id = ""` block that could never plan
+                    return Err(format!(
+                        "{}: the member map form (`\"member\" = [roles…]`) only works for project- and folder-scoped grants; \
+                         write `{}` as a labelled resource with its scope attribute (`bucket = …`, `service_account_id = …`)",
+                        t, t
+                    ));
                 };
                 let parent_expr = crate::emit_shared::parse_expr(parent.as_deref().unwrap_or(""));
                 for e in reconciled_edges(edges)? {

@@ -158,10 +158,14 @@ fn normalize_rule(rule: &Value) -> Value {
         }
     }
 
-    // parameters: object | JSON string
+    // parameters: object | JSON string — a string that is not JSON is not a
+    // policy the provider could apply, so it is an error, not a DIFFERS
     if let Some(p) = obj.get("parameters") {
         let parsed = match p {
-            Value::String(s) => serde_json::from_str::<Value>(s).unwrap_or(Value::String(s.clone())),
+            // strings come only from the estate and are validated when the
+            // desired set is built (`desired_from_bodies`); the API sends objects
+            Value::String(s) => serde_json::from_str::<Value>(s)
+                .unwrap_or_else(|e| panic!("org policy rule `parameters` is not JSON ({}) — validated at the desired-set boundary: {}", e, s)),
             other => other.clone(),
         };
         out.insert("parameters".to_string(), canonical_json(&parsed));
@@ -625,6 +629,18 @@ fn desired_from_bodies(
         let body_json: Value = serde_json::to_value(&body)?;
         let name = body_json.get("name").and_then(|v| v.as_str()).unwrap_or(&yaml_key);
         let constraint = constraint_name(name);
+        // a `parameters` JSON string the estate wrote must parse — the provider
+        // would reject it, and a diff against it would read as a false DIFFERS
+        for spec_key in ["spec", "dry_run_spec", "dryRunSpec"] {
+            let rules = body_json.get(spec_key).and_then(|s| s.get("rules")).and_then(|r| r.as_array());
+            for (i, rule) in rules.into_iter().flatten().enumerate() {
+                if let Some(Value::String(p)) = rule.get("parameters") {
+                    serde_json::from_str::<Value>(p).map_err(|e| {
+                        format!("{}: {}.rules[{}].parameters is not JSON ({}): {}", yaml_key, spec_key, i, e, p)
+                    })?;
+                }
+            }
+        }
         let parent = body_json
             .get("parent")
             .and_then(|v| v.as_str())

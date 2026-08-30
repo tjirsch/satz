@@ -104,9 +104,9 @@ and in the maintainer's notes. Nothing in this file names a customer.
   reads NOT ENFORCED, which outranks DRIFTED. `--prowler` reads Prowler's OCSF
   output (≥ 4) and the legacy JSON; a FAIL on a verified witness makes the row
   CONTESTED (integration proposal I2).
-- Known v0 defect, documented in the language reference: a repeated block key
-  inside one body silently last-wins (write repeated blocks as a list of
-  objects). (The folder emitter's fixed attribute set, #33, is fixed.)
+- A key repeated inside one body is a parse error naming both lines (was the
+  last known v0 silent-last-wins defect; repeated blocks are a list of
+  objects, resource-type maps may repeat).
 
 ## Scripts
 
