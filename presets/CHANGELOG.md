@@ -29,5 +29,6 @@ the private history recorded them.
 | `monitoring.organization_cis_log_alerts_central` | 1.0 | 2026-08-21 | first version |
 | `project_cis_log_alerts` | 1.0 | 2026-08-21 | per-project variant of the CIS 2.5–2.12 metrics + alerts |
 | `sa_security_audit` | 1.0 | 2026-08-21 | read-only security-audit service account with its custom role |
+| `billing_account_permissions` | 1.1 | 2026-09-01 | split by audience: the domain gets `billing.user` + `billing.viewer`; a `billing_admins_group` param (default `gcp-billing-admins@{customer_domain}`) gets `billing.admin` + `billing.costsManager`; the IaC SA keeps `billing.admin`. Adoption adds three grants per estate — a real plan |
 | `billing_account_permissions` | 1.0 | 2026-08-20 | billing-account IAM for the S1 groups and the IaC service account |
 | `organization_budget` | 1.0 | 2026-08-20 | organization budget with threshold alerts (`"import-id"` example) |

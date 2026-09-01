@@ -444,14 +444,18 @@ satz adopt C0example.satz --only google_org_policy_policy --activate --execute -
 
 ## billing-account-permissions.satz
 
-Billing-account IAM: grants for the billing admins group and the IaC service account
-on the billing account (declares its own `google_billing_account_iam_member` map,
-pinned to `billing_account_infra`).
+Billing-account IAM, split by audience: everyone in the domain gets
+`billing.user` + `billing.viewer`; the full administration (`billing.admin` +
+`billing.costsManager`) goes to ONE group named by the `billing_admins_group`
+param (default `gcp-billing-admins@{customer_domain}` — the s1 model's group);
+the IaC service account keeps `billing.admin`. Declares its own
+`google_billing_account_iam_member` map, pinned to `billing_account_infra`.
 
 **Use** (root level): `use "presets/billing-account-permissions.satz"`
 
 **Required from the estate:** `billing_account_infra`, `customer_domain`,
-`svc_iac_account`, `infra_project_name`
+`svc_iac_account`, `infra_project_name`; override `billing_admins_group` for a
+group outside the s1 naming.
 
 ## organization-budget.satz
 

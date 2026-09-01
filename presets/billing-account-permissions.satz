@@ -1,6 +1,17 @@
-// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
+// Billing-account IAM, split by audience: everyone in the domain may USE and
+// VIEW the billing account (link projects, read costs); the full
+// administration — and every other billing-account role — goes to ONE group,
+// named by a param so no customer forks the pack for it. The IaC service
+// account keeps `billing.admin`: it manages this account's budgets and
+// project links on every apply.
 
-pack billing_account_permissions version "1.0"
+pack billing_account_permissions version "1.1"
+
+params {
+  // The group holding billing.admin and billing.costsManager on the billing
+  // account. The s1 group model's default; any existing group works.
+  billing_admins_group = "gcp-billing-admins@{customer_domain}"
+}
 
 google_billing_account_iam_member {
   billing_account_id = billing_account_infra
@@ -9,6 +20,10 @@ google_billing_account_iam_member {
   ]
   "domain:{customer_domain}" = [
     "roles/billing.user",
+    "roles/billing.viewer",
+  ]
+  "group:{billing_admins_group}" = [
+    "roles/billing.admin",
+    "roles/billing.costsManager",
   ]
 }
-
