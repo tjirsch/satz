@@ -9,7 +9,7 @@
 
 // Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
-pack CIS_GCP_Foundation_4_0 version "2.1"
+pack CIS_GCP_Foundation_4_0 version "2.2"
 
 params {
   // CIS §1.1 Domain Restricted Sharing (iam.managed.allowedPolicyMembers):
@@ -57,12 +57,14 @@ params {
     "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
     "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ktd-hpsa.iam.gserviceaccount.com",
   ]
-  // essentialcontacts.managed.allowedContactDomains: the domain whose addresses
-  // may be set as essential contacts. Default = the customer's own domain. Some
-  // customers keep their contact addresses on a DIFFERENT domain than the org
-  // (estate 3: org example.com, contacts @example.net) — set it here rather
-  // than forking the pack.
-  essential_contacts_allowed_domain = customer_domain
+  // essentialcontacts.managed.allowedContactDomains: the DOMAINS whose
+  // addresses may be set as essential contacts (each entry `@domain`).
+  // Default = the customer's own domain. Some customers keep contacts on a
+  // different domain, or on several — a LIST param since v2.2, so neither
+  // case forks the pack.
+  essential_contacts_allowed_domains = [
+    "@{customer_domain}",
+  ]
 }
 
 "iam-managed-disableServiceAccountKeyCreation" {
@@ -279,7 +281,9 @@ params {
     rules = [
       {
         enforce = "TRUE"
-        parameters = "{{\"allowedDomains\" : [\"@{essential_contacts_allowed_domain}\"]}}"
+        parameters = {
+          allowedDomains = essential_contacts_allowed_domains
+        }
       },
     ]
   }

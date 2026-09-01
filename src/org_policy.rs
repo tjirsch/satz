@@ -977,6 +977,89 @@ pub(crate) async fn fetch_current(
 // Conversions for export / activation
 // ---------------------------------------------------------------------------
 
+/// The DECLARED `spec` of an org policy (the estate's folded body: snake_case
+/// keys, `enforce = "TRUE"`, `parameters` as a JSON string or a structured
+/// object) converted to the API shape `create_policy` posts. Activation used
+/// to synthesize `{"rules":[{"enforce":bool}]}`, which parameterized managed
+/// constraints (`…allowedContactDomains`, `…allowedPolicyMembers`) reject —
+/// their rules REQUIRE `parameters`. An unknown key is an error: a spec the
+/// converter does not understand must never activate as something else.
+pub(crate) fn declared_spec_to_api(spec: &serde_yaml::Value) -> Result<Value, String> {
+    let spec: Value = serde_json::to_value(spec).map_err(|e| format!("declared spec is not serialisable: {}", e))?;
+    let obj = spec.as_object().ok_or("declared spec is not a mapping")?;
+    let as_bool = |v: &Value, what: &str| -> Result<Value, String> {
+        match v {
+            Value::Bool(b) => Ok(Value::Bool(*b)),
+            Value::String(s) if s.eq_ignore_ascii_case("true") => Ok(Value::Bool(true)),
+            Value::String(s) if s.eq_ignore_ascii_case("false") => Ok(Value::Bool(false)),
+            other => Err(format!("{} must be a boolean or \"TRUE\"/\"FALSE\", got {}", what, other)),
+        }
+    };
+    let mut out = serde_json::Map::new();
+    for (k, v) in obj {
+        match k.as_str() {
+            "rules" => {
+                let list = v.as_array().ok_or("spec.rules is not a list")?;
+                let mut rules = Vec::new();
+                for (i, rule) in list.iter().enumerate() {
+                    let robj = rule.as_object().ok_or_else(|| format!("spec.rules[{}] is not a mapping", i))?;
+                    let mut r = serde_json::Map::new();
+                    for (rk, rv) in robj {
+                        match rk.as_str() {
+                            "enforce" => {
+                                r.insert("enforce".into(), as_bool(rv, "enforce")?);
+                            }
+                            "allow_all" | "allowAll" => {
+                                r.insert("allowAll".into(), as_bool(rv, "allow_all")?);
+                            }
+                            "deny_all" | "denyAll" => {
+                                r.insert("denyAll".into(), as_bool(rv, "deny_all")?);
+                            }
+                            "parameters" => {
+                                let parsed = match rv {
+                                    Value::String(s) => serde_json::from_str::<Value>(s)
+                                        .map_err(|e| format!("spec.rules[{}].parameters is not JSON ({}): {}", i, e, s))?,
+                                    other => other.clone(),
+                                };
+                                r.insert("parameters".into(), parsed);
+                            }
+                            "values" => {
+                                let vobj = rv.as_object().ok_or_else(|| format!("spec.rules[{}].values is not a mapping", i))?;
+                                let mut vout = serde_json::Map::new();
+                                for (vk, vv) in vobj {
+                                    match vk.as_str() {
+                                        "allowed_values" | "allowedValues" => vout.insert("allowedValues".into(), vv.clone()),
+                                        "denied_values" | "deniedValues" => vout.insert("deniedValues".into(), vv.clone()),
+                                        other => return Err(format!("spec.rules[{}].values: unknown key `{}`", i, other)),
+                                    };
+                                }
+                                r.insert("values".into(), Value::Object(vout));
+                            }
+                            "condition" => {
+                                r.insert("condition".into(), rv.clone());
+                            }
+                            other => return Err(format!("spec.rules[{}]: unknown key `{}` — extend declared_spec_to_api before activating with it", i, other)),
+                        }
+                    }
+                    rules.push(Value::Object(r));
+                }
+                out.insert("rules".into(), Value::Array(rules));
+            }
+            "inherit_from_parent" | "inheritFromParent" => {
+                out.insert("inheritFromParent".into(), as_bool(v, "inherit_from_parent")?);
+            }
+            "reset" => {
+                out.insert("reset".into(), as_bool(v, "reset")?);
+            }
+            other => return Err(format!("spec: unknown key `{}` — extend declared_spec_to_api before activating with it", other)),
+        }
+    }
+    if !out.contains_key("rules") {
+        return Err("declared spec has no rules — nothing to activate".into());
+    }
+    Ok(Value::Object(out))
+}
+
 /// Convert a live policy's `spec` (camelCase, `enforce: bool`, parameters object) into
 /// the snake_case YAML spec the transpiler consumes (`enforce: "TRUE"`, parameters as a
 /// JSON string).
@@ -1608,10 +1691,9 @@ mod tests {
         let ec = desired
             .get(&policy_key("organizations/123456789", "essentialcontacts.managed.allowedContactDomains"))
             .expect("parameterized constraint present");
-        let params = ec.policy["spec"]["rules"][0]["parameters"]
-            .as_str()
-            .expect("parameters is a JSON string");
-        assert!(params.contains("@example.com"), "params were: {}", params);
+        // structured since pack v2.2 — a list param, no JSON string
+        let domains = &ec.policy["spec"]["rules"][0]["parameters"]["allowedDomains"];
+        assert_eq!(domains[0], "@example.com", "params were: {}", ec.policy["spec"]["rules"][0]["parameters"]);
     }
 
     #[test]
@@ -1667,5 +1749,38 @@ mod tests {
         let json: Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert!(json.get("nodes").is_some());
         assert_eq!(json["tree_summary"]["total_projects"], 2);
+    }
+
+    #[test]
+    fn activation_specs_carry_parameters_and_reject_what_they_cannot_express() {
+        // the boolean constraint: string enforce becomes a bool
+        let spec: serde_yaml::Value = serde_yaml::from_str("rules:\n- enforce: \"TRUE\"\n").unwrap();
+        assert_eq!(
+            declared_spec_to_api(&spec).unwrap(),
+            serde_json::json!({"rules": [{"enforce": true}]})
+        );
+        // parameters as the pack's JSON string
+        let spec: serde_yaml::Value =
+            serde_yaml::from_str("rules:\n- enforce: \"TRUE\"\n  parameters: '{\"allowedDomains\": [\"@example.com\"]}'\n").unwrap();
+        assert_eq!(
+            declared_spec_to_api(&spec).unwrap(),
+            serde_json::json!({"rules": [{"enforce": true, "parameters": {"allowedDomains": ["@example.com"]}}]})
+        );
+        // parameters as the structured object
+        let spec: serde_yaml::Value =
+            serde_yaml::from_str("rules:\n- enforce: \"TRUE\"\n  parameters:\n    allowedPrincipalSets:\n    - //cloudresourcemanager.googleapis.com/organizations/123456789012\n").unwrap();
+        let api = declared_spec_to_api(&spec).unwrap();
+        assert_eq!(api["rules"][0]["parameters"]["allowedPrincipalSets"][0], "//cloudresourcemanager.googleapis.com/organizations/123456789012");
+        // a list constraint
+        let spec: serde_yaml::Value = serde_yaml::from_str("rules:\n- values:\n    allowed_values: [\"INTERNAL\"]\n").unwrap();
+        assert_eq!(
+            declared_spec_to_api(&spec).unwrap(),
+            serde_json::json!({"rules": [{"values": {"allowedValues": ["INTERNAL"]}}]})
+        );
+        // never a silent guess
+        let spec: serde_yaml::Value = serde_yaml::from_str("rules:\n- what: 1\n").unwrap();
+        assert!(declared_spec_to_api(&spec).unwrap_err().contains("unknown key `what`"));
+        let spec: serde_yaml::Value = serde_yaml::from_str("rules:\n- enforce: \"TRUE\"\n  parameters: 'not json'\n").unwrap();
+        assert!(declared_spec_to_api(&spec).unwrap_err().contains("not JSON"));
     }
 }

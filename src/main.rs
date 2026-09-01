@@ -2459,13 +2459,36 @@ async fn run_adopt(
 
     if import {
         let hcl_dir = Path::new(&runtime_config.hcl_dir);
+        // activation posts the DECLARED spec — parameterized managed
+        // constraints (allowedContactDomains, allowedPolicyMembers) require
+        // their `parameters` and reject a synthesized enforce-only rule
+        let declared_specs: std::collections::BTreeMap<String, serde_yaml::Value> = out
+            .org_policies
+            .iter()
+            .filter_map(|(_, body)| {
+                let name = body.get("name")?.as_str()?;
+                let spec = body.get("spec")?.clone();
+                Some((crate::org_policy::constraint_name(name), spec))
+            })
+            .collect();
         let (mut activated, mut imported, mut failed) = (0usize, 0usize, 0usize);
         for r in &resolutions {
             let id = match &r.outcome {
-                Outcome::NeedsActivation { id, enforce } => {
+                Outcome::NeedsActivation { id, .. } => {
                     let Some((parent, constraint)) = &r.org_policy else { continue };
                     println!("  {:60} activating (managed, not live)...", r.address);
-                    let spec = serde_json::json!({ "rules": [{ "enforce": enforce.unwrap_or(true) }] });
+                    let spec = match declared_specs
+                        .get(constraint)
+                        .ok_or_else(|| format!("{} declares no spec", constraint))
+                        .and_then(crate::org_policy::declared_spec_to_api)
+                    {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("  {:60} activation FAILED: {}", r.address, e);
+                            failed += 1;
+                            continue;
+                        }
+                    };
                     let client = live.org_policy_client().await?;
                     match client.create_policy(parent, constraint, spec).await {
                         Ok(()) => activated += 1,
