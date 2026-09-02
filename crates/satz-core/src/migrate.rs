@@ -704,19 +704,76 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
         .map_err(|e| MigrateError { msg: format!("pre-passed document does not parse: {}", e) })?;
     // A variables-only pack leaves an empty document after extraction — legal:
     // it compiles to a params-only Satz file.
-    let top = match doc {
+    let mut top = match doc {
         serde_yaml::Value::Mapping(m) => m,
         serde_yaml::Value::Null => serde_yaml::Mapping::new(),
         _ => return err("top level is not a mapping"),
     };
+    let mut params = pre.params.clone();
     let mut header = pre.header.clone();
     header.push(String::new());
     header.push("Converted by `satz import` — interior comments were not carried.".to_string());
+
+    // The Tier-2 (CDKTF-era) spelling: a top-level `version:` dialect marker,
+    // and the params written as unanchored top-level scalars instead of a
+    // `variables:` block. The marker is dropped (a Satz file carries no
+    // estate version); the scalars ARE the params and are converted as such
+    // — estates only, and only true scalars: a top-level `key = [roles]`
+    // grant in a fragment pack is legal Satz and stays where it is. Both
+    // mappings are named in the file header, never silent.
+    let mut promoted: Vec<String> = Vec::new();
+    let mut dropped_version = false;
+    for k in top.keys().cloned().collect::<Vec<_>>() {
+        let Some(ks) = k.as_str() else { continue };
+        let Some(v) = top.get(&k) else { continue };
+        if ks.starts_with(USE_K) || is_use_sentinel(v).is_some() {
+            continue;
+        }
+        if !matches!(
+            v,
+            serde_yaml::Value::String(_) | serde_yaml::Value::Number(_) | serde_yaml::Value::Bool(_)
+        ) {
+            continue;
+        }
+        if ks == "version" {
+            top.remove(&k);
+            dropped_version = true;
+            continue;
+        }
+        if kind_keyword != "estate" {
+            continue;
+        }
+        if let serde_yaml::Value::String(vs) = v {
+            // `x: *x` self-references keep their existing drop in the printer.
+            if as_ref_name(vs).is_some() {
+                continue;
+            }
+        }
+        let name_snake = snake(ks);
+        if params.iter().any(|(n, _)| *n == name_snake) {
+            return err(format!(
+                "top-level `{}` duplicates the param `{}` from the variables block — convert by hand",
+                ks, name_snake
+            ));
+        }
+        let rendered = value_expr(v, 0)?;
+        params.push((name_snake, rendered));
+        promoted.push(ks.to_string());
+        top.remove(&k);
+    }
+    if dropped_version {
+        header.push(
+            "The top-level `version:` dialect marker was dropped — a Satz file carries no estate version.".to_string(),
+        );
+    }
+    if !promoted.is_empty() {
+        header.push(format!("Top-level scalars became params: {}.", promoted.join(", ")));
+    }
     if pre.import_include_seen {
         header.push("NEEDS ADOPTION: the source used `!import-include` (a transpile-time live import).".to_string());
         header.push("It is a plain `use` here; run `satz adopt <estate> --execute` after converting to import what already exists.".to_string());
     }
-    convert_value(&top, kind_keyword, name, &pre.params, &header)
+    convert_value(&top, kind_keyword, name, &params, &header)
 }
 
 /// A value that prints as an interpolated Satz string: `template` with one
@@ -828,6 +885,33 @@ mod tests {
         let y = "variables:\n  sink-name: &sink-name \"s\"\n  org-id: &org-id \"1\"\nsec:\n  *sink-name:\n    org_id: *org-id\n    include_children: True\n    filter: |\n      lineA \"q\"\n      lineB:\"z\"\n";
         let s = convert(y, "pack", "t").unwrap();
         assert!(s.contains("lineA \\\"q\\\"\\nlineB:\\\"z\\\"\\n\""), "TRAILING LOST:\n{s}");
+    }
+
+    #[test]
+    fn tier2_top_level_scalars_become_params_and_the_version_marker_drops() {
+        // The CDKTF-era spelling: no variables block, the params written as
+        // bare top-level scalars, and a `version:` dialect marker.
+        let y = "version: 1.0\ninfra-project-name: \"demo-infra\"\ndeployment-mode: \"local\"\nfolder:\n  f:\n    display_name: \"F\"\n";
+        let s = convert(y, "estate", "t").unwrap();
+        assert!(s.contains("infra_project_name = \"demo-infra\""), "{s}");
+        assert!(s.contains("deployment_mode = \"local\""), "{s}");
+        assert!(
+            !s.lines().any(|l| !l.starts_with("//") && l.contains("version")),
+            "the marker must drop: {s}"
+        );
+        assert!(s.contains("dialect marker was dropped"), "{s}");
+        assert!(s.contains("Top-level scalars became params: infra-project-name, deployment-mode."), "{s}");
+
+        // A fragment PACK's top-level scalar stays where it is — top-level
+        // `key = value` is legal Satz and may be a grant, not a param…
+        let p = convert("version: 1.0\nsome-key: \"v\"\n", "pack", "t").unwrap();
+        assert!(p.contains("some-key\" = \"v\"") || p.contains("some_key = \"v\""), "{p}");
+        assert!(!p.lines().any(|l| !l.starts_with("//") && l.contains("version")), "{p}");
+
+        // …and a top-level scalar that duplicates a variables-block param is
+        // refused, never merged.
+        let dup = "variables:\n  a-b: &a-b \"x\"\na-b: \"y\"\n";
+        assert!(convert(dup, "estate", "t").is_err(), "a duplicate must be refused");
     }
 
     #[test]

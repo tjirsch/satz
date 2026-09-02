@@ -540,6 +540,7 @@ satz import organizations/123456789012 --into C0example.satz   # only what the e
 - `--output, -o <FILE>`: output inside `yaml_dir` (default `discovered.satz`; the extension is always `.satz`).
 - `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
 - yaml shape: `--kind estate|pack`, `--gate <estate>.satz` (compile a converted pack in context), `--fork` (write `<stem>.local.satz`).
+- Tier-2 (CDKTF-era) files convert too: unanchored top-level scalars become `params` entries (kebab→snake_case) and the top-level `version:` dialect marker is dropped — both mappings are named in the converted file's header, and a scalar that duplicates a `variables:` entry is refused rather than merged.
 
 **The import config** (`presets/import-config.yaml`, YAML — it is data that
 configures an import, not an estate) is the repeatable form of the command line:
