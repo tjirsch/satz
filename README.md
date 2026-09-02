@@ -44,13 +44,16 @@ satz bootstrap  C0example.satz
 satz transpile C0example.satz --config ../config.toml
 ```
 
-**Rule of thumb: `--config` takes a path; the positional takes a bare filename.**
+**Rule of thumb: `--config` takes a path; the positional takes a bare filename
+inside `yaml_dir` — or any existing path, which is taken as given** (so the
+long-standing `satz transpile yaml/C01.satz` form works; if a file of the same
+relative path also exists inside `yaml_dir`, the current-directory one wins
+and the shadowing is named).
 
 Common mistakes:
 
 | Mistake | What happens |
 |---|---|
-| `satz bootstrap yaml/C01.satz` | resolves to `yaml/yaml/C01.satz` → not found |
 | `satz bootstrap C01` | no extension is appended → looks for `yaml/C01` |
 | `satz bootstrap C01.satz --config yaml/C01.satz` | the estate is parsed as TOML → `key with no value, expected =` |
 
@@ -123,7 +126,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
 | `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims |
 | `doc-packs` | `--out <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file; `--check` fails when the pages are behind |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |

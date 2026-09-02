@@ -183,6 +183,10 @@ enum Commands {
         /// the Satz block that declared the resource (failed checks exit 1)
         #[arg(long)]
         scan: bool,
+        /// Compile only: parse, fold and emit in memory, write nothing —
+        /// the estate either transpiles or the error says why
+        #[arg(long)]
+        check: bool,
     },
     /// Scan Tofu plan JSON for resource renames
     ScanPlan {
@@ -794,13 +798,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     match cmd_choice {
-        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan } => {
+        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan, check } => {
 
-            let input_path = if Path::new(&input).is_absolute() {
-                PathBuf::from(&input)
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(&input)
-            };
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             if let Some(sd) = &schema_dir {
                 runtime_config.schema_dir = if Path::new(sd).is_absolute() {
                     sd.to_string_lossy().to_string()
@@ -817,6 +817,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (&out.main_tf, &out.providers_tf, &out.variables_tf, &out.tfvars, &out.imports_tf);
             if print_variables {
                 println!("{}", tfvars);
+            }
+            if check {
+                println!(
+                    "transpile --check: OK — {} compiles; nothing was written",
+                    input_path.display()
+                );
+                return Ok(());
             }
             let (main_tf, providers_tf, variables_tf, tfvars, imports_tf) =
                 (main_tf.as_str(), providers_tf.as_str(), variables_tf.as_str(), tfvars.as_str(), imports_tf.as_str());
@@ -1134,7 +1141,7 @@ Thumbs.db
         Commands::GenerateMigration { mapping, output } => {
             let m_path = if mapping.is_absolute() { mapping } else { config_dir.join(mapping) };
             let final_output = if output.is_absolute() { output } else { config_dir.join(output) };
-            crate::state_migration::generate_migration(&m_path, &final_output, &tool_config.tf_tool)?;
+            crate::state_migration::generate_migration(&m_path, &final_output, &tool_config.tf_tool, &runtime_config.hcl_dir)?;
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
@@ -1250,11 +1257,7 @@ Thumbs.db
             Ok(())
         }
         Commands::Migrate { input, mode } => {
-            let input_path = if Path::new(&input).is_absolute() {
-                PathBuf::from(&input)
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(&input)
-            };
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
 
             if !input_path.exists() {
                 return Err(format!("Input file not found: {}", input_path.display()).into());
@@ -1351,11 +1354,7 @@ Thumbs.db
             Ok(())
         }
         Commands::Require { framework, input } => {
-            let input_path = if Path::new(&input).is_absolute() {
-                PathBuf::from(&input)
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(&input)
-            };
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             // This command REPORTS, it does not emit — it needs `main.tf` as a
             // value, never on disk. The stage-B block belongs in `transpile`
             // only; pasted here it once made the command silently regenerate
@@ -1376,11 +1375,7 @@ Thumbs.db
             Ok(())
         }
         Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov, fail_on } => {
-            let input_path = if Path::new(&input).is_absolute() {
-                PathBuf::from(&input)
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(&input)
-            };
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             // Reports, never emits — see the note in `require`.
             let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
@@ -1454,11 +1449,7 @@ Thumbs.db
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
         Commands::TfInit { args } => run_tf(&runtime_config, "init", &args),
         Commands::CheckPresets { input, pristine_dir } => {
-            let input_path = if Path::new(&input).is_absolute() {
-                PathBuf::from(&input)
-            } else {
-                PathBuf::from(&runtime_config.yaml_dir).join(&input)
-            };
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let drift = crate::presets::run_check_presets(
                 &input_path,
                 &runtime_config.presets_dir,
@@ -2699,12 +2690,28 @@ fn provider_maps(tool_config: &ToolConfig) -> (HashMap<String, String>, HashMap<
 /// The estate argument as a path, with no compilation. `estate_input` layers the
 /// `.gen.yaml` twin build on top of this; commands that read Satz natively want
 /// the `.satz` file itself.
+/// Resolve an estate argument: absolute stays as given; a relative path that
+/// exists from the current directory is taken as given too (the runbooks'
+/// long-standing `yaml/X.satz` form, which unconditional yaml_dir-prefixing
+/// turned into `yaml/yaml/X.satz → not found`); otherwise it is looked up
+/// inside yaml_dir. When both exist, the current-directory file wins and the
+/// shadowing is named.
 fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
     if estate.is_absolute() {
-        estate
-    } else {
-        PathBuf::from(&runtime_config.yaml_dir).join(estate)
+        return estate;
     }
+    if estate.exists() {
+        let in_yaml_dir = PathBuf::from(&runtime_config.yaml_dir).join(&estate);
+        if in_yaml_dir.exists() && in_yaml_dir.canonicalize().ok() != estate.canonicalize().ok() {
+            eprintln!(
+                "note: using ./{} (a different {} also exists inside yaml_dir)",
+                estate.display(),
+                in_yaml_dir.display()
+            );
+        }
+        return estate;
+    }
+    PathBuf::from(&runtime_config.yaml_dir).join(estate)
 }
 
 /// The parameter table of a `.satz` estate, in the dialect's kebab-case
