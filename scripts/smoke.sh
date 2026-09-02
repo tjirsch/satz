@@ -65,8 +65,13 @@ if command -v tofu >/dev/null 2>&1; then
 fi
 
 step "require cis-gcp-4.0 (goal view, offline)"
-"$satz" --config . require cis-gcp-4.0 smoke.satz | tee tmp/require.txt
+# `require` exits non-zero when a technical control is unmet — that IS the CI
+# gate; the smoke estate leaves 2.12 (DNS logging) and 2.13 (CAI) unmet on
+# purpose, so the step asserts on the verdict line, not the exit code
+"$satz" --config . require cis-gcp-4.0 smoke.satz > tmp/require.txt 2>&1 || true
+cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
+grep -q '2 unmet' tmp/require.txt || fail "expected exactly the two uncovered catalog controls (2.12 DNS logging, 2.13 CAI) unmet:\n$(tail -3 tmp/require.txt)"
 
 step "triage: Prowler FAILs sorted into buckets against the estate's claims"
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"

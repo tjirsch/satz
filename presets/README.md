@@ -79,6 +79,11 @@ header. DATA_READ org-wide can be voluminous — measure a week before pruning.
 
 ## monitoring/ — CIS 2.5–2.12 (log metrics + alerts)
 
+The eight alert controls are numbered **§2.5–2.12 in CIS 5.0** and **§2.4–2.11 in
+CIS 4.0** (5.0 inserted a new §2.2; 4.0's §2.12 is DNS logging). Resource labels
+and this document use the 5.0 numbers; each pack claims both versions with the
+right id, and `doc-packs --check` refuses a claim on an id its catalog lacks.
+
 Two variants of the same eight controls. **Prefer the central one**; the per-project file is
 the exception, not the default. Both may coexist — the control passes as soon as either path
 is satisfied.

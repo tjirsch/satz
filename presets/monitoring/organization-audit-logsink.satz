@@ -6,7 +6,7 @@
 // Required from the estate: customer_organization_id, billing_account_infra,
 // customer_shortname, default_region.
 
-pack monitoring.organization_audit_logsink version "1.1"
+pack monitoring.organization_audit_logsink version "1.2"
 
 params {
   logsink_name            = "{customer_shortname}-organization-audit-gcs"
@@ -91,7 +91,7 @@ claim "cis-gcp" "4.0" "2.1" implements {
 }
 claim "cis-gcp" "5.0" "2.1" implements {
   resources = ["google_organization_iam_audit_config.org_all_services"]
-  interpretation = "As for 4.0 §2.1; 5.0 control ID provisional pending benchmark verification."
+  interpretation = "As for 4.0 §2.1 (5.0 §2.1, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "2.2" implements {
@@ -102,13 +102,13 @@ claim "cis-gcp" "4.0" "2.2" implements {
   ]
   interpretation = "Aggregated org sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only."
 }
-claim "cis-gcp" "5.0" "2.2" implements {
+claim "cis-gcp" "5.0" "2.3" implements {
   resources = [
     "google_logging_organization_sink.organization_audit_gcs",
     "google_storage_bucket.org_audit_logs",
     "google_storage_bucket_iam_member.org_audit_sink_writer",
   ]
-  interpretation = "As for 4.0 §2.2; 5.0 control ID provisional pending benchmark verification."
+  interpretation = "As for 4.0 §2.2 — 5.0 §2.3 (5.0 inserted a new 2.2 for Workspace data sharing)."
 }
 
 claim "cis-gcp" "4.0" "2.3" contributes {
@@ -116,8 +116,8 @@ claim "cis-gcp" "4.0" "2.3" contributes {
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
   interpretation = "Lifecycle retention (logsink_retention_days) is automated; the bucket LOCK is a deliberate human decision, so coverage is honestly partial."
 }
-claim "cis-gcp" "5.0" "2.3" contributes {
+claim "cis-gcp" "5.0" "2.4" contributes {
   resources = ["google_storage_bucket.org_audit_logs"]
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
-  interpretation = "As for 4.0 §2.3; 5.0 control ID provisional pending benchmark verification."
+  interpretation = "As for 4.0 §2.3 — 5.0 §2.4."
 }

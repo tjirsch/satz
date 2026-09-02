@@ -26,8 +26,10 @@ the private history recorded them.
 | `essential_contacts_organization` | 1.2 | 2026-09-02 | commented per-category contacts (BILLING, SUSPENSION, SECURITY, TECHNICAL, LEGAL, PRODUCT_UPDATES, and a multi-category example) with their own address params, ready to uncomment; the shipped shape is unchanged (one contact on ALL) |
 | `essential_contacts_organization` | 1.1 | 2026-08-23 | `essential_contacts_email` param — a customer pins its contact without a fork; content pack |
 | `essential_contacts_organization` | 1.0 | 2026-08-20 | organization-wide essential contact, all categories |
+| `monitoring.organization_audit_logsink` | 1.2 | 2026-09-03 | CIS 5.0 claim ids corrected: sinks are 5.0 §2.3 and retention §2.4 (5.0 inserted a new §2.2 for Workspace data sharing); 4.0 ids unchanged; "provisional" notes removed — numbering verified against Prowler + Tenable |
 | `monitoring.organization_audit_logsink` | 1.1 | 2026-08-21 | claims for CIS 2.1/2.2 (both 4.0 and 5.0), the writer-identity bucket grant, retention lifecycle rules |
 | `monitoring.organization_audit_logsink` | 1.0 | 2026-08-21 | org audit log sink → bucket |
+| `monitoring.organization_cis_log_alerts_central` | 1.3 | 2026-09-03 | **CIS 4.0 claim ids were off by one** — the eight alert controls are 4.0 §2.4–2.11 (§2.12 is DNS logging), not §2.5–2.12; the invented "§2.4 filters exist" claim is gone and the sink + channel now CONTRIBUTE to the first alert control (4.0 §2.4 / 5.0 §2.5). Resource labels keep the 5.0 numbers. Verified against Prowler, Google's InSpec profile and Tenable |
 | `monitoring.organization_cis_log_alerts_central` | 1.2 | 2026-08-24 | the log metric + alert stack for CIS 2.5–2.12 in one central logging project |
 | `monitoring.organization_cis_log_alerts_central` | 1.1 | 2026-08-22 | notification channel param; alert policy display names carry the control id |
 | `monitoring.organization_cis_log_alerts_central` | 1.0 | 2026-08-21 | first version |

@@ -8,8 +8,8 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`; the 
 | [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.2 | `CIS-GCP-Foundation-4.0.satz` | 18 | 13 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | `billing-account-permissions.satz` | 4 | 0 |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.2 | `essential-contacts-organization.satz` | 1 | 0 |
-| [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.1 | `monitoring/organization-audit-logsink.satz` | 5 | 6 |
-| [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.2 | `monitoring/organization-cis-log-alerts-central.satz` | 20 | 18 |
+| [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.2 | `monitoring/organization-audit-logsink.satz` | 5 | 6 |
+| [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.3 | `monitoring/organization-cis-log-alerts-central.satz` | 20 | 18 |
 | [`project_cis_log_alerts`](project-cis-log-alerts.md) | 1.0 | `monitoring/project-cis-log-alerts.satz` | 17 | 0 |
 | [`organization_budget`](organization-budget.md) | 1.0 | `organization-budget.satz` | 1 | 0 |
 | [`sa_security_audit`](sa-security-audit.md) | 1.0 | `security-audit/sa-security-audit.satz` | 4 | 0 |
