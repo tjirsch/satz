@@ -361,16 +361,26 @@ pub async fn bootstrap(
     println!("----------------------");
 
     if dry_run {
-        println!("Dry run enabled. No resources will be created.");
-        return Ok(());
+        println!("Dry run: nothing will be created; the identity check and permission pre-flight are read-only.");
     }
 
-    println!("Starting bootstrap process...");
-    let mut summary = RunSummary::default();
-
-    // 1. Get Authentication Token
+    // 1. Get Authentication Token. On a dry run, missing credentials end the
+    // run with a NAMED skip: the plan above is still useful offline, but a
+    // pre-flight that silently did not happen must never read as one that
+    // passed.
     println!("Authenticating using Application Default Credentials...");
-    let token = crate::gcp::access_token().await?;
+    let token = match crate::gcp::access_token().await {
+        Ok(t) => t,
+        Err(e) if dry_run => {
+            println!(
+                "pre-flight: SKIPPED — no usable Application Default Credentials ({}). Run `gcloud auth \
+                 application-default login`, then re-run --dry-run to check permissions.",
+                e
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     let client = reqwest::Client::new();
 
@@ -386,21 +396,22 @@ pub async fn bootstrap(
         _ => None,
     };
 
-    match &expected_admin {
-        Some(expected) => {
+    // The identity is resolved even when the config cannot be verified against
+    // it: the pre-flight needs the principal for its self-grant member string.
+    let resolved_identity = resolve_adc_identity(&client, &token).await;
+    match (&expected_admin, &resolved_identity) {
+        (Some(expected), None) => {
             // These messages are printed rather than carried in the error, because `main`
             // renders a returned error with `Debug`, which would escape the newlines.
-            let resolved = resolve_adc_identity(&client, &token).await;
-            let Some((actual, source)) = resolved else {
-                eprintln!(
-                    "\nCould not determine the identity of your Application Default Credentials,\n\
-                     so it cannot be checked against the configured admin '{expected}'.\n\n\
-                     Authenticate with:  gcloud auth application-default login {expected}\n"
-                );
-                return Err("could not verify the Application Default Credentials identity".into());
-            };
-
-            if !identity_matches(expected, &actual) {
+            eprintln!(
+                "\nCould not determine the identity of your Application Default Credentials,\n\
+                 so it cannot be checked against the configured admin '{expected}'.\n\n\
+                 Authenticate with:  gcloud auth application-default login {expected}\n"
+            );
+            return Err("could not verify the Application Default Credentials identity".into());
+        }
+        (Some(expected), Some((actual, source))) => {
+            if !identity_matches(expected, actual) {
                 eprintln!(
                     "\nApplication Default Credentials belong to '{actual}' (determined via {}),\n\
                      but this config expects '{expected}'.\n\
@@ -413,10 +424,9 @@ pub async fn bootstrap(
                 )
                 .into());
             }
-
             println!("Running as {} (via {}), matching the configured admin.", actual, source.label());
         }
-        None => {
+        (None, _) => {
             eprintln!(
                 "Warning: this config defines no 'first-admin' / 'customer-domain', so the identity \
                  of your Application Default Credentials cannot be verified. Continuing."
@@ -424,17 +434,39 @@ pub async fn bootstrap(
         }
     }
 
-    // 2. Create Folder (if specified)
+    // 2. Pre-flight: the REQUIRED permissions on the scope root and the
+    // billing account, tested before anything is created — and self-granted
+    // where the caller holds setIamPolicy there. Read-only on a dry run.
     let infra_folder_name = lookup_str(&["infra-folder-name"]).filter(|s| !s.is_empty());
     let infra_folder_name = infra_folder_name.as_deref();
+    let principal = resolved_identity.as_ref().map(|(email, _)| email.as_str());
+    crate::preflight::run(
+        &client,
+        &token,
+        &parent,
+        infra_folder_name.is_some(),
+        &bid,
+        principal,
+        dry_run,
+    )
+    .await?;
 
+    if dry_run {
+        println!("Dry run complete: nothing was created.");
+        return Ok(());
+    }
+
+    println!("Starting bootstrap process...");
+    let mut summary = RunSummary::default();
+
+    // 2. Create Folder (if specified)    // 3. Create Folder (if specified)
     let mut current_parent = parent.clone();
 
     if let Some(folder_display_name) = infra_folder_name {
         let step = format!("Folder \"{}\"", folder_display_name);
         println!("Checking for existing Infrastructure Folder: {}...", folder_display_name);
 
-        // 2a. Search for folder by display name in the parent — every page,
+        // 3a. Search for folder by display name in the parent — every page,
         // and exactly one match. A failed search must not fall through to
         // creation: that would try to create a folder that may already exist,
         // and the real cause (usually a denied list call) would never be reported.
@@ -451,7 +483,7 @@ pub async fn bootstrap(
                         summary.record(&step, StepStatus::AlreadyExisted);
                     }
                     Ok(None) => {
-                        // 2b. Not found, proceed with creation.
+                        // 3b. Not found, proceed with creation.
                         println!("Creating Infrastructure Folder: {}...", folder_display_name);
                         match crate::gcp::resourcemanager::create_folder(&client, &token, &parent, folder_display_name).await {
                             Ok(name) => {
@@ -470,7 +502,7 @@ pub async fn bootstrap(
     // would just repeat itself with a less informative message.
     permission_gate(&summary)?;
 
-    // 3. Create Project Shell
+    // 4. Create Project Shell
     println!("Creating Project: {}...", project_id);
     let project_step = format!("Project {}", project_id);
     // Billing, API enablement and the bucket all live inside this project, so track
@@ -503,7 +535,7 @@ pub async fn bootstrap(
 
     permission_gate(&summary)?;
 
-    // 4. Link Billing Account
+    // 5. Link Billing Account
     let billing_step = format!("Billing link {} -> {}", project_id, bid);
     if !project_usable {
         summary.record(&billing_step, StepStatus::Skipped(format!("{} was not created", project_id)));
@@ -528,7 +560,7 @@ pub async fn bootstrap(
     }
     permission_gate(&summary)?;
 
-    // 5. Enable Foundation APIs (The "Chicken-and-Egg" Fix)
+    // 6. Enable Foundation APIs (The "Chicken-and-Egg" Fix)
     let core_services = vec![
         "serviceusage.googleapis.com",
         "cloudresourcemanager.googleapis.com",
@@ -572,7 +604,7 @@ pub async fn bootstrap(
     }
     permission_gate(&summary)?;
 
-    // 6. Create GCS State Bucket
+    // 7. Create GCS State Bucket
     let bucket_step = format!("State bucket {}", bucket_name);
     if !project_usable {
         summary.record(&bucket_step, StepStatus::Skipped(format!("{} was not created", project_id)));
@@ -593,10 +625,10 @@ pub async fn bootstrap(
     }
     println!("Core Infrastructure (Folder, Project, Billing, Foundation APIs, State Bucket) is now ready.");
 
-    // 7. Automatic setup: Transpile -> Init -> Import
+    // 8. Automatic setup: Transpile -> Init -> Import
     println!("Running automatic setup...");
 
-    // 7a. Transpile
+    // 8a. Transpile
     println!("Transpiling to HCL...");
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(&exe);
@@ -630,7 +662,7 @@ pub async fn bootstrap(
         return Err("Transpilation failed. Cannot proceed with imports.".into());
     }
 
-    // 7b. Init
+    // 8b. Init
     let target_hcl_dir = std::path::Path::new(&runtime_config.hcl_dir);
     if target_hcl_dir.exists() && target_hcl_dir.is_dir() {
         println!("Initializing OpenTofu/Terraform in {}...", target_hcl_dir.display());

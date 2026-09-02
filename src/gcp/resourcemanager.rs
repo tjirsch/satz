@@ -243,6 +243,65 @@ pub(crate) async fn create_project(
     Ok(ProjectOutcome::Created { number })
 }
 
+/// `testIamPermissions` on `resource` (`organizations/N`, `folders/N` or
+/// `projects/ID`): the granted subset of `permissions`.
+pub(crate) async fn test_permissions(
+    client: &reqwest::Client,
+    token: &str,
+    resource: &str,
+    permissions: &[&str],
+) -> Result<Vec<String>, ApiError> {
+    super::test_iam_permissions(
+        client,
+        token,
+        &format!("{}/{}:testIamPermissions", BASE, resource),
+        permissions,
+    )
+    .await
+}
+
+/// The resource's IAM policy, requested at version 3 so conditional bindings
+/// are visible — a read-modify-write on a lower version would destroy them.
+pub(crate) async fn get_iam_policy(
+    client: &reqwest::Client,
+    token: &str,
+    resource: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let res = client
+        .post(format!("{}/{}:getIamPolicy", BASE, resource))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "options": { "requestedPolicyVersion": 3 } }))
+        .send()
+        .await
+        .map_err(ApiError::transport)?;
+    if !res.status().is_success() {
+        return Err(super::api_error(res).await);
+    }
+    res.json().await.map_err(ApiError::transport)
+}
+
+/// Replace the resource's IAM policy. `policy` carries the `etag` from the
+/// read; a concurrent change makes this a 409 the caller retries from a fresh
+/// read.
+pub(crate) async fn set_iam_policy(
+    client: &reqwest::Client,
+    token: &str,
+    resource: &str,
+    policy: &serde_json::Value,
+) -> Result<(), ApiError> {
+    let res = client
+        .post(format!("{}/{}:setIamPolicy", BASE, resource))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "policy": policy }))
+        .send()
+        .await
+        .map_err(ApiError::transport)?;
+    if !res.status().is_success() {
+        return Err(super::api_error(res).await);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

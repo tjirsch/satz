@@ -12,6 +12,7 @@ mod scan;
 mod template;
 mod adopt;
 mod bootstrap;
+mod preflight;
 mod gcp;
 mod org_policy;
 mod cloud_identity;
@@ -238,12 +239,13 @@ enum Commands {
         #[arg(long)]
         iac_user: Option<String>,
     },
-    /// Bootstrap initial Google Cloud infrastructure (Project, Bucket, Service Account)
+    /// Bootstrap day-0 infrastructure (folder, project, billing link, core APIs, state bucket) after a permission pre-flight
     Bootstrap {
         /// Estate file, e.g. C0example.satz (inside yaml_dir if relative).
         /// Not the tool config — that is --config
         estate: PathBuf,
-        /// Dry run mode (don't create resources)
+        /// Read-only: print the plan, verify the ADC identity and run the
+        /// permission pre-flight; create nothing
         #[arg(long)]
         dry_run: bool,
     },

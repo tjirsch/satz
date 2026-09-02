@@ -1012,17 +1012,53 @@ Ensure the executing user has:
 ### Phase 2: Fundamental Infrastructure
 
 #### 1. Bootstrap Core Resources
-The `bootstrap` command automates the entire process: creating the infrastructure folder, project, bucket, linking billing, enabling foundation APIs (fixing the "chicken-and-egg" problem), and initializing the state.
+The `bootstrap` command creates the day-0 infrastructure: the infrastructure
+folder, the management project, the billing link, the foundation APIs (fixing
+the "chicken-and-egg" problem) and the Terraform state bucket — then runs
+`transpile`, `init` and the first imports so what it created is under
+management from the start.
 
 ```bash
 satz bootstrap C0example.satz
 ```
 
-**What this does:**
-- Creates Folder, Project, Bucket, Service Account.
-- Enables Service Usage, IAM, and other core APIs.
-- Assigns `Folder Admin` to the user executing the bootstrap (if missing).
-- Automatically runs `transpile`, `init`, and `import` to bring resources under Terraform management.
+**Pre-flight.** Before anything is created, bootstrap verifies the ADC
+identity against `first_admin` and tests the REQUIRED PERMISSIONS — never
+roles — with `testIamPermissions`:
+
+| Where | Permission | Supplied by |
+|---|---|---|
+| scope root | `resourcemanager.folders.create` (only when `infra_folder_name` is set) | `roles/resourcemanager.folderAdmin` |
+| scope root | `resourcemanager.projects.create` | `roles/resourcemanager.projectCreator` |
+| scope root | `orgpolicy.policies.create` (the estate's policies, at first apply) | `roles/orgpolicy.policyAdmin` |
+| billing account | `billing.resourceAssociations.create` | `roles/billing.user` |
+
+- Everything granted → bootstrap proceeds.
+- Something missing and the caller holds `setIamPolicy` on the scope root —
+  the normal state of a fresh organization, whose creating super admin is
+  auto-granted Organization Administrator (that role carries `setIamPolicy`
+  but none of the create permissions) → bootstrap **self-grants** the missing
+  roles to the caller, prints each grant with the exact
+  `remove-iam-policy-binding` undo command, waits for IAM propagation and
+  re-tests before proceeding.
+- Something missing and no `setIamPolicy` (or the billing permission, which
+  is never self-granted) → bootstrap prints the exact
+  `gcloud … add-iam-policy-binding` commands for an administrator and stops
+  **before creating anything**.
+
+**Folder-scoped installs.** Set `customer_organization_id = "folders/<id>"`
+and the estate installs under that folder: permissions are tested there, and
+org-root operations are out of scope by design — a folder-granted operator is
+never asked to become org admin.
+
+**Dry run.** `satz bootstrap <estate> --dry-run` is read-only: it prints the
+plan, verifies the identity and runs the same pre-flight (a would-be
+self-grant is reported, not executed). Without credentials the plan still
+prints and the skipped pre-flight is named (`pre-flight: SKIPPED`).
+
+**What bootstrap does NOT do:** it creates no service account and grants no
+IAM beyond the self-grant above — the IaC service account and its grants are
+declared in the estate and come into being on the first `tofu apply`.
 
 #### 2. (Optional) Customize & Transpile
 *Only needed if you modify the estate after bootstrap.*

@@ -166,6 +166,66 @@ pub(crate) fn classify(status: u16, reason: Option<&str>) -> ErrorClass {
     }
 }
 
+/// POST a `testIamPermissions` request to `endpoint` and return the granted
+/// subset. An absent `permissions` field in the response means none of the
+/// asked-for permissions are granted.
+pub(crate) async fn test_iam_permissions(
+    client: &reqwest::Client,
+    token: &str,
+    endpoint: &str,
+    permissions: &[&str],
+) -> Result<Vec<String>, ApiError> {
+    let res = client
+        .post(endpoint)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "permissions": permissions }))
+        .send()
+        .await
+        .map_err(ApiError::transport)?;
+    if !res.status().is_success() {
+        return Err(api_error(res).await);
+    }
+    let v: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
+    Ok(v.get("permissions")
+        .and_then(|p| p.as_array())
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default())
+}
+
+/// Add `member` to `role`'s UNCONDITIONAL binding in an IAM policy, creating
+/// the binding when absent. Bindings that carry a `condition` are never
+/// touched — appending a member there would silently subject them to the
+/// condition. `etag` and `version` pass through untouched, so a
+/// read-modify-write keeps its optimistic-concurrency guard. Returns `false`
+/// when the member is already bound (nothing to write).
+pub(crate) fn add_binding(policy: &mut serde_json::Value, role: &str, member: &str) -> bool {
+    let obj = policy.as_object_mut().expect("an IAM policy is a JSON object");
+    let bindings = obj
+        .entry("bindings")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .expect("policy bindings are a JSON array");
+    for b in bindings.iter_mut() {
+        if b.get("role").and_then(|r| r.as_str()) != Some(role) || b.get("condition").is_some() {
+            continue;
+        }
+        let members = b
+            .as_object_mut()
+            .expect("a binding is a JSON object")
+            .entry("members")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+            .as_array_mut()
+            .expect("binding members are a JSON array");
+        if members.iter().any(|m| m.as_str() == Some(member)) {
+            return false;
+        }
+        members.push(serde_json::Value::String(member.to_string()));
+        return true;
+    }
+    bindings.push(serde_json::json!({ "role": role, "members": [member] }));
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,5 +298,54 @@ mod tests {
         }));
         assert_eq!(odd.class(), ErrorClass::Other);
         assert!(odd.to_string().contains("internal"));
+    }
+
+    // --- IAM policy read-modify-write ---------------------------------------
+
+    #[test]
+    fn add_binding_appends_dedups_and_creates() {
+        let mut policy = serde_json::json!({
+            "version": 1,
+            "etag": "BwX1234=",
+            "bindings": [
+                { "role": "roles/viewer", "members": ["user:a@example.com"] }
+            ]
+        });
+        assert!(add_binding(&mut policy, "roles/viewer", "user:b@example.com"));
+        assert!(!add_binding(&mut policy, "roles/viewer", "user:b@example.com"), "dedup");
+        assert!(add_binding(&mut policy, "roles/editor", "user:b@example.com"), "new binding");
+        assert_eq!(policy["bindings"][0]["members"].as_array().unwrap().len(), 2);
+        assert_eq!(policy["bindings"][1]["role"], "roles/editor");
+        // The optimistic-concurrency guard survives the modification.
+        assert_eq!(policy["etag"], "BwX1234=");
+        assert_eq!(policy["version"], 1);
+    }
+
+    #[test]
+    fn add_binding_never_touches_conditional_bindings() {
+        let mut policy = serde_json::json!({
+            "etag": "BwX1234=",
+            "bindings": [
+                {
+                    "role": "roles/viewer",
+                    "members": ["user:a@example.com"],
+                    "condition": { "title": "expires", "expression": "request.time < timestamp('2027-01-01T00:00:00Z')" }
+                }
+            ]
+        });
+        // Same role, but the existing binding is conditional: a NEW
+        // unconditional binding is created instead of appending there.
+        assert!(add_binding(&mut policy, "roles/viewer", "user:b@example.com"));
+        let bindings = policy["bindings"].as_array().unwrap();
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings[0]["members"].as_array().unwrap().len(), 1, "conditional binding untouched");
+        assert!(bindings[1].get("condition").is_none());
+    }
+
+    #[test]
+    fn add_binding_handles_a_policy_without_bindings() {
+        let mut policy = serde_json::json!({ "etag": "BwX1234=" });
+        assert!(add_binding(&mut policy, "roles/viewer", "user:a@example.com"));
+        assert_eq!(policy["bindings"][0]["members"][0], "user:a@example.com");
     }
 }
