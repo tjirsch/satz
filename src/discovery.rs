@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use serde_json::Value;
 use crate::config::{Config, ImportConfig, Folder, Project};
 use crate::schema::{ResourceRegistry, ResourceSchema, BlockSchema};
-use google_cloud_asset_v1::client::AssetService;
 use google_cloud_asset_v1::model::{Asset, ContentType};
 use google_cloud_gax::paginator::ItemPaginator;
 
@@ -636,7 +635,7 @@ impl Discoverer {
         discovery_config: Option<ImportConfig>,
         registry: Option<ResourceRegistry>,
     ) -> Result<Discovered, Box<dyn std::error::Error>> {
-        let client = AssetService::builder().build().await?;
+        let client = crate::gcp::asset_service().await?;
         
         let mut type_map: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
         

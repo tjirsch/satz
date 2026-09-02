@@ -800,9 +800,8 @@ async fn project_numbers(ids: &BTreeSet<String>) -> Result<BTreeMap<String, Stri
 type Inventory = BTreeMap<String, BTreeMap<String, serde_json::Value>>;
 
 async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<Inventory, BoxErr> {
-    use google_cloud_asset_v1::client::AssetService;
     use google_cloud_asset_v1::model::ContentType;
-    let client = AssetService::builder().build().await?;
+    let client = crate::gcp::asset_service().await?;
     let mut out: Inventory = BTreeMap::new();
     for at in asset_types {
         let mut ids: BTreeMap<String, serde_json::Value> = BTreeMap::new();

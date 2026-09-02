@@ -180,13 +180,12 @@ pub struct TreeSummary {
 /// Fetch the resource hierarchy and every declared org policy in ONE paginated
 /// `list_assets` call. `org` may be `organizations/N` or a bare numeric id.
 pub async fn sweep(org: &str, quota_project: Option<String>) -> Result<Vec<RawAsset>, BoxErr> {
-    use google_cloud_asset_v1::client::AssetService;
     use google_cloud_asset_v1::model::ContentType;
     use google_cloud_gax::options::RequestOptionsBuilder;
     use google_cloud_gax::paginator::ItemPaginator;
 
     let org_id = org.trim_start_matches("organizations/");
-    let client = AssetService::builder().build().await?;
+    let client = crate::gcp::asset_service().await?;
 
     let mut builder = client
         .list_assets()

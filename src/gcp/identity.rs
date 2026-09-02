@@ -101,6 +101,17 @@ pub(crate) async fn announce(token: &str) {
     if ANNOUNCED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
+    // With impersonation configured, the line names the identity the calls
+    // actually run as — the estate's IaC SA — not the human behind it.
+    if let Some(sa) = crate::gcp::impersonation_target() {
+        let info = CredentialInfo {
+            email: Some(sa),
+            kind: CredKind::ImpersonatedSa,
+            quota_project: crate::org_policy::resolve_quota_project(),
+        };
+        println!("{}", render_credential_line(&info));
+        return;
+    }
     let info = credential_info(token).await;
     println!("{}", render_credential_line(&info));
 }
