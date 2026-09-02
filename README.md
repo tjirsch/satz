@@ -118,8 +118,8 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name` |
-| `bootstrap <CONFIG_FILE>` | `--dry-run` |
+| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from-live` (derive the missing values from the ADC alone) |
+| `bootstrap <CONFIG_FILE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize a not-yet-existing organization) |
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
 | `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
@@ -1071,6 +1071,30 @@ service account key), quota project <p>` — so a wrong per-customer login
 surfaces immediately instead of as a downstream 403. `satz whoami` is the
 explicit check (`--offline` for the file-only view; a user ADC file stores no
 identity, so the online form resolves it via token introspection).
+
+**Greenfield: a tenant with no organization yet.** Google creates the
+Organization resource for a Workspace/Cloud Identity domain when a NEW Google
+Cloud user signs in to the console and accepts the terms, or when an EXISTING
+user creates their first project or billing account
+([documented](https://docs.cloud.google.com/resource-manager/docs/creating-managing-organization)).
+satz uses the second trigger:
+
+1. `satz init --from-live --customer-id <C0…>` — derives every derivable init
+   value from the ADC alone (identity → `first_admin` + `customer_domain`,
+   `organizations:search` → org id + directory customer id,
+   `billingAccounts.list` → the single open account; explicit flags always
+   win, nothing is guessed). With no organization visible, the estate is
+   written with an empty `customer_organization_id`.
+2. `satz bootstrap <estate> --greenfield` — creates the infra project WITHOUT
+   a parent (the trigger), polls `organizations:search` until the new
+   organization appears (matched by its `directoryCustomerId`, never "the
+   first org"), moves the project under it, writes the id back into the
+   estate, and continues with the normal pre-flight and build. If the
+   organization never appears (the ADC user has not accepted the console
+   terms), the timeout names the one-time console sign-in as the fallback.
+
+An estate whose `customer_organization_id` is empty fails with exactly this
+guidance instead of a bare "missing org id".
 
 #### 2. (Optional) Customize & Transpile
 *Only needed if you modify the estate after bootstrap.*

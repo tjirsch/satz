@@ -90,6 +90,48 @@ pub(crate) async fn list_budgets(
     Ok(out)
 }
 
+/// `billingAccounts.list`: every billing account visible to the caller as
+/// (bare id, display name, open), across all pages.
+pub(crate) async fn list_billing_accounts(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<Vec<(String, String, bool)>, ApiError> {
+    let mut out = Vec::new();
+    let mut page_token: Option<String> = None;
+    loop {
+        let mut req = client
+            .get("https://cloudbilling.googleapis.com/v1/billingAccounts")
+            .bearer_auth(token)
+            .query(&[("pageSize", "100")]);
+        if let Some(t) = &page_token {
+            req = req.query(&[("pageToken", t.as_str())]);
+        }
+        let res = req.send().await.map_err(ApiError::transport)?;
+        if !res.status().is_success() {
+            return Err(super::api_error(res).await);
+        }
+        let page: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
+        for a in page.get("billingAccounts").and_then(|v| v.as_array()).into_iter().flatten() {
+            let id = a
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim_start_matches("billingAccounts/")
+                .to_string();
+            let display = a.get("displayName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let open = a.get("open").and_then(|v| v.as_bool()).unwrap_or(false);
+            if !id.is_empty() {
+                out.push((id, display, open));
+            }
+        }
+        page_token = page.get("nextPageToken").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+        if page_token.is_none() {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 /// `testIamPermissions` on the billing account (bare id): the granted subset.
 pub(crate) async fn test_billing_permissions(
     client: &reqwest::Client,
