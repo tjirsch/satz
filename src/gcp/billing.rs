@@ -89,3 +89,22 @@ pub(crate) async fn list_budgets(
     }
     Ok(out)
 }
+
+/// `testIamPermissions` on the billing account (bare id): the granted subset.
+pub(crate) async fn test_billing_permissions(
+    client: &reqwest::Client,
+    token: &str,
+    billing_account: &str,
+    permissions: &[&str],
+) -> Result<Vec<String>, ApiError> {
+    super::test_iam_permissions(
+        client,
+        token,
+        &format!(
+            "https://cloudbilling.googleapis.com/v1/billingAccounts/{}:testIamPermissions",
+            billing_account
+        ),
+        permissions,
+    )
+    .await
+}

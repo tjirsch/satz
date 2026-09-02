@@ -155,6 +155,12 @@ else
   grep -qi 'credential\|token\|auth\|ADC' tmp/adopt.txt || fail "adopt failed for a reason other than credentials:\n$(cat tmp/adopt.txt)"
 fi
 
+step "bootstrap --dry-run: offline-safe, the plan prints, the skipped pre-flight is NAMED"
+GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.satz --dry-run > tmp/boot-dry.txt 2>&1 \
+  || fail "bootstrap --dry-run must exit 0 without credentials:\n$(cat tmp/boot-dry.txt)"
+grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
+grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
+
 step "the privacy gate judges tokens, not lines, and refuses an unusable range"
 # the private-looking address is assembled at runtime so the fixture itself
 # never carries a domain the gate would reject
