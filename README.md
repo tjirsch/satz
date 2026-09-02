@@ -141,7 +141,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
-| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
+| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `--import` reads `state list` first and skips already-managed addresses; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `whoami` | `--offline` — print which identity, credential type and quota project the ADC resolves to |

@@ -290,6 +290,30 @@ fn rewrite_param_line(text: &str, param: &str, value: &str) -> Result<String, St
     }
 }
 
+/// The addresses already in the Terraform state (`tf_tool state list` in
+/// `working_dir`). An unreadable state comes back as the error string — the
+/// caller decides whether that is fatal; on a first adopt there is no state
+/// yet, which is not an error condition.
+pub(crate) fn state_addresses(
+    tf_tool: &str,
+    working_dir: &std::path::Path,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let output = std::process::Command::new(tf_tool)
+        .current_dir(working_dir)
+        .args(["state", "list"])
+        .output()
+        .map_err(|e| format!("could not run {} state list: {}", tf_tool, e))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(parse_state_list(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// The pure half of the state read: one address per non-empty line.
+fn parse_state_list(stdout: &str) -> std::collections::BTreeSet<String> {
+    stdout.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
 /// Read a bootstrap config the same way `transpile` does: expand `!include` directives,
 /// then resolve the `!join` / `!format` custom tags.
 ///
@@ -826,6 +850,17 @@ mod tests {
         // A param that merely starts with the name is not a match.
         let prefixed = "customer_organization_id_backup = \"\"\n";
         assert!(rewrite_param_line(prefixed, "customer_organization_id", "1").is_err());
+    }
+
+    // --- state list parsing ------------------------------------------------
+
+    #[test]
+    fn state_list_output_parses_to_addresses() {
+        let set = parse_state_list("google_project.infra\ngoogle_storage_bucket.state\n\n  \n");
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("google_project.infra"));
+        assert!(set.contains("google_storage_bucket.state"));
+        assert!(parse_state_list("").is_empty());
     }
 
     // --- identity comparison -----------------------------------------------------

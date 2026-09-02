@@ -2488,11 +2488,7 @@ async fn run_adopt(
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::adopt::{self, Outcome};
-    let input_path = if Path::new(input).is_absolute() {
-        PathBuf::from(input)
-    } else {
-        PathBuf::from(&runtime_config.yaml_dir).join(input)
-    };
+    let input_path = estate_path(PathBuf::from(input), runtime_config);
     reject_yaml_estate(&input_path, "adopt")?;
     // Same compile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
@@ -2519,6 +2515,24 @@ async fn run_adopt(
 
     if import {
         let hcl_dir = Path::new(&runtime_config.hcl_dir);
+        // E04: with no "import-id" in the estate every resolvable resource
+        // counts as "to import", and a re-run then issued `tofu import` for
+        // addresses the state already manages (17/18 once) — noisy, slow, and
+        // each a needless state write. Read the state once and skip those.
+        // A FIRST adopt is fine: an initialized empty state lists nothing and
+        // errors nothing. An UNREADABLE state (uninitialized dir, changed
+        // backend) means every import below would fail the same way — so this
+        // fails fast with the fix instead of printing it 117 times.
+        let in_state = crate::bootstrap::state_addresses(&runtime_config.tf_tool, hcl_dir)
+            .map_err(|e| {
+                format!(
+                    "could not read the state ({}) — the imports would fail the same way; run `{} init` \
+                     (or `init -reconfigure` after a backend change) in {} first",
+                    e.lines().next().unwrap_or("(no output)"),
+                    runtime_config.tf_tool,
+                    runtime_config.hcl_dir
+                )
+            })?;
         // activation posts the DECLARED spec — parameterized managed
         // constraints (allowedContactDomains, allowedPolicyMembers) require
         // their `parameters` and reject a synthesized enforce-only rule
@@ -2532,7 +2546,13 @@ async fn run_adopt(
             })
             .collect();
         let (mut activated, mut imported, mut failed) = (0usize, 0usize, 0usize);
+        let mut already_managed = 0usize;
         for r in &resolutions {
+            if in_state.contains(&r.address) {
+                println!("  {:60} already managed in the state — skipped", r.address);
+                already_managed += 1;
+                continue;
+            }
             let id = match &r.outcome {
                 Outcome::NeedsActivation { id, .. } => {
                     let Some((parent, constraint)) = &r.org_policy else { continue };
@@ -2569,7 +2589,10 @@ async fn run_adopt(
                 failed += 1;
             }
         }
-        println!("\nadopt: {} activated, {} imported, {} failed. Now run `satz plan` — it should show no create for what was imported.", activated, imported, failed);
+        println!(
+            "\nadopt: {} activated, {} imported, {} already managed (skipped), {} failed. Now run `satz plan` — it should show no create for what was imported.",
+            activated, imported, already_managed, failed
+        );
     } else {
         let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)))?;
         for w in &written {
