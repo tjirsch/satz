@@ -838,13 +838,14 @@ impl OrgPolicyClient {
         let quota_project = quota_override
             .filter(|s| !s.trim().is_empty())
             .or_else(resolve_quota_project);
-        match &quota_project {
-            Some(qp) => println!("Using quota project: {}", qp),
-            None => eprintln!(
+        // The credential line printed at token acquisition already names the
+        // quota project; only its absence needs a warning here.
+        if quota_project.is_none() {
+            eprintln!(
                 "Warning: no quota project found (set GOOGLE_CLOUD_QUOTA_PROJECT, or run \
                  `gcloud auth application-default set-quota-project <project>`). \
                  orgpolicy.googleapis.com requires one and will likely return 403."
-            ),
+            );
         }
 
         Ok(Self {

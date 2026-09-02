@@ -141,6 +141,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `open-readme` | *(none)* — opens the documentation site |
+| `whoami` | `--offline` — print which identity, credential type and quota project the ADC resolves to |
 | `completion [SHELL]` | `--install` |
 
 Details for each command are below.
@@ -1059,6 +1060,13 @@ prints and the skipped pre-flight is named (`pre-flight: SKIPPED`).
 **What bootstrap does NOT do:** it creates no service account and grants no
 IAM beyond the self-grant above — the IaC service account and its grants are
 declared in the estate and come into being on the first `tofu apply`.
+
+**Credential line.** Every live command prints one line before its first API
+call — `credentials: <identity> (user ADC | impersonated service account |
+service account key), quota project <p>` — so a wrong per-customer login
+surfaces immediately instead of as a downstream 403. `satz whoami` is the
+explicit check (`--offline` for the file-only view; a user ADC file stores no
+identity, so the online form resolves it via token introspection).
 
 #### 2. (Optional) Customize & Transpile
 *Only needed if you modify the estate after bootstrap.*

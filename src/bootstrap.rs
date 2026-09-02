@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use serde_yaml::Value;
-use google_cloud_auth::credentials::Builder;
 
 use crate::gcp::ErrorClass;
 
@@ -131,136 +130,12 @@ fn permission_gate(summary: &RunSummary) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-/// How the ADC identity was established, so an unexpected result can be traced back to
-/// the mechanism that produced it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PrincipalSource {
-    TokenInfo,
-    Signer,
-    UserInfo,
-    AdcFile,
-}
-
-impl PrincipalSource {
-    fn label(self) -> &'static str {
-        match self {
-            PrincipalSource::TokenInfo => "token introspection",
-            PrincipalSource::Signer => "credential signer",
-            PrincipalSource::UserInfo => "userinfo endpoint",
-            PrincipalSource::AdcFile => "ADC credentials file",
-        }
-    }
-}
-
-/// Read `email` out of a tokeninfo or userinfo response body.
-fn email_from_identity_json(v: &serde_json::Value) -> Option<String> {
-    v.get("email")
-        .and_then(|e| e.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
-/// Read the service-account address out of an ADC credentials file: either a key file's
-/// `client_email`, or the impersonation target in
-/// `.../serviceAccounts/{email}:generateAccessToken`.
-fn email_from_adc_json(v: &serde_json::Value) -> Option<String> {
-    if let Some(email) = v
-        .get("client_email")
-        .and_then(|e| e.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return Some(email.to_string());
-    }
-
-    let url = v.get("service_account_impersonation_url")?.as_str()?;
-    let email = url.split("/serviceAccounts/").nth(1)?.split(':').next()?;
-    if email.is_empty() { None } else { Some(email.to_string()) }
-}
-
 /// True when the credentials in use are the ones the config names. Addresses are
 /// compared case-insensitively; the local part of an email is technically
 /// case-sensitive, but no identity provider in this path treats it that way, and a
 /// spurious mismatch would block a legitimate run.
 fn identity_matches(expected: &str, actual: &str) -> bool {
     expected.trim().eq_ignore_ascii_case(actual.trim())
-}
-
-/// Determine which principal the Application Default Credentials represent.
-///
-/// Tried in cost order; `None` means no mechanism could tell us, which the caller
-/// treats as "cannot verify" rather than "verified".
-async fn resolve_adc_identity(
-    client: &reqwest::Client,
-    token: &str,
-) -> Option<(String, PrincipalSource)> {
-    // 1. Introspect the token we already hold. This covers `gcloud auth
-    //    application-default login`, the credential type expected here, and needs no
-    //    extra scope. The token goes in the form body rather than the query string so it
-    //    cannot leak into proxy or CDN access logs.
-    if let Ok(res) = client
-        .post("https://oauth2.googleapis.com/tokeninfo")
-        .form(&[("access_token", token)])
-        .send()
-        .await
-    {
-        if res.status().is_success() {
-            if let Ok(body) = res.json::<serde_json::Value>().await {
-                if let Some(email) = email_from_identity_json(&body) {
-                    return Some((email, PrincipalSource::TokenInfo));
-                }
-            }
-        }
-    }
-
-    // 2. Service-account, impersonated-service-account and GCE metadata credentials
-    //    expose the address directly and offline. `authorized_user` and
-    //    `external_account` have no signer and fall through.
-    if let Ok(signer) = Builder::default().build_signer() {
-        if let Ok(email) = signer.client_email().await {
-            if !email.trim().is_empty() {
-                return Some((email, PrincipalSource::Signer));
-            }
-        }
-    }
-
-    // 3. userinfo needs a scope the primary credentials deliberately do not request.
-    //    Build a separate credential for the probe: `with_scopes` is forwarded to the
-    //    wire for every backend (user-account refresh, external-account STS exchange,
-    //    metadata query), and STS in particular often accepts only cloud-platform — so
-    //    widening the credential that mints the working token could break environments
-    //    that work today. The worst case here is that we simply learn nothing.
-    if let Ok(creds) = Builder::default()
-        .with_scopes([
-            "https://www.googleapis.com/auth/cloud-platform",
-            "https://www.googleapis.com/auth/userinfo.email",
-        ])
-        .build_access_token_credentials()
-    {
-        if let Ok(probe) = creds.access_token().await {
-            if let Ok(res) = client
-                .get("https://www.googleapis.com/oauth2/v3/userinfo")
-                .bearer_auth(&probe.token)
-                .send()
-                .await
-            {
-                if res.status().is_success() {
-                    if let Ok(body) = res.json::<serde_json::Value>().await {
-                        if let Some(email) = email_from_identity_json(&body) {
-                            return Some((email, PrincipalSource::UserInfo));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 4. Last resort: read the ADC file off disk.
-    let path = crate::org_policy::adc_file_path()?;
-    let text = std::fs::read_to_string(path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    email_from_adc_json(&json).map(|email| (email, PrincipalSource::AdcFile))
 }
 
 /// Read a bootstrap config the same way `transpile` does: expand `!include` directives,
@@ -398,7 +273,7 @@ pub async fn bootstrap(
 
     // The identity is resolved even when the config cannot be verified against
     // it: the pre-flight needs the principal for its self-grant member string.
-    let resolved_identity = resolve_adc_identity(&client, &token).await;
+    let resolved_identity = crate::gcp::identity::resolve_adc_identity(&client, &token).await;
     match (&expected_admin, &resolved_identity) {
         (Some(expected), None) => {
             // These messages are printed rather than carried in the error, because `main`
@@ -730,51 +605,6 @@ pub(crate) fn run_import(tf_tool: &str, working_dir: &std::path::Path, resource_
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn jv(s: &str) -> serde_json::Value {
-        serde_json::from_str(s).expect("valid test JSON")
-    }
-
-    // --- ADC identity extraction -------------------------------------------------
-
-    #[test]
-    fn email_from_tokeninfo_body() {
-        let v = jv(r#"{"azp":"1.apps.googleusercontent.com","scope":"...cloud-platform","email":"admin@example.com","email_verified":"true"}"#);
-        assert_eq!(email_from_identity_json(&v).as_deref(), Some("admin@example.com"));
-    }
-
-    #[test]
-    fn email_from_userinfo_body() {
-        let v = jv(r#"{"sub":"117","email":"admin@example.com","email_verified":true}"#);
-        assert_eq!(email_from_identity_json(&v).as_deref(), Some("admin@example.com"));
-    }
-
-    #[test]
-    fn email_absent_empty_or_null_is_none() {
-        assert_eq!(email_from_identity_json(&jv(r#"{"scope":"x"}"#)), None);
-        assert_eq!(email_from_identity_json(&jv(r#"{"email":""}"#)), None);
-        assert_eq!(email_from_identity_json(&jv(r#"{"email":"   "}"#)), None);
-        assert_eq!(email_from_identity_json(&jv(r#"{"email":null}"#)), None);
-    }
-
-    #[test]
-    fn email_from_service_account_key_file() {
-        let v = jv(r#"{"type":"service_account","client_email":"svc@p.iam.gserviceaccount.com"}"#);
-        assert_eq!(email_from_adc_json(&v).as_deref(), Some("svc@p.iam.gserviceaccount.com"));
-    }
-
-    #[test]
-    fn email_from_impersonation_url() {
-        let v = jv(r#"{"type":"impersonated_service_account","service_account_impersonation_url":"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/target@p.iam.gserviceaccount.com:generateAccessToken"}"#);
-        assert_eq!(email_from_adc_json(&v).as_deref(), Some("target@p.iam.gserviceaccount.com"));
-    }
-
-    #[test]
-    fn authorized_user_adc_carries_no_email() {
-        // gcloud user ADC has no identity in the file; that is why the REST probes exist.
-        let v = jv(r#"{"type":"authorized_user","client_id":"x","refresh_token":"y"}"#);
-        assert_eq!(email_from_adc_json(&v), None);
-    }
 
     // --- identity comparison -----------------------------------------------------
 
