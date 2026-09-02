@@ -19,8 +19,11 @@ the private history recorded them.
 | `s1_group_definitions` | 1.2 | 2026-08-28 | group `lifecycle { ignore_changes = [initial_group_config] }` — an adopted group no longer plans as "must be replaced" |
 | `s1_group_definitions` | 1.1 | 2026-08-21 | ships NO human memberships — presets define groups, humans grant membership |
 | `s1_group_definitions` | 1.0 | 2026-08-20 | the five S1 admin groups |
+| `s1_security_groups` | 1.0 | 2026-09-02 | the S1 model in ONE typed file (groups + org grants) for top-level `use`; content-identical to `s1_group_definitions` 1.2 + `s1_group_permissions` 1.1, which stay for the under-a-type spelling — an estate takes one of the two, never both |
+| `s2_security_groups` | 1.0 | 2026-09-02 | S2 = S1 plus a distinct `gcp-network-admins` group (`compute.networkAdmin`, `compute.xpnAdmin`, `compute.securityAdmin`, `dns.admin`, `networkconnectivity.hubAdmin`, `networkmanagement.admin` + viewer roles); project-admins lose `compute.networkAdmin` and `compute.xpnAdmin`; one typed file |
 | `s1_group_permissions` | 1.1 | 2026-09-02 | `roles/cloudasset.viewer` for security-admins and security-viewers — `report-compliance` reads witnesses through Cloud Asset Inventory and `iam.securityReviewer` does not carry the search permissions |
 | `s1_group_permissions` | 1.0 | 2026-08-20 | org-level role grants for the S1 groups; `roles/viewer` for the security-viewers group is the fleet standard |
+| `essential_contacts_organization` | 1.2 | 2026-09-02 | commented per-category contacts (BILLING, SUSPENSION, SECURITY, TECHNICAL, LEGAL, PRODUCT_UPDATES, and a multi-category example) with their own address params, ready to uncomment; the shipped shape is unchanged (one contact on ALL) |
 | `essential_contacts_organization` | 1.1 | 2026-08-23 | `essential_contacts_email` param — a customer pins its contact without a fork; content pack |
 | `essential_contacts_organization` | 1.0 | 2026-08-20 | organization-wide essential contact, all categories |
 | `monitoring.organization_audit_logsink` | 1.1 | 2026-08-21 | claims for CIS 2.1/2.2 (both 4.0 and 5.0), the writer-identity bucket grant, retention lifecycle rules |

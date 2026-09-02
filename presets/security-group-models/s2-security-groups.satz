@@ -1,0 +1,167 @@
+// The S2 security group model: S1's five admin groups plus a distinct
+// NETWORK ADMINS group, and the org-level grants split accordingly. In S1 the
+// network authority is folded into project-admins (compute.networkAdmin,
+// compute.xpnAdmin — "Hybrid Connectivity administrators … Network
+// administrators" in their description); S2 carves it out so a network team
+// can own VPCs, Shared VPC, firewalls, DNS and connectivity without the
+// project-admin power over everything else, and project-admins lose exactly
+// those two network roles. Everything else is S1 unchanged.
+//
+// Groups and grants in ONE file (typed sections beside the estate's own):
+//   use "presets/security-group-models/s2-security-groups.satz"
+//
+// To adopt groups that already exist in the tenant:
+//   satz adopt <estate> --only google_cloud_identity_group --execute
+// Memberships are deliberately NOT part of this pack: presets define groups,
+// humans grant membership.
+//
+// Required from the estate: customer_domain, svc_iac_account, infra_project_name
+
+pack s2_security_groups version "1.0"
+
+params {
+  gcp_organization_admins_name = "gcp-organization-admins"
+  gcp_project_admins_name      = "gcp-project-admins"
+  gcp_network_admins_name      = "gcp-network-admins"
+  gcp_security_admins_name     = "gcp-security-admins"
+  gcp_security_viewers_name    = "gcp-security-viewers"
+  gcp_billing_admins_name      = "gcp-billing-admins"
+}
+
+google_cloud_identity_group {
+  "{gcp_organization_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Organization Admins"
+    description  = "Permissions merged from default roles for\nOrganization administrators, Hybrid Connectivity administrators and\nLogging-monitoring administrators.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_project_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Project Admins"
+    description  = "Permissions allow Day2Day Project Administration across all projects +\nLogging-monitoring administrators. Network administration is the\nnetwork-admins group's (S2).\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_network_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Network Admins"
+    description  = "Network administration across the organization: VPCs, subnets,\nShared VPC (XPN), firewall policies, Cloud DNS, hybrid connectivity\n(Network Connectivity Center, VPN, Interconnect) and network diagnostics.\nNo project-level ownership.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_security_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Security Admins"
+    description  = "Permissions for use with Security Admin role. Use of setting IAM on most Resources.\nOrganizational, Folder  and Project IAM Admin roles.\nSCC PowerUser.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_security_viewers_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Security Viewers"
+    description  = "All Viewer Permissions for use with Security Auitor role.\nSCC User.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_billing_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Billing Admins"
+    description  = "All Billing and Procurement roles.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+}
+
+google_organization_iam_member {
+  "domain:{customer_domain}" = [
+    "roles/resourcemanager.organizationViewer",
+  ]
+
+  "group:{gcp_organization_admins_name}@{customer_domain}" = [
+    "roles/resourcemanager.organizationAdmin",
+    "roles/iam.organizationRoleAdmin",
+    "roles/orgpolicy.policyAdmin",
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.folderIamAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/cloudsupport.admin",
+    "roles/billing.user",
+  ]
+
+  // S1 minus compute.networkAdmin and compute.xpnAdmin — those are the
+  // network-admins group's in S2.
+  "group:{gcp_project_admins_name}@{customer_domain}" = [
+    "roles/resourcemanager.folderViewer",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/resourcemanager.tagAdmin",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.serviceAccountCreator",
+    "roles/owner",
+    "roles/bigquery.admin",
+    "roles/pubsub.admin",
+    "roles/cloudsupport.admin",
+    "roles/compute.viewer",
+    "roles/container.viewer",
+    "roles/monitoring.admin",
+    "roles/logging.admin",
+    "roles/logging.configWriter",
+    "roles/logging.privateLogViewer",
+    "roles/monitoring.viewer",
+    "roles/billing.user",
+  ]
+
+  // The network authority, org-wide: create and manage networks, Shared VPC
+  // host/service attachments, firewall rules and policies, DNS zones, hybrid
+  // connectivity hubs/spokes; diagnose with Network Management; read compute
+  // and logs for troubleshooting. No owner, no IAM admin.
+  "group:{gcp_network_admins_name}@{customer_domain}" = [
+    "roles/compute.networkAdmin",
+    "roles/compute.xpnAdmin",
+    "roles/compute.securityAdmin",
+    "roles/dns.admin",
+    "roles/networkconnectivity.hubAdmin",
+    "roles/networkmanagement.admin",
+    "roles/compute.viewer",
+    "roles/resourcemanager.folderViewer",
+    "roles/logging.viewer",
+    "roles/monitoring.viewer",
+  ]
+
+  "group:{gcp_security_admins_name}@{customer_domain}" = [
+    "roles/orgpolicy.policyAdmin",
+    "roles/compute.viewer",
+    "roles/container.viewer",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.securityReviewer",
+    // report-compliance reads witnesses through Cloud Asset Inventory;
+    // securityReviewer does NOT carry cloudasset.assets.searchAllResources.
+    "roles/cloudasset.viewer",
+    "roles/monitoring.admin",
+    "roles/logging.configWriter",
+    "roles/logging.privateLogViewer",
+    "roles/resourcemanager.folderIamAdmin",
+    "roles/securitycenter.admin",
+    "roles/billing.user",
+  ]
+
+  "group:{gcp_security_viewers_name}@{customer_domain}" = [
+    "roles/viewer",
+    "roles/resourcemanager.organizationViewer",
+    "roles/compute.viewer",
+    "roles/logging.configWriter",
+    "roles/logging.privateLogViewer",
+    "roles/monitoring.viewer",
+    "roles/logging.viewer",
+    "roles/container.viewer",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.securityReviewer",
+    "roles/cloudasset.viewer",
+  ]
+
+  "group:{gcp_billing_admins_name}@{customer_domain}" = [
+    "roles/resourcemanager.organizationViewer",
+    "roles/billing.admin",
+    "roles/billing.creator",
+  ]
+}

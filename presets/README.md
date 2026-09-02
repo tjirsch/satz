@@ -260,21 +260,56 @@ recipient; `notification_channels = []` passes CIS and notifies nobody.
 
 ## security-group-models/
 
-The S1 security group model: five admin groups plus their org-level role grants.
+The security group models: admin groups plus their org-level role grants.
+Two spellings of S1 exist — an estate takes ONE of them, never both:
 
-- **s1-group-definitions.satz** — the groups (`gcp-organization-admins`,
-  `gcp-project-admins`, `gcp-security-admins`, `gcp-security-viewers`,
-  `gcp-billing-admins`), each with the IaC service account as owner. Lifecycle
-  ignores `initial_group_config` (imported groups always diff on it).
-  **Since v1.1 the pack ships NO human memberships** — presets define groups,
-  humans grant membership (console or gcloud, deliberately unmanaged). Estates
-  that must manage a membership declare it on their own estate-level groups.
-- **s1-group-permissions.satz** — the `google_organization_iam_member` grants for
-  those groups plus a domain-wide `organizationViewer`.
+- **s1-security-groups.satz** — S1 in ONE typed file (groups AND grants), for
+  a top-level `use`. Resource-type sections may repeat across files with
+  distinct ids, so the pack's `google_cloud_identity_group { … }` sits beside
+  the estate's own.
+- **s1-group-definitions.satz** + **s1-group-permissions.satz** — the same S1
+  as two content packs `use`d UNDER a resource type (the original spelling,
+  kept for the estates on it).
+- **s2-security-groups.satz** — S2: S1 plus a distinct **`gcp-network-admins`**
+  group. The network authority moves out of project-admins (which lose
+  `compute.networkAdmin` and `compute.xpnAdmin`) into a team that owns VPCs,
+  Shared VPC, firewall policies, Cloud DNS, hybrid connectivity and network
+  diagnostics — `compute.networkAdmin`, `compute.xpnAdmin`,
+  `compute.securityAdmin`, `dns.admin`, `networkconnectivity.hubAdmin`,
+  `networkmanagement.admin`, plus viewer roles; no owner, no IAM admin.
+  One file, since groups and their grants belong together.
+
+**Which model:** S1 when one platform team does both project administration
+and networking (the network roles ride along in project-admins because the
+people are the same). S2 as soon as network and project administration are
+different people — a connectivity team, Shared VPC with many service
+projects, hierarchical firewall policies, hybrid connectivity, or a
+separation-of-duties requirement; the network team gets org-wide reach over
+connectivity and nothing else. Moving S1 → S2 later is a pack swap plus
+adopting the new group, but every project admin loses two roles at that
+apply. The role-by-role table and who-sits-where guide are on the
+[S2 pack page](docs/s2-security-groups.md).
+
+The groups: `gcp-organization-admins` (break-glass owners of the org tree,
+policies and org IAM), `gcp-project-admins` (day-2 workload projects),
+`gcp-security-admins` (guardrails: org policies, SCC, folder IAM, log
+routing), `gcp-security-viewers` (org-wide read-only for audit and
+compliance evidence), `gcp-billing-admins` (billing, budgets, procurement)
+— S2 adds `gcp-network-admins` (everything that connects, no ownership, no
+IAM) — each with the IaC service account as owner; lifecycle
+ignores `initial_group_config` (imported groups always diff on it). **No pack
+ships human memberships** — presets define groups, humans grant membership
+(console or gcloud, deliberately unmanaged). Estates that must manage a
+membership declare it on their own estate-level groups. Every group name is a
+param.
 
 **Use:**
 
 ```
+// one typed file (S1 or S2)
+use "presets/security-group-models/s2-security-groups.satz"
+
+// or the two S1 content packs under their resource types
 google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
 google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
 ```
@@ -489,6 +524,14 @@ google_essential_contacts_contact { use "presets/essential-contacts-organization
 | Param | Default | Meaning |
 |---|---|---|
 | `essential_contacts_email` | `"essential-contacts-all@{customer_domain}"` | the contact address |
+
+**Splitting by category (v1.2):** the pack carries COMMENTED contacts for
+each category — `BILLING`, `SUSPENSION`, `SECURITY`, `TECHNICAL`, `LEGAL`,
+`PRODUCT_UPDATES`, and a multi-category `oncall` example — each with its own
+`essential_contacts_<category>_email` param. Uncomment what you split out
+(in a `.local` fork, or the estate declares them directly), give each a
+distinct address, and narrow or delete the `all` contact: one address may
+appear once per parent, and an address on ALL already receives everything.
 
 ## A big resource is a pack
 

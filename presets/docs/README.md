@@ -7,7 +7,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`; the 
 |---|---|---|---|---|
 | [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.2 | `CIS-GCP-Foundation-4.0.satz` | 18 | 13 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | `billing-account-permissions.satz` | 4 | 0 |
-| [`essential_contacts_organization`](essential-contacts-organization.md) | 1.1 | `essential-contacts-organization.satz` | 1 | 0 |
+| [`essential_contacts_organization`](essential-contacts-organization.md) | 1.2 | `essential-contacts-organization.satz` | 1 | 0 |
 | [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.1 | `monitoring/organization-audit-logsink.satz` | 5 | 6 |
 | [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.2 | `monitoring/organization-cis-log-alerts-central.satz` | 20 | 18 |
 | [`project_cis_log_alerts`](project-cis-log-alerts.md) | 1.0 | `monitoring/project-cis-log-alerts.satz` | 17 | 0 |
@@ -15,3 +15,5 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`; the 
 | [`sa_security_audit`](sa-security-audit.md) | 1.0 | `security-audit/sa-security-audit.satz` | 4 | 0 |
 | [`s1_group_definitions`](s1-group-definitions.md) | 1.2 | `security-group-models/s1-group-definitions.satz` | 5 | 0 |
 | [`s1_group_permissions`](s1-group-permissions.md) | 1.1 | `security-group-models/s1-group-permissions.satz` | 6 | 0 |
+| [`s1_security_groups`](s1-security-groups.md) | 1.0 | `security-group-models/s1-security-groups.satz` | 11 | 0 |
+| [`s2_security_groups`](s2-security-groups.md) | 1.0 | `security-group-models/s2-security-groups.satz` | 13 | 0 |
