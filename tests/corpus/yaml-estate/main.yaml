@@ -10,6 +10,11 @@
 #   * a nested ATTRIBUTE block                  (labels)
 #     -- must NOT be mistaken for a resource type
 #   * an !include pack, which conversion has to repoint at the .satz twin
+#   * the Tier-2 (CDKTF-era) spelling: a top-level `version:` dialect marker
+#     (dropped) and unanchored top-level scalars (become params)
+version: 1.0
+infra-project-name: "demo-infra"
+deployment-mode: "local"
 variables:
   customer-organization-id: &customer-organization-id "123456789"
   customer-id: &customer-id "C0TEST"
