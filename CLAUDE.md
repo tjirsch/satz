@@ -92,7 +92,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `docs/satz-language.md` compiles; where the doc and the parser disagree, the
   parser is right and the doc is a bug.
 
-## Language state (v0, satz v0.46.4)
+## Language state (v0, satz v0.46.48)
 
 - The fragment pipeline parses Satz directly: per-file fragments, the ⊕ fold
   (same address, different body = hard error naming both files), schema-typed

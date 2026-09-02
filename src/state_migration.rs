@@ -227,27 +227,94 @@ fn normalize_address(addr: &str) -> String {
     normalized
 }
 
-pub fn generate_migration(mapping_path: &Path, output_path: &Path, tf_tool: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn generate_migration(mapping_path: &Path, output_path: &Path, tf_tool: &str, hcl_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
     let content = crate::fsx::read_to_string(mapping_path)?;
     let mapping: HashMap<String, String> = serde_yaml::from_str(&content)?;
-    
-    let mut script = String::new();
-    script.push_str("#!/bin/bash\n");
-    script.push_str("#set -e\n\n");
-    script.push_str(&format!("TF_TOOL=\"{}\"\n\n", tf_tool));
-    
-    script.push_str("if ! command -v \"$TF_TOOL\" &> /dev/null; then\n");
-    script.push_str("    echo \"Error: $TF_TOOL could not be found\"\n");
-    script.push_str("    exit 1\n");
-    script.push_str("fi\n\n");
-    
+
     let mut items: Vec<_> = mapping.into_iter().collect();
     items.sort();
-    
+    let total = items.len();
+
+    // The generated script survives contact with a real GCS backend: it cds
+    // into hcl_dir itself instead of assuming the caller is there, paces the
+    // writes (the state is ONE object with a per-object mutation rate limit —
+    // 136 consecutive moves once produced five 429s), retries a 429 with
+    // backoff, and ends with an honest summary instead of a silent scroll.
+    let mut script = String::new();
+    script.push_str("#!/bin/bash\n\n");
+    script.push_str(&format!("TF_TOOL=\"{}\"\n", tf_tool));
+    script.push_str(&format!("HCL_DIR=\"{}\"\n\n", hcl_dir));
+    script.push_str(
+        r#"if ! command -v "$TF_TOOL" &> /dev/null; then
+    echo "Error: $TF_TOOL could not be found"
+    exit 1
+fi
+cd "$HCL_DIR" || exit 1
+
+"#,
+    );
+    script.push_str(&format!("total={}\nmoved=0\nfailed=0\n\n", total));
+    script.push_str(
+        r#"mv_state() {
+    local old="$1" new="$2" attempt out
+    for attempt in 1 2 3; do
+        if out=$("$TF_TOOL" state mv "$old" "$new" 2>&1); then
+            printf '%s\n' "$out"
+            moved=$((moved+1))
+            return 0
+        fi
+        # A 429 is the backend's rate limit; the state is untouched. Back off, retry.
+        if printf '%s' "$out" | grep -q '429'; then
+            sleep $((attempt * 2))
+            continue
+        fi
+        break
+    done
+    printf '%s\n' "$out" >&2
+    echo "FAILED: $old -> $new" >&2
+    failed=$((failed+1))
+    return 1
+}
+
+"#,
+    );
     for (old, new) in items {
-        script.push_str(&format!("\"$TF_TOOL\" state mv '{}' '{}'\n", old, new));
+        script.push_str(&format!("mv_state '{}' '{}'\nsleep 1\n", old, new));
     }
-    
+    script.push_str(
+        r#"
+echo
+echo "state moves: $moved moved, $failed failed (of $total)"
+if [ "$failed" -gt 0 ]; then
+    echo "fix the FAILED moves and re-run (addresses already moved will report 'not found')" >&2
+    exit 1
+fi
+"#,
+    );
+
     crate::fsx::write(output_path, script)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod migration_script_tests {
+    use super::*;
+
+    #[test]
+    fn generated_script_paces_retries_and_summarizes() {
+        let dir = std::env::temp_dir().join(format!("satz-genmig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mapping = dir.join("mapping.yaml");
+        std::fs::write(&mapping, "google_project.old: google_project.new\n").unwrap();
+        let out = dir.join("migrate.sh");
+        generate_migration(&mapping, &out, "tofu", "/work/hcl").unwrap();
+        let script = std::fs::read_to_string(&out).unwrap();
+        assert!(script.contains("HCL_DIR=\"/work/hcl\""), "{script}");
+        assert!(script.contains("cd \"$HCL_DIR\""), "{script}");
+        assert!(script.contains("mv_state 'google_project.old' 'google_project.new'"), "{script}");
+        assert!(script.contains("sleep 1"), "{script}");
+        assert!(script.contains("grep -q '429'"), "{script}");
+        assert!(script.contains("state moves:"), "{script}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

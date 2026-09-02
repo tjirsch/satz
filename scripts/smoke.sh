@@ -161,6 +161,22 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.s
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
 grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
 
+step "transpile --check: compiles in memory, accepts the yaml/-prefixed form, writes nothing"
+rm -rf hcl
+"$satz" --config . transpile yaml/smoke.satz --check > tmp/check.txt
+grep -q 'transpile --check: OK' tmp/check.txt || fail "--check did not report OK:\n$(cat tmp/check.txt)"
+[ ! -d hcl ] || fail "--check wrote hcl/"
+"$satz" --config . transpile smoke.satz >/dev/null   # restore hcl/ for the later steps
+
+step "generate-migration: the script cds into hcl_dir, paces, retries 429s and summarizes"
+printf 'google_project.old: google_project.new\n' > tmp/mapping.yaml
+"$satz" --config . generate-migration tmp/mapping.yaml --output tmp/migrate.sh
+grep -q 'cd "$HCL_DIR"' tmp/migrate.sh || fail "the script does not cd into hcl_dir"
+grep -q "mv_state 'google_project.old' 'google_project.new'" tmp/migrate.sh || fail "the move is missing"
+grep -q 'sleep 1' tmp/migrate.sh || fail "no pacing between moves"
+grep -q "grep -q '429'" tmp/migrate.sh || fail "no 429 retry"
+grep -q 'state moves:' tmp/migrate.sh || fail "no summary line"
+
 step "bootstrap on a greenfield estate: the empty org id gets the greenfield guidance, not a bare error"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap greenfield.satz --dry-run > tmp/boot-green.txt 2>&1; then
   fail "an empty customer_organization_id without --greenfield must fail:\n$(cat tmp/boot-green.txt)"
