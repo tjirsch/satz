@@ -1,6 +1,6 @@
 [package]
 name = "satz"
-version = "0.46.52"
+version = "0.46.53"
 edition = "2021"
 authors = ["Thomas Jirsch"]
 description = "Infrastructure with a constitution — proven live. Compiles Satz estates to OpenTofu/Terraform HCL and proves declared controls against the live Google Cloud organisation."
