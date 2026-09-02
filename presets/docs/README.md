@@ -14,4 +14,4 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`; the 
 | [`organization_budget`](organization-budget.md) | 1.0 | `organization-budget.satz` | 1 | 0 |
 | [`sa_security_audit`](sa-security-audit.md) | 1.0 | `security-audit/sa-security-audit.satz` | 4 | 0 |
 | [`s1_group_definitions`](s1-group-definitions.md) | 1.2 | `security-group-models/s1-group-definitions.satz` | 5 | 0 |
-| [`s1_group_permissions`](s1-group-permissions.md) | 1.0 | `security-group-models/s1-group-permissions.satz` | 6 | 0 |
+| [`s1_group_permissions`](s1-group-permissions.md) | 1.1 | `security-group-models/s1-group-permissions.satz` | 6 | 0 |

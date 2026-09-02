@@ -4,7 +4,7 @@
 
 // Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
-pack s1_group_permissions version "1.0"
+pack s1_group_permissions version "1.1"
 
 "domain:{customer_domain}" = [
   "roles/resourcemanager.organizationViewer",
@@ -50,6 +50,9 @@ pack s1_group_permissions version "1.0"
   "roles/container.viewer",
   "roles/iam.organizationRoleViewer",
   "roles/iam.securityReviewer",
+  // report-compliance reads witnesses through Cloud Asset Inventory;
+  // securityReviewer does NOT carry cloudasset.assets.searchAllResources.
+  "roles/cloudasset.viewer",
   "roles/monitoring.admin",
   "roles/logging.configWriter",
   "roles/logging.privateLogViewer",
@@ -69,6 +72,9 @@ pack s1_group_permissions version "1.0"
   "roles/container.viewer",
   "roles/iam.organizationRoleViewer",
   "roles/iam.securityReviewer",
+  // report-compliance reads witnesses through Cloud Asset Inventory;
+  // securityReviewer does NOT carry cloudasset.assets.searchAllResources.
+  "roles/cloudasset.viewer",
 ]
 
 "group:{gcp_billing_admins_name}@{customer_domain}" = [

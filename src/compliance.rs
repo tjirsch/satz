@@ -1042,6 +1042,12 @@ pub(crate) async fn run_report_compliance(
                 Ok(inv) => Some(inv),
                 Err(e) => {
                     eprintln!("warning: live inventory unavailable ({}); report marks witnesses unverifiable", e);
+                    eprintln!(
+                        "warning: the two usual causes — cloudasset.googleapis.com not enabled on the quota \
+                         project (the init template's infra project lists it), or the caller without org-wide \
+                         cloudasset read access: roles/cloudasset.viewer, granted to the security groups by \
+                         s1-group-permissions v1.1 (roles/iam.securityReviewer does NOT carry it)"
+                    );
                     None
                 }
             },
