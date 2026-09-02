@@ -141,7 +141,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--pristine-dir` |
-| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; `--import` reads `state list` first and skips already-managed addresses; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
+| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `whoami` | `--offline` — print which identity, credential type and quota project the ADC resolves to |
@@ -679,7 +679,16 @@ satz adopt C0example.satz --only google_folder,google_cloud_identity_group
 
 How a resource is resolved depends on who chose its identity:
 
-- **User-chosen id** (project, bucket, service account, IAM bindings, sinks,
+- **Projects** are an existence check, not a template: the project id is
+  looked up live — exists → verified import; provably absent → *on apply*,
+  and every resource inside it (IAM, services, project-scoped policies, …)
+  reads *on apply (parent)*: created together with the project, never given a
+  derived id, never written or imported. A misspelled project id is therefore
+  a visible finding, not a confident guess — note that Google answers a
+  lookup of a project id that does not exist (or that you cannot see) with
+  **403, not 404**, so a typo reads as *FAILED* with the API's denial rather
+  than *on apply*: either way the run stops and nothing is written.
+- **User-chosen id** (bucket, service account, IAM bindings, sinks,
   metrics, custom roles, `project_service`, …): the import id is rendered
   offline from a template on the type's row in `presets/import-config.yaml`
   (`import_id: "projects/{project}/serviceAccounts/{account_id}@…"`), with
@@ -697,7 +706,11 @@ How a resource is resolved depends on who chose its identity:
 
 It **never guesses**: exactly one live candidate resolves; none means *on apply*
 (Terraform will create it); more than one is **AMBIGUOUS**, the candidates are
-listed, and you pin `"import-id"` by hand. Managed org-policy constraints the
+listed, and you pin `"import-id"` by hand. And it **never fails quietly**: a
+FAILED lookup (denied, quota), an unresolvable or ambiguous resource, or a type
+without a rule makes the command exit non-zero after printing the table —
+nothing is changed in that case; with `--import`, every row that is not
+imported says why. Managed org-policy constraints the
 organisation has never had need `--activate` (they cannot be imported before
 activation; this mutates the org). `--execute` writes the ids into the `.satz`:
 a resource with a block of its own gets an `"import-id"` line; an entry-level

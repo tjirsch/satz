@@ -61,6 +61,28 @@ pub fn normalize_parent(raw: &str) -> String {
     }
 }
 
+/// Qualify an org-policy parent for the API: `organizations/N`, `folders/N`
+/// and `projects/X` pass through; a bare project id (never all digits) is
+/// prefixed `projects/`; a bare NUMBER is refused — it could be an
+/// organization or a folder, and `normalize_parent`'s organization guess is
+/// exactly how a folder number once became an org-level lookup.
+pub(crate) fn qualify_parent(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("empty parent".to_string());
+    }
+    if raw.starts_with("organizations/") || raw.starts_with("folders/") || raw.starts_with("projects/") {
+        return Ok(raw.to_string());
+    }
+    if raw.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!(
+            "parent {:?} is a bare number — say organizations/{} or folders/{}",
+            raw, raw, raw
+        ));
+    }
+    Ok(format!("projects/{}", raw))
+}
+
 /// Turn a constraint name into the label style used by the packs,
 /// e.g. `iam.managed.disableServiceAccountKeyCreation`
 ///   -> `iam-managed-disableServiceAccountKeyCreation`.
@@ -1485,6 +1507,15 @@ mod tests {
         assert_eq!(normalize_parent("123456"), "organizations/123456");
         assert_eq!(normalize_parent("organizations/9"), "organizations/9");
         assert_eq!(normalize_parent("folders/9"), "folders/9");
+
+        // qualify_parent: what adoption asks the API with — a bare project id
+        // gets its prefix, a bare number is refused (org OR folder?), never guessed.
+        assert_eq!(qualify_parent("acme-infra-001").unwrap(), "projects/acme-infra-001");
+        assert_eq!(qualify_parent("projects/acme-infra-001").unwrap(), "projects/acme-infra-001");
+        assert_eq!(qualify_parent("folders/9").unwrap(), "folders/9");
+        assert_eq!(qualify_parent("organizations/9").unwrap(), "organizations/9");
+        assert!(qualify_parent("123456").unwrap_err().contains("bare number"));
+        assert!(qualify_parent("").is_err());
         assert_eq!(
             sanitize_yaml_key("iam.managed.disableServiceAccountKeyCreation"),
             "iam-managed-disableServiceAccountKeyCreation"

@@ -2520,6 +2520,18 @@ async fn run_adopt(
     print!("{}", adopt::render_table(&resolutions));
     println!("\n{}", adopt::summary(&resolutions));
 
+    // A table with a FAILED / unresolvable / ambiguous / no-rule row did not
+    // answer its question: that is an error exit, not a summary count. The
+    // table is above; nothing has been changed at this point.
+    let unanswered = adopt::unanswered(&resolutions);
+    if unanswered > 0 {
+        return Err(format!(
+            "adopt: {} resolution(s) failed, unresolvable, ambiguous or without a rule — see the rows above; nothing was changed",
+            unanswered
+        )
+        .into());
+    }
+
     if !execute {
         println!(
             "\ndry run — nothing was changed. Re-run with --execute to write the verified \"import-id\"s into the estate, \
@@ -2597,7 +2609,21 @@ async fn run_adopt(
                     id
                 }
                 Outcome::Resolved { id, .. } => id,
-                _ => continue,
+                Outcome::OnApply => {
+                    println!("  {:60} on apply — skipped (apply creates it)", r.address);
+                    continue;
+                }
+                Outcome::ParentOnApply(why) => {
+                    println!("  {:60} on apply — skipped ({})", r.address, why);
+                    continue;
+                }
+                Outcome::AlreadyAdopted(_) | Outcome::Skipped => continue,
+                other => {
+                    // unanswered rows already ended the run above; this arm
+                    // only exists so a new Outcome can never be skipped silently
+                    println!("  {:60} skipped ({:?})", r.address, other);
+                    continue;
+                }
             };
             if crate::bootstrap::run_import(&runtime_config.tf_tool, hcl_dir, &r.address, id) {
                 imported += 1;
@@ -2609,6 +2635,9 @@ async fn run_adopt(
             "\nadopt: {} activated, {} imported, {} already managed (skipped), {} failed. Now run `satz plan` — it should show no create for what was imported.",
             activated, imported, already_managed, failed
         );
+        if failed > 0 {
+            return Err(format!("adopt: {} activation(s)/import(s) failed — see above", failed).into());
+        }
     } else {
         let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)))?;
         for w in &written {
