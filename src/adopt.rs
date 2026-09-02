@@ -748,9 +748,7 @@ impl Live for RealLive {
         use google_cloud_asset_v1::model::ContentType;
         use google_cloud_gax::paginator::ItemPaginator as _;
         if self.assets.is_none() {
-            self.assets = Some(
-                google_cloud_asset_v1::client::AssetService::builder().build().await.map_err(|e| e.to_string())?,
-            );
+            self.assets = Some(crate::gcp::asset_service().await?);
         }
         let client = self.assets.as_ref().unwrap();
         let mut stream = client

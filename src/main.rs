@@ -153,6 +153,11 @@ struct Cli {
     #[arg(long, global = true)]
     verbose: bool,
 
+    /// Live commands: call the APIs as the plain ADC identity instead of
+    /// impersonating the estate's IaC service account
+    #[arg(long, global = true)]
+    no_impersonate: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -743,6 +748,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = maybe_check_for_updates(&mut global_settings).await;
     }
 
+    // --no-impersonate wins over everything: locking the target to None here
+    // makes every later per-command configuration a no-op.
+    if cli.no_impersonate {
+        crate::gcp::configure_impersonation(None);
+    }
+
     let config_dir = config_file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     let tool_config: ToolConfig = if config_file_path.exists() {
@@ -1217,6 +1228,7 @@ Thumbs.db
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
+            configure_estate_impersonation(&config_path, &runtime_config);
             crate::org_policy::export_org_policies(
                 config_path,
                 customer_organization_id,
@@ -1230,6 +1242,7 @@ Thumbs.db
             // The params table and the declared policy set both come from the
             // fragment pipeline; the desired set is what the estate emits.
             let config_path = estate_path(estate, &runtime_config);
+            configure_estate_impersonation(&config_path, &runtime_config);
             crate::org_policy::diff_org_policies(
                 config_path,
                 customer_organization_id,
@@ -1244,6 +1257,7 @@ Thumbs.db
         Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, report, recursive } => {
             // Satz-native: bootstrap needs the variable table, nothing more.
             let config_path = estate_path(estate, &runtime_config);
+            configure_estate_impersonation(&config_path, &runtime_config);
             crate::org_policy::report_org_policies(
                 config_path,
                 customer_organization_id,
@@ -1376,6 +1390,7 @@ Thumbs.db
         }
         Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov, fail_on } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            configure_estate_impersonation(&input_path, &runtime_config);
             // Reports, never emits — see the note in `require`.
             let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
@@ -2490,6 +2505,7 @@ async fn run_adopt(
     use crate::adopt::{self, Outcome};
     let input_path = estate_path(PathBuf::from(input), runtime_config);
     reject_yaml_estate(&input_path, "adopt")?;
+    configure_estate_impersonation(&input_path, runtime_config);
     // Same compile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
     let out = pipeline_b_generate(&input_path, tool_config, runtime_config)?;
@@ -2735,6 +2751,29 @@ fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
         return estate;
     }
     PathBuf::from(&runtime_config.yaml_dir).join(estate)
+}
+
+/// Configure the identity live estate commands run as: on a
+/// `deployment_mode = "cloud"` estate, the IaC service account
+/// (`{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com` — the
+/// emitter's own provider rule), exactly what `tofu` applies with, so the
+/// human needs no org-wide read roles. Local mode and `--no-impersonate`
+/// stay on the plain ADC. Bootstrap never calls this: on day 0 the SA may
+/// not exist yet.
+fn configure_estate_impersonation(input_path: &Path, runtime_config: &ToolConfig) {
+    let sa = satz_estate_params(input_path, &runtime_config.include_dirs).ok().and_then(|params| {
+        let get = |k: &str| params.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        if get("deployment-mode").as_deref() != Some("cloud") {
+            return None;
+        }
+        match (get("svc-iac-account"), get("infra-project-name")) {
+            (Some(a), Some(p)) if !a.is_empty() && !p.is_empty() => {
+                Some(format!("{}@{}.iam.gserviceaccount.com", a, p))
+            }
+            _ => None,
+        }
+    });
+    crate::gcp::configure_impersonation(sa);
 }
 
 /// The parameter table of a `.satz` estate, in the dialect's kebab-case

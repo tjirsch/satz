@@ -10,7 +10,23 @@ pub(crate) mod resourcemanager;
 pub(crate) mod serviceusage;
 pub(crate) mod storage;
 
-/// An ADC bearer token for the cloud-platform scope. The chokepoint every
+/// The service account every live call runs as, set ONCE at dispatch for
+/// estate commands (deployment_mode "cloud" → the estate's IaC SA, exactly
+/// the identity tofu applies with) and consulted by the token chokepoint and
+/// the Cloud Asset client. `None` = plain ADC; a second configuration is a
+/// no-op, so a command's several clients can never disagree.
+static IMPERSONATE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+pub(crate) fn configure_impersonation(sa: Option<String>) {
+    let _ = IMPERSONATE.set(sa);
+}
+
+pub(crate) fn impersonation_target() -> Option<String> {
+    IMPERSONATE.get().and_then(|o| o.clone())
+}
+
+/// An ADC bearer token for the cloud-platform scope — minted AS the
+/// configured impersonation target when one is set. The chokepoint every
 /// live command mints through — which is what lets [`identity::announce`]
 /// print the credential line exactly once, before the first API call, without
 /// any command knowing about it.
@@ -20,9 +36,88 @@ pub(crate) async fn access_token() -> Result<String, String> {
         .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
         .build_access_token_credentials()
         .map_err(|e| e.to_string())?;
-    let token = credentials.access_token().await.map_err(|e| e.to_string())?.token;
+    let base = credentials.access_token().await.map_err(|e| e.to_string())?.token;
+    let token = match impersonation_target() {
+        None => base,
+        Some(sa) => impersonated_token(&base, &sa).await?,
+    };
     identity::announce(&token).await;
     Ok(token)
+}
+
+/// Exchange the caller's token for one minted AS the service account —
+/// iamcredentials `generateAccessToken`, the same call an impersonating ADC
+/// makes. A denial names the missing TokenCreator grant and the opt-out.
+async fn impersonated_token(base: &str, sa: &str) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!(
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{}:generateAccessToken",
+            sa
+        ))
+        .bearer_auth(base)
+        .json(&serde_json::json!({ "scope": ["https://www.googleapis.com/auth/cloud-platform"] }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        let e = api_error(res).await;
+        if e.class() == ErrorClass::PermissionDenied {
+            return Err(format!(
+                "cannot impersonate {} ({}) — the caller needs roles/iam.serviceAccountTokenCreator \
+                 on it (normally via membership in the svc-iac-users group), or pass --no-impersonate",
+                sa, e
+            ));
+        }
+        return Err(format!("cannot impersonate {}: {}", sa, e));
+    }
+    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    v.get("accessToken")
+        .and_then(|t| t.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "generateAccessToken returned no accessToken".to_string())
+}
+
+/// A Cloud Asset client honoring the configured impersonation: with a target
+/// set, the credentials are shaped exactly like an impersonating ADC file
+/// (the on-disk ADC as `source_credentials`); otherwise the default ADC.
+pub(crate) async fn asset_service() -> Result<google_cloud_asset_v1::client::AssetService, String> {
+    let builder = google_cloud_asset_v1::client::AssetService::builder();
+    match impersonation_target() {
+        None => builder.build().await.map_err(|e| e.to_string()),
+        Some(sa) => {
+            let creds = google_cloud_auth::credentials::impersonated::Builder::new(
+                impersonated_credential_json(&sa)?,
+            )
+            .build()
+            .map_err(|e| e.to_string())?;
+            builder.with_credentials(creds).build().await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// The impersonating-ADC JSON, composed in memory: what `gcloud auth
+/// application-default login --impersonate-service-account` would write, with
+/// the existing ADC as the source. An ADC that already impersonates is kept
+/// as-is — re-wrapping would chain impersonations.
+fn impersonated_credential_json(sa: &str) -> Result<serde_json::Value, String> {
+    let path = crate::org_policy::adc_file_path().ok_or(
+        "no ADC file to impersonate from — run `gcloud auth application-default login`, or pass --no-impersonate",
+    )?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let source: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {}", path.display(), e))?;
+    if source.get("type").and_then(|t| t.as_str()) == Some("impersonated_service_account") {
+        return Ok(source);
+    }
+    Ok(serde_json::json!({
+        "type": "impersonated_service_account",
+        "service_account_impersonation_url": format!(
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{}:generateAccessToken",
+            sa
+        ),
+        "source_credentials": source,
+    }))
 }
 
 /// What a failed API call means for the caller. Derived from the HTTP status

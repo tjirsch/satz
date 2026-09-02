@@ -1076,6 +1076,16 @@ surfaces immediately instead of as a downstream 403. `satz whoami` is the
 explicit check (`--offline` for the file-only view; a user ADC file stores no
 identity, so the online form resolves it via token introspection).
 
+**Impersonation.** On a `deployment_mode = "cloud"` estate, every live
+command impersonates the estate's IaC service account
+(`{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`) — exactly
+the identity `tofu` applies with — so the human needs no org-wide read roles,
+only `roles/iam.serviceAccountTokenCreator` on the SA (normally via
+membership in `svc-iac-users`). `--no-impersonate` opts out; `bootstrap`
+never impersonates (day 0, the SA may not exist yet); an ADC that already
+impersonates is used as-is. The credential line names the SA the calls
+actually run as.
+
 **Greenfield: a tenant with no organization yet.** Google creates the
 Organization resource for a Workspace/Cloud Identity domain when a NEW Google
 Cloud user signs in to the console and accepts the terms, or when an EXISTING
