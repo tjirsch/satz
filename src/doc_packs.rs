@@ -310,7 +310,48 @@ fn index(rows: &[(&PathBuf, &File)]) -> String {
 }
 
 /// Generate (or, with `check`, verify) `presets/docs/`.
+/// Every claim in the library must name a control that exists in its
+/// framework's catalog — `<presets_dir>/catalogs/<framework>-<version>.yaml`.
+/// A claim on a control id the catalog does not carry proves nothing and
+/// reports nothing: the CIS 4.0 alert claims were off by one for weeks with
+/// no gate to say so. Returns the offending `(pack, framework version §id)`
+/// pairs; a missing catalog file is itself an error.
+pub(crate) fn check_claims_against_catalogs(presets_dir: &Path) -> Result<Vec<String>, BoxErr> {
+    let mut catalogs: std::collections::BTreeMap<(String, String), std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let mut bad = Vec::new();
+    for (rel, file, _) in packs(presets_dir)? {
+        for c in &file.claims {
+            let key = (c.framework.clone(), c.version.clone());
+            if !catalogs.contains_key(&key) {
+                let path = presets_dir.join("catalogs").join(format!("{}-{}.yaml", c.framework, c.version));
+                let text = std::fs::read_to_string(&path).map_err(|e| {
+                    format!("{}: claims {} {} but there is no catalog {} ({})", rel.display(), c.framework, c.version, path.display(), e)
+                })?;
+                let cat: crate::compliance::Catalog =
+                    serde_yaml::from_str(&text).map_err(|e| format!("{}: {}", path.display(), e))?;
+                catalogs.insert(key.clone(), cat.controls.keys().cloned().collect());
+            }
+            if !catalogs[&key].contains(&c.control) {
+                bad.push(format!("{}: claim {} {} §{} — no such control in the catalog", rel.display(), c.framework, c.version, c.control));
+            }
+        }
+    }
+    Ok(bad)
+}
+
 pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(), BoxErr> {
+    if check {
+        let bad = check_claims_against_catalogs(presets_dir)?;
+        if !bad.is_empty() {
+            return Err(format!(
+                "{} claim(s) name a control their catalog does not carry:\n  {}",
+                bad.len(),
+                bad.join("\n  ")
+            )
+            .into());
+        }
+    }
     let all = packs(presets_dir)?;
     if all.is_empty() {
         return Err(format!("{}: no packs found", presets_dir.display()).into());
@@ -380,5 +421,38 @@ mod tests {
     fn the_shipped_library_renders_and_is_current() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         run(&root.join("presets"), &root.join("presets/docs"), true).expect("presets/docs is behind the packs — run `satz doc-packs` and commit");
+    }
+
+    #[test]
+    fn every_shipped_claim_names_a_control_its_catalog_carries() {
+        // The gate that was missing when the CIS 4.0 alert claims drifted one
+        // id off the benchmark: a claim on a control the catalog does not know
+        // proves nothing and must not ship.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let bad = check_claims_against_catalogs(&root.join("presets")).expect("catalogs readable");
+        assert!(bad.is_empty(), "claims off their catalog:\n{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn a_claim_on_an_unknown_control_is_reported() {
+        let dir = std::env::temp_dir().join(format!("satz-claimgate-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("catalogs")).unwrap();
+        std::fs::write(
+            dir.join("catalogs/cis-gcp-4.0.yaml"),
+            "catalog: cis-gcp\nversion: \"4.0\"\ncontrols:\n  \"2.4\":\n    title: \"x\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("p.satz"),
+            "pack p version \"1.0\"\n\nclaim \"cis-gcp\" \"4.0\" \"2.4\" implements { resources = [\"a.b\"] }\nclaim \"cis-gcp\" \"4.0\" \"2.99\" implements { resources = [\"a.b\"] }\n",
+        )
+        .unwrap();
+        let bad = check_claims_against_catalogs(&dir).unwrap();
+        assert_eq!(bad.len(), 1, "{:?}", bad);
+        assert!(bad[0].contains("§2.99"), "{:?}", bad);
+        // a framework with no catalog file is an error, not a pass
+        std::fs::write(dir.join("q.satz"), "pack q version \"1.0\"\n\nclaim \"nist\" \"800-53\" \"AC-1\" implements { resources = [\"a.b\"] }\n").unwrap();
+        assert!(check_claims_against_catalogs(&dir).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

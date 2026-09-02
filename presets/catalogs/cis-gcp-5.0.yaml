@@ -1,14 +1,17 @@
 #
 # CIS Google Cloud Platform Foundation Benchmark 5.0 — control catalog (data plane)
 #
-# PROVISIONAL: section-2 control IDs are carried over from the 4.0 catalog and must
-# be verified against the published 5.0 benchmark (renumberings happen between major
-# versions). Verify each ID, then delete this notice. Prowler's cis_5.0_gcp mapping
-# is the cross-check.
-#
 # Control IDs plus this project's OWN one-line paraphrases. Framework prose is
 # deliberately absent (CIS benchmark text is license-restricted); consult the
 # benchmark itself for authoritative wording.
+#
+# Numbering VERIFIED 2026-09-02 against Prowler's cis_5.0_gcp mapping and
+# Tenable's v5.0.0 audit. 5.0 (June 2026) adds nine recommendations and shifts
+# the rest: a new §1.1 "Organization resources" subsection pushes the former
+# 1.x up by one (1.1→1.2, 1.4→1.5, 1.5→1.6, 1.16→1.17); a new 2.2 (Workspace
+# data sharing) pushes §2 up by one from there (sinks 2.3, retention 2.4, the
+# alerts 2.5–2.12, DNS logging 2.13, CAI 2.14); new 3.8 VPC Service Controls
+# and 3.9 Private Service Connect push flow logs to 3.10. §4, §5 unchanged.
 #
 # automatability: technical    — fully checkable/implementable as infrastructure
 #                 partial      — infrastructure helps, human duties remain
@@ -16,53 +19,125 @@
 #
 catalog: cis-gcp
 version: "5.0"
+section-1-title: "Identity and Access Management"
 section-2-title: "Logging and Monitoring"
+section-3-title: "Networking"
+section-4-title: "Virtual Machines"
+section-5-title: "Storage"
 controls:
+  "1.1.1":
+    title: "Super admin e-mail not tied to a single user"
+    paraphrase: "The Workspace/Cloud Identity super-admin identity is a role mailbox, not a person's account."
+    automatability: organizational
+  "1.1.2":
+    title: "Super admin not used for Google Cloud administration"
+    paraphrase: "Super-admin accounts hold no Google Cloud IAM roles; day-to-day administration runs as separate identities."
+    automatability: partial
+  "1.1.3":
+    title: "Folders structured by environment and sensitivity"
+    paraphrase: "The folder hierarchy separates environments and data sensitivity so policies and access attach at the right level."
+    automatability: partial
+  "1.1.4":
+    title: "Organization policies configured for centralized constraints"
+    paraphrase: "An organization-level policy baseline (resource locations, OS Login, external IPs, uniform bucket access, allowed member domains …) constrains every project centrally."
+    automatability: technical
+  "1.2":
+    title: "Corporate login credentials only"
+    paraphrase: "IAM grants are restricted to identities from the organisation's own directory; consumer accounts cannot be granted roles."
+    automatability: technical
+  "1.5":
+    title: "Only GCP-managed service account keys"
+    paraphrase: "User-managed service account keys cannot be created or uploaded; only Google-managed keys exist."
+    automatability: technical
+  "1.6":
+    title: "Service accounts without admin privileges"
+    paraphrase: "Default service accounts do not receive primitive or privileged roles automatically."
+    automatability: technical
+  "1.17":
+    title: "Essential Contacts configured for the organisation"
+    paraphrase: "Organisation-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address."
+    automatability: technical
   "2.1":
     title: "Cloud Audit Logging on all services"
     paraphrase: "Data Access audit logs (ADMIN_READ/DATA_READ/DATA_WRITE) enabled org-wide for all services."
     automatability: technical
   "2.2":
+    title: "Workspace/Cloud Identity data sharing with Google Cloud"
+    paraphrase: "Admin-console audit logs are shared into Cloud Logging so directory changes appear beside the cloud audit trail."
+    automatability: organizational
+  "2.3":
     title: "Sinks for all log entries"
     paraphrase: "An aggregated org-level sink routes audit log entries to a central destination project owners cannot bypass."
     automatability: technical
-  "2.3":
+  "2.4":
     title: "Retention on the log bucket"
     paraphrase: "The central log destination retains entries per policy; bucket-lock retention once the pipeline is validated."
     automatability: partial
-  "2.4":
-    title: "Log metric filters exist"
-    paraphrase: "Log-based metrics and alerting are wired to the central audit trail."
-    automatability: technical
   "2.5":
     title: "Project ownership change alerts"
-    paraphrase: "Alert on project ownership assignments/changes across the organization."
+    paraphrase: "Log metric filter and alert on project ownership assignments/changes across the organization."
     automatability: technical
   "2.6":
     title: "Audit configuration change alerts"
-    paraphrase: "Alert on changes to audit logging configuration."
+    paraphrase: "Log metric filter and alert on changes to audit logging configuration."
     automatability: technical
   "2.7":
     title: "Custom role change alerts"
-    paraphrase: "Alert on IAM custom role creation, modification, deletion."
+    paraphrase: "Log metric filter and alert on IAM custom role creation, modification, deletion."
     automatability: technical
   "2.8":
     title: "VPC firewall rule change alerts"
-    paraphrase: "Alert on firewall rule create/modify/delete."
+    paraphrase: "Log metric filter and alert on firewall rule create/modify/delete."
     automatability: technical
   "2.9":
     title: "VPC route change alerts"
-    paraphrase: "Alert on VPC network route changes."
+    paraphrase: "Log metric filter and alert on VPC network route changes."
     automatability: technical
   "2.10":
     title: "VPC network change alerts"
-    paraphrase: "Alert on VPC network create/modify/delete."
+    paraphrase: "Log metric filter and alert on VPC network create/modify/delete."
     automatability: technical
   "2.11":
     title: "Storage IAM change alerts"
-    paraphrase: "Alert on Cloud Storage bucket IAM permission changes."
+    paraphrase: "Log metric filter and alert on Cloud Storage bucket IAM permission changes."
     automatability: technical
   "2.12":
     title: "SQL instance change alerts"
-    paraphrase: "Alert on Cloud SQL instance configuration changes."
+    paraphrase: "Log metric filter and alert on Cloud SQL instance configuration changes."
+    automatability: technical
+  "2.13":
+    title: "Cloud DNS logging on all VPC networks"
+    paraphrase: "Every VPC network has a DNS policy with logging enabled so name resolution is auditable."
+    automatability: technical
+  "2.14":
+    title: "Cloud Asset Inventory enabled"
+    paraphrase: "The Cloud Asset API is enabled so the organisation's resource inventory can be queried and its history kept."
+    automatability: technical
+  "3.1":
+    title: "Default network does not exist"
+    paraphrase: "New projects are created without the auto-mode default VPC and its permissive firewall rules."
+    automatability: technical
+  "3.10":
+    title: "VPC Flow Logs enabled on subnets"
+    paraphrase: "Subnets record flow logs so network traffic is auditable."
+    automatability: technical
+  "4.4":
+    title: "OS Login enabled"
+    paraphrase: "VM SSH access goes through OS Login and IAM rather than project-wide or instance metadata keys."
+    automatability: technical
+  "4.6":
+    title: "IP forwarding not enabled on instances"
+    paraphrase: "Instances may not forward packets for addresses other than their own."
+    automatability: technical
+  "4.9":
+    title: "Compute instances without public IP addresses"
+    paraphrase: "VMs are not reachable directly from the internet via external IPs."
+    automatability: technical
+  "5.1":
+    title: "Storage buckets not anonymously or publicly accessible"
+    paraphrase: "Public access prevention is enforced so buckets cannot be exposed to allUsers/allAuthenticatedUsers."
+    automatability: technical
+  "5.2":
+    title: "Uniform bucket-level access enabled"
+    paraphrase: "Object ACLs are disabled; access is governed by IAM alone."
     automatability: technical

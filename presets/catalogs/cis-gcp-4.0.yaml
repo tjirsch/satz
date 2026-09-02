@@ -5,6 +5,13 @@
 # deliberately absent (CIS benchmark text is license-restricted); consult the
 # benchmark itself for authoritative wording.
 #
+# Section-2 numbering VERIFIED 2026-09-02 against three independent readings of
+# the published 4.0 benchmark (Prowler cis_4.0_gcp, Google's InSpec CIS 4.0
+# profile, Tenable v4.0.0 audit): 2.4–2.11 are the eight log-metric alert
+# controls, 2.12 is Cloud DNS logging, 2.13 Cloud Asset Inventory. An earlier
+# revision of this file invented a "2.4 log metric filters exist" control and
+# shifted the alerts to 2.5–2.12 — every claim on those ids was off by one.
+#
 # automatability: technical    — fully checkable/implementable as infrastructure
 #                 partial      — infrastructure helps, human duties remain
 #                 organizational — process control, no IaC implementation
@@ -12,10 +19,10 @@
 catalog: cis-gcp
 version: "4.0"
 section-1-title: "Identity and Access Management"
+section-2-title: "Logging and Monitoring"
 section-3-title: "Networking"
 section-4-title: "Virtual Machines"
 section-5-title: "Storage"
-section-2-title: "Logging and Monitoring"
 controls:
   "1.1":
     title: "Corporate login credentials only"
@@ -32,6 +39,58 @@ controls:
   "1.16":
     title: "Essential Contacts configured for the organisation"
     paraphrase: "Organisation-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address."
+    automatability: technical
+  "2.1":
+    title: "Cloud Audit Logging on all services"
+    paraphrase: "Data Access audit logs (ADMIN_READ/DATA_READ/DATA_WRITE) enabled org-wide for all services."
+    automatability: technical
+  "2.2":
+    title: "Sinks for all log entries"
+    paraphrase: "An aggregated org-level sink routes audit log entries to a central destination project owners cannot bypass."
+    automatability: technical
+  "2.3":
+    title: "Retention on the log bucket"
+    paraphrase: "The central log destination retains entries per policy; bucket-lock retention once the pipeline is validated."
+    automatability: partial
+  "2.4":
+    title: "Project ownership change alerts"
+    paraphrase: "Log metric filter and alert on project ownership assignments/changes across the organization."
+    automatability: technical
+  "2.5":
+    title: "Audit configuration change alerts"
+    paraphrase: "Log metric filter and alert on changes to audit logging configuration."
+    automatability: technical
+  "2.6":
+    title: "Custom role change alerts"
+    paraphrase: "Log metric filter and alert on IAM custom role creation, modification, deletion."
+    automatability: technical
+  "2.7":
+    title: "VPC firewall rule change alerts"
+    paraphrase: "Log metric filter and alert on firewall rule create/modify/delete."
+    automatability: technical
+  "2.8":
+    title: "VPC route change alerts"
+    paraphrase: "Log metric filter and alert on VPC network route changes."
+    automatability: technical
+  "2.9":
+    title: "VPC network change alerts"
+    paraphrase: "Log metric filter and alert on VPC network create/modify/delete."
+    automatability: technical
+  "2.10":
+    title: "Storage IAM change alerts"
+    paraphrase: "Log metric filter and alert on Cloud Storage bucket IAM permission changes."
+    automatability: technical
+  "2.11":
+    title: "SQL instance change alerts"
+    paraphrase: "Log metric filter and alert on Cloud SQL instance configuration changes."
+    automatability: technical
+  "2.12":
+    title: "Cloud DNS logging on all VPC networks"
+    paraphrase: "Every VPC network has a DNS policy with logging enabled so name resolution is auditable."
+    automatability: technical
+  "2.13":
+    title: "Cloud Asset Inventory enabled"
+    paraphrase: "The Cloud Asset API is enabled so the organisation's resource inventory can be queried and its history kept."
     automatability: technical
   "3.1":
     title: "Default network does not exist"
@@ -60,52 +119,4 @@ controls:
   "5.2":
     title: "Uniform bucket-level access enabled"
     paraphrase: "Object ACLs are disabled; access is governed by IAM alone."
-    automatability: technical
-  "2.1":
-    title: "Cloud Audit Logging on all services"
-    paraphrase: "Data Access audit logs (ADMIN_READ/DATA_READ/DATA_WRITE) enabled org-wide for all services."
-    automatability: technical
-  "2.2":
-    title: "Sinks for all log entries"
-    paraphrase: "An aggregated org-level sink routes audit log entries to a central destination project owners cannot bypass."
-    automatability: technical
-  "2.3":
-    title: "Retention on the log bucket"
-    paraphrase: "The central log destination retains entries per policy; bucket-lock retention once the pipeline is validated."
-    automatability: partial
-  "2.4":
-    title: "Log metric filters exist"
-    paraphrase: "Log-based metrics and alerting are wired to the central audit trail."
-    automatability: technical
-  "2.5":
-    title: "Project ownership change alerts"
-    paraphrase: "Alert on project ownership assignments/changes across the organization."
-    automatability: technical
-  "2.6":
-    title: "Audit configuration change alerts"
-    paraphrase: "Alert on changes to audit logging configuration."
-    automatability: technical
-  "2.7":
-    title: "Custom role change alerts"
-    paraphrase: "Alert on IAM custom role creation, modification, deletion."
-    automatability: technical
-  "2.8":
-    title: "VPC firewall rule change alerts"
-    paraphrase: "Alert on firewall rule create/modify/delete."
-    automatability: technical
-  "2.9":
-    title: "VPC route change alerts"
-    paraphrase: "Alert on VPC network route changes."
-    automatability: technical
-  "2.10":
-    title: "VPC network change alerts"
-    paraphrase: "Alert on VPC network create/modify/delete."
-    automatability: technical
-  "2.11":
-    title: "Storage IAM change alerts"
-    paraphrase: "Alert on Cloud Storage bucket IAM permission changes."
-    automatability: technical
-  "2.12":
-    title: "SQL instance change alerts"
-    paraphrase: "Alert on Cloud SQL instance configuration changes."
     automatability: technical

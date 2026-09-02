@@ -1,4 +1,4 @@
-// CIS 2.5-2.12 centralized log-based alerting — Satz-native pack.
+// CIS 2.5-2.12 (5.0 numbering; 4.0: 2.4-2.11) centralized log-based alerting — Satz-native pack.
 // One logging bucket + second org sink + 8 bucket-scoped metrics + 8 alert
 // policies + email channel. Estate wiring: set cis_central_bucket_project to the
 // logsink project (documented reuse), e.g.  cis_central_bucket_project = logsink_project_name
@@ -9,7 +9,7 @@
 // filters reference metric names (dependency edge) and pin resource.type=
 // "logging_bucket" (bucket-scoped metrics report against it — verified live).
 
-pack monitoring.organization_cis_log_alerts_central version "1.2"
+pack monitoring.organization_cis_log_alerts_central version "1.3"
 
 params {
   cis_central_bucket_project        = "{customer_shortname}-organization-log-alerts"
@@ -353,66 +353,71 @@ google_monitoring_alert_policy {
   }
 }
 
-// --- Control claims: 2.4 = the pipeline substrate; 2.5-2.12 = metric+policy pairs.
+// --- Control claims: one metric+policy pair per alert control. -------------
+// Numbering verified 2026-09-02: the eight alert controls are 4.0 §2.4–2.11 and
+// 5.0 §2.5–2.12 (5.0 inserted a new 2.2). Resource labels carry the 5.0 numbers.
+// The central sink + notification channel are the substrate every alert stands
+// on; they are claimed as CONTRIBUTING to the first alert control rather than to
+// an invented "filters exist" control (which an earlier revision did).
 
-claim "cis-gcp" "4.0" "2.4" implements {
+claim "cis-gcp" "4.0" "2.4" contributes {
   resources = [
     "google_logging_organization_sink.cis_central_metrics_sink",
     "google_monitoring_notification_channel.cis_central_alerts",
   ]
   interpretation = "Central metrics pipeline: org-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on."
 }
-claim "cis-gcp" "5.0" "2.4" implements {
+claim "cis-gcp" "5.0" "2.5" contributes {
   resources = [
     "google_logging_organization_sink.cis_central_metrics_sink",
     "google_monitoring_notification_channel.cis_central_alerts",
   ]
-  interpretation = "As for 4.0 §2.4; 5.0 control ID provisional pending benchmark verification."
+  interpretation = "As for 4.0 §2.4 (5.0 §2.5): the substrate every alert stands on."
 }
 
-claim "cis-gcp" "4.0" "2.5" implements {
+claim "cis-gcp" "4.0" "2.4" implements {
   resources = ["google_logging_metric.cis_central_2_5_project_ownership", "google_monitoring_alert_policy.cis_central_2_5_project_ownership"]
 }
 claim "cis-gcp" "5.0" "2.5" implements {
   resources = ["google_logging_metric.cis_central_2_5_project_ownership", "google_monitoring_alert_policy.cis_central_2_5_project_ownership"]
 }
-claim "cis-gcp" "4.0" "2.6" implements {
+claim "cis-gcp" "4.0" "2.5" implements {
   resources = ["google_logging_metric.cis_central_2_6_audit_config", "google_monitoring_alert_policy.cis_central_2_6_audit_config"]
 }
 claim "cis-gcp" "5.0" "2.6" implements {
   resources = ["google_logging_metric.cis_central_2_6_audit_config", "google_monitoring_alert_policy.cis_central_2_6_audit_config"]
 }
-claim "cis-gcp" "4.0" "2.7" implements {
+claim "cis-gcp" "4.0" "2.6" implements {
   resources = ["google_logging_metric.cis_central_2_7_custom_role", "google_monitoring_alert_policy.cis_central_2_7_custom_role"]
 }
 claim "cis-gcp" "5.0" "2.7" implements {
   resources = ["google_logging_metric.cis_central_2_7_custom_role", "google_monitoring_alert_policy.cis_central_2_7_custom_role"]
 }
-claim "cis-gcp" "4.0" "2.8" implements {
+claim "cis-gcp" "4.0" "2.7" implements {
   resources = ["google_logging_metric.cis_central_2_8_firewall_rule", "google_monitoring_alert_policy.cis_central_2_8_firewall_rule"]
 }
 claim "cis-gcp" "5.0" "2.8" implements {
   resources = ["google_logging_metric.cis_central_2_8_firewall_rule", "google_monitoring_alert_policy.cis_central_2_8_firewall_rule"]
 }
-claim "cis-gcp" "4.0" "2.9" implements {
+claim "cis-gcp" "4.0" "2.8" implements {
   resources = ["google_logging_metric.cis_central_2_9_network_route", "google_monitoring_alert_policy.cis_central_2_9_network_route"]
 }
 claim "cis-gcp" "5.0" "2.9" implements {
   resources = ["google_logging_metric.cis_central_2_9_network_route", "google_monitoring_alert_policy.cis_central_2_9_network_route"]
 }
-claim "cis-gcp" "4.0" "2.10" implements {
+claim "cis-gcp" "4.0" "2.9" implements {
   resources = ["google_logging_metric.cis_central_2_10_network", "google_monitoring_alert_policy.cis_central_2_10_network"]
 }
 claim "cis-gcp" "5.0" "2.10" implements {
   resources = ["google_logging_metric.cis_central_2_10_network", "google_monitoring_alert_policy.cis_central_2_10_network"]
 }
-claim "cis-gcp" "4.0" "2.11" implements {
+claim "cis-gcp" "4.0" "2.10" implements {
   resources = ["google_logging_metric.cis_central_2_11_bucket_permission", "google_monitoring_alert_policy.cis_central_2_11_bucket_permission"]
 }
 claim "cis-gcp" "5.0" "2.11" implements {
   resources = ["google_logging_metric.cis_central_2_11_bucket_permission", "google_monitoring_alert_policy.cis_central_2_11_bucket_permission"]
 }
-claim "cis-gcp" "4.0" "2.12" implements {
+claim "cis-gcp" "4.0" "2.11" implements {
   resources = ["google_logging_metric.cis_central_2_12_sql_instance", "google_monitoring_alert_policy.cis_central_2_12_sql_instance"]
 }
 claim "cis-gcp" "5.0" "2.12" implements {
