@@ -1,10 +1,13 @@
 //! Cloud Resource Manager v3: folders and projects.
 //!
 //! The lookups adoption needs — "the folder called X under parent P" and "the
-//! number of project Y" — both live here. Folder listing is paginated:
-//! `folders.list` returns at most 300 per page, and the first version of
-//! `bootstrap` read only the first page, so an org with many folders under one
-//! parent could miss an existing folder and fall through to creating it.
+//! number of project Y" — both live here, as do the two creations bootstrap
+//! performs. Folder listing is paginated: `folders.list` returns at most 300
+//! per page, and the first version of `bootstrap` read only the first page, so
+//! an org with many folders under one parent could miss an existing folder and
+//! fall through to creating it.
+
+use super::ApiError;
 
 const BASE: &str = "https://cloudresourcemanager.googleapis.com/v3";
 
@@ -14,7 +17,7 @@ pub(crate) async fn list_folders(
     client: &reqwest::Client,
     token: &str,
     parent: &str,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<serde_json::Value>, ApiError> {
     let mut out = Vec::new();
     let mut page_token: Option<String> = None;
     loop {
@@ -25,11 +28,11 @@ pub(crate) async fn list_folders(
         if let Some(t) = &page_token {
             req = req.query(&[("pageToken", t.as_str())]);
         }
-        let res = req.send().await.map_err(|e| e.to_string())?;
+        let res = req.send().await.map_err(ApiError::transport)?;
         if !res.status().is_success() {
-            return Err(http_error(res).await);
+            return Err(super::api_error(res).await);
         }
-        let page: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        let page: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
         page_token = next_page(&mut out, &page);
         if page_token.is_none() {
             return Ok(out);
@@ -101,30 +104,143 @@ pub(crate) async fn get_project_number(
     client: &reqwest::Client,
     token: &str,
     project_id: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, ApiError> {
     let res = client
         .get(format!("{}/projects/{}", BASE, project_id))
         .bearer_auth(token)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(ApiError::transport)?;
     if res.status().as_u16() == 404 {
         return Ok(None);
     }
     if !res.status().is_success() {
-        return Err(http_error(res).await);
+        return Err(super::api_error(res).await);
     }
-    let project: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    let project: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
     Ok(project.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
 }
 
-/// `403 Forbidden: <body>` — the status is part of the error, and an empty
-/// body never yields an empty error.
-async fn http_error(res: reqwest::Response) -> String {
-    let status = res.status();
-    let body = res.text().await.unwrap_or_else(|e| format!("(body unreadable: {})", e));
-    let body = if body.trim().is_empty() { "(empty body)".to_string() } else { body };
-    format!("{} {}: {}", status.as_u16(), status.canonical_reason().unwrap_or(""), body)
+/// Poll a long-running operation until it reports `done`, or the deadline
+/// passes. Without a deadline a stuck operation loops forever; without
+/// inspecting the terminal object, a failed operation reads as a success.
+pub(crate) async fn await_operation(
+    client: &reqwest::Client,
+    token: &str,
+    op_name: &str,
+    interval: std::time::Duration,
+    max_polls: u32,
+) -> Result<serde_json::Value, ApiError> {
+    for _ in 0..max_polls {
+        tokio::time::sleep(interval).await;
+        let res = client
+            .get(format!("{}/{}", BASE, op_name))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(ApiError::transport)?;
+        let op: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
+        if op.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+            return Ok(op);
+        }
+    }
+    Err(ApiError::transport(format!(
+        "operation '{}' did not complete within the timeout",
+        op_name
+    )))
+}
+
+/// `folders.create` under `parent`, waited to completion. Returns the new
+/// folder's resource name (`folders/<number>`).
+pub(crate) async fn create_folder(
+    client: &reqwest::Client,
+    token: &str,
+    parent: &str,
+    display_name: &str,
+) -> Result<String, ApiError> {
+    let res = client
+        .post(format!("{}/folders", BASE))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "displayName": display_name, "parent": parent }))
+        .send()
+        .await
+        .map_err(ApiError::transport)?;
+    if !res.status().is_success() {
+        return Err(super::api_error(res).await);
+    }
+    let info: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
+    let Some(op_name) = info.get("name").and_then(|v| v.as_str()) else {
+        return Err(ApiError::transport(
+            "the API accepted the request but returned no operation name",
+        ));
+    };
+    println!("Folder creation in progress ({})...", op_name);
+    let op = await_operation(client, token, op_name, std::time::Duration::from_secs(2), 60).await?;
+    if let Some(err) = op.get("error") {
+        return Err(ApiError::from_operation_error(err));
+    }
+    op.get("response")
+        .and_then(|r| r.get("name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| ApiError::transport("creation finished with neither a response nor an error"))
+}
+
+/// What `create_project` found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProjectOutcome {
+    /// Newly created; the project NUMBER (`projects/<number>`) when the
+    /// operation's response carried it.
+    Created { number: Option<String> },
+    /// 409: a project with this id already exists.
+    AlreadyExists,
+}
+
+/// `projects.create`, waited to completion. `parent: None` creates the project
+/// parentless — on a Workspace/Cloud Identity account that is the documented
+/// trigger for organization auto-provisioning.
+pub(crate) async fn create_project(
+    client: &reqwest::Client,
+    token: &str,
+    project_id: &str,
+    parent: Option<&str>,
+) -> Result<ProjectOutcome, ApiError> {
+    let mut body = serde_json::json!({ "projectId": project_id, "displayName": project_id });
+    if let Some(p) = parent {
+        body["parent"] = serde_json::Value::String(p.to_string());
+    }
+    let res = client
+        .post(format!("{}/projects", BASE))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(ApiError::transport)?;
+    if res.status().as_u16() == 409 {
+        return Ok(ProjectOutcome::AlreadyExists);
+    }
+    if !res.status().is_success() {
+        return Err(super::api_error(res).await);
+    }
+    let info: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
+    let Some(op_name) = info.get("name").and_then(|v| v.as_str()) else {
+        return Err(ApiError::transport(
+            "the API accepted the request but returned no operation name",
+        ));
+    };
+    println!("Project creation in progress ({})...", op_name);
+    let op = await_operation(client, token, op_name, std::time::Duration::from_secs(3), 60).await?;
+    // The operation's `error` field was once never inspected, so a failed
+    // creation still reported "Project shell created."
+    if let Some(err) = op.get("error") {
+        return Err(ApiError::from_operation_error(err));
+    }
+    let number = op
+        .get("response")
+        .and_then(|r| r.get("name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Ok(ProjectOutcome::Created { number })
 }
 
 #[cfg(test)]

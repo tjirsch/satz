@@ -833,12 +833,7 @@ impl OrgPolicyClient {
     /// quota project is resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT`
     /// or the Application Default Credentials file's `quota_project_id`.
     pub async fn with_quota_project(quota_override: Option<String>) -> Result<Self, BoxErr> {
-        use google_cloud_auth::credentials::Builder;
-        let scopes = ["https://www.googleapis.com/auth/cloud-platform"];
-        let credentials = Builder::default()
-            .with_scopes(scopes)
-            .build_access_token_credentials()?;
-        let token = credentials.access_token().await?;
+        let token = crate::gcp::access_token().await?;
 
         let quota_project = quota_override
             .filter(|s| !s.trim().is_empty())
@@ -854,7 +849,7 @@ impl OrgPolicyClient {
 
         Ok(Self {
             http: reqwest::Client::new(),
-            token: token.token,
+            token,
             quota_project,
         })
     }

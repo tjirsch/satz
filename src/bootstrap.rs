@@ -2,14 +2,16 @@ use std::path::{Path, PathBuf};
 use serde_yaml::Value;
 use google_cloud_auth::credentials::Builder;
 
+use crate::gcp::ErrorClass;
+
 /// What happened to one bootstrap step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StepStatus {
     Created,
     AlreadyExisted,
     Skipped(String),
-    /// Carries the API's own message, verbatim.
-    Failed(String),
+    /// Carries the failure's classification and the API's own message, verbatim.
+    Failed(ErrorClass, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,35 +37,33 @@ impl RunSummary {
             StepStatus::Created => println!("  created  {}", outcome.label),
             StepStatus::AlreadyExisted => println!("  exists   {}", outcome.label),
             StepStatus::Skipped(why) => eprintln!("  skipped  {}: {}", outcome.label, why),
-            StepStatus::Failed(err) => eprintln!("  FAILED   {}: {}", outcome.label, err),
+            StepStatus::Failed(class, err) => {
+                eprintln!("  FAILED   {}: {}", outcome.label, err);
+                if *class == ErrorClass::QuotaProject {
+                    eprintln!("           hint: {}", QUOTA_HINT);
+                }
+            }
         }
         self.steps.push(outcome);
     }
 
     fn failed(&self) -> usize {
-        self.steps.iter().filter(|s| matches!(s.status, StepStatus::Failed(_))).count()
+        self.steps.iter().filter(|s| matches!(s.status, StepStatus::Failed(..))).count()
     }
 
     /// True once a step has failed for lack of permission. Later steps need the same or
     /// broader access, so continuing would only repeat the same denial.
     fn has_permission_failure(&self) -> bool {
-        self.steps.iter().any(|s| match &s.status {
-            StepStatus::Failed(err) => is_permission_error(err),
-            _ => false,
-        })
+        self.steps
+            .iter()
+            .any(|s| matches!(s.status, StepStatus::Failed(ErrorClass::PermissionDenied, _)))
     }
 }
 
-/// Recognise a permission denial in an API error body.
-fn is_permission_error(err: &str) -> bool {
-    let e = err.to_ascii_lowercase();
-    e.contains("permission_denied")
-        || e.contains("permission denied")
-        || e.contains("forbidden")
-        || e.contains("\"code\": 403")
-        || e.contains("\"code\":403")
-        || e.contains("does not have")
-}
+/// One shared hint for quota-class 403s: the failure names the billed project,
+/// not the caller's permissions, and the fix is one gcloud command.
+const QUOTA_HINT: &str = "this 403 is about the billed (quota) project, not a missing permission — \
+                          run `gcloud auth application-default set-quota-project <project>`";
 
 /// Render the end-of-run report. Pure, so its shape is pinned by tests.
 fn render_summary(steps: &[StepOutcome]) -> String {
@@ -95,17 +95,20 @@ fn render_summary(steps: &[StepOutcome]) -> String {
         }
     }
 
-    let errors: Vec<(&str, &str)> = steps
+    let errors: Vec<(&str, ErrorClass, &str)> = steps
         .iter()
         .filter_map(|s| match &s.status {
-            StepStatus::Failed(err) => Some((s.label.as_str(), err.as_str())),
+            StepStatus::Failed(class, err) => Some((s.label.as_str(), *class, err.as_str())),
             _ => None,
         })
         .collect();
     if !errors.is_empty() {
         out.push_str("Errors:\n");
-        for (label, err) in &errors {
+        for (label, class, err) in &errors {
             out.push_str(&format!("  {}: {}\n", label, err));
+            if *class == ErrorClass::QuotaProject {
+                out.push_str(&format!("    hint: {}\n", QUOTA_HINT));
+            }
         }
         out.push_str(&format!(
             "{} step(s) failed. Bootstrap is idempotent — fix the causes and re-run.\n",
@@ -118,45 +121,14 @@ fn render_summary(steps: &[StepOutcome]) -> String {
     out
 }
 
-/// Read the linked billing account out of a cloudbilling `billingInfo` response, e.g.
-/// `billingAccounts/012345-6789AB-CDEF01`. Absent means the project has no billing link.
-fn billing_account_from_json(v: &serde_json::Value) -> Option<String> {
-    v.get("billingAccountName")
-        .and_then(|b| b.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
-/// True when a serviceusage service resource reports itself as already enabled.
-fn service_is_enabled(v: &serde_json::Value) -> bool {
-    v.get("state").and_then(|s| s.as_str()) == Some("ENABLED")
-}
-
-/// Poll a long-running operation until it reports `done`, or the deadline passes.
-/// Without a deadline a stuck operation loops forever; without inspecting the terminal
-/// object, a failed operation reads as a success.
-async fn await_operation(
-    client: &reqwest::Client,
-    token: &str,
-    op_name: &str,
-    interval: std::time::Duration,
-    max_polls: u32,
-) -> Result<serde_json::Value, String> {
-    for _ in 0..max_polls {
-        tokio::time::sleep(interval).await;
-        let res = client
-            .get(format!("https://cloudresourcemanager.googleapis.com/v3/{}", op_name))
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        let op: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-        if op.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
-            return Ok(op);
-        }
+/// Stop the run when a step failed for lack of permission: later steps need
+/// the same or broader access, so continuing would only repeat the same denial.
+fn permission_gate(summary: &RunSummary) -> Result<(), Box<dyn std::error::Error>> {
+    if summary.has_permission_failure() {
+        print!("{}", render_summary(&summary.steps));
+        return Err("bootstrap stopped: the ADC identity lacks a required permission".into());
     }
-    Err(format!("operation '{}' did not complete within the timeout", op_name))
+    Ok(())
 }
 
 /// How the ADC identity was established, so an unexpected result can be traced back to
@@ -398,11 +370,7 @@ pub async fn bootstrap(
 
     // 1. Get Authentication Token
     println!("Authenticating using Application Default Credentials...");
-    let scopes = ["https://www.googleapis.com/auth/cloud-platform"];
-    let credentials = Builder::default()
-        .with_scopes(scopes)
-        .build_access_token_credentials()?;
-    let token = credentials.access_token().await?;
+    let token = crate::gcp::access_token().await?;
 
     let client = reqwest::Client::new();
 
@@ -422,7 +390,7 @@ pub async fn bootstrap(
         Some(expected) => {
             // These messages are printed rather than carried in the error, because `main`
             // renders a returned error with `Debug`, which would escape the newlines.
-            let resolved = resolve_adc_identity(&client, &token.token).await;
+            let resolved = resolve_adc_identity(&client, &token).await;
             let Some((actual, source)) = resolved else {
                 eprintln!(
                     "\nCould not determine the identity of your Application Default Credentials,\n\
@@ -470,85 +438,40 @@ pub async fn bootstrap(
         // and exactly one match. A failed search must not fall through to
         // creation: that would try to create a folder that may already exist,
         // and the real cause (usually a denied list call) would never be reported.
-        let lookup = match crate::gcp::resourcemanager::list_folders(&client, &token.token, &parent).await {
-            Ok(folders) => crate::gcp::resourcemanager::find_folder_by_display_name(&folders, folder_display_name),
-            Err(e) => Err(format!("could not list folders under {}: {}", parent, e)),
-        };
-
-        if let Err(err) = lookup {
-            summary.record(&step, StepStatus::Failed(err));
-        } else if let Ok(Some(folder_id)) = lookup {
-            current_parent = folder_id.clone();
-            summary.record(&step, StepStatus::AlreadyExisted);
-        } else {
-            // 2b. Not found, proceed with creation
-            println!("Creating Infrastructure Folder: {}...", folder_display_name);
-            let url = "https://cloudresourcemanager.googleapis.com/v3/folders";
-            let body = serde_json::json!({
-                "displayName": folder_display_name,
-                "parent": parent
-            });
-
-            let res = client.post(url)
-                .bearer_auth(&token.token)
-                .json(&body)
-                .send()
-                .await?;
-
-            if res.status().is_success() {
-                let info: serde_json::Value = res.json().await?;
-                match info.get("name").and_then(|v| v.as_str()) {
-                    Some(op_name) => {
-                        println!("Folder creation in progress ({})...", op_name);
-                        match await_operation(&client, &token.token, op_name, std::time::Duration::from_secs(2), 60).await {
-                            Ok(op) => {
-                                if let Some(err) = op.get("error") {
-                                    summary.record(&step, StepStatus::Failed(err.to_string()));
-                                } else if let Some(name) = op.get("response").and_then(|r| r.get("name")).and_then(|v| v.as_str()) {
-                                    current_parent = name.to_string();
-                                    summary.record(&step, StepStatus::Created);
-                                } else {
-                                    summary.record(&step, StepStatus::Failed(
-                                        "creation finished with neither a response nor an error".to_string(),
-                                    ));
-                                }
+        match crate::gcp::resourcemanager::list_folders(&client, &token, &parent).await {
+            Err(e) => summary.record(
+                &step,
+                StepStatus::Failed(e.class(), format!("could not list folders under {}: {}", parent, e)),
+            ),
+            Ok(folders) => {
+                match crate::gcp::resourcemanager::find_folder_by_display_name(&folders, folder_display_name) {
+                    Err(err) => summary.record(&step, StepStatus::Failed(ErrorClass::Other, err)),
+                    Ok(Some(folder_id)) => {
+                        current_parent = folder_id;
+                        summary.record(&step, StepStatus::AlreadyExisted);
+                    }
+                    Ok(None) => {
+                        // 2b. Not found, proceed with creation.
+                        println!("Creating Infrastructure Folder: {}...", folder_display_name);
+                        match crate::gcp::resourcemanager::create_folder(&client, &token, &parent, folder_display_name).await {
+                            Ok(name) => {
+                                current_parent = name;
+                                summary.record(&step, StepStatus::Created);
                             }
-                            Err(e) => summary.record(&step, StepStatus::Failed(e)),
+                            Err(e) => summary.record(&step, StepStatus::Failed(e.class(), e.into())),
                         }
                     }
-                    None => summary.record(&step, StepStatus::Failed(
-                        "the API accepted the request but returned no operation name".to_string(),
-                    )),
                 }
-            } else {
-                let err = res.text().await?;
-                summary.record(&step, StepStatus::Failed(err));
             }
         }
     }
 
     // Later steps all target resources inside this folder, so a permission problem here
     // would just repeat itself with a less informative message.
-    if summary.has_permission_failure() {
-        print!("{}", render_summary(&summary.steps));
-        return Err("bootstrap stopped: the ADC identity lacks a required permission".into());
-    }
+    permission_gate(&summary)?;
 
     // 3. Create Project Shell
     println!("Creating Project: {}...", project_id);
-    let url = "https://cloudresourcemanager.googleapis.com/v3/projects";
-    let body = serde_json::json!({
-        "projectId": project_id,
-        "displayName": project_id,
-        "parent": current_parent
-    });
-
-    let res = client.post(url)
-        .bearer_auth(&token.token)
-        .json(&body)
-        .send()
-        .await?;
-
     let project_step = format!("Project {}", project_id);
     // Billing, API enablement and the bucket all live inside this project, so track
     // whether it exists explicitly rather than inferring it from the last recorded step.
@@ -557,99 +480,53 @@ pub async fn bootstrap(
     // is the id every folder-scoped or project-scoped adoption needs. It used
     // to be discarded here — the only place the tool ever had it.
     let mut project_number: Option<String> = None;
-    if res.status().is_success() {
-        let info: serde_json::Value = res.json().await?;
-        match info.get("name").and_then(|v| v.as_str()) {
-            Some(op_name) => {
-                println!("Project creation in progress ({})...", op_name);
-                match await_operation(&client, &token.token, op_name, std::time::Duration::from_secs(3), 60).await {
-                    Ok(op) => {
-                        // The operation's `error` field was previously never inspected, so a
-                        // failed creation still reported "Project shell created."
-                        if let Some(err) = op.get("error") {
-                            project_usable = false;
-                            summary.record(&project_step, StepStatus::Failed(err.to_string()));
-                        } else {
-                            project_number = op
-                                .get("response")
-                                .and_then(|r| r.get("name"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-                            summary.record(&project_step, StepStatus::Created);
-                        }
-                    }
-                    Err(e) => {
-                        project_usable = false;
-                        summary.record(&project_step, StepStatus::Failed(e));
-                    }
-                }
-            }
-            None => {
-                project_usable = false;
-                summary.record(&project_step, StepStatus::Failed(
-                    "the API accepted the request but returned no operation name".to_string(),
-                ));
+    match crate::gcp::resourcemanager::create_project(&client, &token, &project_id, Some(&current_parent)).await {
+        Ok(crate::gcp::resourcemanager::ProjectOutcome::Created { number }) => {
+            project_number = number;
+            summary.record(&project_step, StepStatus::Created);
+        }
+        Ok(crate::gcp::resourcemanager::ProjectOutcome::AlreadyExists) => {
+            summary.record(&project_step, StepStatus::AlreadyExisted);
+            match crate::gcp::resourcemanager::get_project_number(&client, &token, &project_id).await {
+                Ok(n) => project_number = n,
+                Err(e) => eprintln!("warning: could not read project {}: {}", project_id, e),
             }
         }
-    } else if res.status().as_u16() == 409 {
-        summary.record(&project_step, StepStatus::AlreadyExisted);
-        match crate::gcp::resourcemanager::get_project_number(&client, &token.token, &project_id).await {
-            Ok(n) => project_number = n,
-            Err(e) => eprintln!("warning: could not read project {}: {}", project_id, e),
+        Err(e) => {
+            project_usable = false;
+            summary.record(&project_step, StepStatus::Failed(e.class(), e.into()));
         }
-    } else {
-        let err = res.text().await?;
-        project_usable = false;
-        summary.record(&project_step, StepStatus::Failed(err));
     }
     if let Some(n) = &project_number {
         println!("Project number: {}", n.trim_start_matches("projects/"));
     }
 
-    if summary.has_permission_failure() {
-        print!("{}", render_summary(&summary.steps));
-        return Err("bootstrap stopped: the ADC identity lacks a required permission".into());
-    }
+    permission_gate(&summary)?;
 
     // 4. Link Billing Account
     let billing_step = format!("Billing link {} -> {}", project_id, bid);
-    let desired_billing = format!("billingAccounts/{}", bid);
     if !project_usable {
         summary.record(&billing_step, StepStatus::Skipped(format!("{} was not created", project_id)));
     } else {
-        let url = format!("https://cloudbilling.googleapis.com/v1/projects/{}/billingInfo", project_id);
-
         // `PUT billingInfo` is an upsert that returns 200 whether or not anything changed,
         // so read first — otherwise every re-run reports the link as newly created.
-        let current = match client.get(&url).bearer_auth(&token.token).send().await {
-            Ok(res) if res.status().is_success() => res
-                .json::<serde_json::Value>()
-                .await
-                .ok()
-                .and_then(|v| billing_account_from_json(&v)),
-            // An unreadable current state is not evidence of anything; fall through to
-            // the write rather than reporting a state we did not confirm.
-            _ => None,
-        };
-
-        if current.as_deref() == Some(desired_billing.as_str()) {
+        // An unreadable current state is not evidence of anything; fall through to
+        // the write rather than reporting a state we did not confirm.
+        let current = crate::gcp::billing::project_billing_account(&client, &token, &project_id)
+            .await
+            .ok()
+            .flatten();
+        if current.as_deref() == Some(bid.as_str()) {
             summary.record(&billing_step, StepStatus::AlreadyExisted);
         } else {
             println!("Linking Billing Account: {}...", bid);
-            let res = client.put(&url)
-                .bearer_auth(&token.token)
-                .json(&serde_json::json!({ "billingAccountName": desired_billing }))
-                .send()
-                .await?;
-
-            if res.status().is_success() {
-                summary.record(&billing_step, StepStatus::Created);
-            } else {
-                let err = res.text().await?;
-                summary.record(&billing_step, StepStatus::Failed(err));
+            match crate::gcp::billing::set_project_billing_account(&client, &token, &project_id, &bid).await {
+                Ok(()) => summary.record(&billing_step, StepStatus::Created),
+                Err(e) => summary.record(&billing_step, StepStatus::Failed(e.class(), e.into())),
             }
         }
     }
+    permission_gate(&summary)?;
 
     // 5. Enable Foundation APIs (The "Chicken-and-Egg" Fix)
     let core_services = vec![
@@ -673,42 +550,27 @@ pub async fn bootstrap(
             continue;
         }
 
-        let url = format!(
-            "https://serviceusage.googleapis.com/v1/projects/{}/services/{}",
-            project_id, service
-        );
-
         // `services:enable` succeeds whether or not the API was already on, so read the
         // current state first to keep the summary honest about what this run changed.
-        let already_enabled = match client.get(&url).bearer_auth(&token.token).send().await {
-            Ok(res) if res.status().is_success() => res
-                .json::<serde_json::Value>()
-                .await
-                .is_ok_and(|v| service_is_enabled(&v)),
-            _ => false,
-        };
-
+        // A failed read is not evidence of anything; fall through to the enable, which
+        // reports the real error.
+        let already_enabled = crate::gcp::serviceusage::service_enabled(&client, &token, &project_id, service)
+            .await
+            .unwrap_or(false);
         if already_enabled {
             summary.record(&step, StepStatus::AlreadyExisted);
             continue;
         }
 
         println!("Enabling core service: {}...", service);
-        let res = client.post(format!("{}:enable", url))
-            .bearer_auth(&token.token)
-            .json(&serde_json::json!({})) // Fix 411 Length Required (empty body)
-            .send()
-            .await?;
-
         // Collected rather than fatal, so one run reports every API that could not be
         // enabled instead of stopping at the first.
-        if res.status().is_success() {
-            summary.record(&step, StepStatus::Created);
-        } else {
-            let err_body = res.text().await?;
-            summary.record(&step, StepStatus::Failed(err_body));
+        match crate::gcp::serviceusage::enable_service(&client, &token, &project_id, service).await {
+            Ok(()) => summary.record(&step, StepStatus::Created),
+            Err(e) => summary.record(&step, StepStatus::Failed(e.class(), e.into())),
         }
     }
+    permission_gate(&summary)?;
 
     // 6. Create GCS State Bucket
     let bucket_step = format!("State bucket {}", bucket_name);
@@ -716,33 +578,10 @@ pub async fn bootstrap(
         summary.record(&bucket_step, StepStatus::Skipped(format!("{} was not created", project_id)));
     } else {
         println!("Creating GCS State Bucket: {}...", bucket_name);
-        let url = format!("https://storage.googleapis.com/storage/v1/b?project={}", project_id);
-        let body = serde_json::json!({
-            "name": bucket_name,
-            "location": r,
-            "iamConfiguration": {
-                "uniformBucketLevelAccess": {
-                    "enabled": true
-                }
-            },
-            "versioning": {
-                "enabled": true
-            }
-        });
-
-        let res = client.post(&url)
-            .bearer_auth(&token.token)
-            .json(&body)
-            .send()
-            .await?;
-
-        if res.status().is_success() {
-            summary.record(&bucket_step, StepStatus::Created);
-        } else if res.status().as_u16() == 409 {
-            summary.record(&bucket_step, StepStatus::AlreadyExisted);
-        } else {
-            let err = res.text().await?;
-            summary.record(&bucket_step, StepStatus::Failed(err));
+        match crate::gcp::storage::create_bucket(&client, &token, &project_id, &bucket_name, &r).await {
+            Ok(crate::gcp::storage::BucketOutcome::Created) => summary.record(&bucket_step, StepStatus::Created),
+            Ok(crate::gcp::storage::BucketOutcome::AlreadyExists) => summary.record(&bucket_step, StepStatus::AlreadyExisted),
+            Err(e) => summary.record(&bucket_step, StepStatus::Failed(e.class(), e.into())),
         }
     }
 
@@ -905,34 +744,6 @@ mod tests {
         assert_eq!(email_from_adc_json(&v), None);
     }
 
-    // --- read-before-write state probes ------------------------------------------
-
-    #[test]
-    fn reads_the_linked_billing_account() {
-        let v = jv(r#"{"name":"projects/p/billingInfo","projectId":"p","billingAccountName":"billingAccounts/012345-6789AB-CDEF01","billingEnabled":true}"#);
-        assert_eq!(
-            billing_account_from_json(&v).as_deref(),
-            Some("billingAccounts/012345-6789AB-CDEF01")
-        );
-    }
-
-    #[test]
-    fn unlinked_project_reports_no_billing_account() {
-        // A project with no billing link omits the field entirely.
-        assert_eq!(billing_account_from_json(&jv(r#"{"projectId":"p","billingEnabled":false}"#)), None);
-        assert_eq!(billing_account_from_json(&jv(r#"{"billingAccountName":""}"#)), None);
-    }
-
-    #[test]
-    fn service_state_distinguishes_enabled_from_disabled() {
-        // Without this, `services:enable` returning 200 made every re-run report
-        // "created" for APIs that were already on.
-        assert!(service_is_enabled(&jv(r#"{"name":"projects/1/services/iam.googleapis.com","state":"ENABLED"}"#)));
-        assert!(!service_is_enabled(&jv(r#"{"state":"DISABLED"}"#)));
-        assert!(!service_is_enabled(&jv(r#"{"state":"STATE_UNSPECIFIED"}"#)));
-        assert!(!service_is_enabled(&jv("{}")));
-    }
-
     // --- identity comparison -----------------------------------------------------
 
     #[test]
@@ -950,25 +761,6 @@ mod tests {
         assert!(!identity_matches("admin@example.com", ""));
     }
 
-    // --- permission detection ----------------------------------------------------
-
-    #[test]
-    fn recognises_permission_denials() {
-        assert!(is_permission_error(
-            r#"{"error":{"code":403,"status":"PERMISSION_DENIED","message":"Permission denied"}}"#
-        ));
-        assert!(is_permission_error(
-            "user first.admin@example.com does not have resourcemanager.folders.create access"
-        ));
-        assert!(is_permission_error("403 Forbidden"));
-    }
-
-    #[test]
-    fn other_failures_are_not_permission_errors() {
-        assert!(!is_permission_error(r#"{"error":{"code":409,"status":"ALREADY_EXISTS"}}"#));
-        assert!(!is_permission_error("operation timed out"));
-    }
-
     // --- summary rendering -------------------------------------------------------
 
     fn outcome(label: &str, status: StepStatus) -> StepOutcome {
@@ -981,8 +773,8 @@ mod tests {
             outcome("Folder \"Infrastructure\"", StepStatus::Created),
             outcome("Project acme-iac-infra", StepStatus::AlreadyExisted),
             outcome("Billing link", StepStatus::Skipped("project was not created".into())),
-            outcome("API storage.googleapis.com", StepStatus::Failed("SERVICE_DISABLED".into())),
-            outcome("State bucket acme", StepStatus::Failed("PERMISSION_DENIED".into())),
+            outcome("API storage.googleapis.com", StepStatus::Failed(ErrorClass::QuotaProject, "SERVICE_DISABLED".into())),
+            outcome("State bucket acme", StepStatus::Failed(ErrorClass::PermissionDenied, "PERMISSION_DENIED".into())),
         ];
         let out = render_summary(&steps);
 
@@ -994,6 +786,8 @@ mod tests {
         assert!(out.contains("Errors:"), "{out}");
         // The API's own message must survive verbatim — it is the actionable part.
         assert!(out.contains("SERVICE_DISABLED"), "{out}");
+        // A quota-class failure carries its hint — the raw 403 alone reads like a denial.
+        assert!(out.contains("set-quota-project"), "{out}");
         assert!(out.contains("2 step(s) failed"), "{out}");
     }
 
@@ -1015,18 +809,22 @@ mod tests {
         s.record("Billing", StepStatus::Skipped("no project".into()));
         assert_eq!(s.failed(), 0, "non-failures must not make bootstrap exit non-zero");
 
-        s.record("Bucket", StepStatus::Failed("boom".into()));
-        s.record("API x", StepStatus::Failed("boom".into()));
+        s.record("Bucket", StepStatus::Failed(ErrorClass::Other, "boom".into()));
+        s.record("API x", StepStatus::Failed(ErrorClass::Other, "boom".into()));
         assert_eq!(s.failed(), 2);
     }
 
     #[test]
-    fn permission_failure_is_detected_only_for_permission_errors() {
+    fn permission_failure_is_detected_only_for_permission_denials() {
         let mut s = RunSummary::default();
-        s.record("Project", StepStatus::Failed("ALREADY_EXISTS".into()));
+        s.record("Project", StepStatus::Failed(ErrorClass::Conflict, "ALREADY_EXISTS".into()));
         assert!(!s.has_permission_failure());
 
-        s.record("Folder", StepStatus::Failed("PERMISSION_DENIED on folders.create".into()));
-        assert!(s.has_permission_failure(), "a 403 must stop the run");
+        // A quota-class 403 is not a permission problem and must not stop the run.
+        s.record("API x", StepStatus::Failed(ErrorClass::QuotaProject, "SERVICE_DISABLED".into()));
+        assert!(!s.has_permission_failure());
+
+        s.record("Folder", StepStatus::Failed(ErrorClass::PermissionDenied, "PERMISSION_DENIED on folders.create".into()));
+        assert!(s.has_permission_failure(), "a real denial must stop the run");
     }
 }

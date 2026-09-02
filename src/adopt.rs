@@ -788,7 +788,7 @@ impl Live for RealLive {
     }
 
     async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String> {
-        crate::gcp::billing::list_budgets(&self.http, &self.token, billing_account).await
+        crate::gcp::billing::list_budgets(&self.http, &self.token, billing_account).await.map_err(String::from)
     }
 }
 
