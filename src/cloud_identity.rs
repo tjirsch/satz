@@ -116,21 +116,17 @@ impl GroupResolver {
 
 impl CloudIdentityClient {
     pub(crate) async fn new() -> Result<Self, BoxErr> {
-        use google_cloud_auth::credentials::Builder;
-        // `cloud-platform` covers cloudidentity.googleapis.com. Deliberately not also
-        // requesting the narrower cloud-identity.groups scopes: user ADC refresh tokens
-        // are minted pre-scoped by `gcloud auth application-default login` and ignore
-        // what is asked for here, while a service account that was never granted the
-        // narrow scopes would start failing.
-        let scopes = ["https://www.googleapis.com/auth/cloud-platform"];
-        let credentials = Builder::default()
-            .with_scopes(scopes)
-            .build_access_token_credentials()?;
-        let token = credentials.access_token().await?;
+        // `cloud-platform` covers cloudidentity.googleapis.com — the shared
+        // `gcp::access_token()` requests exactly that scope. Deliberately not the
+        // narrower cloud-identity.groups scopes: user ADC refresh tokens are minted
+        // pre-scoped by `gcloud auth application-default login` and ignore what is
+        // asked for here, while a service account that was never granted the narrow
+        // scopes would start failing.
+        let token = crate::gcp::access_token().await?;
 
         Ok(Self {
             http: reqwest::Client::new(),
-            token: token.token,
+            token,
             quota_project: crate::org_policy::resolve_quota_project(),
         })
     }

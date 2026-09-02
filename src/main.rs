@@ -2359,7 +2359,7 @@ async fn attach_billing_accounts(config: &mut Config) {
     };
     let http = reqwest::Client::new();
     for p in projects {
-        match crate::gcp::billing::project_billing_account(&http, &token, &p.project_id).await {
+        match crate::gcp::billing::project_billing_account(&http, &token, &p.project_id).await.map_err(String::from) {
             Ok(Some(acct)) => p.billing_account = Some(acct),
             Ok(None) => {}
             Err(e) => eprintln!(
