@@ -162,6 +162,13 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.s
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
 grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
 
+step "help fits the terminal: no line wider than the width, globals under their own heading"
+# clap reads the tty width; there is none in CI, so COLUMNS pins it
+long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80' | head -3)
+[ -z "$long" ] || fail "adopt --help at 80 columns has lines wider than 80:\n$long"
+COLUMNS=80 "$satz" adopt -h 2>&1 | grep -q '^Global options:' || fail "the global options are not under their own heading"
+COLUMNS=80 "$satz" import -h 2>&1 | grep -q "see more with '--help'" || fail "-h did not become the short form (no summary/details split?)"
+
 step "transpile --check: compiles in memory, accepts the yaml/-prefixed form, writes nothing"
 rm -rf hcl
 "$satz" --config . transpile yaml/smoke.satz --check > tmp/check.txt

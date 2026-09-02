@@ -117,7 +117,7 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 ## CLI Usage
 
-All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`). Commands and their options:
+All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. Commands and their options:
 
 | Command | Options / Arguments |
 |---------|---------------------|
