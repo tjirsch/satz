@@ -1050,7 +1050,11 @@ roles — with `testIamPermissions`:
 **Folder-scoped installs.** Set `customer_organization_id = "folders/<id>"`
 and the estate installs under that folder: permissions are tested there, and
 org-root operations are out of scope by design — a folder-granted operator is
-never asked to become org admin.
+never asked to become org admin. One caveat: Google allows
+`roles/orgpolicy.policyAdmin` only at organization level, so a missing
+`orgpolicy.policies.create` is reported as advisory on a folder scope —
+folder-level org policies need an organization-level grant before their first
+apply.
 
 **Dry run.** `satz bootstrap <estate> --dry-run` is read-only: it prints the
 plan, verifies the identity and runs the same pre-flight (a would-be

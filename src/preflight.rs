@@ -191,6 +191,26 @@ pub(crate) fn decide(
     Decision::SelfGrant(roles)
 }
 
+/// A required permission paired with the role that supplies it.
+pub(crate) type PermRole = (String, String);
+
+/// On a folder scope, a permission whose supplying role Google allows only at
+/// the organization level cannot be self-granted there (the folder grant is
+/// INVALID_ARGUMENT — live-verified 2026-09-02) and must not block a
+/// folder-scoped install either: it is split out as advisory — named in the
+/// output, never silently waved through. At org scope nothing is advisory.
+pub(crate) fn split_folder_advisory(
+    scope: &Scope,
+    missing: Vec<PermRole>,
+) -> (Vec<PermRole>, Vec<PermRole>) {
+    match scope {
+        Scope::Org(_) => (missing, Vec::new()),
+        Scope::Folder(_) => missing
+            .into_iter()
+            .partition(|(_, role)| role != "roles/orgpolicy.policyAdmin"),
+    }
+}
+
 /// Run the pre-flight against the live IAM: test, decide, and — on a live run
 /// with `setIamPolicy` in hand — self-grant, audibly, then re-test until IAM
 /// propagation catches up. Returns only when bootstrap may create things;
@@ -233,6 +253,18 @@ pub(crate) async fn run(
             missing.push((perm.to_string(), role.to_string()));
         }
     }
+    // roles/orgpolicy.policyAdmin exists only at the organization level, so a
+    // folder-scoped install can neither self-grant it nor be blocked by it.
+    let (missing, advisory) = split_folder_advisory(&scope, missing);
+    for (perm, role) in &advisory {
+        println!(
+            "  note: {} stays missing — {} is an organization-level role; the estate's \
+             folder-level org policies will need an organization-level grant before their \
+             first apply. Continuing.",
+            perm, role
+        );
+    }
+
     let can_set_policy = granted.iter().any(|g| g == scope.set_iam_policy_permission());
 
     // And one on the billing account.
@@ -479,5 +511,22 @@ mod tests {
         let d = decide(&missing, false, false, &scope, "A12345-B67890-C12345", Some("admin@example.com"));
         let Decision::Stop(cmds) = d else { panic!("expected Stop, got {:?}", d) };
         assert!(cmds[0].starts_with("gcloud resource-manager folders add-iam-policy-binding 424242"), "{:?}", cmds);
+    }
+
+    #[test]
+    fn folder_scope_makes_the_org_level_only_role_advisory() {
+        let missing = vec![
+            (s("resourcemanager.projects.create"), s("roles/resourcemanager.projectCreator")),
+            (s("orgpolicy.policies.create"), s("roles/orgpolicy.policyAdmin")),
+        ];
+        let (blocking, advisory) =
+            split_folder_advisory(&Scope::Folder(s("folders/424242")), missing.clone());
+        assert_eq!(blocking, vec![missing[0].clone()]);
+        assert_eq!(advisory, vec![missing[1].clone()]);
+
+        // At org scope the role IS grantable — nothing becomes advisory.
+        let (blocking, advisory) = split_folder_advisory(&org(), missing.clone());
+        assert_eq!(blocking, missing);
+        assert!(advisory.is_empty());
     }
 }
