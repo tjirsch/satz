@@ -1,16 +1,32 @@
-// 
+//
 // Essential Contacts
-// 
-// Combine notification categories, each email may only be used once
-// 
+//
+// Google routes each notification category to the contacts subscribed to it.
+// One address may appear ONCE per parent — so the shipped shape is a single
+// contact on ALL. To split by audience (billing to finance, suspension and
+// security to the on-call, …), uncomment the per-category contacts below,
+// give each its own address, and either narrow or delete the `all` contact:
+// an address subscribed to ALL already receives every category.
+//
+// Categories (API enum names): BILLING, LEGAL, PRODUCT_UPDATES, SECURITY,
+// SUSPENSION, TECHNICAL — and ALL.
+//
 
-// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
-
-pack essential_contacts_organization version "1.1" content
+pack essential_contacts_organization version "1.2" content
 
 params {
   // The org-wide contact address receiving ALL Google notifications.
   essential_contacts_email = "essential-contacts-all@{customer_domain}"
+
+  // Per-category addresses for the commented contacts below. Defaults are
+  // role mailboxes on the customer domain; each must differ from every other
+  // address used on the same parent.
+  // essential_contacts_billing_email    = "essential-contacts-billing@{customer_domain}"
+  // essential_contacts_legal_email      = "essential-contacts-legal@{customer_domain}"
+  // essential_contacts_product_email    = "essential-contacts-product@{customer_domain}"
+  // essential_contacts_security_email   = "essential-contacts-security@{customer_domain}"
+  // essential_contacts_suspension_email = "essential-contacts-suspension@{customer_domain}"
+  // essential_contacts_technical_email  = "essential-contacts-technical@{customer_domain}"
 }
 
 all {
@@ -22,3 +38,66 @@ all {
   ]
 }
 
+// --- Per-category contacts (uncomment what you split out) --------------------
+//
+// BILLING — critical billing and payment notifications (invoices, payment
+// failures, account changes). Typically finance / the billing-admins mailbox.
+// billing {
+//   parent = "organizations/{customer_organization_id}"
+//   email = essential_contacts_billing_email
+//   language_tag = "en-GB"
+//   notification_category_subscriptions = [ "BILLING" ]
+// }
+//
+// SUSPENSION — potential or actual account / project suspensions for policy
+// violations. Time-critical: route to a mailbox someone reads the same day.
+// suspension {
+//   parent = "organizations/{customer_organization_id}"
+//   email = essential_contacts_suspension_email
+//   language_tag = "en-GB"
+//   notification_category_subscriptions = [ "SUSPENSION" ]
+// }
+//
+// SECURITY — urgent security and privacy issues affecting resources or the
+// account (abuse reports, leaked credentials, vulnerability notices).
+// security {
+//   parent = "organizations/{customer_organization_id}"
+//   email = essential_contacts_security_email
+//   language_tag = "en-GB"
+//   notification_category_subscriptions = [ "SECURITY" ]
+// }
+//
+// TECHNICAL — operational issues, technical events and important updates
+// relevant to the stability and functioning of the services in use.
+// technical {
+//   parent = "organizations/{customer_organization_id}"
+//   email = essential_contacts_technical_email
+//   language_tag = "en-GB"
+//   notification_category_subscriptions = [ "TECHNICAL" ]
+// }
+//
+// LEGAL — official legal and compliance notifications.
+// legal {
+//   parent = "organizations/{customer_organization_id}"
+//   email = essential_contacts_legal_email
+//   language_tag = "en-GB"
+//   notification_category_subscriptions = [ "LEGAL" ]
+// }
+//
+// PRODUCT_UPDATES — changes to Google Cloud products and services
+// (deprecations, feature launches). Low urgency; often the platform team.
+// product_updates {
+//   parent = "organizations/{customer_organization_id}"
+//   email = essential_contacts_product_email
+//   language_tag = "en-GB"
+//   notification_category_subscriptions = [ "PRODUCT_UPDATES" ]
+// }
+//
+// One contact may also carry SEVERAL categories — e.g. the on-call mailbox
+// on both time-critical ones:
+// oncall {
+//   parent = "organizations/{customer_organization_id}"
+//   email = essential_contacts_security_email
+//   language_tag = "en-GB"
+//   notification_category_subscriptions = [ "SECURITY", "SUSPENSION" ]
+// }

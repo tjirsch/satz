@@ -1,0 +1,142 @@
+// The S1 security group model in ONE file: the five admin groups AND their
+// organization-level role grants — resource-type sections may repeat across
+// files with distinct ids, so a typed pack sits beside the estate's own groups
+// and grants. Content-identical to s1-group-definitions 1.2 +
+// s1-group-permissions 1.1, which stay for the estates that `use` them under
+// a resource type; an estate takes ONE of the two spellings, never both.
+//
+// Use at the top level:
+//   use "presets/security-group-models/s1-security-groups.satz"
+//
+// To adopt groups that already exist in the tenant:
+//   satz adopt <estate> --only google_cloud_identity_group --execute
+// Groups are looked up by email; no ids are hard-coded here (tenant-specific).
+// Memberships are deliberately NOT part of this pack: presets define groups,
+// humans grant membership. Estates that need managed memberships declare them
+// as estate-level resources.
+//
+// Required from the estate: customer_domain, svc_iac_account, infra_project_name
+
+pack s1_security_groups version "1.0"
+
+params {
+  gcp_organization_admins_name = "gcp-organization-admins"
+  gcp_project_admins_name      = "gcp-project-admins"
+  gcp_security_admins_name     = "gcp-security-admins"
+  gcp_security_viewers_name    = "gcp-security-viewers"
+  gcp_billing_admins_name      = "gcp-billing-admins"
+}
+
+google_cloud_identity_group {
+  "{gcp_organization_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Organization Admins"
+    description  = "Permissions merged from default roles for\nOrganization administrators, Hybrid Connectivity administrators,\nLogging-monitoring administrators and Network administrators.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_project_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Project Admins"
+    description  = "Permissions allow Day2Day Project Administration across all projects+\nHybrid Connectivity administrators, Logging-monitoring administrators and\nNetwork administrators.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_security_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Security Admins"
+    description  = "Permissions for use with Security Admin role. Use of setting IAM on most Resources.\nOrganizational, Folder  and Project IAM Admin roles.\nSCC PowerUser.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_security_viewers_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Security Viewers"
+    description  = "All Viewer Permissions for use with Security Auitor role.\nSCC User.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+
+  "{gcp_billing_admins_name}" {
+    lifecycle { ignore_changes = ["initial_group_config"] }
+    display_name = "GCP-Billing Admins"
+    description  = "All Billing and Procurement roles.\n"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+  }
+}
+
+google_organization_iam_member {
+  "domain:{customer_domain}" = [
+    "roles/resourcemanager.organizationViewer",
+  ]
+
+  "group:{gcp_organization_admins_name}@{customer_domain}" = [
+    "roles/resourcemanager.organizationAdmin",
+    "roles/iam.organizationRoleAdmin",
+    "roles/orgpolicy.policyAdmin",
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.folderIamAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/cloudsupport.admin",
+    "roles/billing.user",
+  ]
+
+  "group:{gcp_project_admins_name}@{customer_domain}" = [
+    "roles/resourcemanager.folderViewer",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/resourcemanager.tagAdmin",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.serviceAccountCreator",
+    "roles/owner",
+    "roles/bigquery.admin",
+    "roles/pubsub.admin",
+    "roles/cloudsupport.admin",
+    "roles/compute.networkAdmin",
+    "roles/compute.viewer",
+    "roles/compute.xpnAdmin",
+    "roles/container.viewer",
+    "roles/monitoring.admin",
+    "roles/logging.admin",
+    "roles/logging.configWriter",
+    "roles/logging.privateLogViewer",
+    "roles/monitoring.viewer",
+    "roles/billing.user",
+  ]
+
+  "group:{gcp_security_admins_name}@{customer_domain}" = [
+    "roles/orgpolicy.policyAdmin",
+    "roles/compute.viewer",
+    "roles/container.viewer",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.securityReviewer",
+    // report-compliance reads witnesses through Cloud Asset Inventory;
+    // securityReviewer does NOT carry cloudasset.assets.searchAllResources.
+    "roles/cloudasset.viewer",
+    "roles/monitoring.admin",
+    "roles/logging.configWriter",
+    "roles/logging.privateLogViewer",
+    "roles/resourcemanager.folderIamAdmin",
+    "roles/securitycenter.admin",
+    "roles/billing.user",
+  ]
+
+  "group:{gcp_security_viewers_name}@{customer_domain}" = [
+    "roles/viewer",
+    "roles/resourcemanager.organizationViewer",
+    "roles/compute.viewer",
+    "roles/logging.configWriter",
+    "roles/logging.privateLogViewer",
+    "roles/monitoring.viewer",
+    "roles/logging.viewer",
+    "roles/container.viewer",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.securityReviewer",
+    "roles/cloudasset.viewer",
+  ]
+
+  "group:{gcp_billing_admins_name}@{customer_domain}" = [
+    "roles/resourcemanager.organizationViewer",
+    "roles/billing.admin",
+    "roles/billing.creator",
+  ]
+}
