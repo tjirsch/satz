@@ -561,6 +561,13 @@ enum Commands {
     },
     /// Open the documentation site in the browser
     OpenReadme,
+    /// Show which identity, credential type and quota project the Application
+    /// Default Credentials resolve to
+    Whoami {
+        /// Read the ADC file only — no network, no token minted
+        #[arg(long)]
+        offline: bool,
+    },
     /// Generate shell completion script
     Completion {
         /// Shell to generate completions for: bash, zsh, fish, powershell
@@ -707,7 +714,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
-                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme => {
+                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }
@@ -716,7 +723,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Optional: check for updates per global settings (skip for SelfUpdate and Init)
-    if !matches!(cmd_choice, Commands::SelfUpdate { .. } | Commands::Init { .. }) {
+    if !matches!(cmd_choice, Commands::SelfUpdate { .. } | Commands::Init { .. } | Commands::Whoami { .. }) {
         let _ = maybe_check_for_updates(&mut global_settings).await;
     }
 
@@ -1406,6 +1413,7 @@ Thumbs.db
             Ok(())
         }
         Commands::OpenReadme => open_url(DOCS_URL),
+        Commands::Whoami { offline } => crate::gcp::identity::whoami(offline).await,
         Commands::Completion { shell, install } => {
             let using_default = shell.is_none();
             let shell = match shell {

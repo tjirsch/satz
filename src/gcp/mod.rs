@@ -5,18 +5,24 @@
 
 pub(crate) mod billing;
 pub(crate) mod discovery_doc;
+pub(crate) mod identity;
 pub(crate) mod resourcemanager;
 pub(crate) mod serviceusage;
 pub(crate) mod storage;
 
-/// An ADC bearer token for the cloud-platform scope.
+/// An ADC bearer token for the cloud-platform scope. The chokepoint every
+/// live command mints through — which is what lets [`identity::announce`]
+/// print the credential line exactly once, before the first API call, without
+/// any command knowing about it.
 pub(crate) async fn access_token() -> Result<String, String> {
     use google_cloud_auth::credentials::Builder;
     let credentials = Builder::default()
         .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
         .build_access_token_credentials()
         .map_err(|e| e.to_string())?;
-    Ok(credentials.access_token().await.map_err(|e| e.to_string())?.token)
+    let token = credentials.access_token().await.map_err(|e| e.to_string())?.token;
+    identity::announce(&token).await;
+    Ok(token)
 }
 
 /// What a failed API call means for the caller. Derived from the HTTP status

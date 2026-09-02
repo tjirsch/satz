@@ -161,6 +161,18 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.s
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
 grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
 
+step "whoami: refuses without credentials naming the fix; reads an impersonated-SA ADC offline"
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" whoami --offline > tmp/who.txt 2>&1; then
+  fail "whoami --offline must fail without an ADC file:\n$(cat tmp/who.txt)"
+fi
+grep -q 'application-default login' tmp/who.txt || fail "whoami failure did not name the fix:\n$(cat tmp/who.txt)"
+printf '{"type":"impersonated_service_account","service_account_impersonation_url":"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/svc-iac@acme-infra-001.iam.gserviceaccount.com:generateAccessToken","quota_project_id":"acme-infra-001"}\n' > tmp/adc.json
+GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" whoami --offline > tmp/who2.txt 2>&1 \
+  || fail "whoami --offline failed on a valid impersonated-SA ADC:\n$(cat tmp/who2.txt)"
+grep -q 'svc-iac@acme-infra-001' tmp/who2.txt || fail "impersonation target not shown:\n$(cat tmp/who2.txt)"
+grep -q 'impersonated service account' tmp/who2.txt || fail "credential type not shown:\n$(cat tmp/who2.txt)"
+grep -q 'quota project acme-infra-001' tmp/who2.txt || fail "quota project not shown:\n$(cat tmp/who2.txt)"
+
 step "the privacy gate judges tokens, not lines, and refuses an unusable range"
 # the private-looking address is assembled at runtime so the fixture itself
 # never carries a domain the gate would reject
