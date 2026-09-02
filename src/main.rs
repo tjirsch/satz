@@ -238,6 +238,12 @@ enum Commands {
         /// Initial IaC Admin User (default: first.admin@<domain>)
         #[arg(long)]
         iac_user: Option<String>,
+        /// Derive the missing values from the Application Default Credentials
+        /// alone: identity → first admin + domain, organizations:search → org
+        /// id + directory customer id, billing accounts → the single open
+        /// account. Explicit flags always win; nothing is ever guessed
+        #[arg(long)]
+        from_live: bool,
     },
     /// Bootstrap day-0 infrastructure (folder, project, billing link, core APIs, state bucket) after a permission pre-flight
     Bootstrap {
@@ -248,6 +254,12 @@ enum Commands {
         /// permission pre-flight; create nothing
         #[arg(long)]
         dry_run: bool,
+        /// Materialize a not-yet-existing organization: create the infra
+        /// project WITHOUT a parent (Google's documented auto-provisioning
+        /// trigger for a directory user), wait for the organization, move the
+        /// project under it and write the id back into the estate
+        #[arg(long)]
+        greenfield: bool,
     },
     /// Export the current live Organization Policies to a re-importable YAML preset
     #[command(visible_alias = "export-org-policies")]
@@ -871,6 +883,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             infra_project_name,
             infra_bucket_name,
             iac_user,
+            from_live,
         } => {
             let mut final_google = Vec::new();
             let mut final_aws = Vec::new();
@@ -973,6 +986,51 @@ Thumbs.db
                 fsx::write(&gitignore_path, gitignore_content)?;
                 println!("Created {}", gitignore_path.display());
             }
+
+            // 3b. --from-live: derive the missing values from the ADC alone.
+            // Explicit flags always win, and nothing is ever guessed.
+            let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) =
+                if from_live {
+                    let live = crate::gcp::identity::live_defaults(
+                        customer_organization_id.is_none() || customer_id.is_none(),
+                        billing_account_infra.is_none(),
+                    )
+                    .await?;
+                    let customer_domain = customer_domain.or_else(|| Some(live.customer_domain.clone()));
+                    let iac_user =
+                        iac_user.or_else(|| Some(format!("{}@{}", live.first_admin, live.customer_domain)));
+                    let customer_id = customer_id.or_else(|| live.customer_id.clone());
+                    // No organization visible = greenfield: the estate is
+                    // written with an empty id and bootstrap --greenfield
+                    // fills it in.
+                    let customer_organization_id =
+                        customer_organization_id.or_else(|| Some(live.org_id.clone().unwrap_or_default()));
+                    let billing_account_infra = billing_account_infra.or_else(|| live.billing_account.clone());
+                    let customer_shortname = match customer_shortname {
+                        Some(s) => Some(s),
+                        None => Some(crate::gcp::identity::prompt_shortname()?),
+                    };
+                    if customer_id.is_none() {
+                        return Err("no organization (and so no directory customer id) is visible — \
+                                    pass --customer-id explicitly alongside --from-live"
+                            .into());
+                    }
+                    if billing_account_infra.as_deref().unwrap_or("").is_empty() {
+                        return Err("--from-live could not settle on ONE open billing account — \
+                                    pass --billing-account-infra (the visible accounts are listed above)"
+                            .into());
+                    }
+                    if customer_organization_id.as_deref().unwrap_or("").is_empty() {
+                        println!(
+                            "no organization is visible to these credentials — the estate is written \
+                             with an empty customer_organization_id; `satz bootstrap <estate> --greenfield` \
+                             materializes the organization and fills it in"
+                        );
+                    }
+                    (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
+                } else {
+                    (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
+                };
 
             // 4. Generate the template estate if customer_id provided
             if let Some(c_id) = customer_id {
@@ -1132,13 +1190,14 @@ Thumbs.db
                 other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
             }
         }
-        Commands::Bootstrap { estate, dry_run } => {
+        Commands::Bootstrap { estate, dry_run, greenfield } => {
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
             crate::bootstrap::bootstrap(
                 config_path,
                 dry_run,
+                greenfield,
                 runtime_config,
                 cli.config.clone(),
                 cli.validation.clone(),

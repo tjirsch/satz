@@ -161,6 +161,13 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.s
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
 grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
 
+step "bootstrap on a greenfield estate: the empty org id gets the greenfield guidance, not a bare error"
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap greenfield.satz --dry-run > tmp/boot-green.txt 2>&1; then
+  fail "an empty customer_organization_id without --greenfield must fail:\n$(cat tmp/boot-green.txt)"
+fi
+grep -q -- '--greenfield' tmp/boot-green.txt || fail "the failure did not explain --greenfield:\n$(cat tmp/boot-green.txt)"
+grep -q 'init --from-live' tmp/boot-green.txt || fail "the failure did not name init --from-live:\n$(cat tmp/boot-green.txt)"
+
 step "whoami: refuses without credentials naming the fix; reads an impersonated-SA ADC offline"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" whoami --offline > tmp/who.txt 2>&1; then
   fail "whoami --offline must fail without an ADC file:\n$(cat tmp/who.txt)"

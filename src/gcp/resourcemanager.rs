@@ -302,6 +302,70 @@ pub(crate) async fn set_iam_policy(
     Ok(())
 }
 
+/// `organizations:search` — every organization visible to the caller, across
+/// all pages. An empty result is the greenfield signal, not an error.
+pub(crate) async fn search_organizations(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    let mut out = Vec::new();
+    let mut page_token: Option<String> = None;
+    loop {
+        let mut req = client
+            .get(format!("{}/organizations:search", BASE))
+            .bearer_auth(token);
+        if let Some(t) = &page_token {
+            req = req.query(&[("pageToken", t.as_str())]);
+        }
+        let res = req.send().await.map_err(ApiError::transport)?;
+        if !res.status().is_success() {
+            return Err(super::api_error(res).await);
+        }
+        let page: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
+        if let Some(list) = page.get("organizations").and_then(|v| v.as_array()) {
+            out.extend(list.iter().cloned());
+        }
+        page_token = page
+            .get("nextPageToken")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        if page_token.is_none() {
+            return Ok(out);
+        }
+    }
+}
+
+/// `projects.move` under `destination_parent`, waited to completion.
+pub(crate) async fn move_project(
+    client: &reqwest::Client,
+    token: &str,
+    project_id: &str,
+    destination_parent: &str,
+) -> Result<(), ApiError> {
+    let res = client
+        .post(format!("{}/projects/{}:move", BASE, project_id))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "destinationParent": destination_parent }))
+        .send()
+        .await
+        .map_err(ApiError::transport)?;
+    if !res.status().is_success() {
+        return Err(super::api_error(res).await);
+    }
+    let info: serde_json::Value = res.json().await.map_err(ApiError::transport)?;
+    let Some(op_name) = info.get("name").and_then(|v| v.as_str()) else {
+        return Err(ApiError::transport(
+            "the API accepted the request but returned no operation name",
+        ));
+    };
+    let op = await_operation(client, token, op_name, std::time::Duration::from_secs(3), 60).await?;
+    if let Some(err) = op.get("error") {
+        return Err(ApiError::from_operation_error(err));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

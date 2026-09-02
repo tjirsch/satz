@@ -138,6 +138,158 @@ fn identity_matches(expected: &str, actual: &str) -> bool {
     expected.trim().eq_ignore_ascii_case(actual.trim())
 }
 
+/// Materialize a not-yet-existing organization. The documented trigger: an
+/// EXISTING Google Cloud user's first project (or billing account) creation
+/// auto-provisions the organization for a Workspace/Cloud Identity domain —
+/// so the infra project is created parentless, the organization is awaited,
+/// the project moved under it, and the id written back into the estate. A
+/// NEW user's trigger (console sign-in + accepting the terms) has no API
+/// substitute, which is what the timeout message says.
+async fn resolve_greenfield_parent(
+    client: &reqwest::Client,
+    token: &str,
+    config_file: &Path,
+    project_id: &str,
+    customer_id: Option<&str>,
+    dry_run: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    println!("--- Greenfield: no organization in the estate ---");
+    let orgs = crate::gcp::resourcemanager::search_organizations(client, token)
+        .await
+        .map_err(|e| format!("could not search organizations: {}", e))?;
+    if !orgs.is_empty() {
+        let names: Vec<&str> =
+            orgs.iter().filter_map(|o| o.get("name").and_then(|n| n.as_str())).collect();
+        return Err(format!(
+            "{} organization(s) are already visible ({}) — fill `customer_organization_id` (or run \
+             `satz init --from-live`) instead of --greenfield",
+            orgs.len(),
+            names.join(", ")
+        )
+        .into());
+    }
+    let Some(customer_id) = customer_id.filter(|c| !c.trim().is_empty()) else {
+        return Err("greenfield needs `customer_id` in the estate: the new organization is matched \
+                    by its directoryCustomerId, never taken on faith"
+            .into());
+    };
+    if dry_run {
+        println!(
+            "would create project {} WITHOUT a parent (the documented trigger for organization \
+             auto-provisioning), poll organizations:search for directoryCustomerId {}, move the \
+             project under the new organization, and write its id back into {}",
+            project_id,
+            customer_id,
+            config_file.display()
+        );
+        return Err(
+            "greenfield --dry-run stops here: everything after the parentless create depends on \
+             the organization appearing"
+                .into(),
+        );
+    }
+
+    println!(
+        "Creating project {} without a parent (triggers organization auto-provisioning)...",
+        project_id
+    );
+    crate::gcp::resourcemanager::create_project(client, token, project_id, None)
+        .await
+        .map_err(|e| format!("parentless project creation failed: {}", e))?;
+
+    println!(
+        "Waiting for the organization to appear (directoryCustomerId {}, up to 5 minutes)...",
+        customer_id
+    );
+    let mut org: Option<String> = None;
+    for _ in 0..30u32 {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        let orgs = crate::gcp::resourcemanager::search_organizations(client, token)
+            .await
+            .map_err(|e| format!("could not search organizations: {}", e))?;
+        if let Some(hit) = orgs
+            .iter()
+            .find(|o| o.get("directoryCustomerId").and_then(|c| c.as_str()) == Some(customer_id))
+        {
+            org = hit.get("name").and_then(|n| n.as_str()).map(str::to_string);
+            break;
+        }
+    }
+    let Some(org) = org else {
+        return Err(format!(
+            "the organization did not appear within 5 minutes. The trigger works for a directory \
+             user who has used Google Cloud before; a NEW user must sign in to the Cloud console \
+             once as the admin (accepting the terms creates the organization). Then fill \
+             `customer_organization_id` and re-run WITHOUT --greenfield; project {} exists \
+             parentless and can be moved under the organization with `gcloud beta projects move`.",
+            project_id
+        )
+        .into());
+    };
+    println!("Organization appeared: {}", org);
+
+    crate::gcp::resourcemanager::move_project(client, token, project_id, &org)
+        .await
+        .map_err(|e| format!("could not move {} under {}: {}", project_id, org, e))?;
+    println!("Moved {} under {}", project_id, org);
+
+    let bare = org.trim_start_matches("organizations/");
+    write_param_value(config_file, "customer_organization_id", bare)?;
+    println!(
+        "Wrote customer_organization_id = \"{}\" into {}",
+        bare,
+        config_file.display()
+    );
+    Ok(org)
+}
+
+/// Rewrite one `param = "value"` line in the estate — the greenfield
+/// write-back. Exactly one matching line; a present, different, non-empty
+/// value is an error, never a silent overwrite.
+fn write_param_value(estate: &Path, param: &str, value: &str) -> Result<(), String> {
+    let text =
+        std::fs::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let rewritten = rewrite_param_line(&text, param, value)?;
+    std::fs::write(estate, rewritten).map_err(|e| format!("{}: {}", estate.display(), e))
+}
+
+/// The pure half of the write-back, pinned by tests. Preserves the line's
+/// indentation and alignment; only the quoted value changes.
+fn rewrite_param_line(text: &str, param: &str, value: &str) -> Result<String, String> {
+    let mut out = Vec::new();
+    let mut hits = 0;
+    for line in text.lines() {
+        let is_param_line = line
+            .trim_start()
+            .strip_prefix(param)
+            .map(|rest| rest.trim_start().starts_with('='))
+            .unwrap_or(false);
+        if !is_param_line {
+            out.push(line.to_string());
+            continue;
+        }
+        hits += 1;
+        let Some((head, rest)) = line.split_once('"') else {
+            return Err(format!("param `{}` is not a quoted string in the estate", param));
+        };
+        let Some((current, tail)) = rest.split_once('"') else {
+            return Err(format!("param `{}`: unterminated string", param));
+        };
+        if !current.is_empty() && current != value {
+            return Err(format!(
+                "param `{}` already carries {:?} (expected empty or {:?}) — not overwriting",
+                param, current, value
+            ));
+        }
+        out.push(format!("{}\"{}\"{}", head, value, tail));
+    }
+    match hits {
+        1 => Ok(out.join("\n") + if text.ends_with('\n') { "\n" } else { "" }),
+        0 => Err(format!("param `{}` not found in the estate", param)),
+        n => Err(format!("param `{}` appears {} times — cannot rewrite safely", param, n)),
+    }
+}
+
 /// Read a bootstrap config the same way `transpile` does: expand `!include` directives,
 /// then resolve the `!join` / `!format` custom tags.
 ///
@@ -177,6 +329,7 @@ fn load_bootstrap_yaml(
 pub async fn bootstrap(
     config_file: PathBuf,
     dry_run: bool,
+    greenfield: bool,
     runtime_config: crate::ToolConfig,
     cli_config: Option<PathBuf>,
     cli_validation: Option<String>,
@@ -214,12 +367,32 @@ pub async fn bootstrap(
     let bid = lookup_str(&["billing-account-infra", "billing_id"])
         .ok_or_else(|| format!("Missing 'billing-account-infra' in {}", config_file.display()))?;
     let r = lookup_str(&["default-region", "region"]).unwrap_or_else(|| "europe-west3".to_string());
-    let oid_val = lookup_str(&["customer-organization-id"])
-        .ok_or("Missing org_id in configuration (required for bootstrap)")?;
+    // Empty = greenfield territory: allowed only with --greenfield, checked
+    // below before any credentials are needed.
+    let oid_val = lookup_str(&["customer-organization-id"]).unwrap_or_default();
     let final_proj_id = lookup_str(&["infra-project-name"]);
     let final_bucket = lookup_str(&["infra-bucket-name"]);
 
-    let parent = crate::org_policy::normalize_parent(&oid_val);
+    let org_known = !oid_val.trim().is_empty();
+    let parent = if org_known {
+        crate::org_policy::normalize_parent(&oid_val)
+    } else {
+        "(no organization yet — greenfield)".to_string()
+    };
+
+    if !org_known && !greenfield {
+        // Printed rather than returned: `main` renders a returned error with
+        // `Debug`, which would escape the newlines.
+        eprintln!(
+            "\nThe estate's `customer_organization_id` is empty — there is no organization to install into.\n\
+             If the organization exists: `satz init --from-live` derives the id from your credentials, or fill the param.\n\
+             If this is a brand-new tenant (directory + billing, no organization yet), run\n\
+             `satz bootstrap <estate> --greenfield`: it creates the infra project WITHOUT a parent — the\n\
+             documented trigger for Google's organization auto-provisioning — waits for the organization,\n\
+             moves the project under it and writes the id back into the estate.\n"
+        );
+        return Err("no organization id in the estate (see the greenfield guidance above)".into());
+    }
 
     let project_id = final_proj_id.unwrap_or_else(|| format!("{}-iac-infra", sn));
     let bucket_name = final_bucket.unwrap_or_else(|| project_id.clone());
@@ -308,6 +481,23 @@ pub async fn bootstrap(
             );
         }
     }
+
+    // 1.7 Greenfield: materialize the organization before anything is
+    // tested against it.
+    let parent = if greenfield {
+        if org_known {
+            return Err(format!(
+                "the estate already names {} — drop --greenfield; it exists only to materialize a \
+                 not-yet-existing organization",
+                parent
+            )
+            .into());
+        }
+        let customer_id = lookup_str(&["customer-id"]);
+        resolve_greenfield_parent(&client, &token, &config_file, &project_id, customer_id.as_deref(), dry_run).await?
+    } else {
+        parent
+    };
 
     // 2. Pre-flight: the REQUIRED permissions on the scope root and the
     // billing account, tested before anything is created — and self-granted
@@ -605,6 +795,38 @@ pub(crate) fn run_import(tf_tool: &str, working_dir: &std::path::Path, resource_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- greenfield write-back ---------------------------------------------
+
+    #[test]
+    fn rewrite_fills_an_empty_param_and_preserves_alignment() {
+        let text = "params {\n  customer_organization_id = \"\"\n  other = \"x\"\n}\n";
+        let out = rewrite_param_line(text, "customer_organization_id", "123456789012").unwrap();
+        assert_eq!(
+            out,
+            "params {\n  customer_organization_id = \"123456789012\"\n  other = \"x\"\n}\n"
+        );
+        // Idempotent: the value already written is accepted.
+        let again = rewrite_param_line(&out, "customer_organization_id", "123456789012").unwrap();
+        assert_eq!(again, out);
+    }
+
+    #[test]
+    fn rewrite_never_overwrites_a_different_value() {
+        let text = "customer_organization_id = \"222222222222\"\n";
+        let err = rewrite_param_line(text, "customer_organization_id", "123456789012").unwrap_err();
+        assert!(err.contains("not overwriting"), "{err}");
+    }
+
+    #[test]
+    fn rewrite_fails_on_missing_duplicate_or_prefix_params() {
+        assert!(rewrite_param_line("other = \"x\"\n", "customer_organization_id", "1").is_err());
+        let dup = "customer_organization_id = \"\"\ncustomer_organization_id = \"\"\n";
+        assert!(rewrite_param_line(dup, "customer_organization_id", "1").is_err());
+        // A param that merely starts with the name is not a match.
+        let prefixed = "customer_organization_id_backup = \"\"\n";
+        assert!(rewrite_param_line(prefixed, "customer_organization_id", "1").is_err());
+    }
 
     // --- identity comparison -----------------------------------------------------
 

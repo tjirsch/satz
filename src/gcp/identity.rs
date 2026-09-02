@@ -149,6 +149,145 @@ pub(crate) async fn whoami(offline: bool) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+/// Everything `init --from-live` can derive from the ADC alone.
+pub(crate) struct LiveDefaults {
+    /// Local part of the ADC identity.
+    pub(crate) first_admin: String,
+    pub(crate) customer_domain: String,
+    /// Bare organization number — `None` on a greenfield tenant.
+    pub(crate) org_id: Option<String>,
+    /// The directory customer id (`C0…`).
+    pub(crate) customer_id: Option<String>,
+    /// Bare billing account id — only when exactly ONE open account is
+    /// visible; anything else is never guessed.
+    pub(crate) billing_account: Option<String>,
+}
+
+/// Derive the init parameters from the credentials: tokeninfo → identity,
+/// `organizations:search` → org id + directory customer id,
+/// `billingAccounts.list` → the single open account. Ambiguity is an error or
+/// a named gap, never a guess — and only what is actually MISSING is queried,
+/// so explicit flags keep working on accounts that see many organizations.
+pub(crate) async fn live_defaults(
+    need_org: bool,
+    need_billing: bool,
+) -> Result<LiveDefaults, String> {
+    let token = crate::gcp::access_token().await?;
+    let info = credential_info(&token).await;
+    let Some(email) = info.email else {
+        return Err(
+            "could not determine the ADC identity — run `gcloud auth application-default login`"
+                .to_string(),
+        );
+    };
+    let Some((local, domain)) = email.split_once('@') else {
+        return Err(format!("ADC identity {:?} is not an email address", email));
+    };
+
+    let client = reqwest::Client::new();
+    let (org_id, customer_id) = if !need_org {
+        // Both values arrived as flags — no search, no ambiguity to trip on.
+        (None, None)
+    } else {
+        let orgs = crate::gcp::resourcemanager::search_organizations(&client, &token)
+            .await
+            .map_err(|e| format!("could not search organizations: {}", e))?;
+        match orgs.as_slice() {
+            [] => (None, None),
+            [one] => (
+                one.get("name")
+                    .and_then(|n| n.as_str())
+                    .and_then(|n| n.strip_prefix("organizations/"))
+                    .map(str::to_string),
+                one.get("directoryCustomerId").and_then(|c| c.as_str()).map(str::to_string),
+            ),
+            many => {
+                return Err(format!(
+                    "{} organizations are visible to {} — pass --customer-organization-id and \
+                     --customer-id explicitly: {}",
+                    many.len(),
+                    email,
+                    many.iter()
+                        .filter_map(|o| o.get("name").and_then(|n| n.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+    };
+
+    let billing_account = if !need_billing {
+        None
+    } else {
+        let accounts = crate::gcp::billing::list_billing_accounts(&client, &token)
+            .await
+            .map_err(|e| format!("could not list billing accounts: {}", e))?;
+        let open: Vec<&(String, String, bool)> = accounts.iter().filter(|(_, _, o)| *o).collect();
+        match open.as_slice() {
+            [one] => Some(one.0.clone()),
+            [] => {
+                eprintln!("no open billing account is visible — pass --billing-account-infra");
+                None
+            }
+            many => {
+                eprintln!(
+                    "{} open billing accounts are visible — pass --billing-account-infra explicitly:",
+                    many.len()
+                );
+                for (id, name, _) in many {
+                    eprintln!("  {} ({})", id, name);
+                }
+                None
+            }
+        }
+    };
+
+    let not_derived = |needed: bool, v: &Option<String>, absent: &'static str| -> String {
+        match v {
+            Some(v) => v.clone(),
+            None if needed => absent.to_string(),
+            None => "(passed explicitly)".to_string(),
+        }
+    };
+    println!(
+        "derived from the ADC: first_admin {}@{}, organization {}, customer id {}, billing account {}",
+        local,
+        domain,
+        not_derived(need_org, &org_id, "(none visible)"),
+        not_derived(need_org, &customer_id, "(unknown)"),
+        not_derived(need_billing, &billing_account, "(not settled)")
+    );
+    Ok(LiveDefaults {
+        first_admin: local.to_string(),
+        customer_domain: domain.to_string(),
+        org_id,
+        customer_id,
+        billing_account,
+    })
+}
+
+/// Ask for the one value that cannot be derived. Interactive terminals only;
+/// a scripted run must pass --customer-shortname.
+pub(crate) fn prompt_shortname() -> Result<String, String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return Err(
+            "--from-live needs --customer-shortname when not run interactively (every name \
+             derives from it)"
+                .to_string(),
+        );
+    }
+    print!("customer_shortname (every derived name builds on it, e.g. acme): ");
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    let mut s = String::new();
+    std::io::stdin().lock().read_line(&mut s).map_err(|e| e.to_string())?;
+    let s = s.trim().to_string();
+    if s.is_empty() {
+        return Err("customer_shortname must not be empty".to_string());
+    }
+    Ok(s)
+}
+
 /// How the ADC identity was established, so an unexpected result can be
 /// traced back to the mechanism that produced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,0 +1,16 @@
+// A greenfield estate: directory + billing exist, the organization does not
+// yet. `customer_organization_id` is deliberately empty — bootstrap must
+// explain --greenfield / init --from-live instead of a bare "missing org id".
+
+estate greenfield_fixture
+
+params {
+  customer_shortname       = "acme"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  customer_organization_id = ""
+  billing_account_infra    = "A12345-B67890-C12345"
+  infra_project_name       = "acme-infra-001"
+  infra_bucket_name        = "acme-infra-001"
+  default_region           = "europe-west3"
+}
