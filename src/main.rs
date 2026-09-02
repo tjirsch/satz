@@ -132,30 +132,31 @@ fn default_validation_level() -> String { "warn".to_string() }
 
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None, max_term_width = 110)]
 struct Cli {
-    /// Project config.toml, or the estate directory containing it. Every path in
-    /// the config resolves against the config's own directory, so any command can
-    /// be run from anywhere.
-    #[arg(long, global = true)]
+    /// Project config.toml, or the estate directory containing it
+    ///
+    /// Every path in the config resolves against the config's own directory,
+    /// so any command can be run from anywhere.
+    #[arg(long, global = true, help_heading = "Global options")]
     config: Option<PathBuf>,
 
     /// Validation level: warn (default), error, or none
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     validation: Option<String>,
 
     /// Open the documentation site in the browser at this command's section
     /// (`satz transpile --html-help`); alone, the site's front page
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     html_help: bool,
 
     /// Enable verbose output
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     verbose: bool,
 
     /// Live commands: call the APIs as the plain ADC identity instead of
     /// impersonating the estate's IaC service account
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     no_impersonate: bool,
 
     #[command(subcommand)]
@@ -166,7 +167,8 @@ struct Cli {
 enum Commands {
     /// Compile an estate to HCL (a `.yaml` estate is migrated with `satz import`, never transpiled)
     Transpile {
-        /// Estate file, .satz (inside yaml_dir if relative).
+        /// Estate file, .satz (inside yaml_dir if relative)
+        ///
         /// Not the tool config — that is --config
         input: String,
         /// Name of the output file (inside hcl_dir if relative)
@@ -247,16 +249,16 @@ enum Commands {
         /// Initial IaC Admin User (default: first.admin@<domain>)
         #[arg(long)]
         iac_user: Option<String>,
-        /// Derive the missing values from the Application Default Credentials
-        /// alone: identity → first admin + domain, organizations:search → org
-        /// id + directory customer id, billing accounts → the single open
-        /// account. Explicit flags always win; nothing is ever guessed
+        /// Derive the missing values from the Application Default Credentials alone: identity → first admin + domain, organizations:search → org id + directory customer id, billing accounts → the single open account
+        ///
+        /// Explicit flags always win; nothing is ever guessed
         #[arg(long)]
         from_live: bool,
     },
     /// Bootstrap day-0 infrastructure (folder, project, billing link, core APIs, state bucket) after a permission pre-flight
     Bootstrap {
-        /// Estate file, e.g. C0example.satz (inside yaml_dir if relative).
+        /// Estate file, e.g. C0example.satz (inside yaml_dir if relative)
+        ///
         /// Not the tool config — that is --config
         estate: PathBuf,
         /// Read-only: print the plan, verify the ADC identity and run the
@@ -273,8 +275,9 @@ enum Commands {
     /// Export the current live Organization Policies to a re-importable YAML preset
     #[command(visible_alias = "export-org-policies")]
     ExportOrganizationalPolicies {
-        /// Estate file providing the parameter table, incl. customer-organization-id
-        /// (inside yaml_dir if relative). Not the tool config — that is --config
+        /// Estate file providing the parameter table, incl. customer-organization-id (inside yaml_dir if relative)
+        ///
+        /// Not the tool config — that is --config
         estate: PathBuf,
         /// Organization id override (numeric or organizations/<id>); else read from config
         #[arg(long)]
@@ -286,8 +289,9 @@ enum Commands {
     /// Diff a desired Org Policy preset against the live organization state
     #[command(visible_alias = "diff-org-policies")]
     DiffOrganizationalPolicies {
-        /// Estate file providing the parameter table
-        /// (inside yaml_dir if relative). Not the tool config — that is --config
+        /// Estate file providing the parameter table (inside yaml_dir if relative)
+        ///
+        /// Not the tool config — that is --config
         estate: PathBuf,
         /// Organization id override; else read from config
         #[arg(long)]
@@ -298,8 +302,8 @@ enum Commands {
         /// Report format: console (default), markdown, json
         #[arg(long, default_value = "console")]
         format: String,
-        /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset
-        /// Inventory, classifying node-level overrides against the baseline.
+        /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
+        ///
         /// Needs roles/cloudasset.viewer on the organization
         #[arg(short = 'r', long)]
         recursive: bool,
@@ -307,8 +311,9 @@ enum Commands {
     /// Produce a human-readable report of Organization Policies with explanatory text
     #[command(visible_alias = "report-org-policies")]
     ReportOrganizationalPolicies {
-        /// Estate file providing the parameter table, incl. customer-organization-id
-        /// (inside yaml_dir if relative). Not the tool config — that is --config
+        /// Estate file providing the parameter table, incl. customer-organization-id (inside yaml_dir if relative)
+        ///
+        /// Not the tool config — that is --config
         estate: PathBuf,
         /// Organization id override; else read from config
         #[arg(long)]
@@ -322,9 +327,10 @@ enum Commands {
         /// Output path (default: <yaml_dir>/<Cxxxx>-orgpolicies-report.<ext>)
         #[arg(long)]
         report: Option<PathBuf>,
-        /// Inventory declared policies across the whole resource hierarchy (org,
-        /// folders, projects) via Cloud Asset Inventory. --scope's "available but not
-        /// set" section stays org-level. Needs roles/cloudasset.viewer
+        /// Inventory declared policies across the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory
+        ///
+        /// --scope's "available but not set" section stays org-level. Needs
+        /// roles/cloudasset.viewer
         #[arg(short = 'r', long)]
         recursive: bool,
     },
@@ -337,12 +343,14 @@ enum Commands {
         #[arg(long)]
         tf_tool: Option<String>,
     },
-    /// Create a Satz estate from what exists. The source decides the shape:
-    /// a state file (`state.json`, `*.tfstate`, `-` for `tofu show -json` on
-    /// stdin), a live scope (`organizations/<n>`, `folders/<n>`,
-    /// `projects/<id>`), or a legacy YAML-dialect file. With no source the
-    /// live root comes from the import config. Every import ends with
-    /// `satz transpile` and `tofu plan` — the plan is the check
+    /// Create a Satz estate from what exists
+    ///
+    /// The source decides the shape: a state file (`state.json`, `*.tfstate`,
+    /// `-` for `tofu show -json` on stdin), a live scope
+    /// (`organizations/<n>`, `folders/<n>`, `projects/<id>`), or a legacy
+    /// YAML-dialect file. With no source the live root comes from the import
+    /// config. Every import ends with `satz transpile` and `tofu plan` — the
+    /// plan is the check
     Import {
         /// What to import from (see above); omit to use the import config's `root`
         source: Option<String>,
@@ -399,11 +407,14 @@ enum Commands {
         #[arg(long)]
         skip_checksum: bool,
     },
-    /// Fetch the upstream preset library into presets_dir: installs what is
-    /// missing and refreshes what the estate does not use. Packs the estate
-    /// DOES use are refused (they deploy — use `merge-presets`), unless --force.
+    /// Fetch the upstream preset library into presets_dir: installs what is missing and refreshes what the estate does not use
+    ///
+    /// Packs the estate DOES use are refused (they deploy — use
+    /// `merge-presets`), unless --force.
     GetPresets {
-        /// Overwrite presets the estate uses as well. Lists each one first.
+        /// Overwrite presets the estate uses as well
+        ///
+        /// Lists each one first.
         #[arg(long)]
         force: bool,
         /// Take the library from this directory instead of downloading it
@@ -425,11 +436,12 @@ enum Commands {
         /// Print what would happen without writing anything
         #[arg(long)]
         report_only: bool,
-        /// Adopt upstream IN PLACE for these packs instead of forking them — the
-        /// deliberate upgrade. Pass a pack stem (`CIS-GCP-Foundation-4.0`),
-        /// repeatable; or `all` for every pack that is merely BEHIND. `all`
-        /// never touches a pack that differs at the SAME version — that is an
-        /// edit, and it must be named explicitly.
+        /// Adopt upstream IN PLACE for these packs instead of forking them — the deliberate upgrade
+        ///
+        /// Pass a pack stem (`CIS-GCP-Foundation-4.0`), repeatable; or `all`
+        /// for every pack that is merely BEHIND. `all` never touches a pack
+        /// that differs at the SAME version — that is an edit, and it must be
+        /// named explicitly.
         #[arg(long)]
         adopt: Vec<String>,
     },
@@ -466,9 +478,9 @@ enum Commands {
         /// Skip live verification (declared-estate report only)
         #[arg(long)]
         no_live: bool,
-        /// Exit non-zero when a row's status contains one of these (comma
-        /// list, e.g. `not-enforced,drifted,unmet`; `any` = anything that is
-        /// not verified/declared). The report is written either way.
+        /// Exit non-zero when a row's status contains one of these (comma list, e.g. `not-enforced,drifted,unmet`; `any` = anything that is not verified/declared)
+        ///
+        /// The report is written either way.
         #[arg(long, value_delimiter = ',')]
         fail_on: Vec<String>,
     },
@@ -483,10 +495,9 @@ enum Commands {
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
     },
-    /// Adopt what already exists: resolve the live ids of the resources this
-    /// estate declares (folders by name, groups by email, org policies by
-    /// constraint, everything else by its rule in import-config.yaml) and
-    /// bring them under management. A dry run unless --execute
+    /// Adopt what already exists: resolve the live ids of the resources this estate declares (folders by name, groups by email, org policies by constraint, everything else by its rule in import-config.yaml) and bring them under management
+    ///
+    /// A dry run unless --execute
     Adopt {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -505,11 +516,10 @@ enum Commands {
         #[arg(long)]
         activate: bool,
     },
-    /// Derive the API→Terraform field map per resource type from the API's
-    /// Discovery Document and the provider schema, into
-    /// <presets_dir>/type-map.yaml — what the live import applies so
-    /// imported resources plan clean. Review the rows it marks renamed or
-    /// unmatched; re-run after a provider bump
+    /// Derive the API→Terraform field map per resource type from the API's Discovery Document and the provider schema, into <presets_dir>/type-map.yaml — what the live import applies so imported resources plan clean
+    ///
+    /// Review the rows it marks renamed or unmatched; re-run after a provider
+    /// bump
     MapTypes {
         /// Resource types to map, comma-separated (default: every row with import: true)
         #[arg(long, value_delimiter = ',')]
@@ -544,16 +554,17 @@ enum Commands {
         #[arg(long)]
         report: Option<PathBuf>,
     },
-    /// Run Checkov over the emitted HCL in hcl_dir and point each finding at
-    /// the Satz block that declared the resource. Failed checks exit 1
+    /// Run Checkov over the emitted HCL in hcl_dir and point each finding at the Satz block that declared the resource
+    ///
+    /// Failed checks exit 1
     Scan {
         /// Estate file (inside yaml_dir if relative) — compiled for the source
         /// locations of the findings; without it, findings name the HCL only
         estate: Option<String>,
     },
-    /// One Markdown page per pristine pack, derived from the pack file
-    /// (purpose, params, resources, claims, duties) plus an index — into
-    /// `<presets_dir>/docs/`. `--check` fails when the pages are behind the packs
+    /// One Markdown page per pristine pack, derived from the pack file (purpose, params, resources, claims, duties) plus an index — into `<presets_dir>/docs/`
+    ///
+    /// `--check` fails when the pages are behind the packs
     DocPacks {
         /// Output directory (default: `<presets_dir>/docs`)
         #[arg(long)]
@@ -2959,9 +2970,11 @@ fn print_recursive_help(cmd: &mut clap::Command) {
             continue;
         }
         
-        println!("\n{:=<80}", "");
+        // the rule matches what clap wraps to: the terminal, capped like max_term_width
+        let width = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(100).min(110);
+        println!("\n{}", "=".repeat(width));
         println!("COMMAND: {}", subcmd.get_name());
-        println!("{:=<80}\n", "");
+        println!("{}\n", "=".repeat(width));
         
         print_recursive_help(&mut subcmd);
     }
