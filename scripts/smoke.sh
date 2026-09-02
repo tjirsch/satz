@@ -148,12 +148,13 @@ else
   step "neither checkov nor uvx on PATH — scan skipped"
 fi
 
-step "adopt, offline dry run must refuse without ADC rather than guess"
-if "$satz" --config . adopt smoke.satz --only google_folder >tmp/adopt.txt 2>&1; then
-  grep -q 'to import' tmp/adopt.txt || fail "adopt ran but printed no table"
-else
-  grep -qi 'credential\|token\|auth\|ADC' tmp/adopt.txt || fail "adopt failed for a reason other than credentials:\n$(cat tmp/adopt.txt)"
-fi
+step "adopt, offline dry run must refuse without ADC rather than guess (folders AND projects)"
+for t in google_folder google_project; do
+  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . adopt smoke.satz --only $t >tmp/adopt.txt 2>&1; then
+    fail "adopt --only $t must not succeed without credentials — a project is a live existence check, never a derived id:\n$(cat tmp/adopt.txt)"
+  fi
+  grep -qi 'credential\|token\|auth\|ADC' tmp/adopt.txt || fail "adopt --only $t failed for a reason other than credentials:\n$(cat tmp/adopt.txt)"
+done
 
 step "bootstrap --dry-run: offline-safe, the plan prints, the skipped pre-flight is NAMED"
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.satz --dry-run > tmp/boot-dry.txt 2>&1 \

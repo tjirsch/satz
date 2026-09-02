@@ -37,6 +37,10 @@ pub(crate) enum Lookup {
 /// implementation per binary, generics at the call site, no `dyn`.
 pub(crate) trait Live {
     async fn folder(&mut self, parent: &str, display_name: &str) -> Result<Lookup, String>;
+    /// Does the project exist? `Ok(Some(projects/<number>))` when it does,
+    /// `Ok(None)` when it provably does not (404), `Err` when the question
+    /// itself could not be answered (denied, quota) — never absent-by-error.
+    async fn project(&mut self, project_id: &str) -> Result<Option<String>, String>;
     async fn group(&mut self, email: &str) -> Result<Option<String>, String>;
     async fn membership(&mut self, group_name: &str, email: &str) -> Result<Option<String>, String>;
     async fn org_policy_exists(&mut self, parent: &str, constraint: &str) -> Result<bool, String>;
@@ -63,6 +67,10 @@ pub(crate) enum Outcome {
     NeedsActivation { id: String, enforce: Option<bool> },
     /// Looked up, provably absent: `apply` will create it, nothing to import.
     OnApply,
+    /// Its parent (the project it lives in) is not live — it will be created
+    /// together with the parent. Never written, never imported: an import id
+    /// derived from a non-existent parent is a guess, not a finding.
+    ParentOnApply(String),
     /// More than one live candidate. Never guessed; pin `"import-id"` by hand.
     Ambiguous(Vec<String>),
     /// A rule exists but needs a lookup this version cannot do yet.
@@ -120,6 +128,10 @@ pub(crate) async fn resolve<L: Live>(
     live: &mut L,
 ) -> Vec<Resolution> {
     let mut resolved_ids: BTreeMap<String, String> = BTreeMap::new();
+    // Projects that are not live (absent, or unanswerable), by address and by
+    // project id — a child names its project either by reference or by the
+    // literal id, and both must read the same verdict.
+    let mut not_live: BTreeMap<String, Outcome> = BTreeMap::new();
     let mut out = Vec::new();
     for r in ordered(manifest) {
         let mut res = Resolution {
@@ -141,8 +153,16 @@ pub(crate) async fn resolve<L: Live>(
             out.push(res);
             continue;
         }
+        // A resource inside a project that is not live inherits that verdict
+        // before any rule runs: nothing under it can be adopted yet.
+        if let Some(parent_verdict) = parent_not_live(r, manifest, &not_live) {
+            res.outcome = parent_verdict;
+            out.push(res);
+            continue;
+        }
         let outcome = match r.tf_type.as_str() {
             "google_folder" => resolve_folder(r, manifest, &resolved_ids, live).await,
+            "google_project" => resolve_project(r, live).await,
             "google_cloud_identity_group" => resolve_group(r, live).await,
             "google_cloud_identity_group_membership" => resolve_membership(r, &resolved_ids, live).await,
             "google_org_policy_policy" => resolve_org_policy(r, manifest, &resolved_ids, opts, live, &mut res).await,
@@ -158,9 +178,67 @@ pub(crate) async fn resolve<L: Live>(
         if let Outcome::Resolved { id, .. } | Outcome::NeedsActivation { id, .. } = &res.outcome {
             resolved_ids.insert(r.address(), id.clone());
         }
+        if r.tf_type == "google_project" {
+            if let Some(verdict) = project_verdict_for_children(r, &res.outcome) {
+                not_live.insert(r.address(), verdict.clone());
+                if let Some(pid) = r.attrs.get("project_id") {
+                    not_live.insert(pid.clone(), verdict);
+                }
+            }
+        }
         out.push(res);
     }
     out
+}
+
+/// What a project's outcome means for the resources inside it: `None` when
+/// they can be resolved normally; the verdict they inherit otherwise.
+fn project_verdict_for_children(r: &EmittedResource, outcome: &Outcome) -> Option<Outcome> {
+    match outcome {
+        Outcome::Resolved { .. } | Outcome::AlreadyAdopted(_) | Outcome::Skipped => None,
+        Outcome::OnApply => Some(Outcome::ParentOnApply(format!("{} is not live — created with it", r.address()))),
+        Outcome::Failed(e) => Some(Outcome::Failed(format!("{}: {}", r.address(), e))),
+        other => Some(Outcome::Unresolvable(format!("{}: {:?}", r.address(), other))),
+    }
+}
+
+/// The verdict `r` inherits from a not-live project it belongs to, if any:
+/// by reference (`project = google_project.x.project_id`, or `parent` on a
+/// project-scoped policy) or by the literal project id.
+fn parent_not_live(r: &EmittedResource, manifest: &Manifest, not_live: &BTreeMap<String, Outcome>) -> Option<Outcome> {
+    if r.tf_type == "google_project" || not_live.is_empty() {
+        return None;
+    }
+    for key in ["project", "parent"] {
+        if let Some((target, _)) = r.refs.get(key).and_then(|t| ref_target(t)) {
+            if manifest.resources.get(&target).is_some_and(|t| t.tf_type == "google_project") {
+                if let Some(v) = not_live.get(&target) {
+                    return Some(v.clone());
+                }
+            }
+        }
+        if let Some(lit) = r.attrs.get(key) {
+            let pid = lit.trim_start_matches("projects/");
+            if let Some(v) = not_live.get(pid) {
+                return Some(v.clone());
+            }
+        }
+    }
+    None
+}
+
+/// A project is looked up by its id — an existence check, no natural-key
+/// matching (project ids are user-chosen and global). Exists → the import
+/// id IS the project id, verified; provably absent → `apply` creates it.
+async fn resolve_project<L: Live>(r: &EmittedResource, live: &mut L) -> (String, Outcome) {
+    let Some(project_id) = r.attrs.get("project_id").cloned() else {
+        return (String::new(), Outcome::Unresolvable(format!("{} emits no literal project_id", r.address())));
+    };
+    match live.project(&project_id).await {
+        Ok(Some(_number)) => (project_id.clone(), Outcome::Resolved { id: project_id, verified: true }),
+        Ok(None) => (project_id, Outcome::OnApply),
+        Err(e) => (project_id, Outcome::Failed(e)),
+    }
 }
 
 /// Folders by depth (parent chain length), then everything else by address.
@@ -180,8 +258,15 @@ fn ordered(manifest: &Manifest) -> Vec<&EmittedResource> {
     };
     let mut folders: Vec<&EmittedResource> = manifest.of_type("google_folder").collect();
     folders.sort_by_key(|r| (depth(r), r.address()));
-    let rest = manifest.resources.values().filter(|r| r.tf_type != "google_folder");
-    folders.into_iter().chain(rest).collect()
+    // Projects next: their existence decides whether anything inside them
+    // can be adopted at all.
+    let mut projects: Vec<&EmittedResource> = manifest.of_type("google_project").collect();
+    projects.sort_by_key(|r| r.address());
+    let rest = manifest
+        .resources
+        .values()
+        .filter(|r| r.tf_type != "google_folder" && r.tf_type != "google_project");
+    folders.into_iter().chain(projects).chain(rest).collect()
 }
 
 /// `google_T.L.A` → (`google_T.L`, `A`).
@@ -430,12 +515,15 @@ async fn resolve_org_policy<L: Live>(
 ) -> (String, Outcome) {
     let name = r.attrs.get("name").cloned().unwrap_or_default();
     let constraint = crate::org_policy::constraint_name(&name);
+    // The compile guarantees `parent` is a literal or a reference; an
+    // unresolvable one is reported as such — never scraped out of the policy
+    // name, which is how a wrong parent once became a confident lookup.
     let parent = match value_of(r, "parent", manifest, resolved_ids) {
-        Ok(p) => crate::org_policy::normalize_parent(&p),
-        Err(_) => match name.rsplit_once("/policies/") {
-            Some((p, _)) if !p.contains("${") => p.to_string(),
-            _ => return (constraint, Outcome::Unresolvable(format!("{} has no resolvable parent", r.address()))),
+        Ok(p) => match crate::org_policy::qualify_parent(&p) {
+            Ok(q) => q,
+            Err(e) => return (constraint, Outcome::Unresolvable(format!("{}: {}", r.address(), e))),
         },
+        Err(e) => return (constraint, Outcome::Unresolvable(e)),
     };
     res.org_policy = Some((parent.clone(), constraint.clone()));
     let id = crate::org_policy::full_policy_name(&parent, &constraint);
@@ -493,6 +581,7 @@ pub(crate) fn render_table(resolutions: &[Resolution]) -> String {
             Outcome::Resolved { id, verified: false } => ("import (derived, unverified)", id.clone()),
             Outcome::NeedsActivation { id, .. } => ("ACTIVATE + IMPORT", id.clone()),
             Outcome::OnApply => ("on apply", "not live — apply creates it".into()),
+            Outcome::ParentOnApply(why) => ("on apply (parent)", why.clone()),
             Outcome::Ambiguous(c) => ("AMBIGUOUS", format!("{} candidates: {} — pin \"import-id\" by hand", c.len(), c.join(", "))),
             Outcome::NeedsLookup(why) => ("needs lookup", why.clone()),
             Outcome::NoRule => ("no rule", format!("add import_id or match_on for {} to import-config.yaml", r.tf_type)),
@@ -511,18 +600,29 @@ pub(crate) fn render_table(resolutions: &[Resolution]) -> String {
 pub(crate) fn summary(resolutions: &[Resolution]) -> String {
     let count = |f: &dyn Fn(&Outcome) -> bool| resolutions.iter().filter(|r| f(&r.outcome)).count();
     format!(
-        "adopt: {} to import ({} verified live, {} derived), {} need activation, {} already adopted, {} on apply, {} ambiguous, {} without a rule, {} unresolvable, {} failed",
+        "adopt: {} to import ({} verified live, {} derived), {} need activation, {} already adopted, {} on apply, {} on apply with their project, {} ambiguous, {} without a rule, {} unresolvable, {} failed",
         count(&|o| matches!(o, Outcome::Resolved { .. })),
         count(&|o| matches!(o, Outcome::Resolved { verified: true, .. })),
         count(&|o| matches!(o, Outcome::Resolved { verified: false, .. })),
         count(&|o| matches!(o, Outcome::NeedsActivation { .. })),
         count(&|o| matches!(o, Outcome::AlreadyAdopted(_))),
         count(&|o| matches!(o, Outcome::OnApply)),
+        count(&|o| matches!(o, Outcome::ParentOnApply(_))),
         count(&|o| matches!(o, Outcome::Ambiguous(_))),
         count(&|o| matches!(o, Outcome::NoRule)),
         count(&|o| matches!(o, Outcome::Unresolvable(_))),
         count(&|o| matches!(o, Outcome::Failed(_))),
     )
+}
+
+/// The resolutions that mean the run did not answer its question: a failed
+/// lookup, an unresolvable or ambiguous resource, a type without a rule.
+/// Zero means the table is complete; anything else is a non-zero exit.
+pub(crate) fn unanswered(resolutions: &[Resolution]) -> usize {
+    resolutions
+        .iter()
+        .filter(|r| matches!(r.outcome, Outcome::Failed(_) | Outcome::Unresolvable(_) | Outcome::Ambiguous(_) | Outcome::NoRule))
+        .count()
 }
 
 /// Insert `"import-id" = "<id>"` into the source file right after the
@@ -716,6 +816,12 @@ impl RealLive {
 }
 
 impl Live for RealLive {
+    async fn project(&mut self, project_id: &str) -> Result<Option<String>, String> {
+        crate::gcp::resourcemanager::get_project_number(&self.http, &self.token, project_id)
+            .await
+            .map_err(|e| format!("project {}: {}", project_id, e))
+    }
+
     async fn folder(&mut self, parent: &str, display_name: &str) -> Result<Lookup, String> {
         let folders = crate::gcp::resourcemanager::list_folders(&self.http, &self.token, parent).await?;
         let matches: Vec<String> = folders
@@ -796,6 +902,10 @@ mod tests {
     use crate::config::ImportResourceConfig;
 
     struct Fake {
+        /// project id → projects/<number>; a missing key is "does not exist"
+        projects: BTreeMap<String, String>,
+        /// project ids whose lookup FAILS (denied), for the error paths
+        project_errors: BTreeSet<String>,
         folders: BTreeMap<(String, String), Lookup>,
         groups: BTreeMap<String, String>,
         memberships: BTreeMap<(String, String), String>,
@@ -806,6 +916,14 @@ mod tests {
     }
 
     impl Live for Fake {
+        async fn project(&mut self, project_id: &str) -> Result<Option<String>, String> {
+            self.calls.push(format!("project {}", project_id));
+            if self.project_errors.contains(project_id) {
+                return Err(format!("403 Forbidden: no access to {}", project_id));
+            }
+            Ok(self.projects.get(project_id).cloned())
+        }
+
         async fn folder(&mut self, parent: &str, display_name: &str) -> Result<Lookup, String> {
             self.calls.push(format!("folder {} {}", parent, display_name));
             Ok(self.folders.get(&(parent.to_string(), display_name.to_string())).cloned().unwrap_or(Lookup::Absent))
@@ -935,7 +1053,18 @@ import {
     }
 
     fn fake() -> Fake {
-        let mut f = Fake { folders: BTreeMap::new(), groups: BTreeMap::new(), memberships: BTreeMap::new(), policies: BTreeSet::new(), searches: BTreeMap::new(), budgets: BTreeMap::new(), calls: vec![] };
+        let mut f = Fake {
+            projects: BTreeMap::new(),
+            project_errors: BTreeSet::new(),
+            folders: BTreeMap::new(),
+            groups: BTreeMap::new(),
+            memberships: BTreeMap::new(),
+            policies: BTreeSet::new(),
+            searches: BTreeMap::new(),
+            budgets: BTreeMap::new(),
+            calls: vec![],
+        };
+        f.projects.insert("acme-infra-001".into(), "projects/100000000001".into());
         f.searches.insert(
             ("projects/acme-infra-001".into(), "test.googleapis.com/google_monitoring_alert_policy".into()),
             vec![
@@ -982,7 +1111,9 @@ import {
             outcome(&rs, "google_folder_iam_member.grant"),
             &Outcome::Resolved { id: "folders/222 roles/viewer group:x@example.com".into(), verified: false }
         );
-        assert_eq!(outcome(&rs, "google_project.infra"), &Outcome::Resolved { id: "acme-infra-001".into(), verified: false });
+        // the project is an existence check, not a template: it exists → verified
+        assert_eq!(outcome(&rs, "google_project.infra"), &Outcome::Resolved { id: "acme-infra-001".into(), verified: true });
+        assert!(live.calls.contains(&"project acme-infra-001".to_string()), "{:?}", live.calls);
         assert_eq!(outcome(&rs, "google_storage_bucket.b"), &Outcome::AlreadyAdopted("acme-state".into()));
         // a GCP-assigned id: listed under the resource's own scope through CAI,
         // matched on display_name — one hit, verified
@@ -992,6 +1123,51 @@ import {
         );
         assert!(live.calls.contains(&"search projects/acme-infra-001 test.googleapis.com/google_monitoring_alert_policy".to_string()), "{:?}", live.calls);
         assert_eq!(outcome(&rs, "google_widget.w"), &Outcome::NoRule);
+    }
+
+    #[tokio::test]
+    async fn a_missing_project_is_on_apply_and_takes_its_children_with_it() {
+        // The reported bug: a misspelled / not-yet-existing project produced a
+        // confident derived import-id for itself AND every project-scoped
+        // child, which --execute then wrote into the estate.
+        let rules = rules(&[
+            ("google_service_account", Some("projects/{project}/serviceAccounts/{account_id}@{project}.iam.gserviceaccount.com"), None),
+            ("google_project", Some("{project_id}"), None),
+            ("google_monitoring_alert_policy", None, Some(&["display_name"])),
+        ]);
+        let mut live = fake();
+        live.projects.clear(); // the project does not exist live
+        let rs = resolve(&manifest(), &rules, &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+
+        assert_eq!(outcome(&rs, "google_project.infra"), &Outcome::OnApply);
+        let sa = outcome(&rs, "google_service_account.sa");
+        assert!(matches!(sa, Outcome::ParentOnApply(why) if why.contains("google_project.infra")), "{:?}", sa);
+        let alert = outcome(&rs, "google_monitoring_alert_policy.alert");
+        assert!(matches!(alert, Outcome::ParentOnApply(_)), "{:?}", alert);
+        // no lookup was attempted under the non-existent project, and nothing
+        // is written for it or its children
+        assert!(!live.calls.iter().any(|c| c.starts_with("search projects/acme-infra-001")), "{:?}", live.calls);
+        assert!(!rs.iter().any(|r| matches!(r.outcome, Outcome::Resolved { verified: false, .. })), "no derived ids may survive a missing parent");
+        assert_eq!(unanswered(&rs), rs.iter().filter(|r| matches!(r.outcome, Outcome::Ambiguous(_) | Outcome::NoRule)).count(), "a missing project is a finding, not a failure");
+        assert!(summary(&rs).contains("2 on apply with their project"), "{}", summary(&rs));
+    }
+
+    #[tokio::test]
+    async fn a_project_lookup_that_fails_fails_its_children_with_the_same_cause() {
+        let rules = rules(&[
+            ("google_service_account", Some("projects/{project}/serviceAccounts/{account_id}@{project}.iam.gserviceaccount.com"), None),
+            ("google_project", Some("{project_id}"), None),
+        ]);
+        let mut live = fake();
+        live.project_errors.insert("acme-infra-001".into());
+        let rs = resolve(&manifest(), &rules, &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+
+        let p = outcome(&rs, "google_project.infra");
+        assert!(matches!(p, Outcome::Failed(e) if e.contains("403")), "{:?}", p);
+        let sa = outcome(&rs, "google_service_account.sa");
+        assert!(matches!(sa, Outcome::Failed(e) if e.contains("google_project.infra") && e.contains("403")), "{:?}", sa);
+        // a failed run is unanswered → the command exits non-zero
+        assert!(unanswered(&rs) >= 2, "{}", summary(&rs));
     }
 
     #[tokio::test]
@@ -1111,7 +1287,7 @@ import {
             "resource \"google_billing_budget\" \"infra\" {\n  billing_account = \"012345-6789AB-CDEF01\"\n  display_name = \"Infra monthly\"\n}\n\
              resource \"google_billing_budget\" \"twice\" {\n  billing_account = \"012345-6789AB-CDEF01\"\n  display_name = \"Dup\"\n}\n",
         );
-        let mut f = Fake { folders: BTreeMap::new(), groups: BTreeMap::new(), memberships: BTreeMap::new(), policies: BTreeSet::new(), searches: BTreeMap::new(), budgets: BTreeMap::new(), calls: vec![] };
+        let mut f = fake();
         f.budgets.insert(
             "012345-6789AB-CDEF01".into(),
             vec![

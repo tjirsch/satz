@@ -37,7 +37,7 @@ pub(crate) fn declared_from(resolutions: &[Resolution]) -> Declared {
     for r in resolutions {
         let id = match &r.outcome {
             Outcome::AlreadyAdopted(id) | Outcome::Resolved { id, .. } | Outcome::NeedsActivation { id, .. } => id.clone(),
-            Outcome::OnApply => {
+            Outcome::OnApply | Outcome::ParentOnApply(_) => {
                 d.not_live.push(r.address.clone());
                 continue;
             }
