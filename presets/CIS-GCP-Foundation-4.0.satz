@@ -9,7 +9,7 @@
 
 // Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
-pack CIS_GCP_Foundation_4_0 version "2.2"
+pack CIS_GCP_Foundation_4_0 version "2.3"
 
 params {
   // CIS §1.1 Domain Restricted Sharing (iam.managed.allowedPolicyMembers):
@@ -313,12 +313,51 @@ params {
 // prose is licence-restricted).
 // ---------------------------------------------------------------------------
 
+// 5.0 introduced §1.1 "Organization resources". 1.1.4 asks whether the
+// organization constrains its projects centrally at all — which is what this
+// pack IS, so the witness is the whole baseline rather than any one policy.
+// The five constraints the benchmark names as the baseline (resource
+// locations, OS Login, external IPs, uniform bucket access, allowed member
+// domains) are all in the list below.
+claim "cis-gcp" "5.0" "1.1.4" implements {
+  resources = [
+    "google_org_policy_policy.compute_managed_requireOsLogin",
+    "google_org_policy_policy.compute_managed_vmCanIpForward",
+    "google_org_policy_policy.compute_managed_vmExternalIpAccess",
+    "google_org_policy_policy.compute_requireVpcFlowLogs",
+    "google_org_policy_policy.compute_restrictProtocolForwardingCreationForTypes",
+    "google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly",
+    "google_org_policy_policy.compute_skipDefaultNetworkCreation",
+    "google_org_policy_policy.essentialcontacts_managed_allowedContactDomains",
+    "google_org_policy_policy.gcp_detailedAuditLoggingMode",
+    "google_org_policy_policy.gcp_resourceLocations",
+    "google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts",
+    "google_org_policy_policy.iam_disableAuditLoggingExemption",
+    "google_org_policy_policy.iam_managed_allowedPolicyMembers",
+    "google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation",
+    "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
+    "google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts",
+    "google_org_policy_policy.storage_publicAccessPrevention",
+    "google_org_policy_policy.storage_uniformBucketLevelAccess",
+  ]
+  interpretation = "The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it."
+  duty_review_baseline = "The baseline is a decision, not a default — re-read it when the organisation adds a workload class the current constraints were not chosen for."
+}
+
 claim "cis-gcp" "4.0" "1.1" implements {
   resources = [
     "google_org_policy_policy.iam_managed_allowedPolicyMembers",
   ]
   interpretation = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately NOT set — see duty_legacy_superseded."
   duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone."
+  duty_review_allowlist = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
+}
+claim "cis-gcp" "5.0" "1.2" implements {
+  resources = [
+    "google_org_policy_policy.iam_managed_allowedPolicyMembers",
+  ]
+  interpretation = "As for 4.0 §1.1 — 5.0 §1.2 (5.0 inserted a new §1.1 'Organization resources' subsection, shifting the former 1.x up by one)."
+  duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten — see the 4.0 claim for why running it would weaken rather than strengthen the control."
   duty_review_allowlist = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
 }
 
@@ -329,6 +368,13 @@ claim "cis-gcp" "4.0" "1.4" implements {
   ]
   interpretation = "User-managed service account keys can neither be created nor uploaded org-wide, leaving only Google-managed keys."
 }
+claim "cis-gcp" "5.0" "1.5" implements {
+  resources = [
+    "google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation",
+    "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
+  ]
+  interpretation = "As for 4.0 §1.4 — 5.0 §1.5."
+}
 
 claim "cis-gcp" "4.0" "1.5" implements {
   resources = [
@@ -336,14 +382,28 @@ claim "cis-gcp" "4.0" "1.5" implements {
   ]
   interpretation = "Default service accounts are prevented from holding privileged basic roles."
 }
+claim "cis-gcp" "5.0" "1.6" implements {
+  resources = [
+    "google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts",
+  ]
+  interpretation = "As for 4.0 §1.5 — 5.0 §1.6."
+}
 claim "cis-gcp" "4.0" "1.5" contributes {
   resources = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
   interpretation = "Also disables the automatic Editor grant to default service accounts at project creation."
+}
+claim "cis-gcp" "5.0" "1.6" contributes {
+  resources = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
+  interpretation = "As for 4.0 §1.5 — 5.0 §1.6."
 }
 
 claim "cis-gcp" "4.0" "1.16" contributes {
   resources = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
   interpretation = "Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim."
+}
+claim "cis-gcp" "5.0" "1.17" contributes {
+  resources = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
+  interpretation = "As for 4.0 §1.16 — 5.0 §1.17."
 }
 
 claim "cis-gcp" "4.0" "2.1" contributes {
@@ -353,20 +413,40 @@ claim "cis-gcp" "4.0" "2.1" contributes {
   ]
   interpretation = "Detailed audit logging mode plus a ban on per-principal audit-logging exemptions keep the audit trail complete. The audit config itself is declared by the audit-logsink pack."
 }
+claim "cis-gcp" "5.0" "2.1" contributes {
+  resources = [
+    "google_org_policy_policy.gcp_detailedAuditLoggingMode",
+    "google_org_policy_policy.iam_disableAuditLoggingExemption",
+  ]
+  interpretation = "As for 4.0 §2.1 (5.0 §2.1, unchanged)."
+}
 
 claim "cis-gcp" "4.0" "3.1" implements {
   resources = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
   interpretation = "New projects are created without the auto-mode default VPC and its permissive firewall rules."
+}
+claim "cis-gcp" "5.0" "3.1" implements {
+  resources = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
+  interpretation = "As for 4.0 §3.1 (5.0 §3.1, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "3.8" implements {
   resources = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
   interpretation = "Subnets must enable VPC Flow Logs."
 }
+claim "cis-gcp" "5.0" "3.10" implements {
+  resources = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
+  interpretation = "As for 4.0 §3.8 — 5.0 §3.10 (5.0 inserted 3.8 VPC Service Controls and 3.9 Private Service Connect)."
+}
 
 claim "cis-gcp" "4.0" "4.4" implements {
   resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
   interpretation = "OS Login is required, so VM SSH access is governed by IAM rather than metadata keys."
+  duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
+}
+claim "cis-gcp" "5.0" "4.4" implements {
+  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  interpretation = "As for 4.0 §4.4 (5.0 §4.4, unchanged)."
   duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
 }
 
@@ -375,18 +455,35 @@ claim "cis-gcp" "4.0" "4.6" implements {
   interpretation = "Instances may not enable IP forwarding."
   duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
 }
+claim "cis-gcp" "5.0" "4.6" implements {
+  resources = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
+  interpretation = "As for 4.0 §4.6 (5.0 §4.6, unchanged)."
+  duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
+}
 
 claim "cis-gcp" "4.0" "4.9" implements {
   resources = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
   interpretation = "Compute instances may not be given external IP addresses."
+}
+claim "cis-gcp" "5.0" "4.9" implements {
+  resources = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
+  interpretation = "As for 4.0 §4.9 (5.0 §4.9, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "5.1" implements {
   resources = ["google_org_policy_policy.storage_publicAccessPrevention"]
   interpretation = "Public access prevention is enforced, so buckets cannot be exposed to allUsers or allAuthenticatedUsers."
 }
+claim "cis-gcp" "5.0" "5.1" implements {
+  resources = ["google_org_policy_policy.storage_publicAccessPrevention"]
+  interpretation = "As for 4.0 §5.1 (5.0 §5.1, unchanged)."
+}
 
 claim "cis-gcp" "4.0" "5.2" implements {
   resources = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
   interpretation = "Uniform bucket-level access disables object ACLs; bucket access is governed by IAM alone."
+}
+claim "cis-gcp" "5.0" "5.2" implements {
+  resources = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
+  interpretation = "As for 4.0 §5.2 (5.0 §5.2, unchanged)."
 }
