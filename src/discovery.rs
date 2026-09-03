@@ -415,6 +415,27 @@ impl Discoverer {
                     }
                     continue;
                 }
+                // The API speaks in self-links and full resource names where the
+                // provider takes the short form: a subnet's `region` arrives as
+                // `https://www.googleapis.com/compute/v1/projects/p/regions/europe-west3`
+                // (provider: `europe-west3`), a topic's `name` as
+                // `projects/p/topics/t` (provider: `t`). Left as is, the plan
+                // forces a replacement on import. Only `region`/`zone`/`name`
+                // are shortened — a `network`/`subnetwork` reference is a valid
+                // provider value as a self-link and stays.
+                if let serde_yaml::Value::String(s) = v {
+                    let shorten = match k_str {
+                        "region" | "zone" => s.starts_with("https://") || s.contains('/'),
+                        "name" => at.is_empty() && s.starts_with("projects/") && s.matches('/').count() >= 3,
+                        _ => false,
+                    };
+                    if shorten {
+                        if let Some(last) = s.rsplit('/').next() {
+                            *v = serde_yaml::Value::String(last.to_string());
+                        }
+                        continue;
+                    }
+                }
                 let sub_schema = schema.and_then(|s| s.block_types.get(k_str)).map(|bt| &bt.block);
                 Self::filter_recursive(v, sub_schema, blacklist, tf_type, &format!("{}{}.", at, k_str));
             }
@@ -1349,7 +1370,11 @@ impl Discoverer {
                if let Some(data) = &resource.data {
                    let schema = registry.and_then(|r| r.find_resource(tf_type)).map(|(_, s)| s);
                    let data_val = serde_json::Value::Object(data.clone());
-                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &data_val, schema, true, res_config.exclude.as_ref(), res_config.map.as_ref()) {
+                   // `add_import_id: false` — the state shape's `id` is the
+                   // provider's import id, but Cloud Asset data carries the API's
+                   // own `id` (compute: a bare number) which the provider does
+                   // NOT import by; the asset path below is the import id here
+                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &data_val, schema, false, res_config.exclude.as_ref(), res_config.map.as_ref()) {
                         resource_val = m;
                    }
                }
@@ -1377,7 +1402,7 @@ impl Discoverer {
               }
               other => return Err(SkipReason::Unmapped(format!("asset scope `{}` has no place in the estate", other))),
           };
-          if !resource_val.contains_key(&id_key) {
+          {
               // Cloud Asset names project-scoped resources by project NUMBER;
               // imported that way the provider keeps the number as `project`
               // and the declared id then forces a replacement — so the import
@@ -1389,8 +1414,17 @@ impl Discoverer {
                       path = format!("projects/{}/{}", pid, &path[by_number.len()..]);
                   }
               }
+              // The row's `import_id` template is the provider's own import
+              // format and wins where it renders (`{project} {name}` for a log
+              // metric — not a path at all); the asset path is the fallback
+              // for rows without one.
+              let import_id = res_config
+                  .import_id
+                  .as_deref()
+                  .and_then(|t| Self::render_import_template(t, &resource_val, project_id.as_deref()))
+                  .unwrap_or(path);
               let mut with_id = serde_yaml::Mapping::new();
-              with_id.insert(id_key, serde_yaml::Value::String(path));
+              with_id.insert(id_key, serde_yaml::Value::String(import_id));
               with_id.extend(resource_val);
               resource_val = with_id;
           }
@@ -1400,6 +1434,33 @@ impl Discoverer {
               m.insert(serde_yaml::Value::String(sanitized_key), policy_map_val);
           }
           Ok(())
+    }
+
+    /// Render an `import_id` template from the resource's own values:
+    /// `{project}` is the containing project id, every other `{key}` the
+    /// attribute of that name. `None` when a placeholder has no value — the
+    /// caller falls back to the asset path rather than emitting a half id.
+    fn render_import_template(template: &str, values: &serde_yaml::Mapping, project_id: Option<&str>) -> Option<String> {
+        let mut out = String::new();
+        let mut rest = template;
+        while let Some(start) = rest.find('{') {
+            out.push_str(&rest[..start]);
+            let end = rest[start..].find('}')?;
+            let key = &rest[start + 1..start + end];
+            let v = if key == "project" {
+                project_id.map(str::to_string)
+            } else {
+                values.get(serde_yaml::Value::String(key.to_string())).and_then(|v| match v {
+                    serde_yaml::Value::String(s) => Some(s.clone()),
+                    serde_yaml::Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                })
+            }?;
+            out.push_str(&v);
+            rest = &rest[start + end + 1..];
+        }
+        out.push_str(rest);
+        Some(out)
     }
 
     /// `//logging.googleapis.com/projects/p/sinks/x` → `projects/p/sinks/x`
@@ -1446,6 +1507,16 @@ impl Discoverer {
                     .and_then(|e| e.as_str())
                     .and_then(|e| e.split_once('@'))
                     .map(|(local, _)| local.to_string()),
+                // Regional/located resources carry their location in the asset
+                // name: `…/locations/<location>/…`, `…/regions/<region>/…`.
+                "location" => segs.iter().position(|s| *s == "locations").and_then(|i| segs.get(i + 1)).map(|s| s.to_string()),
+                "region" => segs.iter().position(|s| *s == "regions").and_then(|i| segs.get(i + 1)).map(|s| s.to_string()),
+                // A resource's own user-chosen id is the last segment of its
+                // asset name: `…/secrets/<secret_id>`,
+                // `…/repositories/<repository_id>`. Only the `*_id` shape —
+                // `name` is usually in the data already, and where it is not
+                // it may be computed (a full resource name), not user-chosen.
+                k if k.ends_with("_id") && segs.len() >= 2 => segs.last().map(|s| s.to_string()),
                 _ => None,
             };
             match derived {
