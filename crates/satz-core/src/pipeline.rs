@@ -207,6 +207,118 @@ pub struct ResolvedSuppression {
 /// Apply the estate's suppressions to the folded result. Each one must match —
 /// a suppress that stops matching (typo, upstream rename) is a hard error, so
 /// stale subtractive config can never silently deploy what it meant to remove.
+/// One `${…}` reference the estate writes, and where it was written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenRef {
+    /// The Terraform address it names (`google_project.mgmt`).
+    pub address: String,
+    /// The full traversal, for the message (`google_project.mgmt.number`).
+    pub traversal: String,
+    /// The address whose body carries it.
+    pub site: String,
+    pub file: String,
+    pub line: u32,
+}
+
+/// Every `${…}` reference in the folded estate, wherever it is written: a plain
+/// attribute, a nested block, an element of a list, a grant's member or role,
+/// embedded in a longer string. The caller checks them against what is actually
+/// emitted — a reference naming nothing is a typo that would otherwise compile
+/// and only fail at plan time, or quietly name a real but different resource.
+pub fn written_references(folded: &Folded) -> Vec<WrittenRef> {
+    let mut out = Vec::new();
+    for (addr, slot) in &folded.slots {
+        let crate::algebra::Slot::Ok(e) = slot else { continue };
+        let (file, line) = match e.provenance.first() {
+            Some(s) => (s.file.clone(), s.line),
+            None => (String::new(), 0),
+        };
+        // A grant's label is machinery — its structural path or scope pin, the
+        // separator, then the member. Naming the type is what a reader needs;
+        // the file and line already say which one.
+        let site = if addr.label.contains(GRANT_SCOPE_SEP) {
+            addr.tf_type.clone()
+        } else {
+            format!("{}.{}", addr.tf_type, addr.label)
+        };
+        let mut strings: Vec<&str> = Vec::new();
+        match &e.body {
+            Body::Attrs(v) => collect_strings(v, &mut strings),
+            Body::Grant(edges) => {
+                for ed in edges {
+                    strings.push(&ed.member);
+                    strings.push(&ed.role);
+                    strings.push(&ed.condition);
+                }
+            }
+        }
+        // the label of a node-scoped grant carries its member, and a pinned
+        // grant its scope — both can be references
+        strings.push(&addr.label);
+        for text in strings {
+            for traversal in references_in(text) {
+                let mut parts = traversal.splitn(3, '.');
+                let (Some(t), Some(l)) = (parts.next(), parts.next()) else { continue };
+                out.push(WrittenRef {
+                    address: format!("{}.{}", t, l),
+                    traversal,
+                    site: site.clone(),
+                    file: file.clone(),
+                    line,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| (&a.file, a.line, &a.address).cmp(&(&b.file, b.line, &b.address)));
+    out.dedup();
+    out
+}
+
+/// Every string in a value, however deeply nested.
+fn collect_strings<'a>(v: &'a serde_yaml::Value, out: &mut Vec<&'a str>) {
+    match v {
+        serde_yaml::Value::String(s) => out.push(s),
+        serde_yaml::Value::Sequence(seq) => {
+            for item in seq {
+                collect_strings(item, out);
+            }
+        }
+        serde_yaml::Value::Mapping(m) => {
+            for (k, val) in m {
+                if let serde_yaml::Value::String(k) = k {
+                    out.push(k);
+                }
+                collect_strings(val, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The resource traversals inside `${…}` in one string. Only `google_*` roots
+/// are returned: those are the ones that name an address in this estate.
+fn references_in(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("${") {
+        rest = &rest[i + 2..];
+        let Some(end) = rest.find('}') else { break };
+        let inner = rest[..end].trim();
+        rest = &rest[end + 1..];
+        if !inner.starts_with("google_") {
+            continue;
+        }
+        let traversal: String = inner
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.' || *c == '-')
+            .collect();
+        if traversal.matches('.').count() >= 1 {
+            out.push(traversal);
+        }
+    }
+    out
+}
+
 /// Suppressed resources vanish from emission; any compliance claim whose
 /// witness they were then surfaces as broken in `require` — deliberately.
 pub fn apply_suppressions(
@@ -1877,6 +1989,73 @@ mod review_2026_08_29_tests {
             .collect();
         v.sort();
         v
+    }
+
+    #[test]
+    fn every_reference_is_found_wherever_it_is_written() {
+        let src = format!(
+            "{}google_storage_bucket {{ b {{ name = \"${{{{google_project.p.project_id}}}}-logs\" \
+             labels = {{ owner = \"${{{{google_service_account.sa.email}}}}\" }} \
+             lifecycle_rule = [ {{ action {{ type = \"${{{{google_folder.f.name}}}}\" }} }} ] }} }}\n\
+             google_storage_bucket_iam_member {{ bucket = \"${{{{google_storage_bucket.b.name}}}}\" \
+             \"serviceAccount:${{{{google_service_account.sa.email}}}}\" = [\"roles/storage.objectViewer\"] }}\n",
+            HEAD
+        );
+        let fe = compile(&src).expect("references are not resolved at compile time");
+        let folded = fold_fragments(&Table, &fe.fragments);
+        let found: Vec<String> = written_references(&folded).into_iter().map(|r| r.traversal).collect();
+        // a plain attribute, a map value, an element of a list of objects, a
+        // grant's scope pin (which lives in the address label) and its member
+        for want in [
+            "google_project.p.project_id",
+            "google_service_account.sa.email",
+            "google_folder.f.name",
+            "google_storage_bucket.b.name",
+        ] {
+            assert!(found.iter().any(|f| f == want), "{} not found in {:?}", want, found);
+        }
+    }
+
+    #[test]
+    fn a_reference_names_the_address_and_the_site_that_wrote_it() {
+        let src = format!(
+            "{}google_storage_bucket {{ b {{ name = \"x\" project = \"${{{{google_project.p.project_id}}}}\" }} }}\n",
+            HEAD
+        );
+        let fe = compile(&src).unwrap();
+        let folded = fold_fragments(&Table, &fe.fragments);
+        let refs = written_references(&folded);
+        let r = refs.iter().find(|r| r.traversal == "google_project.p.project_id").expect("not found");
+        assert_eq!(r.address, "google_project.p");
+        assert_eq!(r.site, "google_storage_bucket.b");
+        assert_eq!(r.file, "main.satz");
+        assert!(r.line > 0);
+    }
+
+    #[test]
+    fn a_grants_site_names_its_type_not_its_internal_label() {
+        let src = format!(
+            "{}google_storage_bucket_iam_member {{ bucket = \"${{{{google_storage_bucket.b.name}}}}\" \
+             \"group:a@b.c\" = [\"roles/storage.objectViewer\"] }}\n",
+            HEAD
+        );
+        let fe = compile(&src).unwrap();
+        let folded = fold_fragments(&Table, &fe.fragments);
+        let r = &written_references(&folded)[0];
+        assert_eq!(r.site, "google_storage_bucket_iam_member", "the separator and member must not leak into the message");
+    }
+
+    #[test]
+    fn only_resource_references_are_collected() {
+        // `{param}` is Satz interpolation and is resolved before this point; a
+        // `${…}` that is not a google_* traversal is not an address
+        let src = format!(
+            "{}google_storage_bucket {{ b {{ name = \"${{{{each.key}}}}\" location = \"${{{{lower}}}}\" }} }}\n",
+            HEAD
+        );
+        let fe = compile(&src).unwrap();
+        let folded = fold_fragments(&Table, &fe.fragments);
+        assert!(written_references(&folded).is_empty(), "{:?}", written_references(&folded));
     }
 
     #[test]

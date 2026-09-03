@@ -1677,6 +1677,7 @@ fn pipeline_b_generate(
     let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
     ctx.registry = Some(&registry);
     let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
+    check_written_references(&folded, &out.manifest)?;
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     let providers_tf = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
         .map_err(|e| format!("emit_providers: {}", e))?;
@@ -2748,6 +2749,45 @@ fn compliance_inputs(
 /// Append `hcl { … }` bodies verbatim to the generated main.tf, each under a
 /// provenance header, and report them: raw HCL deploys but the compliance plane
 /// cannot see inside it, so every block warns unless it states a `trust` reason.
+/// Every `${…}` reference the estate writes must name a resource it emits.
+/// Checked against the EMISSION MANIFEST, not the fold: a project's services
+/// and an exploded grant are real emitted addresses that were never fold
+/// entities, and referencing one is legitimate.
+///
+/// Without this a typo compiles and ships. Terraform catches most of them at
+/// plan time, one cycle later and pointing at generated HCL instead of the
+/// line someone wrote; the one it cannot catch is a typo that happens to name
+/// a different real resource.
+fn check_written_references(
+    folded: &satz_core::algebra::Folded,
+    manifest: &crate::manifest::Manifest,
+) -> Result<(), String> {
+    let emitted = manifest.addresses();
+    let bad: Vec<satz_core::pipeline::WrittenRef> = satz_core::pipeline::written_references(folded)
+        .into_iter()
+        .filter(|r| !emitted.contains(&r.address))
+        .collect();
+    if bad.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::from("references to resources this estate does not emit:");
+    for r in &bad {
+        msg.push_str(&format!("\n  {}:{}: {} writes `${{{}}}`", r.file, r.line, r.site, r.traversal));
+        let (tf_type, _) = r.address.split_once('.').unwrap_or((r.address.as_str(), ""));
+        let mut same: Vec<&str> = emitted
+            .iter()
+            .filter_map(|a| a.strip_prefix(tf_type).and_then(|rest| rest.strip_prefix('.')))
+            .collect();
+        same.sort();
+        if same.is_empty() {
+            msg.push_str(&format!("\n    no `{}` is emitted here at all", tf_type));
+        } else {
+            msg.push_str(&format!("\n    emitted `{}` labels: {}", tf_type, same.join(", ")));
+        }
+    }
+    Err(msg)
+}
+
 fn append_hcl_passthrough(mut main_tf: String, blocks: &[satz_core::pipeline::HclPassthrough]) -> String {
     for b in blocks {
         let body = dedent_hcl(&b.body);

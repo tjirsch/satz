@@ -318,6 +318,9 @@ google_org_policy_policy {
 ```
 
 **How it works:**
+- **A reference must name something the estate emits.** Every `${{…}}` is checked
+  against the emitted set at compile time; one that names nothing fails with the
+  site, the reference, and the labels of that type that do exist.
 - **References and adoption.** A value that is exactly one reference
   (`project = "${{google_project.x.project_id}}"`) is recorded as a reference and
   followed — `adopt` resolves through it, and a witness scoped by it verifies.
