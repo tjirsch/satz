@@ -58,6 +58,8 @@ grep -q 'location = "europe-west3"' "$sc" || fail "estate param did not override
 grep -q 'groups/01abcdef2ghijk3' tmp/showcase-hcl/imports.tf || fail "import-id did not reach imports.tf"
 grep -q 'num_newer_versions' "$sc" || fail "list-of-objects lifecycle rules missing"
 grep -q 'google_storage_bucket_iam_member' "$sc" || fail "bucket-scoped grant missing"
+grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form of a bucket-scoped grant did not reach main.tf"
+[ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should emit one resource each"
 "$satz" --config . require cis-gcp-4.0 showcase.satz > tmp/showcase-require.txt 2>&1 || true
 grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not read as a deviation"
 if command -v tofu >/dev/null 2>&1; then

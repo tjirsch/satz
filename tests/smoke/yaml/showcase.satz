@@ -120,14 +120,25 @@ google_folder {
             ]
           }
         }
-        // A bucket-scoped grant is a labelled resource (its scope is `bucket`,
-        // not the node path), never a member map.
+        // A bucket-scoped grant, as a labelled resource: one member, one role,
+        // its scope written as an attribute like any other.
         google_storage_bucket_iam_member {
           auditors_read {
             bucket = "${{google_storage_bucket.audit_logs.name}}"
             role   = "roles/storage.objectViewer"
             member = "group:gcp-auditors@{customer_domain}"
           }
+        }
+        // …and the same grant as a MEMBER MAP. A type whose scope is neither the
+        // organisation nor the folder/project it sits in writes that scope in
+        // the map (`bucket = …`); every other key is a member. The scope
+        // namespaces the grant, so a second map for a second bucket is a second
+        // grant even with the same member and role.
+        google_storage_bucket_iam_member {
+          bucket = "{customer_shortname}-audit-logs-archive"
+          "group:gcp-auditors@{customer_domain}" = [
+            "roles/storage.objectViewer",
+          ]
         }
         google_project_iam_member {
           "group:gcp-auditors@{customer_domain}" = [

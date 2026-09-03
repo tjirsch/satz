@@ -640,7 +640,7 @@ impl Walk<'_> {
                         // `use "…" as key`: the pack's top-level entries are the
                         // CONTENT of a resource map keyed by `key`.
                         Some(k) => match self.types.resolve(k) {
-                            Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path)?,
+                            Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?,
                             None => {
                                 return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as"))
                             }
@@ -683,7 +683,7 @@ impl Walk<'_> {
                             }
                         }
                         Some(rt) => {
-                            self.resource_map(&rt, name.as_ref(), body, file_name, own, *line, path)?
+                            self.resource_map(&rt, name.as_ref(), body, file_name, own, *line, path, None)?
                         }
                     }
                 }
@@ -731,7 +731,7 @@ impl Walk<'_> {
                                 // `use "…" as <type>` inside a folder: the pack is the
                                 // content of that resource map, scoped to the folder
                                 Some(k) => match self.types.resolve(k) {
-                                    Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path)?,
+                                    Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?,
                                     None => return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as")),
                                 },
                                 None => self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?,
@@ -900,6 +900,87 @@ impl Walk<'_> {
 }
 
 impl Walk<'_> {
+    /// The scope attribute a grant map pins, if any — read before the members
+    /// so declaration order does not matter. `google_billing_account_iam_member`
+    /// keeps its own channel: its account is estate-wide, pinned once as a
+    /// synthetic entity (idempotent, conflicting pins = ⊥) with a fallback to
+    /// `billing_account_infra`, not per-map like every other scope.
+    fn collect_scope_pin(
+        &mut self,
+        rt: &ResolvedType,
+        name: Option<&Key>,
+        body: &[Entry],
+        file_name: &str,
+        own: &mut Fragment,
+        path: &[String],
+    ) -> Result<Option<ScopePin>, PipelineError> {
+        if rt.class != MergeClass::Grant || name.is_some() {
+            return Ok(None);
+        }
+        let mut pin: Option<(ScopePin, usize)> = None;
+        for e in body {
+            let Entry::Attr { key, value, line } = e else { continue };
+            let key = resolve_key(key, &self.genv, file_name, *line)?;
+            if !is_scope_attr_key(&key) {
+                continue;
+            }
+            let value = resolve_value(value, &self.genv, file_name, *line)?;
+            let Some(value) = value.as_str() else {
+                return perr(
+                    file_name,
+                    *line,
+                    format!("`{}` is a scope attribute of `{}`, so its value must be a string — a list here reads as a member's roles, and `{}` is not a member (a member is `<type>:<value>`)", key, rt.tf_type, key),
+                );
+            };
+            if rt.tf_type == "google_billing_account_iam_member" && key == "billing_account_id" {
+                insert_entity(
+                    own,
+                    Address { tf_type: BILLING_ID_TYPE.to_string(), label: "billing_account_id".to_string() },
+                    Scope::Billing,
+                    Body::Attrs(serde_yaml::Value::String(value.to_string())),
+                    file_name,
+                    *line,
+                    path,
+                )?;
+                continue;
+            }
+            if rt.scope == Scope::Org {
+                return perr(
+                    file_name,
+                    *line,
+                    format!("`{}` takes its scope from the estate's `customer_organization_id`; remove `{}`", rt.tf_type, key),
+                );
+            }
+            if scoped_by_node(&rt.tf_type) && !path.is_empty() {
+                return perr(
+                    file_name,
+                    *line,
+                    format!(
+                        "`{}` inside `{}` is already scoped by that node; remove `{}` or move the map out of the node",
+                        rt.tf_type,
+                        path.join("/"),
+                        key
+                    ),
+                );
+            }
+            if let Some((prev, first)) = &pin {
+                if prev.attr != key || prev.value != value {
+                    return perr(
+                        file_name,
+                        *line,
+                        format!(
+                            "`{}` pins two scopes in one map (`{} = \"{}\"` at line {}, `{} = \"{}\"` here) — one scope per map; repeat the map for the second",
+                            rt.tf_type, prev.attr, prev.value, first, key, value
+                        ),
+                    );
+                }
+                continue;
+            }
+            pin = Some((ScopePin { attr: key, value: value.to_string() }, *line));
+        }
+        Ok(pin.map(|(p, _)| p))
+    }
+
     /// One resource-type map: named entities, grant edges, or `use` lines whose
     /// pack content lands in THIS map. Grant addresses of Node-scoped types are
     /// namespaced by their structural path so grants of different projects never
@@ -914,7 +995,13 @@ impl Walk<'_> {
         own: &mut Fragment,
         line: usize,
         path: &[String],
+        pin: Option<&ScopePin>,
     ) -> Result<(), PipelineError> {
+        // A scope attribute applies to the whole map regardless of where it is
+        // written, and to the content of any pack `use`d inside it; a pack that
+        // pins its own scope wins for its own content.
+        let own_pin = self.collect_scope_pin(rt, name, body, file_name, own, path)?;
+        let pin = own_pin.as_ref().or(pin);
         let named: Vec<(String, &[Entry], usize)> = match name {
             Some(n) => vec![(resolve_key(n, &self.genv, file_name, line)?, body, line)],
             None => {
@@ -926,26 +1013,12 @@ impl Walk<'_> {
                         }
                         Entry::Attr { key, value, line } if rt.class == MergeClass::Grant => {
                             let member = resolve_key(key, &self.genv, file_name, *line)?;
-                            let roles = resolve_value(value, &self.genv, file_name, *line)?;
-                            // A billing fragment may pin the account explicitly —
-                            // the walk's set_billing_account_id case, kept as a
-                            // synthetic entity (idempotent, conflicting pins = ⊥).
-                            if rt.tf_type == "google_billing_account_iam_member"
-                                && member == "billing_account_id"
-                                && roles.as_str().is_some()
-                            {
-                                insert_entity(
-                                    own,
-                                    Address { tf_type: BILLING_ID_TYPE.to_string(), label: "billing_account_id".to_string() },
-                                    Scope::Billing,
-                                    Body::Attrs(roles),
-                                    file_name,
-                                    *line,
-                                    path,
-                                )?;
+                            // Scope attributes were consumed by the pre-pass.
+                            if is_scope_attr_key(&member) {
                                 continue;
                             }
-                            insert_grant(own, rt, &member, &roles, file_name, *line, path)?;
+                            let roles = resolve_value(value, &self.genv, file_name, *line)?;
+                            insert_grant(own, rt, &member, &roles, file_name, *line, path, pin)?;
                             continue;
                         }
                         Entry::Use { path: use_path, as_key, when, line } => {
@@ -968,7 +1041,7 @@ impl Walk<'_> {
                             let file = self.enter_use(use_path, file_name, *line)?;
                             // pack content lands in this same fragment-map scope;
                             // its own file identity is preserved via provenance.
-                            self.resource_map(rt, None, &file.items, use_path, own, *line, path)?;
+                            self.resource_map(rt, None, &file.items, use_path, own, *line, path, pin)?;
                             self.use_chain.pop();
                             continue;
                         }
@@ -1004,6 +1077,38 @@ impl Walk<'_> {
 /// in the fold address label. The emitter splits on it.
 pub const GRANT_SCOPE_SEP: char = '\u{1}';
 
+/// An explicit scope for a grant map: the resource's own scope attribute and
+/// its value (`service_account_id = "projects/p/serviceAccounts/x@y"`). Types
+/// whose scope is neither the organisation nor the structural node it sits in
+/// carry it this way, so the member-map form works for every `*_iam_member`
+/// type and not only the hierarchy ones.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopePin {
+    pub attr: String,
+    pub value: String,
+}
+
+impl ScopePin {
+    /// The address prefix a pinned grant is namespaced by — visible, because
+    /// `suppress` addresses one with `"<attr>=<value>::<member>"`.
+    fn prefix(&self) -> String {
+        format!("{}={}", self.attr, self.value)
+    }
+}
+
+/// A key inside a grant map is the scope attribute rather than a member when it
+/// cannot be an IAM member: every member is `<type>:<value>` except the two
+/// reserved all-principal forms, and no Terraform attribute name contains `:`.
+fn is_scope_attr_key(key: &str) -> bool {
+    !key.contains(':') && key != "allUsers" && key != "allAuthenticatedUsers"
+}
+
+/// Whether a grant type takes its scope from the folder/project it is written
+/// in. Mirrors the emitter's test, so both agree on what a pin may override.
+fn scoped_by_node(tf_type: &str) -> bool {
+    tf_type.contains("project") || tf_type.contains("folder")
+}
+
 /// Synthetic address type for an explicitly pinned billing account id
 /// (mirrors the walk's BILLING_ID_TYPE) — consumed by the emitter, never emitted.
 pub const BILLING_ID_TYPE: &str = "__billing_account_id";
@@ -1017,6 +1122,7 @@ fn insert_grant(
     file_name: &str,
     line: usize,
     path: &[String],
+    pin: Option<&ScopePin>,
 ) -> Result<(), PipelineError> {
     let list = match roles {
         serde_yaml::Value::Sequence(s) => s.clone(),
@@ -1081,10 +1187,24 @@ fn insert_grant(
         };
         edges.insert(GrantEdge { member: member.to_string(), role, condition, import_id });
     }
-    let label = if rt.scope == Scope::Node && !path.is_empty() {
-        format!("{}{}{}", path.join("/"), GRANT_SCOPE_SEP, member)
-    } else {
-        member.to_string()
+    // An explicit scope namespaces the address, so two maps pinning different
+    // scopes never merge into one grant; otherwise a Node-scoped grant is
+    // namespaced by the structural path, exactly as before (no address moves).
+    let label = match pin {
+        Some(p) => format!("{}{}{}", p.prefix(), GRANT_SCOPE_SEP, member),
+        None if rt.scope == Scope::Node && !path.is_empty() => {
+            // `=` is what tells a pinned prefix from a structural one, so a node
+            // label may not contain one. Quoted labels make this reachable.
+            if let Some(bad) = path.iter().find(|seg| seg.contains('=')) {
+                return perr(
+                    file_name,
+                    line,
+                    format!("`{}` is not a usable folder or project label for a grant: `=` separates a grant's own scope from its member", bad),
+                );
+            }
+            format!("{}{}{}", path.join("/"), GRANT_SCOPE_SEP, member)
+        }
+        None => member.to_string(),
     };
     let addr = Address { tf_type: rt.tf_type.clone(), label };
     let span = Span { file: file_name.to_string(), line: line as u32 };
@@ -1655,6 +1775,9 @@ mod review_2026_08_29_tests {
                 "google_cloud_identity_group" => entity("google_cloud_identity_group", Scope::Customer),
                 "google_org_policy_policy" => entity("google_org_policy_policy", Scope::Node),
                 "google_organization_iam_member" => Some(ResolvedType { tf_type: "google_organization_iam_member".into(), class: MergeClass::Grant, scope: Scope::Org }),
+                "google_storage_bucket_iam_member" | "google_service_account_iam_member" | "google_project_iam_member" => {
+                    Some(ResolvedType { tf_type: key.into(), class: MergeClass::Grant, scope: Scope::Node })
+                }
                 _ => None,
             }
         }
@@ -1738,6 +1861,115 @@ mod review_2026_08_29_tests {
         assert!(err.msg.contains("declared twice"), "{}", err.msg);
         let same = format!("{}google_org_policy_policy {{ p {{ name = \"x\" }} }}\ngoogle_org_policy_policy {{ p {{ name = \"x\" }} }}\n", HEAD);
         compile(&same).expect("an identical repeat is idempotent");
+    }
+
+
+    // --- scope pins: the member-map form for types whose scope is neither the
+    // organisation nor the folder/project they are written in. -----------------
+
+    fn grant_labels(fe: &FrontEnd, tf_type: &str) -> Vec<String> {
+        let folded = fold_fragments(&Table, &fe.fragments);
+        let mut v: Vec<String> = folded
+            .slots
+            .keys()
+            .filter(|a| a.tf_type == tf_type)
+            .map(|a| a.label.clone())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn a_scope_attribute_pins_a_grant_map_and_namespaces_its_address() {
+        // the same member and role in two scopes: two grants, not one
+        let src = format!(
+            "{}google_storage_bucket_iam_member {{ bucket = \"audit\" \"group:a@b.c\" = [\"roles/storage.objectViewer\"] }}\n\
+             google_storage_bucket_iam_member {{ bucket = \"logs\" \"group:a@b.c\" = [\"roles/storage.objectViewer\"] }}\n",
+            HEAD
+        );
+        let fe = compile(&src).expect("two pinned maps must compile");
+        assert_eq!(
+            grant_labels(&fe, "google_storage_bucket_iam_member"),
+            vec![
+                format!("bucket=audit{}group:a@b.c", GRANT_SCOPE_SEP),
+                format!("bucket=logs{}group:a@b.c", GRANT_SCOPE_SEP),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_scope_pin_is_read_before_the_members_whatever_the_order() {
+        let src = format!(
+            "{}google_service_account_iam_member {{ \"group:a@b.c\" = [\"roles/iam.workloadIdentityUser\"] service_account_id = \"projects/p/serviceAccounts/x@y\" }}\n",
+            HEAD
+        );
+        let fe = compile(&src).expect("a pin after the members must still apply");
+        assert_eq!(
+            grant_labels(&fe, "google_service_account_iam_member"),
+            vec![format!("service_account_id=projects/p/serviceAccounts/x@y{}group:a@b.c", GRANT_SCOPE_SEP)]
+        );
+    }
+
+    #[test]
+    fn a_pinned_grant_map_passes_its_scope_to_used_pack_content() {
+        let src = format!("{}google_storage_bucket_iam_member {{ bucket = \"audit\" use \"g.satz\" }}\n", HEAD);
+        let fe = compile_with(&src, &[("g.satz", "pack g\n\"group:a@b.c\" = [\"roles/storage.objectViewer\"]\n")])
+            .expect("pack content must inherit the map's scope");
+        assert_eq!(
+            grant_labels(&fe, "google_storage_bucket_iam_member"),
+            vec![format!("bucket=audit{}group:a@b.c", GRANT_SCOPE_SEP)]
+        );
+    }
+
+    #[test]
+    fn two_scopes_in_one_grant_map_is_an_error_naming_both() {
+        let src = format!(
+            "{}google_storage_bucket_iam_member {{ bucket = \"audit\" buckett = \"logs\" \"group:a@b.c\" = [\"roles/storage.objectViewer\"] }}\n",
+            HEAD
+        );
+        let err = compile(&src).must_fail("one map cannot carry two scopes");
+        assert!(err.msg.contains("pins two scopes"), "{}", err.msg);
+        assert!(err.msg.contains("bucket = \"audit\"") && err.msg.contains("buckett"), "{}", err.msg);
+    }
+
+    #[test]
+    fn a_scope_pin_on_an_organisation_grant_is_an_error() {
+        let src = format!("{}google_organization_iam_member {{ org_id = \"9\" \"group:a@b.c\" = [\"roles/browser\"] }}\n", HEAD);
+        let err = compile(&src).must_fail("the org scope comes from customer_organization_id");
+        assert!(err.msg.contains("customer_organization_id"), "{}", err.msg);
+    }
+
+    #[test]
+    fn a_scope_pin_inside_the_node_that_already_scopes_it_is_an_error() {
+        let src = format!(
+            "{}google_folder {{ f {{ display_name = \"F\" google_project_iam_member {{ project = \"p\" \"group:a@b.c\" = [\"roles/viewer\"] }} }} }}\n",
+            HEAD
+        );
+        let err = compile(&src).must_fail("explicit and inherited scope must not compete");
+        assert!(err.msg.contains("already scoped by that node"), "{}", err.msg);
+    }
+
+    #[test]
+    fn the_two_all_principal_members_are_members_not_scopes() {
+        let src = format!(
+            "{}google_storage_bucket_iam_member {{ bucket = \"public\" allUsers = [\"roles/storage.objectViewer\"] }}\n",
+            HEAD
+        );
+        let fe = compile(&src).expect("allUsers is a member");
+        assert_eq!(
+            grant_labels(&fe, "google_storage_bucket_iam_member"),
+            vec![format!("bucket=public{}allUsers", GRANT_SCOPE_SEP)]
+        );
+    }
+
+    #[test]
+    fn a_scope_attribute_given_a_list_says_so() {
+        let src = format!(
+            "{}google_storage_bucket_iam_member {{ bucket = [\"audit\"] \"group:a@b.c\" = [\"roles/storage.objectViewer\"] }}\n",
+            HEAD
+        );
+        let err = compile(&src).must_fail("a scope is one string");
+        assert!(err.msg.contains("must be a string"), "{}", err.msg);
     }
 
     #[test]

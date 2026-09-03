@@ -450,6 +450,14 @@ Merge rules when several fragments declare the same thing:
 Project- and folder-scoped IAM types (`project_iam_member`, `folder_iam_member`) are **not**
 hoisted — their position in the tree is their parent, as before.
 
+Every other `*_iam_member` type — bucket, service account, KMS key, Pub/Sub topic — writes
+its scope in the grant map beside the members (`bucket = …`, `service_account_id = …`); a
+key that cannot be a member is that scope, a member being always `<type>:<value>` or one of
+the two reserved forms `allUsers` / `allAuthenticatedUsers`. It namespaces
+the grant, so two maps pinning two scopes are two grants even with the same member and role.
+One scope per map; repeat the map for the next scope. The labelled-resource form works for
+these types too and is the better fit for a single edge.
+
 Every other resource type is position-independent whenever its parent is explicit in the
 source (`org_id`, `parent`, `billing_account`), so it needs no hoisting. What all types
 get instead is the **duplicate-address guard**: a Terraform address may be emitted once.

@@ -3461,6 +3461,66 @@
       "description_kind": "plain"
      }
     },
+    "google_service_account_iam_member": {
+     "version": 0,
+     "block": {
+      "attributes": {
+       "etag": {
+        "type": "string",
+        "description_kind": "plain",
+        "computed": true
+       },
+       "id": {
+        "type": "string",
+        "description_kind": "plain",
+        "optional": true,
+        "computed": true
+       },
+       "member": {
+        "type": "string",
+        "description_kind": "plain",
+        "required": true
+       },
+       "role": {
+        "type": "string",
+        "description_kind": "plain",
+        "required": true
+       },
+       "service_account_id": {
+        "type": "string",
+        "description_kind": "plain",
+        "required": true
+       }
+      },
+      "block_types": {
+       "condition": {
+        "nesting_mode": "list",
+        "block": {
+         "attributes": {
+          "description": {
+           "type": "string",
+           "description_kind": "plain",
+           "optional": true
+          },
+          "expression": {
+           "type": "string",
+           "description_kind": "plain",
+           "required": true
+          },
+          "title": {
+           "type": "string",
+           "description_kind": "plain",
+           "required": true
+          }
+         },
+         "description_kind": "plain"
+        },
+        "max_items": 1
+       }
+      },
+      "description_kind": "plain"
+     }
+    },
     "google_storage_bucket_iam_member": {
      "version": 0,
      "block": {

@@ -143,7 +143,9 @@ Nine syntactic ones — and, below them, the short list of attributes the emitte
 6. `labels { k = "v" }` (block syntax) → `labels = { "k" = "v" }` (map attribute).
 7. **IAM grants** — the one shape that is not 1:1: `"member" = [roles…]` emits one
    `*_iam_member` resource per (member, role, condition), with a hashed label and
-   `role` / `member` / `org_id`-or-`project` synthesized.
+   `role` / `member` / `org_id`-or-`project` synthesized. A type scoped by
+   neither the organisation nor its node writes that scope in the map
+   (`bucket = …`, `service_account_id = …`), and it namespaces the grant.
 8. Hierarchy **is** the parent reference: a `google_folder` inside a folder emits
    `parent = google_folder.<outer>.name`; a `google_project` inside a folder
    emits `folder_id = …`; a top-level folder gets `parent = "organizations/<id>"`.
@@ -309,7 +311,8 @@ sections below cite instead of carrying loose snippets:
   `providers`, `use` in all three positions (`as`, `when`), two `suppress`
   forms, a group with a member and an `"import-id"`, grants incl. a
   conditional one, folder → project → bucket nesting with a list-of-objects
-  block, a bucket-scoped labelled grant, `hcl trust`, and claims of all three
+  block, a bucket-scoped grant in both forms (labelled and member map with its
+  own scope), `hcl trust`, and claims of all three
   kinds with duties and an `interpretation`. `scripts/smoke.sh` transpiles it,
   validates the HCL and checks each feature's effect.
 
@@ -665,7 +668,41 @@ The condition is hashed into the address, so the same role to the same member
 under two conditions is two resources. Emission order is by address, not by
 source order.
 
-A grant scoped to a **bucket** is a plain labelled resource, not a member map:
+**Every `*_iam_member` type takes the member map.** The organisation's scope
+comes from `customer_organization_id`, a project's or folder's from the node the
+map is written in, and every other type writes its scope in the map — one key
+that cannot be a member, because a member is always `<type>:<value>` (or one of
+the two reserved forms `allUsers` and `allAuthenticatedUsers`):
+
+```
+google_storage_bucket_iam_member {
+  bucket = "${{google_storage_bucket.audit_logs.name}}"
+  "group:gcp-auditors@{customer_domain}" = [
+    "roles/storage.objectViewer",
+  ]
+}
+
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.onboarding.name}}"
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/iam.workloadIdentityUser",
+  ]
+}
+```
+
+The scope **namespaces the grant**, so a second map for a second bucket is a
+second grant even when the member and role are identical; and it enters the
+emitted label, so the two never collide. One scope per map — repeat the map for
+the next one. Order inside the map does not matter: the scope is read before the
+members. A misspelt scope attribute is a compile error naming the type's real
+one, and a scope on a type that already has one (`org_id` on an organisation
+grant, `project` on a map inside a project) is refused rather than silently
+ignored. `google_billing_account_iam_member` is the exception that proves the
+rule: its `billing_account_id` is estate-wide, pinned once and defaulting to
+`billing_account_infra`, not per-map.
+
+The same grant as a **labelled resource** is equally valid, and is the form to
+use for a single edge or when the scope differs per member:
 
 ```
 google_storage_bucket_iam_member {
@@ -887,7 +924,9 @@ suppress google_organization_iam_member "group:sec@{customer_domain}" role "role
 - A grant inside a folder or project is addressed by its node: a bare member
   (`"group:x@…"`) suppresses that member on EVERY node that grants it; a
   node-qualified label (`"shared/prod::group:x@…"`, the folder/project labels
-  joined by `/`) suppresses it on that one node.
+  joined by `/`) suppresses it on that one node. A grant that writes its own
+  scope is addressed the same way, by that scope:
+  `suppress google_storage_bucket_iam_member "bucket=acme-audit::group:x@…"`.
 - `role` on an address that is in conflict (⊥) is an error: suppress the whole
   member, or resolve the conflict.
 
@@ -1218,6 +1257,7 @@ never legal conformity.
 | declare a resource | `type { "label" { attr = … } }` |
 | repeat a nested block | `lifecycle_rule = [ { … }, { … } ]` |
 | grant roles | `google_organization_iam_member { "group:x@{domain}" = ["roles/viewer"] }` |
+| grant on a bucket, service account, … | the same map plus its scope: `google_storage_bucket_iam_member { bucket = "b" "group:x@{domain}" = ["roles/storage.objectViewer"] }` |
 | grant conditionally | role becomes `{ role = "…" condition { title = … expression = … } }` |
 | adopt an existing resource | `"import-id" = "folders/123"` |
 | drop one pack resource | `suppress google_org_policy_policy "label"` |
