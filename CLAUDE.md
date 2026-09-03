@@ -71,7 +71,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **`cargo test` does NOT rebuild the debug binary** — `cargo build` before a
   live test, or a stale binary shadows the fix. Same family: an edit to
   `crates/satz-core/` was once not picked up — `touch` the file and confirm
-  "Compiling satz-core" before trusting a live run.
+  "Compiling satz-core" before trusting a live run. `scripts/smoke.sh` used to
+  belong here too: it ran `target/release/satz` and rebuilt it only when the
+  file was MISSING, so a local run after a pull or a merge judged the leftover
+  binary instead of the tree. It now always builds (2026-09-03); pass `SATZ=`
+  only when you built the binary yourself and want that one.
 - **Corpus (`tests/corpus/`) is snapshot-gated:** `UPDATE_CORPUS=1` + review
   the diff.
 - **Docs ship with the change, in two renderings.** A change to the language,
