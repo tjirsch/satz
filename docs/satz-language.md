@@ -375,6 +375,24 @@ value = "${{google_project.x.project_id}}"   # a literal Terraform reference
 
 Rule of thumb: **`{x}` is Satz, `{{` is a brace you want to survive.**
 
+**A reference must name something the estate emits.** Every `${{…}}` is checked
+against what was actually emitted — including a project's expanded services and
+an exploded grant, which are emitted addresses that were never written as
+blocks. A reference naming nothing is a compile error that says where it was
+written and lists the labels of that type that do exist:
+
+```
+references to resources this estate does not emit:
+  yaml/main.satz:26: google_service_account_iam_member writes `${google_service_account.onbaording.name}`
+    emitted `google_service_account` labels: onboarding
+```
+
+Without the check a typo compiles: Terraform catches most of them one cycle
+later, pointing at generated HCL instead of the line someone wrote, and the one
+it cannot catch is a typo that happens to name a different real resource.
+Suppressing a resource something else references is the same error, which is
+the point — the estate no longer emits it.
+
 **A reference is understood, not just emitted.** When a value is *nothing but*
 one reference — `service_account_id = "${{google_service_account.onb.name}}"` —
 the emission manifest records it as a reference, so `satz adopt` follows it to

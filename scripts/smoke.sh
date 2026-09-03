@@ -210,6 +210,35 @@ grep -q 'transpile --check: OK' tmp/check.txt || fail "--check did not report OK
 [ ! -d hcl ] || fail "--check wrote hcl/"
 "$satz" --config . transpile smoke.satz >/dev/null   # restore hcl/ for the later steps
 
+step "a reference to a resource the estate does not emit is refused, naming the labels that exist"
+cat > tmp/badref.satz <<'EOF'
+estate badref
+
+params {
+  customer_organization_id = "123456789012"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+}
+
+terraform { backend { local { path = "terraform.tfstate" } } }
+providers { google { alias = "google" } }
+
+google_storage_bucket {
+  logs {
+    name     = "corp-logs-001"
+    location = "EU"
+  }
+}
+
+google_storage_bucket_iam_member {
+  bucket = "${{google_storage_bucket.lugs.name}}"
+  "group:gcp-auditors@example.com" = [ "roles/storage.objectViewer" ]
+}
+EOF
+"$satz" --config . transpile tmp/badref.satz --check > tmp/badref.txt 2>&1 && fail "a typo'd reference must not compile:\n$(cat tmp/badref.txt)"
+grep -q 'does not emit' tmp/badref.txt || fail "the reference check did not fire:\n$(cat tmp/badref.txt)"
+grep -q 'google_storage_bucket.lugs.name' tmp/badref.txt || fail "the error does not name the bad reference"
+grep -q 'emitted `google_storage_bucket` labels: logs' tmp/badref.txt || fail "the error does not name the labels that do exist:\n$(cat tmp/badref.txt)"
+
 step "generate-migration: the script cds into hcl_dir, paces, retries 429s and summarizes"
 printf 'google_project.old: google_project.new\n' > tmp/mapping.yaml
 "$satz" --config . generate-migration tmp/mapping.yaml --output tmp/migrate.sh
