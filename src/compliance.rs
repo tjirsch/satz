@@ -871,6 +871,14 @@ pub(crate) struct ProwlerFinding {
     /// `projects/x/…`), empty when absent
     pub resource: String,
     pub project: String,
+    /// Prowler's own title, remediation text and risk statement — carried for
+    /// the remediation dossier; empty when the export does not have them.
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub remediation: String,
+    #[serde(default)]
+    pub risk: String,
 }
 
 /// Prowler ingest, OCSF (Prowler ≥ 4) and the legacy native JSON: per
@@ -915,6 +923,15 @@ pub(crate) fn ingest_prowler(
                     .or_else(|| f.get("ResourceId")),
             ),
             project: text(f.get("cloud").and_then(|c| c.get("project")).and_then(|p| p.get("uid")).or_else(|| f.get("project_id"))),
+            // OCSF: finding_info.title, remediation.desc, risk_details;
+            // legacy: CheckTitle, Remediation.Recommendation.Text, Risk
+            title: text(f.get("finding_info").and_then(|i| i.get("title")).or_else(|| f.get("CheckTitle"))),
+            remediation: text(
+                f.get("remediation")
+                    .and_then(|r| r.get("desc"))
+                    .or_else(|| f.get("Remediation").and_then(|r| r.get("Recommendation")).and_then(|r| r.get("Text"))),
+            ),
+            risk: text(f.get("risk_details").or_else(|| f.get("Risk"))),
         };
         for (fw, controls) in map {
             // legacy `cis_4.0_gcp`, OCSF `CIS-4.0-GCP`: same framework, two spellings
@@ -1646,6 +1663,97 @@ pub(crate) fn run_triage(
         m
     });
     eprintln!("triage: {}", counts.iter().map(|(b, n)| format!("{} {}", n, b)).collect::<Vec<_>>().join(", "));
+    Ok(())
+}
+
+/// The `remediation-plan` command, phase 1: the dossier and its renderings,
+/// offline. Writes `dossier.json`, `findings.csv`, `findings.xlsx` and
+/// `meta.json` into `out`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_remediation_dossier(
+    framework: &str,
+    presets_dir: &str,
+    included_claims: &[(String, Claim)],
+    manifest: &Manifest,
+    estate_path: &Path,
+    prowler_path: &Path,
+    checkov: Option<&crate::scan::Report>,
+    out: &Path,
+) -> Result<(), BoxErr> {
+    let catalog = load_catalog(presets_dir, framework)?;
+    let library_claims = load_library_view(presets_dir)?;
+    let emitted = manifest.addresses();
+    let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
+    let attrs = manifest.witness_attrs();
+    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
+        .map_err(|e| format!("prowler json does not parse: {}", e))?;
+    let findings = ingest_prowler(&raw, &catalog.catalog, &catalog.version);
+    if findings.is_empty() {
+        return Err(format!("no finding in {} maps to {} {} — is this the right framework and a Prowler export (OCSF or legacy JSON)?", prowler_path.display(), catalog.catalog, catalog.version).into());
+    }
+    let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
+    // Prowler's own title / remediation / risk per check id — the dossier
+    // carries them beside satz's paraphrase and plan.
+    let mut prowler_text: BTreeMap<String, (String, String, String)> = BTreeMap::new();
+    for f in findings.values().flatten() {
+        prowler_text
+            .entry(f.check.clone())
+            .or_insert_with(|| (f.title.clone(), f.remediation.clone(), f.risk.clone()));
+    }
+    let declared_at: BTreeMap<String, String> = manifest
+        .resources
+        .iter()
+        .filter_map(|(addr, r)| r.origin.as_ref().map(|(file, line)| (addr.clone(), format!("{}:{}", file, line))))
+        .collect();
+    let checkov_findings: Vec<crate::scan::Finding> = checkov.map(|r| r.findings.clone()).unwrap_or_default();
+
+    let estate = estate_path.file_name().and_then(|n| n.to_str()).unwrap_or("estate").to_string();
+    let dossier = crate::dossier::build(&crate::dossier::Inputs {
+        framework,
+        catalog: &catalog,
+        goals: &goals,
+        estate: &estate,
+        triage_rows: &rows,
+        prowler_text: &prowler_text,
+        checkov: &checkov_findings,
+        declared_at: &declared_at,
+    });
+    let hash = dossier.hash();
+
+    crate::fsx::create_dir_all(out)?;
+    crate::fsx::write(out.join("dossier.json"), dossier.json())?;
+    crate::fsx::write(out.join("findings.csv"), crate::dossier::csv(&dossier))?;
+    let provenance = vec![
+        ("satz".to_string(), env!("CARGO_PKG_VERSION").to_string()),
+        ("framework".to_string(), framework.to_string()),
+        ("estate".to_string(), estate.clone()),
+        ("prowler export".to_string(), prowler_path.display().to_string()),
+        ("checkov".to_string(), checkov.map(|r| format!("v{} — {} findings", r.version, r.findings.len())).unwrap_or_else(|| "not run".to_string())),
+        ("dossier sha256".to_string(), hash.clone()),
+        ("generated".to_string(), chrono_free_timestamp()),
+        ("[AI] columns".to_string(), "empty — authored by a later model pass or by hand; Review column: open / accepted / edited / rejected".to_string()),
+    ];
+    let xlsx = crate::dossier::xlsx(&dossier, &provenance)?;
+    std::fs::write(out.join("findings.xlsx"), xlsx).map_err(|e| format!("{}: {}", out.join("findings.xlsx").display(), e))?;
+    let meta = serde_json::json!({
+        "satz": env!("CARGO_PKG_VERSION"),
+        "framework": framework,
+        "estate": estate,
+        "dossier_sha256": hash,
+        "generated": chrono_free_timestamp(),
+        "summary": dossier.summary,
+    });
+    crate::fsx::write(out.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
+
+    let s = &dossier.summary;
+    println!(
+        "remediation-plan: {} finding(s) — {}; {} corroborated by both scanners, {} declared (apply fixes them)",
+        s.items,
+        s.by_bucket.iter().map(|(b, n)| format!("{} in {}", n, b)).collect::<Vec<_>>().join(", "),
+        s.corroborated,
+        s.declared_apply_fixes
+    );
+    println!("Wrote {} (dossier.json, findings.csv, findings.xlsx, meta.json) — dossier sha256 {}", out.display(), &hash[..12]);
     Ok(())
 }
 

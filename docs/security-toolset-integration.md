@@ -170,6 +170,47 @@ the library claim index, the compile's address set, the `deviates` claims —
 with the I2 findings. Buckets A, C, E need nothing new; B needs the reverse
 index (§4); the param link in A is I5's `governs`.
 
+### I6 — The dossier: everything mechanical about the findings, settled first
+
+*Status 2026-09-03: phase 1 shipped as `satz remediation-plan` — the dossier
+and the workbook, offline; the model pass (phase 3 of the design) is next.*
+
+**What.** `satz remediation-plan <framework> <estate> --prowler <ocsf.json>
+[--checkov] [--out <dir>]` builds the **dossier**: the I3 triage rows joined
+with Checkov findings on the declared address (the one identity both scanners
+share), each item carrying its bucket, normalized severity, control + the
+catalog's paraphrase, the declaring `file:line`, the sources that flagged it,
+Prowler's own title / remediation / risk, the mechanical plan sentence, the
+library packs that would cover it, the estate's deviation reasons and open
+duties, and the goal view's verdict. Ordered (bucket, severity, control,
+resource), ids `F-0001…`, counted by bucket / severity / control / project,
+with "corroborated by both scanners" and "declared — apply fixes it" as first-
+class numbers. Written under the estate's `evidence/plan/<framework>-<ts>/`
+(git-ignored, gate-rejected) as `dossier.json`, `findings.csv`,
+`findings.xlsx`, `meta.json`.
+
+**Deterministic by construction**: the same inputs give the same JSON byte for
+byte, and its SHA-256 names the run — `meta.json` carries it, and it is the
+cache key the model pass will use.
+
+**The workbook** is the findings deliverable minus the prose: a `Findings`
+sheet with the mechanical columns filled and the `[AI]` columns (what/why in
+customer language, recommended fix, owner, effort, phase, quick win, risk-
+acceptance candidate) tinted and empty, a `Review` dropdown
+(open / accepted / edited / rejected) with reviewer and date, `By control` and
+`By bucket` summaries as live formulas over Findings (edits propagate), an
+empty `Plan phases` sheet the model pass or the consultant fills, and
+`Provenance`.
+
+**Why the split.** The plan is not mechanical — grouping into workstreams,
+priorities in this customer's words, effort, what to accept as risk are
+judgment. But roughly seventy percent of the workbook *is* mechanical, and a
+model given two raw scanner exports re-derives it badly and differently every
+time. The dossier is the structured, triaged, PII-minimized input the model
+gets; it returns structured JSON for the `[AI]` columns and the phases; satz
+renders. Until the model pass exists, the workbook is already the consultant's
+starting point.
+
 ### I4 — `deviates` is the exception register
 
 *Status 2026-08-29: the join shipped (v0.46.34) — a FAIL on a deviated control renders as **accepted exception — <reason>** in the Prowler column and lands in triage bucket C. `--review` (audit-side false positives) is still a proposal.*

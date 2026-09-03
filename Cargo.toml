@@ -39,6 +39,11 @@ hex = "0.4"
 regex = "1.13"
 google-cloud-asset-v1 = "1.12.0"
 google-cloud-gax = "1.13.0"
+rust_xlsxwriter = "0.99"
+
+[dev-dependencies]
+# the workbook test opens the xlsx package; the same zip rust_xlsxwriter writes with
+zip = "8.6"
 
 # The profile that 'dist' will build with
 [profile.dist]

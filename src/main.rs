@@ -17,6 +17,7 @@ mod gcp;
 mod org_policy;
 mod cloud_identity;
 mod compliance;
+mod dossier;
 mod presets;
 mod doc_packs;
 mod github;
@@ -554,6 +555,29 @@ enum Commands {
         #[arg(long)]
         report: Option<PathBuf>,
     },
+    /// Build the remediation dossier — the findings workbook minus the prose
+    ///
+    /// Every Prowler FAIL/MANUAL (and Checkov finding) triaged against the
+    /// estate's claims, joined per resource, counted, and written under the
+    /// estate's evidence/ directory as JSON, CSV and XLSX. The mechanical
+    /// columns are filled; the `[AI]` columns and the Review column are the
+    /// consultant's (or a later model pass's). Offline, deterministic: the
+    /// dossier hash names the run
+    RemediationPlan {
+        /// Catalog id, e.g. cis-gcp-4.0
+        framework: String,
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Prowler export (OCSF or legacy JSON)
+        #[arg(long)]
+        prowler: PathBuf,
+        /// Also run Checkov over hcl_dir and join its findings
+        #[arg(long)]
+        checkov: bool,
+        /// Output directory (default: <config dir>/evidence/plan/<framework>-<timestamp>)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Run Checkov over the emitted HCL in hcl_dir and point each finding at the Satz block that declared the resource
     ///
     /// Failed checks exit 1
@@ -732,7 +756,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
                     // plan/apply/tf-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1449,6 +1473,24 @@ Thumbs.db
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, &format, report)
+        }
+        Commands::RemediationPlan { framework, input, prowler, checkov, out } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
+            let out = out.unwrap_or_else(|| {
+                config_dir.join("evidence").join("plan").join(format!("{}-{}", framework, crate::compliance::chrono_free_timestamp()))
+            });
+            crate::compliance::run_remediation_dossier(
+                &framework,
+                &runtime_config.presets_dir,
+                &included_claims,
+                &manifest,
+                &input_path,
+                &prowler,
+                checkov_report.as_ref(),
+                &out,
+            )
         }
         Commands::DocPacks { out, check } => {
             let presets = PathBuf::from(&runtime_config.presets_dir);
