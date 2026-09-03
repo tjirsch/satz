@@ -1,0 +1,165 @@
+// Microsoft Defender for Cloud — GCP onboarding, the foundation.
+//
+// Defender onboards a GCP organization through workload identity federation:
+// no service-account keys leave the estate. Microsoft's portal generates a
+// per-customer Terraform/gcloud script; this pack is that script as Satz, with
+// the customer-specific values as params and Microsoft's own values inlined —
+// they are the same for every customer and are NOT knobs.
+//
+// This file is the foundation every Defender deployment needs: the management
+// project, its APIs, the workload identity pool, and the auto-provisioner plan
+// that Microsoft always creates. One fragment per LICENSED PLAN goes beside it:
+//
+//   use "presets/integrations/microsoft-defender-for-cloud.satz"
+//   use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
+//   use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
+//
+// Required from the estate: `customer_organization_id`. The management project
+// takes `billing_account_infra` unless the estate sets `billing_account` on it.
+//
+// WHY the plans are separate files and not a list param: a pack cannot add to
+// another fragment's project — two fragments defining one project is a fold
+// conflict, and lists replace rather than concatenate. So this file owns the
+// project and its complete API list, and each plan fragment declares its own
+// resources at top level, naming the project through `mdc_mgmt_project_id`.
+//
+// NO CLAIM is made here. Defender for Cloud is an external CSPM that READS the
+// estate; it implements no CIS control and contributes to none. A pack that
+// claimed one would be asserting compliance it does not create.
+//
+// BEFORE THE FIRST APPLY, two estate-side prerequisites:
+//   1. The Defender agentless-scanning service account lives in a Microsoft
+//      project, so it must be in `allowed_policy_member_subjects` (or the
+//      principal-set allowlist) BEFORE any grant to it is applied — the
+//      constraints AND together and an incomplete list refuses the grant.
+//   2. A deny-all on `iam.workloadIdentityPoolProviders` blocks the providers
+//      below. The estate must allow the `sts.windows.net/<microsoft tenant>`
+//      issuer, or document the exception.
+
+pack integrations.microsoft_defender_for_cloud version "0.1"
+
+params {
+  // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
+  // workload identity pool id Microsoft's wizard generates. Take it from the
+  // generated script; there is no default because it is per customer.
+  mdc_workload_pool_id = ""
+
+  // The management project Defender is onboarded through. A full param, not
+  // derived: customers name projects their own way.
+  mdc_mgmt_project_id = ""
+
+  // Which plans are licensed. Each `true` pulls in that plan's fragment; a
+  // fragment for a plan not listed here has to be written from that customer's
+  // generated script (see the note at the bottom of this file).
+  mdc_plan_cspm = false
+
+  // CSPM access mode — exactly ONE of these, and only when mdc_plan_cspm is on.
+  // Default access grants `roles/viewer` plus a five-permission custom role;
+  // least privilege enumerates 82 permissions instead. Both true is a fold
+  // conflict on the role address, which is the loud failure it should be.
+  mdc_cspm_default_access = false
+  mdc_cspm_least_privilege = false
+}
+
+// The management project. `project_service` expands to one
+// google_project_service per entry — this is the API set Microsoft's script
+// enables, and it is a constant of the onboarding, not a customer choice.
+google_project {
+  mdc_mgmt {
+    project_id = mdc_mgmt_project_id
+    name       = "Microsoft MGMT Project"
+    project_service = [
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "sts.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "compute.googleapis.com",
+      "apikeys.googleapis.com",
+      "sqladmin.googleapis.com",
+      "cloudkms.googleapis.com",
+      "cloudasset.googleapis.com",
+    ]
+
+    // One pool for the whole integration; every plan adds its own provider.
+    google_iam_workload_identity_pool {
+      mdc_pool {
+        workload_identity_pool_id = mdc_workload_pool_id
+        display_name              = "Microsoft Defender for Cloud"
+        description               = "Microsoft defender for cloud provisioner workload identity pool"
+      }
+    }
+
+    // The auto-provisioner service account: Microsoft always creates it, so it
+    // is here and not behind a plan flag.
+    google_service_account {
+      mdc_onboarding {
+        account_id   = "mdc-onboarding-sa"
+        display_name = "Microsoft Onboarding management service account"
+      }
+    }
+  }
+}
+
+// The onboarding custom role. Its id is Microsoft's, not a knob.
+google_organization_iam_custom_role {
+  MDCCustomRole {
+    role_id     = "MDCCustomRole"
+    title       = "MDCCustomRole"
+    org_id      = customer_organization_id
+    description = "Microsoft organization custom role for onboarding"
+    permissions = [
+      "resourcemanager.folders.get",
+      "resourcemanager.folders.list",
+      "resourcemanager.projects.get",
+      "resourcemanager.projects.list",
+      "serviceusage.services.enable",
+      "iam.roles.list",
+      "compute.projects.get",
+      "compute.projects.setCommonInstanceMetadata",
+    ]
+  }
+}
+
+// The onboarding SA holds that role on the organization.
+google_organization_iam_member {
+  "serviceAccount:mdc-onboarding-sa@{mdc_mgmt_project_id}.iam.gserviceaccount.com" = [
+    "organizations/{customer_organization_id}/roles/MDCCustomRole",
+  ]
+}
+
+// Anything federated through the pool may impersonate the onboarding SA. The
+// principal set carries the project NUMBER, which Google assigns at creation —
+// hence a reference, not a literal.
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.mdc_onboarding.name}}"
+  "principalSet://iam.googleapis.com/projects/${{google_project.mdc_mgmt.number}}/locations/global/workloadIdentityPools/{mdc_workload_pool_id}/*" = [
+    "roles/iam.workloadIdentityUser",
+  ]
+}
+
+// The auto-provisioner OIDC provider. The audience is Microsoft's application
+// id and the issuer is Microsoft's own tenant — both identical for every
+// customer, both from the generated script.
+google_iam_workload_identity_pool_provider {
+  mdc_auto_provisioner {
+    project                            = mdc_mgmt_project_id
+    workload_identity_pool_id          = "${{google_iam_workload_identity_pool.mdc_pool.workload_identity_pool_id}}"
+    workload_identity_pool_provider_id = "auto-provisioner"
+    description                        = "OIDC identity pool provider for autoprovisioner"
+    attribute_mapping = {
+      "google.subject" = "assertion.sub"
+    }
+    oidc {
+      allowed_audiences = ["api://d17a7d74-7e73-4e7d-bd41-8d9525e86cab"]
+      issuer_uri        = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+    }
+  }
+}
+
+// ADDING A PLAN: copy the cspm fragment. Each plan needs, from THAT customer's
+// generated script: its provider id (`ciem-discovery`, `containers`,
+// `containers-streams`, `data-security-posture-storage`,
+// `defender-for-databases-arc-ap`, `defender-for-servers`), its `api://`
+// audience — a different Microsoft application id per plan — its service
+// account, and its role set. None of those can be guessed, and this pack
+// carries only what a real generated script has been read from.

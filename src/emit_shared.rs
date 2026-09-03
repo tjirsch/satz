@@ -28,10 +28,19 @@ pub(crate) fn iam_member_label(
     if !scope.is_empty() {
         scope.hash(&mut hasher);
     }
-    // Strip interpolation syntax from the label: "${google_project.x.number}"
-    // would otherwise leak braces and dollars into the resource name.
-    let label_src = member.replace("${", "").replace('}', "");
-    format!("iam_{}_{:x}", label_src.replace(&['@', '.', ':', '-'][..], "_"), hasher.finish())
+    // The label is a Terraform resource name, so every character outside
+    // [A-Za-z0-9_] has to go: interpolation syntax from a reference
+    // ("${google_project.x.number}"), and the slashes and stars of a
+    // principalSet member, which used to reach main.tf verbatim and made the
+    // block unparseable. Members written as `<type>:<value>` are unaffected —
+    // `@ . : -` mapped to `_` before and still do, so no existing label moves.
+    let label_src: String = member
+        .replace("${", "")
+        .replace('}', "")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    format!("iam_{}_{:x}", label_src, hasher.finish())
 }
 
 /// The IAM member resource block. `member_expr` arrives prebuilt (members may
