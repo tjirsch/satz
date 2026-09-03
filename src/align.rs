@@ -250,6 +250,25 @@ pub fn apply_map(data: &mut serde_yaml::Mapping, map: &BTreeMap<String, String>)
     let mut rows: Vec<(&String, &String)> = map.iter().collect();
     rows.sort_by_key(|a| std::cmp::Reverse(a.0.matches('.').count()));
     for (src, dst) in rows {
+        // `allowed[].IPProtocol → allowed[].protocol`: a rename INSIDE every
+        // element of a list — the API's nested vocabulary (a firewall rule's
+        // `allowed[].IPProtocol` is the provider's `allow { protocol }`)
+        if let Some((list, inner_src)) = src.split_once("[].") {
+            let Some((dst_list, inner_dst)) = dst.split_once("[].") else { continue };
+            if dst_list != list {
+                continue;
+            }
+            if let Some(serde_yaml::Value::Sequence(items)) = data.get_mut(serde_yaml::Value::String(list.to_string())) {
+                for item in items.iter_mut() {
+                    if let serde_yaml::Value::Mapping(m) = item {
+                        if let Some(v) = take_path(m, inner_src) {
+                            put_path(m, inner_dst, v);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         if let Some(v) = take_path(data, src) {
             put_path(data, dst, v);
         }
@@ -306,6 +325,25 @@ fn prune_empty(data: &mut serde_yaml::Mapping) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_map_renames_inside_list_elements() {
+        // a firewall rule as Cloud Asset Inventory carries it
+        let mut data: serde_yaml::Mapping = serde_yaml::from_str(
+            "allowed:\n  - IPProtocol: tcp\n    ports: ['22']\n  - IPProtocol: udp\ndirection: INGRESS\n",
+        )
+        .unwrap();
+        let mut map = BTreeMap::new();
+        map.insert("allowed[].IPProtocol".to_string(), "allowed[].protocol".to_string());
+        map.insert("allowed".to_string(), "allow".to_string());
+        apply_map(&mut data, &map);
+        let out = serde_yaml::to_string(&data).unwrap();
+        assert!(out.contains("allow:"), "{out}");
+        assert!(!out.contains("allowed:"), "{out}");
+        assert!(out.contains("protocol: tcp") && out.contains("protocol: udp"), "{out}");
+        assert!(!out.contains("IPProtocol"), "{out}");
+        assert!(out.contains("direction: INGRESS"), "{out}");
+    }
 
     fn tf() -> BlockSchema {
         serde_json::from_value(serde_json::json!({

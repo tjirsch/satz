@@ -52,7 +52,7 @@ resource_types:
   google_artifact_registry_repository:
     import_id: "projects/{project}/locations/{location}/repositories/{repository_id}"
     description: Artifact Registry repository
-    import: false
+    import: true
     asset_type: artifactregistry.googleapis.com/Repository
     content_type: RESOURCE
     derive_yaml_key_from: name
@@ -190,10 +190,16 @@ resource_types:
   google_compute_firewall:
     import_id: "projects/{project}/global/firewalls/{name}"
     description: Compute Engine firewall rule
-    import: false
+    import: true
     asset_type: compute.googleapis.com/Firewall
     content_type: RESOURCE
     derive_yaml_key_from: name
+    # the API's rule lists are the provider's allow/deny blocks
+    map:
+      allowed[].IPProtocol: allowed[].protocol
+      denied[].IPProtocol: denied[].protocol
+      allowed: allow
+      denied: deny
   google_compute_firewall_policy:
     description: Compute Engine firewall policy
     import: false
@@ -288,7 +294,7 @@ resource_types:
   google_compute_network:
     import_id: "projects/{project}/global/networks/{name}"
     description: Compute Engine VPC network
-    import: false
+    import: true
     asset_type: compute.googleapis.com/Network
     content_type: RESOURCE
     derive_yaml_key_from: name
@@ -440,7 +446,7 @@ resource_types:
   google_compute_subnetwork:
     import_id: "projects/{project}/regions/{region}/subnetworks/{name}"
     description: Compute Engine VPC subnet
-    import: false
+    import: true
     asset_type: compute.googleapis.com/Subnetwork
     content_type: RESOURCE
     derive_yaml_key_from: name
@@ -740,7 +746,7 @@ resource_types:
   google_logging_metric:
     import_id: "{project} {name}"
     description: Cloud Logging user-defined metric
-    import: false
+    import: true
     asset_type: logging.googleapis.com/LogMetric
     content_type: RESOURCE
     derive_yaml_key_from: name
@@ -936,7 +942,7 @@ resource_types:
   google_pubsub_topic:
     import_id: "projects/{project}/topics/{name}"
     description: Pub/Sub topic
-    import: false
+    import: true
     asset_type: pubsub.googleapis.com/Topic
     content_type: RESOURCE
     derive_yaml_key_from: name
@@ -961,7 +967,7 @@ resource_types:
   google_secret_manager_secret:
     import_id: "projects/{project}/secrets/{secret_id}"
     description: Secret Manager secret
-    import: false
+    import: true
     asset_type: secretmanager.googleapis.com/Secret
     content_type: RESOURCE
     derive_yaml_key_from: name
