@@ -791,6 +791,45 @@ pub fn interpolated(template: &str, params: &[&str]) -> serde_yaml::Value {
     }))
 }
 
+/// The Satz param name for an HCL identifier: `-` and `.` become `_`, the same
+/// normalisation every other printed reference gets.
+pub fn param_name(name: &str) -> String {
+    snake(name)
+}
+
+/// A value that prints as a **bare** param reference (`role_id = IAMRoleID`).
+/// Bare is not cosmetic: it preserves the param's TYPE, so a list or bool param
+/// can be referenced as one, which `"{name}"` could not do. Callers building
+/// documents for `convert_value` use this instead of writing the sentinel frame
+/// themselves.
+pub fn param_ref(name: &str) -> serde_yaml::Value {
+    serde_yaml::Value::String(format!("{}{}{}", REF_L, name, REF_R))
+}
+
+/// A value that prints as an interpolated Satz string, built from literal
+/// chunks and `param_ref`s in order.
+///
+/// Every part travels as an ARGUMENT and the template is nothing but `{}`
+/// placeholders. That is deliberate: `format_to_interpolation` escapes an
+/// argument with `esc` (total — it doubles `{` and `}`), while its template
+/// path reads `{{`, `}}` and `{}` as syntax. Text whose braces are not under
+/// the caller's control is therefore only safe in the argument position.
+pub fn interpolation(parts: Vec<serde_yaml::Value>) -> serde_yaml::Value {
+    let mut seq = vec![serde_yaml::Value::String("{}".repeat(parts.len()))];
+    seq.extend(parts);
+    serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue {
+        tag: serde_yaml::value::Tag::new("format"),
+        value: serde_yaml::Value::Sequence(seq),
+    }))
+}
+
+/// One value rendered as the text a `params` entry takes in `convert_value` —
+/// the printer's own renderer, at the indentation a param sits at, so callers
+/// never re-implement it.
+pub fn param_value(v: &serde_yaml::Value) -> Result<String, MigrateError> {
+    value_expr(v, 2)
+}
+
 /// Print an already-parsed document as Satz: the printer behind `convert`,
 /// for callers that hold plain data rather than dialect text — discovery
 /// hands it a `Config` with no anchors, tags or includes. `params` are
@@ -971,6 +1010,39 @@ mod tests {
         let s = convert(y, "pack", "t").unwrap();
         assert!(s.contains("d = \"line1\\nline2\\n\""), "{s}");
         assert!(s.contains("m = \"${{a.b.c}}\""), "{s}");
+    }
+
+    /// The three helpers `satz-hcl` builds its param references with. A bare ref
+    /// must stay bare (that is what preserves a list's type), and a literal
+    /// chunk must be escaped even when it contains the interpolation syntax —
+    /// which is exactly why the chunk travels as an argument, not a template.
+    #[test]
+    fn param_helpers_render_bare_refs_and_escape_literal_chunks() {
+        assert_eq!(param_name("a-b.c"), "a_b_c");
+
+        let mut top = serde_yaml::Mapping::new();
+        let mut inner = serde_yaml::Mapping::new();
+        inner.insert("bare".into(), param_ref("a-b"));
+        inner.insert(
+            "mixed".into(),
+            interpolation(vec![
+                serde_yaml::Value::String("x{y} ${z.w} ".to_string()),
+                param_ref("p"),
+            ]),
+        );
+        let mut t = serde_yaml::Mapping::new();
+        t.insert("i".into(), serde_yaml::Value::Mapping(inner));
+        top.insert("section".into(), serde_yaml::Value::Mapping(t));
+
+        let s = convert_value(&top, "pack", "t", &[], &[]).unwrap();
+        // bare: prints as an identifier, not a quoted "{a_b}"
+        assert!(s.contains("bare = a_b"), "{s}");
+        // the chunk's own braces are doubled, and the param becomes {p}
+        assert!(s.contains(r#"mixed = "x{{y}} ${{z.w}} {p}""#), "{s}");
+
+        // a list renders at a param's indentation
+        let list = serde_yaml::Value::Sequence(vec!["a".into(), "b".into()]);
+        assert_eq!(param_value(&list).unwrap(), "[\n    \"a\",\n    \"b\",\n  ]");
     }
 
     #[test]
