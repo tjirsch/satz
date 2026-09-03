@@ -667,6 +667,24 @@ satz require cis-gcp-4.0 C0example.satz
 #   ✗ 2.11 Storage IAM change alerts    — unmet. Provides: monitoring/organization-cis-log-alerts-central
 ```
 
+A catalog can also be a **cross-walk** over another one. `iso27001-2022` carries the 93
+Annex A controls and, for those a landing zone can evidence, the CIS controls that stand
+as that evidence; `require iso27001-2022` folds those verdicts rather than asking packs
+to claim a second framework:
+
+```bash
+satz require iso27001-2022 C0example.satz
+#   ✓ A.8.3  Information access restriction  — google_org_policy_policy.storage_publicAccessPrevention, …
+#   ◐ A.5.3  Segregation of duties           — open duties: role-matrix-reviewed
+#   ○ A.5.1  Policies for information security — organizational control (no IaC witness)
+#   ◇ A.7.1  Physical security perimeters    — inherited from the provider (shared responsibility)
+```
+
+The fold is pessimistic: every source satisfied and no duty open gives ✓, any deviation
+below surfaces as a deviation above with its reason, a broken claim stays broken, and
+anything else is partial. The ISO view is therefore only as good as the CIS coverage
+beneath it — which is the honest answer, and the same one an auditor reaches.
+
 Per control: **✓ satisfied** (an `implements` claim from an included pack, every witness
 emitted by the compiler — a resource written inside a raw `hcl { … }` block never counts), **◐ partial** (witnesses present but manual duties
 open, or only `contributes` claims), **⚠ deviation** (the estate deliberately does not
