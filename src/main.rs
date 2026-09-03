@@ -3970,9 +3970,28 @@ mod manifest_gate {
                 "{}: witness attr addresses",
                 name
             );
+            let got_refs = m.witness_refs();
             for (addr, legacy) in &legacy_attrs {
                 let got = &got_attrs[addr];
                 for (k, v) in legacy {
+                    // DELIBERATE divergence from the text scanner (R9): a value
+                    // that is nothing but one interpolation is a REFERENCE, so
+                    // the manifest files it under `refs`. The scanner could only
+                    // ever see text, and reading `${…}` as a literal is what made
+                    // adopt search live state for a string containing `${`.
+                    if v.starts_with("${") && v.ends_with('}') && !v[2..].contains("${") {
+                        let want = &v[2..v.len() - 1];
+                        assert_eq!(
+                            got_refs[addr].get(k).map(String::as_str),
+                            Some(want),
+                            "{}: {} {} should be a reference, not a literal",
+                            name,
+                            addr,
+                            k
+                        );
+                        assert!(got.get(k).is_none(), "{}: {} {} must not also be an attr", name, addr, k);
+                        continue;
+                    }
                     assert_eq!(got.get(k), Some(v), "{}: {} {}", name, addr, k);
                 }
                 for (k, v) in got {

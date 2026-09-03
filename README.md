@@ -318,6 +318,12 @@ google_org_policy_policy {
 ```
 
 **How it works:**
+- **References and adoption.** A value that is exactly one reference
+  (`project = "${{google_project.x.project_id}}"`) is recorded as a reference and
+  followed — `adopt` resolves through it, and a witness scoped by it verifies.
+  A reference *embedded* in a longer string is only known after apply; those are
+  reported as unresolvable, naming the reference, instead of being matched
+  against live state as literal text.
 - **`"import-id" = "<ID>"`**: Provide the full GCP resource ID. Honoured on every emitted resource; where the resource is an *entry* — a role in an IAM grant list, a service in `project_service`, a member of a group — write the entry as an object and put the id there (`{ role = "roles/x" "import-id" = "…" }`, `{ service = "…" "import-id" = "…" }`, `{ id = "user:…" "import-id" = "…" }`). See the language reference §6.7.
 - **`imports.tf` Generation**: The transpiler detects the `import-id` and generates a corresponding OpenTofu `import` block in `hcl/imports.tf`.
 - **Automatic Lifecycle**: `imports.tf` is automatically deleted before each `transpile` run and only recreated if `import-id` tags are found.

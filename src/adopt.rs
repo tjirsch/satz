@@ -289,6 +289,17 @@ fn value_of(
     resolved_ids: &BTreeMap<String, String>,
 ) -> Result<String, String> {
     if let Some(v) = r.attrs.get(key) {
+        // A value carrying an interpolation is not a literal: matching it
+        // against live state would search for the text `${…}` and silently
+        // find nothing. Say so instead (R9).
+        if crate::manifest::has_interpolation(v) {
+            return Err(format!(
+                "{}: `{}` = \"{}\" carries a reference that is only known after apply — it cannot be resolved before the resource exists",
+                r.address(),
+                key,
+                v
+            ));
+        }
         return Ok(v.clone());
     }
     let Some(traversal) = r.refs.get(key) else {
@@ -310,10 +321,17 @@ fn value_of(
             .cloned()
             .ok_or_else(|| format!("{} is not resolved yet ({} on it must be adopted or pinned first)", target, key));
     }
-    t.attrs
-        .get(&attr)
-        .cloned()
-        .ok_or_else(|| format!("{}: `{}` references {}.{}, which is not a literal", r.address(), key, target, attr))
+    match t.attrs.get(&attr) {
+        Some(v) if crate::manifest::has_interpolation(v) => Err(format!(
+            "{}: `{}` references {}.{}, which is itself a reference known only after apply",
+            r.address(),
+            key,
+            target,
+            attr
+        )),
+        Some(v) => Ok(v.clone()),
+        None => Err(format!("{}: `{}` references {}.{}, which is not a literal", r.address(), key, target, attr)),
+    }
 }
 
 /// A GCP-assigned id looked up through Cloud Asset Inventory: the assets of
@@ -1279,6 +1297,24 @@ import {
         assert!(!std::fs::read_to_string(&pack).unwrap().contains("import-id"), "a pristine pack is never edited");
         let _ = std::fs::remove_file(&tmp);
         let _ = std::fs::remove_dir_all(&presets);
+    }
+
+    #[test]
+    fn a_reference_resolves_through_its_target_and_an_embedded_one_says_it_cannot() {
+        let manifest = Manifest::parse(
+            "resource \"google_project\" \"mgmt\" {\n  project_id = \"acme-mdc-mgmt\"\n}\n\
+             resource \"google_storage_bucket\" \"b\" {\n  name = \"acme-audit\"\n  project = \"${google_project.mgmt.project_id}\"\n}\n\
+             resource \"google_service_account_iam_member\" \"a\" {\n  role = \"roles/iam.workloadIdentityUser\"\n  member = \"principalSet://iam.googleapis.com/projects/${google_project.mgmt.number}/locations/global/workloadIdentityPools/p/*\"\n}\n",
+        );
+        let ids = BTreeMap::new();
+        // whole-value reference: followed to the target's own attribute
+        let bucket = &manifest.resources["google_storage_bucket.b"];
+        assert_eq!(value_of(bucket, "project", &manifest, &ids).unwrap(), "acme-mdc-mgmt");
+        // embedded reference: not a literal, and not silently searched for
+        let grant = &manifest.resources["google_service_account_iam_member.a"];
+        let err = value_of(grant, "member", &manifest, &ids).unwrap_err();
+        assert!(err.contains("only known after apply"), "{}", err);
+        assert!(!err.contains("has no `member`"), "{}", err);
     }
 
     #[tokio::test]
