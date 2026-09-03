@@ -73,6 +73,16 @@ cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 grep -q '2 unmet' tmp/require.txt || fail "expected exactly the two uncovered catalog controls (2.12 DNS logging, 2.13 CAI) unmet:\n$(tail -3 tmp/require.txt)"
 
+step "remediation-plan: the dossier + workbook, offline and deterministic"
+rm -rf tmp/plan tmp/plan2
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan > tmp/plan.txt 2>&1 || fail "remediation-plan failed:\n$(cat tmp/plan.txt)"
+for f in dossier.json findings.csv findings.xlsx meta.json; do [ -s "tmp/plan/$f" ] || fail "remediation-plan: $f missing or empty"; done
+grep -q '"declared_address": "google_storage_bucket.state"' tmp/plan/dossier.json || fail "the bucket finding was not joined to its declaring block"
+grep -q '^\[AI\] Recommended fix' <(head -1 tmp/plan/findings.csv | tr ',' '\n') || fail "the CSV lacks the [AI] columns"
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan2 >/dev/null 2>&1
+h1=$(grep -o '"dossier_sha256": "[0-9a-f]*"' tmp/plan/meta.json); h2=$(grep -o '"dossier_sha256": "[0-9a-f]*"' tmp/plan2/meta.json)
+[ "$h1" = "$h2" ] || fail "the dossier is not deterministic: $h1 vs $h2"
+
 step "triage: Prowler FAILs sorted into buckets against the estate's claims"
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
 grep -q '^## B ·' tmp/triage.md || fail "no bucket headings"
