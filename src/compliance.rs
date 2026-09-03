@@ -762,7 +762,12 @@ fn expected_key(
 fn witness_project(w: &str, manifest: &Manifest) -> Option<String> {
     let r = manifest.resources.get(w)?;
     if let Some(p) = r.attrs.get("project") {
-        return Some(p.trim_start_matches("projects/").to_string());
+        // An interpolated project is not a project id; falling through to the
+        // reference is what resolves it (R9). Returning the raw `${…}` here
+        // sent it to projects.get, which fails the whole report.
+        if !crate::manifest::has_interpolation(p) {
+            return Some(p.trim_start_matches("projects/").to_string());
+        }
     }
     let traversal = r.refs.get("project")?;
     let target = traversal.strip_suffix(".project_id").or_else(|| traversal.strip_suffix(".id"))?;
@@ -1803,6 +1808,22 @@ mod witness_scope_tests {
         let keys = inventory_keys("//logging.googleapis.com/projects/100000000001/metrics/cis-2-5", &serde_json::Value::Null);
         assert_eq!(keys, vec!["projects/100000000001/metrics/cis-2-5".to_string()]);
         assert!(!keys.iter().any(|k| k == "cis-2-5"), "the bare name is not a key");
+    }
+
+    #[test]
+    fn a_witness_scoped_by_a_reference_resolves_through_it_not_through_its_text() {
+        // The shipped logsink pack writes `project = "${{google_project.x.project_id}}"`.
+        // Read as a literal, that text went to projects.get and failed the whole
+        // report; as a reference it resolves to the project's own id (R9).
+        let manifest = Manifest::parse(
+            "resource \"google_project\" \"logsink_project\" {\n  project_id = \"corp-log-infra-001\"\n}\n\
+             resource \"google_logging_metric\" \"m\" {\n  name = \"cis-2-5\"\n  project = \"${google_project.logsink_project.project_id}\"\n}\n",
+        );
+        let attrs = manifest.witness_attrs();
+        let mut numbers = BTreeMap::new();
+        numbers.insert("corp-log-infra-001".to_string(), "100000000001".to_string());
+        let key = expected_key("google_logging_metric.m", "name", WitnessScope::Project, &attrs, &manifest, "1", &numbers).unwrap();
+        assert_eq!(key, "projects/100000000001/metrics/cis-2-5");
     }
 
     #[test]

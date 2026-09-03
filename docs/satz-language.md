@@ -375,6 +375,16 @@ value = "${{google_project.x.project_id}}"   # a literal Terraform reference
 
 Rule of thumb: **`{x}` is Satz, `{{` is a brace you want to survive.**
 
+**A reference is understood, not just emitted.** When a value is *nothing but*
+one reference — `service_account_id = "${{google_service_account.onb.name}}"` —
+the emission manifest records it as a reference, so `satz adopt` follows it to
+the resource it names and `report-compliance` scopes a witness through it. When
+the reference is *embedded* in a longer string —
+`"principalSet://…/projects/${{google_project.mgmt.number}}/…"` — it is not a
+reference to a resource but a string that mentions one, and its value is only
+known after apply. Those are reported as unresolvable, naming the reference,
+rather than matched against live state as if the `${…}` text were literal.
+
 ### 6.2 File structure
 
 ```ebnf

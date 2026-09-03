@@ -116,6 +116,14 @@ impl Manifest {
         self.resources.iter().map(|(a, r)| (a.clone(), r.attrs.clone())).collect()
     }
 
+    /// Per address, the references it carries — placement traversals the walk
+    /// emitted and whole-value `${…}` references the author wrote. Read by the
+    /// gate that holds the manifest to what the old text scanners produced.
+    #[cfg(test)]
+    pub fn witness_refs(&self) -> BTreeMap<String, BTreeMap<String, String>> {
+        self.resources.iter().map(|(a, r)| (a.clone(), r.refs.clone())).collect()
+    }
+
     /// Per org-policy address, the single `enforce` it declares.
     pub fn declared_enforcement(&self) -> BTreeMap<String, bool> {
         self.resources
@@ -145,7 +153,14 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
     let mut attrs = BTreeMap::new();
     let mut refs = BTreeMap::new();
     for a in b.body().attributes() {
-        if let Some(v) = string_value(a.expr()) {
+        // A value that is NOTHING BUT one interpolation is a reference, the
+        // same as the bare traversal the walk emits for placement — it just
+        // reached HCL through a Satz `${{…}}`. Consumers follow `refs`; left in
+        // `attrs` it would be read as the literal text `${…}` and matched
+        // against live state, which never matches (R9).
+        if let Some(t) = whole_value_ref(a.expr()) {
+            refs.insert(a.key().to_string(), t);
+        } else if let Some(v) = string_value(a.expr()) {
             attrs.insert(a.key().to_string(), v);
         } else if let hcl::Expression::Traversal(_) = a.expr() {
             if let Ok(t) = hcl::format::to_string(a.expr()) {
@@ -177,6 +192,34 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         import_id: None,
         origin: None,
     })
+}
+
+/// True when a manifest value still carries an interpolation, i.e. it is not a
+/// literal and must not be matched against live state as one. An EMBEDDED
+/// reference (`"${google_folder.x.name}/policies/…"`) stays in `attrs` because
+/// consumers read a fixed part of it — but never the whole.
+pub(crate) fn has_interpolation(s: &str) -> bool {
+    s.contains("${")
+}
+
+/// The traversal of a value that is exactly one interpolation and nothing else
+/// (`"${google_project.x.project_id}"` -> `google_project.x.project_id`).
+/// Anything with literal text around it is not a reference to a resource, it is
+/// a string that mentions one.
+fn whole_value_ref(expr: &hcl::Expression) -> Option<String> {
+    let hcl::Expression::TemplateExpr(_) = expr else { return None };
+    let rendered = hcl::format::to_string(expr).ok()?;
+    let inner = rendered.trim().trim_matches('"');
+    let inner = inner.strip_prefix("${")?.strip_suffix('}')?.trim();
+    if inner.is_empty() || inner.contains("${") {
+        return None;
+    }
+    // a dotted path of identifiers - not a function call, index or operator
+    let shaped = inner.contains('.')
+        && !inner.starts_with('.')
+        && !inner.ends_with('.')
+        && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-');
+    shaped.then(|| inner.to_string())
 }
 
 /// A plain string, or a template string rendered back to its `${…}` text —
@@ -233,6 +276,57 @@ import {
         assert!(set.contains("google_logging_metric.cis_central_2_5_project_ownership"));
         assert!(set.contains("google_storage_bucket.org_audit_logs"));
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn a_whole_value_interpolation_is_a_reference_an_embedded_one_is_not() {
+        let m = Manifest::parse(
+            r#"
+resource "google_service_account_iam_member" "assignment" {
+  service_account_id = "${google_service_account.onboarding.name}"
+  role = "roles/iam.workloadIdentityUser"
+  member = "principalSet://iam.googleapis.com/projects/${google_project.mgmt.number}/locations/global/workloadIdentityPools/p/*"
+}
+
+resource "google_org_policy_policy" "under_a_folder" {
+  name = "${google_folder.workloads.name}/policies/compute.skipDefaultNetworkCreation"
+  parent = google_folder.workloads.name
+}
+"#,
+        );
+        let r = &m.resources["google_service_account_iam_member.assignment"];
+        // nothing but the interpolation: a reference the consumers can follow
+        assert_eq!(r.refs.get("service_account_id").map(String::as_str), Some("google_service_account.onboarding.name"));
+        assert!(!r.attrs.contains_key("service_account_id"), "a reference must not also be a literal");
+        // a plain literal stays a literal
+        assert_eq!(r.attrs.get("role").map(String::as_str), Some("roles/iam.workloadIdentityUser"));
+        // literal text around the interpolation: not a reference to a resource,
+        // a string that mentions one — it stays in attrs, and is flagged
+        let member = r.attrs.get("member").expect("an embedded reference stays an attr");
+        assert!(has_interpolation(member));
+        assert!(!r.refs.contains_key("member"));
+        // the org-policy name is the load-bearing embedded case: consumers read
+        // the part after /policies/, so it must not move
+        let policy = &m.resources["google_org_policy_policy.under_a_folder"];
+        assert!(policy.attrs.get("name").is_some_and(|n| n.ends_with("/policies/compute.skipDefaultNetworkCreation")));
+        assert_eq!(policy.refs.get("parent").map(String::as_str), Some("google_folder.workloads.name"));
+    }
+
+    #[test]
+    fn an_interpolation_that_is_not_a_plain_traversal_stays_an_attr() {
+        let m = Manifest::parse(
+            r#"
+resource "google_storage_bucket" "b" {
+  name = "${lower(var.x)}"
+  location = "${google_project.a.b[0]}"
+}
+"#,
+        );
+        let r = &m.resources["google_storage_bucket.b"];
+        for k in ["name", "location"] {
+            assert!(!r.refs.contains_key(k), "{} is not a resource reference", k);
+            assert!(r.attrs.contains_key(k), "{} must still be recorded", k);
+        }
     }
 
     #[test]
