@@ -52,6 +52,21 @@ pub(crate) struct Control {
     pub paraphrase: String,
     #[serde(default = "default_automatability")]
     pub automatability: String,
+    /// CROSS-WALK: the controls of another catalog whose verdicts stand as this
+    /// control's evidence, keyed `"<catalog>/<version>"`. A framework that is a
+    /// management standard rather than a configuration benchmark (ISO 27001 and
+    /// its Annex A) has no resources of its own — its evidence IS the benchmark
+    /// verdict. Folding here rather than claiming twice keeps one set of packs
+    /// and one set of witnesses: a pack claims the benchmark, and the standard
+    /// reads through it.
+    #[serde(default)]
+    pub evidence: BTreeMap<String, Vec<String>>,
+    /// Duties this control carries by its nature, independent of any pack — the
+    /// human half of a control whose technical half is evidenced above. Any
+    /// duty caps the verdict at partial: a review that must happen cannot be
+    /// discharged by configuration.
+    #[serde(default)]
+    pub duties: Vec<String>,
 }
 
 fn default_automatability() -> String {
@@ -107,6 +122,11 @@ pub(crate) enum Goal {
     Unmet { providers: Vec<String> },
     /// The catalog marks it organizational — no IaC witness possible.
     Organizational,
+    /// Not the estate's to satisfy: the provider's own certified controls under
+    /// the shared-responsibility model (physical security, cabling, equipment
+    /// disposal). Reported so the Statement of Applicability is complete, never
+    /// counted as a gap.
+    Inherited,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +152,10 @@ pub(crate) fn resolve_goals(
             goals.insert(id.clone(), Goal::Organizational);
             continue;
         }
+        if control.automatability == "inherited" {
+            goals.insert(id.clone(), Goal::Inherited);
+            continue;
+        }
 
         let relevant: Vec<&(String, Claim)> = library_claims
             .iter()
@@ -152,6 +176,20 @@ pub(crate) fn resolve_goals(
             .collect();
 
         if included.is_empty() {
+            // Duties named on the CONTROL hold with or without a pack: they are
+            // the control's own human half. A control that carries one is not
+            // "unmet", it is open — someone owes the work.
+            if !control.duties.is_empty() {
+                goals.insert(
+                    id.clone(),
+                    Goal::Partial {
+                        witnesses: Vec::new(),
+                        open_duties: control.duties.clone(),
+                        contributes_only: false,
+                    },
+                );
+                continue;
+            }
             let mut providers: Vec<String> =
                 relevant.iter().map(|(pack, _)| pack.clone()).collect();
             providers.sort();
@@ -204,7 +242,7 @@ pub(crate) fn resolve_goals(
 
         // A claim holds iff every declared witness is actually emitted.
         let mut witnesses = Vec::new();
-        let mut open_duties = Vec::new();
+        let mut open_duties = control.duties.clone();
         let mut has_implements = false;
         let mut broken: Option<(Vec<String>, String)> = None;
 
@@ -226,11 +264,19 @@ pub(crate) fn resolve_goals(
             }
         }
 
-        let goal = if witnesses.is_empty() {
+        let goal = if witnesses.is_empty() && open_duties.is_empty() {
             match broken {
                 Some((missing, pack)) => Goal::ClaimBroken { missing, pack },
                 None => Goal::Unmet { providers: Vec::new() },
             }
+        } else if witnesses.is_empty() {
+            // A DUTY-ONLY claim: the pack states what a human must do and
+            // declares no witness. That is a real statement about the control —
+            // reading it as "unmet" would erase it, and reading it as satisfied
+            // would credit configuration that does not exist.
+            open_duties.sort();
+            open_duties.dedup();
+            Goal::Partial { witnesses: Vec::new(), open_duties, contributes_only: !has_implements }
         } else if has_implements && open_duties.is_empty() {
             witnesses.sort();
             witnesses.dedup();
@@ -245,6 +291,128 @@ pub(crate) fn resolve_goals(
         goals.insert(id.clone(), goal);
     }
 
+    goals
+}
+
+/// The catalogs a cross-walk reads through, as `"<catalog>/<version>"`.
+pub(crate) fn cross_walk_sources(catalog: &Catalog) -> BTreeSet<String> {
+    catalog.controls.values().flat_map(|c| c.evidence.keys().cloned()).collect()
+}
+
+/// Fold a cross-walk: every control that names another catalog's controls as
+/// its evidence takes its verdict from THEIR verdicts.
+///
+/// The alternative — a second set of packs claiming the standard directly —
+/// would duplicate every witness under a second name and drift the moment one
+/// side is edited. Here the packs keep claiming the benchmark, and the standard
+/// reads through them.
+///
+/// The fold is deliberately pessimistic, in this order:
+///   a deviation on any source control    → the standard's control is a
+///                                          disclosed deviation too, with the
+///                                          reasons carried up;
+///   a broken claim on any source         → broken here as well;
+///   every source satisfied, no duties    → satisfied;
+///   any source satisfied or partial      → partial, carrying the duties;
+///   nothing                              → unmet.
+///
+/// A control whose evidence names controls this catalog's source does not have
+/// is unmet, not an error: a cross-walk may reference a benchmark section the
+/// estate's catalog version does not carry.
+pub(crate) fn fold_cross_walk(
+    catalog: &Catalog,
+    goals: &mut BTreeMap<String, Goal>,
+    source_goals: &BTreeMap<String, BTreeMap<String, Goal>>,
+) {
+    for (id, control) in &catalog.controls {
+        if control.evidence.is_empty() {
+            continue;
+        }
+        let mut witnesses: Vec<String> = Vec::new();
+        let mut open_duties: Vec<String> = control.duties.clone();
+        let mut reasons: Vec<(String, String)> = Vec::new();
+        let mut broken: Option<(Vec<String>, String)> = None;
+        let mut seen = 0usize;
+        let mut satisfied = 0usize;
+        let mut evidenced = 0usize;
+
+        for (source, ids) in &control.evidence {
+            let Some(from) = source_goals.get(source) else { continue };
+            for sid in ids {
+                let Some(goal) = from.get(sid) else { continue };
+                seen += 1;
+                match goal {
+                    Goal::Satisfied { witnesses: w } => {
+                        satisfied += 1;
+                        evidenced += 1;
+                        witnesses.extend(w.iter().cloned());
+                    }
+                    Goal::Partial { witnesses: w, open_duties: d, .. } => {
+                        evidenced += 1;
+                        witnesses.extend(w.iter().cloned());
+                        open_duties.extend(d.iter().cloned());
+                    }
+                    Goal::Deviation { reasons: r, witnesses: w, open_duties: d } => {
+                        witnesses.extend(w.iter().cloned());
+                        open_duties.extend(d.iter().cloned());
+                        reasons.extend(r.iter().cloned());
+                    }
+                    Goal::ClaimBroken { missing, pack } => {
+                        broken.get_or_insert_with(|| (missing.clone(), pack.clone()));
+                    }
+                    Goal::Unmet { .. } | Goal::Organizational | Goal::Inherited => {}
+                }
+            }
+        }
+
+        witnesses.sort();
+        witnesses.dedup();
+        open_duties.sort();
+        open_duties.dedup();
+
+        let folded = if !reasons.is_empty() {
+            Goal::Deviation { reasons, witnesses, open_duties }
+        } else if let Some((missing, pack)) = broken {
+            Goal::ClaimBroken { missing, pack }
+        } else if seen > 0 && satisfied == seen && open_duties.is_empty() {
+            Goal::Satisfied { witnesses }
+        } else if evidenced > 0 || !open_duties.is_empty() {
+            Goal::Partial { witnesses, open_duties, contributes_only: false }
+        } else {
+            Goal::Unmet { providers: Vec::new() }
+        };
+        goals.insert(id.clone(), folded);
+    }
+}
+
+/// `resolve_goals`, plus the cross-walk when the catalog declares one: each
+/// source catalog is loaded and resolved against the same claims, then folded.
+pub(crate) fn resolve_goals_cross_walked(
+    presets_dir: &str,
+    catalog: &Catalog,
+    library_claims: &[(String, Claim)],
+    included_claims: &[(String, Claim)],
+    emitted: &BTreeSet<String>,
+) -> BTreeMap<String, Goal> {
+    let mut goals = resolve_goals(catalog, library_claims, included_claims, emitted);
+    let sources = cross_walk_sources(catalog);
+    if sources.is_empty() {
+        return goals;
+    }
+    let mut source_goals: BTreeMap<String, BTreeMap<String, Goal>> = BTreeMap::new();
+    for key in sources {
+        // "cis-gcp/4.0" is the catalog file `cis-gcp-4.0.yaml`
+        let file = key.replace('/', "-");
+        match load_catalog(presets_dir, &file) {
+            Ok(src) => {
+                source_goals.insert(key, resolve_goals(&src, library_claims, included_claims, emitted));
+            }
+            Err(e) => {
+                eprintln!("warning: cross-walk source `{}` could not be read ({}) — the controls it evidences read as unmet", key, e);
+            }
+        }
+    }
+    fold_cross_walk(catalog, &mut goals, &source_goals);
     goals
 }
 
@@ -359,7 +527,7 @@ pub(crate) fn run_require(
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
+    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
 
     println!(
         "\nrequire {} {} — goal view for {}\n",
@@ -379,6 +547,10 @@ pub(crate) fn run_require(
                 part += 1;
                 let why = if *contributes_only {
                     "no implements claim included".to_string()
+                } else if open_duties.is_empty() {
+                    // a cross-walk fold can be partial with nothing open: some
+                    // of the evidence it reads through is itself partial
+                    "partial evidence".to_string()
                 } else {
                     format!("open duties: {}", open_duties.join(", "))
                 };
@@ -415,6 +587,9 @@ pub(crate) fn run_require(
             }
             Goal::Organizational => {
                 println!("  ○ {:5} {:45} — organizational control (no IaC witness)", id, title);
+            }
+            Goal::Inherited => {
+                println!("  ◇ {:5} {:45} — inherited from the provider (shared responsibility)", id, title);
             }
         }
     }
@@ -496,6 +671,154 @@ controls:
             g => panic!("expected Unmet with provider, got {:?}", g),
         }
         assert!(matches!(goals["9.9"], Goal::Organizational));
+    }
+
+    fn cross_walk_catalog() -> Catalog {
+        serde_yaml::from_str(
+            r#"
+catalog: iso27001
+version: "2022"
+controls:
+  "A.8.20":
+    title: "Networks security"
+    automatability: technical
+    evidence:
+      "cis-gcp/4.0": ["1.1", "9.9"]
+  "A.5.3":
+    title: "Segregation of duties"
+    automatability: partial
+    evidence:
+      "cis-gcp/4.0": ["1.1"]
+    duties: [role-matrix-reviewed]
+  "A.7.1":
+    title: "Physical security perimeters"
+    automatability: inherited
+  "A.8.24":
+    title: "Use of cryptography"
+    automatability: partial
+    duties: [key-management-policy]
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_cross_walk_folds_the_verdicts_of_the_catalog_it_reads_through() {
+        let iso = cross_walk_catalog();
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        // 7.x is the provider's, decided without consulting anything
+        assert!(matches!(goals["A.7.1"], Goal::Inherited));
+        // a duty on the control itself, with no evidence at all, is partial —
+        // it is a real statement, not an absence
+        assert!(matches!(goals["A.8.24"], Goal::Partial { .. }));
+
+        let mut source = BTreeMap::new();
+        source.insert(
+            "cis-gcp/4.0".to_string(),
+            BTreeMap::from([
+                ("1.1".to_string(), Goal::Satisfied { witnesses: vec!["google_org_policy_policy.a".into()] }),
+                ("9.9".to_string(), Goal::Satisfied { witnesses: vec!["google_org_policy_policy.b".into()] }),
+            ]),
+        );
+        fold_cross_walk(&iso, &mut goals, &source);
+        match &goals["A.8.20"] {
+            Goal::Satisfied { witnesses } => assert_eq!(witnesses.len(), 2, "both sources' witnesses carry up"),
+            other => panic!("every source satisfied should satisfy: {:?}", other),
+        }
+        // the catalog's own duty caps it at partial even with the evidence green
+        match &goals["A.5.3"] {
+            Goal::Partial { open_duties, witnesses, .. } => {
+                assert_eq!(open_duties, &vec!["role-matrix-reviewed".to_string()]);
+                assert_eq!(witnesses, &vec!["google_org_policy_policy.a".to_string()]);
+            }
+            other => panic!("a duty must cap the verdict: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn a_cross_walk_is_pessimistic_about_what_it_reads() {
+        let iso = cross_walk_catalog();
+
+        // one source unmet: partial, not satisfied
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let partial = BTreeMap::from([(
+            "cis-gcp/4.0".to_string(),
+            BTreeMap::from([
+                ("1.1".to_string(), Goal::Satisfied { witnesses: vec!["a".into()] }),
+                ("9.9".to_string(), Goal::Unmet { providers: vec![] }),
+            ]),
+        )]);
+        fold_cross_walk(&iso, &mut goals, &partial);
+        assert!(matches!(goals["A.8.20"], Goal::Partial { .. }), "{:?}", goals["A.8.20"]);
+
+        // a deviation below surfaces as a deviation above, with its reason
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let deviated = BTreeMap::from([(
+            "cis-gcp/4.0".to_string(),
+            BTreeMap::from([
+                ("1.1".to_string(), Goal::Satisfied { witnesses: vec!["a".into()] }),
+                (
+                    "9.9".to_string(),
+                    Goal::Deviation {
+                        reasons: vec![("pack".into(), "a service here needs it".into())],
+                        witnesses: vec![],
+                        open_duties: vec![],
+                    },
+                ),
+            ]),
+        )]);
+        fold_cross_walk(&iso, &mut goals, &deviated);
+        match &goals["A.8.20"] {
+            Goal::Deviation { reasons, .. } => assert_eq!(reasons[0].1, "a service here needs it"),
+            other => panic!("a deviation must carry up: {:?}", other),
+        }
+
+        // a broken claim below is broken above too
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let broken = BTreeMap::from([(
+            "cis-gcp/4.0".to_string(),
+            BTreeMap::from([(
+                "1.1".to_string(),
+                Goal::ClaimBroken { missing: vec!["google_org_policy_policy.gone".into()], pack: "p".into() },
+            )]),
+        )]);
+        fold_cross_walk(&iso, &mut goals, &broken);
+        assert!(matches!(goals["A.8.20"], Goal::ClaimBroken { .. }), "{:?}", goals["A.8.20"]);
+
+        // nothing to read through at all: unmet, not silently satisfied
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        fold_cross_walk(&iso, &mut goals, &BTreeMap::new());
+        assert!(matches!(goals["A.8.20"], Goal::Unmet { .. }), "{:?}", goals["A.8.20"]);
+    }
+
+    #[test]
+    fn a_duty_only_claim_is_a_duty_not_an_absence() {
+        // a pack that states what a human owes and declares no witness must not
+        // read as "unmet" — that would erase the statement
+        let claim = (
+            "duties-pack".to_string(),
+            Claim {
+                framework: "cis-gcp".into(),
+                framework_version: "4.0".into(),
+                control: "2.1".into(),
+                coverage: "contributes".into(),
+                resources: vec![],
+                interpretation: String::new(),
+                reason: String::new(),
+                manual_duties: vec![ManualDuty {
+                    id: "role-matrix-reviewed".into(),
+                    duty: "review the role matrix each quarter".into(),
+                }],
+            },
+        );
+        let goals = resolve_goals(&catalog(), std::slice::from_ref(&claim), std::slice::from_ref(&claim), &BTreeSet::new());
+        match &goals["2.1"] {
+            Goal::Partial { witnesses, open_duties, .. } => {
+                assert!(witnesses.is_empty());
+                assert_eq!(open_duties, &vec!["role-matrix-reviewed".to_string()]);
+            }
+            other => panic!("a duty-only claim is partial: {:?}", other),
+        }
     }
 
     /// The live side. Shape verified against the Org Policy API on a real org:
@@ -1017,7 +1340,7 @@ pub(crate) async fn run_report_compliance(
         .unwrap_or_default();
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
+    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
     let attrs = manifest.witness_attrs();
 
     // ---- live verification (degrades to Unverifiable, never fails the report) ----
@@ -1277,6 +1600,7 @@ pub(crate) async fn run_report_compliance(
                 "–".into(),
             ),
             Goal::Organizational => ("organizational".into(), "no IaC witness".into(), "–".into()),
+            Goal::Inherited => ("inherited".into(), "provider-certified".into(), "–".into()),
         };
         let witness_ids: Vec<String> = match goal {
             Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. } => witnesses
@@ -1516,7 +1840,7 @@ pub(crate) fn bucket_for(goal: Option<&Goal>, status: &str, has_resource: bool) 
         Some(Goal::Deviation { .. }) => Bucket::C,
         Some(Goal::Satisfied { .. }) | Some(Goal::Partial { .. }) | Some(Goal::ClaimBroken { .. }) => Bucket::B,
         Some(Goal::Unmet { providers }) if !providers.is_empty() => Bucket::A,
-        Some(Goal::Organizational) => Bucket::E,
+        Some(Goal::Organizational) | Some(Goal::Inherited) => Bucket::E,
         _ => {
             if has_resource {
                 Bucket::D
@@ -1640,7 +1964,7 @@ pub(crate) fn run_triage(
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
+    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
     let attrs = manifest.witness_attrs();
     let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
         .map_err(|e| format!("prowler json does not parse: {}", e))?;
@@ -1688,7 +2012,7 @@ pub(crate) fn run_remediation_dossier(
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals(&catalog, &library_claims, included_claims, &emitted);
+    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
     let attrs = manifest.witness_attrs();
     let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
         .map_err(|e| format!("prowler json does not parse: {}", e))?;

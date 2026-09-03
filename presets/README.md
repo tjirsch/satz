@@ -614,6 +614,20 @@ Compliance catalogs (`cis-gcp-4.0.yaml`, `cis-gcp-5.0.yaml`): control ids with t
 project's own paraphrases, read by `require` and `report-compliance`. YAML data, not
 packs.
 
+`iso27001-2022.yaml` is a **cross-walk**, not a second benchmark. ISO 27001 is a
+management-system standard: Annex A names no cloud resource, so a control that the
+estate can evidence points at the CIS controls that stand as its evidence
+(`evidence: { "cis-gcp/4.0": ["3.1", …] }`) and `require` folds their verdicts. Packs
+keep claiming CIS only — one set of witnesses, nothing to drift. Two fields exist for
+it: `evidence`, and `duties` named on the CONTROL (the human half a config cannot
+discharge, which caps the verdict at partial). `automatability: inherited` marks the
+provider's own controls under shared responsibility — all of Annex A 7.x — reported so
+the Statement of Applicability is complete, never counted as a gap.
+
+The view is exactly as good as the CIS coverage beneath it, deliberately: an estate
+claiming few CIS controls shows few ISO controls satisfied, which is what an auditor
+sees too.
+
 ## import-config.yaml
 
 Not a pack: the configuration `satz import` reads — an optional `root` (organization,

@@ -289,6 +289,7 @@ fn describe_goal(goal: Option<&Goal>) -> (String, Vec<String>, Vec<String>, Vec<
         ),
         Some(Goal::Unmet { providers }) => ("unmet".to_string(), providers.clone(), vec![], vec![]),
         Some(Goal::Organizational) => ("organizational — no IaC witness".to_string(), vec![], vec![], vec![]),
+        Some(Goal::Inherited) => ("inherited from the provider — shared responsibility".to_string(), vec![], vec![], vec![]),
         None => ("not in the goal view".to_string(), vec![], vec![], vec![]),
     }
 }
@@ -485,8 +486,8 @@ mod tests {
 
     fn catalog() -> Catalog {
         let mut controls = BTreeMap::new();
-        controls.insert("5.1".to_string(), Control { title: "Buckets not public".into(), paraphrase: "Public access prevention enforced.".into(), automatability: "technical".into() });
-        controls.insert("2.11".to_string(), Control { title: "SQL change alerts".into(), paraphrase: "Alert on SQL config changes.".into(), automatability: "technical".into() });
+        controls.insert("5.1".to_string(), Control { title: "Buckets not public".into(), paraphrase: "Public access prevention enforced.".into(), automatability: "technical".into(), evidence: Default::default(), duties: Vec::new() });
+        controls.insert("2.11".to_string(), Control { title: "SQL change alerts".into(), paraphrase: "Alert on SQL config changes.".into(), automatability: "technical".into(), evidence: Default::default(), duties: Vec::new() });
         Catalog { catalog: "cis-gcp".into(), version: "4.0".into(), controls }
     }
 

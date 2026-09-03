@@ -48,7 +48,7 @@ than the README suggests.
 | surface | state |
 |---|---|
 | `report-compliance --prowler <file>` | reads Prowler's **legacy native JSON** only: top-level `status` and `compliance`. Prowler ≥ 4 emits OCSF, where those are `status_code` and `unmapped.compliance` — the parser finds nothing and, by its own "corroboration must never fail the report" contract, silently yields `–` in every row. Counts PASS/FAIL per CIS id; reads no severity, resource, title or remediation. No test covers it. |
-| catalogs (`presets/catalogs/*.yaml`) | three keys per control — `title`, `paraphrase`, `automatability`. No Prowler check id, no cross-framework column. `cis-gcp-5.0` is a provisional §2 subset. No second framework anywhere in the repo. |
+| catalogs (`presets/catalogs/*.yaml`) | `title`, `paraphrase`, `automatability`, and — since the ISO cross-walk — `evidence` (another catalog's controls that stand as this one's evidence) and `duties` (the control's own human half). No Prowler check id. `cis-gcp-5.0` is a provisional §2 subset. `iso27001-2022` is the second framework, and it is a cross-walk rather than a second set of claims. |
 | `require` | text only, no JSON. Its "Provides: `<pack>`" hint comes from indexing every claim in the preset library by control id — a real control→pack map, but pack-name only. |
 | claims at the compliance boundary | `claims_from_frontend` drops pack **version, file and line**; `interpretation` and duty text are parsed but never rendered. |
 | `evidence/<framework>-<ts>.json` | one row per control; `witnesses`, `duties`, `prowler` are **pre-rendered markdown strings**, not structured data. |

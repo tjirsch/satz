@@ -85,6 +85,19 @@ cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 grep -q '2 unmet' tmp/require.txt || fail "expected exactly the two uncovered catalog controls (2.12 DNS logging, 2.13 CAI) unmet:\n$(tail -3 tmp/require.txt)"
 
+step "require iso27001-2022 (cross-walk: ISO verdicts folded from the CIS ones)"
+"$satz" --config . require iso27001-2022 smoke.satz > tmp/require-iso.txt 2>&1 || true
+grep -q 'satisfied' tmp/require-iso.txt || fail "require printed no verdict line:\n$(cat tmp/require-iso.txt)"
+# the fold reaches through: an ISO control with no claim of its own is satisfied
+# by the CIS witnesses its evidence names
+grep -qE '✓ A\.8\.3 .*google_org_policy_policy' tmp/require-iso.txt || fail "A.8.3 was not satisfied through its CIS evidence:\n$(grep 'A.8.3' tmp/require-iso.txt)"
+# a duty named on the control caps it at partial even with the evidence green
+grep -q '◐ A.5.3 .*role-matrix-reviewed' tmp/require-iso.txt || fail "a control duty did not cap the verdict:\n$(grep 'A.5.3' tmp/require-iso.txt)"
+# 7.x is the provider's under shared responsibility, and never a gap
+grep -q '◇ A.7.1 .*inherited from the provider' tmp/require-iso.txt || fail "physical controls must read as inherited"
+[ "$(grep -c '◇' tmp/require-iso.txt)" = 14 ] || fail "all fourteen 7.x controls should be inherited"
+[ "$(grep -cE '^  [✓◐○◇✗⚠]' tmp/require-iso.txt)" = 93 ] || fail "Annex A has 93 controls; the Statement of Applicability must list every one"
+
 step "remediation-plan: the dossier + workbook, offline and deterministic"
 rm -rf tmp/plan tmp/plan2
 "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan > tmp/plan.txt 2>&1 || fail "remediation-plan failed:\n$(cat tmp/plan.txt)"
