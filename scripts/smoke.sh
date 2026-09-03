@@ -85,6 +85,20 @@ cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 grep -q '2 unmet' tmp/require.txt || fail "expected exactly the two uncovered catalog controls (2.12 DNS logging, 2.13 CAI) unmet:\n$(tail -3 tmp/require.txt)"
 
+step "require cis-gcp-5.0: the same pack answers both benchmark versions"
+"$satz" --config . require cis-gcp-5.0 smoke.satz > tmp/require-50.txt 2>&1 || true
+grep -q 'satisfied' tmp/require-50.txt || fail "require printed no verdict line:\n$(cat tmp/require-50.txt)"
+grep -q '0 broken claim' tmp/require-50.txt || fail "a 5.0 claim names a witness the estate does not emit:\n$(grep -i broken tmp/require-50.txt)"
+# the renumbered controls resolve against the SAME resources as their 4.0 twins
+grep -qE '✓ 1.5 .*iam_managed_disableServiceAccountKeyCreation' tmp/require-50.txt || fail "4.0 1.4 -> 5.0 1.5 did not carry over:\n$(grep ' 1.5 ' tmp/require-50.txt)"
+grep -qE '✓ 1.6 .*preventPrivilegedBasicRoles' tmp/require-50.txt || fail "4.0 1.5 -> 5.0 1.6 did not carry over"
+grep -qE '✓ 3.10 .*compute_requireVpcFlowLogs' tmp/require-50.txt || fail "4.0 3.8 -> 5.0 3.10 did not carry over"
+# 1.2 keeps the 4.0 claim's duties, so it is partial rather than satisfied — the
+# point is that it resolves at all, against the same policy
+grep -qE '◐ 1.2 .*legacy-superseded' tmp/require-50.txt || fail "4.0 1.1 -> 5.0 1.2 did not carry over with its duties"
+# 1.1.4 asks whether the org constrains its projects centrally: the whole baseline is the witness
+grep -qE '◐ 1.1.4 .*review-baseline' tmp/require-50.txt || fail "the 5.0 §1.1.4 baseline claim is missing:\n$(grep '1.1.4' tmp/require-50.txt)"
+
 step "require iso27001-2022 (cross-walk: ISO verdicts folded from the CIS ones)"
 "$satz" --config . require iso27001-2022 smoke.satz > tmp/require-iso.txt 2>&1 || true
 grep -q 'satisfied' tmp/require-iso.txt || fail "require printed no verdict line:\n$(cat tmp/require-iso.txt)"

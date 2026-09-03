@@ -8,6 +8,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.3 | 2026-09-03 | claims the SAME resources against CIS 5.0 as well as 4.0 — no second pack, because 5.0's org-policy content is identical and only renumbered (1.1→1.2, 1.4→1.5, 1.5→1.6, 1.16→1.17, 3.8→3.10; §2, §4, §5 unchanged). Plus a new `5.0 1.1.4 implements` over the whole baseline: the control asks whether the organisation constrains its projects centrally, which is what the pack is |
 | `integrations.microsoft_defender_for_cloud` | 0.1 | 2026-09-03 | first cut — the foundation of Microsoft's GCP onboarding as Satz: management project + its API set, the workload identity pool, the auto-provisioner plan and its custom role. Transcribed from a customer's generated wizard Terraform; Microsoft's own tenant, application-id audiences, provider ids and role ids are inlined constants, the customer's Entra tenant and the management project id are params |
 | `integrations.microsoft_defender_for_cloud_cspm` | 0.1 | 2026-09-03 | first cut — the CSPM plan behind `mdc_plan_cspm`: its service account, OIDC provider, workload-identity assignment and org grants. The custom role is not here: it depends on the access mode |
 | `integrations.microsoft_defender_for_cloud_cspm_role_default` | 0.1 | 2026-09-03 | first cut — the CSPM custom role in DEFAULT access mode: five permissions beside the `roles/viewer` the plan grants |
