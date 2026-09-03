@@ -4,17 +4,27 @@
 # that the COMMANDS still run, which the unit tests (engines only) never did:
 # two regressions shipped with a green test suite before this existed.
 #
-#   scripts/smoke.sh            # uses target/release/satz, builds it if missing
-#   SATZ=path/to/satz scripts/smoke.sh
+#   scripts/smoke.sh            # builds target/release/satz, then runs it
+#   SATZ=path/to/satz scripts/smoke.sh   # …or run a binary you built yourself
 #
 # `tofu` is optional: with it on PATH the transpiled HCL is also `tofu validate`d
 # (the provider is downloaded once; no state, no cloud).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-satz="${SATZ:-$root/target/release/satz}"
-if [ ! -x "$satz" ]; then
-  (cd "$root" && cargo build --release --quiet)
+# Build unconditionally. Building only when the binary was MISSING made this a
+# false-verdict generator on every local run after a pull, a merge or an edit:
+# the leftover binary from a previous run answered instead of the working tree,
+# so a merged fix could read as a regression and — the dangerous direction — a
+# broken tree could go green before a push. cargo is a no-op on a warm tree, so
+# being unconditional costs nothing. An explicit SATZ means the caller built it
+# and owns whether it is current; that path is never rebuilt.
+if [ -n "${SATZ:-}" ]; then
+  satz="$SATZ"
+  [ -x "$satz" ] || { printf 'SATZ=%s is not an executable\n' "$satz" >&2; exit 1; }
+else
+  satz="$root/target/release/satz"
+  (cd "$root" && cargo build --release --quiet --locked)
 fi
 # no GitHub update check per invocation (CI runners share the unauthenticated quota)
 if [ ! -f "$HOME/.config/satz/satz.toml" ]; then
