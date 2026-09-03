@@ -1,0 +1,73 @@
+// Corpus case: the member-map grant form for types whose scope is neither the
+// organisation nor the folder/project they are written in. The same member and
+// the same role appear in three scopes here — the scope namespaces the address
+// and enters the emitted label, so they are three resources, not one.
+// Snapshot-gated.
+
+estate corpus_grant_scopes
+
+params {
+  customer_organization_id = "123456789"
+  billing_account_infra    = "01AA-BB-CC"
+  audit_bucket             = "acme-organization-audit-bucket"
+  log_bucket               = "acme-log-001"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+// two buckets, one member, one role
+google_storage_bucket_iam_member {
+  bucket = audit_bucket
+  "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
+}
+
+google_storage_bucket_iam_member {
+  "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
+  bucket = log_bucket
+}
+
+// a service-account-scoped grant: the scope is a reference to the account the
+// estate declares, so the dependency edge orders the two
+google_service_account {
+  onboarding {
+    account_id   = "acme-onboarding-sa"
+    display_name = "Onboarding"
+  }
+}
+
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.onboarding.name}}"
+  "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
+  "serviceAccount:acme-onboarding-sa@acme-infra-001.iam.gserviceaccount.com" = [
+    "roles/iam.workloadIdentityUser",
+  ]
+}
+
+// the hierarchy forms are untouched: scope from the estate, from the node, and
+// the billing account's own estate-wide pin
+google_organization_iam_member {
+  "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
+}
+
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
+}
+
+google_folder {
+  workloads {
+    display_name = "Workloads"
+    google_project {
+      infra {
+        project_id = "acme-infra-001"
+        google_project_iam_member {
+          "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
+        }
+      }
+    }
+  }
+}

@@ -11,6 +11,7 @@ pub(crate) fn iam_member_label(
     member: &str,
     role: &str,
     condition: Option<&serde_yaml::Value>,
+    scope: &str,
 ) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -19,6 +20,13 @@ pub(crate) fn iam_member_label(
     role.hash(&mut hasher);
     if let Some(cv) = condition {
         format!("{:?}", cv).hash(&mut hasher);
+    }
+    // Only an explicitly pinned scope enters the hash. Grants scoped by the
+    // organisation or by their structural node pass "" and keep the label they
+    // have always had: it is the Terraform resource name, and renaming an IAM
+    // binding is a destroy-and-create on every estate.
+    if !scope.is_empty() {
+        scope.hash(&mut hasher);
     }
     // Strip interpolation syntax from the label: "${google_project.x.number}"
     // would otherwise leak braces and dollars into the resource name.
@@ -43,7 +51,7 @@ pub(crate) fn iam_member_block(
     let mut rb = hcl::Block::builder("resource")
         .add_label(resource_type)
         .add_label(label)
-        .add_attribute(("role", role.to_owned()))
+        .add_attribute(("role", string_to_hcl_expr(role)))
         .add_attribute(("member", member_expr))
         .add_attribute((id_attribute, parent_expr));
     if let Some(cond) = condition_block {

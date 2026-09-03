@@ -1,0 +1,64 @@
+  account_id = "acme-onboarding-sa"
+  billing_account = "01AA-BB-CC"
+  billing_account_id = "01AA-BB-CC"
+  bucket = "acme-log-001"
+  bucket = "acme-organization-audit-bucket"
+  display_name = "Onboarding"
+  display_name = "Workloads"
+  folder_id = google_folder.workloads.name
+  member = "group:gcp-auditors@example.com"
+  member = "group:gcp-auditors@example.com"
+  member = "group:gcp-auditors@example.com"
+  member = "group:gcp-auditors@example.com"
+  member = "group:gcp-auditors@example.com"
+  member = "group:gcp-auditors@example.com"
+  member = "serviceAccount:acme-onboarding-sa@acme-infra-001.iam.gserviceaccount.com"
+  name = "acme-infra-001"
+  org_id = "123456789"
+  parent = "organizations/123456789"
+  project = google_project.infra.project_id
+  project_id = "acme-infra-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.project_infra
+  role = "roles/iam.workloadIdentityUser"
+  role = "roles/storage.objectViewer"
+  role = "roles/storage.objectViewer"
+  role = "roles/storage.objectViewer"
+  role = "roles/storage.objectViewer"
+  role = "roles/storage.objectViewer"
+  role = "roles/storage.objectViewer"
+  service_account_id = "${google_service_account.onboarding.name}"
+  service_account_id = "${google_service_account.onboarding.name}"
+resource "google_billing_account_iam_member" "iam_group_gcp_auditors_example_com_1442ba87cc2088ea" {
+resource "google_folder" "workloads" {
+resource "google_organization_iam_member" "iam_group_gcp_auditors_example_com_1442ba87cc2088ea" {
+resource "google_project" "infra" {
+resource "google_project_iam_member" "iam_group_gcp_auditors_example_com_1442ba87cc2088ea" {
+resource "google_service_account" "onboarding" {
+resource "google_service_account_iam_member" "iam_group_gcp_auditors_example_com_af2aa835a433dc41" {
+resource "google_service_account_iam_member" "iam_serviceAccount_acme_onboarding_sa_acme_infra_001_iam_gserviceaccount_com_1409df582f036e4b" {
+resource "google_storage_bucket_iam_member" "iam_group_gcp_auditors_example_com_59bb2ed504373b44" {
+resource "google_storage_bucket_iam_member" "iam_group_gcp_auditors_example_com_a77dd85c073ddb71" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+audit-bucket = "acme-organization-audit-bucket"
+billing-account-infra = "01AA-BB-CC"
+customer-organization-id = "123456789"
+log-bucket = "acme-log-001"

@@ -4096,7 +4096,7 @@ google_cloud_identity_group {
         let reg = super::corpus::registry();
         let b = pipeline_b(&reg);
 
-        let binding = crate::emit_shared::iam_member_label("group:gcp-org-admins@example.com", "roles/browser", None);
+        let binding = crate::emit_shared::iam_member_label("group:gcp-org-admins@example.com", "roles/browser", None, "");
         let membership = crate::emit_shared::membership_resource_label("gcp_auditors", "user:b@example.com");
         for (to, id) in [
             (format!("google_organization_iam_member.{}", binding), "123456789012 roles/browser group:gcp-org-admins@example.com"),

@@ -37,6 +37,34 @@ fn last_with_prefix<'a>(path: &'a [String], prefix: &str) -> Option<&'a str> {
     path.iter().rev().find_map(|e| e.strip_prefix(prefix))
 }
 
+/// An address prefix that is a scope pin (`<attr>=<value>`) rather than a
+/// structural path. The attribute is a Terraform identifier, so the split is
+/// unambiguous: a folder or project label never looks like one.
+fn scope_pin_of(prefix: &str) -> Option<(String, String)> {
+    let (attr, value) = prefix.split_once('=')?;
+    if attr.is_empty() || value.is_empty() {
+        return None;
+    }
+    let ident = attr.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && attr.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    ident.then(|| (attr.to_string(), value.to_string()))
+}
+
+/// The attributes of an `*_iam_member` type that could name its scope —
+/// everything but the three every such type carries. Used to make a mistyped
+/// scope attribute a compile error that names the alternatives.
+fn scope_attr_candidates(schema: &crate::schema::ResourceSchema) -> Vec<String> {
+    let mut v: Vec<String> = schema
+        .block
+        .attributes
+        .keys()
+        .filter(|k| !matches!(k.as_str(), "role" | "member" | "id" | "etag" | "condition"))
+        .cloned()
+        .collect();
+    v.sort();
+    v
+}
+
 /// The provider alias the walk would hand a resource at this position:
 /// per-project alias inside a project, the root alias everywhere else.
 fn alias_for(path: &[String]) -> String {
@@ -254,7 +282,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             ("google_organization_iam_member", Body::Grant(edges)) => {
                 for e in reconciled_edges(edges)? {
                     let cond = edge_condition(&e);
-                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref());
+                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
                         "google_organization_iam_member",
@@ -288,7 +316,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 let billing_id = pinned.as_deref().unwrap_or(fallback);
                 for e in reconciled_edges(edges)? {
                     let cond = edge_condition(&e);
-                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref());
+                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
                         "google_billing_account_iam_member",
@@ -308,13 +336,31 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             // Node-scoped grant maps (project_iam_member inside a project, …):
             // the label carries the structural path before the separator.
             (t, Body::Grant(edges)) => {
-                let grant_path: Vec<String> = match addr.label.split_once(GRANT_SCOPE_SEP) {
-                    Some((p, _)) => p.split('/').map(|s| s.to_string()).collect(),
-                    None => path.clone(),
+                // The address prefix is either an explicit scope pin
+                // (`service_account_id=projects/p/serviceAccounts/x@y`) or the
+                // structural path the grant was written in.
+                let prefix = addr.label.split_once(GRANT_SCOPE_SEP).map(|(p, _)| p);
+                let pin = prefix.and_then(scope_pin_of);
+                let grant_path: Vec<String> = match (&pin, prefix) {
+                    (Some(_), _) => path.clone(),
+                    (None, Some(p)) => p.split('/').map(|s| s.to_string()).collect(),
+                    (None, None) => path.clone(),
                 };
                 let rc = res_ctx(&grant_path, ctx, folded);
                 let galias = alias_for(&grant_path);
-                let (id_attr, parent) = if t.contains("project") {
+                let (id_attr, parent) = if let Some((attr, value)) = &pin {
+                    if let Some(schema) = ctx.registry.and_then(|r| r.find_resource(t)).map(|(_, s)| s) {
+                        if !schema.block.attributes.contains_key(attr.as_str()) {
+                            return Err(format!(
+                                "{}: `{}` is not an attribute of this type — its scope attribute is one of: {}",
+                                t,
+                                attr,
+                                scope_attr_candidates(schema).join(", ")
+                            ));
+                        }
+                    }
+                    (attr.as_str(), Some(value.clone()))
+                } else if t.contains("project") {
                     ("project", rc.project_ref.clone().or(rc.project_id.clone()))
                 } else if t.contains("folder") {
                     ("folder", rc.folder_ref.clone().or(rc.folder_id.clone()))
@@ -323,15 +369,16 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     // to inherit from the node path; the map form used to emit
                     // an `id = ""` block that could never plan
                     return Err(format!(
-                        "{}: the member map form (`\"member\" = [roles…]`) only works for project- and folder-scoped grants; \
-                         write `{}` as a labelled resource with its scope attribute (`bucket = …`, `service_account_id = …`)",
+                        "{}: the member map form (`\"member\" = [roles…]`) needs the scope written in the map for this type; \
+                         add its scope attribute beside the members (`bucket = …`, `service_account_id = …`), or write `{}` as a labelled resource",
                         t, t
                     ));
                 };
+                let scope_key = pin.as_ref().map(|(_, v)| v.as_str()).unwrap_or("");
                 let parent_expr = crate::emit_shared::parse_expr(parent.as_deref().unwrap_or(""));
                 for e in reconciled_edges(edges)? {
                     let cond = edge_condition(&e);
-                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref());
+                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), scope_key);
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
                         t,
@@ -386,6 +433,21 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 if let Some(a) = block_address(b) {
                     origins.push((a, span.file.clone(), span.line));
                 }
+            }
+        }
+    }
+
+    // Two blocks with one Terraform address is invalid HCL, and the IAM member
+    // label is a hash of member+role+condition — distinct scopes that grant the
+    // same pair would otherwise collide silently.
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for b in &blocks {
+        if let Some(a) = block_address(b) {
+            if !seen.insert(a.clone()) {
+                return Err(format!(
+                    "two resources emit the same address `{}` — one would silently overwrite the other in main.tf",
+                    a
+                ));
             }
         }
     }
