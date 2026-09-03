@@ -1,0 +1,30 @@
+// Corpus case: the Microsoft Defender for Cloud integration pack, wired the way
+// an estate wires it — foundation + the CSPM plan + one access mode. Proves the
+// four fragments compose, that the plan fragment reaches the foundation's
+// project without nesting into it, and that the references (the project number
+// in the principal set, the pool id, the service account names) emit as
+// references. Snapshot-gated.
+
+estate corpus_defender_preset
+
+params {
+  customer_organization_id = "123456789"
+  billing_account_infra    = "01AA-BB-CC"
+
+  mdc_workload_pool_id = "acmetenantpoolexample0000000001"
+  mdc_mgmt_project_id  = "acme-mdc-mgmt"
+
+  mdc_plan_cspm           = true
+  mdc_cspm_default_access = true
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/integrations/microsoft-defender-for-cloud.satz"
+use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
+use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
+use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz" when mdc_cspm_least_privilege

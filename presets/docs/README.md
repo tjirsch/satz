@@ -8,6 +8,10 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`; the 
 | [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.2 | `CIS-GCP-Foundation-4.0.satz` | 18 | 13 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | `billing-account-permissions.satz` | 4 | 0 |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.2 | `essential-contacts-organization.satz` | 1 | 0 |
+| [`integrations.microsoft_defender_for_cloud_cspm_role_default`](microsoft-defender-for-cloud-cspm-role-default.md) | 0.1 | `integrations/microsoft-defender-for-cloud-cspm-role-default.satz` | 1 | 0 |
+| [`integrations.microsoft_defender_for_cloud_cspm_role_least_privilege`](microsoft-defender-for-cloud-cspm-role-least-privilege.md) | 0.1 | `integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz` | 1 | 0 |
+| [`integrations.microsoft_defender_for_cloud_cspm`](microsoft-defender-for-cloud-cspm.md) | 0.1 | `integrations/microsoft-defender-for-cloud-cspm.satz` | 5 | 0 |
+| [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.1 | `integrations/microsoft-defender-for-cloud.satz` | 6 | 0 |
 | [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.2 | `monitoring/organization-audit-logsink.satz` | 5 | 6 |
 | [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.3 | `monitoring/organization-cis-log-alerts-central.satz` | 20 | 18 |
 | [`project_cis_log_alerts`](project-cis-log-alerts.md) | 1.0 | `monitoring/project-cis-log-alerts.satz` | 17 | 0 |

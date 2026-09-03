@@ -538,6 +538,50 @@ each category — `BILLING`, `SUSPENSION`, `SECURITY`, `TECHNICAL`, `LEGAL`,
 distinct address, and narrow or delete the `all` contact: one address may
 appear once per parent, and an address on ALL already receives everything.
 
+## integrations/microsoft-defender-for-cloud*.satz
+
+Microsoft Defender for Cloud's GCP onboarding: workload identity federation, so no
+service-account keys leave the estate. Four files — the foundation plus one fragment per
+licensed plan and per access mode — because a fragment cannot add to another fragment's
+project (two definitions of one project is a fold conflict, and lists replace rather than
+concatenate). The foundation owns the management project and its complete API set; each
+plan declares its own resources at top level, naming the project through a param.
+
+**Use** (root level):
+
+```
+use "presets/integrations/microsoft-defender-for-cloud.satz"
+use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
+use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
+```
+
+**Required from the estate:** `customer_organization_id`. The management project takes
+`billing_account_infra` unless the estate sets `billing_account` on it.
+
+**Params:** `mdc_workload_pool_id` (the customer's Entra tenant id without dashes — that is
+what Microsoft's wizard uses as the pool id), `mdc_mgmt_project_id`, `mdc_plan_cspm`, and
+the access-mode pair `mdc_cspm_default_access` / `mdc_cspm_least_privilege`. Everything
+Microsoft-side — their tenant as the OIDC issuer, the per-plan `api://` audiences, the
+provider ids, the custom role ids, the API list — is an inlined constant: identical for
+every customer, and not a knob.
+
+**No claim.** Defender for Cloud is an external CSPM that reads the estate. It implements
+no CIS control and contributes to none, so the pack asserts nothing.
+
+**Two prerequisites before the first apply.** The Defender agentless-scanning service
+account lives in a Microsoft project, so it must be in `allowed_policy_member_subjects`
+BEFORE any grant to it is applied — the constraints AND together and an incomplete list
+refuses the grant. And a deny-all on `iam.workloadIdentityPoolProviders` blocks the
+providers: the estate must allow the `sts.windows.net/<microsoft tenant>` issuer or
+document the exception.
+
+**Coverage.** Only the two plans a real generated script has been read from are here:
+auto-provisioner (always created, in the foundation) and CSPM. The other plan ids Microsoft
+issues — `ciem-discovery`, `containers`, `containers-streams`,
+`data-security-posture-storage`, `defender-for-databases-arc-ap`, `defender-for-servers` —
+each need their own `api://` audience, service account and role set from that customer's
+script. They cannot be guessed, so they are not shipped.
+
 ## A big resource is a pack
 
 A resource with a long literal (a custom role with 1,400 permissions, an

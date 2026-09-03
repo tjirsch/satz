@@ -1,0 +1,60 @@
+// Microsoft Defender for Cloud — the CSPM plan.
+//
+// Used beside the foundation pack, gated on the licence:
+//   use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
+//
+// The custom role this plan grants is NOT here: it depends on the access mode,
+// so it lives in its own fragment (`-cspm-role-default` or
+// `-cspm-role-least-privilege`) and exactly one of those is used. This file is
+// the part that is the same either way.
+//
+// Everything is declared at top level with an explicit project, because a
+// fragment cannot nest into the project the foundation pack defines.
+
+pack integrations.microsoft_defender_for_cloud_cspm version "0.1"
+
+google_service_account {
+  mdc_cspm {
+    account_id   = "microsoft-defender-cspm"
+    display_name = "Microsoft Defender CSPM"
+    project      = mdc_mgmt_project_id
+  }
+}
+
+// `roles/viewer` is what makes the DEFAULT access mode's five-permission role
+// enough. Under least privilege the 82-permission role replaces what viewer
+// gave, and this grant should be removed with a `suppress` in the estate —
+// Microsoft's own generated script grants viewer in both modes, so the pack
+// follows the script rather than silently diverging from it.
+google_organization_iam_member {
+  "serviceAccount:microsoft-defender-cspm@{mdc_mgmt_project_id}.iam.gserviceaccount.com" = [
+    "roles/viewer",
+    "organizations/{customer_organization_id}/roles/MDCCspmCustomRole",
+  ]
+}
+
+// The CSPM service account is impersonated through the same pool.
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.mdc_cspm.name}}"
+  "principalSet://iam.googleapis.com/projects/${{google_project.mdc_mgmt.number}}/locations/global/workloadIdentityPools/{mdc_workload_pool_id}/*" = [
+    "roles/iam.workloadIdentityUser",
+  ]
+}
+
+// The CSPM OIDC provider: its own Microsoft application id as the audience,
+// the same Microsoft tenant as the issuer.
+google_iam_workload_identity_pool_provider {
+  mdc_cspm {
+    project                            = mdc_mgmt_project_id
+    workload_identity_pool_id          = "${{google_iam_workload_identity_pool.mdc_pool.workload_identity_pool_id}}"
+    workload_identity_pool_provider_id = "cspm"
+    description                        = "OIDC identity pool provider for CSPM"
+    attribute_mapping = {
+      "google.subject" = "assertion.sub"
+    }
+    oidc {
+      allowed_audiences = ["api://6e81e733-9e7f-474a-85f0-385c097f7f52"]
+      issuer_uri        = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+    }
+  }
+}

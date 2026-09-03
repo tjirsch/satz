@@ -1,0 +1,172 @@
+      "api://6e81e733-9e7f-474a-85f0-385c097f7f52"
+      "api://d17a7d74-7e73-4e7d-bd41-8d9525e86cab"
+    "compute.projects.get",
+    "compute.projects.setCommonInstanceMetadata"
+    "google.subject" = "assertion.sub"
+    "google.subject" = "assertion.sub"
+    "iam.roles.list",
+    "resourcemanager.folders.get",
+    "resourcemanager.folders.getIamPolicy",
+    "resourcemanager.folders.list",
+    "resourcemanager.folders.list",
+    "resourcemanager.organizations.get",
+    "resourcemanager.organizations.getIamPolicy",
+    "resourcemanager.projects.get",
+    "resourcemanager.projects.list",
+    "serviceusage.services.enable",
+    "storage.buckets.getIamPolicy"
+    ]
+    ]
+    allowed_audiences = [
+    allowed_audiences = [
+    issuer_uri = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+    issuer_uri = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+  ]
+  ]
+  account_id = "mdc-onboarding-sa"
+  account_id = "microsoft-defender-cspm"
+  attribute_mapping = {
+  attribute_mapping = {
+  billing_account = "01AA-BB-CC"
+  description = "Microsoft Defender for cloud CSPM custom role"
+  description = "Microsoft defender for cloud provisioner workload identity pool"
+  description = "Microsoft organization custom role for onboarding"
+  description = "OIDC identity pool provider for CSPM"
+  description = "OIDC identity pool provider for autoprovisioner"
+  display_name = "Microsoft Defender CSPM"
+  display_name = "Microsoft Defender for Cloud"
+  display_name = "Microsoft Onboarding management service account"
+  member = "principalSet://iam.googleapis.com/projects/${google_project.mdc_mgmt.number}/locations/global/workloadIdentityPools/acmetenantpoolexample0000000001/*"
+  member = "principalSet://iam.googleapis.com/projects/${google_project.mdc_mgmt.number}/locations/global/workloadIdentityPools/acmetenantpoolexample0000000001/*"
+  member = "serviceAccount:mdc-onboarding-sa@acme-mdc-mgmt.iam.gserviceaccount.com"
+  member = "serviceAccount:microsoft-defender-cspm@acme-mdc-mgmt.iam.gserviceaccount.com"
+  member = "serviceAccount:microsoft-defender-cspm@acme-mdc-mgmt.iam.gserviceaccount.com"
+  name = "Microsoft MGMT Project"
+  oidc {
+  oidc {
+  org_id = "123456789"
+  org_id = "123456789"
+  org_id = "123456789"
+  org_id = "123456789"
+  org_id = "123456789"
+  org_id = "123456789"
+  permissions = [
+  permissions = [
+  project = "acme-mdc-mgmt"
+  project = "acme-mdc-mgmt"
+  project = "acme-mdc-mgmt"
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project_id = "acme-mdc-mgmt"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.project_mdc_mgmt
+  provider = google.project_mdc_mgmt
+  role = "organizations/123456789/roles/MDCCspmCustomRole"
+  role = "organizations/123456789/roles/MDCCustomRole"
+  role = "roles/iam.workloadIdentityUser"
+  role = "roles/iam.workloadIdentityUser"
+  role = "roles/viewer"
+  role_id = "MDCCspmCustomRole"
+  role_id = "MDCCustomRole"
+  service = "apikeys.googleapis.com"
+  service = "cloudasset.googleapis.com"
+  service = "cloudkms.googleapis.com"
+  service = "cloudresourcemanager.googleapis.com"
+  service = "compute.googleapis.com"
+  service = "iam.googleapis.com"
+  service = "iamcredentials.googleapis.com"
+  service = "sqladmin.googleapis.com"
+  service = "sts.googleapis.com"
+  service_account_id = "${google_service_account.mdc_cspm.name}"
+  service_account_id = "${google_service_account.mdc_onboarding.name}"
+  title = "MDCCspmCustomRole"
+  title = "MDCCustomRole"
+  workload_identity_pool_id = "${google_iam_workload_identity_pool.mdc_pool.workload_identity_pool_id}"
+  workload_identity_pool_id = "${google_iam_workload_identity_pool.mdc_pool.workload_identity_pool_id}"
+  workload_identity_pool_id = "acmetenantpoolexample0000000001"
+  workload_identity_pool_provider_id = "auto-provisioner"
+  workload_identity_pool_provider_id = "cspm"
+  }
+  }
+  }
+  }
+resource "google_iam_workload_identity_pool" "mdc_pool" {
+resource "google_iam_workload_identity_pool_provider" "mdc_auto_provisioner" {
+resource "google_iam_workload_identity_pool_provider" "mdc_cspm" {
+resource "google_organization_iam_custom_role" "MDCCspmCustomRole" {
+resource "google_organization_iam_custom_role" "MDCCustomRole" {
+resource "google_organization_iam_member" "iam_serviceAccount_mdc_onboarding_sa_acme_mdc_mgmt_iam_gserviceaccount_com_e75f6dd4c3ed9cfa" {
+resource "google_organization_iam_member" "iam_serviceAccount_microsoft_defender_cspm_acme_mdc_mgmt_iam_gserviceaccount_com_5822cb432a15e3e2" {
+resource "google_organization_iam_member" "iam_serviceAccount_microsoft_defender_cspm_acme_mdc_mgmt_iam_gserviceaccount_com_d1bfb33dbc0a5ab9" {
+resource "google_project" "mdc_mgmt" {
+resource "google_project_service" "mdc_mgmt_apikeys_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_cloudasset_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_cloudkms_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_cloudresourcemanager_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_compute_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_iam_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_iamcredentials_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_sqladmin_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_sts_googleapis_com" {
+resource "google_service_account" "mdc_cspm" {
+resource "google_service_account" "mdc_onboarding" {
+resource "google_service_account_iam_member" "iam_principalSet___iam_googleapis_com_projects_google_project_mdc_mgmt_number_locations_global_workloadIdentityPools_acmetenantpoolexample0000000001___b4d70511b263cc1f" {
+resource "google_service_account_iam_member" "iam_principalSet___iam_googleapis_com_projects_google_project_mdc_mgmt_number_locations_global_workloadIdentityPools_acmetenantpoolexample0000000001___c27de10872fba4e7" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+billing-account-infra = "01AA-BB-CC"
+customer-organization-id = "123456789"
+mdc-cspm-default-access = true
+mdc-cspm-least-privilege = false
+mdc-mgmt-project-id = "acme-mdc-mgmt"
+mdc-plan-cspm = true
+mdc-workload-pool-id = "acmetenantpoolexample0000000001"

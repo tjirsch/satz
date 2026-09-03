@@ -1,0 +1,108 @@
+// Microsoft Defender for Cloud — the CSPM custom role, LEAST PRIVILEGE mode.
+//
+//   use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz" when mdc_cspm_least_privilege
+//
+// The 82 permissions Microsoft's script enumerates when least privilege is on,
+// in place of the five that ride on `roles/viewer`. Use this OR the default
+// fragment, never both — both define this role address.
+//
+// Note: Microsoft's generated script still grants `roles/viewer` to the CSPM
+// service account in this mode, which makes the enumeration moot. If the point
+// of choosing least privilege is to drop viewer, the estate must say so:
+//   suppress google_organization_iam_member "serviceAccount:microsoft-defender-cspm@<project>.iam.gserviceaccount.com" role "roles/viewer"
+// The pack does not do it silently, because the script does not.
+
+pack integrations.microsoft_defender_for_cloud_cspm_role_least_privilege version "0.1"
+
+google_organization_iam_custom_role {
+  MDCCspmCustomRole {
+    role_id     = "MDCCspmCustomRole"
+    title       = "MDCCspmCustomRole"
+    org_id      = customer_organization_id
+    description = "Microsoft Defender for cloud CSPM custom role"
+    permissions = [
+      "cloudkms.cryptoKeys.getIamPolicy",
+      "cloudkms.cryptoKeys.list",
+      "cloudkms.keyRings.list",
+      "cloudkms.keyRings.getIamPolicy",
+      "apikeys.keys.list",
+      "iam.serviceAccounts.list",
+      "iam.serviceAccounts.getIamPolicy",
+      "iam.serviceAccountKeys.list",
+      "iam.roles.list",
+      "iam.roles.get",
+      "iam.denypolicies.list",
+      "iam.googleapis.com/workloadIdentityPoolProviders.get",
+      "iam.googleapis.com/workloadIdentityPoolProviders.list",
+      "iam.googleapis.com/workloadIdentityPools.get",
+      "iam.googleapis.com/workloadIdentityPools.list",
+      "bigquery.datasets.get",
+      "bigquery.tables.get",
+      "bigquery.tables.list",
+      "bigquery.tables.getIamPolicy",
+      "resourcemanager.projects.get",
+      "resourcemanager.projects.list",
+      "resourcemanager.projects.getIamPolicy",
+      "resourcemanager.folders.getIamPolicy",
+      "resourcemanager.folders.list",
+      "resourcemanager.organizations.getIamPolicy",
+      "resourcemanager.organizations.get",
+      "orgpolicy.policy.get",
+      "compute.firewalls.list",
+      "compute.networks.list",
+      "compute.instances.list",
+      "compute.projects.get",
+      "compute.subnetworks.list",
+      "compute.targetHttpsProxies.list",
+      "compute.sslPolicies.list",
+      "compute.targetSslProxies.list",
+      "compute.disks.list",
+      "compute.targetHttpProxies.list",
+      "compute.globalForwardingRules.list",
+      "compute.forwardingRules.list",
+      "compute.urlMaps.list",
+      "compute.instances.getEffectiveFirewalls",
+      "compute.backendServices.list",
+      "compute.instanceGroups.list",
+      "compute.instanceTemplates.list",
+      "compute.machineTypes.list",
+      "compute.networks.list",
+      "compute.networks.getEffectiveFirewalls",
+      "compute.regionBackendServices.list",
+      "compute.instanceGroupManagers.list",
+      "compute.instanceGroupManagers.get",
+      "compute.regionUrlMaps.list",
+      "compute.regionTargetHttpProxies.list",
+      "compute.regionTargetHttpsProxies.list",
+      "compute.targetHttpsProxies.list",
+      "compute.targetPools.list",
+      "compute.targetTcpProxies.list",
+      "cloudasset.assets.analyzeIamPolicy",
+      "cloudasset.assets.searchAllResources",
+      "cloudasset.assets.searchAllIamPolicies",
+      "dns.managedZones.list",
+      "dns.policies.list",
+      "logging.logMetrics.list",
+      "logging.sinks.list",
+      "logging.logEntries.list",
+      "monitoring.alertPolicies.list",
+      "cloudsql.instances.list",
+      "spanner.instances.list",
+      "spanner.databases.list",
+      "alloydb.instances.list",
+      "alloydb.databases.list",
+      "alloydb.clusters.list",
+      "storage.buckets.list",
+      "storage.buckets.getiampolicy",
+      "osconfig.osPolicyAssignments.list",
+      "osconfig.osPolicyAssignmentReports.list",
+      "container.clusters.list",
+      "recommender.projects.list",
+      "secretmanager.secrets.getIamPolicy",
+      "iam.serviceAccountKeys.get",
+      "aiplatform.models.get",
+      "pubsub.topics.getIamPolicy",
+      "pubsub.subscriptions.getIamPolicy",
+    ]
+  }
+}
