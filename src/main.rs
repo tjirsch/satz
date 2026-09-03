@@ -2270,8 +2270,7 @@ fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime
         .collect::<Result<_, std::io::Error>>()?;
     let name = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl");
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let is_type = |t: &str| registry.as_ref().is_some_and(|r| r.resources.contains_key(t));
-    let imported = satz_hcl::import(&inputs, name, wrap_all, &is_type)?;
+    let imported = satz_hcl::import(&inputs, name, wrap_all, &RegistrySchema(registry.as_ref()))?;
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
@@ -2283,11 +2282,32 @@ fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime
         match &r.action {
             satz_hcl::Action::Dropped(why) => println!("  dropped    {}:{} {} — {}", r.file, r.line, r.what, why),
             satz_hcl::Action::Wrapped(why) if !wrap_all || verbose => println!("  wrapped    {}:{} {} — {}", r.file, r.line, r.what, why),
+            satz_hcl::Action::Promoted(what) => println!("  promoted   {}:{} {} — {}", r.file, r.line, r.what, what),
             satz_hcl::Action::Translated if verbose => println!("  translated {}:{} {}", r.file, r.line, r.what),
             _ => {}
         }
     }
+    for n in &imported.notes {
+        println!("  note       {}", n);
+    }
     Ok(())
+}
+
+/// The provider schema, as the HCL importer asks about it. With no schemas on
+/// disk nothing is a known type, so every block wraps — loudly, in the report,
+/// rather than by mistranslation.
+struct RegistrySchema<'a>(Option<&'a ResourceRegistry>);
+
+impl satz_hcl::Schema for RegistrySchema<'_> {
+    fn has_type(&self, tf_type: &str) -> bool {
+        self.0.is_some_and(|r| r.resources.contains_key(tf_type))
+    }
+
+    fn has_attr(&self, tf_type: &str, attr: &str) -> bool {
+        self.0.is_some_and(|r| {
+            r.resources.get(tf_type).is_some_and(|s| s.1.block.attributes.contains_key(attr))
+        })
+    }
 }
 
 /// The live shape with `--into`: the delta against what the estate declares.

@@ -25,3 +25,8 @@ evidence/
 # the rendered documentation site (built by scripts/build-site.py, published by CI)
 _site/
 __pycache__/
+# provider schemas written by `satz update-schema` — per-checkout, tens of MB.
+# Root-anchored so the trimmed CI fixture tests/schemas/ stays tracked.
+/schemas/
+# vendor Terraform handed over for an import: customer data, never committed
+mdc-terraform.tf

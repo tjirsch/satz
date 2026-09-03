@@ -1364,27 +1364,40 @@ asset path; for the others, `satz adopt` resolves them afterwards.
 | `import state.json` (or `-` for `tofu show -json` on stdin) | you already run Terraform/OpenTofu and want the estate that reproduces its state | folders/projects nested, grants collapsed to member → roles, services into `project_service`, every resource with its `"import-id"` from the state id | only `tofu show -json` output (a raw `.tfstate` is refused); a resource without `id` gets no import id; grant conditions are not carried; the import-config's `exclude`/`map` are not applied to this shape; rows with `import: false` are skipped and listed (`type off`) |
 | `import organizations/<n>` \| `folders/<n>` \| `projects/<id>` (or bare `import` with `root:` in `import-config.yaml`) | brownfield: nothing is in Terraform yet | one Cloud Asset sweep of the scope; every enabled type; import ids = the row's `import_id` template rendered from the resource (`{project} {name}` for a log metric), else the asset path with the project named by ID; required attributes the asset lacks derived (`parent`, `org_id`/`folder`/`project`, `location`/`region` from the asset name, a `*_id` from its last segment — `secret_id`, `repository_id` —, a service account's `account_id`); API vocabulary the provider spells differently is renamed per the row's `map:` (a firewall's `allowed[].IPProtocol` → `allow { protocol }`), and self-link `region`/`zone` and full-name `name` values are shortened to what the provider takes | only rows with `import: true` AND an `asset_type` are swept (21 enabled by default — the landing-zone types plus VPC network/subnet/firewall, Pub/Sub topic, Secret Manager secret, log metric, Artifact Registry repository, each verified live to plan as import-only; `--only` narrows, never widens; an enabled row with `asset_type: TODO` is an error); IAM conditions are not carried; no Cloud Identity groups (not in Cloud Asset — state shape or `adopt`); a resource whose required attribute cannot be derived is skipped and named; one fetch error aborts the run; a page is 1000 assets |
 | `--into <estate>` | the estate exists; take over what it does not declare yet | packs `imported-<scope>[-<container>].satz` plus `use` lines inserted at the declaring folder/project | live shape only; if ANY declared resource fails to resolve live (error, ambiguity), nothing is written; the packs are regenerated wholesale on every run — hand edits go into the estate, never into an `imported-*` pack; a `use` is inserted automatically only where the container is declared in the estate file itself |
-| `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out`) | literal, schema-known, identifier-labelled `resource` blocks as Satz resources placed under the folder/project they reference; everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block | `terraform`/`provider` blocks are always dropped (the emitter writes them), `--wrap-all` included; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit; no import ids (`adopt`) |
+| `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out`) | `variable`/`locals` promoted to params; schema-known, identifier-labelled `resource` blocks whose values are literals, params or `${…}` references as Satz resources placed under the folder/project they reference; everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block | `terraform`/`provider` blocks are always dropped (the emitter writes them), `--wrap-all` included — and `--wrap-all` promotes nothing, since a param is a translation; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit; no import ids (`adopt`); a `${…}` reference is opaque to the compliance plane |
 | `import <file>.yaml --kind estate\|pack [--gate <estate>] [--fork]` | the legacy YAML dialect (until the last org is moved) | `<stem>.satz` beside the source, proven by compiling it (`CONVERTED … N resources emitted`) | refuses while a `use` still points at a YAML pack (each named — convert packs first); a result that does not compile is deleted and reported; `--fork` writes `<stem>.local.satz` (packs only); a pack without `--gate` is only parsed; interior comments are not carried; a `!include` in a `!format` value is refused (inline it) |
 
 ### 12.1 From existing Terraform (`./hcl/`)
 
-A `resource` block of a schema-known type whose values are all literals becomes a
-**Satz resource**; the folder/project it references (`parent`, `folder_id`,
-`project` as a `google_folder.x.name` / `google_project.y.project_id` traversal —
-the one expression allowed) decides where it is placed. Every other block is
-carried **verbatim** inside `hcl trust "imported from <file>:<line>" { … }` — it
-deploys exactly as written, but the fold cannot compose it and the compliance
-plane cannot see into it. Every block is accounted for; nothing vanishes.
+Three tiers. A `variable` with a literal `default`, and a `locals` entry with a
+literal value, become **params** — params *are* Satz's variables, so this is the
+language's own model rather than a rewrite, and the result stays
+re-parameterisable. A `resource` block of a schema-known type becomes a **Satz
+resource** when every value is a literal, a promoted param, or a reference to a
+managed resource; the folder/project it references (`parent`, `folder_id`,
+`project`) decides where it is placed. Every other block is carried **verbatim**
+inside `hcl trust "imported from <file>:<line>" { … }` — it deploys exactly as
+written, but the fold cannot compose it and the compliance plane cannot see into
+it. Every block is accounted for; nothing vanishes.
+
+Two things the report is careful about. A promoted declaration that a wrapped
+block still reads is **carried verbatim as well**, so the wrapped block's
+`var.x` keeps resolving. And *translated* is not *proven*: a `${…}` reference is
+opaque to the compliance plane, so a claim cannot reason about it.
 
 | HCL | Becomes |
 |---|---|
-| `resource` of a schema-known type, literal values, identifier label | a Satz resource: attributes as written, repeated nested blocks → a list of objects, `lifecycle` as declared; the label kept for plain resources (services and grants become list/map entries and lose theirs) |
+| `resource` of a schema-known type, identifier label, values that are literals, promoted params or `${…}` references | a Satz resource: attributes as written, repeated nested blocks → a list of objects, `lifecycle` as declared; the label kept for plain resources (services and grants become list/map entries and lose theirs) |
+| `variable "x" { default = <literal> }`, `locals { y = <literal> }` | **promoted** to `params { x = … }`; `var.x` becomes a bare param reference, `"a-${var.x}"` the interpolation `"a-{x}"` |
+| `variable "x"` with no `default` | named in the header, given no value — `satz transpile` stops with `unknown param 'x'` until it is bound, which is the same gate the source had |
+| a reference to a managed resource (`google_project.p.number`), anywhere in a value | carried verbatim as Satz `${{…}}`, which emits back byte-identically |
+| a `*_iam_member` whose scope is neither project, folder nor organisation (a service account's, a bucket's) | a **labelled resource** with its scope attribute (`service_account_id = …`, `bucket = …`) — the member map has no room for one |
 | `google_folder` (`parent` = the organisation, or a reference to a folder in the input), `google_project` (`folder_id` a folder reference, or `org_id`), `google_project_service` / `google_project_iam_member` / any project-scoped resource whose `project` references a project in the input, `google_folder_iam_member`, `google_organization_iam_member` | placed: nested under the folder/project they reference; grants become grant-map entries (a `condition` block travels in the object form), services the project's `project_service` list; `customer_organization_id` is inferred from the literals |
-| a project whose `folder_id` is a folder *number*, a resource whose parent is wrapped, a scope written as any other expression, groups, memberships, `*_iam_binding` / `_policy`, bucket and billing grants, a grant without literal `member`/`role`, a `project_service` carrying more than `service` | wrapped, with the reason (closure by dependency: a child of a wrapped container is wrapped too) |
-| a `resource` with an expression — a reference, `${…}`, a function, `count`/`for_each`/`dynamic`/`provider`/`depends_on`, a type not in the schema, a label that is not an identifier | wrapped, with the reason |
-| `module`, `locals`, `data`, `variable`, `output`, `moved`, `import` | wrapped |
-| `terraform`, `provider` | dropped (one note each), also under `--wrap-all` |
+| a project whose `folder_id` is a folder *number*, a resource whose parent is wrapped, a scope written as any other expression, groups, memberships, `*_iam_binding` / `_policy` / `_audit_config` (authoritative: they own every binding on their target), billing grants (they hoist to the estate's billing scope), a grant without a resolvable `member`/`role`, a `project_service` carrying more than `service` | wrapped, with the reason (closure by dependency: a child of a wrapped container is wrapped too) |
+| a `resource` using `count`/`for_each`/`dynamic`/`provider`/`depends_on`, a function call, a conditional (`? :`), an arithmetic or `for` expression, a `data.`/`module.` reference, a name no `variable` or `locals` declares, a string holding a literal `${` (written `$${`), a type not in the schema, a label that is not an identifier | wrapped, with the reason |
+| `module`, `data`, `output`, `moved`, `import` | wrapped |
+| a `variable` or `locals` whose value is not literal | wrapped, and the names it declares stay Terraform variables |
+| `terraform`, `provider` | dropped (one note each), also under `--wrap-all`. A `provider` block's default `project` is carried as **placement**: a resource that named no project of its own lands in that project when the default resolves to one of the imported projects, and the dropped row says so |
 
 ### 12.2 From the YAML dialect
 

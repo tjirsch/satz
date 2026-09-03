@@ -17,8 +17,14 @@ resource "google_folder" "workloads" {
   parent       = "organizations/123456789012"
 }
 
+variable "bucket_suffix" {
+  type    = string
+  default = "001"
+}
+
 resource "google_storage_bucket" "logs" {
-  name     = "corp-logs-001"
+  # a template over a promoted variable: resolves to the same literal it did
+  name     = "corp-logs-${var.bucket_suffix}"
   location = "EU"
   project  = "corp-infra-001"
 
@@ -36,6 +42,15 @@ resource "google_storage_bucket" "logs" {
 
 locals {
   env = "prod"
+}
+
+# a bucket-scoped grant: NOT a member map (the map form has no room for
+# `bucket`), so it translates as a labelled resource, and its bucket reference
+# is carried verbatim
+resource "google_storage_bucket_iam_member" "logs_reader" {
+  bucket = google_storage_bucket.logs.name
+  role   = "roles/storage.objectViewer"
+  member = "group:gcp-auditors@example.com"
 }
 
 resource "google_project" "infra" {

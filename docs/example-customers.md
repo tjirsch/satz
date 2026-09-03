@@ -48,9 +48,12 @@ repository.
 **Domains.** Only IANA-reserved names (`example.com/org/net`, and the
 `.example`, `.test`, `.invalid`, `.localhost` TLDs) and the vendor hosts the
 project genuinely references (`googleapis.com`, `gserviceaccount.com`,
-`github.com`, `opentofu.org`, `terraform.io`, `cisecurity.org`, …) may appear
-anywhere. Any other domain fails the gate — including plausible-looking ones:
-the obvious "fictional" company domains are real, registered businesses.
+`github.com`, `opentofu.org`, `terraform.io`, `cisecurity.org`, and Microsoft's
+`windows.net`, `microsoft.com`, `microsoftonline.com` — a workload-identity
+federation example cannot avoid naming the issuer it federates, and
+`sts.windows.net` is Microsoft's, not a customer's) may appear anywhere. Any
+other domain fails the gate — including plausible-looking ones: the obvious
+"fictional" company domains are real, registered businesses.
 
 **Commit identity.** Every commit's author and committer must be the
 maintainer's address or a GitHub noreply address
