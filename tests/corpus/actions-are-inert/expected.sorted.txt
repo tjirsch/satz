@@ -1,0 +1,8 @@
+  display_name = "Logging"
+  parent = "organizations/123456789"
+  provider = google.google
+resource "google_folder" "logging" {
+}
+---tfvars---
+customer-organization-id = "123456789"
+customer-shortname = "corp"

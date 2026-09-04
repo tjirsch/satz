@@ -413,6 +413,7 @@ item    := "params" "{" { param } "}"
          | "claim" STRING STRING STRING COVERAGE "{" { claim-entry } "}"
          | "suppress" IDENT STRING [ "role" STRING ]
          | "hcl" [ "trust" STRING ] "{" … "}"
+         | "action" STRING "{" { action-entry } "}"
          | block
 ```
 
@@ -1097,7 +1098,175 @@ only inside `hcl { … }` therefore deploys but is **not a witness**; a claim
 that names it reports **‼ broken claim**, exactly as if the resource were
 missing.
 
-### 6.13 Provenance: pristine, fork, ledger
+#### Running a script from inside the apply
+
+Because the body is verbatim Terraform, the passthrough is also the way to put a
+script *in the dependency graph* — the one thing [`action`](#613-action--a-step-with-no-provider-resource)
+cannot do:
+
+```
+hcl trust "SCC enablement has no provider resource (google 7.14.1)" {
+  resource "terraform_data" "scc_services" {
+    triggers_replace = [var.customer_organization_id]
+    provisioner "local-exec" {
+      command = "${path.module}/../scripts/scc-enable-all.sh --organization ${var.customer_organization_id} --apply"
+    }
+  }
+}
+```
+
+This orders the script against satz-emitted resources through ordinary HCL
+references, which nothing else here can. It also costs more than it looks:
+`tofu plan` cannot show what the script will do, a failure taints state and has
+to be cleaned up by hand, the script runs on whichever machine runs `apply`, and
+the block is invisible to the compliance plane like any other passthrough.
+Reach for it only when a step genuinely has to happen *between* two resources in
+one apply; otherwise declare an `action`, which is legible, selectable, and runs
+where you can watch it.
+
+### 6.13 `action` — a step with no provider resource
+
+Some cloud steps cannot be declared at all. Security Command Center service
+enablement is the standing example: as of provider 7.14.1 there are 35
+`google_scc_*` / `google_securityposture_*` types and **none** of them is service
+enablement or tier activation, so no language satz compiles can express it. The
+step is still part of the deployment.
+
+`action` names such a step, binds it to a script, and builds its arguments from
+the estate's own parameters:
+
+```
+action "scc-services" {
+  reason       = "SCC service enablement has no provider resource (google 7.14.1)"
+  run          = "../scripts/scc-enable-all.sh"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+  phase        = "after-apply"
+}
+```
+
+| key | required | meaning |
+|---|---|---|
+| `reason` | yes | Why this is not a resource. Quoted back in every warning. |
+| `run` | yes | The executable. Resolved relative to the directory of the file that **declares** it — so a pack that ships a script is self-contained — then against the include dirs, exactly as a `use` path is. Never interpolated. |
+| `args` | no | Always passed. `{param}` interpolates; an unknown param is a hard error. |
+| `execute_args` | no | Appended **only** under `--execute`. This is where a script's `--apply` lives. |
+| `phase` | no | `before-apply` or `after-apply`, default `after-apply`. Advisory: it orders the run and selects with `--phase`. Nothing chains `satz apply`. |
+
+**Nothing here runs while compiling.** `transpile` is a pure function of its
+sources and stays one: that is what lets the corpus snapshots, `check-presets`
+and the auto-fork transpile-identity proof mean what they say, and it is why
+cloning an estate and compiling it cannot execute anything. An action is inert
+until [`satz run-actions`](#run-actions) is invoked.
+
+**An action emits nothing and can carry no claim.** It is not in `main.tf`, not
+in the emission manifest, and no `claim` can name it — the same opacity `hcl`
+has, with execution on top. Satz records that the step exists and never says
+what it did; nothing about an action reaches `report-compliance`.
+
+Every compile of an estate that declares one says so, and unlike `hcl trust`, a
+`reason` does not downgrade the warning — HCL only deploys, an action runs:
+
+```
+warning: action "scc-services" declared in presets/scc/enable.satz:12 (from a pack) — `satz run-actions` will execute enable.sh
+  reason: SCC service enablement has no provider resource (google 7.14.1)
+note: --no-pack-actions ignores pack-declared actions, --no-actions disables all execution, --no-action-warnings silences this.
+```
+
+A pack may declare an action, and the warning says when one did. That is
+deliberate — the pack is where the knowledge that a step is needed lives — and
+it is why the three switches exist: `get-presets` downloads packs from a public
+repository. A downloaded script also arrives without its executable bit, and
+satz will not set it; the error names the `chmod +x` and leaves the decision to
+whoever read the file.
+
+Names are unique across the estate. Two actions answering to one name is a hard
+error naming both files, the rule the ⊕ fold already applies to a repeated
+address. An action inside a pack that `use … when` switched off is never
+collected at all.
+
+#### When an action runs, and how
+
+**Never on its own.** `satz run-actions` is the only thing that executes one:
+not `transpile`, not `plan`, not `apply` — `satz apply` does not know actions
+exist. `phase` orders the run and selects with `--phase`; it does not make
+anything happen around an apply.
+
+When `run-actions` does run, in this order:
+
+1. **The estate is compiled first.** If it does not compile, nothing runs — an
+   estate whose parameters cannot be trusted is not one to build a command line
+   from.
+2. **`{param}` resolves** against the finished namespace. An unknown param is a
+   hard error, never an empty argument.
+3. **The executable is located** relative to the directory of the file that
+   declared it, then against the include dirs — the same search a `use` path
+   gets.
+4. **Every action is located and vetted before any one is spawned** (it exists,
+   it is executable). A run must not die half way on the fourth script's missing
+   `+x` when the first three already changed the organisation.
+5. **Each is spawned**, in phase order (`before-apply`, then `after-apply`) and
+   declaration order within a phase — the estate's own actions first, then
+   `use`-visit order.
+6. **A non-zero exit stops the run** and satz exits with that code. The
+   remaining actions do not run: a failed step is not a reason to keep changing
+   the organisation.
+
+#### Writing a script for an action
+
+The contract is small, and satz guarantees all of it:
+
+| | |
+|---|---|
+| **interpreter** | Whatever the file's shebang says. Satz executes the file; it does not know or care whether the target is `sh`, `bash`, Python or a compiled binary. A Python script with dependencies can use `#!/usr/bin/env -S uv run --script` and PEP 723 inline metadata. |
+| **executable bit** | Required. Satz never sets it — the error names the `chmod +x`. |
+| **working directory** | Always the directory holding `config.toml`, whatever directory the operator invoked satz from. Never assume the caller's cwd. |
+| **arguments** | `args`, plus `execute_args` appended under `--execute`. |
+| **environment** | Exactly five variables, and **nothing else**: `SATZ_ACTION` (the name), `SATZ_PHASE`, `SATZ_MODE` (`check` or `execute`), `SATZ_ESTATE` (the estate file), `SATZ_HCL_DIR`. Params are **not** exported — anything a script needs must be named in `args`, so the declaration is the complete record of what the action was told. |
+| **exit code** | `0` is success. Anything else stops the run and becomes satz's exit code. |
+| **stdout / stderr** | Inherited, so the script's output is the operator's output. Satz does not capture, parse or store it. |
+
+The two-list split is what makes a script safe to point at: put the form that
+**reads** in `args` and the flag that **writes** in `execute_args`, so
+`run-actions --check` exercises the script's own dry run and only `--execute`
+lets it write. Whether the `args` form really is side-effect-free is the
+script's business — satz cannot know what a script does and does not pretend to.
+
+A script written to that contract. `tests/smoke/scripts/showcase-action.sh` is
+this shape with a few extra echoes the smoke matrix asserts on, and CI runs it on
+every push:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dry run unless the estate's execute_args said otherwise. The flag is the
+# script's own, not satz's: satz only decides whether to pass it.
+apply=0
+org=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --organization) org="$2"; shift 2 ;;
+    --apply)        apply=1; shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$org" ] || { echo "--organization is required" >&2; exit 2; }
+
+echo "action ${SATZ_ACTION} (${SATZ_MODE}) on organizations/${org}"
+if [ "$apply" = 0 ]; then
+  echo "DRY RUN — re-run with --execute to write."
+  exit 0
+fi
+
+# … the work. A non-zero exit here stops the whole run.
+```
+
+`scripts/scc-enable-all.sh` in this repository is the real one, and it already
+has that shape — dry run by default, `--apply` to write, non-zero on any failed
+call. See [`docs/scripts.md`](scripts.md).
+
+### 6.14 Provenance: pristine, fork, ledger
 
 Suffix carries meaning; the tooling enforces it.
 
@@ -1294,6 +1463,8 @@ never legal conformity.
 | record a manual duty | `duty_lock_bucket = "…"` inside a claim |
 | decline a control on purpose | `claim … deviates { resources = [...] reason = "…" }` |
 | escape into raw HCL | `hcl { … }` — warns unless `hcl trust "…" { … }` |
+| declare a step no resource can express | `action "scc" { reason = "…" run = "../scripts/x.sh" args = ["--org", "{customer_organization_id}"] }` |
+| run a script inside the apply instead | `hcl trust "…" { resource "terraform_data" … provisioner "local-exec" { … } }` |
 | multi-line string | `"""…"""` |
 | comment | `#`, `//`, `/* … */` |
 
@@ -1308,6 +1479,7 @@ never legal conformity.
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `hcl-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
+| `run-actions <estate>.satz [--check\|--execute] [--only n,…] [--phase p]` | Satz | run the estate's declared `action`s (§6.13). Prints and stops by default; `--check` runs each action's own dry-run form, `--execute` the form that writes. Global `--no-actions`, `--no-pack-actions`, `--no-action-warnings` |
 | `import [<source>] [--only t,…] [--import-config f] [-o <file>] [--into <estate>] [--wrap-all] [--kind estate\|pack] [--gate <estate>] [--fork]` | — | create an estate from what exists (§12): a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, a directory of `.tf`, or a legacy `.yaml` file; `--from` forces the shape; `--into` imports only what the estate does not declare, as packs it `use`s; checked by `transpile` + `tofu plan` |
 | `triage <framework> <estate>.satz --prowler f` | Evidence | every Prowler FAIL sorted into buckets A–E (a pack covers it / Satz declares it / declared exception / unmanaged / manual) — the remediation plan's skeleton |
 | `scan [<estate>.satz]` | HCL | Checkov over `hcl_dir`, findings pointed at the Satz line that declared the resource; failed checks exit 1 |
@@ -1363,6 +1535,19 @@ across files it is the fold's conflict above.
 
 ---
 
+### Actions
+
+| message | cause |
+|---|---|
+| `action "x": reason = "…" is required` | An action must say why the step is not a resource; it is what the warning quotes. |
+| `action "x": run = "…" is required` | Nothing to run. |
+| `action "x": phase = "…" — expected "before-apply" or "after-apply"` | Those are the two phases. |
+| `action: unexpected entry … (keys are reason, run, args, execute_args, phase)` | An unknown key is refused, never ignored. |
+| `action "x": no interpolation allowed` | The name and `run` are literal; only `args` and `execute_args` interpolate. |
+| `action "x": declared twice — a.satz:3 and b.satz:9` | Names are unique across the estate. |
+| `run = "x.sh" not found. Looked in: …` | Every place that was tried, in order: the declaring file's directory, then the include dirs. |
+| `… is not executable. chmod +x …` | Satz never sets the bit — a script that arrived via `get-presets` becomes executable when a human decides it should. |
+
 ## 11. Known v0 limits
 
 - **Param scoping is document-ordered, not lexical.** Packs see every earlier
@@ -1376,6 +1561,16 @@ across files it is the fold's conflict above.
   redeclaration lands at the same address and folds to a conflict.
 - **An estate with no resources emits no `main.tf`** — only `providers.tf`,
   `variables.tf` and `terraform.tfvars`.
+- **`satz apply` does not run actions.** `run-actions` is a separate verb, and
+  `phase` only orders and selects — nothing enforces that a `before-apply`
+  action ran before the apply. Coupling the two would change what `plan` means,
+  which is the same reason `plan` does not transpile.
+- **An action produces no evidence.** Nothing is recorded when one runs, and no
+  claim can rest on it: satz still cannot tell you whether a given step was ever
+  run against an organisation. Where that matters the pattern to copy is
+  `--prowler <FILE>` — satz ingests a file, it never trusts a process.
+- **`suppress` cannot remove an action.** `--no-pack-actions` drops every
+  pack-declared one; there is no per-action subtraction.
 
 ---
 

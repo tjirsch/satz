@@ -18,3 +18,12 @@ google_storage_bucket {
 claim "cis-gcp" "4.0" "5.2" contributes {
   resources = ["google_storage_bucket.pack_bucket"]
 }
+
+// A pack may ship an executable step. It is reported as coming from a pack on
+// every compile, and `--no-pack-actions` skips exactly these.
+action "pack-step" {
+  reason       = "a pack-declared step: enablement the provider has no resource for"
+  run          = "../scripts/showcase-action.sh"
+  args         = ["--pack", "{customer_shortname}"]
+  phase        = "before-apply"
+}

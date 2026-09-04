@@ -106,6 +106,33 @@ pub struct HclBlock {
     pub line: usize,
 }
 
+/// `action "<name>" { … }` — a deployment step that has no provider resource.
+///
+/// Satz never runs one while compiling: an action is inert until `satz run-actions`
+/// is invoked. It emits nothing, never enters the fold or the emission manifest, and
+/// can carry no claim — the same opacity `hcl { … }` has, with execution on top. That
+/// is why `reason` is mandatory and why the warning an action raises cannot be
+/// downgraded the way `hcl trust` downgrades its own: HCL only deploys, an action runs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionDecl {
+    /// Unique across the estate; a duplicate is an error naming both files.
+    pub name: String,
+    /// Why this step is not a resource. Quoted back in every warning.
+    pub reason: String,
+    /// The executable, resolved relative to the directory of the DECLARING file, so a
+    /// pack that ships a script is self-contained. Never interpolated: a path assembled
+    /// from params is a path no reader can check against the warning.
+    pub run: String,
+    /// Always passed. `{param}` interpolates.
+    pub args: Vec<Vec<StrPart>>,
+    /// Appended only under `--execute` — where a script's `--apply` lives.
+    pub execute_args: Vec<Vec<StrPart>>,
+    /// `before-apply` | `after-apply`. Advisory: it orders the run and selects with
+    /// `--phase`, but nothing chains `satz apply`, so satz enforces no relationship.
+    pub phase: String,
+    pub line: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct File {
     pub estate: Option<String>,
@@ -123,6 +150,7 @@ pub struct File {
     pub claims: Vec<ClaimDecl>,
     pub suppressions: Vec<Suppression>,
     pub hcl_blocks: Vec<HclBlock>,
+    pub actions: Vec<ActionDecl>,
 }
 
 /// A control claim as language syntax:
@@ -183,6 +211,15 @@ impl std::error::Error for SatzError {}
 
 fn err<T>(line: usize, msg: impl Into<String>) -> Result<T, SatzError> {
     Err(SatzError { line, msg: msg.into() })
+}
+
+/// A string that must not interpolate. Used where a value has to be readable in a
+/// warning exactly as it is written in the file.
+fn lit_str(parts: &[StrPart], line: usize, what: &str) -> Result<String, SatzError> {
+    match parts {
+        [StrPart::Lit(v)] => Ok(v.clone()),
+        _ => err(line, format!("{}: no interpolation allowed", what)),
+    }
 }
 
 /// Raw-capture the body of `hcl { … }`: everything between the outer braces,
@@ -779,6 +816,83 @@ impl P {
         Ok(decl)
     }
 
+    fn action_stmt(&mut self, line: usize) -> Result<ActionDecl, SatzError> {
+        let name = match self.next() {
+            Some(Tok::Str(parts)) => lit_str(&parts, line, "action: the name")?,
+            other => return err(line, format!("action: expected a quoted name, found {:?}", other)),
+        };
+        if name.is_empty() {
+            return err(line, "action: the name is empty (it is how `run-actions --only` selects it)");
+        }
+        self.expect(Tok::LBrace, "'{' after the action name")?;
+        let body = self.entries()?;
+
+        let mut reason = None;
+        let mut run = None;
+        let mut args = Vec::new();
+        let mut execute_args = Vec::new();
+        let mut phase = None;
+
+        // A list of plain-or-interpolated strings; anything else is refused rather
+        // than stringified, because an argument list is what gets executed.
+        let arg_list = |items: Vec<Value>, what: &str| -> Result<Vec<Vec<StrPart>>, SatzError> {
+            let mut out = Vec::new();
+            for it in items {
+                match it {
+                    Value::Str(parts) => out.push(parts),
+                    other => {
+                        return err(line, format!("action {}: expected strings, found {:?}", what, other))
+                    }
+                }
+            }
+            Ok(out)
+        };
+
+        for e in body {
+            match e {
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k == "reason" => {
+                    reason = Some(lit_str(&parts, line, "action reason")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k == "run" => {
+                    run = Some(lit_str(&parts, line, "action run")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k == "phase" => {
+                    phase = Some(lit_str(&parts, line, "action phase")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::List(items), .. } if k == "args" => {
+                    args = arg_list(items, "args")?;
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::List(items), .. } if k == "execute_args" => {
+                    execute_args = arg_list(items, "execute_args")?;
+                }
+                other => {
+                    return err(
+                        line,
+                        format!(
+                            "action: unexpected entry {:?} (keys are reason, run, args, execute_args, phase)",
+                            other
+                        ),
+                    )
+                }
+            }
+        }
+
+        let Some(reason) = reason else {
+            return err(line, format!("action \"{}\": reason = \"…\" is required (it is what the execution warning quotes)", name));
+        };
+        let Some(run) = run else {
+            return err(line, format!("action \"{}\": run = \"…\" is required (the executable to run)", name));
+        };
+        if run.is_empty() {
+            return err(line, format!("action \"{}\": run = \"\" is empty", name));
+        }
+        let phase = phase.unwrap_or_else(|| "after-apply".to_string());
+        if phase != "before-apply" && phase != "after-apply" {
+            return err(line, format!("action \"{}\": phase = \"{}\" — expected \"before-apply\" or \"after-apply\"", name, phase));
+        }
+        Ok(ActionDecl { name, reason, run, args, execute_args, phase, line })
+    }
+
     fn use_stmt(&mut self, line: usize) -> Result<Entry, SatzError> {
         let path = match self.next() {
             Some(Tok::Str(parts)) => match parts.as_slice() {
@@ -934,6 +1048,20 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
             Some(Tok::Ident(id)) if id == "claim" => {
                 p.next();
                 file.claims.push(p.claim_stmt(line)?);
+            }
+            Some(Tok::Ident(id)) if id == "action" => {
+                p.next();
+                let a = p.action_stmt(line)?;
+                if let Some(first) = file.actions.iter().find(|x| x.name == a.name) {
+                    return err(
+                        a.line,
+                        format!(
+                            "action \"{}\": declared twice in this file (line {} and line {})",
+                            a.name, first.line, a.line
+                        ),
+                    );
+                }
+                file.actions.push(a);
             }
             Some(Tok::Ident(id)) if id == "suppress" => {
                 p.next();
@@ -1139,6 +1267,17 @@ pub fn canonical_parts(file: &File) -> Canonical {
     for h in &file.hcl_blocks {
         body.push_str(&format!("hcl({}){{{}}}\n", h.trust.as_deref().unwrap_or(""), h.body.trim()));
     }
+    for a in &file.actions {
+        body.push_str(&format!(
+            "action({}|{}|{}|[{}]|[{}]|{})\n",
+            a.name,
+            a.reason,
+            a.run,
+            a.args.iter().map(|p| canon_str(p)).collect::<Vec<_>>().join(","),
+            a.execute_args.iter().map(|p| canon_str(p)).collect::<Vec<_>>().join(","),
+            a.phase
+        ));
+    }
     Canonical { params, body }
 }
 
@@ -1295,6 +1434,92 @@ claim "cis-gcp" "4.0" "2.2" implements {
         assert_eq!((c.framework.as_str(), c.version.as_str(), c.control.as_str()), ("cis-gcp", "4.0", "2.2"));
         assert_eq!(c.resources, vec!["google_logging_organization_sink.archive".to_string()]);
         assert_eq!(c.duties.len(), 1, "{:?}", c.duties);
+    }
+
+
+    /// An action is the deployment's `unsafe` block: satz will execute it, so the
+    /// declaration has to carry everything a reader needs to judge it before it runs.
+    #[test]
+    fn an_action_is_parsed_with_its_two_argument_lists() {
+        let f = parse(
+            r#"
+estate demo
+action "scc-services" {
+  reason       = "SCC service enablement has no provider resource"
+  run          = "../scripts/scc-enable-all.sh"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+  phase        = "before-apply"
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(f.actions.len(), 1, "{:?}", f.actions);
+        let a = &f.actions[0];
+        assert_eq!(a.name, "scc-services");
+        assert_eq!(a.run, "../scripts/scc-enable-all.sh");
+        assert_eq!(a.phase, "before-apply");
+        assert_eq!(a.args.len(), 2);
+        // The second argument interpolates; the first is literal.
+        assert_eq!(a.args[0], vec![StrPart::Lit("--organization".to_string())]);
+        assert_eq!(a.args[1], vec![StrPart::Param("customer_organization_id".to_string())]);
+        assert_eq!(a.execute_args, vec![vec![StrPart::Lit("--apply".to_string())]]);
+    }
+
+    #[test]
+    fn an_action_defaults_to_after_apply_and_rejects_any_other_phase() {
+        let f = parse("action \"a\" {\n  reason = \"r\"\n  run = \"x.sh\"\n}\n").unwrap();
+        assert_eq!(f.actions[0].phase, "after-apply");
+        let e = parse("action \"a\" {\n  reason = \"r\"\n  run = \"x.sh\"\n  phase = \"whenever\"\n}\n")
+            .unwrap_err();
+        assert!(e.msg.contains("before-apply"), "{}", e.msg);
+    }
+
+    /// Both are mandatory: `run` because there is nothing to do without it, `reason`
+    /// because it is what the execution warning quotes back to whoever is about to
+    /// run the thing.
+    #[test]
+    fn an_action_without_a_reason_or_a_run_is_refused() {
+        let e = parse("action \"a\" {\n  run = \"x.sh\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("reason"), "{}", e.msg);
+        let e = parse("action \"a\" {\n  reason = \"r\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("run"), "{}", e.msg);
+    }
+
+    #[test]
+    fn an_action_name_and_run_path_may_not_interpolate() {
+        let e = parse("action \"{x}\" {\n  reason = \"r\"\n  run = \"x.sh\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("no interpolation"), "{}", e.msg);
+        let e = parse("action \"a\" {\n  reason = \"r\"\n  run = \"{x}.sh\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("no interpolation"), "{}", e.msg);
+    }
+
+    #[test]
+    fn two_actions_of_one_name_in_one_file_name_both_lines() {
+        let e = parse(
+            "action \"a\" {\n  reason = \"r\"\n  run = \"x.sh\"\n}\naction \"a\" {\n  reason = \"r\"\n  run = \"y.sh\"\n}\n",
+        )
+        .unwrap_err();
+        assert!(e.msg.contains("declared twice"), "{}", e.msg);
+    }
+
+    #[test]
+    fn an_unknown_action_key_is_refused_rather_than_ignored() {
+        let e = parse("action \"a\" {\n  reason = \"r\"\n  run = \"x.sh\"\n  timeout = \"30\"\n}\n")
+            .unwrap_err();
+        assert!(e.msg.contains("reason, run, args, execute_args, phase"), "{}", e.msg);
+    }
+
+    /// `check-presets` compares packs by canonical form. An action that did not
+    /// appear there would let a pack grow — or lose — an executable step while the
+    /// drift check called the two versions identical.
+    #[test]
+    fn the_canonical_form_carries_the_action() {
+        let with = parse("pack p\naction \"a\" {\n  reason = \"r\"\n  run = \"x.sh\"\n}\n").unwrap();
+        let without = parse("pack p\n").unwrap();
+        let changed = parse("pack p\naction \"a\" {\n  reason = \"r\"\n  run = \"y.sh\"\n}\n").unwrap();
+        assert_ne!(canonical(&with), canonical(&without));
+        assert_ne!(canonical(&with), canonical(&changed));
     }
 
     #[test]

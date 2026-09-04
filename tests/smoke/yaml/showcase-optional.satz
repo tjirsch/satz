@@ -1,5 +1,7 @@
 // Pulled in only when the estate's `want_optional` is true — it is not, so
-// nothing here reaches main.tf: no resource, no param, no claim.
+// nothing here reaches main.tf: no resource, no param, no claim, and no action.
+// The action below is the gate's sharpest test: `run-actions` must never offer to
+// run a step belonging to a pack the estate deliberately switched off.
 pack showcase_optional version "1.0"
 
 google_storage_bucket {
@@ -7,4 +9,9 @@ google_storage_bucket {
     name     = "{customer_shortname}-optional-001"
     location = "EU"
   }
+}
+
+action "optional-step" {
+  reason = "never collected: this pack is gated off by `use … when want_optional`"
+  run    = "../scripts/showcase-action.sh"
 }

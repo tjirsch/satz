@@ -242,6 +242,24 @@ fn render(rel: &Path, file: &File, src: &str, existing: Option<&str>) -> String 
     if !file.suppressions.is_empty() {
         md.push_str(&format!("**Suppressions:** {}.\n\n", file.suppressions.len()));
     }
+    // A pack that ships an executable step must say so on its own page. Whoever
+    // installs it with `get-presets` should not have to open the .satz to find out
+    // that `run-actions` would run something.
+    if !file.actions.is_empty() {
+        md.push_str(&format!(
+            "**Actions:** {} — `satz run-actions` executes {}. Not covered by any claim.\n\n",
+            file.actions.len(),
+            file.actions
+                .iter()
+                .map(|a| format!("`{}` (`{}`)", a.name, a.run))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        for a in &file.actions {
+            md.push_str(&format!("- `{}` — {}\n", a.name, a.reason));
+        }
+        md.push('\n');
+    }
     md.push_str("## Claims\n\n");
     if file.claims.is_empty() {
         md.push_str("_None — this pack proves no control by itself._\n\n");

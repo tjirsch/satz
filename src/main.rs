@@ -9,6 +9,7 @@ mod discovery;
 mod delta;
 mod align;
 mod scan;
+mod actions;
 mod template;
 mod adopt;
 mod bootstrap;
@@ -160,9 +161,28 @@ struct Cli {
     #[arg(long, global = true, help_heading = "Global options")]
     no_impersonate: bool,
 
+    /// Never execute a declared `action`, whatever `run-actions` was asked to do
+    #[arg(long, global = true, help_heading = "Global options")]
+    no_actions: bool,
+
+    /// Consider only the estate's own actions; ignore any a `use`d pack declares
+    #[arg(long, global = true, help_heading = "Global options")]
+    no_pack_actions: bool,
+
+    /// Silence the warning every declared `action` raises on a compile
+    #[arg(long, global = true, help_heading = "Global options")]
+    no_action_warnings: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
+
+/// `--no-action-warnings`, reachable from `pipeline_b_generate`.
+///
+/// A process-wide flag rather than a threaded argument on purpose: it is a global CLI
+/// flag whose only effect is on what is printed, and threading it would widen the
+/// signature of every estate-consuming call site to carry a print setting.
+static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The `satz --help` groups. The ONE place the command taxonomy lives: the root
 /// help renders them in this order, and `satz --verbose` walks the per-command
@@ -171,7 +191,7 @@ struct Cli {
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt"]),
-    ("HCL and OpenTofu", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration"]),
+    ("HCL and OpenTofu", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs"]),
     (
         "Organization policies",
@@ -188,6 +208,27 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run the estate's declared `action`s — the deployment steps that have no provider resource
+    ///
+    /// Prints what it would run and stops. `--check` runs each action's own
+    /// dry-run form; `--execute` runs the form that writes. Whether an action's
+    /// check form is side-effect-free is the action's contract, not satz's.
+    RunActions {
+        /// Estate file, .satz (inside yaml_dir if relative)
+        input: String,
+        /// Run each action's dry-run form (`args` only)
+        #[arg(long, conflicts_with = "execute")]
+        check: bool,
+        /// Run the form that writes (`args` + `execute_args`)
+        #[arg(long)]
+        execute: bool,
+        /// Run only these actions, by name
+        #[arg(long, value_delimiter = ',')]
+        only: Option<Vec<String>>,
+        /// Run only actions of this phase: before-apply or after-apply
+        #[arg(long)]
+        phase: Option<String>,
+    },
     /// Compile an estate to HCL (a `.yaml` estate is migrated with `satz import`, never transpiled)
     Transpile {
         /// Estate file, .satz (inside yaml_dir if relative)
@@ -742,6 +783,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.html_help {
         return open_html_help(subcommand.as_deref());
     }
+    NO_ACTION_WARNINGS.store(cli.no_action_warnings, std::sync::atomic::Ordering::Relaxed);
 
     // Load/create global settings on first run (creates ~/.config/satz/satz.toml with defaults)
     let mut global_settings = load_global_settings()?;
@@ -783,7 +825,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1524,6 +1566,55 @@ Thumbs.db
             let out = out.unwrap_or_else(|| presets.join("docs"));
             crate::doc_packs::run(&presets, &out, check)
         }
+        Commands::RunActions { input, check, execute, only, phase } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            reject_yaml_estate(&input_path, "run-actions")?;
+            if let Some(p) = &phase {
+                if p != "before-apply" && p != "after-apply" {
+                    return Err(format!(
+                        "--phase {}: expected before-apply or after-apply",
+                        p
+                    )
+                    .into());
+                }
+            }
+            // Compile first, always. An estate that does not compile is an estate
+            // whose parameters cannot be trusted, and an action's arguments are
+            // built from them.
+            let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
+            let mode = if execute {
+                crate::actions::Mode::Execute
+            } else if check {
+                crate::actions::Mode::Check
+            } else {
+                crate::actions::Mode::Plan
+            };
+            let estate_root = config_file_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            let include_dirs: Vec<PathBuf> =
+                runtime_config.include_dirs.iter().map(PathBuf::from).collect();
+            let opts = crate::actions::RunOptions {
+                mode,
+                only,
+                phase,
+                no_actions: cli.no_actions,
+                no_pack_actions: cli.no_pack_actions,
+                estate_root: &estate_root,
+                include_dirs: &include_dirs,
+                estate_file: &input_path,
+                hcl_dir: Path::new(&runtime_config.hcl_dir),
+            };
+            // Printed, not returned: these messages carry a remedy on its own line
+            // (`chmod +x …`, the list of places a script was looked for), and the
+            // default `Error: {:?}` would hand the operator an escaped one-liner.
+            if let Err(e) = crate::actions::run(&out.actions, &opts) {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Commands::Scan { estate } => {
             let manifest = match estate {
                 Some(e) => {
@@ -1604,6 +1695,9 @@ struct PipelineBOut {
     /// The Cloud Identity customer id the estate declares ("" when absent) —
     /// the tenant adoption lists when a group lookup is refused.
     customer_id: String,
+    /// Declared `action`s, arguments resolved. Nothing is emitted for them and
+    /// nothing runs them here — `run-actions` is the only thing that does.
+    actions: Vec<satz_core::pipeline::ResolvedAction>,
 }
 
 use satz_core::pipeline::ResolvedType;
@@ -1708,7 +1802,11 @@ fn pipeline_b_generate(
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     let providers_tf = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
         .map_err(|e| format!("emit_providers: {}", e))?;
+    if !NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
+        crate::actions::warn(&fe.actions);
+    }
     Ok(PipelineBOut {
+        actions: fe.actions,
         main_tf: append_hcl_passthrough(out.main_tf, &fe.hcl),
         manifest: out.manifest,
         providers_tf,
@@ -3485,7 +3583,7 @@ fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Er
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration",
+        "scan-plan", "generate-migration", "run-actions",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),

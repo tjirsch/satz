@@ -62,6 +62,8 @@ grep -q 'roles/browser' "$sc" && fail "suppressed role was emitted"
 grep -q 'roles/iam.securityReviewer' "$sc" || fail "the member's other role vanished with the suppressed one"
 grep -q 'audit-objects-only' "$sc" || fail "conditional grant missing"
 grep -q 'trusted: reviewed' "$sc" || fail "hcl trust reason missing"
+grep -q 'showcase-action' "$sc" && fail "an action leaked into main.tf — nothing about an action is ever emitted"
+grep -q 'showcase-step' "$sc" && fail "an action name leaked into main.tf"
 grep -q 'optional-001' "$sc" && fail "a \`when\`=false pack was pulled in"
 grep -q 'corp-pack-bucket-001' "$sc" || fail "top-level pack resource missing"
 grep -q 'location = "europe-west3"' "$sc" || fail "estate param did not override the pack default"
@@ -75,6 +77,60 @@ grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
+
+step "run-actions: declared, resolved, and never run without being asked"
+# Plan mode is the default and must spawn nothing. The fixture script would print
+# a line of its own if it ran, so its absence is the assertion.
+"$satz" --config . run-actions showcase.satz > tmp/actions-plan.txt 2>&1 \
+  || fail "run-actions (plan) failed"
+grep -q '2 action(s) declared' tmp/actions-plan.txt || fail "both actions should be collected"
+grep -q 'optional-step' tmp/actions-plan.txt && fail "a \`when\`=false pack contributed an action"
+grep -q 'from a pack' tmp/actions-plan.txt || fail "the pack-declared action is not reported as coming from a pack"
+grep -q 'scripts/showcase-action.sh --organization 123456789012' tmp/actions-plan.txt \
+  || fail "the estate's param did not reach the resolved command line"
+grep -q -- '--apply' tmp/actions-plan.txt || fail "the --execute form should be shown in the plan"
+grep -q 'showcase-action: ' tmp/actions-plan.txt && fail "plan mode spawned the script"
+grep -q 'nothing was run' tmp/actions-plan.txt || fail "plan mode did not say it ran nothing"
+
+# --check passes `args` only; --execute appends `execute_args`. The fixture prints
+# WRITE MODE only when it sees --apply, so the two runs are told apart by effect.
+"$satz" --config . run-actions showcase.satz --check > tmp/actions-check.txt 2>&1 \
+  || fail "run-actions --check failed"
+grep -q 'showcase-action: name=showcase-step phase=after-apply mode=check' tmp/actions-check.txt \
+  || fail "the action did not run, or did not receive its environment"
+grep -q 'WRITE MODE' tmp/actions-check.txt && fail "--check must not pass execute_args"
+grep -q 'customer_domain=not-exported' tmp/actions-check.txt \
+  || fail "a param the estate did not put in args reached the script's environment"
+
+"$satz" --config . run-actions showcase.satz --execute > tmp/actions-exec.txt 2>&1 \
+  || fail "run-actions --execute failed"
+grep -q 'WRITE MODE' tmp/actions-exec.txt || fail "--execute did not append execute_args"
+
+# before-apply runs ahead of after-apply, whatever order they were declared in.
+grep -n 'showcase-action: name=' tmp/actions-exec.txt | head -1 | grep -q 'name=pack-step' \
+  || fail "phase order ignored: before-apply should run first"
+
+# The three switches.
+"$satz" --config . run-actions showcase.satz --execute --no-actions > tmp/actions-off.txt 2>&1 \
+  || fail "run-actions --no-actions failed"
+grep -q 'showcase-action: ' tmp/actions-off.txt && fail "--no-actions still executed something"
+grep -q 'nothing was run: --no-actions' tmp/actions-off.txt || fail "--no-actions did not report itself"
+
+"$satz" --config . run-actions showcase.satz --no-pack-actions > tmp/actions-nopack.txt 2>&1 \
+  || fail "run-actions --no-pack-actions failed"
+grep -q '1 pack-declared action(s) skipped' tmp/actions-nopack.txt || fail "--no-pack-actions skipped nothing"
+
+"$satz" --config . transpile showcase.satz --check > tmp/actions-warn.txt 2>&1 \
+  || fail "transpile --check failed"
+grep -q 'warning: action "showcase-step"' tmp/actions-warn.txt \
+  || fail "a declared action must warn on every compile"
+"$satz" --config . transpile showcase.satz --check --no-action-warnings > tmp/actions-nowarn.txt 2>&1 \
+  || fail "transpile --check --no-action-warnings failed"
+grep -q 'warning: action' tmp/actions-nowarn.txt && fail "--no-action-warnings did not silence the warning"
+
+"$satz" --config . run-actions showcase.satz --only nope > tmp/actions-only.txt 2>&1 \
+  && fail "--only with an unknown name should fail"
+grep -q 'no action by that name' tmp/actions-only.txt || fail "--only did not name the mistake"
 
 step "require cis-gcp-4.0 (goal view, offline)"
 # `require` exits non-zero when a technical control is unmet — that IS the CI

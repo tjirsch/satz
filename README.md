@@ -65,6 +65,9 @@ These options can be placed anywhere in the command (e.g., before or after subco
 - `--validation <LEVEL>`: Validation level for mandatory parameters (`warn`, `error`, `none`). Default from project config or `warn`.
 - `--html-help`: open the documentation site in the browser at the invoked command's section (`satz transpile --html-help`); alone (`satz --html-help`) the front page. Commands without a section of their own open the command table.
 - `--verbose`: Enable verbose output. When invoked without a subcommand (e.g. `satz --verbose`), prints full recursive help listing all subcommands and their options.
+- `--no-actions`: never execute a declared [`action`](#run-actions), whatever `run-actions` was asked to do.
+- `--no-pack-actions`: consider only the estate's own actions; ignore any a `use`d pack declares.
+- `--no-action-warnings`: silence the warning every declared action raises on a compile.
 
 ### User settings (~/.config/satz/satz.toml)
 
@@ -117,7 +120,7 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 ## CLI Usage
 
-All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
+All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
 **Estate**
 
@@ -139,6 +142,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `migrate <INPUT>` | `--mode` |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
+| `run-actions <INPUT>` | `--check` (each action's own dry-run form), `--execute` (the form that writes), `--only <names>`, `--phase <before-apply\|after-apply>` — prints what it would run and stops by default |
 
 **Presets**
 
@@ -1399,6 +1403,71 @@ satz scan-plan plan.json --output mapping.yaml
 - Parses the plan JSON to identify resources that are being destroyed and recreated with new addresses.
 - Generates a mapping file that correlates old and new resource addresses.
 - The mapping file can be used with `generate-migration` to create state move commands.
+
+### Run Actions (`run-actions`)
+
+Some cloud steps have **no provider resource at all** — Security Command Center
+service enablement is the standing example: provider 7.14.1 ships 35
+`google_scc_*` / `google_securityposture_*` types and none of them is enablement
+or tier activation. Those steps stay scripts, and `action` is how an estate
+declares one so that satz can run it with the estate's own parameters instead of
+a human retyping the organisation id.
+
+```
+action "scc-services" {
+  reason       = "SCC service enablement has no provider resource (google 7.14.1)"
+  run          = "../scripts/scc-enable-all.sh"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+  phase        = "after-apply"
+}
+```
+
+```bash
+satz run-actions estate.satz              # resolve and print; runs nothing
+satz run-actions estate.satz --check      # run each action's own dry-run form
+satz run-actions estate.satz --execute    # run the form that writes (adds execute_args)
+```
+
+Nothing runs while compiling — `transpile` stays a pure function of its sources,
+which is what keeps the corpus snapshots and the preset drift check meaningful,
+and what makes cloning an estate and compiling it safe. An action emits nothing,
+enters no manifest, and can carry no claim; satz records that the step exists and
+never says what it did.
+
+Whether an action's `--check` form is side-effect-free is **the action's
+contract, not satz's**. A failed action stops the run and its exit code is
+propagated; the remaining actions do not run.
+
+What a script can rely on: the interpreter is whatever its shebang says (sh,
+bash, Python, a binary — satz just executes the file, and it must already be
+executable); the working directory is always the one holding `config.toml`,
+whatever directory satz was invoked from; and the environment is exactly five
+variables and **nothing else** — `SATZ_ACTION`, `SATZ_PHASE`, `SATZ_MODE`
+(`check` or `execute`), `SATZ_ESTATE`, `SATZ_HCL_DIR`. Params are not exported,
+so anything a script needs must be named in `args` and the declaration stays the
+complete record of what the action was told. Every action is located and checked
+before any is spawned, so a run cannot fail half way on the fourth script's
+missing `+x`. §6.13 has a worked script.
+
+Packs may declare actions too — the pack is where the knowledge that a step is
+needed lives — so every compile warns, naming the declaring file, and three
+global switches exist because `get-presets` downloads packs from a public
+repository:
+
+| switch | effect |
+|---|---|
+| `--no-actions` | never execute an action, whatever `run-actions` was asked to do |
+| `--no-pack-actions` | consider only the estate's own actions |
+| `--no-action-warnings` | silence the warning every declared action raises on a compile |
+
+A downloaded script also arrives without its executable bit and satz will not set
+it: the error names the `chmod +x` and leaves the decision to whoever read the
+file. The full reference is
+[§6.13 of the language spec](docs/satz-language.md#613-action--a-step-with-no-provider-resource);
+for a step that must run *between* two resources inside one apply, use a
+`terraform_data` provisioner in an `hcl trust` block instead, with the costs
+§6.12 lists.
 
 ### Generate Migration (`generate-migration`)
 Generate a shell script with `tofu state mv` commands from a mapping YAML file.
