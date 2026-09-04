@@ -1449,6 +1449,19 @@ satz run-actions estate.satz --check      # run each action's own dry-run form
 satz run-actions estate.satz --execute    # run the form that writes (adds execute_args)
 ```
 
+`phase` says whether the step is a **prerequisite** (`before-apply`, as above —
+the services must be on before the resources that need them) or whether it needs
+**what the apply created** (`after-apply`, the default — a per-project setting
+has no project to act on until the apply made one). It is advisory: `satz apply`
+neither knows nor mentions actions, so sequencing the two is the operator's job,
+and `--phase` is what makes that easy.
+
+```bash
+satz run-actions estate.satz --phase before-apply --execute
+satz apply
+satz run-actions estate.satz --phase after-apply --execute
+```
+
 Nothing runs while compiling — `transpile` stays a pure function of its sources,
 which is what keeps the corpus snapshots and the preset drift check meaningful,
 and what makes cloning an estate and compiling it safe. An action emits nothing,

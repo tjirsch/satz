@@ -134,14 +134,20 @@ fn locate(a: &ResolvedAction, opts: &RunOptions) -> Result<PathBuf, String> {
             Err(format!("run = \"{}\" resolves to {}, which does not exist", a.run, rel.display()))
         };
     }
-    let mut tried = Vec::new();
+    let mut tried: Vec<String> = Vec::new();
     let mut candidates = vec![opts.estate_root.join(&rel)];
     candidates.extend(opts.include_dirs.iter().map(|d| d.join(&rel)));
     for c in candidates {
         if c.exists() {
             return absolutize(&c);
         }
-        tried.push(lexical_normalize(&c).display().to_string());
+        // The estate root is usually also an include dir, so the same candidate
+        // comes round twice; a "looked in" list that repeats itself reads like a
+        // bug in the search rather than a missing file.
+        let shown = lexical_normalize(&c).display().to_string();
+        if !tried.contains(&shown) {
+            tried.push(shown);
+        }
     }
     Err(format!(
         "run = \"{}\" not found. Looked in:\n      {}",
