@@ -287,6 +287,16 @@ done
 step "check-presets against the repository's own presets (must be clean)"
 "$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz
 
+# and the same verdicts as data — the last reporting command that had no JSON
+"$satz" --config . check-presets smoke.satz --pristine-dir "$root/presets" --format json 2>/dev/null > tmp/presets.json || true
+python3 - <<'PYEOF' || fail "check-presets --format json did not emit parseable JSON on stdout"
+import json
+d = json.load(open("tmp/presets.json"))
+assert d["packs"], "no pack rows"
+assert d["summary"]["drift_in_use"] is False, d["summary"]
+assert {p["status"] for p in d["packs"]} <= {"clean","stale","edited","fork","local-only","missing-locally"}
+PYEOF
+grep -q 'satz v' tmp/presets.json && fail "the version banner is on stdout"
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"

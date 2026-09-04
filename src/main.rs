@@ -600,6 +600,9 @@ enum Commands {
         /// Compare against this directory instead of downloading the upstream presets
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
+        /// Output format: text or json
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
     },
     /// Adopt what already exists: resolve the live ids of the resources this estate declares (folders by name, groups by email, org policies by constraint, everything else by its rule in import-config.yaml) and bring them under management
     ///
@@ -1698,16 +1701,21 @@ Thumbs.db
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
         Commands::HclInit { args } => run_tf(&runtime_config, "init", &args),
-        Commands::CheckPresets { input, pristine_dir } => {
+        Commands::CheckPresets { input, pristine_dir, format } => {
+            let format = format.require_one_of("check-presets", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let drift = crate::presets::run_check_presets(
+            let report = crate::presets::check_presets_report(
                 &input_path,
                 &runtime_config.presets_dir,
                 &runtime_config.include_dirs,
                 pristine_dir,
             )
             .await?;
-            if drift {
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                _ => print!("{}", crate::presets::render_check_presets(&report)),
+            }
+            if report.summary.drift_in_use {
                 std::process::exit(1);
             }
             Ok(())
