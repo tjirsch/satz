@@ -470,8 +470,10 @@ list, which is what "won't stay activated / asks to activate on every console
 visit" looks like from the console.
 
 **How many agents is that? Five, and enabling more services does not add to them.**
-Measured 2026-09-04 on a live organization: with every service this SDK can set
-turned on, the org IAM policy carried exactly the five the baseline already lists
+Measured 2026-09-04 on a live organization, twice: with every service that can be
+enabled at all turned on — all fourteen GCP-side ones, including the four that are
+reachable only through the API — the org IAM policy carried exactly the five the
+baseline already lists
 (`securitycenter`, `cloudsecuritycompliance`, `dspm`, `externalexposure`,
 `containerthreatdetection` service agents). They come with SCC activation, not
 per service. A **notification config** adds

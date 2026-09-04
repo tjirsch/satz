@@ -6,7 +6,15 @@
 # -------------------------------------
 # google/google-beta have no binding for securitycentermanagement's
 # SecurityCenterService, so SCC module enablement (and tier activation) cannot
-# be expressed in Terraform/OpenTofu at all — see CLAUDE.md #27. Everything
+# be expressed in Terraform/OpenTofu at all — see CLAUDE.md #27.
+#
+# It calls the securitycentermanagement REST API directly rather than
+# `gcloud scc manage`, because the SDK knows only 13 of the 17 services the API
+# exposes: ARTIFACT_GUARD, ARTIFACT_ANALYSIS, AGENT_ENGINE_VULN_ASSESSMENT and
+# EXTERNAL_EXPOSURE have no gcloud name at all, while the API sets them without
+# complaint. gcloud is still used for credentials and for walking the hierarchy.
+#
+# Everything
 # DOWNSTREAM of activation (custom modules, sources + source IAM, notification
 # configs, BigQuery exports, mute configs, Security Posture) is codeable and
 # belongs in a preset; this file covers only the part that has no resource.
@@ -36,44 +44,39 @@ RESET_MODULES=0
 ALL_SERVICES=0
 SERVICES_OVERRIDE=""
 TARGETS_FILE=""
+QUOTA_PROJECT=""
 
 # Services gcloud knows about (SDK 580.0.0). Used only as a fallback when the
 # org's own service list cannot be read — the live list is authoritative.
 FALLBACK_GCP_SERVICES=(
-  security-health-analytics
-  event-threat-detection
-  container-threat-detection
-  vm-threat-detection
-  web-security-scanner
-  cloud-run-threat-detection
-  vm-manager
-  gce-vulnerability-assessment
-  notebook-security-scanner
-  agent-engine-threat-detection
+  SECURITY_HEALTH_ANALYTICS
+  EVENT_THREAT_DETECTION
+  CONTAINER_THREAT_DETECTION
+  VM_THREAT_DETECTION
+  WEB_SECURITY_SCANNER
+  CLOUD_RUN_THREAT_DETECTION
+  VM_MANAGER
+  GCE_VULNERABILITY_ASSESSMENT
+  NOTEBOOK_SECURITY_SCANNER
+  AGENT_ENGINE_THREAT_DETECTION
+  AGENT_ENGINE_VULN_ASSESSMENT
+  EXTERNAL_EXPOSURE
+  ARTIFACT_ANALYSIS
+  ARTIFACT_GUARD
 )
 # Multicloud connectors: only meaningful once an AWS/Azure connector exists.
 # Skipped unless --all-services, because they fail noisily otherwise.
 MULTICLOUD_SERVICES=(
-  vm-threat-detection-aws
-  ec2-vulnerability-assessment
-  azure-vulnerability-assessment
+  VM_THREAT_DETECTION_AWS
+  EC2_VULNERABILITY_ASSESSMENT
+  AZURE_VULNERABILITY_ASSESSMENT
 )
-# Every name `gcloud scc manage services update` accepts (SDK 580.0.0). This is
-# NOT the same set the API lists: the API knows services gcloud has no name for
-# (ARTIFACT_GUARD, ARTIFACT_ANALYSIS, AGENT_ENGINE_VULN_ASSESSMENT and
-# EXTERNAL_EXPOSURE on a live org in 2026-09), and passing one of those turns
-# the whole run into a wall of "is not a valid service name". Discovery is
-# intersected with this list and the remainder is REPORTED, not attempted.
 # VM Manager is not a service you switch on HERE. SCC mirrors whether GCE's VM
-# Manager is running, and the API answers ENABLED with
-# "Invalid intended_enablement_state" — enable VM Manager in Compute and this
-# follows. It is still swept to INHERITED below, which the API does accept.
+# Manager is running, and the API answers "Invalid intended_enablement_state" —
+# enable VM Manager in Compute and this follows. Still swept to INHERITED, which
+# the API does accept.
 NOT_ENABLEABLE_SERVICES=(
-  vm-manager
-)
-SETTABLE_SERVICES=(
-  "${FALLBACK_GCP_SERVICES[@]}"
-  "${MULTICLOUD_SERVICES[@]}"
+  VM_MANAGER
 )
 
 usage() {
@@ -81,8 +84,8 @@ usage() {
 Usage: scripts/scc-enable-all.sh --organization ORG_ID [options]
 
   --organization ID     numeric organization id (required)
-  --apply               actually write; without it every call runs with
-                        --validate-only and nothing changes
+  --apply               actually write; without it every call carries
+                        validateOnly and nothing changes
   --services "a b c"    use this service list verbatim instead of discovering it
   --all-services        include the AWS/Azure connector services
   --org-only            enable at the org, skip the descendant sweep
@@ -91,6 +94,9 @@ Usage: scripts/scc-enable-all.sh --organization ORG_ID [options]
                         overrides; applies to the org pass and the sweep)
   --targets-file FILE   newline-separated folders/<id> and projects/<id> to
                         sweep, instead of walking the hierarchy
+  --quota-project ID    project the API bills the call to; defaults to the
+                        active gcloud project. securitycentermanagement
+                        refuses a call without one.
   -h, --help            this text
 
 Examples
@@ -112,6 +118,7 @@ while [[ $# -gt 0 ]]; do
     --descendants-only)   DO_ORG=0; shift ;;
     --reset-modules)      RESET_MODULES=1; shift ;;
     --targets-file)       TARGETS_FILE="${2:-}"; shift 2 ;;
+    --quota-project)      QUOTA_PROJECT="${2:-}"; shift 2 ;;
     -h|--help)            usage; exit 0 ;;
     *) echo "unknown flag: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -121,13 +128,50 @@ done
 ORG="${ORG#organizations/}"
 [[ "$ORG" =~ ^[0-9]+$ ]] || { echo "error: organization id must be numeric, got '$ORG'" >&2; exit 2; }
 
+# ------------------------------------------------------------- the API ------
+# Calls go to securitycentermanagement REST, not to `gcloud scc manage`. The SDK
+# knows only 13 of the 17 services this API exposes — ARTIFACT_GUARD,
+# ARTIFACT_ANALYSIS, AGENT_ENGINE_VULN_ASSESSMENT and EXTERNAL_EXPOSURE have no
+# gcloud name and are unreachable through it, though the API sets them happily.
+# Going straight to the API also removes a translation step that was itself a
+# bug: the API says SECURITY_HEALTH_ANALYTICS, the CLI wanted
+# security-health-analytics, and discovery fed one to the other.
+API="https://securitycentermanagement.googleapis.com/v1"
+
+api_token() {
+  gcloud auth application-default print-access-token 2>/dev/null \
+    || gcloud auth print-access-token 2>/dev/null
+}
+
+# api_patch <resource-path> <query> <json-body> — echoes the response body and
+# returns non-zero on a non-2xx answer, so the caller reports the API's own
+# message rather than a generic failure.
+api_patch() {
+  local path="$1" query="$2" body="$3" out code
+  out=$(curl -sS -w $'\n%{http_code}' -X PATCH \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "x-goog-user-project: $QUOTA_PROJECT" \
+          -H "Content-Type: application/json" \
+          -d "$body" "$API/$path?$query" 2>&1) || { printf '%s' "$out"; return 1; }
+  code=${out##*$'\n'}
+  out=${out%$'\n'*}
+  printf '%s' "$out"
+  [[ "$code" =~ ^2 ]]
+}
+
 command -v gcloud >/dev/null || { echo "error: gcloud not on PATH" >&2; exit 2; }
 command -v jq     >/dev/null || { echo "error: jq not on PATH" >&2; exit 2; }
+command -v curl   >/dev/null || { echo "error: curl not on PATH" >&2; exit 2; }
 
-# bash 3.2 (the macOS default) errors on "${arr[@]}" for an empty array under
-# `set -u`, so this is expanded through the ${arr[@]+…} guard at both use sites.
-VALIDATE=()
-(( APPLY )) || VALIDATE=(--validate-only)
+# gcloud is still how we authenticate and how the hierarchy is walked; the SCC
+# calls themselves go to the REST API (see "the API" below).
+TOKEN=$(api_token)
+[[ -n "$TOKEN" ]] || {
+  echo "error: no access token — run 'gcloud auth application-default login'" >&2; exit 2; }
+QUOTA_PROJECT="${QUOTA_PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
+[[ -n "$QUOTA_PROJECT" ]] || {
+  echo "error: no quota project — pass --quota-project, or 'gcloud config set project'" >&2
+  echo "       securitycentermanagement refuses a call without one." >&2; exit 2; }
 
 # read_lines VAR_NAME  — mapfile replacement; bash 3.2 has no mapfile.
 read_into() {
@@ -166,10 +210,11 @@ diagnose() {
 
 # set_state <parent> <service> <ENABLED|INHERITED>
 set_state() {
-  local parent="$1" service="$2" state="$3" err
-  if err=$(gcloud scc manage services update "$service" \
-             --parent="$parent" --enablement-state="$state" \
-             ${VALIDATE[@]+"${VALIDATE[@]}"} --format=none 2>&1); then
+  local parent="$1" service="$2" state="$3" err q
+  q="updateMask=intendedEnablementState"
+  (( APPLY )) || q="$q&validateOnly=true"
+  if err=$(api_patch "$parent/locations/global/securityCenterServices/$service" \
+             "$q" "{\"intendedEnablementState\":\"$state\"}"); then
     say "    ok    $service -> $state"
     OK=$((OK+1))
   else
@@ -184,26 +229,21 @@ set_state() {
 # reset_modules <parent> <service> — every module of the service to INHERITED,
 # which is how a module says "whatever my parent says".
 reset_modules() {
-  local parent="$1" service="$2" modules cfg err count m
-  modules=$(gcloud scc manage services describe "$service" --parent="$parent" \
-              --format=json 2>/dev/null \
+  local parent="$1" service="$2" res modules body err count q
+  res="$parent/locations/global/securityCenterServices/$service"
+  modules=$(curl -sS -H "Authorization: Bearer $TOKEN" \
+              -H "x-goog-user-project: $QUOTA_PROJECT" "$API/$res" 2>/dev/null \
             | jq -r '(.modules // {}) | keys[]' 2>/dev/null || true)
   if [[ -z "$modules" ]]; then
     say "    --    $service: no modules reported"
     return
   fi
-
-  cfg=$(mktemp)
-  count=0
-  while IFS= read -r m; do
-    [[ -n "$m" ]] || continue
-    printf '%s:\n  intended_enablement_state: INHERITED\n' "$m" >>"$cfg"
-    count=$((count+1))
-  done <<<"$modules"
-
-  if err=$(gcloud scc manage services update "$service" \
-             --parent="$parent" --module-config-file="$cfg" \
-             ${VALIDATE[@]+"${VALIDATE[@]}"} --format=none 2>&1); then
+  count=$(printf '%s\n' "$modules" | grep -c . || true)
+  body=$(printf '%s\n' "$modules" \
+         | jq -R . | jq -s '{modules: (map({(.): {intendedEnablementState: "INHERITED"}}) | add)}')
+  q="updateMask=modules"
+  (( APPLY )) || q="$q&validateOnly=true"
+  if err=$(api_patch "$res" "$q" "$body"); then
     say "    ok    $service: $count module(s) -> INHERITED"
     OK=$((OK+1))
   else
@@ -213,7 +253,6 @@ reset_modules() {
     FAILED=$((FAILED+1))
     FAILURES+=("$parent $service modules")
   fi
-  rm -f "$cfg"
 }
 
 # ------------------------------------------------------- service discovery --
@@ -223,33 +262,17 @@ discover_services() {
     return
   fi
   local live
-  # The API answers SECURITY_HEALTH_ANALYTICS; the command takes
-  # security-health-analytics. Feeding the API's spelling to gcloud verbatim
-  # failed EVERY call on the first live run — the whole point of discovery,
-  # inverted. Lowercase and hyphenate here, then keep only what gcloud accepts.
-  live=$(gcloud scc manage services list --parent="organizations/$ORG" \
-           --format=json 2>/dev/null \
-         | jq -r '.[]?.name // empty | split("/") | last | ascii_downcase | gsub("_"; "-")' 2>/dev/null || true)
+  live=$(curl -sS -H "Authorization: Bearer $TOKEN" \
+           -H "x-goog-user-project: $QUOTA_PROJECT" \
+           "$API/organizations/$ORG/locations/global/securityCenterServices" 2>/dev/null \
+         | jq -r '.securityCenterServices[]?.name // empty | split("/") | last' 2>/dev/null || true)
   if [[ -n "$live" ]]; then
-    local keep="" skip="" svc
-    for svc in $live; do
-      if is_settable "$svc"; then keep="$keep$svc"$'\n'; else skip="$skip $svc"; fi
-    done
-    [[ -z "$skip" ]] || say "note: the org lists services this gcloud cannot set, skipping:$skip" >&2
-    if [[ -n "$keep" ]]; then printf '%s' "$keep"; return; fi
-    say "note: none of the discovered services is settable; using the built-in list" >&2
+    printf '%s\n' "$live"
+    return
   fi
   say "note: could not read the org's service list; using the built-in list" >&2
   printf '%s\n' "${FALLBACK_GCP_SERVICES[@]}"
   if (( ALL_SERVICES )); then printf '%s\n' "${MULTICLOUD_SERVICES[@]}"; fi
-}
-
-is_settable() {
-  local s="$1" k
-  for k in "${SETTABLE_SERVICES[@]}"; do
-    [[ "$s" == "$k" ]] && return 0
-  done
-  return 1
 }
 
 is_not_enableable() {
@@ -310,7 +333,7 @@ say "organization : organizations/$ORG"
 if (( APPLY )); then
   say "mode         : APPLY — writes"
 else
-  say "mode         : DRY RUN — --validate-only, nothing is written"
+  say "mode         : DRY RUN — validateOnly, nothing is written"
 fi
 say "services     : ${SERVICES[*]}"
 

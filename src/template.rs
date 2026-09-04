@@ -144,6 +144,7 @@ google_folder {{
           "logging.googleapis.com",
           "orgpolicy.googleapis.com",
           "securitycenter.googleapis.com",
+          "securitycentermanagement.googleapis.com",
           "serviceusage.googleapis.com",
           "essentialcontacts.googleapis.com",
         ]
