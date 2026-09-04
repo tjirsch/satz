@@ -96,26 +96,41 @@ pub(crate) fn render_credential_line(info: &CredentialInfo) -> String {
 
 static ANNOUNCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Print the credential line — once per process, however many clients a
-/// command builds. Sits behind `gcp::access_token()`, so every live command
-/// gets the line without knowing about it.
-pub(crate) async fn announce(token: &str) {
-    if ANNOUNCED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
-    // With impersonation configured, the line names the identity the calls
-    // actually run as — the estate's IaC SA — not the human behind it.
+/// Which identity the line should name. With impersonation configured it is
+/// the identity the calls actually run as — the estate's IaC SA — not the
+/// human behind it.
+async fn announce_info(token: &str) -> CredentialInfo {
     if let Some(sa) = crate::gcp::impersonation_target() {
-        let info = CredentialInfo {
+        return CredentialInfo {
             email: Some(sa),
             kind: CredKind::ImpersonatedSa,
             quota_project: crate::org_policy::resolve_quota_project(),
         };
-        println!("{}", render_credential_line(&info));
+    }
+    credential_info(token).await
+}
+
+/// Write the credential line to `sink`. Split out from [`announce`] so a test
+/// can read the line back without capturing a process stream.
+pub(crate) fn announce_to(sink: &mut impl std::io::Write, info: &CredentialInfo) {
+    // If the diagnostic stream itself is gone there is nothing to report it to.
+    let _ = writeln!(sink, "{}", render_credential_line(info));
+}
+
+/// Announce the credential line — once per process, however many clients a
+/// command builds. Sits behind `gcp::access_token()`, so every live command
+/// gets the line without knowing about it.
+///
+/// It goes to STDERR for the same reason the version banner does: stdout
+/// carries the ANSWER. Under `satz mcp` stdout carries the JSON-RPC stream, so
+/// a line printed there is not untidy output — it is a protocol error that
+/// breaks the client on the first live tool call.
+pub(crate) async fn announce(token: &str) {
+    if ANNOUNCED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    let info = credential_info(token).await;
-    println!("{}", render_credential_line(&info));
+    let info = announce_info(token).await;
+    announce_to(&mut std::io::stderr(), &info);
 }
 
 /// Suppress the automatic line for a command that prints its own picture
@@ -542,6 +557,25 @@ mod tests {
     }
 
     // --- the credential line -----------------------------------------------
+
+    /// The line is diagnostics and must be writable to a stream that is not
+    /// stdout — under `satz mcp`, stdout is the JSON-RPC transport and a stray
+    /// line there breaks the client rather than just looking untidy.
+    #[test]
+    fn the_credential_line_goes_to_the_sink_it_is_given() {
+        let info = CredentialInfo {
+            email: Some("svc-iac@acme-infra-001.iam.gserviceaccount.com".into()),
+            kind: CredKind::ImpersonatedSa,
+            quota_project: Some("acme-infra-001".into()),
+        };
+        let mut sink: Vec<u8> = Vec::new();
+        announce_to(&mut sink, &info);
+        assert_eq!(
+            String::from_utf8(sink).expect("utf-8"),
+            "credentials: svc-iac@acme-infra-001.iam.gserviceaccount.com \
+             (impersonated service account), quota project acme-infra-001\n"
+        );
+    }
 
     #[test]
     fn credential_line_shapes_are_pinned() {

@@ -806,6 +806,50 @@ mod tests {
         }
     }
 
+    /// The module test above is not enough on its own, and one real bug proved it:
+    /// `identity::announce` printed the credential line to stdout from behind
+    /// `gcp::access_token()`, so the FIRST live tool call corrupted the stream
+    /// without a single `println!` appearing in this file.
+    ///
+    /// The smoke matrix cannot catch that — it has no credentials, so it never
+    /// reaches a live tool call. So the code a tool reaches transitively is
+    /// gated here instead: the token chokepoint, and the announce path behind it.
+    /// (`identity.rs` as a whole is NOT covered — `whoami` prints its answer to
+    /// stdout, which is correct for a CLI command.)
+    #[test]
+    fn the_token_path_never_writes_to_stdout() {
+        let mut regions: Vec<(&str, &str)> = vec![("src/gcp/mod.rs", include_str!("gcp/mod.rs"))];
+
+        // Just the three announce functions, not the whole file.
+        let identity = include_str!("gcp/identity.rs");
+        let start = identity
+            .find("async fn announce_info")
+            .expect("announce_info moved — re-point this gate");
+        let end = identity
+            .find("pub(crate) fn mark_announced")
+            .expect("mark_announced moved — re-point this gate");
+        assert!(start < end, "the announce path is no longer one contiguous region");
+        regions.push(("src/gcp/identity.rs (announce path)", &identity[start..end]));
+
+        for (what, src) in regions {
+            for line in src.lines() {
+                let code = line
+                    .split("//")
+                    .next()
+                    .unwrap_or("")
+                    .replace("eprintln!", "")
+                    .replace("eprint!", "");
+                assert!(
+                    !code.contains("println!(") && !code.contains("print!("),
+                    "{}: a tool reaches this code, and stdout is the protocol — \
+                     write to stderr or take a sink: {}",
+                    what,
+                    line.trim()
+                );
+            }
+        }
+    }
+
     #[test]
     fn describe_names_every_granted_group() {
         assert_eq!(Level::parse("read,write,exec").unwrap().describe(), "read,write,exec");

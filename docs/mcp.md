@@ -149,10 +149,18 @@ which was the deciding question, rather than which option was less code.
 ## stdout is the protocol
 
 Everything satz says to a human — the version banner, schema-loader progress, emitter
-warnings — goes to **stderr**, and has since the reporting commands learned `--format
-json`. Under MCP that is not a convenience: a stray line on stdout is a corrupt stream,
-and the client reports nothing useful rather than reporting an error. The smoke matrix
-asserts that every line the server emits parses as JSON-RPC.
+warnings, the `credentials:` line — goes to **stderr**, and has since the reporting
+commands learned `--format json`. Under MCP that is not a convenience: a stray line on
+stdout is a corrupt stream, and the client reports nothing useful rather than reporting
+an error. The smoke matrix asserts that every line the server emits parses as JSON-RPC.
+
+That check has a blind spot worth knowing about. The matrix runs without credentials, so
+it never reaches a **live** tool call — and the first real bug here was exactly there:
+the credential line was printed from behind `gcp::access_token()`, in a different module,
+so the first live call corrupted the stream without a single `println!` in `src/mcp.rs`.
+Two unit tests cover what the matrix cannot: one scans this module, the other scans the
+code a tool reaches transitively — the token chokepoint and the announce path. A new
+live code path on a tool's route belongs in the second one.
 
 ### Still missing
 
