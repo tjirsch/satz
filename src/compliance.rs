@@ -22,6 +22,8 @@
 //! read, so claims and witnesses can never disagree about which estate they
 //! describe. There is no sidecar route: a YAML-dialect estate is rejected here.
 
+// schemars comes through rmcp: one version in the tree, no second dependency to pin
+use rmcp::schemars;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -520,7 +522,7 @@ fn load_library_view(presets_dir: &str) -> Result<Vec<(String, Claim)>, BoxErr> 
 /// One control's verdict, as data. The renderer derives its sentence from these
 /// fields and reaches nothing else — if it cannot see it here, it cannot print it,
 /// which is what keeps the text and the JSON from drifting.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ControlRow {
     pub id: String,
     pub title: String,
@@ -544,7 +546,7 @@ pub(crate) struct ControlRow {
     pub contributes_only: bool,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct RequireSummary {
     pub satisfied: usize,
     pub partial: usize,
@@ -555,7 +557,7 @@ pub(crate) struct RequireSummary {
     pub inherited: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct RequireReport {
     pub catalog: String,
     pub version: String,
@@ -1871,11 +1873,16 @@ pub(crate) async fn run_report_compliance(
         "live": !no_live, "rows": json_rows,
     });
 
-    // append-only history
+    // Append-only history — but NOT when the caller asked for the evidence as
+    // data. The history is the audit trail of a deliberate report run; a caller
+    // reading current state (a pipeline, an agent over MCP) must not append to
+    // it, and a "read-only" wrapper that silently wrote files would be a lie.
     let hist_dir = config_dir.join("evidence");
-    crate::fsx::create_dir_all(&hist_dir)?;
     let hist = hist_dir.join(format!("{}-{}.json", framework, verified_at.replace(':', "-")));
-    crate::fsx::write(&hist, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
+    if format != crate::OutFormat::Json {
+        crate::fsx::create_dir_all(&hist_dir)?;
+        crate::fsx::write(&hist, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
+    }
 
     let out_path = report_path.unwrap_or_else(|| hist_dir.join(format!("{}-latest.md", framework)));
     match format {
@@ -1987,7 +1994,7 @@ mod prowler_ocsf_tests {
 // it and how (docs/security-toolset-integration.md)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, schemars::JsonSchema)]
 pub(crate) enum Bucket {
     /// a pack in the library already covers the control
     A,
@@ -2013,7 +2020,7 @@ impl Bucket {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct TriageRow {
     pub bucket: Bucket,
     pub control: String,
@@ -2149,15 +2156,15 @@ pub(crate) fn render_triage(catalog: &Catalog, rows: &[TriageRow]) -> String {
 
 /// The `triage` command.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_triage(
+/// The triage rows, computed. No printing, no files — so the same verdicts serve
+/// the terminal, `--format json` and the MCP tool.
+pub(crate) fn triage_rows(
     framework: &str,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
     manifest: &Manifest,
     prowler_path: &Path,
-    format: crate::OutFormat,
-    report_path: Option<PathBuf>,
-) -> Result<(), BoxErr> {
+) -> Result<(Catalog, Vec<TriageRow>), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
@@ -2170,6 +2177,20 @@ pub(crate) fn run_triage(
         return Err(format!("no finding in {} maps to {} {} — is this the right framework and a Prowler export (OCSF or legacy JSON)?", prowler_path.display(), catalog.catalog, catalog.version).into());
     }
     let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
+    Ok((catalog, rows))
+}
+
+pub(crate) fn run_triage(
+    framework: &str,
+    presets_dir: &str,
+    included_claims: &[(String, Claim)],
+    manifest: &Manifest,
+    prowler_path: &Path,
+    format: crate::OutFormat,
+    report_path: Option<PathBuf>,
+) -> Result<(), BoxErr> {
+    let (catalog, rows) = triage_rows(framework, presets_dir, included_claims, manifest, prowler_path)?;
+
     let text = match format {
         crate::OutFormat::Json => serde_json::to_string_pretty(&rows)?,
         _ => render_triage(&catalog, &rows),

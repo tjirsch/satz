@@ -39,7 +39,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::handler::server::wrapper::Parameters;
+use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, ProtocolVersion, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
 
@@ -161,6 +161,24 @@ pub(crate) struct RequireArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct TriageArgs {
+    /// Estate file, e.g. `C0example.satz`
+    pub estate: String,
+    /// Catalog id, e.g. `cis-gcp-4.0`
+    pub framework: String,
+    /// Prowler export (OCSF or legacy JSON), a path under the server's root
+    pub prowler: String,
+}
+
+/// What a compile produced. The addresses are the estate's emitted resources —
+/// the same set the compliance plane witnesses against.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct CompileSummary {
+    pub estate: String,
+    pub addresses: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct RestrictArgs {
     /// Groups to keep, comma-separated: read, write, exec
     pub allow: String,
@@ -173,11 +191,11 @@ fn refused(msg: String) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(msg)])
 }
 
-fn ok_json(value: &impl serde::Serialize) -> Result<CallToolResult, McpError> {
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|e| McpError::internal_error(format!("could not serialise the report: {e}"), None))?;
-    Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
-}
+// Every handler returns `Json<T>` on success. The SDK puts that in the result's
+// `structuredContent` and publishes T's schema as the tool's `outputSchema`, so a
+// client gets a typed value instead of a string it has to parse. Returning the
+// report as a text block — what this server first did — threw that away: the JSON
+// was there, but nothing said what shape it had.
 
 #[tool_router]
 impl SatzMcp {
@@ -215,10 +233,16 @@ impl SatzMcp {
     /// this a tool argument is an arbitrary-file read: `use "…"` resolves
     /// through include_dirs, so a path is not just a path.
     fn estate(&self, name: &str) -> Result<PathBuf, CallToolResult> {
-        if name.contains('\0') {
-            return Err(refused("the estate name is not a path".into()));
-        }
         let p = crate::estate_path(PathBuf::from(name), &self.ctx.runtime);
+        self.confine(p)
+    }
+
+    /// Any other path argument — a Prowler export, a report to read back.
+    fn file(&self, name: &str) -> Result<PathBuf, CallToolResult> {
+        self.confine(self.ctx.root.join(name))
+    }
+
+    fn confine(&self, p: PathBuf) -> Result<PathBuf, CallToolResult> {
         let resolved = p
             .canonicalize()
             .map_err(|e| refused(format!("{}: {}", p.display(), e)))?;
@@ -233,23 +257,33 @@ impl SatzMcp {
         Ok(resolved)
     }
 
+    /// The manifest and claims every compliance tool starts from.
+    fn inputs(&self, estate: &std::path::Path) -> Result<crate::ComplianceInputs, CallToolResult> {
+        crate::compliance_inputs(estate, &self.ctx.tool, &self.ctx.runtime)
+            .map_err(|e| refused(format!("{}: {}", estate.display(), e)))
+    }
+
     #[tool(
         name = "satz_require",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::compliance::RequireReport>(),
         description = "Goal view: which controls of a compliance catalog the DECLARED estate satisfies, \
-                       from the claims of the packs it uses. Offline, reads nothing live. Returns JSON."
+                       from the claims of the packs it uses. Offline, reads nothing live.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
-    async fn require(&self, Parameters(args): Parameters<RequireArgs>) -> Result<CallToolResult, McpError> {
+    async fn require(
+        &self,
+        Parameters(args): Parameters<RequireArgs>,
+    ) -> Result<Result<Json<crate::compliance::RequireReport>, CallToolResult>, McpError> {
         if let Err(r) = self.permits(Group::Read) {
-            return Ok(r);
+            return Ok(Err(r));
         }
         let estate = match self.estate(&args.estate) {
             Ok(p) => p,
-            Err(r) => return Ok(r),
+            Err(r) => return Ok(Err(r)),
         };
-        let inputs = crate::compliance_inputs(&estate, &self.ctx.tool, &self.ctx.runtime);
-        let (manifest, claims, _org) = match inputs {
+        let (manifest, claims, _org) = match self.inputs(&estate) {
             Ok(v) => v,
-            Err(e) => return Ok(refused(format!("{}: {}", args.estate, e))),
+            Err(r) => return Ok(Err(r)),
         };
         match crate::compliance::require_report(
             &args.framework,
@@ -258,24 +292,120 @@ impl SatzMcp {
             &claims,
             &manifest,
         ) {
-            Ok(report) => ok_json(&report),
-            Err(e) => Ok(refused(format!("require {}: {}", args.framework, e))),
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("require {}: {}", args.framework, e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_questions",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::questions::QuestionsReport>(),
+        description = "What this estate can be asked: every question its packs declare, joined with the \
+                       answers its params already carry, and what changing each answer would cost. \
+                       Offline and schema-free.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn questions(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<crate::questions::QuestionsReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let estate = match self.estate(&args.estate) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::questions::questions_report(&estate, &self.ctx.runtime) {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("questions: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_triage",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<Vec<crate::compliance::TriageRow>>(),
+        description = "Sort a Prowler export's FAILs into buckets A–E against what the estate CLAIMS: \
+                       who fixes each finding, and whether a pack already covers it. Offline; the \
+                       Prowler JSON is read from a path under the server's root.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn triage(
+        &self,
+        Parameters(args): Parameters<TriageArgs>,
+    ) -> Result<Result<Json<Vec<crate::compliance::TriageRow>>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let estate = match self.estate(&args.estate) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let prowler = match self.file(&args.prowler) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let (manifest, claims, _org) = match self.inputs(&estate) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::compliance::triage_rows(
+            &args.framework,
+            &self.ctx.runtime.presets_dir,
+            &claims,
+            &manifest,
+            &prowler,
+        ) {
+            Ok((_catalog, rows)) => Ok(Ok(Json(rows))),
+            Err(e) => Ok(Err(refused(format!("triage: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_transpile_check",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<CompileSummary>(),
+        description = "Compile the estate in memory and report what it would emit. Writes nothing — \
+                       the gate to run before touching hcl/.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn transpile_check(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<CompileSummary>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let estate = match self.estate(&args.estate) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::pipeline_b_generate(&estate, &self.ctx.tool, &self.ctx.runtime) {
+            Ok(out) => Ok(Ok(Json(CompileSummary {
+                estate: estate.display().to_string(),
+                addresses: out.manifest.addresses().into_iter().collect(),
+            }))),
+            Err(e) => Ok(Err(refused(format!("transpile --check: {}", e)))),
         }
     }
 
     #[tool(
         name = "satz_check_presets",
-        description = "Preset drift: which packs in the local library are clean, behind upstream or \
-                       locally edited, with the remedy for each. Downloads the pristine library to \
-                       compare. Returns JSON."
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::presets::CheckPresetsReport>(),
+        description = "Preset drift: which packs in the local library are clean, behind upstream, \
+                       locally edited, or changed only in the questions they ask — with the remedy \
+                       for each. Downloads the pristine library to compare.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
     )]
-    async fn check_presets(&self, Parameters(args): Parameters<EstateArg>) -> Result<CallToolResult, McpError> {
+    async fn check_presets(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<crate::presets::CheckPresetsReport>, CallToolResult>, McpError> {
         if let Err(r) = self.permits(Group::Read) {
-            return Ok(r);
+            return Ok(Err(r));
         }
         let estate = match self.estate(&args.estate) {
             Ok(p) => p,
-            Err(r) => return Ok(r),
+            Err(r) => return Ok(Err(r)),
         };
         match crate::presets::check_presets_report(
             &estate,
@@ -285,39 +415,44 @@ impl SatzMcp {
         )
         .await
         {
-            Ok(report) => ok_json(&report),
-            Err(e) => Ok(refused(format!("check-presets: {}", e))),
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("check-presets: {}", e)))),
         }
     }
 
     #[tool(
         name = "satz_transpile",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<CompileSummary>(),
         description = "Compile the estate to OpenTofu HCL and WRITE it into the configured hcl_dir. \
-                       Needs the 'write' capability."
+                       Needs the 'write' capability.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
-    async fn transpile(&self, Parameters(args): Parameters<EstateArg>) -> Result<CallToolResult, McpError> {
+    async fn transpile(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<CompileSummary>, CallToolResult>, McpError> {
         if let Err(r) = self.permits(Group::Write) {
-            return Ok(r);
+            return Ok(Err(r));
         }
         let estate = match self.estate(&args.estate) {
             Ok(p) => p,
-            Err(r) => return Ok(r),
+            Err(r) => return Ok(Err(r)),
         };
         match crate::pipeline_b_generate(&estate, &self.ctx.tool, &self.ctx.runtime) {
-            Ok(out) => ok_json(&serde_json::json!({
-                "estate": estate.display().to_string(),
-                "hcl_dir": self.ctx.runtime.hcl_dir,
-                "addresses": out.manifest.addresses().len(),
-            })),
-            Err(e) => Ok(refused(format!("transpile: {}", e))),
+            Ok(out) => Ok(Ok(Json(CompileSummary {
+                estate: estate.display().to_string(),
+                addresses: out.manifest.addresses().into_iter().collect(),
+            }))),
+            Err(e) => Ok(Err(refused(format!("transpile: {}", e)))),
         }
     }
 
     #[tool(
         name = "satz_restrict",
         description = "Lower this session's capability level for the rest of the connection. It can \
-                       only ever shrink — a level cannot be raised back, and never above the ceiling \
-                       the server was started with. Available only with --self-gated."
+                       only ever shrink — never raised back, never above the ceiling the server was \
+                       started with. Available only with --self-gated.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn restrict(&self, Parameters(args): Parameters<RestrictArgs>) -> Result<CallToolResult, McpError> {
         if !self.self_gated {
