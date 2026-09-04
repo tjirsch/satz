@@ -17,7 +17,6 @@ This file is the foundation every Defender deployment needs: the management
 project, its APIs, the workload identity pool, and the auto-provisioner plan
 that Microsoft always creates. One fragment per LICENSED PLAN goes beside it:
 
-use "presets/integrations/microsoft-defender-for-cloud.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
 use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
 
@@ -43,6 +42,25 @@ constraints AND together and an incomplete list refuses the grant.
 below. The estate must allow the `sts.windows.net/<microsoft tenant>`
 issuer, or document the exception.
 
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  mdc_workload_pool_id = ""
+  mdc_mgmt_project_id = ""
+  mdc_plan_cspm = false
+  mdc_cspm_default_access = false
+  mdc_cspm_least_privilege = false
+}
+
+use "presets/integrations/microsoft-defender-for-cloud.satz"
+```
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
+
 ## Params
 
 | param | default |
@@ -66,6 +84,14 @@ issuer, or document the exception.
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 0.1 | 2026-09-03 | first cut — the foundation of Microsoft's GCP onboarding as Satz: management project + its API set, the workload identity pool, the auto-provisioner plan and its custom role. Transcribed from a customer's generated wizard Terraform; Microsoft's own tenant, application-id audiences, provider ids and role ids are inlined constants, the customer's Entra tenant and the management project id are params |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

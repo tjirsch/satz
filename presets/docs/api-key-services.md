@@ -7,8 +7,6 @@ Source: `presets/cis-extensions/api-key-services.satz`
 
 CIS 4.0 §1.14 / 5.0 §1.15 — API keys restricted to the APIs an application needs.
 
-use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
-
 Opt-in because an API key that today calls anything stops working the moment
 this is enforced, unless its API targets are already narrowed. Set the
 allowed services first, then enforce.
@@ -18,6 +16,25 @@ verified against a live organisation's OrgPolicy `ListConstraints`. It blocks
 creating an API key bound to a service account unless the key's API targets
 are non-empty and limited to `allowed_api_key_services`, which is exactly
 what the control asks for.
+
+## Use it
+
+```
+params {
+  cis_api_key_services = true
+
+  // the pack's own defaults — copy only the lines you change
+  allowed_api_key_services = []
+}
+
+use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
+```
+
+`cis_api_key_services` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `CIS_GCP_Foundation_4_0`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -33,14 +50,28 @@ what the control asks for.
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 1.14 | implements | `google_org_policy_policy.iam_managed_disableServiceAccountApiKeyCreation` | A service-account API key may only be created when its API targets are non-empty and limited to the allowed services, so no key exists that can call every enabled API. |
-| cis-gcp 5.0 | 1.15 | implements | `google_org_policy_policy.iam_managed_disableServiceAccountApiKeyCreation` | As for 4.0 §1.14 — 5.0 §1.15 (5.0 renumbered §1.13–1.16; its 1.13 is a different control, 'API keys only exist for active services'). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 1.14 | API keys restricted to the APIs the application needs | implements | `google_org_policy_policy.iam_managed_disableServiceAccountApiKeyCreation` | A service-account API key may only be created when its API targets are non-empty and limited to the allowed services, so no key exists that can call every enabled API. |
+| cis-gcp 5.0 | 1.15 | API keys restricted to the APIs the application needs | implements | `google_org_policy_policy.iam_managed_disableServiceAccountApiKeyCreation` | As for 4.0 §1.14 — 5.0 §1.15 (5.0 renumbered §1.13–1.16; its 1.13 is a different control, 'API keys only exist for active services'). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **API keys restricted to the APIs the application needs** (cis-gcp 4.0 §1.14, cis-gcp 5.0 §1.15) — An API key may call only the services the application actually uses, never every enabled API.
 
 **Manual duties** (a control stays *partial* until each is attested):
 
 - `review-services` (cis-gcp 4.0 §1.14, cis-gcp 5.0 §1.15) — The allowed-service list is the control: re-read it when an application starts calling a new API, rather than switching the constraint off.
+
+Every resource this pack contributes is a witness of a claim above.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-04 | CIS 4.0 1.14 / 5.0 1.15, opt-in: a managed constraint with an `allowedServices` parameter, not a bare boolean |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

@@ -5,24 +5,41 @@ Source: `presets/security-group-models/s1-security-groups.satz`
 
 ## Purpose
 
-The S1 security group model in ONE file: the five admin groups AND their
-organization-level role grants — resource-type sections may repeat across
-files with distinct ids, so a typed pack sits beside the estate's own groups
-and grants. Content-identical to s1-group-definitions 1.2 +
-s1-group-permissions 1.1, which stay for the estates that `use` them under
-a resource type; an estate takes ONE of the two spellings, never both.
+The S1 security group model in ONE file: the five admin groups and their
+organization-level role grants.
 
-Use at the top level:
-use "presets/security-group-models/s1-security-groups.satz"
+Resource-type sections may repeat across files with distinct ids, so a typed
+pack sits beside the estate's own groups and grants. Content-identical to
+s1-group-definitions 1.2 + s1-group-permissions 1.1, which stay for the estates
+that `use` them under a resource type; an estate takes ONE of the two
+spellings, never both.
 
 To adopt groups that already exist in the tenant:
 satz adopt <estate> --only google_cloud_identity_group --execute
 Groups are looked up by email; no ids are hard-coded here (tenant-specific).
 Memberships are deliberately NOT part of this pack: presets define groups,
-humans grant membership. Estates that need managed memberships declare them
-as estate-level resources.
+humans grant membership.
 
-Required from the estate: customer_domain, svc_iac_account, infra_project_name
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  gcp_organization_admins_name = "gcp-organization-admins"
+  gcp_project_admins_name = "gcp-project-admins"
+  gcp_security_admins_name = "gcp-security-admins"
+  gcp_security_viewers_name = "gcp-security-viewers"
+  gcp_billing_admins_name = "gcp-billing-admins"
+}
+
+use "presets/security-group-models/s1-security-groups.satz"
+```
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `infra_project_name` — no pack in the library declares it, so the estate must.
+- `svc_iac_account` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -44,6 +61,14 @@ Required from the estate: customer_domain, svc_iac_account, infra_project_name
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-02 | the S1 model in ONE typed file (groups + org grants) for top-level `use`; content-identical to `s1_group_definitions` 1.2 + `s1_group_permissions` 1.1, which stay for the under-a-type spelling — an estate takes one of the two, never both |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

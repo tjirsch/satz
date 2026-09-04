@@ -1,8 +1,9 @@
-// 
-// Include under organization_iam_member:
-// 
-
-// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
+// Organization-level role grants for the five S1 admin groups.
+//
+//   google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
+//
+// The groups themselves are `s1_group_definitions`; memberships are deliberately
+// not here — presets define groups, humans grant membership.
 
 pack s1_group_permissions version "1.1"
 

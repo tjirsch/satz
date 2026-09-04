@@ -1,5 +1,7 @@
+// Turns every Security Command Center service on at the organization, through
+// the one step that has no provider resource.
 //
-// Security Command Center — service enablement
+//   use "presets/scc/scc-service-enablement.satz"
 //
 // This pack contains no resources, and that is the whole point of it.
 //

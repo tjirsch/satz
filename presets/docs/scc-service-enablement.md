@@ -5,7 +5,8 @@ Source: `presets/scc/scc-service-enablement.satz`
 
 ## Purpose
 
-Security Command Center — service enablement
+Turns every Security Command Center service on at the organization, through
+the one step that has no provider resource.
 
 This pack contains no resources, and that is the whole point of it.
 
@@ -49,6 +50,18 @@ invoked, it emits nothing, and no claim can cover it — satz records that
 the step exists and never says what it did. `report-compliance` will not
 tell you whether SCC is on; Cloud Asset Inventory does not carry it.
 
+## Use it
+
+```
+use "presets/scc/scc-service-enablement.satz"
+```
+
+The pack declares no params: everything it sets is fixed in the file. A different value is a param lifted into the pack, or a `.local` fork.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
+
 ## Params
 
 _None — the pack takes everything from the estate's params._
@@ -59,11 +72,19 @@ _No resources: this pack's content is the action below — a step with no provid
 
 **Actions:** 1 — `satz run-actions` executes `scc-services` (`scc-enable-all.sh`). Not covered by any claim.
 
-- `scc-services` — SCC service enablement has no provider resource — google 7.14.1 ships 35 google_scc_*/google_securityposture_* types and none of them is enablement or tier activation
+- `scc-services` — SCC service enablement has no provider resource — google 7.14.1 ships 35 google_scc_*/google_securityposture_* types and none of them is enablement or tier activation (phase `before-apply`)
 
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-04 | first version: no resources, one `action` binding `scc/scc-enable-all.sh`. SCC service enablement and tier activation have no provider resource (7.14.1 ships 35 `google_scc_*`/`google_securityposture_*` types and none of them is enablement), so the estate declares the step and `satz run-actions` runs it with the org id the estate already carries. `phase = "before-apply"`; everything downstream of enablement stays for a later pack |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

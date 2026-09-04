@@ -1,19 +1,16 @@
-// 
-// Include under cloud_identity_group:
-// 
-// cloud_identity_group: !include presets/security-group-models/s1-group-definitions-1.0.yaml
-// 
+// The five S1 admin groups, defined but not populated.
+//
+//   google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
+//
 // To adopt groups that already exist in the tenant, run
 //   satz adopt <estate> --only google_cloud_identity_group --execute
-// each group is looked up by email over the Cloud Identity API and the verified
+// Each group is looked up by email over the Cloud Identity API and the verified
 // ids are written into the estate as "import-id". That is why no group ids are
 // hard-coded here — they are tenant-specific and do not belong in a shared preset.
-// Memberships are deliberately NOT part of this preset (v1.1): presets define
-// groups, humans grant membership. Estates that need managed memberships declare
-// them as estate-level resources.
-// 
-
-// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
+//
+// Memberships are deliberately NOT part of this preset: presets define groups,
+// humans grant membership. Estates that need managed memberships declare them
+// as estate-level resources.
 
 pack s1_group_definitions version "1.2"
 

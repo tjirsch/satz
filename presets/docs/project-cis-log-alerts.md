@@ -5,36 +5,24 @@ Source: `presets/monitoring/project-cis-log-alerts.satz`
 
 ## Purpose
 
-CIS log metric filters + alert policies — PER PROJECT
+CIS log metric filters and alert policies, per project.
 
 Covers CIS GCP Foundations 2.5 – 2.12: eight log-based metric filters, each
 with an alert policy, plus the notification channel they fire into.
 
-Include at ROOT level — this preset declares several resource types, and the
-target project is chosen by the `project:` field of each resource, not by
-where the include sits:
-
-!include presets/monitoring/project-cis-log-alerts-1.0.yaml
-
-Or gated on the target project being defined:
-
-!include-if cis-alert-project presets/monitoring/project-cis-log-alerts-1.0.yaml
-
-Required from the including config's variables:
-*customer-domain            recipient domain for the notification channel
-
-The variables below are DEFAULTS: define the same anchor in the main file's
-`variables:` block (before the include) to override.
+It declares several resource types, so it goes at the TOP level: the target
+project is chosen by each resource's own project field, not by where the `use`
+sits.
 
 ---------------------------------------------------------------------------
-ONE PROJECT PER INCLUDE — no parameterisation
+ONE PROJECT PER USE — no parameterisation
 ---------------------------------------------------------------------------
-The YAML keys below (cis_2_5_project_ownership, ...) are fixed. Including
-this file twice collides: duplicate keys, last one wins or the parse fails.
-For a second project, copy the file and prefix every key and metric `name`
-(e.g. cis_2_5_project_ownership -> tenantb_cis_2_5_project_ownership), or —
-preferably — use the central variant, which covers all projects at once:
-presets/monitoring/organization-cis-log-alerts-central-1.0.yaml
+The labels below (cis_2_5_project_ownership, ...) are fixed, so using this
+pack twice collides on the fold. For a second project, fork it and prefix
+every label and metric `name` (cis_2_5_project_ownership ->
+tenantb_cis_2_5_project_ownership), or — preferably — use the central variant,
+which covers all projects at once:
+presets/monitoring/organization-cis-log-alerts-central.satz
 
 ---------------------------------------------------------------------------
 WHY PER PROJECT — and why that is the expensive option
@@ -43,10 +31,10 @@ Notification channels are PROJECT resources
 (google_monitoring_notification_channel -> projects.notificationChannels).
 An alert policy can only reference channels living in its OWN project;
 there is no organization-level channel and no cross-project reference.
-So "one channel for everything" is not available: including this file in
+So "one channel for everything" is not available: using this pack in
 N projects creates N channels pointing at the same mailbox, N x 8 metrics
-and N x 8 policies. Every new project needs the include again, or it
-silently fails CIS 2.5-2.12.
+and N x 8 policies. Every new project needs it again, or it silently fails
+CIS 2.5-2.12.
 
 The cheaper topology: route all projects' logs through an org-level
 aggregated sink into a LOGGING bucket (not GCS), then define the eight
@@ -55,9 +43,9 @@ project of such a sink as compliant
 (logging_service.get_projects_covered_by_aggregated_metric) — eight metrics
 and one channel for the whole organization, and future projects are covered
 on creation without touching their config.
-See organization-cis-log-alerts-central-1.0.yaml.
+See organization-cis-log-alerts-central.satz.
 
-Use THIS file when a project must alert on its own (separate on-call,
+Use THIS pack when a project must alert on its own (separate on-call,
 delegated ownership, tenant isolation) or when the central logging bucket
 does not exist yet. Both variants may coexist: Prowler passes the control as
 soon as EITHER condition is met.
@@ -81,7 +69,7 @@ Validated against prowler master, 2026-08-18.
 PREREQUISITES
 ---------------------------------------------------------------------------
 - logging.googleapis.com and monitoring.googleapis.com enabled in the
-target project (add to its project_service list).
+target project (add them to its project_service list).
 - The recipient group must exist in Cloud Identity BEFORE apply; Google
 accepts unverified email channels but they stay unconfirmed and silent.
 - Admin Activity audit logs are always on; DATA_READ/DATA_WRITE are not
@@ -97,6 +85,25 @@ increments satisfies the auditor but not the attacker:
 gcloud iam roles create cis_probe --project=<p> --permissions=storage.buckets.get --stage=GA
 gcloud iam roles delete cis_probe --project=<p>
 # expect an alert from the 2.7 policy within ~5 minutes
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  cis_alert_project = "{infra_project_name}"
+  cis_alert_email_local = "gcp-security"
+  cis_alert_channel_name = "CIS Security Alerts"
+  cis_alert_window = "300s"
+}
+
+use "presets/monitoring/project-cis-log-alerts.satz"
+```
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `infra_project_name` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -118,6 +125,14 @@ gcloud iam roles delete cis_probe --project=<p>
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-08-21 | per-project variant of the CIS 2.5–2.12 metrics + alerts |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

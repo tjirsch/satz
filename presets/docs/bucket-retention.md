@@ -7,8 +7,6 @@ Source: `presets/cis-extensions/bucket-retention.satz`
 
 CIS 4.0 §2.3 / 5.0 §2.4 — retention on the log-export bucket.
 
-use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
-
 Opt-in because it constrains EVERY bucket in the organisation, not only the
 log sink's: once a duration list is set, a bucket may carry a retention
 policy only if its duration is in the list. An estate with buckets on other
@@ -21,6 +19,25 @@ It is a `contributes`, deliberately: the control asks for retention
 configured USING BUCKET LOCK, and locking is a one-way door no org policy
 performs. The audit-logsink pack carries the same duty.
 
+## Use it
+
+```
+params {
+  cis_bucket_retention = true
+
+  // the pack's own defaults — copy only the lines you change
+  allowed_bucket_retention_seconds = [ "34560000" ]
+}
+
+use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
+```
+
+`cis_bucket_retention` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `CIS_GCP_Foundation_4_0`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
+
 ## Params
 
 | param | default |
@@ -31,18 +48,35 @@ performs. The audit-logsink pack carries the same duty.
 
 | resource type | labels |
 |---|---|
-| `google_org_policy_policy` | `storage-managed-retentionPolicySeconds`, `storage-retentionPolicySeconds` |
+| `google_org_policy_policy` | `storage-managed-retentionPolicySeconds`, `storage-retentionPolicySeconds` *(off)* |
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 2.3 | contributes | `google_org_policy_policy.storage_managed_retentionPolicySeconds` | A bucket may only carry a retention policy of an approved duration, so the log-export bucket's retention cannot be quietly shortened. The LOCK remains a human decision. |
-| cis-gcp 5.0 | 2.4 | contributes | `google_org_policy_policy.storage_managed_retentionPolicySeconds` | As for 4.0 §2.3 — 5.0 §2.4 (5.0 inserted a new 2.2 for Workspace data sharing). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 2.3 | Retention on the log bucket | contributes | `google_org_policy_policy.storage_managed_retentionPolicySeconds` | A bucket may only carry a retention policy of an approved duration, so the log-export bucket's retention cannot be quietly shortened. The LOCK remains a human decision. |
+| cis-gcp 5.0 | 2.4 | Retention on the log bucket | contributes | `google_org_policy_policy.storage_managed_retentionPolicySeconds` | As for 4.0 §2.3 — 5.0 §2.4 (5.0 inserted a new 2.2 for Workspace data sharing). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Retention on the log bucket** (cis-gcp 4.0 §2.3, cis-gcp 5.0 §2.4) — The central log destination retains entries per policy; bucket-lock retention once the pipeline is validated.
 
 **Manual duties** (a control stays *partial* until each is attested):
 
 - `validate-then-lock` (cis-gcp 4.0 §2.3, cis-gcp 5.0 §2.4) — After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default).
+
+Not every resource this pack contributes is a witness:
+
+- `google_org_policy_policy.storage_retentionPolicySeconds` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.1 | 2026-09-04 | declares its superseded legacy twin (`storage.retentionPolicySeconds`) off |
+| 1.0 | 2026-09-04 | CIS 4.0 2.3 / 5.0 2.4 as a `contributes`, opt-in: constrains EVERY bucket's retention duration, and locking stays a human decision |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

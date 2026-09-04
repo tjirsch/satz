@@ -7,8 +7,6 @@ Source: `presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privi
 
 Microsoft Defender for Cloud — the CSPM custom role, LEAST PRIVILEGE mode.
 
-use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz" when mdc_cspm_least_privilege
-
 The 82 permissions Microsoft's script enumerates when least privilege is on,
 in place of the five that ride on `roles/viewer`. Use this OR the default
 fragment, never both — both define this role address.
@@ -18,6 +16,22 @@ service account in this mode, which makes the enumeration moot. If the point
 of choosing least privilege is to drop viewer, the estate must say so:
 suppress google_organization_iam_member "serviceAccount:microsoft-defender-cspm@<project>.iam.gserviceaccount.com" role "roles/viewer"
 The pack does not do it silently, because the script does not.
+
+## Use it
+
+```
+params {
+  mdc_cspm_least_privilege = true
+}
+
+use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz" when mdc_cspm_least_privilege
+```
+
+`mdc_cspm_least_privilege` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `integrations.microsoft_defender_for_cloud`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -32,6 +46,14 @@ _None — the pack takes everything from the estate's params._
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 0.1 | 2026-09-03 | first cut — the CSPM custom role in LEAST PRIVILEGE mode: the 82 permissions Microsoft's script enumerates in place of viewer's reach. Use this or the default role, never both |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

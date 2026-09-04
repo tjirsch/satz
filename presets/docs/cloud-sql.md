@@ -7,8 +7,6 @@ Source: `presets/cis-extensions/cloud-sql.satz`
 
 CIS 6.5 and 6.6/6.7 — Cloud SQL network exposure.
 
-use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
-
 Opt-in because an estate with existing Cloud SQL instances on public IPs loses
 connectivity the moment this is enforced; the private path has to exist
 first. Note the renumbering: public IP is §6.6 in 4.0 and §6.7 in 5.0, while
@@ -16,6 +14,22 @@ authorized networks stays §6.5 in both.
 
 The constraint name and its shape were verified against a live
 organisation's OrgPolicy `ListConstraints`, not transcribed.
+
+## Use it
+
+```
+params {
+  cis_cloud_sql_hardening = true
+}
+
+use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
+```
+
+`cis_cloud_sql_hardening` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `CIS_GCP_Foundation_4_0`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -25,16 +39,35 @@ _None — the pack takes everything from the estate's params._
 
 | resource type | labels |
 |---|---|
-| `google_org_policy_policy` | `sql-managed-restrictAuthorizedNetworks`, `sql-managed-restrictPublicIp`, `sql-restrictAuthorizedNetworks`, `sql-restrictPublicIp` |
+| `google_org_policy_policy` | `sql-managed-restrictAuthorizedNetworks`, `sql-managed-restrictPublicIp`, `sql-restrictAuthorizedNetworks` *(off)*, `sql-restrictPublicIp` *(off)* |
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 6.5 | implements | `google_org_policy_policy.sql_managed_restrictAuthorizedNetworks` | No Cloud SQL instance may carry an authorized network that whitelists every public address. |
-| cis-gcp 5.0 | 6.5 | implements | `google_org_policy_policy.sql_managed_restrictAuthorizedNetworks` | As for 4.0 §6.5 (5.0 §6.5, unchanged). |
-| cis-gcp 4.0 | 6.6 | implements | `google_org_policy_policy.sql_managed_restrictPublicIp` | Cloud SQL instances may not be given public IP addresses. |
-| cis-gcp 5.0 | 6.7 | implements | `google_org_policy_policy.sql_managed_restrictPublicIp` | As for 4.0 §6.6 — 5.0 §6.7 (5.0 inserted 6.6 IAM database authentication). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 6.5 | Cloud SQL instances do not whitelist all public IPs | implements | `google_org_policy_policy.sql_managed_restrictAuthorizedNetworks` | No Cloud SQL instance may carry an authorized network that whitelists every public address. |
+| cis-gcp 5.0 | 6.5 | Cloud SQL instances do not whitelist all public IPs | implements | `google_org_policy_policy.sql_managed_restrictAuthorizedNetworks` | As for 4.0 §6.5 (5.0 §6.5, unchanged). |
+| cis-gcp 4.0 | 6.6 | Cloud SQL instances do not have public IPs | implements | `google_org_policy_policy.sql_managed_restrictPublicIp` | Cloud SQL instances may not be given public IP addresses. |
+| cis-gcp 5.0 | 6.7 | Cloud SQL instances do not have public IPs | implements | `google_org_policy_policy.sql_managed_restrictPublicIp` | As for 4.0 §6.6 — 5.0 §6.7 (5.0 inserted 6.6 IAM database authentication). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Cloud SQL instances do not have public IPs** (cis-gcp 4.0 §6.6, cis-gcp 5.0 §6.7) — Cloud SQL instances are reachable privately only.
+- **Cloud SQL instances do not whitelist all public IPs** (cis-gcp 4.0 §6.5, cis-gcp 5.0 §6.5) — No Cloud SQL instance carries an authorized network of 0.0.0.0/0.
+
+Not every resource this pack contributes is a witness:
+
+- `google_org_policy_policy.sql_restrictAuthorizedNetworks` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+- `google_org_policy_policy.sql_restrictPublicIp` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.1 | 2026-09-04 | declares its two superseded legacy twins (`sql.restrictAuthorizedNetworks`, `sql.restrictPublicIp`) off |
+| 1.0 | 2026-09-04 | CIS 6.5 and 6.6/6.7 (renumbered in 5.0), opt-in: existing public-IP instances lose connectivity |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 
