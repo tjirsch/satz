@@ -8,6 +8,8 @@
 //! Read-only, schema-free, offline. An interview happens before anyone has run
 //! `update-schema`, so nothing here needs the provider registry.
 
+// schemars comes through rmcp: one version in the tree, no second dependency to pin
+use rmcp::schemars;
 use std::path::Path;
 
 use satz_core::pipeline::estate_questions;
@@ -15,7 +17,7 @@ use satz_core::pipeline::estate_questions;
 use crate::ToolConfig;
 
 /// One question, joined with the answer the estate currently carries.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct QuestionRow {
     /// the param it answers, or the group name for a choice
     pub subject: String,
@@ -35,6 +37,7 @@ pub(crate) struct QuestionRow {
     /// two apart is the lockfile's job, and the lockfile is a later phase.
     pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<serde_json::Value>")]
     pub current: Option<serde_yaml::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommend: Option<String>,
@@ -45,7 +48,7 @@ pub(crate) struct QuestionRow {
     pub pack: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct OptionRow {
     pub param: String,
     pub label: String,
@@ -54,14 +57,14 @@ pub(crate) struct OptionRow {
     pub selected: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct QuestionsReport {
     pub estate: String,
     pub questions: Vec<QuestionRow>,
     pub summary: QuestionsSummary,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct QuestionsSummary {
     pub total: usize,
     pub answered: usize,

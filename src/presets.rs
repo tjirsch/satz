@@ -10,6 +10,8 @@
 //! The classification layer is pure and unit-tested; downloading and directory walking
 //! are the only IO.
 
+// schemars comes through rmcp: one version in the tree, no second dependency to pin
+use rmcp::schemars;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -248,7 +250,7 @@ fn indented(value: &str) -> String {
 /// so a version gap and a local edit are described the same way — only the
 /// headline and the remedy differ.
 /// One default whose value differs from upstream.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ChangedDefault {
     pub name: String,
     pub value: String,
@@ -260,7 +262,7 @@ pub(crate) struct ChangedDefault {
 /// One preset file's verdict, as data. Every sentence the renderer prints is
 /// derived from these fields — it reaches nothing else, so the text cannot say
 /// anything the JSON omits.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PresetRow {
     pub file: String,
     /// in the estate's `use` graph
@@ -295,14 +297,14 @@ pub(crate) struct PresetRow {
     pub semantics_unchanged: bool,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct CheckPresetsSummary {
     pub clean: usize,
     pub stale: usize,
     pub drift_in_use: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct CheckPresetsReport {
     pub presets_dir: String,
     pub packs: Vec<PresetRow>,

@@ -38,15 +38,44 @@ started in. That second one is not paranoia — `use "…"` resolves through
 | tool | group | what it answers |
 |---|---|---|
 | `satz_require` | `read` | which controls of a catalog the **declared** estate satisfies, from its packs' claims. Offline |
-| `satz_check_presets` | `read` | which packs are clean, behind upstream or locally edited, and the remedy for each |
+| `satz_questions` | `read` | every question the estate's packs declare, joined with the answers its params carry, and what changing each costs |
+| `satz_triage` | `read` | a Prowler export's FAILs sorted into buckets A–E against what the estate claims |
+| `satz_transpile_check` | `read` | compiles in memory and reports what it *would* emit — writes nothing |
+| `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
 | `satz_transpile` | `write` | compiles the estate to OpenTofu HCL in `hcl_dir` |
 | `satz_restrict` | — | lowers this session's level; only with `--self-gated` |
 
-Each returns the same JSON the corresponding `--format json` command prints, so a
-tool result and a CLI answer are the same value.
+Each returns the same value the corresponding `--format json` command prints, so a
+tool result and a CLI answer are the same thing.
 
 A tool the level does not permit comes back as a tool **result** with `isError`, not a
 protocol error — an agent recovers from the first and gives up on the second.
+
+## Structured output, and why it matters
+
+Every data tool returns its report as **`structuredContent`** and publishes the
+report's **`outputSchema`** in `tools/list`. A client gets a typed value it can index,
+and knows the shape before it calls.
+
+This server's first version returned the same JSON as a *text block*. The data was
+there and nothing said what shape it had, so every caller had to parse a string and
+guess — which is the failure the structured-output part of the protocol exists to
+prevent.
+
+## Annotations — the client's half of the safety model
+
+`--allow` is the **server's** answer to "what is permitted". Tool annotations are the
+**client's** answer to "what may I run without stopping to ask":
+
+| annotation | on |
+|---|---|
+| `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets` |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges |
+| `openWorldHint: true` | `satz_check_presets` only, which downloads the pristine library |
+
+Without them a client either prompts on every read (friction that makes the server
+tiresome) or auto-runs a write (wrong). Both halves are needed: the ceiling decides
+what is *possible*, the annotation decides what is *unremarkable*.
 
 ## Claude Code
 
@@ -80,7 +109,16 @@ json`. Under MCP that is not a convenience: a stray line on stdout is a corrupt 
 and the client reports nothing useful rather than reporting an error. The smoke matrix
 asserts that every line the server emits parses as JSON-RPC.
 
-This is also why no `exec` tool exists yet, though the group is grantable. `tofu` and
+### Still missing
+
+- **No `exec` tool**, though the group is grantable. `tofu` and
 Checkov inherit stdio from the CLI; an exec tool has to **capture** its child's output
 first, and that plumbing ships with the first such tool rather than being hurried in
 beside the transport.
+- **`report_compliance`, `adopt`, `merge-presets`, `get-presets` and `whoami` are not
+  exposed yet.** Each still prints from inside its own walk, so exposing one would put
+  its output on stdout — which here is the protocol. They need the same
+  compute/render split `require` and `check-presets` went through first. That is the
+  work, not the tool definition.
+- **No progress notifications.** `satz_check_presets` downloads the whole pristine
+  library with no feedback to the client.
