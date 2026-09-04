@@ -785,33 +785,41 @@ async fn prepare_recursive(
 
 const ORGPOLICY_HOST: &str = "https://orgpolicy.googleapis.com";
 
-/// Locate the Application Default Credentials JSON file, honoring the standard overrides.
+/// Locate the Application Default Credentials JSON file.
 pub(crate) fn adc_file_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+    #[cfg(windows)]
+    let root = std::env::var("APPDATA").ok();
+    #[cfg(not(windows))]
+    let root = std::env::var("HOME").ok();
+    adc_file_path_from(std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok().as_deref(), root.as_deref())
+}
+
+/// The resolution itself: AIP-4110's environment variable, then AIP-4113's
+/// well-known path, and **nothing else**.
+///
+/// This function only REPORTS the credential; the token is minted by
+/// `google-cloud-auth`, whose own `adc_path()` resolves exactly these two. So an
+/// extra rule here does not widen where satz looks — it makes `satz whoami` name
+/// a file satz does not use.
+///
+/// `CLOUDSDK_CONFIG` used to sit in between, and it was precisely that bug.
+/// gcloud reads it; the auth crate does not, and neither does the Go SDK behind
+/// `tofu`. An operator who set it got a three-way split: satz reported one
+/// credential while satz and tofu both minted from another. Pointing all three
+/// at another gcloud configuration is done by naming its file —
+/// `GOOGLE_APPLICATION_CREDENTIALS=<dir>/application_default_credentials.json`.
+fn adc_file_path_from(explicit: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    if let Some(p) = explicit {
         if !p.trim().is_empty() {
             return Some(PathBuf::from(p));
         }
     }
-    if let Ok(cfg) = std::env::var("CLOUDSDK_CONFIG") {
-        if !cfg.trim().is_empty() {
-            return Some(PathBuf::from(cfg).join("application_default_credentials.json"));
-        }
-    }
     #[cfg(windows)]
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        return Some(
-            PathBuf::from(appdata)
-                .join("gcloud")
-                .join("application_default_credentials.json"),
-        );
-    }
-    let home = std::env::var("HOME").ok()?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("gcloud")
-            .join("application_default_credentials.json"),
-    )
+    let well_known = PathBuf::from(home?).join("gcloud").join("application_default_credentials.json");
+    #[cfg(not(windows))]
+    let well_known =
+        PathBuf::from(home?).join(".config").join("gcloud").join("application_default_credentials.json");
+    Some(well_known)
 }
 
 /// Resolve the quota/billing project: env vars first, then the ADC file's
@@ -1493,6 +1501,47 @@ mod tests {
 
     fn jv(s: &str) -> Value {
         serde_json::from_str(s).unwrap()
+    }
+
+    // --- where the credential lives ------------------------------------------
+
+    /// AIP-4110: the environment variable wins, and an empty one is not a value.
+    #[test]
+    fn the_explicit_credential_path_wins_and_blank_does_not_count() {
+        assert_eq!(
+            adc_file_path_from(Some("/creds/acme.json"), Some("/home/op")),
+            Some(PathBuf::from("/creds/acme.json"))
+        );
+        assert_eq!(
+            adc_file_path_from(Some("   "), Some("/home/op")),
+            adc_file_path_from(None, Some("/home/op")),
+            "a blank variable must fall through, not resolve to an empty path"
+        );
+    }
+
+    /// AIP-4113: the well-known path, and no credential at all without a home.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_well_known_path_is_the_only_fallback() {
+        assert_eq!(
+            adc_file_path_from(None, Some("/home/op")),
+            Some(PathBuf::from("/home/op/.config/gcloud/application_default_credentials.json"))
+        );
+        assert_eq!(adc_file_path_from(None, None), None);
+    }
+
+    /// The regression this replaced: satz honoured `CLOUDSDK_CONFIG` while the
+    /// auth crate and tofu's Go SDK did not, so `satz whoami` named one file
+    /// while every token came from another. Resolution takes exactly two inputs
+    /// now, and the signature is what keeps a third from creeping back.
+    #[cfg(not(windows))]
+    #[test]
+    fn no_third_source_of_the_credential_path() {
+        // Whatever else is in the environment, these two arguments decide.
+        assert_eq!(
+            adc_file_path_from(None, Some("/home/op")),
+            Some(PathBuf::from("/home/op/.config/gcloud/application_default_credentials.json"))
+        );
     }
 
     #[test]

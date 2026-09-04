@@ -1391,7 +1391,7 @@ The group and membership resolvers `satz adopt` uses. A groups pack declares gro
 - **Lookup, not guesswork**: the group email the emitted HCL carries (`group_key.id`) is resolved via `cloudidentity.googleapis.com/v1/groups:lookup`; a member email via `memberships:lookup`. Existing ones are imported; missing ones are left for `tofu apply`.
 - **403 is ambiguous**: some tenants return it for a nonexistent group as well as for a permission problem, so a denied lookup falls back to listing `customers/<customer-id>` once and answers from that. If that fails too the resolution is reported as FAILED with an actionable hint rather than treated as absent.
 - **Declared memberships only**: `adopt` resolves the memberships the estate emits — live members the estate does not mention are never looked at, so adopting a group cannot make `apply` propose deleting somebody. The membership label is a `DefaultHasher` digest of `(group key, raw member string)` computed by the same `membership_resource_label` helper the emitter uses; `membership_address_matches_the_generated_resource` pins the two together.
-- **Quota project**: every request sends `x-goog-user-project`, resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT` or the ADC file's `quota_project_id`.
+- **Quota project**: every request sends `x-goog-user-project`, resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT` or the ADC file's `quota_project_id`. Every Cloud Asset sweep sends it too — `report-compliance` and `import` used to omit it, so the same organisation could answer one reporting command and refuse another when the credentials carried no default.
 
 ### Bootstrap Workflow (Declarative Tofu)
 Instead of hardcoded setup scripts, `satz` uses a two-phase Tofu approach:
@@ -1420,6 +1420,29 @@ estate's service account.** Every exception is deliberate and listed here.
 | `plan`, `apply`, `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
 
 `--no-impersonate` pins the process to the plain ADC and outranks every estate.
+
+**Where the credential comes from.** AIP-4110 and nothing else:
+`GOOGLE_APPLICATION_CREDENTIALS`, then the well-known path
+(`~/.config/gcloud/application_default_credentials.json`). satz, `google-cloud-auth`
+and the Go SDK behind `tofu` all resolve those two, so all three agree.
+
+To work against a second customer without disturbing the first, give gcloud its own
+configuration directory and name the file it writes:
+
+```bash
+CLOUDSDK_CONFIG=~/.gcloud-acme gcloud auth application-default login
+export GOOGLE_APPLICATION_CREDENTIALS=~/.gcloud-acme/application_default_credentials.json
+satz whoami          # names that file, and mints from it
+```
+
+`CLOUDSDK_CONFIG` alone is not enough: gcloud reads it, satz and `tofu` do not.
+satz used to honour it when *reporting* and not when *minting*, which meant
+`whoami` could name a credential no API call ever used.
+
+**If your ADC already impersonates** — `gcloud auth application-default login
+--impersonate-service-account` — satz uses it as-is when it names the estate's own
+service account, and refuses when it names a different one rather than chaining or
+silently preferring either.
 
 **One process serves one identity.** That is free on the command line — one command, one
 estate — but `satz mcp` is long-lived and each of its tools names an estate. The first
