@@ -10,6 +10,7 @@ exists). Links between the Markdown files are rewritten to their HTML twins;
 every page gets the same navigation bar. The Markdown stays the source GitHub
 shows — one text, two renderings. Rendering itself is `build-satz-doc.py`.
 """
+
 import re
 import shutil
 import sys
@@ -32,14 +33,12 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "_site"
 # left off it either.
 SITE_DOCS: list[str] = [
     "satz-language",
-    "mcp",
     "presets-workflow",
     "scripts",
+    "mcp",
     "housekeeping",
     "competitive",
     "example-customers",
-    "interview-design",
-    "presets-commands-proposal",
 ]
 
 # Not published, and why. These stay in the repository and stay linkable — a link
@@ -48,6 +47,7 @@ SITE_DOCS_EXCLUDED: dict[str, str] = {
     "security-toolset-integration": "proposal under rework; it describes an audit loop that is not what satz does today",
     "fast-delta": "source material for the competitive matrix, which carries the conclusions",
     "stage-b": "how the pipeline was built. The language reference is how it is used, and the migration commands are in the README",
+    "interview-design": "a design sketch for a layer that is not built; it describes questions satz does not yet ask",
 }
 
 _docs = {md.stem for md in (ROOT / "docs").glob("*.md")}
@@ -67,12 +67,27 @@ for stem in SITE_DOCS:
     PAGES.append((ROOT / "docs" / f"{stem}.md", f"docs/{stem}.html", stem))
 PAGES.append((ROOT / "presets/README.md", "presets/index.html", "presets"))
 if (ROOT / "presets/CHANGELOG.md").exists():
-    PAGES.append((ROOT / "presets/CHANGELOG.md", "presets/changelog.html", "presets changelog"))
-PACK_PAGES: list[tuple[Path, str]] = []  # derived per-pack pages: rendered, linked from the index, not in the nav
+    PAGES.append(
+        (ROOT / "presets/CHANGELOG.md", "presets/changelog.html", "presets changelog")
+    )
+PACK_PAGES: list[
+    tuple[Path, str]
+] = []  # derived per-pack pages: rendered, linked from the index, not in the nav
 for md in sorted((ROOT / "presets/docs").glob("*.md")):
-    PACK_PAGES.append((md, f"presets/docs/{'index' if md.stem == 'README' else md.stem}.html"))
+    PACK_PAGES.append(
+        (md, f"presets/docs/{'index' if md.stem == 'README' else md.stem}.html")
+    )
 
-NAV_ORDER = ["satz", "satz-language", "mcp", "presets", "pack pages", "presets changelog", "presets-workflow", "scripts"]
+NAV_ORDER = [
+    "satz",
+    "satz-language",
+    "mcp",
+    "presets",
+    "pack pages",
+    "presets changelog",
+    "presets-workflow",
+    "scripts",
+]
 
 
 def nav_html(current_rel: str) -> str:
@@ -82,7 +97,9 @@ def nav_html(current_rel: str) -> str:
     by_label = {label: rel for _, rel, label in PAGES}
     if any(rel == "presets/docs/index.html" for _, rel in PACK_PAGES):
         by_label["pack pages"] = "presets/docs/index.html"
-    ordered = [l for l in NAV_ORDER if l in by_label] + sorted(l for l in by_label if l not in NAV_ORDER)
+    ordered = [l for l in NAV_ORDER if l in by_label] + sorted(
+        l for l in by_label if l not in NAV_ORDER
+    )
     for label in ordered:
         rel = by_label[label]
         cls = ' class="current"' if rel == current_rel else ""
@@ -283,14 +300,17 @@ def index_entries(title: str, rel: str, body: str) -> list[dict]:
     lead = strip_tags(parts[0])[:180]
     entries.append({"t": title, "p": rel, "a": "", "h": title, "x": lead})
     for i in range(1, len(parts), 2):
-        m = re.match(r"<h([123])[^>]*?id=\"([^\"]+)\"[^>]*>(.*?)</h\1>", parts[i], flags=re.S)
+        m = re.match(
+            r"<h([123])[^>]*?id=\"([^\"]+)\"[^>]*>(.*?)</h\1>", parts[i], flags=re.S
+        )
         if not m:
             continue
         heading = strip_tags(m.group(3))
         follow = strip_tags(parts[i + 1] if i + 1 < len(parts) else "")[:180]
-        entries.append({"t": title, "p": rel, "a": m.group(2), "h": heading, "x": follow})
+        entries.append(
+            {"t": title, "p": rel, "a": m.group(2), "h": heading, "x": follow}
+        )
     return entries
-
 
 
 def command_anchors(body: str) -> str:
@@ -305,7 +325,11 @@ def command_anchors(body: str) -> str:
             return m.group(0)
         return f'<h{level}{attrs} id="cmd-{cmds[0]}">{inner}</h{level}>'
 
-    return re.sub(r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="[^"]*")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>', repl, body)
+    return re.sub(
+        r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="[^"]*")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>',
+        repl,
+        body,
+    )
 
 
 GITHUB_BLOB = "https://github.com/tjirsch/satz/blob/main/"
@@ -315,13 +339,15 @@ TOC_MIN_HEADINGS = 3
 
 
 def toc_html(body: str) -> str:
-    """"On this page" — the h2/h3 headings of the rendered body, as a sidebar.
+    """ "On this page" — the h2/h3 headings of the rendered body, as a sidebar.
 
     Built AFTER `command_anchors` has run, so the hrefs are the ids the document
     actually carries. h4 and deeper are left out: a table of contents that lists
     every paragraph is another long page to navigate.
     """
-    heads = re.findall(r'<h([23])[^>]*?\bid="([^"]+)"[^>]*>(.*?)</h\1>', body, flags=re.S)
+    heads = re.findall(
+        r'<h([23])[^>]*?\bid="([^"]+)"[^>]*>(.*?)</h\1>', body, flags=re.S
+    )
     if len(heads) < TOC_MIN_HEADINGS:
         return ""
     items = []
@@ -356,7 +382,11 @@ def rewrite_links(body: str, src_rel: Path) -> str:
         path, _, frag = href.partition("#")
         if not path.endswith(".md"):
             return m.group(0)
-        target = (src_rel.parent / path).resolve().relative_to(ROOT.resolve()) if not path.startswith("/") else Path(path.lstrip("/"))
+        target = (
+            (src_rel.parent / path).resolve().relative_to(ROOT.resolve())
+            if not path.startswith("/")
+            else Path(path.lstrip("/"))
+        )
         html = targets.get(str(target))
         if not html:
             if str(target) in excluded:
@@ -379,8 +409,12 @@ def main() -> None:
         m = re.search(r"^# (.+)$", text, re.M)
         title = m.group(1).strip() if m else src.stem
         doc.MD = src  # the renderer inlines SVGs relative to the source
-        body = doc.markdown.markdown(text, extensions=["tables", "fenced_code", "toc"], output_format="html5")
-        body = body.replace("<table>", '<div class="tablewrap"><table>').replace("</table>", "</table></div>")
+        body = doc.markdown.markdown(
+            text, extensions=["tables", "fenced_code", "toc"], output_format="html5"
+        )
+        body = body.replace("<table>", '<div class="tablewrap"><table>').replace(
+            "</table>", "</table></div>"
+        )
         body = doc.inline_images(body)
         body = rewrite_links(body, src.relative_to(ROOT))
         body = command_anchors(body)
@@ -406,10 +440,16 @@ def main() -> None:
     import json
 
     (OUT / "search-index.js").write_text(
-        "window.SATZ_INDEX=" + json.dumps(index, ensure_ascii=False) + ";\n" + SEARCH_JS + TOC_JS,
+        "window.SATZ_INDEX="
+        + json.dumps(index, ensure_ascii=False)
+        + ";\n"
+        + SEARCH_JS
+        + TOC_JS,
         encoding="utf-8",
     )
-    print(f"wrote search-index.js ({(OUT / 'search-index.js').stat().st_size} bytes, {len(index)} entries)")
+    print(
+        f"wrote search-index.js ({(OUT / 'search-index.js').stat().st_size} bytes, {len(index)} entries)"
+    )
     (OUT / ".nojekyll").write_text("")
 
 

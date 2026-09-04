@@ -1,9 +1,7 @@
 # Working with presets: `get-presets`, `check-presets`, `merge-presets`
 
 How to tell whether a newer preset exists, what to do about it, and which command
-to reach for. Describes **what the tool does today** (v0.44.x). A proposal for
-resolving the overlap between these three commands is in
-[presets-commands-proposal.md](presets-commands-proposal.md).
+to reach for. Describes **what the tool does today** (v0.44.x).
 
 ---
 
