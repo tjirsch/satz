@@ -50,6 +50,26 @@ binary), and **every path argument is confined** to the directory the server was
 started in. That second one is not paranoia — `use "…"` resolves through
 `include_dirs`, so an estate path is not merely a file to read.
 
+## Resources — what an agent reads before it writes
+
+A client that only speaks MCP has no repository. The tool schemas say how to *call*
+satz; nothing in them says how to write the language the calls are about. So the server
+serves the documentation itself:
+
+| resource | what it is |
+|---|---|
+| `satz://guide` | [Satz for agents](satz-for-agents.md) — the working subset, the three grant forms, and the order to call the tools in. **Read this before writing a `.satz` file.** |
+| `satz://reference` | the complete language reference |
+| `satz://presets` | the preset library and its provenance rules |
+
+They are compiled into the binary, so the answer travels with the server: no path to
+configure, no copy to drift. The `instructions` returned at initialize point at the
+guide by name, so an agent is told where to look before it is asked to write anything.
+
+The guide's examples are gated: a unit test parses every `satz` block in it. That gate
+caught a broken example on its first run — a doc an agent will act on cannot afford
+one.
+
 ## Tools
 
 | tool | group | what it answers |

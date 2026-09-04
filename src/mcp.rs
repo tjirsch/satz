@@ -40,7 +40,13 @@ use std::sync::{Arc, Mutex};
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::model::{CallToolResult, ContentBlock, ProtocolVersion, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CallToolResult, ContentBlock, ListResourcesResult, PaginatedRequestParams, ProtocolVersion,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+    ResourceContents, ServerCapabilities, ServerInfo,
+};
+use rmcp::service::RequestContext;
+use rmcp::RoleServer;
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
 
 use crate::ToolConfig;
@@ -204,6 +210,48 @@ pub(crate) struct RestrictArgs {
     /// Groups to keep, comma-separated: read, write, exec
     pub allow: String,
 }
+
+/// What an agent has to read before it can WRITE Satz.
+///
+/// A client that only speaks MCP has no filesystem and no repository — the tool
+/// schemas tell it how to CALL satz, and nothing tells it how to write the
+/// language the calls are about. These are compiled into the binary so the
+/// answer travels with the server: no path to configure, no version to drift.
+const GUIDE: &str = include_str!("../docs/satz-for-agents.md");
+const REFERENCE: &str = include_str!("../docs/satz-language.md");
+const PRESETS: &str = include_str!("../presets/README.md");
+
+struct Doc {
+    uri: &'static str,
+    name: &'static str,
+    description: &'static str,
+    body: &'static str,
+}
+
+const DOCS: &[Doc] = &[
+    Doc {
+        uri: "satz://guide",
+        name: "Satz for agents",
+        description: "How to write Satz: the estate shape, params, hierarchy, the three grant \
+                      forms, packs, claims, questions, and the order to call the tools in. Read \
+                      this before writing or editing a .satz file.",
+        body: GUIDE,
+    },
+    Doc {
+        uri: "satz://reference",
+        name: "Satz language reference",
+        description: "The complete language reference — every construct, with the errors each \
+                      one raises. Consult it when the guide does not cover a case.",
+        body: REFERENCE,
+    },
+    Doc {
+        uri: "satz://presets",
+        name: "The preset library",
+        description: "What each shipped pack contains, how provenance by suffix works \
+                      (pristine / .local fork / .diff ledger), and the conventions a pack follows.",
+        body: PRESETS,
+    },
+];
 
 /// A refusal an agent can recover from. The plan's rule: a tool the level does
 /// not permit is a tool RESULT with `isError`, never a protocol error — clients
@@ -572,18 +620,61 @@ impl SatzMcp {
 
 #[tool_handler]
 impl ServerHandler for SatzMcp {
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        let resources = DOCS
+            .iter()
+            .map(|d| {
+                let mut r = Resource::new(d.uri, d.name.to_string());
+                r.description = Some(d.description.to_string());
+                r.mime_type = Some("text/markdown".to_string());
+                r
+            })
+            .collect();
+        // built from the default so a field added upstream cannot break this
+        Ok(ListResourcesResult { resources, ..Default::default() })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        match DOCS.iter().find(|d| d.uri == request.uri) {
+            Some(d) => Ok(ReadResourceResult::new(vec![ResourceContents::text(d.body, d.uri)]).into()),
+            None => Err(McpError::resource_not_found(
+                format!(
+                    "no such resource: {} — this server offers {}",
+                    request.uri,
+                    DOCS.iter().map(|d| d.uri).collect::<Vec<_>>().join(", ")
+                ),
+                None,
+            )),
+        }
+    }
+
     fn get_info(&self) -> ServerInfo {
         // `ServerInfo` and `Implementation` are #[non_exhaustive]: build from the
         // default and assign, so a field added upstream cannot break this.
         let mut info = ServerInfo::default();
         info.protocol_version = ProtocolVersion::default();
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.capabilities = ServerCapabilities::builder().enable_tools().enable_resources().build();
         info.server_info.name = "satz".into();
         info.server_info.version = env!("CARGO_PKG_VERSION").into();
         info.instructions = Some(format!(
             "satz compiles an estate written in Satz to OpenTofu HCL and judges it against \
              compliance catalogs. It never calls a model: ask it for facts, and do the judging \
-             yourself. Capability level in force: '{}'.",
+             yourself.\n\n\
+             BEFORE WRITING OR EDITING ANY .satz FILE, read the resource `satz://guide`. It is \
+             the working subset of the language and the order to call these tools in; without it \
+             you will write something that compiles and is wrong. `satz://reference` is the full \
+             language reference and `satz://presets` describes the shipped packs.\n\n\
+             After every edit, call satz_transpile_check before saying you are done. Never edit \
+             the generated hcl/ directory, and never invent an id — resolve it with adopt or ask.\n\n\
+             Capability level in force: '{}'.",
             self.ceiling.describe()
         ));
         info

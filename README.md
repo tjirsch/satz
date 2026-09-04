@@ -748,6 +748,10 @@ deviations are disclosed decisions and do not fail it.
 
 ### The Satz language
 
+Driving satz from an agent? **[`docs/satz-for-agents.md`](docs/satz-for-agents.md)** is
+the working subset written for that — the MCP server serves it as `satz://guide`, so an
+agent gets it without a repository.
+
 Full specification, grammar and lookup: **`docs/satz-language.md`** — derived from
 the parser (`crates/satz-core/src/satz.rs`), with every example verified to compile.
 

@@ -568,6 +568,8 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":9,"method":"resources/list","params":{}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"satz://guide"}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"satz_questions","arguments":{"estate":"showcase.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"satz_triage","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0","prowler":"prowler.json"}}}'
@@ -594,6 +596,17 @@ for l in lines:
         msgs[d["id"]] = d
 
 assert msgs[1]["result"]["serverInfo"]["name"] == "satz", msgs[1]
+
+# A client that only speaks MCP has no repository to read. The language guide has to
+# travel with the server, and the instructions have to point at it — otherwise an
+# agent knows how to CALL satz and not how to write the language the calls are about.
+assert "resources" in msgs[1]["result"]["capabilities"], msgs[1]["result"]["capabilities"]
+assert "satz://guide" in msgs[1]["result"].get("instructions", ""), "the instructions do not send the agent to the guide"
+uris = {r["uri"] for r in msgs[9]["result"]["resources"]}
+assert {"satz://guide", "satz://reference", "satz://presets"} <= uris, uris
+guide = msgs[10]["result"]["contents"][0]["text"]
+assert guide.startswith("# Satz for agents"), guide[:80]
+assert "Never edit `hcl/`" in guide, "the guide lost its hard rules"
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 assert {"satz_require", "satz_check_presets", "satz_questions", "satz_triage",
         "satz_transpile_check", "satz_transpile", "satz_report_compliance",

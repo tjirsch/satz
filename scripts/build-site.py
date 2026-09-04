@@ -33,6 +33,7 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "_site"
 # left off it either.
 SITE_DOCS: list[str] = [
     "satz-language",
+    "satz-for-agents",
     "presets-workflow",
     "scripts",
     "mcp",
@@ -47,7 +48,7 @@ SITE_DOCS_EXCLUDED: dict[str, str] = {
     "security-toolset-integration": "proposal under rework; it describes an audit loop that is not what satz does today",
     "fast-delta": "source material for the competitive matrix, which carries the conclusions",
     "stage-b": "how the pipeline was built. The language reference is how it is used, and the migration commands are in the README",
-    "interview-design": "a design sketch for a layer that is not built; it describes questions satz does not yet ask",
+    "interview-design": "the design sketch behind `question` blocks. The language half shipped and is in the reference; what this page still describes — derive, answers.lock.yaml, check-derived — is not built",
 }
 
 _docs = {md.stem for md in (ROOT / "docs").glob("*.md")}
