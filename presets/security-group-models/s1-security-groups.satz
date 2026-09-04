@@ -1,21 +1,19 @@
-// The S1 security group model in ONE file: the five admin groups AND their
-// organization-level role grants — resource-type sections may repeat across
-// files with distinct ids, so a typed pack sits beside the estate's own groups
-// and grants. Content-identical to s1-group-definitions 1.2 +
-// s1-group-permissions 1.1, which stay for the estates that `use` them under
-// a resource type; an estate takes ONE of the two spellings, never both.
+// The S1 security group model in ONE file: the five admin groups and their
+// organization-level role grants.
 //
-// Use at the top level:
+// Resource-type sections may repeat across files with distinct ids, so a typed
+// pack sits beside the estate's own groups and grants. Content-identical to
+// s1-group-definitions 1.2 + s1-group-permissions 1.1, which stay for the estates
+// that `use` them under a resource type; an estate takes ONE of the two
+// spellings, never both.
+//
 //   use "presets/security-group-models/s1-security-groups.satz"
 //
 // To adopt groups that already exist in the tenant:
 //   satz adopt <estate> --only google_cloud_identity_group --execute
 // Groups are looked up by email; no ids are hard-coded here (tenant-specific).
 // Memberships are deliberately NOT part of this pack: presets define groups,
-// humans grant membership. Estates that need managed memberships declare them
-// as estate-level resources.
-//
-// Required from the estate: customer_domain, svc_iac_account, infra_project_name
+// humans grant membership.
 
 pack s1_security_groups version "1.0"
 

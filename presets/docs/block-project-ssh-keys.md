@@ -7,14 +7,28 @@ Source: `presets/cis-extensions/block-project-ssh-keys.satz`
 
 CIS 4.3 — block project-wide SSH keys.
 
-use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
-
 Opt-in because Google still marks this managed constraint PREVIEW, and because an
 estate that relies on project-wide keys for break-glass access loses it the
 moment this is enforced. There is no legacy equivalent to fall back to.
 
 The constraint name and its shape were verified against a live
 organisation's OrgPolicy `ListConstraints`, not transcribed.
+
+## Use it
+
+```
+params {
+  cis_block_project_ssh_keys = true
+}
+
+use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
+```
+
+`cis_block_project_ssh_keys` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `CIS_GCP_Foundation_4_0`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -28,10 +42,24 @@ _None — the pack takes everything from the estate's params._
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 4.3 | implements | `google_org_policy_policy.compute_managed_blockProjectSshKeys` | The block-project-ssh-keys metadata key cannot be set to false, so instances do not accept project-wide keys. |
-| cis-gcp 5.0 | 4.3 | implements | `google_org_policy_policy.compute_managed_blockProjectSshKeys` | As for 4.0 §4.3 (5.0 §4.3, unchanged). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 4.3 | Block project-wide SSH keys on VM instances | implements | `google_org_policy_policy.compute_managed_blockProjectSshKeys` | The block-project-ssh-keys metadata key cannot be set to false, so instances do not accept project-wide keys. |
+| cis-gcp 5.0 | 4.3 | Block project-wide SSH keys on VM instances | implements | `google_org_policy_policy.compute_managed_blockProjectSshKeys` | As for 4.0 §4.3 (5.0 §4.3, unchanged). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Block project-wide SSH keys on VM instances** (cis-gcp 4.0 §4.3, cis-gcp 5.0 §4.3) — Instances do not accept project-wide SSH keys; access is granted per instance.
+
+Every resource this pack contributes is a witness of a claim above.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-04 | CIS 4.3, opt-in: the managed constraint is still PREVIEW and has no legacy equivalent |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

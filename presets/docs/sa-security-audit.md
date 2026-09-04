@@ -5,32 +5,44 @@ Source: `presets/security-audit/sa-security-audit.satz`
 
 ## Purpose
 
-Security-Audit Service Account — read-only Audit-SA + Impersonations-Gruppe
+A read-only security-audit service account, with the group that may
+impersonate it.
 
-Dieses Preset kombiniert mehrere Ressourcentypen (Service Account, Gruppe,
-Org-IAM) und gehoert daher — analog zu organization-audit-logsink-1.0.yaml —
-auf das Wurzel-Level der Kunden-Haupt-YAML, NICHT unter einen einzelnen
-Resource-Key:
-!include presets/security-audit/sa-security-audit-1.0.yaml
-direkt neben den anderen Top-Level-Bloecken (google_billing_account_iam_member,
-org_policy_policy, cloud_identity_group, ...).
+The pack combines several resource types (service account, group,
+organization IAM), so — like the audit log sink — it goes at the top level of
+the estate rather than under a single resource key.
 
-Referenz: Security Toolset.md, Abschnitt 6.6 "Audit-SA + Impersonation
-(Ausrollpaket)" — dieses Preset ist die YAML-Form des dort beschriebenen
-gcloud-Skripts, gedacht zum wiederholten Ausrollen je (Managed) Org.
-
-Nutzung nach dem Apply (Mensch, nicht Claude — Toolset bleibt read-only):
+After the apply, a human (not the tooling, which stays read-only) uses it:
 prowler gcp --impersonate-service-account $SA --compliance cis_5.0_gcp ...
 gcloud <cmd> --impersonate-service-account=$SA
 gcloud auth application-default login --impersonate-service-account=$SA
--> erzeugt die impersonierte ADC fuer den Prowler-CLI-Anwender bzw.
-die SCC-MCP-Config (adc-audit.json, siehe Abschnitt 6.3/6.6)
+The last one produces the impersonated ADC the Prowler CLI and the SCC
+configuration read.
 
-Was dieses Preset NICHT tut:
-- keine API-Aktivierung im Seed-Projekt (iamcredentials.googleapis.com
-wird fuer Impersonation benoetigt — separat aktivieren, siehe unten)
-- keine SA-Keys — Zugriff ausschliesslich per Token-Creator-Impersonation
-- keine Remediation-Rechte — das Rollen-Set ist bewusst vollstaendig lesend
+What this pack does NOT do:
+- no API enablement in the seed project (impersonation needs
+iamcredentials.googleapis.com — enable it separately)
+- no service-account keys: access is by token-creator impersonation only
+- no remediation rights: the role set is deliberately read-only throughout
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  security_audit_sa_project = ""
+  security_audit_sa_name = "sa-security-audit"
+  security_audit_sa_display_name = "Security Audit (read-only)"
+  security_audit_auditors_group = "grp-security-auditors"
+}
+
+use "presets/security-audit/sa-security-audit.satz"
+```
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `first_admin` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -52,6 +64,14 @@ wird fuer Impersonation benoetigt — separat aktivieren, siehe unten)
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-08-21 | read-only security-audit service account with its custom role |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

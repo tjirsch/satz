@@ -1,10 +1,9 @@
-// Organization-wide audit log sink -> GCS bucket (compliance archive).
-// Satz-native pack: params are overridable defaults (define the same param in the
-// estate to override), claims are read from this source by the compliance plane, and the estate
-// includes this file with:  use "presets/monitoring/organization-audit-logsink.satz"
+// Organization-wide audit log sink into a GCS bucket — the compliance archive.
 //
-// Required from the estate: customer_organization_id, billing_account_infra,
-// customer_shortname, default_region.
+//   use "presets/monitoring/organization-audit-logsink.satz"
+//
+// Params are overridable defaults: define the same param in the estate to
+// override one. Claims are read from this source by the compliance plane.
 
 pack monitoring.organization_audit_logsink version "1.2"
 

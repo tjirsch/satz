@@ -1,13 +1,16 @@
-// 
+// The CIS GCP Foundation 4.0 organization-policy set, managed constraints
+// included.
+//
+// Every constraint the benchmark asks for as an org policy, with the six
+// superseded legacy twins declared OFF (`spec { reset = true }`) so that no
+// organisation ends up with both forms of a constraint enforcing. Some policies
+// have to be activated before they can be imported.
+//
+//   google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
+//
+// The benchmark: https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
+// Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
-// 
-// Include all CIS GCP Foundation 4.0 policies
-// https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
-// 
-// Some policies need to be activated manually before import
-// 
-
-// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
 pack CIS_GCP_Foundation_4_0 version "2.5"
 

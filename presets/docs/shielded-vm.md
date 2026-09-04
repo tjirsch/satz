@@ -7,8 +7,6 @@ Source: `presets/cis-extensions/shielded-vm.satz`
 
 CIS 4.8 — Shielded VM.
 
-use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
-
 Opt-in because not every image supports Shielded VM; an org with custom or older
 images will fail instance creation until those images are rebuilt. This is
 also the one constraint here with NO managed form and no dry-run support, so
@@ -16,6 +14,22 @@ it cannot be rehearsed before it bites.
 
 The constraint name and its shape were verified against a live
 organisation's OrgPolicy `ListConstraints`, not transcribed.
+
+## Use it
+
+```
+params {
+  cis_require_shielded_vm = true
+}
+
+use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+```
+
+`cis_require_shielded_vm` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `CIS_GCP_Foundation_4_0`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -29,10 +43,24 @@ _None — the pack takes everything from the estate's params._
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 4.8 | implements | `google_org_policy_policy.compute_requireShieldedVm` | Instances must boot as Shielded VMs: secure boot, vTPM and integrity monitoring. |
-| cis-gcp 5.0 | 4.8 | implements | `google_org_policy_policy.compute_requireShieldedVm` | As for 4.0 §4.8 (5.0 §4.8, unchanged). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 4.8 | Compute instances launched with Shielded VM enabled | implements | `google_org_policy_policy.compute_requireShieldedVm` | Instances must boot as Shielded VMs: secure boot, vTPM and integrity monitoring. |
+| cis-gcp 5.0 | 4.8 | Compute instances launched with Shielded VM enabled | implements | `google_org_policy_policy.compute_requireShieldedVm` | As for 4.0 §4.8 (5.0 §4.8, unchanged). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Compute instances launched with Shielded VM enabled** (cis-gcp 4.0 §4.8, cis-gcp 5.0 §4.8) — Instances boot with secure boot, vTPM and integrity monitoring.
+
+Every resource this pack contributes is a witness of a claim above.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-04 | CIS 4.8, opt-in: image support required, and the only constraint here with no managed form and no dry-run |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

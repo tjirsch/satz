@@ -7,14 +7,28 @@ Source: `presets/cis-extensions/confidential-computing.satz`
 
 CIS 4.11 — Confidential Computing.
 
-use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
-
 Opt-in because Confidential VMs are limited to particular machine families and cost
 more; enforcing this org-wide stops most ordinary workloads from starting.
 CIS rates it Level 2 for the same reason.
 
 The constraint name and its shape were verified against a live
 organisation's OrgPolicy `ListConstraints`, not transcribed.
+
+## Use it
+
+```
+params {
+  cis_confidential_computing = true
+}
+
+use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
+```
+
+`cis_confidential_computing` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `CIS_GCP_Foundation_4_0`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -28,10 +42,24 @@ _None — the pack takes everything from the estate's params._
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 4.11 | implements | `google_org_policy_policy.compute_managed_restrictNonConfidentialComputing` | Instances must run as Confidential VMs, so memory stays encrypted in use. |
-| cis-gcp 5.0 | 4.11 | implements | `google_org_policy_policy.compute_managed_restrictNonConfidentialComputing` | As for 4.0 §4.11 (5.0 §4.11, unchanged). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 4.11 | Compute instances have Confidential Computing enabled | implements | `google_org_policy_policy.compute_managed_restrictNonConfidentialComputing` | Instances must run as Confidential VMs, so memory stays encrypted in use. |
+| cis-gcp 5.0 | 4.11 | Compute instances have Confidential Computing enabled | implements | `google_org_policy_policy.compute_managed_restrictNonConfidentialComputing` | As for 4.0 §4.11 (5.0 §4.11, unchanged). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Compute instances have Confidential Computing enabled** (cis-gcp 4.0 §4.11, cis-gcp 5.0 §4.11) — Instances run as Confidential VMs, so memory is encrypted in use.
+
+Every resource this pack contributes is a witness of a claim above.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-04 | CIS 4.11, opt-in: Confidential VMs are machine-family limited, so enforcing it org-wide stops ordinary workloads |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

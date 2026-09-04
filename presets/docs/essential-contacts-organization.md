@@ -5,9 +5,9 @@ Source: `presets/essential-contacts-organization.satz` — a **content** pack: f
 
 ## Purpose
 
-Essential Contacts
+One organization-level Essential Contact, subscribed to every notification
+category Google routes.
 
-Google routes each notification category to the contacts subscribed to it.
 One address may appear ONCE per parent — so the shipped shape is a single
 contact on ALL. To split by audience (billing to finance, suspension and
 security to the on-call, …), uncomment the per-category contacts below,
@@ -16,6 +16,22 @@ an address subscribed to ALL already receives every category.
 
 Categories (API enum names): BILLING, LEGAL, PRODUCT_UPDATES, SECURITY,
 SUSPENSION, TECHNICAL — and ALL.
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  essential_contacts_email = "essential-contacts-all@{customer_domain}"
+}
+
+google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }
+```
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -30,6 +46,16 @@ A bare list — keyed by the estate's resource map (`google_x { use "presets/ess
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.2 | 2026-09-02 | commented per-category contacts (BILLING, SUSPENSION, SECURITY, TECHNICAL, LEGAL, PRODUCT_UPDATES, and a multi-category example) with their own address params, ready to uncomment; the shipped shape is unchanged (one contact on ALL) |
+| 1.1 | 2026-08-23 | `essential_contacts_email` param — a customer pins its contact without a fork; content pack |
+| 1.0 | 2026-08-20 | organization-wide essential contact, all categories |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

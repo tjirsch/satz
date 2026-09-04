@@ -5,12 +5,51 @@ Source: `presets/CIS-GCP-Foundation-4.0.satz`
 
 ## Purpose
 
+The CIS GCP Foundation 4.0 organization-policy set, managed constraints
+included.
+
+Every constraint the benchmark asks for as an org policy, with the six
+superseded legacy twins declared OFF (`spec { reset = true }`) so that no
+organisation ends up with both forms of a constraint enforcing. Some policies
+have to be activated before they can be imported.
+
+The benchmark: https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
+Google's constraint catalogue:
 https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-Include all CIS GCP Foundation 4.0 policies
-https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
+## Use it
 
-Some policies need to be activated manually before import
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  cis_block_project_ssh_keys = false
+  cis_require_shielded_vm = false
+  cis_confidential_computing = false
+  cis_cloud_sql_hardening = false
+  cis_cmek_required = false
+  cis_api_key_services = false
+  cis_bucket_retention = false
+  allowed_policy_member_principal_sets = [
+    "//cloudresourcemanager.googleapis.com/organizations/{customer_organization_id}",
+  ]
+  allowed_policy_member_subjects = [
+    "serviceAccount:service-org-{customer_organization_id}@security-center-api.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-csc-hpsa.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-dspm-hpsa.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
+    "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ktd-hpsa.iam.gserviceaccount.com",
+  ]
+  allowed_protocol_forwarding_schemes = [ "INTERNAL" ]
+  essential_contacts_allowed_domains = [ "@{customer_domain}" ]
+}
+
+google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
+```
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -30,41 +69,58 @@ Some policies need to be activated manually before import
 
 ## Contributes
 
-A bare list — keyed by the estate's resource map (`google_x { use "presets/CIS-GCP-Foundation-4.0.satz" }` or `use … as google_x`): `compute-managed-disableSerialPortAccess`, `iam-managed-disableServiceAccountKeyCreation`, `iam-managed-disableServiceAccountKeyUpload`, `iam-managed-preventPrivilegedBasicRolesForDefaultServiceAccounts`, `iam-automaticIamGrantsForDefaultServiceAccounts`, `storage-uniformBucketLevelAccess`, `compute-setNewProjectDefaultToZonalDNSOnly`, `compute-managed-restrictProtocolForwardingCreationForTypes`, `compute-skipDefaultNetworkCreation`, `gcp-resourceLocations`, `compute-managed-requireOsLogin`, `gcp-detailedAuditLoggingMode`, `iam-disableAuditLoggingExemption`, `compute-requireVpcFlowLogs`, `storage-publicAccessPrevention`, `compute-managed-vmCanIpForward`, `compute-managed-vmExternalIpAccess`, `essentialcontacts-managed-allowedContactDomains`, `iam-managed-allowedPolicyMembers`, `iam-allowedPolicyMemberDomains`, `compute-requireOsLogin`, `essentialcontacts-allowedContactDomains`, `iam-disableServiceAccountKeyCreation`, `iam-disableServiceAccountKeyUpload`, `compute-restrictProtocolForwardingCreationForTypes`.
+A bare list — keyed by the estate's resource map (`google_x { use "presets/CIS-GCP-Foundation-4.0.satz" }` or `use … as google_x`): `compute-managed-disableSerialPortAccess`, `iam-managed-disableServiceAccountKeyCreation`, `iam-managed-disableServiceAccountKeyUpload`, `iam-managed-preventPrivilegedBasicRolesForDefaultServiceAccounts`, `iam-automaticIamGrantsForDefaultServiceAccounts`, `storage-uniformBucketLevelAccess`, `compute-setNewProjectDefaultToZonalDNSOnly`, `compute-managed-restrictProtocolForwardingCreationForTypes`, `compute-skipDefaultNetworkCreation`, `gcp-resourceLocations`, `compute-managed-requireOsLogin`, `gcp-detailedAuditLoggingMode`, `iam-disableAuditLoggingExemption`, `compute-requireVpcFlowLogs`, `storage-publicAccessPrevention`, `compute-managed-vmCanIpForward`, `compute-managed-vmExternalIpAccess`, `essentialcontacts-managed-allowedContactDomains`, `iam-managed-allowedPolicyMembers`, `iam-allowedPolicyMemberDomains` *(off)*, `compute-requireOsLogin` *(off)*, `essentialcontacts-allowedContactDomains` *(off)*, `iam-disableServiceAccountKeyCreation` *(off)*, `iam-disableServiceAccountKeyUpload` *(off)*, `compute-restrictProtocolForwardingCreationForTypes` *(off)*.
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 5.0 | 1.1.4 | implements | `google_org_policy_policy.compute_managed_requireOsLogin`<br>`google_org_policy_policy.compute_managed_vmCanIpForward`<br>`google_org_policy_policy.compute_managed_vmExternalIpAccess`<br>`google_org_policy_policy.compute_requireVpcFlowLogs`<br>`google_org_policy_policy.compute_managed_restrictProtocolForwardingCreationForTypes`<br>`google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly`<br>`google_org_policy_policy.compute_skipDefaultNetworkCreation`<br>`google_org_policy_policy.essentialcontacts_managed_allowedContactDomains`<br>`google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.gcp_resourceLocations`<br>`google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption`<br>`google_org_policy_policy.iam_managed_allowedPolicyMembers`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload`<br>`google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts`<br>`google_org_policy_policy.storage_publicAccessPrevention`<br>`google_org_policy_policy.storage_uniformBucketLevelAccess` | The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it. |
-| cis-gcp 4.0 | 1.1 | implements | `google_org_policy_policy.iam_managed_allowedPolicyMembers` | Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded. |
-| cis-gcp 5.0 | 1.2 | implements | `google_org_policy_policy.iam_managed_allowedPolicyMembers` | As for 4.0 §1.1 — 5.0 §1.2 (5.0 inserted a new §1.1 'Organization resources' subsection, shifting the former 1.x up by one). |
-| cis-gcp 4.0 | 1.4 | implements | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload` | User-managed service account keys can neither be created nor uploaded org-wide, leaving only Google-managed keys. |
-| cis-gcp 5.0 | 1.5 | implements | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload` | As for 4.0 §1.4 — 5.0 §1.5. |
-| cis-gcp 4.0 | 1.5 | implements | `google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts` | Default service accounts are prevented from holding privileged basic roles. |
-| cis-gcp 5.0 | 1.6 | implements | `google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts` | As for 4.0 §1.5 — 5.0 §1.6. |
-| cis-gcp 4.0 | 1.5 | contributes | `google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts` | Also disables the automatic Editor grant to default service accounts at project creation. |
-| cis-gcp 5.0 | 1.6 | contributes | `google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts` | As for 4.0 §1.5 — 5.0 §1.6. |
-| cis-gcp 4.0 | 1.16 | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim. |
-| cis-gcp 5.0 | 1.17 | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | As for 4.0 §1.16 — 5.0 §1.17. |
-| cis-gcp 4.0 | 2.1 | contributes | `google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption` | Detailed audit logging mode plus a ban on per-principal audit-logging exemptions keep the audit trail complete. The audit config itself is declared by the audit-logsink pack. |
-| cis-gcp 5.0 | 2.1 | contributes | `google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption` | As for 4.0 §2.1 (5.0 §2.1, unchanged). |
-| cis-gcp 4.0 | 3.1 | implements | `google_org_policy_policy.compute_skipDefaultNetworkCreation` | New projects are created without the auto-mode default VPC and its permissive firewall rules. |
-| cis-gcp 5.0 | 3.1 | implements | `google_org_policy_policy.compute_skipDefaultNetworkCreation` | As for 4.0 §3.1 (5.0 §3.1, unchanged). |
-| cis-gcp 4.0 | 3.8 | implements | `google_org_policy_policy.compute_requireVpcFlowLogs` | Subnets must enable VPC Flow Logs. |
-| cis-gcp 5.0 | 3.10 | implements | `google_org_policy_policy.compute_requireVpcFlowLogs` | As for 4.0 §3.8 — 5.0 §3.10 (5.0 inserted 3.8 VPC Service Controls and 3.9 Private Service Connect). |
-| cis-gcp 4.0 | 4.5 | implements | `google_org_policy_policy.compute_managed_disableSerialPortAccess` | The serial-port-enable metadata key cannot be set to true, so no VM exposes an interactive serial console. |
-| cis-gcp 5.0 | 4.5 | implements | `google_org_policy_policy.compute_managed_disableSerialPortAccess` | As for 4.0 §4.5 (5.0 §4.5, unchanged). |
-| cis-gcp 4.0 | 4.4 | implements | `google_org_policy_policy.compute_managed_requireOsLogin` | OS Login is required, so VM SSH access is governed by IAM rather than metadata keys. |
-| cis-gcp 5.0 | 4.4 | implements | `google_org_policy_policy.compute_managed_requireOsLogin` | As for 4.0 §4.4 (5.0 §4.4, unchanged). |
-| cis-gcp 4.0 | 4.6 | implements | `google_org_policy_policy.compute_managed_vmCanIpForward` | Instances may not enable IP forwarding. |
-| cis-gcp 5.0 | 4.6 | implements | `google_org_policy_policy.compute_managed_vmCanIpForward` | As for 4.0 §4.6 (5.0 §4.6, unchanged). |
-| cis-gcp 4.0 | 4.9 | implements | `google_org_policy_policy.compute_managed_vmExternalIpAccess` | Compute instances may not be given external IP addresses. |
-| cis-gcp 5.0 | 4.9 | implements | `google_org_policy_policy.compute_managed_vmExternalIpAccess` | As for 4.0 §4.9 (5.0 §4.9, unchanged). |
-| cis-gcp 4.0 | 5.1 | implements | `google_org_policy_policy.storage_publicAccessPrevention` | Public access prevention is enforced, so buckets cannot be exposed to allUsers or allAuthenticatedUsers. |
-| cis-gcp 5.0 | 5.1 | implements | `google_org_policy_policy.storage_publicAccessPrevention` | As for 4.0 §5.1 (5.0 §5.1, unchanged). |
-| cis-gcp 4.0 | 5.2 | implements | `google_org_policy_policy.storage_uniformBucketLevelAccess` | Uniform bucket-level access disables object ACLs; bucket access is governed by IAM alone. |
-| cis-gcp 5.0 | 5.2 | implements | `google_org_policy_policy.storage_uniformBucketLevelAccess` | As for 4.0 §5.2 (5.0 §5.2, unchanged). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 5.0 | 1.1.4 | Organization policies configured for centralized constraints | implements | `google_org_policy_policy.compute_managed_requireOsLogin`<br>`google_org_policy_policy.compute_managed_vmCanIpForward`<br>`google_org_policy_policy.compute_managed_vmExternalIpAccess`<br>`google_org_policy_policy.compute_requireVpcFlowLogs`<br>`google_org_policy_policy.compute_managed_restrictProtocolForwardingCreationForTypes`<br>`google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly`<br>`google_org_policy_policy.compute_skipDefaultNetworkCreation`<br>`google_org_policy_policy.essentialcontacts_managed_allowedContactDomains`<br>`google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.gcp_resourceLocations`<br>`google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption`<br>`google_org_policy_policy.iam_managed_allowedPolicyMembers`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload`<br>`google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts`<br>`google_org_policy_policy.storage_publicAccessPrevention`<br>`google_org_policy_policy.storage_uniformBucketLevelAccess` | The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it. |
+| cis-gcp 4.0 | 1.1 | Corporate login credentials only | implements | `google_org_policy_policy.iam_managed_allowedPolicyMembers` | Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded. |
+| cis-gcp 5.0 | 1.2 | Corporate login credentials only | implements | `google_org_policy_policy.iam_managed_allowedPolicyMembers` | As for 4.0 §1.1 — 5.0 §1.2 (5.0 inserted a new §1.1 'Organization resources' subsection, shifting the former 1.x up by one). |
+| cis-gcp 4.0 | 1.4 | Only GCP-managed service account keys | implements | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload` | User-managed service account keys can neither be created nor uploaded org-wide, leaving only Google-managed keys. |
+| cis-gcp 5.0 | 1.5 | Only GCP-managed service account keys | implements | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload` | As for 4.0 §1.4 — 5.0 §1.5. |
+| cis-gcp 4.0 | 1.5 | Service accounts without admin privileges | implements | `google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts` | Default service accounts are prevented from holding privileged basic roles. |
+| cis-gcp 5.0 | 1.6 | Service accounts without admin privileges | implements | `google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts` | As for 4.0 §1.5 — 5.0 §1.6. |
+| cis-gcp 4.0 | 1.5 | Service accounts without admin privileges | contributes | `google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts` | Also disables the automatic Editor grant to default service accounts at project creation. |
+| cis-gcp 5.0 | 1.6 | Service accounts without admin privileges | contributes | `google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts` | As for 4.0 §1.5 — 5.0 §1.6. |
+| cis-gcp 4.0 | 1.16 | Essential Contacts configured for the organisation | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim. |
+| cis-gcp 5.0 | 1.17 | Essential Contacts configured for the organisation | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | As for 4.0 §1.16 — 5.0 §1.17. |
+| cis-gcp 4.0 | 2.1 | Cloud Audit Logging on all services | contributes | `google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption` | Detailed audit logging mode plus a ban on per-principal audit-logging exemptions keep the audit trail complete. The audit config itself is declared by the audit-logsink pack. |
+| cis-gcp 5.0 | 2.1 | Cloud Audit Logging on all services | contributes | `google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption` | As for 4.0 §2.1 (5.0 §2.1, unchanged). |
+| cis-gcp 4.0 | 3.1 | Default network does not exist | implements | `google_org_policy_policy.compute_skipDefaultNetworkCreation` | New projects are created without the auto-mode default VPC and its permissive firewall rules. |
+| cis-gcp 5.0 | 3.1 | Default network does not exist | implements | `google_org_policy_policy.compute_skipDefaultNetworkCreation` | As for 4.0 §3.1 (5.0 §3.1, unchanged). |
+| cis-gcp 4.0 | 3.8 | VPC Flow Logs enabled on subnets | implements | `google_org_policy_policy.compute_requireVpcFlowLogs` | Subnets must enable VPC Flow Logs. |
+| cis-gcp 5.0 | 3.10 | VPC Flow Logs enabled on subnets | implements | `google_org_policy_policy.compute_requireVpcFlowLogs` | As for 4.0 §3.8 — 5.0 §3.10 (5.0 inserted 3.8 VPC Service Controls and 3.9 Private Service Connect). |
+| cis-gcp 4.0 | 4.5 | Serial port access not enabled on VM instances | implements | `google_org_policy_policy.compute_managed_disableSerialPortAccess` | The serial-port-enable metadata key cannot be set to true, so no VM exposes an interactive serial console. |
+| cis-gcp 5.0 | 4.5 | Serial port access not enabled on VM instances | implements | `google_org_policy_policy.compute_managed_disableSerialPortAccess` | As for 4.0 §4.5 (5.0 §4.5, unchanged). |
+| cis-gcp 4.0 | 4.4 | OS Login enabled | implements | `google_org_policy_policy.compute_managed_requireOsLogin` | OS Login is required, so VM SSH access is governed by IAM rather than metadata keys. |
+| cis-gcp 5.0 | 4.4 | OS Login enabled | implements | `google_org_policy_policy.compute_managed_requireOsLogin` | As for 4.0 §4.4 (5.0 §4.4, unchanged). |
+| cis-gcp 4.0 | 4.6 | IP forwarding not enabled on instances | implements | `google_org_policy_policy.compute_managed_vmCanIpForward` | Instances may not enable IP forwarding. |
+| cis-gcp 5.0 | 4.6 | IP forwarding not enabled on instances | implements | `google_org_policy_policy.compute_managed_vmCanIpForward` | As for 4.0 §4.6 (5.0 §4.6, unchanged). |
+| cis-gcp 4.0 | 4.9 | Compute instances without public IP addresses | implements | `google_org_policy_policy.compute_managed_vmExternalIpAccess` | Compute instances may not be given external IP addresses. |
+| cis-gcp 5.0 | 4.9 | Compute instances without public IP addresses | implements | `google_org_policy_policy.compute_managed_vmExternalIpAccess` | As for 4.0 §4.9 (5.0 §4.9, unchanged). |
+| cis-gcp 4.0 | 5.1 | Storage buckets not anonymously or publicly accessible | implements | `google_org_policy_policy.storage_publicAccessPrevention` | Public access prevention is enforced, so buckets cannot be exposed to allUsers or allAuthenticatedUsers. |
+| cis-gcp 5.0 | 5.1 | Storage buckets not anonymously or publicly accessible | implements | `google_org_policy_policy.storage_publicAccessPrevention` | As for 4.0 §5.1 (5.0 §5.1, unchanged). |
+| cis-gcp 4.0 | 5.2 | Uniform bucket-level access enabled | implements | `google_org_policy_policy.storage_uniformBucketLevelAccess` | Uniform bucket-level access disables object ACLs; bucket access is governed by IAM alone. |
+| cis-gcp 5.0 | 5.2 | Uniform bucket-level access enabled | implements | `google_org_policy_policy.storage_uniformBucketLevelAccess` | As for 4.0 §5.2 (5.0 §5.2, unchanged). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Cloud Audit Logging on all services** (cis-gcp 4.0 §2.1, cis-gcp 5.0 §2.1) — Data Access audit logs (ADMIN_READ/DATA_READ/DATA_WRITE) enabled org-wide for all services.
+- **Compute instances without public IP addresses** (cis-gcp 4.0 §4.9, cis-gcp 5.0 §4.9) — VMs are not reachable directly from the internet via external IPs.
+- **Corporate login credentials only** (cis-gcp 4.0 §1.1, cis-gcp 5.0 §1.2) — IAM grants are restricted to identities from the organisation's own directory; consumer accounts cannot be granted roles.
+- **Default network does not exist** (cis-gcp 4.0 §3.1, cis-gcp 5.0 §3.1) — New projects are created without the auto-mode default VPC and its permissive firewall rules.
+- **Essential Contacts configured for the organisation** (cis-gcp 4.0 §1.16, cis-gcp 5.0 §1.17) — Organisation-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address.
+- **IP forwarding not enabled on instances** (cis-gcp 4.0 §4.6, cis-gcp 5.0 §4.6) — Instances may not forward packets for addresses other than their own.
+- **OS Login enabled** (cis-gcp 4.0 §4.4, cis-gcp 5.0 §4.4) — VM SSH access goes through OS Login and IAM rather than project-wide or instance metadata keys.
+- **Only GCP-managed service account keys** (cis-gcp 4.0 §1.4, cis-gcp 5.0 §1.5) — User-managed service account keys cannot be created or uploaded; only Google-managed keys exist.
+- **Organization policies configured for centralized constraints** (cis-gcp 5.0 §1.1.4) — An organization-level policy baseline (resource locations, OS Login, external IPs, uniform bucket access, allowed member domains …) constrains every project centrally.
+- **Serial port access not enabled on VM instances** (cis-gcp 4.0 §4.5, cis-gcp 5.0 §4.5) — Interactive serial console access is off, so a VM cannot be reached outside IAM-governed paths.
+- **Service accounts without admin privileges** (cis-gcp 4.0 §1.5, cis-gcp 5.0 §1.6) — Default service accounts do not receive primitive or privileged roles automatically.
+- **Storage buckets not anonymously or publicly accessible** (cis-gcp 4.0 §5.1, cis-gcp 5.0 §5.1) — Public access prevention is enforced so buckets cannot be exposed to allUsers/allAuthenticatedUsers.
+- **Uniform bucket-level access enabled** (cis-gcp 4.0 §5.2, cis-gcp 5.0 §5.2) — Object ACLs are disabled; access is governed by IAM alone.
+- **VPC Flow Logs enabled on subnets** (cis-gcp 4.0 §3.8, cis-gcp 5.0 §3.10) — Subnets record flow logs so network traffic is auditable.
 
 **Manual duties** (a control stays *partial* until each is attested):
 
@@ -74,6 +130,33 @@ A bare list — keyed by the estate's resource map (`google_x { use "presets/CIS
 - `legacy-superseded` (cis-gcp 4.0 §1.1) — The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organisation goes on enforcing, unseen by the apply.
 - `review-allowlist` (cis-gcp 4.0 §1.1, cis-gcp 5.0 §1.2) — Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant.
 - `review-baseline` (cis-gcp 5.0 §1.1.4) — The baseline is a decision, not a default — re-read it when the organisation adds a workload class the current constraints were not chosen for.
+
+Not every resource this pack contributes is a witness:
+
+- `google_org_policy_policy.iam_allowedPolicyMemberDomains` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+- `google_org_policy_policy.compute_requireOsLogin` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+- `google_org_policy_policy.essentialcontacts_allowedContactDomains` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+- `google_org_policy_policy.iam_disableServiceAccountKeyCreation` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+- `google_org_policy_policy.iam_disableServiceAccountKeyUpload` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+- `google_org_policy_policy.compute_restrictProtocolForwardingCreationForTypes` — declared OFF (`spec { reset = true }`): a superseded legacy twin, which proves nothing by design.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 2.5 | 2026-09-04 | runs the MANAGED protocol-forwarding constraint (`parameters.allowedSchemes`, param `allowed_protocol_forwarding_schemes`) and declares all six superseded legacy twins OFF with `reset = true`, so no estate ends up with both forms enforcing |
+| 2.4 | 2026-09-04 | adds `compute.managed.disableSerialPortAccess` (4.5) to the baseline — safe by default — and declares the seven opt-in flags the `cis-extensions/` fragments are gated on |
+| 2.3 | 2026-09-03 | claims the SAME resources against CIS 5.0 as well as 4.0 — no second pack, because 5.0's org-policy content is identical and only renumbered (1.1→1.2, 1.4→1.5, 1.5→1.6, 1.16→1.17, 3.8→3.10; §2, §4, §5 unchanged). Plus a new `5.0 1.1.4 implements` over the whole baseline: the control asks whether the organisation constrains its projects centrally, which is what the pack is |
+| 2.2 | 2026-09-01 | `essential_contacts_allowed_domains` becomes a LIST param with structured `parameters` (was the singular `essential_contacts_allowed_domain` inside a JSON string) — several contact domains no longer fork the pack; estates that bound the singular param bind the list instead |
+| 2.1 | 2026-08-24 | `allowed_policy_member_subjects` default gains the fifth SCC service agent; structured `parameters` on the managed §1.1 policy |
+| 2.0 | 2026-08-23 | retires the legacy `iam.allowedPolicyMemberDomains` (and its `allowed_policy_member_customers` param) in favour of the managed `iam.managed.allowedPolicyMembers`; the §1.1 claim carries `duty_legacy_superseded` |
+| 1.6 | 2026-08-23 | `allowed_policy_member_subjects` param: the canonical SCC service agents allowlisted under the managed §1.1 constraint |
+| 1.5 | 2026-08-22 | the 23-control catalog; claims for every control the pack implements |
+| 1.4 | 2026-08-22 | `essential_contacts_allowed_domain` param (driven by E03's conversion) |
+| 1.3 | 2026-08-21 | subjects param on `iam_managed_allowedPolicyMembers` (`allowedMemberSubjects` explicit) |
+| 1.2 | 2026-08-20 | pristine baseline as converted to Satz |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

@@ -5,9 +5,25 @@ Source: `presets/organization-budget.satz`
 
 ## Purpose
 
-Budget for Global Spend
+An organization-wide budget on the infrastructure billing account, with alert
+thresholds at 50, 80 and 100 % of current spend.
 
-Include in the YAML file
+The `"import-id"` in the body is a placeholder for adopting a budget that
+already exists — delete it for a fresh budget, or replace it with the real id.
+`satz adopt` does not resolve budgets: they are matched by display name and
+need the Budgets API.
+
+## Use it
+
+```
+use "presets/organization-budget.satz"
+```
+
+The pack declares no params: everything it sets is fixed in the file. A different value is a param lifted into the pack, or a `.local` fork.
+
+**Needs from outside the pack:**
+
+- `billing_account_infra` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -22,6 +38,14 @@ _None — the pack takes everything from the estate's params._
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-08-20 | organization budget with threshold alerts (`"import-id"` example) |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

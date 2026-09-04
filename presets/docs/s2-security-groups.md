@@ -15,7 +15,6 @@ project-admin power over everything else, and project-admins lose exactly
 those two network roles. Everything else is S1 unchanged.
 
 Groups and grants in ONE file (typed sections beside the estate's own):
-use "presets/security-group-models/s2-security-groups.satz"
 
 To adopt groups that already exist in the tenant:
 satz adopt <estate> --only google_cloud_identity_group --execute
@@ -23,6 +22,28 @@ Memberships are deliberately NOT part of this pack: presets define groups,
 humans grant membership.
 
 Required from the estate: customer_domain, svc_iac_account, infra_project_name
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  gcp_organization_admins_name = "gcp-organization-admins"
+  gcp_project_admins_name = "gcp-project-admins"
+  gcp_network_admins_name = "gcp-network-admins"
+  gcp_security_admins_name = "gcp-security-admins"
+  gcp_security_viewers_name = "gcp-security-viewers"
+  gcp_billing_admins_name = "gcp-billing-admins"
+}
+
+use "presets/security-group-models/s2-security-groups.satz"
+```
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `infra_project_name` — no pack in the library declares it, so the estate must.
+- `svc_iac_account` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -45,6 +66,14 @@ Required from the estate: customer_domain, svc_iac_account, infra_project_name
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-02 | S2 = S1 plus a distinct `gcp-network-admins` group (`compute.networkAdmin`, `compute.xpnAdmin`, `compute.securityAdmin`, `dns.admin`, `networkconnectivity.hubAdmin`, `networkmanagement.admin` + viewer roles); project-admins lose `compute.networkAdmin` and `compute.xpnAdmin`; one typed file |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

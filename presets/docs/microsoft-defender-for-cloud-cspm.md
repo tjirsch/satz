@@ -8,7 +8,6 @@ Source: `presets/integrations/microsoft-defender-for-cloud-cspm.satz`
 Microsoft Defender for Cloud — the CSPM plan.
 
 Used beside the foundation pack, gated on the licence:
-use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
 
 The custom role this plan grants is NOT here: it depends on the access mode,
 so it lives in its own fragment (`-cspm-role-default` or
@@ -17,6 +16,24 @@ the part that is the same either way.
 
 Everything is declared at top level with an explicit project, because a
 fragment cannot nest into the project the foundation pack defines.
+
+## Use it
+
+```
+params {
+  mdc_plan_cspm = true
+}
+
+use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
+```
+
+`mdc_plan_cspm` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `integrations.microsoft_defender_for_cloud`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
+- `mdc_mgmt_project_id` — declared by `integrations.microsoft_defender_for_cloud`; use one of them alongside, or declare it in the estate.
+- `mdc_workload_pool_id` — declared by `integrations.microsoft_defender_for_cloud`; use one of them alongside, or declare it in the estate.
 
 ## Params
 
@@ -34,6 +51,14 @@ _None — the pack takes everything from the estate's params._
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 0.1 | 2026-09-03 | first cut — the CSPM plan behind `mdc_plan_cspm`: its service account, OIDC provider, workload-identity assignment and org grants. The custom role is not here: it depends on the access mode |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

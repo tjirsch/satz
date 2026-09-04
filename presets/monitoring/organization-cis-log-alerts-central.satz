@@ -1,10 +1,12 @@
-// CIS 2.5-2.12 (5.0 numbering; 4.0: 2.4-2.11) centralized log-based alerting — Satz-native pack.
+// Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in
+// 4.0.
+//
+//   use "presets/monitoring/organization-cis-log-alerts-central.satz"
+//
 // One logging bucket + second org sink + 8 bucket-scoped metrics + 8 alert
 // policies + email channel. Estate wiring: set cis_central_bucket_project to the
 // logsink project (documented reuse), e.g.  cis_central_bucket_project = logsink_project_name
 //
-// Required from the estate: customer_organization_id, customer_shortname,
-// customer_domain, default_region.
 // Filters are verbatim CIS/Prowler strings; alert
 // filters reference metric names (dependency edge) and pin resource.type=
 // "logging_bucket" (bucket-scoped metrics report against it — verified live).

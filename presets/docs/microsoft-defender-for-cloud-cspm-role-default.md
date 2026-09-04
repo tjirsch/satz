@@ -7,12 +7,26 @@ Source: `presets/integrations/microsoft-defender-for-cloud-cspm-role-default.sat
 
 Microsoft Defender for Cloud — the CSPM custom role, DEFAULT access mode.
 
-use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
-
 Five permissions, because the plan also holds `roles/viewer`: together they
 are what Microsoft's script grants when least privilege is off. Use this OR
 the least-privilege fragment, never both — both define this role address, so
 both would be a fold conflict naming the two files.
+
+## Use it
+
+```
+params {
+  mdc_cspm_default_access = true
+}
+
+use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
+```
+
+`mdc_cspm_default_access` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `integrations.microsoft_defender_for_cloud`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -27,6 +41,14 @@ _None — the pack takes everything from the estate's params._
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 0.1 | 2026-09-03 | first cut — the CSPM custom role in DEFAULT access mode: five permissions beside the `roles/viewer` the plan grants |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

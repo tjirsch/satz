@@ -7,8 +7,6 @@ Source: `presets/cis-extensions/cmek.satz`
 
 CIS 7.2, 7.3 and 8.1 — customer-managed encryption keys.
 
-use "presets/cis-extensions/cmek.satz" when cis_cmek_required
-
 Opt-in because it is the most disruptive control in this set: once a service
 is listed, every NEW resource of that service must be created with a CMEK, so
 the key rings, the keys and the grants have to exist first. It also needs a
@@ -16,6 +14,31 @@ decision the pack cannot make — which projects may supply keys.
 
 Both constraints are plain LIST constraints, not managed booleans — verified
 against a live organisation's OrgPolicy `ListConstraints`.
+
+## Use it
+
+```
+params {
+  cis_cmek_required = true
+
+  // the pack's own defaults — copy only the lines you change
+  cmek_required_services = [
+    "bigquery.googleapis.com",
+    "dataproc.googleapis.com",
+  ]
+  cmek_allowed_key_projects = [
+    "under:organizations/{customer_organization_id}",
+  ]
+}
+
+use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+```
+
+`cis_cmek_required` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `CIS_GCP_Foundation_4_0`, and the estate's own binding wins.
+
+**Needs from outside the pack:**
+
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -32,19 +55,35 @@ against a live organisation's OrgPolicy `ListConstraints`.
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 7.2 | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | BigQuery may not create resources without a customer-managed key, and the key must come from an approved project. |
-| cis-gcp 5.0 | 7.2 | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | As for 4.0 §7.2 (5.0 §7.2, unchanged). |
-| cis-gcp 4.0 | 7.3 | contributes | `google_org_policy_policy.gcp_restrictNonCmekServices` | A dataset cannot be created without a CMEK, which is what makes a default key present; the default key ITSELF is a dataset attribute the org policy cannot set. |
-| cis-gcp 5.0 | 7.3 | contributes | `google_org_policy_policy.gcp_restrictNonCmekServices` | As for 4.0 §7.3 (5.0 §7.3, unchanged). |
-| cis-gcp 4.0 | 8.1 | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | Dataproc may not create clusters without a customer-managed key, and the key must come from an approved project. |
-| cis-gcp 5.0 | 8.1 | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | As for 4.0 §8.1 (5.0 §8.1, unchanged). |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 7.2 | BigQuery tables encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | BigQuery may not create resources without a customer-managed key, and the key must come from an approved project. |
+| cis-gcp 5.0 | 7.2 | BigQuery tables encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | As for 4.0 §7.2 (5.0 §7.2, unchanged). |
+| cis-gcp 4.0 | 7.3 | Default customer-managed key set for BigQuery datasets | contributes | `google_org_policy_policy.gcp_restrictNonCmekServices` | A dataset cannot be created without a CMEK, which is what makes a default key present; the default key ITSELF is a dataset attribute the org policy cannot set. |
+| cis-gcp 5.0 | 7.3 | Default customer-managed key set for BigQuery datasets | contributes | `google_org_policy_policy.gcp_restrictNonCmekServices` | As for 4.0 §7.3 (5.0 §7.3, unchanged). |
+| cis-gcp 4.0 | 8.1 | Dataproc clusters encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | Dataproc may not create clusters without a customer-managed key, and the key must come from an approved project. |
+| cis-gcp 5.0 | 8.1 | Dataproc clusters encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | As for 4.0 §8.1 (5.0 §8.1, unchanged). |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **BigQuery tables encrypted with a customer-managed key** (cis-gcp 4.0 §7.2, cis-gcp 5.0 §7.2) — BigQuery tables are protected by CMEK rather than Google-managed keys.
+- **Dataproc clusters encrypted with a customer-managed key** (cis-gcp 4.0 §8.1, cis-gcp 5.0 §8.1) — Dataproc cluster data is protected by CMEK.
+- **Default customer-managed key set for BigQuery datasets** (cis-gcp 4.0 §7.3, cis-gcp 5.0 §7.3) — Every BigQuery dataset carries a default CMEK, so new tables inherit it.
 
 **Manual duties** (a control stays *partial* until each is attested):
 
 - `default-key` (cis-gcp 4.0 §7.3, cis-gcp 5.0 §7.3) — Set defaultEncryptionConfiguration on each dataset — the constraint forces a key to exist, not which one is the dataset default.
 - `keys-exist` (cis-gcp 4.0 §7.2, cis-gcp 5.0 §7.2, cis-gcp 4.0 §8.1, cis-gcp 5.0 §8.1) — The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced.
+
+Every resource this pack contributes is a witness of a claim above.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.0 | 2026-09-04 | CIS 7.2, 7.3 and 8.1, opt-in: two LIST constraints; the keys and grants must exist first, and the key-project value takes a resource PATH |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

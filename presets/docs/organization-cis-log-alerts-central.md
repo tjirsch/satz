@@ -5,16 +5,41 @@ Source: `presets/monitoring/organization-cis-log-alerts-central.satz`
 
 ## Purpose
 
-CIS 2.5-2.12 (5.0 numbering; 4.0: 2.4-2.11) centralized log-based alerting — Satz-native pack.
+Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in
+4.0.
+
 One logging bucket + second org sink + 8 bucket-scoped metrics + 8 alert
 policies + email channel. Estate wiring: set cis_central_bucket_project to the
 logsink project (documented reuse), e.g.  cis_central_bucket_project = logsink_project_name
 
-Required from the estate: customer_organization_id, customer_shortname,
-customer_domain, default_region.
 Filters are verbatim CIS/Prowler strings; alert
 filters reference metric names (dependency edge) and pin resource.type=
 "logging_bucket" (bucket-scoped metrics report against it — verified live).
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  cis_central_bucket_project = "{customer_shortname}-organization-log-alerts"
+  cis_central_bucket_id = "{customer_shortname}-organization-log-alerts"
+  cis_central_bucket_location = default_region
+  cis_central_bucket_retention_days = 30
+  cis_central_sink_name = "cis-central-metrics-sink"
+  cis_central_email = "gcp-security@{customer_domain}"
+  cis_central_channel_name = "CIS Security Alerts (org)"
+  cis_central_alert_window = "300s"
+}
+
+use "presets/monitoring/organization-cis-log-alerts-central.satz"
+```
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
+- `customer_shortname` — no pack in the library declares it, so the estate must.
+- `default_region` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -42,26 +67,53 @@ filters reference metric names (dependency edge) and pin resource.type=
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 2.4 | contributes | `google_logging_organization_sink.cis_central_metrics_sink`<br>`google_monitoring_notification_channel.cis_central_alerts` | Central metrics pipeline: org-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on. |
-| cis-gcp 5.0 | 2.5 | contributes | `google_logging_organization_sink.cis_central_metrics_sink`<br>`google_monitoring_notification_channel.cis_central_alerts` | As for 4.0 §2.4 (5.0 §2.5): the substrate every alert stands on. |
-| cis-gcp 4.0 | 2.4 | implements | `google_logging_metric.cis_central_2_5_project_ownership`<br>`google_monitoring_alert_policy.cis_central_2_5_project_ownership` |  |
-| cis-gcp 5.0 | 2.5 | implements | `google_logging_metric.cis_central_2_5_project_ownership`<br>`google_monitoring_alert_policy.cis_central_2_5_project_ownership` |  |
-| cis-gcp 4.0 | 2.5 | implements | `google_logging_metric.cis_central_2_6_audit_config`<br>`google_monitoring_alert_policy.cis_central_2_6_audit_config` |  |
-| cis-gcp 5.0 | 2.6 | implements | `google_logging_metric.cis_central_2_6_audit_config`<br>`google_monitoring_alert_policy.cis_central_2_6_audit_config` |  |
-| cis-gcp 4.0 | 2.6 | implements | `google_logging_metric.cis_central_2_7_custom_role`<br>`google_monitoring_alert_policy.cis_central_2_7_custom_role` |  |
-| cis-gcp 5.0 | 2.7 | implements | `google_logging_metric.cis_central_2_7_custom_role`<br>`google_monitoring_alert_policy.cis_central_2_7_custom_role` |  |
-| cis-gcp 4.0 | 2.7 | implements | `google_logging_metric.cis_central_2_8_firewall_rule`<br>`google_monitoring_alert_policy.cis_central_2_8_firewall_rule` |  |
-| cis-gcp 5.0 | 2.8 | implements | `google_logging_metric.cis_central_2_8_firewall_rule`<br>`google_monitoring_alert_policy.cis_central_2_8_firewall_rule` |  |
-| cis-gcp 4.0 | 2.8 | implements | `google_logging_metric.cis_central_2_9_network_route`<br>`google_monitoring_alert_policy.cis_central_2_9_network_route` |  |
-| cis-gcp 5.0 | 2.9 | implements | `google_logging_metric.cis_central_2_9_network_route`<br>`google_monitoring_alert_policy.cis_central_2_9_network_route` |  |
-| cis-gcp 4.0 | 2.9 | implements | `google_logging_metric.cis_central_2_10_network`<br>`google_monitoring_alert_policy.cis_central_2_10_network` |  |
-| cis-gcp 5.0 | 2.10 | implements | `google_logging_metric.cis_central_2_10_network`<br>`google_monitoring_alert_policy.cis_central_2_10_network` |  |
-| cis-gcp 4.0 | 2.10 | implements | `google_logging_metric.cis_central_2_11_bucket_permission`<br>`google_monitoring_alert_policy.cis_central_2_11_bucket_permission` |  |
-| cis-gcp 5.0 | 2.11 | implements | `google_logging_metric.cis_central_2_11_bucket_permission`<br>`google_monitoring_alert_policy.cis_central_2_11_bucket_permission` |  |
-| cis-gcp 4.0 | 2.11 | implements | `google_logging_metric.cis_central_2_12_sql_instance`<br>`google_monitoring_alert_policy.cis_central_2_12_sql_instance` |  |
-| cis-gcp 5.0 | 2.12 | implements | `google_logging_metric.cis_central_2_12_sql_instance`<br>`google_monitoring_alert_policy.cis_central_2_12_sql_instance` |  |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 2.4 | Project ownership change alerts | contributes | `google_logging_organization_sink.cis_central_metrics_sink`<br>`google_monitoring_notification_channel.cis_central_alerts` | Central metrics pipeline: org-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on. |
+| cis-gcp 5.0 | 2.5 | Project ownership change alerts | contributes | `google_logging_organization_sink.cis_central_metrics_sink`<br>`google_monitoring_notification_channel.cis_central_alerts` | As for 4.0 §2.4 (5.0 §2.5): the substrate every alert stands on. |
+| cis-gcp 4.0 | 2.4 | Project ownership change alerts | implements | `google_logging_metric.cis_central_2_5_project_ownership`<br>`google_monitoring_alert_policy.cis_central_2_5_project_ownership` |  |
+| cis-gcp 5.0 | 2.5 | Project ownership change alerts | implements | `google_logging_metric.cis_central_2_5_project_ownership`<br>`google_monitoring_alert_policy.cis_central_2_5_project_ownership` |  |
+| cis-gcp 4.0 | 2.5 | Audit configuration change alerts | implements | `google_logging_metric.cis_central_2_6_audit_config`<br>`google_monitoring_alert_policy.cis_central_2_6_audit_config` |  |
+| cis-gcp 5.0 | 2.6 | Audit configuration change alerts | implements | `google_logging_metric.cis_central_2_6_audit_config`<br>`google_monitoring_alert_policy.cis_central_2_6_audit_config` |  |
+| cis-gcp 4.0 | 2.6 | Custom role change alerts | implements | `google_logging_metric.cis_central_2_7_custom_role`<br>`google_monitoring_alert_policy.cis_central_2_7_custom_role` |  |
+| cis-gcp 5.0 | 2.7 | Custom role change alerts | implements | `google_logging_metric.cis_central_2_7_custom_role`<br>`google_monitoring_alert_policy.cis_central_2_7_custom_role` |  |
+| cis-gcp 4.0 | 2.7 | VPC firewall rule change alerts | implements | `google_logging_metric.cis_central_2_8_firewall_rule`<br>`google_monitoring_alert_policy.cis_central_2_8_firewall_rule` |  |
+| cis-gcp 5.0 | 2.8 | VPC firewall rule change alerts | implements | `google_logging_metric.cis_central_2_8_firewall_rule`<br>`google_monitoring_alert_policy.cis_central_2_8_firewall_rule` |  |
+| cis-gcp 4.0 | 2.8 | VPC route change alerts | implements | `google_logging_metric.cis_central_2_9_network_route`<br>`google_monitoring_alert_policy.cis_central_2_9_network_route` |  |
+| cis-gcp 5.0 | 2.9 | VPC route change alerts | implements | `google_logging_metric.cis_central_2_9_network_route`<br>`google_monitoring_alert_policy.cis_central_2_9_network_route` |  |
+| cis-gcp 4.0 | 2.9 | VPC network change alerts | implements | `google_logging_metric.cis_central_2_10_network`<br>`google_monitoring_alert_policy.cis_central_2_10_network` |  |
+| cis-gcp 5.0 | 2.10 | VPC network change alerts | implements | `google_logging_metric.cis_central_2_10_network`<br>`google_monitoring_alert_policy.cis_central_2_10_network` |  |
+| cis-gcp 4.0 | 2.10 | Storage IAM change alerts | implements | `google_logging_metric.cis_central_2_11_bucket_permission`<br>`google_monitoring_alert_policy.cis_central_2_11_bucket_permission` |  |
+| cis-gcp 5.0 | 2.11 | Storage IAM change alerts | implements | `google_logging_metric.cis_central_2_11_bucket_permission`<br>`google_monitoring_alert_policy.cis_central_2_11_bucket_permission` |  |
+| cis-gcp 4.0 | 2.11 | SQL instance change alerts | implements | `google_logging_metric.cis_central_2_12_sql_instance`<br>`google_monitoring_alert_policy.cis_central_2_12_sql_instance` |  |
+| cis-gcp 5.0 | 2.12 | SQL instance change alerts | implements | `google_logging_metric.cis_central_2_12_sql_instance`<br>`google_monitoring_alert_policy.cis_central_2_12_sql_instance` |  |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Audit configuration change alerts** (cis-gcp 4.0 §2.5, cis-gcp 5.0 §2.6) — Log metric filter and alert on changes to audit logging configuration.
+- **Custom role change alerts** (cis-gcp 4.0 §2.6, cis-gcp 5.0 §2.7) — Log metric filter and alert on IAM custom role creation, modification, deletion.
+- **Project ownership change alerts** (cis-gcp 4.0 §2.4, cis-gcp 5.0 §2.5) — Log metric filter and alert on project ownership assignments/changes across the organization.
+- **SQL instance change alerts** (cis-gcp 4.0 §2.11, cis-gcp 5.0 §2.12) — Log metric filter and alert on Cloud SQL instance configuration changes.
+- **Storage IAM change alerts** (cis-gcp 4.0 §2.10, cis-gcp 5.0 §2.11) — Log metric filter and alert on Cloud Storage bucket IAM permission changes.
+- **VPC firewall rule change alerts** (cis-gcp 4.0 §2.7, cis-gcp 5.0 §2.8) — Log metric filter and alert on firewall rule create/modify/delete.
+- **VPC network change alerts** (cis-gcp 4.0 §2.9, cis-gcp 5.0 §2.10) — Log metric filter and alert on VPC network create/modify/delete.
+- **VPC route change alerts** (cis-gcp 4.0 §2.8, cis-gcp 5.0 §2.9) — Log metric filter and alert on VPC network route changes.
+
+Not every resource this pack contributes is a witness:
+
+- `google_logging_project_bucket_config.cis_central_metrics` — contributed, but no claim names it.
+- `google_project_iam_member.cis_central_sink_writer` — contributed, but no claim names it.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.3 | 2026-09-03 | **CIS 4.0 claim ids were off by one** — the eight alert controls are 4.0 §2.4–2.11 (§2.12 is DNS logging), not §2.5–2.12; the invented "§2.4 filters exist" claim is gone and the sink + channel now CONTRIBUTE to the first alert control (4.0 §2.4 / 5.0 §2.5). Resource labels keep the 5.0 numbers. Verified against Prowler, Google's InSpec profile and Tenable |
+| 1.2 | 2026-08-24 | the log metric + alert stack for CIS 2.5–2.12 in one central logging project |
+| 1.1 | 2026-08-22 | notification channel param; alert policy display names carry the control id |
+| 1.0 | 2026-08-21 | first version |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

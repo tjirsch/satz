@@ -5,12 +5,31 @@ Source: `presets/billing-account-permissions.satz`
 
 ## Purpose
 
-Billing-account IAM, split by audience: everyone in the domain may USE and
-VIEW the billing account (link projects, read costs); the full
-administration — and every other billing-account role — goes to ONE group,
-named by a param so no customer forks the pack for it. The IaC service
-account keeps `billing.admin`: it manages this account's budgets and
-project links on every apply.
+Billing-account IAM, split by audience.
+
+Everyone in the domain may USE and VIEW the billing account (link projects,
+read costs); the full administration — and every other billing-account role —
+goes to ONE group, named by a param so no customer forks the pack for it. The
+IaC service account keeps `billing.admin`: it manages this account's budgets
+and project links on every apply.
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  billing_admins_group = "gcp-billing-admins@{customer_domain}"
+}
+
+use "presets/billing-account-permissions.satz"
+```
+
+**Needs from outside the pack:**
+
+- `billing_account_infra` — no pack in the library declares it, so the estate must.
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `infra_project_name` — no pack in the library declares it, so the estate must.
+- `svc_iac_account` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -27,6 +46,15 @@ project links on every apply.
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.1 | 2026-09-01 | split by audience: the domain gets `billing.user` + `billing.viewer`; a `billing_admins_group` param (default `gcp-billing-admins@{customer_domain}`) gets `billing.admin` + `billing.costsManager`; the IaC SA keeps `billing.admin`. Adoption adds three grants per estate — a real plan |
+| 1.0 | 2026-08-20 | billing-account IAM for the S1 groups and the IaC service account |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

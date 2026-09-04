@@ -328,14 +328,12 @@ cp "$root/presets/import-config.yaml" tmp/import-config.yaml
 uv run --with ruamel.yaml "$root/scripts/update_import_config.py" --config-file tmp/import-config.yaml --cai-types "$root/presets/cai-asset-types.txt" | tee tmp/fill.txt
 grep -q '^asset_type filled: 0;' tmp/fill.txt || fail "presets/import-config.yaml is behind presets/cai-asset-types.txt — run the fill and commit it"
 
-step "pack docs are current (satz doc-packs --check) and every pack version has a changelog line"
+# doc-packs carries three gates now: the pages match the packs, every claim
+# names a control its catalog carries, and every pack version has a changelog
+# row. The shell loop that checked the last one lived here; the tool knows both
+# halves, so its message can name the line and `cargo test` runs it too.
+step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
-for f in $(find "$root/presets" -name '*.satz' ! -name '*.local.satz' ! -name '*.diff.satz'); do
-  line=$(grep -m1 -E '^pack ' "$f") || fail "$f has no pack header"
-  name=$(printf '%s' "$line" | awk '{print $2}')
-  ver=$(printf '%s' "$line" | grep -o 'version "[^"]*"' | cut -d'"' -f2)
-  grep -q -E "^\| \`$name\` \| $ver \|" "$root/presets/README.md" || fail "presets/README.md has no changelog row for \`$name\` $ver — add the version bump under ## Changelog"
-done
 
 step "check-presets against the repository's own presets (must be clean)"
 "$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz

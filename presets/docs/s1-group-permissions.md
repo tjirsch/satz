@@ -5,7 +5,27 @@ Source: `presets/security-group-models/s1-group-permissions.satz`
 
 ## Purpose
 
-Include under organization_iam_member:
+Organization-level role grants for the five S1 admin groups.
+
+The groups themselves are `s1_group_definitions`; memberships are deliberately
+not here — presets define groups, humans grant membership.
+
+## Use it
+
+```
+google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
+```
+
+The pack declares no params: everything it sets is fixed in the file. A different value is a param lifted into the pack, or a `.local` fork.
+
+**Needs from outside the pack:**
+
+- `customer_domain` — no pack in the library declares it, so the estate must.
+- `gcp_billing_admins_name` — declared by `s1_group_definitions`, `s1_security_groups`, `s2_security_groups`; use one of them alongside, or declare it in the estate.
+- `gcp_organization_admins_name` — declared by `s1_group_definitions`, `s1_security_groups`, `s2_security_groups`; use one of them alongside, or declare it in the estate.
+- `gcp_project_admins_name` — declared by `s1_group_definitions`, `s1_security_groups`, `s2_security_groups`; use one of them alongside, or declare it in the estate.
+- `gcp_security_admins_name` — declared by `s1_group_definitions`, `s1_security_groups`, `s2_security_groups`; use one of them alongside, or declare it in the estate.
+- `gcp_security_viewers_name` — declared by `s1_group_definitions`, `s1_security_groups`, `s2_security_groups`; use one of them alongside, or declare it in the estate.
 
 ## Params
 
@@ -18,6 +38,15 @@ A bare list — keyed by the estate's resource map (`google_x { use "presets/sec
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.1 | 2026-09-02 | `roles/cloudasset.viewer` for security-admins and security-viewers — `report-compliance` reads witnesses through Cloud Asset Inventory and `iam.securityReviewer` does not carry the search permissions |
+| 1.0 | 2026-08-20 | org-level role grants for the S1 groups; `roles/viewer` for the security-viewers group is the fleet standard |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

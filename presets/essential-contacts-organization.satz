@@ -1,7 +1,8 @@
+// One organization-level Essential Contact, subscribed to every notification
+// category Google routes.
 //
-// Essential Contacts
+//   google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }
 //
-// Google routes each notification category to the contacts subscribed to it.
 // One address may appear ONCE per parent — so the shipped shape is a single
 // contact on ALL. To split by audience (billing to finance, suspension and
 // security to the on-call, …), uncomment the per-category contacts below,
@@ -10,7 +11,6 @@
 //
 // Categories (API enum names): BILLING, LEGAL, PRODUCT_UPDATES, SECURITY,
 // SUSPENSION, TECHNICAL — and ALL.
-//
 
 pack essential_contacts_organization version "1.2" content
 

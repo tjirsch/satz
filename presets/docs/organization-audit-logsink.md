@@ -5,13 +5,33 @@ Source: `presets/monitoring/organization-audit-logsink.satz`
 
 ## Purpose
 
-Organization-wide audit log sink -> GCS bucket (compliance archive).
-Satz-native pack: params are overridable defaults (define the same param in the
-estate to override), claims are read from this source by the compliance plane, and the estate
-includes this file with:  use "presets/monitoring/organization-audit-logsink.satz"
+Organization-wide audit log sink into a GCS bucket — the compliance archive.
 
-Required from the estate: customer_organization_id, billing_account_infra,
-customer_shortname, default_region.
+Params are overridable defaults: define the same param in the estate to
+override one. Claims are read from this source by the compliance plane.
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  logsink_name = "{customer_shortname}-organization-audit-gcs"
+  logsink_project_name = "{customer_shortname}-log-infra-001"
+  logsink_bucket_name = "{customer_shortname}-organization-audit-logs"
+  logsink_bucket_location = default_region
+  logsink_retention_days = 400
+  logsink_filter = "log_id("cloudaudit.googleapis.com/activity") OR log_id("cloudaudit.googleapis.com/data_access") OR log_id("cloudaudit.googleapis.com/system_event") OR log_id("cloudaudit.googleapis.com/policy")"
+}
+
+use "presets/monitoring/organization-audit-logsink.satz"
+```
+
+**Needs from outside the pack:**
+
+- `billing_account_infra` — no pack in the library declares it, so the estate must.
+- `customer_organization_id` — no pack in the library declares it, so the estate must.
+- `customer_shortname` — no pack in the library declares it, so the estate must.
+- `default_region` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -36,18 +56,38 @@ customer_shortname, default_region.
 
 ## Claims
 
-| framework | control | kind | witnesses | interpretation |
-|---|---|---|---|---|
-| cis-gcp 4.0 | 2.1 | implements | `google_organization_iam_audit_config.org_all_services` | ADMIN_READ/DATA_READ/DATA_WRITE on allServices at organization scope; exemptions via exempted_members keep the category enabled and visible. |
-| cis-gcp 5.0 | 2.1 | implements | `google_organization_iam_audit_config.org_all_services` | As for 4.0 §2.1 (5.0 §2.1, unchanged). |
-| cis-gcp 4.0 | 2.2 | implements | `google_logging_organization_sink.organization_audit_gcs`<br>`google_storage_bucket.org_audit_logs`<br>`google_storage_bucket_iam_member.org_audit_sink_writer` | Aggregated org sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only. |
-| cis-gcp 5.0 | 2.3 | implements | `google_logging_organization_sink.organization_audit_gcs`<br>`google_storage_bucket.org_audit_logs`<br>`google_storage_bucket_iam_member.org_audit_sink_writer` | As for 4.0 §2.2 — 5.0 §2.3 (5.0 inserted a new 2.2 for Workspace data sharing). |
-| cis-gcp 4.0 | 2.3 | contributes | `google_storage_bucket.org_audit_logs` | Lifecycle retention (logsink_retention_days) is automated; the bucket LOCK is a deliberate human decision, so coverage is honestly partial. |
-| cis-gcp 5.0 | 2.4 | contributes | `google_storage_bucket.org_audit_logs` | As for 4.0 §2.3 — 5.0 §2.4. |
+| framework | control | title | kind | witnesses | interpretation |
+|---|---|---|---|---|---|
+| cis-gcp 4.0 | 2.1 | Cloud Audit Logging on all services | implements | `google_organization_iam_audit_config.org_all_services` | ADMIN_READ/DATA_READ/DATA_WRITE on allServices at organization scope; exemptions via exempted_members keep the category enabled and visible. |
+| cis-gcp 5.0 | 2.1 | Cloud Audit Logging on all services | implements | `google_organization_iam_audit_config.org_all_services` | As for 4.0 §2.1 (5.0 §2.1, unchanged). |
+| cis-gcp 4.0 | 2.2 | Sinks for all log entries | implements | `google_logging_organization_sink.organization_audit_gcs`<br>`google_storage_bucket.org_audit_logs`<br>`google_storage_bucket_iam_member.org_audit_sink_writer` | Aggregated org sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only. |
+| cis-gcp 5.0 | 2.3 | Sinks for all log entries | implements | `google_logging_organization_sink.organization_audit_gcs`<br>`google_storage_bucket.org_audit_logs`<br>`google_storage_bucket_iam_member.org_audit_sink_writer` | As for 4.0 §2.2 — 5.0 §2.3 (5.0 inserted a new 2.2 for Workspace data sharing). |
+| cis-gcp 4.0 | 2.3 | Retention on the log bucket | contributes | `google_storage_bucket.org_audit_logs` | Lifecycle retention (logsink_retention_days) is automated; the bucket LOCK is a deliberate human decision, so coverage is honestly partial. |
+| cis-gcp 5.0 | 2.4 | Retention on the log bucket | contributes | `google_storage_bucket.org_audit_logs` | As for 4.0 §2.3 — 5.0 §2.4. |
+
+**What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
+
+- **Cloud Audit Logging on all services** (cis-gcp 4.0 §2.1, cis-gcp 5.0 §2.1) — Data Access audit logs (ADMIN_READ/DATA_READ/DATA_WRITE) enabled org-wide for all services.
+- **Retention on the log bucket** (cis-gcp 4.0 §2.3, cis-gcp 5.0 §2.4) — The central log destination retains entries per policy; bucket-lock retention once the pipeline is validated.
+- **Sinks for all log entries** (cis-gcp 4.0 §2.2, cis-gcp 5.0 §2.3) — An aggregated org-level sink routes audit log entries to a central destination project owners cannot bypass.
 
 **Manual duties** (a control stays *partial* until each is attested):
 
 - `validate-then-lock` (cis-gcp 4.0 §2.3, cis-gcp 5.0 §2.4) — After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default).
+
+Not every resource this pack contributes is a witness:
+
+- `google_project.logsink_project` — contributed, but no claim names it.
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.2 | 2026-09-03 | CIS 5.0 claim ids corrected: sinks are 5.0 §2.3 and retention §2.4 (5.0 inserted a new §2.2 for Workspace data sharing); 4.0 ids unchanged; "provisional" notes removed — numbering verified against Prowler + Tenable |
+| 1.1 | 2026-08-21 | claims for CIS 2.1/2.2 (both 4.0 and 5.0), the writer-identity bucket grant, retention lifecycle rules |
+| 1.0 | 2026-08-21 | org audit log sink → bucket |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 

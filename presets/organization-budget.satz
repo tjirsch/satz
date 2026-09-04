@@ -1,10 +1,12 @@
-// 
-// Budget for Global Spend
-// 
-// Include in the YAML file
-// 
-
-// Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
+// An organization-wide budget on the infrastructure billing account, with alert
+// thresholds at 50, 80 and 100 % of current spend.
+//
+//   use "presets/organization-budget.satz"
+//
+// The `"import-id"` in the body is a placeholder for adopting a budget that
+// already exists — delete it for a fresh budget, or replace it with the real id.
+// `satz adopt` does not resolve budgets: they are matched by display name and
+// need the Budgets API.
 
 pack organization_budget version "1.0"
 

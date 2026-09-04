@@ -5,18 +5,37 @@ Source: `presets/security-group-models/s1-group-definitions.satz`
 
 ## Purpose
 
-Include under cloud_identity_group:
-
-cloud_identity_group: !include presets/security-group-models/s1-group-definitions-1.0.yaml
+The five S1 admin groups, defined but not populated.
 
 To adopt groups that already exist in the tenant, run
 satz adopt <estate> --only google_cloud_identity_group --execute
-each group is looked up by email over the Cloud Identity API and the verified
+Each group is looked up by email over the Cloud Identity API and the verified
 ids are written into the estate as "import-id". That is why no group ids are
 hard-coded here — they are tenant-specific and do not belong in a shared preset.
-Memberships are deliberately NOT part of this preset (v1.1): presets define
-groups, humans grant membership. Estates that need managed memberships declare
-them as estate-level resources.
+
+Memberships are deliberately NOT part of this preset: presets define groups,
+humans grant membership. Estates that need managed memberships declare them
+as estate-level resources.
+
+## Use it
+
+```
+params {
+  // the pack's own defaults — copy only the lines you change
+  gcp_organization_admins_name = "gcp-organization-admins"
+  gcp_project_admins_name = "gcp-project-admins"
+  gcp_security_admins_name = "gcp-security-admins"
+  gcp_security_viewers_name = "gcp-security-viewers"
+  gcp_billing_admins_name = "gcp-billing-admins"
+}
+
+google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
+```
+
+**Needs from outside the pack:**
+
+- `infra_project_name` — no pack in the library declares it, so the estate must.
+- `svc_iac_account` — no pack in the library declares it, so the estate must.
 
 ## Params
 
@@ -35,6 +54,16 @@ A bare list — keyed by the estate's resource map (`google_x { use "presets/sec
 ## Claims
 
 _None — this pack proves no control by itself._
+
+## History
+
+| version | date | change |
+|---|---|---|
+| 1.2 | 2026-08-28 | group `lifecycle { ignore_changes = [initial_group_config] }` — an adopted group no longer plans as "must be replaced" |
+| 1.1 | 2026-08-21 | ships NO human memberships — presets define groups, humans grant membership |
+| 1.0 | 2026-08-20 | the five S1 admin groups |
+
+The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
 ## Notes
 
