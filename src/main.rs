@@ -5267,3 +5267,52 @@ mod out_format_tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod agent_guide_tests {
+    /// The agent guide is read by something that will act on it. A syntax error in
+    /// an example is not a typo there — it is an instruction to write invalid Satz,
+    /// followed by a compile failure the agent has to debug from a doc it trusted.
+    ///
+    /// This parses every ```satz block in the guide. It is a PARSE gate, not a
+    /// compile gate: the fragments deliberately show one construct at a time and
+    /// have no estate around them, so schema checks (does this attribute exist on
+    /// this type?) are out of reach here. Those are covered where the same
+    /// constructs appear in `tests/smoke/yaml/showcase.satz`, which is compiled and
+    /// `tofu validate`d by the smoke matrix.
+    #[test]
+    fn every_example_in_the_agent_guide_parses() {
+        let doc = include_str!("../docs/satz-for-agents.md");
+        let mut blocks = Vec::new();
+        let mut current: Option<(usize, String)> = None;
+        for (n, line) in doc.lines().enumerate() {
+            match (&mut current, line.trim_start()) {
+                (None, "```satz") => current = Some((n + 2, String::new())),
+                (Some(_), "```") => {
+                    let (start, body) = current.take().expect("in a block");
+                    blocks.push((start, body));
+                }
+                (Some((_, body)), _) => {
+                    body.push_str(line);
+                    body.push('\n');
+                }
+                _ => {}
+            }
+        }
+        assert!(current.is_none(), "an unterminated ```satz block in the guide");
+        assert!(
+            blocks.len() >= 10,
+            "only {} satz examples found — the extractor is looking at the wrong thing",
+            blocks.len()
+        );
+        for (line, body) in &blocks {
+            if let Err(e) = satz_core::satz::parse(body) {
+                panic!(
+                    "docs/satz-for-agents.md:{}: the example does not parse — {}:{}\n{}",
+                    line, e.line, e.msg, body
+                );
+            }
+        }
+    }
+}
