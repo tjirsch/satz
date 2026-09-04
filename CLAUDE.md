@@ -52,6 +52,17 @@ and in the maintainer's notes. Nothing in this file names a customer.
   Release without asking when a discussed solution is releasable (tests +
   clippy green, docs updated). After the release, stop — no polling of the
   GitHub API (unauthenticated: 60 req/h, shared with users' `self-update`).
+- **satz owns no credential.** No OAuth client, no token on disk, no per-estate
+  credential store: the Application Default Credentials are gcloud's and satz
+  only reads them. What satz owns is the IDENTITY — post-init, anything that
+  reads or writes a customer's estate runs as that estate's IaC service
+  account, derived from `svc_iac_account` + `infra_project_name` exactly as the
+  emitter derives the provider's `impersonate_service_account`. The exceptions
+  are `whoami`, `bootstrap`, `init --from-live` and `map-types`, each named with
+  its reason in `IDENTITIES` (`src/main.rs`), which a test forces every new
+  command to join. One process serves one identity: a second, different binding
+  is refused, never ignored — `satz mcp` dispatches concurrently, and a silently
+  dropped binding is how one customer's tools run as another's service account.
 - **Presets, provenance by suffix:** `X.satz` pristine, upstream-owned, always
   overwritable / `X.local.satz` the user's fork, never touched by updates /
   `X.diff.satz` the current adoption delta, rewritten on every merge. A preset

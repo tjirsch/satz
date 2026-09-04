@@ -1398,6 +1398,45 @@ Instead of hardcoded setup scripts, `satz` uses a two-phase Tofu approach:
 1. **Local Phase**: `deployment_mode = "local"`. Runs under User ADC. Creates the management project and initial Service Account.
 2. **Cloud Phase**: `deployment_mode = "cloud"` (`satz migrate <estate> --mode cloud`). Uses Service Account impersonation and a GCS backend for all subsequent operations.
 
+### Which identity a command runs as
+
+satz owns no OAuth client and writes no credential of its own. The Application Default
+Credentials are gcloud's; satz reads them and, for a `deployment_mode = "cloud"` estate,
+impersonates that estate's IaC service account — the same identity the emitted provider
+block gives `tofu`, derived from the same two params.
+
+The rule: **post-init, anything that reads or writes a customer's estate runs as that
+estate's service account.** Every exception is deliberate and listed here.
+
+| Command | Runs as | |
+|---|---|---|
+| `export-`/`diff-`/`report-organizational-policies`, `report-compliance`, `adopt`, `adopt-org-policies` | the estate's service account | |
+| `import --into <estate>` | the estate's service account | it runs `adopt`'s read path, so it runs `adopt`'s identity |
+| `import` without `--into` | the human's ADC | the output is a new file; there is no estate to be |
+| `bootstrap`, `init --from-live` | the human's ADC | day 0 — the service account does not exist yet |
+| `whoami` | the human's ADC | the question *is* who the human is |
+| `map-types` | no credential at all | Discovery documents are public |
+| `mcp` | per tool call, from the estate each tool names | see below |
+| `plan`, `apply`, `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
+
+`--no-impersonate` pins the process to the plain ADC and outranks every estate.
+
+**One process serves one identity.** That is free on the command line — one command, one
+estate — but `satz mcp` is long-lived and each of its tools names an estate. The first
+live tool call binds; a later call needing a *different* service account is refused,
+naming both. It is not silently ignored, which is what it used to be: the second
+estate's tools ran as the first estate's service account, deterministically and
+invisibly. Serve the other estate from a second server.
+
+Two things this does **not** cover, both deliberate and both worth knowing:
+
+- **The GCS state backend authenticates as the human**, not as the service account, so
+  the human needs object access on the state bucket even after the cloud migration. Only
+  resource operations go through the provider's impersonation.
+- **`roles/iam.serviceAccountTokenCreator` is granted at organization scope** to the
+  `svc-iac-users` group, so a member can impersonate every service account in the
+  organization, not only the IaC one.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](https://github.com/tjirsch/satz/blob/main/LICENSE) file for details.

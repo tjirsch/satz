@@ -927,10 +927,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = maybe_check_for_updates(&mut global_settings).await;
     }
 
-    // --no-impersonate wins over everything: locking the target to None here
-    // makes every later per-command configuration a no-op.
+    // --no-impersonate wins over everything: pinning the process to the plain
+    // ADC here makes every later per-command binding a no-op rather than a
+    // conflict — the operator asked for this, so an estate does not override it.
     if cli.no_impersonate {
-        crate::gcp::configure_impersonation(None);
+        crate::gcp::disable_impersonation();
     }
 
     let config_dir = config_file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -1377,9 +1378,20 @@ Thumbs.db
                         };
                         import_state(state_json, output, cfg, filtered, cli.verbose, &tool_config, &runtime_config)
                     } else {
+                        // `--into` names an existing estate, and the delta runs
+                        // exactly `adopt`'s read path — the same Cloud Asset
+                        // searches and the same natural-key lookups. So it runs
+                        // as the same identity: the estate's service account.
+                        // Without `--into` there is no estate to be (the output
+                        // is a new file), so discovery stays on the human's ADC,
+                        // like `init --from-live`.
+                        let into_path = into.map(|estate| estate_path(estate, &runtime_config));
+                        if let Some(estate) = &into_path {
+                            configure_estate_impersonation(estate, &runtime_config)?;
+                        }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
-                        match into {
-                            Some(estate) => import_delta(&parent, estate_path(estate, &runtime_config), cfg, filtered, cli.verbose, &tool_config, &runtime_config).await,
+                        match into_path {
+                            Some(estate) => import_delta(&parent, estate, cfg, filtered, cli.verbose, &tool_config, &runtime_config).await,
                             None => import_org(&parent, output, cfg, filtered, cli.verbose, &runtime_config).await,
                         }
                     }
@@ -1407,7 +1419,7 @@ Thumbs.db
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
-            configure_estate_impersonation(&config_path, &runtime_config);
+            configure_estate_impersonation(&config_path, &runtime_config)?;
             crate::org_policy::export_org_policies(
                 config_path,
                 customer_organization_id,
@@ -1425,7 +1437,7 @@ Thumbs.db
             // The params table and the declared policy set both come from the
             // fragment pipeline; the desired set is what the estate emits.
             let config_path = estate_path(estate, &runtime_config);
-            configure_estate_impersonation(&config_path, &runtime_config);
+            configure_estate_impersonation(&config_path, &runtime_config)?;
             crate::org_policy::diff_org_policies(
                 config_path,
                 customer_organization_id,
@@ -1444,7 +1456,7 @@ Thumbs.db
             )?;
             // Satz-native: bootstrap needs the variable table, nothing more.
             let config_path = estate_path(estate, &runtime_config);
-            configure_estate_impersonation(&config_path, &runtime_config);
+            configure_estate_impersonation(&config_path, &runtime_config)?;
             crate::org_policy::report_org_policies(
                 config_path,
                 customer_organization_id,
@@ -1586,7 +1598,7 @@ Thumbs.db
                 &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
             )?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            configure_estate_impersonation(&input_path, &runtime_config);
+            configure_estate_impersonation(&input_path, &runtime_config)?;
             // Reports, never emits — see the note in `require`.
             let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
@@ -2825,7 +2837,7 @@ async fn run_adopt(
     use crate::adopt::{self, Outcome};
     let input_path = estate_path(PathBuf::from(input), runtime_config);
     reject_yaml_estate(&input_path, "adopt")?;
-    configure_estate_impersonation(&input_path, runtime_config);
+    configure_estate_impersonation(&input_path, runtime_config)?;
     // Same compile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
     let out = pipeline_b_generate(&input_path, tool_config, runtime_config)?;
@@ -3169,7 +3181,20 @@ fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
 /// human needs no org-wide read roles. Local mode and `--no-impersonate`
 /// stay on the plain ADC. Bootstrap never calls this: on day 0 the SA may
 /// not exist yet.
-fn configure_estate_impersonation(input_path: &Path, runtime_config: &ToolConfig) {
+///
+/// THE RULE: post-init, anything that reads or writes a customer's estate runs
+/// as that estate's service account. The exceptions are deliberate and few —
+/// `whoami` (it asks about the human), `bootstrap` and `init --from-live` (no
+/// SA exists yet), and `map-types` (no credentials at all). A live command that
+/// calls neither this nor `disable_impersonation` runs as the human by
+/// accident, which is what `every_live_command_binds_an_identity` gates.
+///
+/// Errors when the process is already acting as a different estate — see
+/// `gcp::configure_impersonation`.
+fn configure_estate_impersonation(
+    input_path: &Path,
+    runtime_config: &ToolConfig,
+) -> Result<(), String> {
     let sa = satz_estate_params(input_path, &runtime_config.include_dirs).ok().and_then(|params| {
         let get = |k: &str| params.get(k).and_then(|v| v.as_str()).map(str::to_string);
         if get("deployment-mode").as_deref() != Some("cloud") {
@@ -3182,7 +3207,7 @@ fn configure_estate_impersonation(input_path: &Path, runtime_config: &ToolConfig
             _ => None,
         }
     });
-    crate::gcp::configure_impersonation(sa);
+    crate::gcp::configure_impersonation(sa)
 }
 
 /// The parameter table of a `.satz` estate, in the dialect's kebab-case
@@ -3917,6 +3942,135 @@ mod command_groups {
 
     fn declared() -> Vec<&'static str> {
         COMMAND_GROUPS.iter().flat_map(|(_, names)| names.iter().copied()).collect()
+    }
+
+    /// Which identity a command's Google API calls run as.
+    ///
+    /// This exists because the boundary used to be implicit — five call sites of
+    /// `configure_estate_impersonation` — and two commands fell outside it by
+    /// accident rather than by decision: `import --into` ran `adopt`'s exact read
+    /// path as the human, and every MCP tool did too.
+    #[derive(Debug, PartialEq)]
+    enum Identity {
+        /// Binds the estate's IaC service account, as `tofu` applies with.
+        EstateSa,
+        /// Deliberately the human's ADC. The reason is the point of the entry.
+        Human(&'static str),
+        /// satz itself calls no Google API. It may still shell out to `tofu` or
+        /// Checkov, or talk to GitHub — neither is a Google credential.
+        NoGoogleApi,
+        /// `mcp` binds per tool call, from the estate each tool names.
+        PerTool,
+    }
+
+    /// EVERY command, classified. A new one fails `every_command_declares_an_identity`
+    /// until it is listed here, which is the point: running as the wrong principal is
+    /// not visible in output, in tests, or in a diff — only in an audit log, months later.
+    const IDENTITIES: &[(&str, Identity)] = &[
+        ("export-organizational-policies", Identity::EstateSa),
+        ("diff-organizational-policies", Identity::EstateSa),
+        ("report-organizational-policies", Identity::EstateSa),
+        ("adopt-org-policies", Identity::EstateSa),
+        ("report-compliance", Identity::EstateSa),
+        ("adopt", Identity::EstateSa),
+        // Only `--into` names an estate; plain discovery writes a NEW file and so
+        // has no estate to be, exactly like `init --from-live`.
+        ("import", Identity::EstateSa),
+        ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
+        ("init", Identity::Human("--from-live runs before the estate exists")),
+        ("whoami", Identity::Human("the question IS who the human is")),
+        ("map-types", Identity::Human("Discovery documents are public — no credential at all")),
+        ("mcp", Identity::PerTool),
+        ("transpile", Identity::NoGoogleApi),
+        ("hcl-init", Identity::NoGoogleApi),
+        ("plan", Identity::NoGoogleApi),
+        ("apply", Identity::NoGoogleApi),
+        ("migrate", Identity::NoGoogleApi),
+        ("scan-plan", Identity::NoGoogleApi),
+        ("generate-migration", Identity::NoGoogleApi),
+        ("run-actions", Identity::NoGoogleApi),
+        ("get-presets", Identity::NoGoogleApi),
+        ("merge-presets", Identity::NoGoogleApi),
+        ("check-presets", Identity::NoGoogleApi),
+        ("doc-packs", Identity::NoGoogleApi),
+        ("require", Identity::NoGoogleApi),
+        ("questions", Identity::NoGoogleApi),
+        ("scan", Identity::NoGoogleApi),
+        ("triage", Identity::NoGoogleApi),
+        ("remediation-plan", Identity::NoGoogleApi),
+        ("update-schema", Identity::NoGoogleApi),
+        ("self-update", Identity::NoGoogleApi),
+        ("completion", Identity::NoGoogleApi),
+        ("open-readme", Identity::NoGoogleApi),
+        ("help", Identity::NoGoogleApi),
+    ];
+
+    /// The rule: post-init, anything that reads or writes a customer's estate runs
+    /// as that estate's service account. Every exception is named, with its reason.
+    #[test]
+    fn every_command_declares_an_identity() {
+        let mut cmd = Cli::command();
+        cmd.build();
+        let cli: BTreeSet<&str> =
+            cmd.get_subcommands().filter(|s| !s.is_hide_set()).map(|s| s.get_name()).collect();
+        let classified: BTreeSet<&str> = IDENTITIES.iter().map(|(n, _)| *n).collect();
+
+        let missing: Vec<_> = cli.difference(&classified).collect();
+        assert!(
+            missing.is_empty(),
+            "these commands do not say which identity their live calls run as: {missing:?} — \
+             add each to IDENTITIES in src/main.rs. If it touches a customer's estate the answer \
+             is EstateSa (call configure_estate_impersonation at its arm); if it deliberately \
+             stays on the human's ADC, say why."
+        );
+        let unknown: Vec<_> = classified.difference(&cli).collect();
+        assert!(unknown.is_empty(), "IDENTITIES names commands the CLI does not have: {unknown:?}");
+    }
+
+    /// Which dispatch site binds which commands. Not one site per command:
+    /// `adopt` and `adopt-org-policies` are both served by `run_adopt`, so seven
+    /// commands are bound by six sites. Spelling that out is what lets the test
+    /// below compare the table against the code instead of guessing a number.
+    const BINDING_SITES: &[&[&str]] = &[
+        &["export-organizational-policies"],
+        &["diff-organizational-policies"],
+        &["report-organizational-policies"],
+        &["report-compliance"],
+        &["adopt", "adopt-org-policies"],
+        &["import"],
+    ];
+
+    /// The classification is a claim about the code, so check it against the code.
+    /// A command that claims the service account and does not bind it runs as the
+    /// human — which shows up in no output, no test and no diff, only in an audit
+    /// log months later.
+    #[test]
+    fn the_estate_commands_are_the_ones_that_bind() {
+        let bound: BTreeSet<&str> = BINDING_SITES.iter().flat_map(|s| s.iter().copied()).collect();
+        let claimed: BTreeSet<&str> = IDENTITIES
+            .iter()
+            .filter(|(_, i)| *i == Identity::EstateSa)
+            .map(|(n, _)| *n)
+            .collect();
+        assert_eq!(
+            bound, claimed,
+            "IDENTITIES and BINDING_SITES disagree about which commands run as the estate's \
+             service account"
+        );
+
+        // One `configure_estate_impersonation(` per site, plus the definition.
+        let src = include_str!("main.rs");
+        let body = src.split("#[cfg(test)]").next().unwrap_or(src);
+        let calls = body.matches("configure_estate_impersonation(").count() - 1;
+        assert_eq!(
+            calls,
+            BINDING_SITES.len(),
+            "{} dispatch sites are declared in BINDING_SITES but the code binds at {} — either a \
+             command was added without binding, or a binding was added without saying which \
+             commands it serves",
+            BINDING_SITES.len(),
+            calls
+        );
     }
 
     #[test]

@@ -203,6 +203,11 @@ pub(crate) struct WhoamiArgs {
     /// Read the ADC file only — no network, no token minted
     #[serde(default)]
     pub offline: bool,
+    /// Estate file to answer FOR: a cloud-mode estate reports its IaC service
+    /// account, which is the identity its live tools actually run as. Omit to
+    /// report the ambient credentials the server itself falls back to.
+    #[serde(default)]
+    pub estate: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -327,6 +332,21 @@ impl SatzMcp {
     /// Any other path argument — a Prowler export, a report to read back.
     fn file(&self, name: &str) -> Result<PathBuf, CallToolResult> {
         self.confine(self.ctx.root.join(name))
+    }
+
+    /// Bind the identity before any LIVE call, exactly as the CLI does at
+    /// dispatch: a cloud-mode estate is read as its own IaC service account,
+    /// not as the human who started the server.
+    ///
+    /// Without this the same code answered differently depending on how it was
+    /// reached — `report-compliance` on the command line ran as the service
+    /// account, `satz_report_compliance` here ran as the human.
+    ///
+    /// One process serves one identity, so a second estate needing a different
+    /// service account is REFUSED. That is a tool-result error, which an agent
+    /// can read and act on, rather than a protocol error, which it cannot.
+    fn bind_identity(&self, estate: &std::path::Path) -> Result<(), CallToolResult> {
+        crate::configure_estate_impersonation(estate, &self.ctx.runtime).map_err(refused)
     }
 
     fn confine(&self, p: PathBuf) -> Result<PathBuf, CallToolResult> {
@@ -555,6 +575,9 @@ impl SatzMcp {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
+        if let Err(r) = self.bind_identity(&estate) {
+            return Ok(Err(r));
+        }
         let prowler = match args.prowler.as_deref().map(|p| self.file(p)).transpose() {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
@@ -586,7 +609,9 @@ impl SatzMcp {
         name = "satz_whoami",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::gcp::identity::WhoamiReport>(),
         description = "Which identity, credential type and quota project the Application Default \
-                       Credentials resolve to. The first thing to check when a live call is refused.",
+                       Credentials resolve to. The first thing to check when a live call is refused. \
+                       Pass `estate` to be told the identity THAT estate's live tools run as — a \
+                       cloud-mode estate answers with its IaC service account, not with the human.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
     )]
     async fn whoami(
@@ -595,6 +620,18 @@ impl SatzMcp {
     ) -> Result<Result<Json<crate::gcp::identity::WhoamiReport>, CallToolResult>, McpError> {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
+        }
+        // Asking "who am I for this estate" has to bind the same identity the
+        // estate's other tools use, or the answer describes a different session
+        // than the one the agent is about to get.
+        if let Some(name) = args.estate.as_deref() {
+            let estate = match self.estate(name) {
+                Ok(p) => p,
+                Err(r) => return Ok(Err(r)),
+            };
+            if let Err(r) = self.bind_identity(&estate) {
+                return Ok(Err(r));
+            }
         }
         match crate::gcp::identity::whoami_report(args.offline).await {
             Ok(report) => Ok(Ok(Json(report))),
