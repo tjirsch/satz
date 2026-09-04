@@ -46,7 +46,6 @@ FALLBACK_GCP_SERVICES=(
   vm-threat-detection
   web-security-scanner
   cloud-run-threat-detection
-  external-exposure
   vm-manager
   gce-vulnerability-assessment
   notebook-security-scanner
@@ -58,6 +57,23 @@ MULTICLOUD_SERVICES=(
   vm-threat-detection-aws
   ec2-vulnerability-assessment
   azure-vulnerability-assessment
+)
+# Every name `gcloud scc manage services update` accepts (SDK 580.0.0). This is
+# NOT the same set the API lists: the API knows services gcloud has no name for
+# (ARTIFACT_GUARD, ARTIFACT_ANALYSIS, AGENT_ENGINE_VULN_ASSESSMENT and
+# EXTERNAL_EXPOSURE on a live org in 2026-09), and passing one of those turns
+# the whole run into a wall of "is not a valid service name". Discovery is
+# intersected with this list and the remainder is REPORTED, not attempted.
+# VM Manager is not a service you switch on HERE. SCC mirrors whether GCE's VM
+# Manager is running, and the API answers ENABLED with
+# "Invalid intended_enablement_state" — enable VM Manager in Compute and this
+# follows. It is still swept to INHERITED below, which the API does accept.
+NOT_ENABLEABLE_SERVICES=(
+  vm-manager
+)
+SETTABLE_SERVICES=(
+  "${FALLBACK_GCP_SERVICES[@]}"
+  "${MULTICLOUD_SERVICES[@]}"
 )
 
 usage() {
@@ -207,16 +223,41 @@ discover_services() {
     return
   fi
   local live
+  # The API answers SECURITY_HEALTH_ANALYTICS; the command takes
+  # security-health-analytics. Feeding the API's spelling to gcloud verbatim
+  # failed EVERY call on the first live run — the whole point of discovery,
+  # inverted. Lowercase and hyphenate here, then keep only what gcloud accepts.
   live=$(gcloud scc manage services list --parent="organizations/$ORG" \
            --format=json 2>/dev/null \
-         | jq -r '.[]?.name // empty | split("/") | last' 2>/dev/null || true)
+         | jq -r '.[]?.name // empty | split("/") | last | ascii_downcase | gsub("_"; "-")' 2>/dev/null || true)
   if [[ -n "$live" ]]; then
-    printf '%s\n' "$live"
-    return
+    local keep="" skip="" svc
+    for svc in $live; do
+      if is_settable "$svc"; then keep="$keep$svc"$'\n'; else skip="$skip $svc"; fi
+    done
+    [[ -z "$skip" ]] || say "note: the org lists services this gcloud cannot set, skipping:$skip" >&2
+    if [[ -n "$keep" ]]; then printf '%s' "$keep"; return; fi
+    say "note: none of the discovered services is settable; using the built-in list" >&2
   fi
   say "note: could not read the org's service list; using the built-in list" >&2
   printf '%s\n' "${FALLBACK_GCP_SERVICES[@]}"
   if (( ALL_SERVICES )); then printf '%s\n' "${MULTICLOUD_SERVICES[@]}"; fi
+}
+
+is_settable() {
+  local s="$1" k
+  for k in "${SETTABLE_SERVICES[@]}"; do
+    [[ "$s" == "$k" ]] && return 0
+  done
+  return 1
+}
+
+is_not_enableable() {
+  local s="$1" k
+  for k in "${NOT_ENABLEABLE_SERVICES[@]}"; do
+    [[ "$s" == "$k" ]] && return 0
+  done
+  return 1
 }
 
 is_multicloud() {
@@ -278,6 +319,10 @@ if (( DO_ORG )); then
   for s in "${SERVICES[@]}"; do
     if is_multicloud "$s" && (( ! ALL_SERVICES )); then
       say "    skip  $s (multicloud connector; pass --all-services to include)"
+      continue
+    fi
+    if is_not_enableable "$s"; then
+      say "    skip  $s (not enableable here; SCC mirrors the underlying service)"
       continue
     fi
     set_state "organizations/$ORG" "$s" ENABLED

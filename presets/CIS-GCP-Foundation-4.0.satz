@@ -64,10 +64,16 @@ params {
   // These agents live in Google tenant projects, NOT in the customer's org, so
   // the org principal set does not cover them — they have to be named.
   //
-  // NOT a complete list of what a full SCC activation needs. Enabling further
-  // SCC services provisions further agents, and the managed constraint blocks a
-  // grant to any agent not named here. Harvest the real set from the org IAM
-  // policy after an activation and add what appears.
+  // MEASURED 2026-09-04 on a second organization, with every SCC service the SDK
+  // can set turned on: the org IAM policy carried exactly these five and no
+  // sixth. They come with SCC activation, not one per service — the earlier
+  // caution here, that each further service provisions another agent, was wrong.
+  // A notification config does add a `gcp-sa-scc-notification` agent, but on the
+  // Pub/Sub TOPIC rather than at the organization, and it was granted with this
+  // constraint enforced and that agent not listed. Still unproven: Security
+  // Health Analytics (a failed precondition on that org) and the AWS/Azure
+  // connectors. If an activation ever stalls, the org IAM policy is still where
+  // the answer is.
   allowed_policy_member_subjects = [
     "serviceAccount:service-org-{customer_organization_id}@security-center-api.iam.gserviceaccount.com",
     "serviceAccount:service-org-{customer_organization_id}@gcp-sa-csc-hpsa.iam.gserviceaccount.com",
