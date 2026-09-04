@@ -464,6 +464,12 @@ scripts/scc-enable-all.sh --organization 123456789012              # dry run
 scripts/scc-enable-all.sh --organization 123456789012 --apply      # write
 ```
 
+Everything is on by default except Web Security Scanner (it actively crawls the
+customer's web apps), Artifact Analysis (billed per image scan) and the AWS/Azure
+connectors — `--with-optional` and `--with-multicloud` respectively. A detector for
+a workload that does not exist yet costs nothing, so the rest are enabled ahead of
+the workload rather than waiting for someone to remember.
+
 Expect the §1.1 interaction above — SCC's service agents are granted their roles
 at the organization, and the domain lock refuses any agent the baseline does not
 list, which is what "won't stay activated / asks to activate on every console

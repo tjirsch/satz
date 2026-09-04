@@ -20,7 +20,9 @@
 # belongs in a preset; this file covers only the part that has no resource.
 #
 # WHAT IT DOES
-#   1. org pass         each service -> ENABLED   at organizations/<ID>
+#   1. org pass         each service -> ENABLED   at organizations/<ID>, except
+#                                       the two opt-in ones and the multicloud
+#                                       connectors (see OPTIONAL_SERVICES)
 #   2. descendant sweep each service -> INHERITED at every folder and project
 #                                       under the org, so the org value is the
 #                                       single source of truth and no local
@@ -41,7 +43,8 @@ APPLY=0
 DO_ORG=1
 DO_DESCENDANTS=1
 RESET_MODULES=0
-ALL_SERVICES=0
+WITH_MULTICLOUD=0
+WITH_OPTIONAL=0
 SERVICES_OVERRIDE=""
 TARGETS_FILE=""
 QUOTA_PROJECT=""
@@ -65,11 +68,25 @@ FALLBACK_GCP_SERVICES=(
   ARTIFACT_GUARD
 )
 # Multicloud connectors: only meaningful once an AWS/Azure connector exists.
-# Skipped unless --all-services, because they fail noisily otherwise.
+# Skipped unless --with-multicloud, because they fail noisily otherwise.
 MULTICLOUD_SERVICES=(
   VM_THREAT_DETECTION_AWS
   EC2_VULNERABILITY_ASSESSMENT
   AZURE_VULNERABILITY_ASSESSMENT
+)
+# OPTIONAL: everything else on the list is enabled by default, because a detector
+# for a workload nobody runs costs nothing and finds nothing — and being ready
+# beats hoping someone remembers to switch it on the day the first GKE cluster
+# or Cloud Run service appears. These two are different in kind and need saying
+# yes to:
+#   WEB_SECURITY_SCANNER  actively CRAWLS the customer's web applications. That
+#                         is a different consent from passive detection, and not
+#                         one to give on a customer's behalf.
+#   ARTIFACT_ANALYSIS     billed per image scan, so it is a cost decision rather
+#                         than a security one.
+OPTIONAL_SERVICES=(
+  WEB_SECURITY_SCANNER
+  ARTIFACT_ANALYSIS
 )
 # VM Manager is not a service you switch on HERE. SCC mirrors whether GCE's VM
 # Manager is running, and the API answers "Invalid intended_enablement_state" —
@@ -87,7 +104,10 @@ Usage: scripts/scc-enable-all.sh --organization ORG_ID [options]
   --apply               actually write; without it every call carries
                         validateOnly and nothing changes
   --services "a b c"    use this service list verbatim instead of discovering it
-  --all-services        include the AWS/Azure connector services
+  --with-optional       also enable WEB_SECURITY_SCANNER (which actively crawls
+                        the customer's web apps) and ARTIFACT_ANALYSIS (billed
+                        per image scan). Everything else is on by default.
+  --with-multicloud     include the AWS/Azure connector services
   --org-only            enable at the org, skip the descendant sweep
   --descendants-only    only sweep folders/projects to INHERITED
   --reset-modules       also set every MODULE to INHERITED (clears per-module
@@ -113,7 +133,8 @@ while [[ $# -gt 0 ]]; do
     --organization|--org) ORG="${2:-}"; shift 2 ;;
     --apply)              APPLY=1; shift ;;
     --services)           SERVICES_OVERRIDE="${2:-}"; shift 2 ;;
-    --all-services)       ALL_SERVICES=1; shift ;;
+    --with-multicloud)    WITH_MULTICLOUD=1; shift ;;
+    --with-optional)      WITH_OPTIONAL=1; shift ;;
     --org-only)           DO_DESCENDANTS=0; shift ;;
     --descendants-only)   DO_ORG=0; shift ;;
     --reset-modules)      RESET_MODULES=1; shift ;;
@@ -272,7 +293,15 @@ discover_services() {
   fi
   say "note: could not read the org's service list; using the built-in list" >&2
   printf '%s\n' "${FALLBACK_GCP_SERVICES[@]}"
-  if (( ALL_SERVICES )); then printf '%s\n' "${MULTICLOUD_SERVICES[@]}"; fi
+  if (( WITH_MULTICLOUD )); then printf '%s\n' "${MULTICLOUD_SERVICES[@]}"; fi
+}
+
+is_optional() {
+  local s="$1" k
+  for k in "${OPTIONAL_SERVICES[@]}"; do
+    [[ "$s" == "$k" ]] && return 0
+  done
+  return 1
 }
 
 is_not_enableable() {
@@ -340,8 +369,12 @@ say "services     : ${SERVICES[*]}"
 if (( DO_ORG )); then
   step "1. organizations/$ORG — every service ENABLED"
   for s in "${SERVICES[@]}"; do
-    if is_multicloud "$s" && (( ! ALL_SERVICES )); then
-      say "    skip  $s (multicloud connector; pass --all-services to include)"
+    if is_multicloud "$s" && (( ! WITH_MULTICLOUD )); then
+      say "    skip  $s (multicloud connector; pass --with-multicloud to include)"
+      continue
+    fi
+    if is_optional "$s" && (( ! WITH_OPTIONAL )); then
+      say "    skip  $s (opt-in: active scanning or per-scan cost; --with-optional)"
       continue
     fi
     if is_not_enableable "$s"; then
@@ -363,7 +396,8 @@ if (( DO_DESCENDANTS )); then
     for t in "${TARGETS[@]}"; do
       say "  $t"
       for s in "${SERVICES[@]}"; do
-        if is_multicloud "$s" && (( ! ALL_SERVICES )); then continue; fi
+        if is_multicloud "$s" && (( ! WITH_MULTICLOUD )); then continue; fi
+        if is_optional "$s" && (( ! WITH_OPTIONAL )); then continue; fi
         set_state "$t" "$s" INHERITED
         if (( RESET_MODULES )); then reset_modules "$t" "$s"; fi
       done

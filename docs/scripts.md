@@ -27,6 +27,28 @@ scripts/scc-enable-all.sh --organization 123456789012            # dry run
 scripts/scc-enable-all.sh --organization 123456789012 --apply    # write
 ```
 
+### What is on by default, and what you have to ask for
+
+Everything except three things. A detector for a workload nobody runs costs
+nothing and finds nothing, so enabling Container Threat Detection before the first
+GKE cluster exists is free — and it beats hoping somebody remembers to switch it
+on the day the cluster appears. Being ready is the default.
+
+Two services are different in kind, and one group is meaningless without a
+connector:
+
+| flag | what it adds | why it is not the default |
+|---|---|---|
+| `--with-optional` | `WEB_SECURITY_SCANNER` | it actively **crawls** the customer's web applications — a different consent from passive detection, and not one to give on their behalf |
+| `--with-optional` | `ARTIFACT_ANALYSIS` | billed per image scan: a cost decision rather than a security one |
+| `--with-multicloud` | the AWS/Azure connector services | they fail noisily until an AWS or Azure connector exists |
+
+Without the flag those services are **left alone entirely** — not enabled at the
+org, and not swept to `INHERITED` on descendants either. Sweeping them would mean
+"take the org's value", and the org has no value for something we deliberately did
+not decide, so the sweep would quietly disable a scanner somebody turned on for one
+project on purpose.
+
 ### Why it is a script
 
 google/google-beta carry **no binding** for
@@ -106,9 +128,11 @@ With `--reset-modules` each service's individual **modules** are set to
 | flag | effect |
 |---|---|
 | `--organization ID` | numeric org id (required); `organizations/123` is accepted too |
-| `--apply` | actually write — without it every call carries `--validate-only` |
+| `--apply` | actually write — without it every call carries `validateOnly` |
 | `--services "a b c"` | use this service list verbatim instead of discovering it |
-| `--all-services` | include the AWS/Azure connector services |
+| `--with-optional` | also enable Web Security Scanner and Artifact Analysis |
+| `--with-multicloud` | include the AWS/Azure connector services |
+| `--quota-project ID` | project the API bills the call to; defaults to the active gcloud project |
 | `--org-only` | enable at the org, skip the sweep |
 | `--descendants-only` | only sweep folders/projects to `INHERITED` |
 | `--reset-modules` | also set every module to `INHERITED` |
@@ -116,16 +140,15 @@ With `--reset-modules` each service's individual **modules** are set to
 
 ### Three things worth knowing before running it
 
-**It is a dry run by default.** Every `gcloud` call goes out with
-`--validate-only` until `--apply` is passed. This runs against customer orgs;
+**It is a dry run by default.** Every call carries `validateOnly` until
+`--apply` is passed. This runs against customer orgs;
 the safe direction is the default one.
 
-**The service list is read from the org, not hardcoded.** It comes from
-`gcloud scc manage services list --parent=organizations/<id>`, so a service
-Google adds later is picked up without touching the script. The built-in list of
-14 is only a fallback for when that call cannot be made, and the AWS/Azure
-connectors in it are skipped unless `--all-services`, because they fail noisily
-on an org with no such connector.
+**The service list is read from the org, not hardcoded.** It comes from the API's
+own `securityCenterServices` listing, so a service Google adds later is picked up
+without touching the script. The built-in list of 14 is only a fallback for when
+that call cannot be made, and the AWS/Azure connectors in it are skipped unless
+`--with-multicloud`, because they fail noisily on an org with no such connector.
 
 **Activate the tier first.** The script cannot do it — there is no scriptable
 surface for tier activation either — and enabling a service on an org without a
