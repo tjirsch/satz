@@ -641,13 +641,34 @@ pub(crate) fn emit_providers(
                         let Some(be_type_str) = be_type.as_str() else { continue };
                         if (mode == "local" && be_type_str == "local") || (mode == "cloud" && be_type_str == "gcs") {
                             let mut be_builder = hcl::Block::builder("backend").add_label(be_type_str);
+                            let mut declares_impersonation = false;
                             if let serde_yaml::Value::Mapping(c_map) = be_config {
                                 for (ck, cv) in c_map {
                                     if let (Some(cks), Some(cval)) =
                                         (ck.as_str(), crate::emit_shared::render_value(cv, &|_| None))
                                     {
+                                        if cks == "impersonate_service_account" {
+                                            declares_impersonation = true;
+                                        }
                                         be_builder = be_builder.add_attribute((cks, cval));
                                     }
+                                }
+                            }
+                            // The state bucket gets the same identity as the
+                            // resources. Without this the backend authenticates
+                            // as the HUMAN while every resource operation runs as
+                            // the service account — a split identity inside one
+                            // `tofu apply`, and a standing requirement that every
+                            // operator keep object access on the state bucket.
+                            //
+                            // Only `gcs`: the `local` backend is a file, and only
+                            // when the estate has not said otherwise, matching how
+                            // `configure_google_provider` yields to a declared
+                            // `billing_project`.
+                            if be_type_str == "gcs" && !declares_impersonation {
+                                if let Some(sa) = &deps.impersonate {
+                                    be_builder = be_builder
+                                        .add_attribute(("impersonate_service_account", sa.clone()));
                                 }
                             }
                             tf_block = tf_block.add_block(be_builder.build());
@@ -774,4 +795,108 @@ pub(crate) fn emit_tfvars(env: &Env) -> String {
         out.push_str(&format!("{} = {}\n", name.replace('_', "-"), rendered));
     }
     out
+}
+
+#[cfg(test)]
+mod backend_identity_tests {
+    //! Who the STATE bucket is read and written as.
+    //!
+    //! The provider block has carried `impersonate_service_account` since cloud
+    //! mode existed, so resource operations run as the estate's IaC service
+    //! account. The backend did not: its attributes are copied verbatim from the
+    //! estate, which declares only `bucket` and `prefix`. One `tofu apply` then
+    //! used two principals — the service account for every resource, the human
+    //! for the state — and every operator needed standing object access on the
+    //! state bucket for as long as the estate lived.
+    //!
+    //! `providers.tf` is not in the corpus snapshots (those are `main.tf` plus
+    //! tfvars), so nothing else gates this.
+
+    use super::*;
+    use std::collections::{BTreeMap, HashMap};
+
+    fn config_with_both_backends() -> BTreeMap<String, serde_yaml::Value> {
+        let tf: serde_yaml::Value = serde_yaml::from_str(
+            "backend:\n  local:\n    path: terraform.tfstate\n  gcs:\n    bucket: corp-infra-001-state\n    prefix: hcl/state\n",
+        )
+        .expect("valid test YAML");
+        BTreeMap::from([("terraform".to_string(), tf)])
+    }
+
+    fn env(mode: &str) -> Env {
+        BTreeMap::from([
+            ("deployment_mode".to_string(), serde_yaml::Value::from(mode)),
+            ("svc_iac_account".to_string(), serde_yaml::Value::from("svc-iac-001")),
+            ("infra_project_name".to_string(), serde_yaml::Value::from("corp-infra-001")),
+        ])
+    }
+
+    fn providers_tf(config: &BTreeMap<String, serde_yaml::Value>, env: &Env) -> String {
+        emit_providers(
+            config,
+            &Folded { slots: BTreeMap::new() },
+            env,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .expect("providers.tf emits")
+    }
+
+    #[test]
+    fn the_cloud_backend_runs_as_the_estate_service_account() {
+        let out = providers_tf(&config_with_both_backends(), &env("cloud"));
+        assert!(out.contains(r#"backend "gcs""#), "the gcs backend was not selected:\n{}", out);
+        assert!(
+            out.contains(
+                r#"impersonate_service_account = "svc-iac-001@corp-infra-001.iam.gserviceaccount.com""#
+            ),
+            "the state bucket is still read as the human:\n{}",
+            out
+        );
+    }
+
+    #[test]
+    fn the_local_backend_is_a_file_and_impersonates_nothing() {
+        let out = providers_tf(&config_with_both_backends(), &env("local"));
+        assert!(out.contains(r#"backend "local""#), "the local backend was not selected:\n{}", out);
+        assert!(
+            !out.contains("impersonate_service_account"),
+            "local mode must not impersonate anywhere:\n{}",
+            out
+        );
+    }
+
+    /// An estate that names its own backend identity keeps it — the same
+    /// deference `configure_google_provider` shows a declared `billing_project`.
+    #[test]
+    fn a_declared_backend_identity_is_not_overwritten() {
+        let tf: serde_yaml::Value = serde_yaml::from_str(
+            "backend:\n  gcs:\n    bucket: corp-infra-001-state\n    impersonate_service_account: state-reader@corp-infra-001.iam.gserviceaccount.com\n",
+        )
+        .expect("valid test YAML");
+        let config = BTreeMap::from([("terraform".to_string(), tf)]);
+        let out = providers_tf(&config, &env("cloud"));
+        assert!(
+            out.contains("state-reader@corp-infra-001"),
+            "the estate's own choice was lost:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("svc-iac-001@corp-infra-001"),
+            "the derived account was added beside the declared one:\n{}",
+            out
+        );
+    }
+
+    /// Cloud mode without the two params that name the account: there is no
+    /// identity to impersonate, so the backend keeps what the estate gave it
+    /// rather than emitting a half-formed address.
+    #[test]
+    fn cloud_mode_without_the_params_adds_nothing() {
+        let env =
+            BTreeMap::from([("deployment_mode".to_string(), serde_yaml::Value::from("cloud"))]);
+        let out = providers_tf(&config_with_both_backends(), &env);
+        assert!(out.contains(r#"backend "gcs""#), "{}", out);
+        assert!(!out.contains("impersonate_service_account"), "{}", out);
+    }
 }

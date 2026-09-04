@@ -149,8 +149,18 @@ satz migrate C0example.satz --mode cloud
 ```
 
 `migrate` rewrites the estate's `deployment_mode`, switches to service-account
-impersonation and runs `tofu init -migrate-state`. Then prove the restricted
-identity can do the work:
+impersonation and runs `tofu init -migrate-state`. Impersonation applies to both
+halves of the run: every provider block gets `impersonate_service_account`, and so
+does the `gcs` backend, so the state bucket is read and written as the service
+account rather than as the human who happens to be logged in.
+
+> An estate that was ALREADY in cloud mode before this shipped gains the backend
+> attribute on its next transpile. That is a backend configuration change, so
+> `tofu` refuses the next command until it is re-initialised — run
+> `tofu init -reconfigure` once in `hcl/`. Estates migrated by the command above
+> need nothing; it re-initialises for you.
+
+Then prove the restricted identity can do the work:
 
 ```bash
 cd hcl/
