@@ -183,6 +183,33 @@ constraint that has a replacement, or enables a replacement without declaring it
 So refreshing the table is a deliberate act needing credentials, while the rule it encodes
 is checked on every `cargo test` with none.
 
+## `update_schema_fixture.py` — keep the test schema honest
+
+`tests/schemas/google.json` is a real provider schema trimmed to the types the
+fixtures use, and the corpus classifies types through it the way production classifies
+them through the real thing. A type missing from it silently loses schema-derived
+detail; a type whose real schema has moved on means the snapshots pin yesterday's
+provider.
+
+```
+uv run scripts/update_schema_fixture.py --check
+uv run scripts/update_schema_fixture.py --add google_compute_firewall_policy_rule
+```
+
+`--check` downloads the pinned provider (from `provider_version` in
+`tests/smoke/config.toml`) and reports each fixture type as GONE or DRIFTED, listing
+the attributes and blocks that appeared or vanished. **Run it when the provider pin
+moves** — nothing else notices. `--add` inserts or re-cuts types from the real schema
+and leaves the rest byte for byte; regenerate the corpus afterwards.
+
+It never deletes, deliberately. Three fixture types appear in no `.satz` source
+because the emitter produces them from structural nodes, and one type that is
+referenced needs no schema because it sits in a raw `hcl { }` block — trimming by
+what looks unused would remove three live types and keep a dead one.
+
+Needs `tofu` on PATH; talks to no organisation. See
+[housekeeping](housekeeping.md) for the other derived files and their triggers.
+
 ## `inspect_schema.py` — look at one type
 
 Prints one resource type's schema out of a `terraform providers schema -json`
