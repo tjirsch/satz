@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-names.sh — the privacy gate. Neutral: it knows no customer, no
 # company, no person. It rejects anything SHAPED like private data that is
-# not one of the predefined example values (docs/example-customers.md), and
+# not one of the predefined example values (docs/examples.md), and
 # any commit made under an identity other than the maintainer's or a GitHub
 # noreply address.
 #
@@ -27,7 +27,7 @@ cd "$(git rev-parse --show-toplevel)"
 # ---- allowlists ---------------------------------------------------------------
 # identities that may author or commit: the maintainer, and GitHub's private noreply addresses
 ALLOW_IDENT='Thomas\.Jirsch@gmail\.com|[0-9]+\+[A-Za-z0-9-]+@users\.noreply\.github\.com|noreply@github\.com'
-# example customers (docs/example-customers.md) + documented legacy placeholders
+# example customers (docs/examples.md) + documented legacy placeholders
 ALLOW_DIR='C0example|C0bolt002|C0cedar03|C0delta04|C01234567|C0abcd123'
 ALLOW_NUM='123456789012|222222222222|333333333333|444444444444|100000000001|200000000002|300000000003|400000000004|123456789|222222222|333333333|444444444'
 ALLOW_BILL='012345-6789AB-CDEF01|0B0B0B-0B0B0B-0B0B02|0C0C0C-0C0C0C-0C0C03|0D0D0D-0D0D0D-0D0D04|123456-123456-123456|A12345-B67890-C12345'
@@ -36,7 +36,7 @@ ALLOW_DOMAIN='example\.(com|org|net)|[a-z0-9.-]+\.(example|test|invalid|localhos
 ALLOW_MAILDOM="$ALLOW_DOMAIN"
 # GUIDs. Two kinds are legitimate: the four example tenants, and VENDOR DEFAULTS —
 # identifiers Microsoft or Google publish and every customer shares. Each vendor
-# default is listed in docs/example-customers.md with what it is; a GUID that is not
+# default is listed in docs/examples.md with what it is; a GUID that is not
 # there is assumed to be a customer's Entra tenant or directory object.
 ALLOW_GUID='11111111-1111-1111-1111-111111111111|22222222-2222-2222-2222-222222222222|33333333-3333-3333-3333-333333333333|44444444-4444-4444-4444-444444444444|00000000-0000-0000-0000-000000000000|33e01921-4d64-4f8c-a055-5bdaffd5e33d|d17a7d74-7e73-4e7d-bd41-8d9525e86cab|6e81e733-9e7f-474a-85f0-385c097f7f52'
 # the same values without dashes: an Entra tenant id in that form is the workload
@@ -165,7 +165,7 @@ if [[ -f "$DENY" && -n "$files" ]]; then
 fi
 
 if (( fail )); then
-  echo; echo "check-names: FAILED — private data must not enter this repository; use docs/example-customers.md values and the maintainer identity"
+  echo; echo "check-names: FAILED — private data must not enter this repository; use docs/examples.md values and the maintainer identity"
   exit 1
 fi
 n=$( [[ -n "$files" ]] && printf '%s\n' $files | wc -l | tr -d ' ' || echo 0 )

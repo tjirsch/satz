@@ -54,7 +54,7 @@ request (`scripts/check-names.sh`, `.github/workflows/names-gate.yml`). It is
 neutral — it names nobody — and rejects:
 
 - identifiers that are not one of the documented example values in
-  `docs/example-customers.md`: Google Workspace directory ids (`C0…`),
+  `docs/examples.md`: Google Workspace directory ids (`C0…`),
   organisation / project / folder numbers, billing accounts;
 - e-mail addresses and domains that are neither IANA-reserved
   (`example.com`, `.example`, `.test`, …) nor a known vendor host;

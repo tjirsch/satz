@@ -3,7 +3,7 @@
 # `action "showcase-step"` and showcase-pack.satz's `action "pack-step"`,
 # exercised by scripts/smoke.sh.
 #
-# It is written in the shape docs/satz-language.md §6.13 documents — dry run
+# It is written in the shape docs/language.md §6.13 documents — dry run
 # unless the estate's `execute_args` passed `--apply`, unknown arguments refused,
 # non-zero on misuse — plus the echoes the smoke step asserts on: the resolved
 # argument list, the environment satz promises an action, and the fact that a

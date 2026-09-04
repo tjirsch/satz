@@ -1,4 +1,6 @@
-# Satz — language specification
+# satz language
+
+The complete specification of Satz, the language an estate is written in.
 
 **Version:** v0, as implemented in `crates/satz-core/src/satz.rs` (satz v0.46.41).
 This document is derived from the parser, not from intent: where the two
@@ -629,7 +631,7 @@ the last one, silently). The list form is the only one. Resource-type maps
 (`google_…`) may repeat — two `google_org_policy_policy { … }` groups in one
 file are one map, folded by address.
 
-`google_cloud_identity_group` is a satz abstraction that shares a Terraform
+`google_cloud_identity_group` is a Satz abstraction that shares a Terraform
 type name: it is expanded into a group resource (deriving `group_key`, `parent =
 customers/<id>` and the discussion_forum/security labels) rather than passed
 through.
@@ -1101,7 +1103,7 @@ missing.
 #### Running a script from inside the apply
 
 Because the body is verbatim Terraform, the passthrough is also the way to put a
-script *in the dependency graph* — the one thing [`action`](#613-action--a-step-with-no-provider-resource)
+script *in the dependency graph* — the one thing [`action`](#613-action-a-step-with-no-provider-resource)
 cannot do:
 
 ```
@@ -1202,7 +1204,7 @@ satz run-actions estate.satz --phase after-apply --execute
 sources and stays one: that is what lets the corpus snapshots, `check-presets`
 and the auto-fork transpile-identity proof mean what they say, and it is why
 cloning an estate and compiling it cannot execute anything. An action is inert
-until [`satz run-actions`](#run-actions) is invoked.
+until [`satz run-actions`](../README.md#cmd-run-actions) is invoked.
 
 **An action emits nothing and can carry no claim.** It is not in `main.tf`, not
 in the emission manifest, and no `claim` can name it — the same opacity `hcl`
@@ -1312,7 +1314,7 @@ already has that shape — dry run by default, `--apply` to write, non-zero on a
 failed call. It lives under `presets/` rather than `scripts/` because
 `get-presets` ships only `presets/**`, and a pack whose script did not travel
 with it would declare an action that cannot find what it runs. See
-[`docs/scripts.md`](scripts.md).
+[`docs/housekeeping.md`](housekeeping.md#presetssccscc-enable-allsh-security-command-center-services).
 
 ### 6.14 `question` — what to ask, and what the answer costs
 

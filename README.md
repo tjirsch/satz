@@ -1,10 +1,10 @@
 # satz
 
-**Infrastructure with a constitution — proven live.** Satz compiles an estate — written in a language whose resource types and attributes are the Terraform provider's — to OpenTofu/Terraform HCL, and proves the controls it declares against the live Google Cloud organisation. It succeeds the tool that began as `cfg2hcl`.
+**Infrastructure with a constitution — proven live.** satz compiles an estate — written in a language whose resource types and attributes are the Terraform provider's — to OpenTofu/Terraform HCL, and proves the controls it declares against the live Google Cloud organisation. It succeeds the tool that began as `cfg2hcl`.
 Builtin functions to bootstrap a Google Cloud Organization and do state import, migration and discovery of an existing GCP Organization from state or live infrastructure.
 
 > **📖 Documentation: <https://tjirsch.github.io/satz/>** — this README, the
-> [language reference](https://tjirsch.github.io/satz/docs/satz-language.html) and the
+> [language reference](https://tjirsch.github.io/satz/docs/language.html) and the
 > [preset pack pages](https://tjirsch.github.io/satz/presets/docs/index.html), searchable,
 > rebuilt on every release. Also: `satz open-readme`, or `satz <command> --html-help`.
 
@@ -65,7 +65,7 @@ These options can be placed anywhere in the command (e.g., before or after subco
 - `--validation <LEVEL>`: Validation level for mandatory parameters (`warn`, `error`, `none`). Default from project config or `warn`.
 - `--html-help`: open the documentation site in the browser at the invoked command's section (`satz transpile --html-help`); alone (`satz --html-help`) the front page. Commands without a section of their own open the command table.
 - `--verbose`: Enable verbose output. When invoked without a subcommand (e.g. `satz --verbose`), prints full recursive help listing all subcommands and their options.
-- `--no-actions`: never execute a declared [`action`](#run-actions), whatever `run-actions` was asked to do.
+- `--no-actions`: never execute a declared [`action`](#cmd-run-actions), whatever `run-actions` was asked to do.
 - `--no-pack-actions`: consider only the estate's own actions; ignore any a `use`d pack declares.
 - `--no-action-warnings`: silence the warning every declared action raises on a compile.
 
@@ -278,7 +278,7 @@ algebra folds them (grant union, deep-equal idempotence, conflicts reported
 with every contributing origin), and HCL is emitted from the folded result,
 with deterministic ordering (snapshot-gated by `tests/corpus/`).
 
-**Subtractive overrides (`suppress`, satz estates only):**
+**Subtractive overrides (`suppress`, Satz estates only):**
 An estate can remove something a used pack contributes — without forking:
 
 ```
@@ -686,7 +686,7 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 
 **Under the Hood:**
 - Fetches the `presets` directory from the GitHub repo (main branch) in **one** API request (a recursive tree), preserving subdirectories (e.g. `presets/security-group-models/`). The files themselves come from raw.githubusercontent.com, which is not rate-limited.
-- GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/presets-workflow.md](docs/presets-workflow.md#5-when-upstream-stops-answering-the-github-quota).
+- GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/workflows.md](docs/workflows.md#when-upstream-stops-answering-the-github-quota).
 - Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. Changing a pack the estate deploys changes the org, and a `tofu plan` should not be the first place you learn that. `--force` overwrites anyway, listing each in-use pack as it does.
 - `X.local.*` files have no upstream counterpart, so nothing here can touch them.
 
@@ -748,11 +748,11 @@ deviations are disclosed decisions and do not fail it.
 
 ### The Satz language
 
-Driving satz from an agent? **[`docs/satz-for-agents.md`](docs/satz-for-agents.md)** is
+Driving satz from an agent? **[`docs/llms.md`](docs/llms.md)** is
 the working subset written for that — the MCP server serves it as `satz://guide`, so an
 agent gets it without a repository.
 
-Full specification, grammar and lookup: **`docs/satz-language.md`** — derived from
+Full specification, grammar and lookup: **`docs/language.md`** — derived from
 the parser (`crates/satz-core/src/satz.rs`), with every example verified to compile.
 
 ### Adopting what already exists (`adopt`, brownfield)
@@ -980,7 +980,7 @@ Version hygiene is cross-checked: semantic change without a version bump warns
 Non-zero exit when anything needs attention (a fork was created or its upstream
 moved, or a repoint was refused) — CI-friendly.
 
-> **Which command when?** [docs/presets-workflow.md](docs/presets-workflow.md)
+> **Which command when?** [docs/workflows.md](docs/workflows.md)
 > walks the whole decision — how to tell a newer preset exists, whether your copy
 > is *stale* or *edited* (they need different commands), and what to check before
 > applying.
@@ -1090,214 +1090,11 @@ fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit && compinit
 ```
 
-## Day 0 Onboarding Playbook
+## Playbooks
 
-This section outlines the step-by-step process for onboarding a new Google Cloud Organization.
-
-### Phase 1: Preparation
-
-#### Prerequisites
-Ensure the executing user has:
-- **Superadmin** access to the Google Workspace / Cloud Identity.
-- **Organization Administrator** role on the GCP Organization.
-- **Billing Account Administrator** on the target billing account (must be granted in the Reseller Console).
-
-#### Workspace Setup
-1. Authenticate with Google Cloud:
-   ```bash
-   gcloud auth application-default login
-   ```
-2. Initialize the tool configuration and folder structure:
-   ```bash
-   satz init \
-     --customer-id "C01234567" \
-     --customer-shortname "example-org" \
-     --billing-account-infra "A12345-B67890-C12345" \
-     --customer-domain "example.com" \
-     --customer-organization-id "123456789012" \
-     --iac-user "admin@example.com"
-   ```
-
-### Phase 2: Fundamental Infrastructure
-
-#### 1. Bootstrap Core Resources
-The `bootstrap` command creates the day-0 infrastructure: the infrastructure
-folder, the management project, the billing link, the foundation APIs (fixing
-the "chicken-and-egg" problem) and the Terraform state bucket — then runs
-`transpile`, `init` and the first imports so what it created is under
-management from the start.
-
-```bash
-satz bootstrap C0example.satz
-```
-
-**Pre-flight.** Before anything is created, bootstrap verifies the ADC
-identity against `first_admin` and tests the REQUIRED PERMISSIONS — never
-roles — with `testIamPermissions`:
-
-| Where | Permission | Supplied by |
-|---|---|---|
-| scope root | `resourcemanager.folders.create` (only when `infra_folder_name` is set) | `roles/resourcemanager.folderAdmin` |
-| scope root | `resourcemanager.projects.create` | `roles/resourcemanager.projectCreator` |
-| scope root | `orgpolicy.policies.create` (the estate's policies, at first apply) | `roles/orgpolicy.policyAdmin` |
-| billing account | `billing.resourceAssociations.create` | `roles/billing.user` |
-
-- Everything granted → bootstrap proceeds.
-- Something missing and the caller holds `setIamPolicy` on the scope root —
-  the normal state of a fresh organization, whose creating super admin is
-  auto-granted Organization Administrator (that role carries `setIamPolicy`
-  but none of the create permissions) → bootstrap **self-grants** the missing
-  roles to the caller, prints each grant with the exact
-  `remove-iam-policy-binding` undo command, waits for IAM propagation and
-  re-tests before proceeding.
-- Something missing and no `setIamPolicy` (or the billing permission, which
-  is never self-granted) → bootstrap prints the exact
-  `gcloud … add-iam-policy-binding` commands for an administrator and stops
-  **before creating anything**.
-
-**Folder-scoped installs.** Set `customer_organization_id = "folders/<id>"`
-and the estate installs under that folder: permissions are tested there, and
-org-root operations are out of scope by design — a folder-granted operator is
-never asked to become org admin. One caveat: Google allows
-`roles/orgpolicy.policyAdmin` only at organization level, so a missing
-`orgpolicy.policies.create` is reported as advisory on a folder scope —
-folder-level org policies need an organization-level grant before their first
-apply.
-
-**Dry run.** `satz bootstrap <estate> --dry-run` is read-only: it prints the
-plan, verifies the identity and runs the same pre-flight (a would-be
-self-grant is reported, not executed). Without credentials the plan still
-prints and the skipped pre-flight is named (`pre-flight: SKIPPED`).
-
-**What bootstrap does NOT do:** it creates no service account and grants no
-IAM beyond the self-grant above — the IaC service account and its grants are
-declared in the estate and come into being on the first `tofu apply`.
-
-**Credential line.** Every live command prints one line before its first API
-call — `credentials: <identity> (user ADC | impersonated service account |
-service account key), quota project <p>` — so a wrong per-customer login
-surfaces immediately instead of as a downstream 403. `satz whoami` is the
-explicit check (`--offline` for the file-only view; a user ADC file stores no
-identity, so the online form resolves it via token introspection).
-
-**Impersonation.** On a `deployment_mode = "cloud"` estate, every live
-command impersonates the estate's IaC service account
-(`{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`) — exactly
-the identity `tofu` applies with — so the human needs no org-wide read roles,
-only `roles/iam.serviceAccountTokenCreator` on the SA (normally via
-membership in `svc-iac-users`). `--no-impersonate` opts out; `bootstrap`
-never impersonates (day 0, the SA may not exist yet); an ADC that already
-impersonates is used as-is. The credential line names the SA the calls
-actually run as.
-
-**Greenfield: a tenant with no organization yet.** Google creates the
-Organization resource for a Workspace/Cloud Identity domain when a NEW Google
-Cloud user signs in to the console and accepts the terms, or when an EXISTING
-user creates their first project or billing account
-([documented](https://docs.cloud.google.com/resource-manager/docs/creating-managing-organization)).
-satz uses the second trigger:
-
-1. `satz init --from-live --customer-id <C0…>` — derives every derivable init
-   value from the ADC alone (identity → `first_admin` + `customer_domain`,
-   `organizations:search` → org id + directory customer id,
-   `billingAccounts.list` → the single open account; explicit flags always
-   win, nothing is guessed). With no organization visible, the estate is
-   written with an empty `customer_organization_id`.
-2. `satz bootstrap <estate> --greenfield` — creates the infra project WITHOUT
-   a parent (the trigger), polls `organizations:search` until the new
-   organization appears (matched by its `directoryCustomerId`, never "the
-   first org"), moves the project under it, writes the id back into the
-   estate, and continues with the normal pre-flight and build. If the
-   organization never appears (the ADC user has not accepted the console
-   terms), the timeout names the one-time console sign-in as the fallback.
-
-An estate whose `customer_organization_id` is empty fails with exactly this
-guidance instead of a bare "missing org id".
-
-#### 2. (Optional) Customize & Transpile
-*Only needed if you modify the estate after bootstrap.*
-
-Modify `yaml/C0example.satz` as needed, then manually generate the HCL:
-```bash
-satz transpile C0example.satz
-```
-
-#### 3. (Optional) Configure Identity
-*Only needed if the default identity setup from bootstrap was insufficient.*
-
-If customization was done, re-run initialization:
-```bash
-cd hcl
-tofu init
-tofu apply
-```
-
-
-
-### Phase 3: Identity & Access Rollout
-
-#### 1. Apply Management Infrastructure
-Run the first Tofu apply. This creates the **Identity Groups**, attaches the necessary **IAM roles** (including `Token Creator`), and finalizes the management project.
-
-```bash
-cd hcl/
-tofu plan
-tofu apply
-```
-
-### Phase 4: Cloud Migration
-
-#### 1. Perform State Migration
-Toggle to `cloud` mode and move state to the GCS bucket:
-```bash
-satz migrate C0example.satz --mode cloud
-```
-The tool rewrites the estate's `deployment_mode`, switches to **Service Account Impersonation**, and runs `tofu init -migrate-state`.
-
-#### 2. Verification
-In `cloud` mode, verify that you can plan/apply using the restricted service account identity:
-```bash
-tofu plan
-```
-
-#### Template Params Reference
-
-When you run `init`, the following params are generated in the estate's `params { … }` block:
-
-| Param | Default | Description |
-|-------|---------|-------------|
-| `infra_folder_name` | `"Infrastructure"` | Display name for the top-level folder. Leave `""` to create the project in the root. |
-| `infra_project_name` | `""` | The unique ID for the management (IaC) project. |
-| `infra_bucket_name` | `""` | The name of the GCS bucket for Terraform state. |
-| `customer_id` | (from CLI) | The Workspace customer ID (e.g., `C01234567`). |
-| `customer_organization_id` | `"123456789012"` | The numeric Google Cloud Organization ID. |
-| `customer_domain` | `""` | The customer's primary domain (e.g., `example.com`). |
-| `first_admin` | (from `--iac-user`) | Local part of the first admin's address; members are built as `user:{first_admin}@{customer_domain}`. |
-| `customer_longname` | `""` | The full legal name of the customer entity. |
-| `customer_shortname` | `""` | A unique slug or shortname for the customer. |
-| `svc_iac_account` | `"svc-iac-001"` | The name/ID of the primary IaC Service Account. |
-| `svc_iac_users_group` | `"svc-iac-users"` | The Cloud Identity group for IaC administrators. |
-| `billing_account_infra` | `""` | The Billing Account ID (e.g., `012345-6789AB-CDEF01`). |
-| `deployment_engine` | `"tofu"` | The IaC tool: `tofu` or `terraform`. |
-| `deployment_mode` | `"local"` | `local` for Day 0 (User ADC); `cloud` for Day 1+ (Impersonation). Switched by `satz migrate`. |
-| `default_region` | `"europe-west3"` | Default region for regional resources. |
-| `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
-
-### 3. Transpile
-Compile an estate to HCL. Run this from within the customer repository directory.
-```bash
-satz transpile my-infra.satz
-```
-- Input is read from `yaml_dir` (e.g., `./yaml/my-infra.satz`).
-- Output is written directly to the `hcl_dir` defined in your config.
-- **Run from anywhere**: All paths are resolved relative to the configuration file's directory.
-- **Automatic Schema Sync**: The tool will automatically fetch missing provider schemas via `tofu/terraform` during transpilation.
-
-### 3. Update Schemas
-Refresh provider schemas manually.
-```bash
-satz update-schema --providers google,google-beta
-```
+Standing an organisation up from nothing, adopting one that already exists, and
+keeping the preset library current are three walkthroughs on one page:
+**[docs/workflows.md](docs/workflows.md)**. The command reference is above.
 
 ## Configuration
 
@@ -1342,7 +1139,7 @@ You can control the strictness via CLI `--validation` or `config.toml`.
 ## Satz
 
 Estates are written in **Satz** (`.satz` files) — the language reference is
-[docs/satz-language.md](docs/satz-language.md). Params are declarations in one
+[docs/language.md](docs/language.md). Params are declarations in one
 document-ordered namespace (no anchors), `"{param}"` interpolates (no `!format`), `use "pack.satz" [as key] [when param]`
 includes, blocks nest with braces, and resource attribute names are **1:1 the Terraform
 provider names** — the registry docs are the docs. A `.satz` estate is parsed directly by
@@ -1365,7 +1162,7 @@ interpolates params. Every command reads `.satz`. The legacy YAML dialect that
 preceded Satz exists only as input to `satz import <file>.yaml`, which converts an estate or a pack,
 gated by compiling the result through the fragment pipeline and reporting what it emits —
 a migrated estate may need a manual edit; `tofu plan` has the last word
-(see [docs/satz-language.md §12](docs/satz-language.md)).
+(see [docs/language.md §12](docs/language.md)).
 
 ## Core Principles
 
@@ -1501,7 +1298,7 @@ repository:
 A downloaded script also arrives without its executable bit and satz will not set
 it: the error names the `chmod +x` and leaves the decision to whoever read the
 file. The full reference is
-[§6.13 of the language spec](docs/satz-language.md#613-action--a-step-with-no-provider-resource);
+[§6.13 of the language spec](docs/language.md#613-action-a-step-with-no-provider-resource);
 for a step that must run *between* two resources inside one apply, use a
 `terraform_data` provisioner in an `hcl trust` block instead, with the costs
 §6.12 lists.
@@ -1521,64 +1318,6 @@ satz generate-migration mapping.yaml --output migrate.sh
 - Reads the mapping file generated by `scan-plan`.
 - Generates a shell script with `tofu state mv` commands to safely rename resources in the state.
 - The script can be reviewed and executed manually to perform the state migration.
-
-## Day 0: Migration Playbook
-
-This section outlines the general process for migrating existing infrastructure into `satz` management.
-
-### 1. State Discovery
-Begin by capturing the current infrastructure state. If you have an existing Terraform/OpenTofu project, generate a JSON state file and use the discovery tool:
-```bash
-tofu show -json > state.json
-satz import state.json -o migration-discovery.satz
-```
-
-Alternatively, if you want to discover infrastructure directly from GCP without Terraform state:
-```bash
-satz import organizations/123456789012 -o migration-discovery.satz
-```
-
-Only the resource types marked `import: true` in `presets/import-config.yaml` are
-taken (`--only` narrows further); enable more rows as needed — every row with an
-`asset_type` can be switched on. The table covers the provider's 895 resource
-types: 389 with their Cloud Asset Inventory name (derived from the type name
-and checked against Google's list, `presets/cai-asset-types.txt`), 296 that are
-not Cloud Asset resources (IAM members, org-policy v1 shapes; state shape only),
-209 still `TODO/UNKNOWN` (Cloud Asset does not inventory them, or the name
-could not be derived — `scripts/update_import_config.py` prints what it tried).
-A live resource whose provider block would not plan is never written: a
-required attribute the asset data lacks is derived where it can be (`parent`,
-`org_id`/`folder`/`project` from the asset path, a service account's
-`account_id` from its email) and the resource is otherwise skipped with the
-attribute named. Import ids of live resources are the asset path, with the
-project named by id (the provider keeps a project NUMBER on import and the
-declared id would then force a replacement). Verified on a test organization
-with folders, projects, services, buckets, IAM, org policies, org/folder/project
-log sinks, a service account and an essential contact: `tofu plan` = every
-resource imported, nothing added or destroyed.
-
-### 2. Hierarchical Refinement
-The discovered estate compiles as-is, but it is as found. Organize it into the `satz` hierarchical format:
-- Move projects into their respective folders.
-- Nest resources (Buckets, Networks, etc.) inside their projects to leverage **Attribute Inheritance**.
-- Remove redundant attributes (like `project_id`) that are now inherited from the context.
-
-### 3. Resource Optimization
-Convert standard resource definitions into optimized `satz` patterns:
-- **Services**: Group `google_project_service` resources into a single `project_service` list.
-- **IAM**: Combine individual IAM members into compact `project_iam_member` or `folder_iam_member` blocks.
-- **Formatting**: Ensure attributes with sub-structures (e.g., `project_service` with `disable_on_destroy`) are correctly indented.
-
-### 4. Validation & Reconciliation
-Generate the HCL and compare it with the live environment:
-1. Run `satz transpile migration-discovery.satz`.
-2. Run `tofu plan` in the `hcl/` directory.
-3. **Reconcile**: If the plan shows "replace" instead of "no changes", it means the HCL labels or resource IDs don't match.
-   - Use `"import-id"` in the estate to link existing resources.
-   - Or use `tofu state mv` to align the existing state with the new HCL labels.
-
-### 5. Transition to Management
-Once `tofu plan` shows no changes (or only intended updates), the migration is complete. You can now manage the infrastructure exclusively through the estate.
 
 ## Development
 
@@ -1661,4 +1400,4 @@ Instead of hardcoded setup scripts, `satz` uses a two-phase Tofu approach:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/tjirsch/satz/blob/main/LICENSE) file for details.

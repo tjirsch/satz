@@ -1,7 +1,7 @@
 // The smoke estate: one of everything the commands touch — the shipped CIS
 // and contacts packs, the monitoring packs under a folder, a group with a
 // member, org grants, a project with services and a bucket. Example values
-// only (docs/example-customers.md).
+// only (docs/examples.md).
 
 estate smoke
 

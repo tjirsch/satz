@@ -1,10 +1,10 @@
-# Satz for agents
+# satz for llms
 
 You are reading this because you are driving satz — probably through its MCP server —
 and you need to write Satz, not just call tools. This is the working subset, with the
 rules that stop you producing something that compiles and is wrong.
 
-[`docs/satz-language.md`](satz-language.md) is the full reference. This page is what to
+[`docs/language.md`](language.md) is the full reference. This page is what to
 keep in your head.
 
 ## What satz is, and the one rule

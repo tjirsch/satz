@@ -5,8 +5,8 @@ self-contained themed HTML, into one output directory (GitHub Pages).
     uv run --with markdown scripts/build-site.py [_site]
 
 Pages: README.md → index.html, docs/*.md → docs/<name>.html,
-presets/README.md → presets/index.html (and presets/CHANGELOG.md when it
-exists). Links between the Markdown files are rewritten to their HTML twins;
+presets/README.md → presets/index.html. Links between the Markdown files are
+rewritten to their HTML twins;
 every page gets the same navigation bar. The Markdown stays the source GitHub
 shows — one text, two renderings. Rendering itself is `build-satz-doc.py`.
 """
@@ -32,14 +32,13 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "_site"
 # That way a new doc cannot slip onto the site unnoticed, and cannot be silently
 # left off it either.
 SITE_DOCS: list[str] = [
-    "satz-language",
-    "satz-for-agents",
-    "presets-workflow",
-    "scripts",
+    "language",
+    "workflows",
     "mcp",
+    "examples",
     "housekeeping",
     "competitive",
-    "example-customers",
+    "llms",
 ]
 
 # Not published, and why. These stay in the repository and stay linkable — a link
@@ -67,10 +66,6 @@ PAGES.append((ROOT / "README.md", "index.html", "satz"))
 for stem in SITE_DOCS:
     PAGES.append((ROOT / "docs" / f"{stem}.md", f"docs/{stem}.html", stem))
 PAGES.append((ROOT / "presets/README.md", "presets/index.html", "presets"))
-if (ROOT / "presets/CHANGELOG.md").exists():
-    PAGES.append(
-        (ROOT / "presets/CHANGELOG.md", "presets/changelog.html", "presets changelog")
-    )
 PACK_PAGES: list[
     tuple[Path, str]
 ] = []  # derived per-pack pages: rendered, linked from the index, not in the nav
@@ -79,16 +74,31 @@ for md in sorted((ROOT / "presets/docs").glob("*.md")):
         (md, f"presets/docs/{'index' if md.stem == 'README' else md.stem}.html")
     )
 
+# The menu, in reading order: what satz is, the language it is written in, the
+# library that ships with it, how you work with it, the machine interfaces, then
+# the reference shelf. Every page is named here and nothing else is — an unlisted
+# page used to be appended alphabetically, which is how the menu drifted into a
+# directory listing. It is a failure now, like an unclassified doc above.
 NAV_ORDER = [
     "satz",
-    "satz-language",
-    "mcp",
+    "language",
     "presets",
-    "pack pages",
-    "presets changelog",
-    "presets-workflow",
-    "scripts",
+    "workflows",
+    "mcp",
+    "examples",
+    "housekeeping",
+    "competitive",
+    "llms",
 ]
+
+_labels = {label for _, _, label in PAGES}
+if _labels != set(NAV_ORDER):
+    lines = ["build-site: the navigation names every page, in a decided order."]
+    for label in sorted(_labels - set(NAV_ORDER)):
+        lines.append(f"  page {label!r} is not in NAV_ORDER")
+    for label in sorted(set(NAV_ORDER) - _labels):
+        lines.append(f"  NAV_ORDER names {label!r}, which is not a page")
+    raise SystemExit("\n".join(lines))
 
 
 def nav_html(current_rel: str) -> str:
@@ -96,12 +106,7 @@ def nav_html(current_rel: str) -> str:
     up = "../" * depth
     items = []
     by_label = {label: rel for _, rel, label in PAGES}
-    if any(rel == "presets/docs/index.html" for _, rel in PACK_PAGES):
-        by_label["pack pages"] = "presets/docs/index.html"
-    ordered = [l for l in NAV_ORDER if l in by_label] + sorted(
-        l for l in by_label if l not in NAV_ORDER
-    )
-    for label in ordered:
+    for label in NAV_ORDER:
         rel = by_label[label]
         cls = ' class="current"' if rel == current_rel else ""
         items.append(f'<a{cls} href="{up}{rel}">{label}</a>')
