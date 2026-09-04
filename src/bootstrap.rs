@@ -9,6 +9,11 @@ enum StepStatus {
     Created,
     AlreadyExisted,
     Skipped(String),
+    /// Attempted, refused, and that is survivable: the estate's own template
+    /// declares the same thing, so `tofu apply` does it with the permissions the
+    /// caller does have. Unlike `Failed` this never stops the run — an engagement
+    /// scoped to a folder or a single project must still be able to bootstrap.
+    Deferred(String),
     /// Carries the failure's classification and the API's own message, verbatim.
     Failed(ErrorClass, String),
 }
@@ -36,6 +41,10 @@ impl RunSummary {
             StepStatus::Created => println!("  created  {}", outcome.label),
             StepStatus::AlreadyExisted => println!("  exists   {}", outcome.label),
             StepStatus::Skipped(why) => eprintln!("  skipped  {}: {}", outcome.label, why),
+            StepStatus::Deferred(why) => {
+                eprintln!("  deferred {}: {}", outcome.label, why);
+                eprintln!("           the estate template declares it; tofu will apply it");
+            }
             StepStatus::Failed(class, err) => {
                 eprintln!("  FAILED   {}: {}", outcome.label, err);
                 if *class == ErrorClass::QuotaProject {
@@ -90,6 +99,20 @@ fn render_summary(steps: &[StepOutcome]) -> String {
     if !skipped.is_empty() {
         out.push_str("Skipped:\n");
         for (label, why) in skipped {
+            out.push_str(&format!("  {}: {}\n", label, why));
+        }
+    }
+
+    let deferred: Vec<(&str, &str)> = steps
+        .iter()
+        .filter_map(|s| match &s.status {
+            StepStatus::Deferred(why) => Some((s.label.as_str(), why.as_str())),
+            _ => None,
+        })
+        .collect();
+    if !deferred.is_empty() {
+        out.push_str("Deferred to the estate (the template declares these; tofu will apply them):\n");
+        for (label, why) in deferred {
             out.push_str(&format!("  {}: {}\n", label, why));
         }
     }
@@ -650,13 +673,30 @@ pub async fn bootstrap(
     permission_gate(&summary)?;
 
     // 6. Enable Foundation APIs (The "Chicken-and-Egg" Fix)
-    let core_services = vec![
+    //
+    // Two lists, because they fail differently.
+    //
+    // REQUIRED are the APIs bootstrap ITSELF calls before `tofu` ever runs — it
+    // creates the project, links billing, impersonates a service account and
+    // writes the state bucket. Without these there is nothing to hand over, so a
+    // permission denial here still stops the run.
+    //
+    // The rest are enabled because `google_project_service` carries no
+    // `depends_on`: inside one apply, Terraform can create a resource before the
+    // API it needs is on. Enabling them up front dodges that race — but every one
+    // of them is ALSO declared in the estate template, so if the caller may not
+    // enable them here, tofu can. On an engagement scoped to a folder or a single
+    // project that is the normal case, not an error, and `init` must not die on
+    // it.
+    let required_services = [
         "serviceusage.googleapis.com",
         "cloudresourcemanager.googleapis.com",
         "iam.googleapis.com",
         "iamcredentials.googleapis.com",
         "storage.googleapis.com",
         "cloudbilling.googleapis.com",
+    ];
+    let template_services = [
         "cloudidentity.googleapis.com",
         "cloudasset.googleapis.com",
         "logging.googleapis.com",
@@ -664,7 +704,8 @@ pub async fn bootstrap(
         "essentialcontacts.googleapis.com",
     ];
 
-    for service in core_services {
+    for service in required_services.iter().chain(template_services.iter()).copied() {
+        let required = required_services.contains(&service);
         let step = format!("API {}", service);
         if !project_usable {
             summary.record(&step, StepStatus::Skipped(format!("{} was not created", project_id)));
@@ -688,6 +729,10 @@ pub async fn bootstrap(
         // enabled instead of stopping at the first.
         match crate::gcp::serviceusage::enable_service(&client, &token, &project_id, service).await {
             Ok(()) => summary.record(&step, StepStatus::Created),
+            Err(e) if !required => {
+                let msg: String = e.into();
+                summary.record(&step, StepStatus::Deferred(msg));
+            }
             Err(e) => summary.record(&step, StepStatus::Failed(e.class(), e.into())),
         }
     }
@@ -918,6 +963,47 @@ mod tests {
         assert!(!out.contains("Errors:"), "{out}");
         assert!(!out.contains("Skipped:"), "{out}");
         assert!(out.contains("All steps completed."), "{out}");
+    }
+
+    /// An engagement scoped to a folder or a single project cannot enable the
+    /// org-adjacent APIs, and must still bootstrap: the estate template declares
+    /// every one of them, so tofu applies them with the access the caller has.
+    /// A deferral is therefore neither an error nor a reason to stop.
+    #[test]
+    fn a_deferred_api_neither_fails_nor_stops_the_run() {
+        let mut s = RunSummary::default();
+        s.record("Project acme-iac-infra", StepStatus::Created);
+        s.record(
+            "API orgpolicy.googleapis.com",
+            StepStatus::Deferred("PERMISSION_DENIED on the infra project".into()),
+        );
+
+        assert_eq!(s.failed(), 0, "a deferral must not make bootstrap exit non-zero");
+        assert!(
+            !s.has_permission_failure(),
+            "a deferral must not trip the permission gate — that is the whole point"
+        );
+        assert!(permission_gate(&s).is_ok(), "the run must continue");
+
+        let out = render_summary(&s.steps);
+        assert!(out.contains("Deferred to the estate"), "{out}");
+        assert!(out.contains("orgpolicy.googleapis.com"), "{out}");
+        // it is not an error, so the run still reads as complete
+        assert!(!out.contains("Errors:"), "{out}");
+        assert!(out.contains("All steps completed."), "{out}");
+    }
+
+    /// The APIs bootstrap itself needs before tofu exists keep the hard gate:
+    /// without serviceusage or storage there is nothing to hand over.
+    #[test]
+    fn a_required_api_still_stops_the_run() {
+        let mut s = RunSummary::default();
+        s.record(
+            "API storage.googleapis.com",
+            StepStatus::Failed(ErrorClass::PermissionDenied, "PERMISSION_DENIED".into()),
+        );
+        assert!(s.has_permission_failure());
+        assert!(permission_gate(&s).is_err(), "a required API must still stop the run");
     }
 
     #[test]
