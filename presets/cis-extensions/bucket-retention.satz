@@ -14,7 +14,7 @@
 // configured USING BUCKET LOCK, and locking is a one-way door no org policy
 // performs. The audit-logsink pack carries the same duty.
 
-pack cis_extensions.bucket_retention version "1.0"
+pack cis_extensions.bucket_retention version "1.1"
 
 params {
   // Durations, in SECONDS, a bucket retention policy may use. The default is
@@ -38,6 +38,20 @@ google_org_policy_policy {
           }
         },
       ]
+    }
+  }
+}
+
+
+// Superseded legacy twin, declared OFF — see the section of the same name in
+// CIS-GCP-Foundation-4.0.satz for why absence is not enough. `reset = true`
+// restores the constraint default, which is ALLOW here.
+google_org_policy_policy {
+  "storage-retentionPolicySeconds" {
+    name = "storage.retentionPolicySeconds"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
     }
   }
 }

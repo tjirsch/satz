@@ -103,6 +103,34 @@ grep -qE '◐ 1.2 .*legacy-superseded' tmp/require-50.txt || fail "4.0 1.1 -> 5.
 # 1.1.4 asks whether the org constrains its projects centrally: the whole baseline is the witness
 grep -qE '◐ 1.1.4 .*review-baseline' tmp/require-50.txt || fail "the 5.0 §1.1.4 baseline claim is missing:\n$(grep '1.1.4' tmp/require-50.txt)"
 
+step "superseded legacy constraints are declared OFF, never enforced beside their managed twin"
+# The defect this prevents: both forms in force, so every exemption has to lift two
+# policies. Absence would not prevent it — a legacy policy already set on the org is
+# invisible to an apply that does not declare it — so the pack declares each twin reset.
+for c in iam.allowedPolicyMemberDomains compute.requireOsLogin \
+         essentialcontacts.allowedContactDomains iam.disableServiceAccountKeyCreation \
+         iam.disableServiceAccountKeyUpload compute.restrictProtocolForwardingCreationForTypes; do
+  python3 - "$c" <<'PY' || fail "the superseded twin is not declared off"
+import re, sys
+name = sys.argv[1]
+tf = open("hcl/main.tf").read()
+blocks = re.findall(r'resource "google_org_policy_policy" "[^"]+" \{.*?\n\}', tf, re.S)
+mine = [b for b in blocks if f'/policies/{name}"' in b]
+if len(mine) != 1:
+    print(f"expected exactly one block for {name}, found {len(mine)}"); sys.exit(1)
+b = mine[0]
+if "reset = true" not in b:
+    print(f"{name} is declared without reset = true:\n{b}"); sys.exit(1)
+if "enforce" in b or "values" in b:
+    print(f"{name} still carries an enforcing body:\n{b}"); sys.exit(1)
+PY
+done
+# and the managed replacement IS enforcing, with its parameters
+grep -q 'policies/compute.managed.restrictProtocolForwardingCreationForTypes"' hcl/main.tf \
+  || fail "the managed protocol-forwarding constraint is missing"
+grep -q 'parameters = "{\\"allowedSchemes\\":\[\\"INTERNAL\\"\]}"' hcl/main.tf \
+  || fail "the managed protocol-forwarding constraint lost its parameters"
+
 step "cis-extensions: opt-in coverage, off by default and on when asked"
 # off by default: the baseline must not enforce any of them
 grep -q 'compute.requireShieldedVm' hcl/main.tf && fail "an opt-in extension leaked into the baseline"

@@ -8,6 +8,9 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.5 | 2026-09-04 | runs the MANAGED protocol-forwarding constraint (`parameters.allowedSchemes`, param `allowed_protocol_forwarding_schemes`) and declares all six superseded legacy twins OFF with `reset = true`, so no estate ends up with both forms enforcing |
+| `cis_extensions.cloud_sql` | 1.1 | 2026-09-04 | declares its two superseded legacy twins (`sql.restrictAuthorizedNetworks`, `sql.restrictPublicIp`) off |
+| `cis_extensions.bucket_retention` | 1.1 | 2026-09-04 | declares its superseded legacy twin (`storage.retentionPolicySeconds`) off |
 | `CIS_GCP_Foundation_4_0` | 2.4 | 2026-09-04 | adds `compute.managed.disableSerialPortAccess` (4.5) to the baseline — safe by default — and declares the seven opt-in flags the `cis-extensions/` fragments are gated on |
 | `cis_extensions.block_project_ssh_keys` | 1.0 | 2026-09-04 | CIS 4.3, opt-in: the managed constraint is still PREVIEW and has no legacy equivalent |
 | `cis_extensions.shielded_vm` | 1.0 | 2026-09-04 | CIS 4.8, opt-in: image support required, and the only constraint here with no managed form and no dry-run |
