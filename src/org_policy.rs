@@ -563,10 +563,10 @@ pub fn render_markdown(report: &DiffReport) -> String {
     s
 }
 
-pub fn render_report(report: &DiffReport, format: &str) -> String {
+pub fn render_report(report: &DiffReport, format: crate::OutFormat) -> String {
     match format {
-        "json" => serde_json::to_string_pretty(report).expect("a DiffReport serialises"),
-        "markdown" => render_markdown(report),
+        crate::OutFormat::Json => serde_json::to_string_pretty(report).expect("a DiffReport serialises"),
+        crate::OutFormat::Markdown => render_markdown(report),
         _ => render_console(report),
     }
 }
@@ -1244,7 +1244,7 @@ pub async fn diff_org_policies(
     config_path: PathBuf,
     org_id_override: Option<String>,
     report: Option<PathBuf>,
-    format: String,
+    format: crate::OutFormat,
     recursive: bool,
     runtime_config: ToolConfig,
 ) -> Result<(), BoxErr> {
@@ -1258,7 +1258,7 @@ pub async fn diff_org_policies(
 
     // The JSON contract is the DiffReport itself (nodes/tree_summary ride inside it);
     // console and markdown additionally need the full tree to draw collapsed subtrees.
-    let mut rendered = render_report(&report_obj, &format);
+    let mut rendered = render_report(&report_obj, format);
     if let (Some(t), Some(nodes), Some(summary)) =
         (&tree, &report_obj.nodes, &report_obj.tree_summary)
     {
@@ -1297,7 +1297,7 @@ pub async fn report_org_policies(
     config_path: PathBuf,
     org_id_override: Option<String>,
     scope: String,
-    format: String,
+    format: crate::OutFormat,
     report: Option<PathBuf>,
     recursive: bool,
     runtime_config: ToolConfig,
@@ -1325,7 +1325,7 @@ pub async fn report_org_policies(
         }
 
         let out_path = report.unwrap_or_else(|| {
-            let ext = if format == "json" { "json" } else { "md" };
+            let ext = if format == crate::OutFormat::Json { "json" } else { "md" };
             PathBuf::from(format!(
                 "{}-orgpolicies-tree-report.{}",
                 output_basename(&parent, &vars),
@@ -1336,13 +1336,13 @@ pub async fn report_org_policies(
             crate::fsx::create_dir_all(dir)?;
         }
 
-        if format == "json" {
+        if format == crate::OutFormat::Json {
             let json = crate::policy_tree::render_tree_inventory_json(&tree, &scope);
             crate::fsx::write(&out_path, serde_json::to_string_pretty(&json)?)?;
         } else {
             let md = crate::policy_tree::render_tree_inventory_markdown(&tree, &descriptions);
             crate::fsx::write(&out_path, &md)?;
-            if format == "pdf" {
+            if format == crate::OutFormat::Pdf {
                 try_pandoc_pdf(&out_path);
             }
         }
@@ -1379,7 +1379,7 @@ pub async fn report_org_policies(
     // directory where the caller is looking — matching an explicitly passed --report.
     // Previously the default went to yaml_dir while an explicit path did not.
     let out_path = report.unwrap_or_else(|| {
-        let ext = if format == "json" { "json" } else { "md" };
+        let ext = if format == crate::OutFormat::Json { "json" } else { "md" };
         PathBuf::from(format!(
             "{}-orgpolicies-report.{}",
             output_basename(&parent, &vars),
@@ -1390,7 +1390,7 @@ pub async fn report_org_policies(
         crate::fsx::create_dir_all(dir)?;
     }
 
-    if format == "json" {
+    if format == crate::OutFormat::Json {
         let json = serde_json::json!({
             "parent": parent,
             "scope": scope,
@@ -1399,7 +1399,7 @@ pub async fn report_org_policies(
         crate::fsx::write(&out_path, serde_json::to_string_pretty(&json)?)?;
     } else {
         crate::fsx::write(&out_path, &md)?;
-        if format == "pdf" {
+        if format == crate::OutFormat::Pdf {
             try_pandoc_pdf(&out_path);
         }
     }

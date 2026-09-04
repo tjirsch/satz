@@ -193,7 +193,8 @@ impl ResourceRegistry {
                         }
                     }
                     if let Some(file_name) = entry.path().file_name().and_then(|f| f.to_str()) {
-                         println!("Loaded {} resource types from schema file '{}'", file_resource_count, file_name);
+                         // stderr: progress, not the answer — see the banner note in main().
+                         eprintln!("Loaded {} resource types from schema file '{}'", file_resource_count, file_name);
                     }
                 }
             }

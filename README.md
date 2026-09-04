@@ -158,7 +158,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | Command | Options / Arguments |
 |---------|---------------------|
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
-| `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
+| `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`text`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
 | `adopt-org-policies <INPUT>` | `--dry-run` — alias of `adopt --only google_org_policy_policy --activate --execute --import` |
 
@@ -166,7 +166,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
+| `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
 | `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims |
@@ -701,6 +701,21 @@ satz require cis-gcp-4.0 C0example.satz
 #   ◐ 2.3  Retention on the log bucket  — open duty: validate-then-lock
 #   ✗ 2.11 Storage IAM change alerts    — unmet. Provides: monitoring/organization-cis-log-alerts-central
 ```
+
+Every reporting command answers in one vocabulary — `--format text|markdown|json|pdf`,
+each command accepting the subset it can produce and **refusing the rest by name**
+rather than quietly rendering something else. `require --format json` gives the same
+verdicts as data:
+
+```bash
+satz require cis-gcp-4.0 C0example.satz --format json | jq '.summary'
+#   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 11, "broken": 0, … }
+```
+
+**stdout carries the answer and nothing else.** The version banner, the schema-loader
+line and every other progress message go to stderr, so a report can be piped into a
+parser without filtering — and so a future `satz mcp` speaking JSON-RPC over stdout is
+not corrupted by a stray line.
 
 A catalog can also be a **cross-walk** over another one. `iso27001-2022` carries the 93
 Annex A controls and, for those a landing zone can evidence, the CIS controls that stand
