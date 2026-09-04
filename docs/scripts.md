@@ -241,6 +241,7 @@ Currently excluded, and why:
 | `security-toolset-integration.md` | a proposal under rework; it describes an audit loop that is not what satz does today |
 | `fast-delta.md` | source material for the competitive matrix, which carries the conclusions |
 | `stage-b.md` | how the pipeline was built. The language reference is how it is used, and the migration commands are in the README |
+| `interview-design.md` | a design sketch for a layer that is not built; it describes questions satz does not yet ask |
 
 ### Navigating a long page
 

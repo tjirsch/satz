@@ -979,8 +979,7 @@ moved, or a repoint was refused) — CI-friendly.
 > **Which command when?** [docs/presets-workflow.md](docs/presets-workflow.md)
 > walks the whole decision — how to tell a newer preset exists, whether your copy
 > is *stale* or *edited* (they need different commands), and what to check before
-> applying. A proposal for closing the gap between these three commands is in
-> [docs/presets-commands-proposal.md](docs/presets-commands-proposal.md).
+> applying.
 
 ### Check presets for drift (`check-presets`)
 
