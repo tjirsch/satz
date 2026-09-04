@@ -1,7 +1,7 @@
 // The showcase estate — every language feature in one compilable file. The
-// reference (docs/satz-language.md) cites this file by section instead of
+// reference (docs/language.md) cites this file by section instead of
 // carrying loose snippets; scripts/smoke.sh transpiles it on every push.
-// Example values only (docs/example-customers.md).
+// Example values only (docs/examples.md).
 
 /* A block comment spans lines. `#` and `//` comments run to the end of a line. */
 

@@ -351,7 +351,7 @@ fn render(rel: &Path, file: &File, src: &str, existing: Option<&str>) -> String 
 
 fn index(rows: &[(&PathBuf, &File)]) -> String {
     let mut md = String::from(BANNER);
-    md.push_str("\n# Preset packs\n\nOne page per pristine pack, derived from the pack file by `satz doc-packs`; the set's overview is [`presets/README.md`](../README.md), its history [`presets/CHANGELOG.md`](../CHANGELOG.md).\n\n| pack | version | file | resources | claims |\n|---|---|---|---|---|\n");
+    md.push_str("\n# Preset packs\n\nOne page per pristine pack, derived from the pack file by `satz doc-packs`; the set's overview is [`presets/README.md`](../README.md), its history [the changelog](../README.md#changelog) at the foot of that page.\n\n| pack | version | file | resources | claims |\n|---|---|---|---|---|\n");
     for (rel, file) in rows {
         let sh = shape(&file.items);
         let resources: usize = sh.typed.values().map(|l| l.len()).sum::<usize>() + sh.bare.len();

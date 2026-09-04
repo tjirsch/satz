@@ -1,6 +1,6 @@
-# Competitive reference — promote & defend
+# satz competitive
 
-Standing reference for positioning Cloud Cockpit against other frameworks.
+Standing reference — promote and defend — for positioning Cloud Cockpit against other frameworks.
 Detailed technical diffs live in their own audit docs (currently
 [fast-delta.md](fast-delta.md)); this file holds the landscape, the arguments,
 and the battle-review log. Keep ALL framework inputs — every audit adds a row

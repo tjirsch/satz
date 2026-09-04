@@ -1,6 +1,6 @@
-# `satz mcp` — the estate, over the Model Context Protocol
+# satz mcp
 
-satz never calls a model. This is the other direction: an agent you already trust —
+The estate, over the Model Context Protocol. satz never calls a model. This is the other direction: an agent you already trust —
 Claude Code, Cursor, your own — drives satz, and satz stays deterministic, keyless and
 offline by default. Nothing in this surface talks to a model and nothing needs an API
 key.
@@ -58,7 +58,7 @@ serves the documentation itself:
 
 | resource | what it is |
 |---|---|
-| `satz://guide` | [Satz for agents](satz-for-agents.md) — the working subset, the three grant forms, and the order to call the tools in. **Read this before writing a `.satz` file.** |
+| `satz://guide` | [satz for llms](llms.md) — the working subset, the three grant forms, and the order to call the tools in. **Read this before writing a `.satz` file.** |
 | `satz://reference` | the complete language reference |
 | `satz://presets` | the preset library and its provenance rules |
 

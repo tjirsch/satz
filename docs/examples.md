@@ -1,4 +1,12 @@
-# Example customers — the only identifiers allowed in docs, examples and tests
+# satz examples
+
+Two kinds of example. First the **register of identifiers** every example in this
+repository is allowed to use — a rule the privacy gate enforces on every commit.
+Then **worked estates**: real files in this repository, transpiled by
+`scripts/smoke.sh` on every push, so an example here cannot describe a language the
+compiler no longer speaks.
+
+## Example customers
 
 This repository is public. Real customer names, domains, Google Workspace
 directory ids (`C0…`), GCP organisation, folder and project numbers, billing
@@ -30,7 +38,7 @@ nothing here can resolve. All numbers are visibly synthetic.
 | Microsoft Entra tenant id | `11111111-1111-1111-1111-111111111111` | `22222222-2222-2222-2222-222222222222` | `33333333-3333-3333-3333-333333333333` | `44444444-4444-4444-4444-444444444444` |
 | workload identity pool id (the tenant id without dashes) | `11111111111111111111111111111111` | `22222222222222222222222222222222` | `33333333333333333333333333333333` | `44444444444444444444444444444444` |
 
-## Vendor default identifiers
+### Vendor default identifiers
 
 Some GUIDs are not anybody's secret: Microsoft and Google publish them, and every
 customer's estate carries the same value. Those are allowed by name, listed here and
@@ -47,14 +55,14 @@ customer — a tenant id that appears in the customer's generated script is thei
 the vendor's, and belongs in a param. Then add it to `ALLOW_GUID` and to this table
 in the same commit. A GUID the gate does not know is assumed to identify a customer.
 
-## Legacy fixture placeholders
+### Legacy fixture placeholders
 
 `corp-infra-001` and `corp-log-infra-001` are project ids in the smoke estate and the
 corpus fixtures, from before this page existed. They are fictional and allowed, but
 they are not a fifth customer: **new examples use the four above.** The same applies
 to the directory ids `C01234567` and `C0abcd123`.
 
-## What the gate cannot see
+### What the gate cannot see
 
 Shapes are enforceable; names are not. A project's or folder's DISPLAY name, a
 company name in prose, a person's name in a comment — `"Log Admins"` and a real
@@ -112,3 +120,77 @@ with an org id from the table.
 
 If an example genuinely needs a value this page does not define, add the
 value here first, in the same commit.
+
+---
+
+## The smallest estate that compiles
+
+An estate is a name and a `params` block. Nothing else is required: a file that
+declares no resources emits an empty configuration, which is the right answer
+rather than an error. `tests/smoke/yaml/greenfield.satz` is the smallest one this
+repository keeps:
+
+```
+estate greenfield_fixture
+
+params {
+  customer_shortname       = "acme"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  customer_organization_id = ""
+  billing_account_infra    = "A12345-B67890-C12345"
+  infra_project_name       = "acme-infra-001"
+  infra_bucket_name        = "acme-infra-001"
+  default_region           = "europe-west3"
+}
+```
+
+It exists to pin one behaviour: `customer_organization_id` is deliberately empty,
+which is the state of a tenant whose Google Cloud organization does not exist yet.
+`satz bootstrap` must answer that with the greenfield path — `--greenfield`, or
+`init --from-live` — and not with a bare "missing org id". See
+[from nothing to applied](workflows.md#from-nothing-to-applied).
+
+## A working estate, end to end
+
+`tests/smoke/yaml/smoke.satz` is the fixture every estate-consuming command runs
+against in CI, so it is the closest thing here to a real customer estate that
+anyone can read. In about a hundred lines it carries:
+
+- **params** — the sixteen an estate normally binds, including a param defined in
+  terms of another (`cis_central_bucket_project = logsink_project_name`);
+- **`terraform` and `providers` blocks**, which become `providers.tf` and the
+  backend;
+- **three pristine packs**, each in the position its shape calls for: the contacts
+  pack and the CIS baseline as the *content* of a resource map
+  (`google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }`), the
+  two monitoring packs at the top level of a folder;
+- **a Cloud Identity group with a member**, and **organization IAM grants** in the
+  member → roles form;
+- **a folder holding a project**, that project holding its enabled services and a
+  storage bucket — the hierarchy from which scope attributes are derived rather
+  than repeated.
+
+Read it next to [the language reference](language.md); it is the shortest route
+from the reference's constructs to a file that produces HCL.
+
+## Every feature in one file
+
+`tests/smoke/yaml/showcase.satz` is the reference's own corpus. Rather than carry
+loose snippets that drift, [`docs/language.md`](language.md) cites this file by
+section, and `scripts/smoke.sh` transpiles it on every push — so an example in the
+reference is an example that compiled this morning.
+
+It is annotated in place and walks, in order: params and the `question` blocks that
+say what to ask before one can be filled (including a `oneof` exclusive choice);
+the estate configuration blocks; `use` in all three positions (top level, `as`, and
+`when` on a declared param); `suppress`, declining one policy and one role of one
+grant without forking the pack; a group, its member and the `"import-id"` of one
+that already exists; IAM grants with a conditional role; the folder → project →
+resource hierarchy; `hcl { }` raw passthrough; an `action`, the deployment step
+that has no provider resource; and the `claim` blocks that say what the estate
+proves and what it declines on purpose.
+
+**Adding a feature to the language means adding it here first.** The reference
+cites this file, so a construct without a line in the showcase has no example that
+CI keeps honest.

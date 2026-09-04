@@ -5283,7 +5283,7 @@ mod agent_guide_tests {
     /// `tofu validate`d by the smoke matrix.
     #[test]
     fn every_example_in_the_agent_guide_parses() {
-        let doc = include_str!("../docs/satz-for-agents.md");
+        let doc = include_str!("../docs/llms.md");
         let mut blocks = Vec::new();
         let mut current: Option<(usize, String)> = None;
         for (n, line) in doc.lines().enumerate() {
@@ -5309,7 +5309,7 @@ mod agent_guide_tests {
         for (line, body) in &blocks {
             if let Err(e) = satz_core::satz::parse(body) {
                 panic!(
-                    "docs/satz-for-agents.md:{}: the example does not parse — {}:{}\n{}",
+                    "docs/llms.md:{}: the example does not parse — {}:{}\n{}",
                     line, e.line, e.msg, body
                 );
             }

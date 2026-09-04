@@ -217,39 +217,57 @@ pub(crate) struct RestrictArgs {
 /// schemas tell it how to CALL satz, and nothing tells it how to write the
 /// language the calls are about. These are compiled into the binary so the
 /// answer travels with the server: no path to configure, no version to drift.
-const GUIDE: &str = include_str!("../docs/satz-for-agents.md");
-const REFERENCE: &str = include_str!("../docs/satz-language.md");
+const GUIDE: &str = include_str!("../docs/llms.md");
+const REFERENCE: &str = include_str!("../docs/language.md");
 const PRESETS: &str = include_str!("../presets/README.md");
 
 struct Doc {
     uri: &'static str,
     name: &'static str,
     description: &'static str,
-    body: &'static str,
+    text: &'static str,
+    /// Serve `text` only down to this marker. `presets/README.md` closes with the
+    /// pack changelog: version history an agent reading "how do I use a pack"
+    /// never needs, and a quarter of the resource.
+    trim_at: Option<&'static str>,
+}
+
+impl Doc {
+    fn body(&self) -> &'static str {
+        match self.trim_at {
+            // `every_trimmed_resource_finds_its_marker` proves every marker is
+            // present, so a missing one is a broken build, not a runtime case.
+            Some(m) => self.text.split_once(m).expect("the trim marker is asserted by a test").0,
+            None => self.text,
+        }
+    }
 }
 
 const DOCS: &[Doc] = &[
     Doc {
         uri: "satz://guide",
-        name: "Satz for agents",
+        name: "satz for llms",
         description: "How to write Satz: the estate shape, params, hierarchy, the three grant \
                       forms, packs, claims, questions, and the order to call the tools in. Read \
                       this before writing or editing a .satz file.",
-        body: GUIDE,
+        text: GUIDE,
+        trim_at: None,
     },
     Doc {
         uri: "satz://reference",
         name: "Satz language reference",
         description: "The complete language reference — every construct, with the errors each \
                       one raises. Consult it when the guide does not cover a case.",
-        body: REFERENCE,
+        text: REFERENCE,
+        trim_at: None,
     },
     Doc {
         uri: "satz://presets",
         name: "The preset library",
         description: "What each shipped pack contains, how provenance by suffix works \
                       (pristine / .local fork / .diff ledger), and the conventions a pack follows.",
-        body: PRESETS,
+        text: PRESETS,
+        trim_at: Some("\n## Changelog\n"),
     },
 ];
 
@@ -644,7 +662,7 @@ impl ServerHandler for SatzMcp {
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, McpError> {
         match DOCS.iter().find(|d| d.uri == request.uri) {
-            Some(d) => Ok(ReadResourceResult::new(vec![ResourceContents::text(d.body, d.uri)]).into()),
+            Some(d) => Ok(ReadResourceResult::new(vec![ResourceContents::text(d.body(), d.uri)]).into()),
             None => Err(McpError::resource_not_found(
                 format!(
                     "no such resource: {} — this server offers {}",
@@ -727,7 +745,7 @@ pub(crate) async fn serve(
 
 #[cfg(test)]
 mod tests {
-    use super::{Group, Level};
+    use super::{Group, Level, DOCS};
 
     /// A typo in a capability grant must be an error. Read as "less" it would
     /// silently disable half a pipeline; read as "more" it would grant what
@@ -792,5 +810,23 @@ mod tests {
     fn describe_names_every_granted_group() {
         assert_eq!(Level::parse("read,write,exec").unwrap().describe(), "read,write,exec");
         assert_eq!(Level::default().describe(), "nothing");
+    }
+
+    /// `Doc::body` slices at the marker and panics if it is gone. A heading
+    /// renamed in the Markdown would otherwise turn a served resource into a
+    /// panic on the first read — or, worse, a silent no-op if the trim ever
+    /// grew a fallback.
+    #[test]
+    fn every_trimmed_resource_finds_its_marker() {
+        for d in DOCS {
+            let Some(m) = d.trim_at else { continue };
+            assert!(
+                d.text.contains(m),
+                "{}: the trim marker {:?} is gone from the source document",
+                d.uri,
+                m
+            );
+            assert!(d.body().len() < d.text.len(), "{}: the trim removed nothing", d.uri);
+        }
     }
 }

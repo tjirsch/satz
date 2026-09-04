@@ -334,7 +334,7 @@ for f in $(find "$root/presets" -name '*.satz' ! -name '*.local.satz' ! -name '*
   line=$(grep -m1 -E '^pack ' "$f") || fail "$f has no pack header"
   name=$(printf '%s' "$line" | awk '{print $2}')
   ver=$(printf '%s' "$line" | grep -o 'version "[^"]*"' | cut -d'"' -f2)
-  grep -q -E "^\| \`$name\` \| $ver \|" "$root/presets/CHANGELOG.md" || fail "presets/CHANGELOG.md has no row for \`$name\` $ver — add the version bump to the changelog"
+  grep -q -E "^\| \`$name\` \| $ver \|" "$root/presets/README.md" || fail "presets/README.md has no changelog row for \`$name\` $ver — add the version bump under ## Changelog"
 done
 
 step "check-presets against the repository's own presets (must be clean)"
@@ -605,7 +605,7 @@ assert "satz://guide" in msgs[1]["result"].get("instructions", ""), "the instruc
 uris = {r["uri"] for r in msgs[9]["result"]["resources"]}
 assert {"satz://guide", "satz://reference", "satz://presets"} <= uris, uris
 guide = msgs[10]["result"]["contents"][0]["text"]
-assert guide.startswith("# Satz for agents"), guide[:80]
+assert guide.startswith("# satz for llms"), guide[:80]
 assert "Never edit `hcl/`" in guide, "the guide lost its hard rules"
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 assert {"satz_require", "satz_check_presets", "satz_questions", "satz_triage",
@@ -648,8 +648,8 @@ PYEOF
 
 step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
-for f in index.html docs/satz-language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
-grep -q 'href="docs/satz-language.html"' tmp/site/index.html || fail "site: README link to the language reference was not rewritten to HTML"
+for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
+grep -q 'href="docs/language.html"' tmp/site/index.html || fail "site: README link to the language reference was not rewritten to HTML"
 
 step "corpus + unit tests"
 (cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)

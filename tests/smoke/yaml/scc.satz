@@ -6,7 +6,7 @@
 // live organisation, so the step asserts on the resolved command line and on the
 // fact that nothing was spawned.
 //
-// Example values only (docs/example-customers.md).
+// Example values only (docs/examples.md).
 
 estate scc_smoke
 

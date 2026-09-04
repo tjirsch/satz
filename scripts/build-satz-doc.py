@@ -3,7 +3,7 @@
 
     uv run --with markdown scripts/build-satz-doc.py [MD] [OUT.html] [TITLE]
 
-Defaults: docs/satz-language.md → docs/satz-language.html, title from the
+Defaults: docs/language.md → docs/language.html, title from the
 first `# heading`. Any `![…](name.svg)` image whose file sits beside the
 markdown is inlined and recoloured through CSS tokens so it follows the
 viewer's theme. One source, two renderings: the markdown is what the repo
@@ -16,7 +16,7 @@ from pathlib import Path
 import markdown
 
 ROOT = Path(__file__).resolve().parent.parent
-MD = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "docs" / "satz-language.md"
+MD = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "docs" / "language.md"
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else MD.with_suffix(".html")
 TITLE = sys.argv[3] if len(sys.argv) > 3 else None
 

@@ -407,7 +407,7 @@ pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
                 } else {
                     out.push_str("    a newer release exists — the differences above are the version gap.\n");
                     out.push_str("    Adopt it (copy the pristine file in), or `merge-presets` if this copy may\n");
-                    out.push_str("    ALSO have been edited. See docs/presets-workflow.md.\n");
+                    out.push_str("    ALSO have been edited. See docs/workflows.md.\n");
                 }
             }
             _ => {

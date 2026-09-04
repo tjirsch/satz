@@ -2,7 +2,7 @@
 
 **Status:** proposal, 2026-08-25. Owner decisions already taken: satz exports
 *facts*, Claude writes the *prose*; the document lives here, name-free, with a
-drawn diagram. Companion to `satz-language.md`, which it does not change.
+drawn diagram. Companion to `language.md`, which it does not change.
 
 This document answers one question: **where does an external audit toolset —
 Prowler scanning a whole organisation, Claude turning findings into a
