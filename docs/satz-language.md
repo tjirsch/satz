@@ -1155,7 +1155,48 @@ declaration above is that pack's, with its `reason` shortened to fit here.
 | `run` | yes | The executable. Resolved relative to the directory of the file that **declares** it — so a pack that ships a script is self-contained — then against the include dirs, exactly as a `use` path is. Never interpolated. |
 | `args` | no | Always passed. `{param}` interpolates; an unknown param is a hard error. |
 | `execute_args` | no | Appended **only** under `--execute`. This is where a script's `--apply` lives. |
-| `phase` | no | `before-apply` or `after-apply`, default `after-apply`. Advisory: it orders the run and selects with `--phase`. Nothing chains `satz apply`. |
+| `phase` | no | `before-apply` for a prerequisite, `after-apply` for a step that needs what the apply created. Default `after-apply`. Advisory: it orders the run and selects with `--phase`, but nothing chains `satz apply` — see below. |
+
+#### Which phase, and what `phase` does not do
+
+The two values answer one question: does this step have to happen **before** the
+estate exists, or **after**?
+
+**`before-apply` — a prerequisite.** The step has to be true before the apply can
+succeed, so it cannot wait for it. Enablement is the archetype: the SCC pack above
+turns the services on ahead of the resources that depend on them.
+
+**`after-apply` — the step needs what the apply created.** It cannot run earlier,
+because the thing it operates on does not exist yet. A per-project setting with no
+provider binding is the plain case — it cannot be applied to a project the apply
+has not created:
+
+```
+action "seed-project-settings" {
+  reason       = "the setting has no provider resource, and the project it targets is created by this estate"
+  run          = "../scripts/seed-settings.sh"
+  args         = ["--project", "{infra_project_name}"]
+  execute_args = ["--apply"]
+  phase        = "after-apply"
+}
+```
+
+`after-apply` is the default, so the second form needs no `phase` line at all;
+write it when it helps a reader, and write `before-apply` whenever the step is a
+prerequisite.
+
+**What `phase` does not do:** it does not run anything around `satz apply`.
+`satz apply` neither knows nor mentions actions, so nothing enforces that a
+`before-apply` action actually ran before the apply. The value orders the run
+(`before-apply` first, then declaration order) and selects with
+`--phase before-apply|after-apply`; sequencing the two against the apply is the
+operator's job:
+
+```bash
+satz run-actions estate.satz --phase before-apply --execute
+satz apply
+satz run-actions estate.satz --phase after-apply --execute
+```
 
 **Nothing here runs while compiling.** `transpile` is a pure function of its
 sources and stays one: that is what lets the corpus snapshots, `check-presets`
