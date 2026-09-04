@@ -2280,7 +2280,7 @@ dependencies = [
 
 [[package]]
 name = "satz"
-version = "0.46.72"
+version = "0.46.73"
 dependencies = [
  "clap",
  "clap_complete",
