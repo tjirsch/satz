@@ -134,7 +134,16 @@ and in the maintainer's notes. Nothing in this file names a customer.
   last known v0 silent-last-wins defect; repeated blocks are a list of
   objects, resource-type maps may repeat).
 
-## Scripts
+## Scripts and housekeeping
 
 `docs/scripts.md` describes `scripts/` — the operations that are neither a
 command nor a preset (SCC service enablement, the doc build, the privacy gate).
+
+`docs/housekeeping.md` lists every file DERIVED from something outside this
+repository — the provider schema fixture, the CAI asset-type list, the
+managed/legacy constraint pairing, the catalogs, the version pins — with what
+refreshes each, what triggers it, and what catches it when nobody remembers.
+Three of them have no automatic check at all, which is the reason the page
+exists. Anything derived gets a script, else a gate, else a line on that page:
+a file that is out of date while the tests report success is how a compliance
+tool starts lying.
