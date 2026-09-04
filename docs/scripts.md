@@ -46,33 +46,42 @@ resources: the v1 API answers `This API is no longer available. Please use API
 V2` on a live org, so `google_scc_notification_config` is a dead end and
 `google_scc_v2_organization_notification_config` is the one to write.
 
-### What the first live run changed (2026-09-04)
+### It calls the API, not `gcloud scc manage`
 
-Until then this script had only ever run against a gcloud test double, and the
-double accepted everything. Against a real organization, four things were wrong:
+The SDK knows **13** of the **17** services the API exposes. `ARTIFACT_GUARD`,
+`ARTIFACT_ANALYSIS`, `AGENT_ENGINE_VULN_ASSESSMENT` and `EXTERNAL_EXPOSURE` have
+no gcloud name at all — the CLI answers "is not a valid service name" — while the
+API sets them without complaint. Four services silently out of reach is reason
+enough on its own; going straight to the API also deletes a translation step that
+had been a bug (the API says `SECURITY_HEALTH_ANALYTICS`, the CLI wanted
+`security-health-analytics`, and discovery fed one to the other, so *every*
+discovered run failed completely). gcloud still supplies the credentials and
+walks the hierarchy.
 
-- **Discovery spoke the wrong dialect.** `gcloud scc manage services list`
-  answers `SECURITY_HEALTH_ANALYTICS`; `gcloud scc manage services update` takes
-  `security-health-analytics`. The discovered names were passed through verbatim,
-  so *every* call failed with "is not a valid service name" — discovery, the
-  feature meant to keep the list current, broke every run that used it. Names are
-  now lowercased and hyphenated.
-- **The API lists services gcloud cannot set.** A live org offered
-  `ARTIFACT_GUARD`, `ARTIFACT_ANALYSIS`, `AGENT_ENGINE_VULN_ASSESSMENT` and
-  `EXTERNAL_EXPOSURE`, none of which the SDK accepts. Discovery is intersected
-  with the settable set and the remainder is reported in one line instead of
-  producing a wall of errors.
-- **`external-exposure` was in the built-in fallback list** and is not a valid
-  name either — so the fallback path was broken too, in the same way, silently.
-- **VM Manager cannot be enabled here.** The API answers `Invalid
+The API needs a quota project — `--quota-project`, defaulting to the active
+gcloud project — and refuses the call without one. `--apply` is the difference
+between `validateOnly` and a write.
+
+### What the live runs found (2026-09-04)
+
+Until that day this script had only ever run against a gcloud test double, and
+the double accepted everything. Against a real organization, on the gcloud path,
+7 of 33 calls failed; on the API path 38 of 41 succeed, and the three that fail
+are the organization's own state. What the runs turned up:
+
+- **Four services were unreachable through the CLI** — the reason for the move
+  above. All four now enable, verified end to end.
+- **VM Manager cannot be enabled at all here.** The API answers `Invalid
   intended_enablement_state. ENABLED is not a valid enablement state`: SCC mirrors
   whether GCE's VM Manager is running. It is skipped in the org pass with a note
   and still swept to `INHERITED`, which the API does accept.
-
-One failure is **not** a script bug and is left to surface: Security Health
-Analytics answers `FAILED_PRECONDITION` at every level on an org where it is
-disabled and the subscription does not carry it. The script prints the API's own
-error rather than guessing at the cause.
+- **Security Health Analytics answers `FAILED_PRECONDITION`** at every level on an
+  org where it is disabled and the subscription does not carry it. That is not a
+  script bug and is left to surface with the API's own message rather than a
+  guess at the cause.
+- **`external-exposure` sat in the built-in fallback list** in a spelling nothing
+  accepted, so the fallback path had been broken too, and silently. The list is
+  now in the API's own names, which is what discovery returns.
 
 ### What it does
 
