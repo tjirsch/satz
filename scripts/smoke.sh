@@ -31,7 +31,7 @@ if [ ! -f "$HOME/.config/satz/satz.toml" ]; then
   mkdir -p "$HOME/.config/satz" && printf 'self_update_frequency = "never"\n' > "$HOME/.config/satz/satz.toml"
 fi
 cd "$root/tests/smoke"
-rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz evidence
+rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz yaml/identity-*.satz evidence
 mkdir -p tmp
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -644,6 +644,66 @@ assert "outside the server's root" in msgs[5]["result"]["content"][0]["text"], m
 
 PYEOF
 
+step "satz mcp: one process serves one identity, and a second estate is refused"
+# The identity a live tool runs as is invisible in its output, so it is asserted
+# here instead. Two cloud-mode estates with DIFFERENT service accounts: the first
+# binds, the second must be refused by name. It used to be silently ignored, which
+# meant the second estate's tools ran as the first estate's service account.
+# Offline throughout: whoami reports the bound target without minting a token.
+for c in acme bolt; do
+  cat > "yaml/identity-$c.satz" <<EOF
+estate identity_$c
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0TEST"
+  customer_domain = "example.com"
+  customer_shortname = "$c"
+  infra_project_name = "$c-infra-001"
+  svc_iac_account = "svc-iac-001"
+  deployment_engine = "tofu"
+  deployment_mode = "cloud"
+}
+EOF
+done
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"estate":"identity-acme.satz","offline":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"estate":"identity-bolt.satz","offline":true}}}'
+} > tmp/mcp-id-in.jsonl
+"$satz" --config . mcp 2>/dev/null < tmp/mcp-id-in.jsonl > tmp/mcp-id.jsonl || true
+python3 - <<'PYEOF' || fail "the identity binding did not behave"
+import json
+msgs = {}
+for l in open("tmp/mcp-id.jsonl"):
+    if l.strip():
+        d = json.loads(l)      # stdout is still the protocol
+        if "id" in d:
+            msgs[d["id"]] = d
+
+want = {20: "acme", 21: "bolt"}
+results = {i: msgs[i]["result"] for i in want}
+
+# Which of the two binds is NOT asserted: the server dispatches requests
+# concurrently, so they race, and either may win. What must hold is that exactly
+# one wins — the outcome the old silent no-op could not give, since there the
+# loser ran happily as the winner's service account.
+ok = [i for i, r in results.items() if not r.get("isError")]
+refused = [i for i, r in results.items() if r.get("isError")]
+assert len(ok) == 1 and len(refused) == 1, f"expected one bound and one refused, got {results}"
+
+who = results[ok[0]]["structuredContent"]
+assert who["email"] == f"svc-iac-001@{want[ok[0]]}-infra-001.iam.gserviceaccount.com", who
+assert who["kind"] == "impersonated-sa", who
+
+# The refusal has to name both, or the operator cannot tell which estate the
+# process belongs to and which one they asked for.
+text = json.dumps(results[refused[0]])
+for c in want.values():
+    assert f"{c}-infra-001" in text, f"the refusal does not name {c}: {text}"
+PYEOF
+
 step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
@@ -652,5 +712,5 @@ grep -q 'href="docs/language.html"' tmp/site/index.html || fail "site: README li
 step "corpus + unit tests"
 (cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)
 
-rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz evidence
+rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz yaml/identity-*.satz evidence
 printf '\nsmoke: every command ran.\n'

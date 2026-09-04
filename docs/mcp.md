@@ -162,6 +162,29 @@ Two unit tests cover what the matrix cannot: one scans this module, the other sc
 code a tool reaches transitively — the token chokepoint and the announce path. A new
 live code path on a tool's route belongs in the second one.
 
+## One server, one identity
+
+A live tool runs as the estate it names — for a `deployment_mode = "cloud"` estate, that
+estate's IaC service account, exactly as the same command does from the shell. This was
+not true at first: the server never bound an identity, so `satz_report_compliance` read
+the organisation as the human who started it while `satz report-compliance` read it as
+the service account. Same code, two principals, no visible difference in the output.
+
+The binding is per tool call, from the estate argument, but the **process** holds one
+identity. The first live call binds it; a call needing a different service account is
+refused, and the refusal names both. Serve a second estate from a second server.
+
+Refusing is the point. The alternative — rebinding per call — is not merely untidy: the
+server dispatches requests concurrently (the smoke matrix demonstrates two calls racing),
+so a mutable target would hand one estate's tools another estate's credentials, at
+random, across customers. The old behaviour was worse still and needed no concurrency at
+all: the second binding was silently dropped, so estate B's tools ran as estate A's
+service account every time.
+
+`satz_whoami` takes an optional `estate` for this reason. Without it you learn the
+server's ambient fallback; with it you learn the identity that estate's tools actually
+run as.
+
 ### Still missing
 
 - **No `exec` tool**, though the group is grantable. `tofu` and

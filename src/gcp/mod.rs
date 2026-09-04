@@ -10,19 +10,65 @@ pub(crate) mod resourcemanager;
 pub(crate) mod serviceusage;
 pub(crate) mod storage;
 
-/// The service account every live call runs as, set ONCE at dispatch for
-/// estate commands (deployment_mode "cloud" → the estate's IaC SA, exactly
-/// the identity tofu applies with) and consulted by the token chokepoint and
-/// the Cloud Asset client. `None` = plain ADC; a second configuration is a
-/// no-op, so a command's several clients can never disagree.
-static IMPERSONATE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+/// What the process has been bound to.
+///
+/// `Disabled` is `--no-impersonate`: a deliberate decision that outranks any
+/// estate and is never a conflict. `Bound` is the estate's answer — `Some(sa)`
+/// for a `deployment_mode = "cloud"` estate, `None` for a local one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Identity {
+    Disabled,
+    Bound(Option<String>),
+}
 
-pub(crate) fn configure_impersonation(sa: Option<String>) {
-    let _ = IMPERSONATE.set(sa);
+/// The service account every live call runs as, bound at dispatch for estate
+/// commands (deployment_mode "cloud" → the estate's IaC SA, exactly the
+/// identity tofu applies with) and consulted by the token chokepoint and the
+/// Cloud Asset client.
+///
+/// One process, one identity. That is free for the CLI — one command, one
+/// estate — but `satz mcp` is long-lived and its tools each name an estate, so
+/// a second, DIFFERENT binding is refused rather than ignored. It used to be
+/// ignored, which meant a tool call on estate B silently ran as estate A's
+/// service account: deterministic, silent, and cross-customer.
+static IMPERSONATE: std::sync::OnceLock<Identity> = std::sync::OnceLock::new();
+
+/// Bind the identity, or confirm it is already what the caller wants.
+///
+/// Rebinding to the same target is fine (a command builds several clients).
+/// Rebinding to a different one is an error naming both, because there is no
+/// answer that is right for both callers.
+pub(crate) fn configure_impersonation(sa: Option<String>) -> Result<(), String> {
+    describe_conflict(IMPERSONATE.get_or_init(|| Identity::Bound(sa.clone())), &sa)
+}
+
+/// `--no-impersonate`: pin the process to the plain ADC. It wins over any
+/// later estate binding instead of colliding with it.
+pub(crate) fn disable_impersonation() {
+    let _ = IMPERSONATE.set(Identity::Disabled);
+}
+
+/// Pure so the four cases are testable without touching the global.
+fn describe_conflict(current: &Identity, wanted: &Option<String>) -> Result<(), String> {
+    match current {
+        // The operator asked for the plain ADC; an estate does not override that.
+        Identity::Disabled => Ok(()),
+        Identity::Bound(bound) if bound == wanted => Ok(()),
+        Identity::Bound(bound) => Err(format!(
+            "this process is already acting as {}, and this estate needs {} — one process \
+             serves one identity. Run the command again for the other estate, or restart \
+             `satz mcp` pointed at it.",
+            bound.as_deref().unwrap_or("the plain ADC (a local-mode estate)"),
+            wanted.as_deref().unwrap_or("the plain ADC (a local-mode estate)"),
+        )),
+    }
 }
 
 pub(crate) fn impersonation_target() -> Option<String> {
-    IMPERSONATE.get().and_then(|o| o.clone())
+    match IMPERSONATE.get() {
+        Some(Identity::Bound(sa)) => sa.clone(),
+        Some(Identity::Disabled) | None => None,
+    }
 }
 
 /// An ADC bearer token for the cloud-platform scope — minted AS the
@@ -330,6 +376,60 @@ pub(crate) fn add_binding(policy: &mut serde_json::Value, role: &str, member: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- which identity the process is bound to ------------------------------
+
+    fn sa(s: &str) -> Option<String> {
+        Some(s.to_string())
+    }
+
+    /// Binding twice to the same service account is ordinary: one command builds
+    /// several clients, and each asks.
+    #[test]
+    fn rebinding_the_same_identity_is_not_a_conflict() {
+        let bound = Identity::Bound(sa("svc-iac@acme-infra-001.iam.gserviceaccount.com"));
+        assert!(
+            describe_conflict(&bound, &sa("svc-iac@acme-infra-001.iam.gserviceaccount.com")).is_ok()
+        );
+        assert!(describe_conflict(&Identity::Bound(None), &None).is_ok());
+    }
+
+    /// The defect this replaced: the second binding was silently DROPPED, so a
+    /// tool call on estate B ran as estate A's service account. Deterministic,
+    /// invisible, and across two customers.
+    #[test]
+    fn a_second_different_identity_is_refused_and_names_both() {
+        let bound = Identity::Bound(sa("svc-iac@acme-infra-001.iam.gserviceaccount.com"));
+        let err = describe_conflict(&bound, &sa("svc-iac@globex-infra-001.iam.gserviceaccount.com"))
+            .expect_err("a different service account must not be silently ignored");
+        assert!(err.contains("acme-infra-001"), "the error hides who we already are: {}", err);
+        assert!(err.contains("globex-infra-001"), "the error hides who was asked for: {}", err);
+    }
+
+    /// A local-mode estate wants the plain ADC; that is still an identity, and
+    /// mixing it with a cloud-mode estate in one process is still a conflict.
+    #[test]
+    fn plain_adc_and_a_service_account_conflict_in_both_directions() {
+        let none = Identity::Bound(None);
+        let some = Identity::Bound(sa("svc-iac@acme-infra-001.iam.gserviceaccount.com"));
+        assert!(describe_conflict(&none, &sa("svc-iac@acme-infra-001.iam.gserviceaccount.com")).is_err());
+        assert!(describe_conflict(&some, &None).is_err());
+    }
+
+    /// `--no-impersonate` is the operator overruling the estate. It must not then
+    /// collide with the estate it overruled.
+    #[test]
+    fn no_impersonate_outranks_every_estate_instead_of_conflicting() {
+        assert!(describe_conflict(&Identity::Disabled, &None).is_ok());
+        assert!(
+            describe_conflict(
+                &Identity::Disabled,
+                &sa("svc-iac@acme-infra-001.iam.gserviceaccount.com")
+            )
+            .is_ok(),
+            "--no-impersonate must stay a decision, not become a conflict"
+        );
+    }
 
     #[test]
     fn classification_separates_quota_from_permission() {

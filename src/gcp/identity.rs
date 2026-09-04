@@ -167,6 +167,26 @@ pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn
         CredKind::SaKey => "sa-key",
         CredKind::Unknown => "unknown",
     };
+    // When the process is bound to an estate, the honest answer to "who am I"
+    // is the identity the live calls RUN as — the estate's IaC service account
+    // — not the human behind it. Nothing binds for the plain `satz whoami`, so
+    // this is inert there; it fires for `satz_whoami` asked about an estate.
+    // Known without a network either way, so it answers `--offline` too.
+    if let Some(sa) = crate::gcp::impersonation_target() {
+        return Ok(WhoamiReport {
+            email: Some(sa),
+            kind: kind_name(&CredKind::ImpersonatedSa),
+            quota_project: crate::org_policy::resolve_quota_project(),
+            adc_file,
+            offline,
+            note: Some(
+                "impersonated for this estate — the ADC file above is the human this \
+                 service account is reached through"
+                    .to_string(),
+            ),
+        });
+    }
+
     if offline {
         let Some(info) = credential_info_offline() else {
             return Err("no Application Default Credentials file found — run `gcloud auth \
