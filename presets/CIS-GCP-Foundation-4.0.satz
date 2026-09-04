@@ -9,7 +9,7 @@
 
 // Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
-pack CIS_GCP_Foundation_4_0 version "2.4"
+pack CIS_GCP_Foundation_4_0 version "2.5"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -69,6 +69,14 @@ params {
     "serviceAccount:service-org-{customer_organization_id}@gcp-sa-dspm-hpsa.iam.gserviceaccount.com",
     "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
     "serviceAccount:service-org-{customer_organization_id}@gcp-sa-ktd-hpsa.iam.gserviceaccount.com",
+  ]
+  // compute.managed.restrictProtocolForwardingCreationForTypes: the load
+  // balancing schemes for which protocol forwarding may be created. Default =
+  // INTERNAL only, which is what the legacy list constraint enforced before
+  // v2.5. A managed constraint is configured through `parameters`, so this is a
+  // param rather than a values list.
+  allowed_protocol_forwarding_schemes = [
+    "INTERNAL",
   ]
   // essentialcontacts.managed.allowedContactDomains: the DOMAINS whose
   // addresses may be set as essential contacts (each entry `@domain`).
@@ -167,16 +175,21 @@ params {
   }
 }
 
-"compute-restrictProtocolForwardingCreationForTypes" {
-  name = "compute.restrictProtocolForwardingCreationForTypes"
+// CIS protocol forwarding, MANAGED form. Google replaces the legacy list
+// constraint with this one; the legacy twin is switched off in the same breath
+// (see the superseded section below) so the two never both apply. Same effect:
+// only INTERNAL protocol forwarding may be created. A managed constraint is
+// configured through `parameters` — the legacy form's `allowed_values` has no
+// meaning here.
+"compute-managed-restrictProtocolForwardingCreationForTypes" {
+  name = "compute.managed.restrictProtocolForwardingCreationForTypes"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
       {
-        values {
-          allowed_values = [
-            "INTERNAL",
-          ]
+        enforce = "TRUE"
+        parameters = {
+          allowedSchemes = allowed_protocol_forwarding_schemes
         }
       },
     ]
@@ -347,13 +360,99 @@ params {
 // The five constraints the benchmark names as the baseline (resource
 // locations, OS Login, external IPs, uniform bucket access, allowed member
 // domains) are all in the list below.
+// ---------------------------------------------------------------------------
+// SUPERSEDED LEGACY CONSTRAINTS — declared OFF, on purpose.
+//
+// Where Google replaces a legacy constraint with a managed one, this pack runs
+// the REPLACEMENT ALONE. Both forms in force is the defect, not a belt-and-
+// braces win: org-policy constraints AND together, so every exemption would
+// have to lift TWO policies — and for several of these Google's only documented
+// exemption path is to disable the constraint org-wide, grant, and re-enable,
+// which is a window with the control switched off.
+//
+// Absence is not enough. A legacy policy already set on an organisation is
+// invisible to an apply that does not declare it: it keeps enforcing, and has
+// to be deleted by hand, on every estate, forever. Declaring it with
+// `reset = true` — restore the constraint's default, which is ALLOW for every
+// constraint below, verified against a live organisation — lets the estate say
+// it, the apply do it, and a later re-enabling revert on the next apply.
+//
+// On an organisation where one of these is already set, run
+// `satz adopt --only google_org_policy_policy --execute --import` before the
+// apply, so the existing policy is imported rather than created twice.
+//
+// A constraint is listed here ONLY when this pack enables its managed
+// replacement; `cis-extensions/` carries its own, next to the fragment that
+// enables them. Managed constraints with no legacy form — most of them, 45 of
+// the 60 a live organisation offers — need nothing.
+// ---------------------------------------------------------------------------
+
+// Superseded by iam.managed.allowedPolicyMembers (CIS 1.1 / 5.0 1.2). Google
+// declares no equivalence between these two names, so the pairing is ours; the
+// reasoning is in the claim's duty_legacy_superseded.
+"iam-allowedPolicyMemberDomains" {
+  name = "iam.allowedPolicyMemberDomains"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    reset = true
+  }
+}
+
+// Superseded by compute.managed.requireOsLogin.
+"compute-requireOsLogin" {
+  name = "compute.requireOsLogin"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    reset = true
+  }
+}
+
+// Superseded by essentialcontacts.managed.allowedContactDomains.
+"essentialcontacts-allowedContactDomains" {
+  name = "essentialcontacts.allowedContactDomains"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    reset = true
+  }
+}
+
+// Superseded by iam.managed.disableServiceAccountKeyCreation.
+"iam-disableServiceAccountKeyCreation" {
+  name = "iam.disableServiceAccountKeyCreation"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    reset = true
+  }
+}
+
+// Superseded by iam.managed.disableServiceAccountKeyUpload.
+"iam-disableServiceAccountKeyUpload" {
+  name = "iam.disableServiceAccountKeyUpload"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    reset = true
+  }
+}
+
+// Superseded by compute.managed.restrictProtocolForwardingCreationForTypes as of
+// v2.5. This block kept its address deliberately: an estate on v2.4 carries the
+// legacy policy under exactly this name, so the switch is an in-place update
+// rather than a destroy and a create of the same org policy in one apply.
+"compute-restrictProtocolForwardingCreationForTypes" {
+  name = "compute.restrictProtocolForwardingCreationForTypes"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    reset = true
+  }
+}
+
 claim "cis-gcp" "5.0" "1.1.4" implements {
   resources = [
     "google_org_policy_policy.compute_managed_requireOsLogin",
     "google_org_policy_policy.compute_managed_vmCanIpForward",
     "google_org_policy_policy.compute_managed_vmExternalIpAccess",
     "google_org_policy_policy.compute_requireVpcFlowLogs",
-    "google_org_policy_policy.compute_restrictProtocolForwardingCreationForTypes",
+    "google_org_policy_policy.compute_managed_restrictProtocolForwardingCreationForTypes",
     "google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly",
     "google_org_policy_policy.compute_skipDefaultNetworkCreation",
     "google_org_policy_policy.essentialcontacts_managed_allowedContactDomains",

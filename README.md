@@ -248,7 +248,7 @@ An estate can remove something a used pack contributes — without forking:
 use "presets/CIS-GCP-Foundation-4.0.satz" as google_org_policy_policy
 
 // drop one pack resource; grant-edge form removes a single role
-suppress google_org_policy_policy "iam-allowedPolicyMemberDomains"
+suppress google_org_policy_policy "compute-skipDefaultNetworkCreation"
 suppress google_organization_iam_member "group:sec@example.com" role "roles/viewer"
 ```
 

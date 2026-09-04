@@ -582,6 +582,47 @@ issues — `ciem-discovery`, `containers`, `containers-streams`,
 each need their own `api://` audience, service account and role set from that customer's
 script. They cannot be guessed, so they are not shipped.
 
+## Superseded legacy constraints
+
+Where Google replaces a legacy org-policy constraint with a managed one, a pack runs the
+**replacement alone** and declares the legacy twin OFF in the same file:
+
+```
+"compute-requireOsLogin" {
+  name = "compute.requireOsLogin"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    reset = true
+  }
+}
+```
+
+Both forms in force is a defect, not extra safety. Org-policy constraints AND together, so
+an exemption has to lift **two** policies — and for several legacy constraints Google's only
+documented exemption path is to disable the constraint org-wide, grant, and re-enable it,
+which is a window with the control switched off. That is the argument the CIS pack's
+`duty_legacy_superseded` has carried since v2.0, now applied to every pair it enables.
+
+**Absence is not enough**, which is why these blocks exist rather than simply not being
+written. A legacy policy already set on an organisation is invisible to an apply that does
+not declare it: it keeps enforcing, and someone has to delete it by hand on every estate.
+`reset = true` restores the constraint's default — ALLOW for every constraint paired this
+way, verified against a live organisation — so the estate states it, the apply does it, and
+a later re-enabling reverts on the next apply. On an organisation where the legacy policy
+already exists, run `satz adopt --only google_org_policy_policy --execute --import` first so
+it is imported rather than created twice.
+
+Do not `suppress` one of these blocks. Suppressing it does not re-enable anything — it stops
+the estate from saying the legacy constraint is off, so a policy already set on the
+organisation goes back to enforcing beside its managed twin, which is the situation the
+block exists to prevent.
+
+Only pairs need this. Of the 60 managed constraints a live organisation offers, **45 have no
+legacy form at all** — nothing to switch off. Google declares the pairing in
+`equivalentConstraint`, asymmetrically (15 managed name a legacy twin; only 6 legacy name a
+managed one), and not at all for `iam.allowedPolicyMemberDomains` ↔
+`iam.managed.allowedPolicyMembers` — that pairing is ours.
+
 ## cis-extensions/
 
 CIS coverage beyond the baseline, one fragment per control, all **opt-in**. The base

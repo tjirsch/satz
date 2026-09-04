@@ -10,7 +10,7 @@
 // The constraint name and its shape were verified against a live
 // organisation's OrgPolicy `ListConstraints`, not transcribed.
 
-pack cis_extensions.cloud_sql version "1.0"
+pack cis_extensions.cloud_sql version "1.1"
 
 google_org_policy_policy {
   "sql-managed-restrictAuthorizedNetworks" {
@@ -36,6 +36,33 @@ google_org_policy_policy {
         enforce = "TRUE"
         },
       ]
+    }
+  }
+}
+
+
+// Superseded legacy twin, declared OFF — see the section of the same name in
+// CIS-GCP-Foundation-4.0.satz for why absence is not enough. `reset = true`
+// restores the constraint default, which is ALLOW here.
+google_org_policy_policy {
+  "sql-restrictAuthorizedNetworks" {
+    name = "sql.restrictAuthorizedNetworks"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
+    }
+  }
+}
+
+// Superseded legacy twin, declared OFF — see the section of the same name in
+// CIS-GCP-Foundation-4.0.satz for why absence is not enough. `reset = true`
+// restores the constraint default, which is ALLOW here.
+google_org_policy_policy {
+  "sql-restrictPublicIp" {
+    name = "sql.restrictPublicIp"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
     }
   }
 }

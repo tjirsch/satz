@@ -5,12 +5,12 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`; the 
 
 | pack | version | file | resources | claims |
 |---|---|---|---|---|
-| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.4 | `CIS-GCP-Foundation-4.0.satz` | 19 | 29 |
+| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.5 | `CIS-GCP-Foundation-4.0.satz` | 25 | 29 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | `billing-account-permissions.satz` | 4 | 0 |
 | [`cis_extensions.api_key_services`](api-key-services.md) | 1.0 | `cis-extensions/api-key-services.satz` | 1 | 2 |
 | [`cis_extensions.block_project_ssh_keys`](block-project-ssh-keys.md) | 1.0 | `cis-extensions/block-project-ssh-keys.satz` | 1 | 2 |
-| [`cis_extensions.bucket_retention`](bucket-retention.md) | 1.0 | `cis-extensions/bucket-retention.satz` | 1 | 2 |
-| [`cis_extensions.cloud_sql`](cloud-sql.md) | 1.0 | `cis-extensions/cloud-sql.satz` | 2 | 4 |
+| [`cis_extensions.bucket_retention`](bucket-retention.md) | 1.1 | `cis-extensions/bucket-retention.satz` | 2 | 2 |
+| [`cis_extensions.cloud_sql`](cloud-sql.md) | 1.1 | `cis-extensions/cloud-sql.satz` | 4 | 4 |
 | [`cis_extensions.cmek`](cmek.md) | 1.0 | `cis-extensions/cmek.satz` | 2 | 6 |
 | [`cis_extensions.confidential_computing`](confidential-computing.md) | 1.0 | `cis-extensions/confidential-computing.satz` | 1 | 2 |
 | [`cis_extensions.shielded_vm`](shielded-vm.md) | 1.0 | `cis-extensions/shielded-vm.satz` | 1 | 2 |
