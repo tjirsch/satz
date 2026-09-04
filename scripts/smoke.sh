@@ -550,6 +550,16 @@ done
 bash "$root/scripts/check-names.sh" tmp/ok.txt >tmp/ok-out.txt 2>&1 \
   || fail "the gate rejected a vendor default or a documented example:\n$(cat tmp/ok-out.txt)"
 
+step "satz mcp: a client that never says hello is not an error"
+# The first thing anyone does to check the command is run it by hand. Closed stdin
+# means the client hung up before `initialize`, which is not a failure — exiting
+# non-zero there teaches an operator to distrust a server that is working.
+if ! printf '' | "$satz" --config . mcp >tmp/mcp-eof.txt 2>&1; then
+  fail "a closed stdin made satz mcp exit non-zero:\n$(cat tmp/mcp-eof.txt)"
+fi
+grep -q 'before the client said hello' tmp/mcp-eof.txt \
+  || fail "the EOF message does not explain itself:\n$(cat tmp/mcp-eof.txt)"
+
 step "satz mcp: a real handshake, a real tool call, and the capability gate"
 # stdout IS the protocol here, so the assertion is that EVERY line parses as
 # JSON-RPC — the version banner and the schema-loader line would each be a

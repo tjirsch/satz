@@ -607,9 +607,29 @@ pub(crate) async fn serve(
         ceiling.describe(),
         if self_gated { ", self-gated" } else { "" }
     );
-    let service = SatzMcp::new(tool, runtime, root, ceiling, self_gated)
+    let service = match SatzMcp::new(tool, runtime, root, ceiling, self_gated)
         .serve(rmcp::transport::stdio())
-        .await?;
+        .await
+    {
+        Ok(s) => s,
+        // A client that hangs up before `initialize` has not failed at anything.
+        // It is what `echo "" | satz mcp` does, and what a client does when it
+        // decides not to start us after all. Saying `Error: ConnectionClosed`
+        // and exiting non-zero teaches an operator to distrust a server that is
+        // working — the first thing anyone does to check this command is run it
+        // by hand with nothing on stdin.
+        Err(rmcp::service::ServerInitializeError::ConnectionClosed(_)) => {
+            eprintln!(
+                "satz mcp: stdin closed before the client said hello — nothing to serve, exiting."
+            );
+            eprintln!(
+                "          This is what running it by hand does. A client starts it and speaks first; \
+                 to try it yourself, pipe an `initialize` request in."
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
     service.waiting().await?;
     Ok(())
 }

@@ -13,6 +13,23 @@ satz mcp --allow read,write --self-gated
 
 It speaks JSON-RPC on stdio and is started by the client, not by you.
 
+Running it by hand is the first thing anyone tries, and it exits immediately with
+
+```
+satz mcp: stdin closed before the client said hello — nothing to serve, exiting.
+```
+
+That is correct behaviour, not a failure: the client speaks first. To exercise it
+yourself, pipe a real handshake in:
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | satz --config /path/to/estate mcp
+```
+
 ## What an agent may do
 
 Three capability groups, granted independently. They are **not** a severity ladder —
