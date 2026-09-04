@@ -1439,6 +1439,17 @@ Whether an action's `--check` form is side-effect-free is **the action's
 contract, not satz's**. A failed action stops the run and its exit code is
 propagated; the remaining actions do not run.
 
+What a script can rely on: the interpreter is whatever its shebang says (sh,
+bash, Python, a binary — satz just executes the file, and it must already be
+executable); the working directory is always the one holding `config.toml`,
+whatever directory satz was invoked from; and the environment is exactly five
+variables and **nothing else** — `SATZ_ACTION`, `SATZ_PHASE`, `SATZ_MODE`
+(`check` or `execute`), `SATZ_ESTATE`, `SATZ_HCL_DIR`. Params are not exported,
+so anything a script needs must be named in `args` and the declaration stays the
+complete record of what the action was told. Every action is located and checked
+before any is spawned, so a run cannot fail half way on the fourth script's
+missing `+x`. §6.13 has a worked script.
+
 Packs may declare actions too — the pack is where the knowledge that a step is
 needed lives — so every compile warns, naming the declaring file, and three
 global switches exist because `get-presets` downloads packs from a public

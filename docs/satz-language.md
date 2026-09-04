@@ -1185,6 +1185,87 @@ error naming both files, the rule the ⊕ fold already applies to a repeated
 address. An action inside a pack that `use … when` switched off is never
 collected at all.
 
+#### When an action runs, and how
+
+**Never on its own.** `satz run-actions` is the only thing that executes one:
+not `transpile`, not `plan`, not `apply` — `satz apply` does not know actions
+exist. `phase` orders the run and selects with `--phase`; it does not make
+anything happen around an apply.
+
+When `run-actions` does run, in this order:
+
+1. **The estate is compiled first.** If it does not compile, nothing runs — an
+   estate whose parameters cannot be trusted is not one to build a command line
+   from.
+2. **`{param}` resolves** against the finished namespace. An unknown param is a
+   hard error, never an empty argument.
+3. **The executable is located** relative to the directory of the file that
+   declared it, then against the include dirs — the same search a `use` path
+   gets.
+4. **Every action is located and vetted before any one is spawned** (it exists,
+   it is executable). A run must not die half way on the fourth script's missing
+   `+x` when the first three already changed the organisation.
+5. **Each is spawned**, in phase order (`before-apply`, then `after-apply`) and
+   declaration order within a phase — the estate's own actions first, then
+   `use`-visit order.
+6. **A non-zero exit stops the run** and satz exits with that code. The
+   remaining actions do not run: a failed step is not a reason to keep changing
+   the organisation.
+
+#### Writing a script for an action
+
+The contract is small, and satz guarantees all of it:
+
+| | |
+|---|---|
+| **interpreter** | Whatever the file's shebang says. Satz executes the file; it does not know or care whether the target is `sh`, `bash`, Python or a compiled binary. A Python script with dependencies can use `#!/usr/bin/env -S uv run --script` and PEP 723 inline metadata. |
+| **executable bit** | Required. Satz never sets it — the error names the `chmod +x`. |
+| **working directory** | Always the directory holding `config.toml`, whatever directory the operator invoked satz from. Never assume the caller's cwd. |
+| **arguments** | `args`, plus `execute_args` appended under `--execute`. |
+| **environment** | Exactly five variables, and **nothing else**: `SATZ_ACTION` (the name), `SATZ_PHASE`, `SATZ_MODE` (`check` or `execute`), `SATZ_ESTATE` (the estate file), `SATZ_HCL_DIR`. Params are **not** exported — anything a script needs must be named in `args`, so the declaration is the complete record of what the action was told. |
+| **exit code** | `0` is success. Anything else stops the run and becomes satz's exit code. |
+| **stdout / stderr** | Inherited, so the script's output is the operator's output. Satz does not capture, parse or store it. |
+
+The two-list split is what makes a script safe to point at: put the form that
+**reads** in `args` and the flag that **writes** in `execute_args`, so
+`run-actions --check` exercises the script's own dry run and only `--execute`
+lets it write. Whether the `args` form really is side-effect-free is the
+script's business — satz cannot know what a script does and does not pretend to.
+
+A script written to that contract. `tests/smoke/scripts/showcase-action.sh` is
+this shape with a few extra echoes the smoke matrix asserts on, and CI runs it on
+every push:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dry run unless the estate's execute_args said otherwise. The flag is the
+# script's own, not satz's: satz only decides whether to pass it.
+apply=0
+org=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --organization) org="$2"; shift 2 ;;
+    --apply)        apply=1; shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$org" ] || { echo "--organization is required" >&2; exit 2; }
+
+echo "action ${SATZ_ACTION} (${SATZ_MODE}) on organizations/${org}"
+if [ "$apply" = 0 ]; then
+  echo "DRY RUN — re-run with --execute to write."
+  exit 0
+fi
+
+# … the work. A non-zero exit here stops the whole run.
+```
+
+`scripts/scc-enable-all.sh` in this repository is the real one, and it already
+has that shape — dry run by default, `--apply` to write, non-zero on any failed
+call. See [`docs/scripts.md`](scripts.md).
+
 ### 6.14 Provenance: pristine, fork, ledger
 
 Suffix carries meaning; the tooling enforces it.
