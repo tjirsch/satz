@@ -440,7 +440,7 @@ step "the root help is grouped, on every path that prints it"
 for form in "--help" "-h" "help" ""; do
   # shellcheck disable=SC2086
   out=$(COLUMNS=80 "$satz" $form 2>&1)
-  for heading in "Estate:" "HCL and OpenTofu:" "Presets:" "Organization policies:" "Compliance and audit:" "Tool:"; do
+  for heading in "Estate:" "HCL:" "Presets:" "Policies:" "Compliance and audit:" "Tool:"; do
     printf '%s\n' "$out" | grep -qx "$heading" \
       || fail "\`satz ${form:-<no args>}\` has no '$heading' section — the grouped root help did not render"
   done
@@ -448,10 +448,10 @@ for form in "--help" "-h" "help" ""; do
     || fail "\`satz ${form:-<no args>}\`: the globals lost their own heading"
 done
 # a command lands under its group, not just anywhere in the output
-COLUMNS=80 "$satz" --help 2>&1 | awk '/^Organization policies:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'adopt-org-policies' \
-  || fail "adopt-org-policies is not listed under Organization policies"
-COLUMNS=80 "$satz" --help 2>&1 | awk '/^HCL and OpenTofu:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'hcl-init' \
-  || fail "hcl-init is not listed under HCL and OpenTofu"
+COLUMNS=80 "$satz" --help 2>&1 | awk '/^Policies:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'adopt-org-policies' \
+  || fail "adopt-org-policies is not listed under Policies"
+COLUMNS=80 "$satz" --help 2>&1 | awk '/^HCL:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'hcl-init' \
+  || fail "hcl-init is not listed under HCL"
 
 step "transpile --check: compiles in memory, accepts the yaml/-prefixed form, writes nothing"
 rm -rf hcl
