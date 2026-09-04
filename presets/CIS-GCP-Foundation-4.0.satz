@@ -30,9 +30,12 @@ params {
   // customer's own org. Add a partner's org here when the estate genuinely
   // needs cross-org grants.
   //
-  // v2.0 drops the legacy `iam.allowedPolicyMemberDomains` and its
-  // `allowed_policy_member_customers` param entirely; the claim's
-  // duty_legacy_superseded says why.
+  // v2.0 dropped the legacy `iam.allowedPolicyMemberDomains` and its
+  // `allowed_policy_member_customers` param; since v2.5 the pack goes further
+  // and declares that constraint OFF (`reset = true`, in the superseded
+  // section below), because not declaring it leaves a policy already set on the
+  // organisation enforcing beside this one. The claim's
+  // duty_legacy_superseded says why running both is the defect.
   allowed_policy_member_principal_sets = [
     "//cloudresourcemanager.googleapis.com/organizations/{customer_organization_id}",
   ]
@@ -40,8 +43,10 @@ params {
   // constraint can express this — the legacy `iam.allowedPolicyMemberDomains`
   // takes directory customer ids and, per Google, "cannot configure exceptions
   // for specific principals"; its documented remedy for granting a service
-  // agent is disable / grant / re-enable. So while both §1.1 policies are
-  // enforced, this list does NOT by itself unblock a service agent.
+  // agent is disable / grant / re-enable — which is exactly why this pack runs
+  // the managed constraint ALONE and declares the legacy one off. Where an
+  // estate has not yet applied that (pack < 2.5, legacy policy still enforcing),
+  // this list does NOT by itself unblock a service agent.
   //
   // Default = Security Command Center's service agents. They are CANONICAL:
   // the address is derived from the org id inside a Google-owned domain nobody
@@ -475,8 +480,8 @@ claim "cis-gcp" "4.0" "1.1" implements {
   resources = [
     "google_org_policy_policy.iam_managed_allowedPolicyMembers",
   ]
-  interpretation = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately NOT set — see duty_legacy_superseded."
-  duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone."
+  interpretation = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded."
+  duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organisation goes on enforcing, unseen by the apply."
   duty_review_allowlist = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
 }
 claim "cis-gcp" "5.0" "1.2" implements {
