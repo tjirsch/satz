@@ -8,15 +8,24 @@ that maintain the repo's own data files.
 A cloud step still cannot be **authored** in Satz — that is what makes it a
 script. It can, since v0.46.69, be **declared and invoked** by an estate: an
 [`action`](satz-language.md#613-action--a-step-with-no-provider-resource) names
-the step, binds it to one of these files, and builds its arguments from the
-estate's own params, so `satz run-actions` runs it with the organisation id the
-estate already knows instead of a human retyping it. Nothing runs at transpile
-time and an action carries no claim; the script stays exactly as opaque to the
-compliance plane as it is today.
+the step, binds it to a script, and builds its arguments from the estate's own
+params, so `satz run-actions` runs it with the organisation id the estate
+already knows instead of a human retyping it. Nothing runs at transpile time and
+an action carries no claim; the script stays exactly as opaque to the compliance
+plane as it is today.
+
+**One of these files does not live in `scripts/`, and the reason is worth
+stating.** `get-presets` downloads `presets/**` and nothing else, so a pack that
+declares an action must carry its script inside `presets/` or ship an action
+that cannot find what it runs. `scc-enable-all.sh` is therefore
+`presets/scc/scc-enable-all.sh`, beside the pack that binds it. The rule that
+follows: **a script a customer runs belongs under `presets/`; a script only this
+repository runs belongs in `scripts/`.** Everything else on this page is the
+second kind.
 
 | script | kind | what it does |
 |---|---|---|
-| `scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below |
+| `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
 | `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
@@ -26,30 +35,34 @@ compliance plane as it is today.
 
 ---
 
-## `scc-enable-all.sh` — Security Command Center services
+## `presets/scc/scc-enable-all.sh` — Security Command Center services
 
 Turns every SCC service on at the organization and makes everything below the
 organization inherit it.
 
 ```bash
-scripts/scc-enable-all.sh --organization 123456789012            # dry run
-scripts/scc-enable-all.sh --organization 123456789012 --apply    # write
+presets/scc/scc-enable-all.sh --organization 123456789012            # dry run
+presets/scc/scc-enable-all.sh --organization 123456789012 --apply    # write
 ```
 
-Its flag shape is also the shape an `action` binds to — `args` for the form that
-reads, `execute_args` for the flag that writes:
+**Or let the estate supply the organisation id.** `presets/scc/scc-service-enablement.satz`
+is a pack whose entire content is an `action` binding this script — no resources,
+because enablement is precisely the part that has none:
 
 ```
-action "scc-services" {
-  reason       = "SCC service enablement has no provider resource (google 7.14.1)"
-  run          = "../scripts/scc-enable-all.sh"
-  args         = ["--organization", "{customer_organization_id}"]
-  execute_args = ["--apply"]
-}
+use "presets/scc/scc-service-enablement.satz"
 ```
 
-`satz run-actions <estate>.satz` then prints the resolved command line, `--check`
-runs the dry run, and `--execute` adds `--apply`.
+```bash
+satz run-actions estate.satz              # print the resolved command line, run nothing
+satz run-actions estate.satz --check      # the dry run above
+satz run-actions estate.satz --execute    # adds --apply
+```
+
+The script's flag shape is what makes that binding clean: `args` carries the form
+that reads, `execute_args` the one flag that writes. The pack declares
+`phase = "before-apply"`, because enablement is a prerequisite for the SCC
+resources a later pack will declare.
 
 ### What is on by default, and what you have to ask for
 

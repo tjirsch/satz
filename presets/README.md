@@ -449,34 +449,41 @@ constraint may require one specific form) **or a third policy needs tuning**
 activation error, fix the exception format or identify the third constraint, then
 harden the pack/docs so the lift window is the only manual part.
 
-### Turning the SCC services on — `scripts/scc-enable-all.sh`
+### Turning the SCC services on — `presets/scc/scc-enable-all.sh`
 
 Service (module) enablement has **no provider resource**, so it cannot be
 expressed in a preset at all; neither can tier activation. What IS codeable —
 custom modules, sources + source IAM, notification configs, BigQuery exports,
 mute configs, Security Posture — is everything DOWNSTREAM of this step.
 
-`scripts/scc-enable-all.sh` is that step: every service `ENABLED` at the org,
+`presets/scc/scc-enable-all.sh` is that step: every service `ENABLED` at the org,
 every folder and project below it `INHERITED`. Dry run by default.
 
 ```bash
-scripts/scc-enable-all.sh --organization 123456789012              # dry run
-scripts/scc-enable-all.sh --organization 123456789012 --apply      # write
+presets/scc/scc-enable-all.sh --organization 123456789012              # dry run
+presets/scc/scc-enable-all.sh --organization 123456789012 --apply      # write
 ```
 
-An estate can bind that step instead of a human retyping the org id, with an
-[`action`](../docs/satz-language.md#613-action--a-step-with-no-provider-resource):
-`args` carries the form that reads, `execute_args` the flag that writes, and
-`satz run-actions <estate>.satz --execute` runs it with the estate's own params.
+**`scc/scc-service-enablement.satz` binds it**, so an estate does not retype the
+org id — one `use` is the whole thing:
 
 ```
-action "scc-services" {
-  reason       = "SCC service enablement has no provider resource (google 7.14.1)"
-  run          = "../scripts/scc-enable-all.sh"
-  args         = ["--organization", "{customer_organization_id}"]
-  execute_args = ["--apply"]
-}
+use "presets/scc/scc-service-enablement.satz"
 ```
+
+```bash
+satz run-actions estate.satz              # print the resolved command line, run nothing
+satz run-actions estate.satz --check      # the dry run above
+satz run-actions estate.satz --execute    # adds --apply
+```
+
+The pack has **no resources**, which is the point: enablement is precisely the
+part with no provider binding, and everything downstream of it (custom modules,
+sources and source IAM, v2 notification configs, BigQuery exports, mute configs,
+Security Posture) is codeable and belongs in a preset of its own. The script sits
+beside the pack rather than in `scripts/` because `get-presets` ships `presets/**`
+and nothing else — a pack whose script did not travel with it would declare an
+action that cannot find what it runs.
 
 A **pack** may declare an action too, and `satz doc-packs` puts it on the pack's
 page — but it stays a step satz merely runs, never a witness: no claim can cover

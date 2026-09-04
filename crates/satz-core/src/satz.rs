@@ -1446,7 +1446,7 @@ claim "cis-gcp" "4.0" "2.2" implements {
 estate demo
 action "scc-services" {
   reason       = "SCC service enablement has no provider resource"
-  run          = "../scripts/scc-enable-all.sh"
+  run          = "scc-enable-all.sh"
   args         = ["--organization", "{customer_organization_id}"]
   execute_args = ["--apply"]
   phase        = "before-apply"
@@ -1457,7 +1457,7 @@ action "scc-services" {
         assert_eq!(f.actions.len(), 1, "{:?}", f.actions);
         let a = &f.actions[0];
         assert_eq!(a.name, "scc-services");
-        assert_eq!(a.run, "../scripts/scc-enable-all.sh");
+        assert_eq!(a.run, "scc-enable-all.sh");
         assert_eq!(a.phase, "before-apply");
         assert_eq!(a.args.len(), 2);
         // The second argument interpolates; the first is literal.

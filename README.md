@@ -1431,12 +1431,16 @@ a human retyping the organisation id.
 ```
 action "scc-services" {
   reason       = "SCC service enablement has no provider resource (google 7.14.1)"
-  run          = "../scripts/scc-enable-all.sh"
+  run          = "scc-enable-all.sh"
   args         = ["--organization", "{customer_organization_id}"]
   execute_args = ["--apply"]
-  phase        = "after-apply"
+  phase        = "before-apply"
 }
 ```
+
+That one ships. `use "presets/scc/scc-service-enablement.satz"` is the whole
+binding — the pack's content is that action and nothing else, because enablement
+is precisely the part with no provider resource.
 
 ```bash
 satz run-actions estate.satz              # resolve and print; runs nothing

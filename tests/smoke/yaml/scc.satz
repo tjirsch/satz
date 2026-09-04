@@ -1,0 +1,23 @@
+// Proves the shipped SCC enablement pack parses, that its action is collected
+// and reported as pack-declared, and that the script is found beside the pack
+// rather than beside the estate.
+//
+// PLAN MODE ONLY in the smoke matrix: running it needs gcloud credentials and a
+// live organisation, so the step asserts on the resolved command line and on the
+// fact that nothing was spawned.
+//
+// Example values only (docs/example-customers.md).
+
+estate scc_smoke
+
+params {
+  customer_organization_id = "123456789012"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/scc/scc-service-enablement.satz"
