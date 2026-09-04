@@ -1,0 +1,345 @@
+          "COMPREHENSIVE"
+          "ESSENTIAL",
+          "INTERNAL"
+          "LIGHT",
+          "bigquery.googleapis.com",
+          "dataproc.googleapis.com"
+          "in:eu-locations",
+          "in:us-locations"
+          "under:organizations/123456789"
+        ]
+        ]
+        ]
+        ]
+        ]
+        allowed_values = [
+        allowed_values = [
+        allowed_values = [
+        allowed_values = [
+        denied_values = [
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      parameters = "{\"allowedDomains\":[\"@example.com\"]}"
+      parameters = "{\"allowedPrincipalSets\":[\"//cloudresourcemanager.googleapis.com/organizations/123456789\"],\"allowedMemberSubjects\":[\"serviceAccount:service-org-123456789@security-center-api.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-csc-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-dspm-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-ee-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-ktd-hpsa.iam.gserviceaccount.com\"]}"
+      parameters = "{\"allowedRetentionPeriods\":[\"34560000\"]}"
+      parameters = "{\"allowedServices\":[\"storage.googleapis.com\"]}"
+      values {
+      values {
+      values {
+      values {
+      values {
+      }
+      }
+      }
+      }
+      }
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+  name = "organizations/123456789/policies/compute.managed.blockProjectSshKeys"
+  name = "organizations/123456789/policies/compute.managed.disableSerialPortAccess"
+  name = "organizations/123456789/policies/compute.managed.requireOsLogin"
+  name = "organizations/123456789/policies/compute.managed.restrictNonConfidentialComputing"
+  name = "organizations/123456789/policies/compute.managed.vmCanIpForward"
+  name = "organizations/123456789/policies/compute.managed.vmExternalIpAccess"
+  name = "organizations/123456789/policies/compute.requireShieldedVm"
+  name = "organizations/123456789/policies/compute.requireVpcFlowLogs"
+  name = "organizations/123456789/policies/compute.restrictProtocolForwardingCreationForTypes"
+  name = "organizations/123456789/policies/compute.setNewProjectDefaultToZonalDNSOnly"
+  name = "organizations/123456789/policies/compute.skipDefaultNetworkCreation"
+  name = "organizations/123456789/policies/essentialcontacts.managed.allowedContactDomains"
+  name = "organizations/123456789/policies/gcp.detailedAuditLoggingMode"
+  name = "organizations/123456789/policies/gcp.resourceLocations"
+  name = "organizations/123456789/policies/gcp.restrictCmekCryptoKeyProjects"
+  name = "organizations/123456789/policies/gcp.restrictNonCmekServices"
+  name = "organizations/123456789/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+  name = "organizations/123456789/policies/iam.disableAuditLoggingExemption"
+  name = "organizations/123456789/policies/iam.managed.allowedPolicyMembers"
+  name = "organizations/123456789/policies/iam.managed.disableServiceAccountApiKeyCreation"
+  name = "organizations/123456789/policies/iam.managed.disableServiceAccountKeyCreation"
+  name = "organizations/123456789/policies/iam.managed.disableServiceAccountKeyUpload"
+  name = "organizations/123456789/policies/iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts"
+  name = "organizations/123456789/policies/sql.managed.restrictAuthorizedNetworks"
+  name = "organizations/123456789/policies/sql.managed.restrictPublicIp"
+  name = "organizations/123456789/policies/storage.managed.retentionPolicySeconds"
+  name = "organizations/123456789/policies/storage.publicAccessPrevention"
+  name = "organizations/123456789/policies/storage.uniformBucketLevelAccess"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+resource "google_org_policy_policy" "compute_managed_blockProjectSshKeys" {
+resource "google_org_policy_policy" "compute_managed_disableSerialPortAccess" {
+resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
+resource "google_org_policy_policy" "compute_managed_restrictNonConfidentialComputing" {
+resource "google_org_policy_policy" "compute_managed_vmCanIpForward" {
+resource "google_org_policy_policy" "compute_managed_vmExternalIpAccess" {
+resource "google_org_policy_policy" "compute_requireShieldedVm" {
+resource "google_org_policy_policy" "compute_requireVpcFlowLogs" {
+resource "google_org_policy_policy" "compute_restrictProtocolForwardingCreationForTypes" {
+resource "google_org_policy_policy" "compute_setNewProjectDefaultToZonalDNSOnly" {
+resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
+resource "google_org_policy_policy" "essentialcontacts_managed_allowedContactDomains" {
+resource "google_org_policy_policy" "gcp_detailedAuditLoggingMode" {
+resource "google_org_policy_policy" "gcp_resourceLocations" {
+resource "google_org_policy_policy" "gcp_restrictCmekCryptoKeyProjects" {
+resource "google_org_policy_policy" "gcp_restrictNonCmekServices" {
+resource "google_org_policy_policy" "iam_automaticIamGrantsForDefaultServiceAccounts" {
+resource "google_org_policy_policy" "iam_disableAuditLoggingExemption" {
+resource "google_org_policy_policy" "iam_managed_allowedPolicyMembers" {
+resource "google_org_policy_policy" "iam_managed_disableServiceAccountApiKeyCreation" {
+resource "google_org_policy_policy" "iam_managed_disableServiceAccountKeyCreation" {
+resource "google_org_policy_policy" "iam_managed_disableServiceAccountKeyUpload" {
+resource "google_org_policy_policy" "iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts" {
+resource "google_org_policy_policy" "sql_managed_restrictAuthorizedNetworks" {
+resource "google_org_policy_policy" "sql_managed_restrictPublicIp" {
+resource "google_org_policy_policy" "storage_managed_retentionPolicySeconds" {
+resource "google_org_policy_policy" "storage_publicAccessPrevention" {
+resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+  "//cloudresourcemanager.googleapis.com/organizations/123456789"
+  "34560000"
+  "@example.com"
+  "bigquery.googleapis.com",
+  "dataproc.googleapis.com"
+  "serviceAccount:service-org-123456789@gcp-sa-csc-hpsa.iam.gserviceaccount.com",
+  "serviceAccount:service-org-123456789@gcp-sa-dspm-hpsa.iam.gserviceaccount.com",
+  "serviceAccount:service-org-123456789@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
+  "serviceAccount:service-org-123456789@gcp-sa-ktd-hpsa.iam.gserviceaccount.com"
+  "serviceAccount:service-org-123456789@security-center-api.iam.gserviceaccount.com",
+  "storage.googleapis.com"
+  "under:organizations/123456789"
+]
+]
+]
+]
+]
+]
+]
+allowed-api-key-services = [
+allowed-bucket-retention-seconds = [
+allowed-policy-member-principal-sets = [
+allowed-policy-member-subjects = [
+billing-account-infra = "01AA-BB-CC"
+cis-api-key-services = true
+cis-block-project-ssh-keys = true
+cis-bucket-retention = true
+cis-cloud-sql-hardening = true
+cis-cmek-required = true
+cis-confidential-computing = true
+cis-require-shielded-vm = true
+cmek-allowed-key-projects = [
+cmek-required-services = [
+customer-domain = "example.com"
+customer-organization-id = "123456789"
+essential-contacts-allowed-domains = [

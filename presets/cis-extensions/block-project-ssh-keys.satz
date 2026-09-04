@@ -1,0 +1,40 @@
+// CIS 4.3 — block project-wide SSH keys.
+//
+//   use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
+//
+// Opt-in because Google still marks this managed constraint PREVIEW, and because an
+// estate that relies on project-wide keys for break-glass access loses it the
+// moment this is enforced. There is no legacy equivalent to fall back to.
+//
+// The constraint name and its shape were verified against a live
+// organisation's OrgPolicy `ListConstraints`, not transcribed.
+
+pack cis_extensions.block_project_ssh_keys version "1.0"
+
+google_org_policy_policy {
+  "compute-managed-blockProjectSshKeys" {
+    name = "compute.managed.blockProjectSshKeys"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+        enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}
+
+claim "cis-gcp" "4.0" "4.3" implements {
+  resources = [
+    "google_org_policy_policy.compute_managed_blockProjectSshKeys",
+  ]
+  interpretation = "The block-project-ssh-keys metadata key cannot be set to false, so instances do not accept project-wide keys."
+}
+claim "cis-gcp" "5.0" "4.3" implements {
+  resources = [
+    "google_org_policy_policy.compute_managed_blockProjectSshKeys",
+  ]
+  interpretation = "As for 4.0 §4.3 (5.0 §4.3, unchanged)."
+}
+

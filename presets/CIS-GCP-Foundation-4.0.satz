@@ -9,9 +9,22 @@
 
 // Converted by `satz import (from the YAML dialect)` — interior comments were not carried.
 
-pack CIS_GCP_Foundation_4_0 version "2.3"
+pack CIS_GCP_Foundation_4_0 version "2.4"
 
 params {
+  // ---- coverage beyond the baseline: OPT-IN, because each of these can break
+  // a workload that was legitimate the day before. Turn one on and `use` its
+  // fragment from presets/cis-extensions/ — see presets/README.md. Constraint
+  // names and shapes were verified against a live organisation's OrgPolicy
+  // ListConstraints, not transcribed from documentation.
+  cis_block_project_ssh_keys = false
+  cis_require_shielded_vm    = false
+  cis_confidential_computing = false
+  cis_cloud_sql_hardening    = false
+  cis_cmek_required          = false
+  cis_api_key_services       = false
+  cis_bucket_retention       = false
+
   // CIS §1.1 Domain Restricted Sharing (iam.managed.allowedPolicyMembers):
   // PRINCIPAL SETS whose members may be granted IAM roles. Default = the
   // customer's own org. Add a partner's org here when the estate genuinely
@@ -65,6 +78,21 @@ params {
   essential_contacts_allowed_domains = [
     "@{customer_domain}",
   ]
+}
+
+// CIS 4.5 — interactive serial console access is off org-wide. Safe enough for
+// the baseline: nothing routine reaches a VM this way, and the exemption path
+// is a tag condition rather than switching the constraint off.
+"compute-managed-disableSerialPortAccess" {
+  name = "compute.managed.disableSerialPortAccess"
+  parent = "organizations/{customer_organization_id}"
+  spec {
+    rules = [
+      {
+        enforce = "TRUE"
+      },
+    ]
+  }
 }
 
 "iam-managed-disableServiceAccountKeyCreation" {
@@ -437,6 +465,15 @@ claim "cis-gcp" "4.0" "3.8" implements {
 claim "cis-gcp" "5.0" "3.10" implements {
   resources = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
   interpretation = "As for 4.0 §3.8 — 5.0 §3.10 (5.0 inserted 3.8 VPC Service Controls and 3.9 Private Service Connect)."
+}
+
+claim "cis-gcp" "4.0" "4.5" implements {
+  resources = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
+  interpretation = "The serial-port-enable metadata key cannot be set to true, so no VM exposes an interactive serial console."
+}
+claim "cis-gcp" "5.0" "4.5" implements {
+  resources = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
+  interpretation = "As for 4.0 §4.5 (5.0 §4.5, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "4.4" implements {
