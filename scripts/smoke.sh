@@ -497,6 +497,46 @@ done
 bash "$root/scripts/check-names.sh" tmp/ok.txt >tmp/ok-out.txt 2>&1 \
   || fail "the gate rejected a vendor default or a documented example:\n$(cat tmp/ok-out.txt)"
 
+step "satz mcp: a real handshake, a real tool call, and the capability gate"
+# stdout IS the protocol here, so the assertion is that EVERY line parses as
+# JSON-RPC — the version banner and the schema-loader line would each be a
+# corrupt stream rather than cosmetic noise.
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_transpile","arguments":{"estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"../../../README.md","framework":"cis-gcp-4.0"}}}'
+} | "$satz" --config . mcp 2>/dev/null > tmp/mcp.jsonl || true
+python3 - <<'PYEOF' || fail "the MCP handshake did not behave"
+import json
+lines = [l for l in open("tmp/mcp.jsonl") if l.strip()]
+assert lines, "the server answered nothing"
+msgs = {}
+for l in lines:
+    d = json.loads(l)          # every line must parse: stdout is the protocol
+    if "id" in d:
+        msgs[d["id"]] = d
+
+assert msgs[1]["result"]["serverInfo"]["name"] == "satz", msgs[1]
+names = {t["name"] for t in msgs[2]["result"]["tools"]}
+assert {"satz_require", "satz_check_presets", "satz_transpile"} <= names, names
+
+# a granted tool returns the real report
+rep = json.loads(msgs[3]["result"]["content"][0]["text"])
+assert rep["summary"]["unmet"] == 11, rep["summary"]
+
+# a tool outside the granted level is refused as a tool RESULT, not a protocol
+# error — agents recover from the first and give up on the second
+assert msgs[4]["result"]["isError"] is True, msgs[4]
+assert "needs 'write'" in msgs[4]["result"]["content"][0]["text"], msgs[4]
+
+# and a path that escapes the server's root is refused by name
+assert msgs[5]["result"]["isError"] is True, msgs[5]
+assert "outside the server's root" in msgs[5]["result"]["content"][0]["text"], msgs[5]
+PYEOF
+
 step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/satz-language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done

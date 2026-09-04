@@ -181,6 +181,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
+| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated` — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. satz never calls a model; this is the other direction. See [docs/mcp.md](docs/mcp.md) |
 | `whoami` | `--offline` — print which identity, credential type and quota project the ADC resolves to |
 
 Details for each command are below.

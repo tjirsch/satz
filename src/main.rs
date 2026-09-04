@@ -18,6 +18,7 @@ mod gcp;
 mod org_policy;
 mod cloud_identity;
 mod compliance;
+mod mcp;
 mod dossier;
 mod presets;
 mod doc_packs;
@@ -242,7 +243,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Compliance and audit", &["require", "report-compliance", "scan", "triage", "remediation-plan"]),
-    ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help"]),
+    ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
 #[derive(Subcommand)]
@@ -723,6 +724,19 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Serve this estate over the Model Context Protocol (stdio), so an agent drives satz
+    ///
+    /// satz never calls a model; this is the other direction. `--allow` sets a ceiling the
+    /// client cannot raise: read (compile and report), write (writes files in the estate),
+    /// exec (runs external tools or changes a live org).
+    Mcp {
+        /// Capability groups to grant, comma-separated: read, write, exec
+        #[arg(long, default_value = "read")]
+        allow: String,
+        /// Let the client LOWER its own level at runtime (never raise it)
+        #[arg(long)]
+        self_gated: bool,
+    },
     /// Open the documentation site in the browser
     OpenReadme,
     /// Show which identity, credential type and quota project the Application
@@ -874,7 +888,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Mcp { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1719,6 +1733,17 @@ Thumbs.db
                 std::process::exit(1);
             }
             Ok(())
+        }
+        Commands::Mcp { allow, self_gated } => {
+            let ceiling = crate::mcp::Level::parse(&allow)?;
+            crate::mcp::serve(
+                tool_config.clone(),
+                runtime_config.clone(),
+                config_dir.clone(),
+                ceiling,
+                self_gated,
+            )
+            .await
         }
         Commands::OpenReadme => open_url(DOCS_URL),
         Commands::Whoami { offline } => crate::gcp::identity::whoami(offline).await,
