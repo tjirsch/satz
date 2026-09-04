@@ -132,6 +132,27 @@ grep -q 'warning: action' tmp/actions-nowarn.txt && fail "--no-action-warnings d
   && fail "--only with an unknown name should fail"
 grep -q 'no action by that name' tmp/actions-only.txt || fail "--only did not name the mistake"
 
+step "the shipped SCC pack binds its script as an action, and the script travels with it"
+# Plan mode only: running this one needs gcloud credentials and a live org.
+"$satz" --config . run-actions scc.satz > tmp/scc-actions.txt 2>&1 \
+  || fail "run-actions on the SCC estate failed"
+grep -q '1 action(s) declared' tmp/scc-actions.txt || fail "the SCC pack's action was not collected"
+grep -q 'from a pack' tmp/scc-actions.txt || fail "the SCC action should be reported as pack-declared"
+grep -q 'before-apply' tmp/scc-actions.txt || fail "SCC enablement must run before the apply"
+grep -q -- '--organization 123456789012' tmp/scc-actions.txt \
+  || fail "the estate's org id did not reach the resolved command line"
+# The script must resolve beside its pack, not beside the estate — that is what
+# makes a pack self-contained once `get-presets` has installed it.
+grep -q 'presets/scc/scc-enable-all.sh' tmp/scc-actions.txt \
+  || fail "the pack's script was not found beside the pack"
+[ -x "$root/presets/scc/scc-enable-all.sh" ] \
+  || fail "presets/scc/scc-enable-all.sh is not executable — an action refuses to run it"
+# get-presets ships presets/** and nothing else, so a pack's script must be under it.
+case "$(cd "$root" && git ls-files presets/scc/scc-enable-all.sh)" in
+  presets/scc/scc-enable-all.sh) ;;
+  *) fail "the SCC script is not tracked under presets/ — get-presets would not ship it" ;;
+esac
+
 step "require cis-gcp-4.0 (goal view, offline)"
 # `require` exits non-zero when a technical control is unmet — that IS the CI
 # gate; the smoke estate leaves 2.12 (DNS logging) and 2.13 (CAI) unmet on

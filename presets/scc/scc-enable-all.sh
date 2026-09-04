@@ -6,7 +6,12 @@
 # -------------------------------------
 # google/google-beta have no binding for securitycentermanagement's
 # SecurityCenterService, so SCC module enablement (and tier activation) cannot
-# be expressed in Terraform/OpenTofu at all — see CLAUDE.md #27.
+# be expressed in Terraform/OpenTofu at all.
+#
+# It lives beside a preset rather than in scripts/ so that `get-presets` ships
+# it: scc-service-enablement.satz, in this directory, binds it as an `action`,
+# and a pack whose script did not travel with it would be an action that cannot
+# find what it runs.
 #
 # It calls the securitycentermanagement REST API directly rather than
 # `gcloud scc manage`, because the SDK knows only 13 of the 17 services the API
@@ -98,7 +103,7 @@ NOT_ENABLEABLE_SERVICES=(
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/scc-enable-all.sh --organization ORG_ID [options]
+Usage: presets/scc/scc-enable-all.sh --organization ORG_ID [options]
 
   --organization ID     numeric organization id (required)
   --apply               actually write; without it every call carries
@@ -121,10 +126,17 @@ Usage: scripts/scc-enable-all.sh --organization ORG_ID [options]
 
 Examples
   # see what would happen, change nothing
-  scripts/scc-enable-all.sh --organization 123456789012
+  presets/scc/scc-enable-all.sh --organization 123456789012
 
   # do it
-  scripts/scc-enable-all.sh --organization 123456789012 --apply
+  presets/scc/scc-enable-all.sh --organization 123456789012 --apply
+
+  # or let the estate supply the organisation id: the pack beside this file
+  # binds this script as an `action`, so satz builds the command line from
+  # the estate's own params
+  satz run-actions <estate>.satz              # print it, run nothing
+  satz run-actions <estate>.satz --check      # the dry run above
+  satz run-actions <estate>.satz --execute    # adds --apply
 USAGE
 }
 

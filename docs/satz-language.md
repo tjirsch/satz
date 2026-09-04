@@ -1109,7 +1109,7 @@ hcl trust "SCC enablement has no provider resource (google 7.14.1)" {
   resource "terraform_data" "scc_services" {
     triggers_replace = [var.customer_organization_id]
     provisioner "local-exec" {
-      command = "${path.module}/../scripts/scc-enable-all.sh --organization ${var.customer_organization_id} --apply"
+      command = "${path.module}/../presets/scc/scc-enable-all.sh --organization ${var.customer_organization_id} --apply"
     }
   }
 }
@@ -1138,12 +1138,16 @@ the estate's own parameters:
 ```
 action "scc-services" {
   reason       = "SCC service enablement has no provider resource (google 7.14.1)"
-  run          = "../scripts/scc-enable-all.sh"
+  run          = "scc-enable-all.sh"
   args         = ["--organization", "{customer_organization_id}"]
   execute_args = ["--apply"]
-  phase        = "after-apply"
+  phase        = "before-apply"
 }
 ```
+
+That exact case ships as a pack, so an estate does not have to write it at all —
+`use "presets/scc/scc-service-enablement.satz"` is the whole binding, and the
+declaration above is that pack's, with its `reason` shortened to fit here.
 
 | key | required | meaning |
 |---|---|---|
@@ -1262,9 +1266,12 @@ fi
 # … the work. A non-zero exit here stops the whole run.
 ```
 
-`scripts/scc-enable-all.sh` in this repository is the real one, and it already
-has that shape — dry run by default, `--apply` to write, non-zero on any failed
-call. See [`docs/scripts.md`](scripts.md).
+`presets/scc/scc-enable-all.sh` in this repository is the real one, and it
+already has that shape — dry run by default, `--apply` to write, non-zero on any
+failed call. It lives under `presets/` rather than `scripts/` because
+`get-presets` ships only `presets/**`, and a pack whose script did not travel
+with it would declare an action that cannot find what it runs. See
+[`docs/scripts.md`](scripts.md).
 
 ### 6.14 Provenance: pristine, fork, ledger
 

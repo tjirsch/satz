@@ -1,0 +1,64 @@
+//
+// Security Command Center — service enablement
+//
+// This pack contains no resources, and that is the whole point of it.
+//
+// google/google-beta carry NO binding for securitycentermanagement's
+// SecurityCenterService. Re-verified against provider 7.14.1: the provider
+// ships 35 `google_scc_*` / `google_securityposture_*` types and none of them
+// is service enablement or tier activation — the `google_scc_management_*`
+// ones are custom modules only. Turning Security Health Analytics, Event
+// Threat Detection, Container Threat Detection and the rest on therefore
+// cannot be written as a resource in any language satz compiles.
+//
+// So the step stays a script, and this pack binds it: `satz run-actions
+// <estate>.satz --execute` runs it with the organisation id the estate
+// already declares, instead of a human retyping it into a shell.
+//
+// WHAT THIS DOES NOT COVER
+// Everything DOWNSTREAM of enablement is codeable and belongs in a preset of
+// its own: custom modules (SHA + ETD), sources and source IAM, notification
+// configs (the **v2** resources — the v1 API answers "This API is no longer
+// available" on a live org), BigQuery exports, mute configs, and
+// `google_securityposture_posture(_deployment)`.
+//
+// TIER ACTIVATION IS NOT HERE EITHER. Enabling a service on an organisation
+// with no Premium/Enterprise subscription fails at the API, and no flag
+// changes that. Activate the tier first — a console action — then run this.
+//
+// PREREQUISITES the script will tell you about, loudly, if they are missing:
+//   * `securitycenter.googleapis.com` and
+//     `securitycentermanagement.googleapis.com` enabled on the quota project.
+//     The first live call failed on exactly this.
+//   * The §1.1 domain-lock interaction: SCC's service agents are granted
+//     roles at the organisation, and a managed `iam.managed.allowedPolicyMembers`
+//     policy refuses any agent the baseline does not list. That is what
+//     "won't stay activated / asks to activate on every console visit" looks
+//     like from the console. The CIS pack's subject list already carries the
+//     five agents SCC activation mints; enabling more services does not add
+//     to them (measured on a live organisation, 2026-09-04).
+//
+// NOTHING RUNS AT TRANSPILE TIME. An action is inert until `run-actions` is
+// invoked, it emits nothing, and no claim can cover it — satz records that
+// the step exists and never says what it did. `report-compliance` will not
+// tell you whether SCC is on; Cloud Asset Inventory does not carry it.
+//
+
+pack scc_service_enablement version "1.0"
+
+action "scc-services" {
+  reason = "SCC service enablement has no provider resource — google 7.14.1 ships 35 google_scc_*/google_securityposture_* types and none of them is enablement or tier activation"
+
+  run = "scc-enable-all.sh"
+
+  // The organisation comes from the estate, never from this pack.
+  args = ["--organization", "{customer_organization_id}"]
+
+  // Dry run until this is added. The script validates every call against the
+  // API without writing when it is absent.
+  execute_args = ["--apply"]
+
+  // Enablement is a prerequisite for the SCC resources a later pack will
+  // declare, so it belongs ahead of the apply rather than after it.
+  phase = "before-apply"
+}

@@ -229,7 +229,14 @@ fn render(rel: &Path, file: &File, src: &str, existing: Option<&str>) -> String 
         ));
     }
     if sh.typed.is_empty() && sh.bare.is_empty() && sh.uses.is_empty() {
-        md.push_str("_No resources — params and claims only._\n\n");
+        // A pack whose whole content is an action declares no resources on
+        // purpose — saying "params and claims only" there would describe it as
+        // missing something it was never meant to have.
+        if file.actions.is_empty() {
+            md.push_str("_No resources — params and claims only._\n\n");
+        } else {
+            md.push_str("_No resources: this pack's content is the action below — a step with no provider binding._\n\n");
+        }
     }
     if !file.hcl_blocks.is_empty() {
         md.push_str(&format!("**Raw HCL:** {} `hcl` block(s)", file.hcl_blocks.len()));
