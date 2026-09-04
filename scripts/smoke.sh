@@ -89,6 +89,35 @@ grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 # rather than absent — that is what makes the number meaningful.
 grep -q '11 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the nine opt-in extension controls unmet:\n$(tail -3 tmp/require.txt)"
 
+step "require --format json: stdout carries the answer and nothing else"
+# The reason this matters beyond convenience: once `satz mcp` speaks JSON-RPC over
+# stdout, a stray progress line is a corrupt protocol stream, not cosmetic noise.
+# So the assertion is deliberately strict — stdout must parse WHOLE, with stderr
+# discarded, and the version banner and the schema-loader line must not be in it.
+"$satz" --config . require cis-gcp-4.0 smoke.satz --format json 2>/dev/null > tmp/require.json || true
+python3 - <<'PY' || fail "require --format json did not emit parseable JSON on stdout"
+import json, sys
+d = json.load(open("tmp/require.json"))
+assert d["catalog"] == "cis-gcp" and d["version"] == "4.0", d.get("catalog")
+assert len(d["controls"]) > 20, len(d["controls"])
+s = d["summary"]
+# the same numbers the text renderer prints, from the same report
+assert s["unmet"] == 11, s
+assert s["satisfied"] == 18, s
+# every row carries a verdict from the closed set
+verdicts = {c["verdict"] for c in d["controls"]}
+assert verdicts <= {"satisfied","partial","broken","deviation","unmet","organizational","inherited"}, verdicts
+PY
+grep -q 'satz v' tmp/require.json && fail "the version banner is on stdout — it must go to stderr"
+grep -q 'Loaded ' tmp/require.json && fail "a progress line is on stdout — it must go to stderr"
+
+step "a format a command cannot produce is refused, not quietly rendered as something else"
+if "$satz" --config . require cis-gcp-4.0 smoke.satz --format pdf >tmp/fmt.txt 2>&1; then
+  fail "require accepted --format pdf"
+fi
+grep -q 'not available here' tmp/fmt.txt || fail "the refusal does not name the problem:\n$(cat tmp/fmt.txt)"
+grep -q 'text or json' tmp/fmt.txt || fail "the refusal does not name what it can do:\n$(cat tmp/fmt.txt)"
+
 step "require cis-gcp-5.0: the same pack answers both benchmark versions"
 "$satz" --config . require cis-gcp-5.0 smoke.satz > tmp/require-50.txt 2>&1 || true
 grep -q 'satisfied' tmp/require-50.txt || fail "require printed no verdict line:\n$(cat tmp/require-50.txt)"

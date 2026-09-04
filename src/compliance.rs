@@ -517,94 +517,208 @@ fn load_library_view(presets_dir: &str) -> Result<Vec<(String, Claim)>, BoxErr> 
 
 /// The `require` command. Returns true if any technical control is unmet or a
 /// claim is broken (caller exits non-zero — CI gate).
-pub(crate) fn run_require(
+/// One control's verdict, as data. The renderer derives its sentence from these
+/// fields and reaches nothing else — if it cannot see it here, it cannot print it,
+/// which is what keeps the text and the JSON from drifting.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct ControlRow {
+    pub id: String,
+    pub title: String,
+    /// satisfied | partial | broken | deviation | unmet | organizational | inherited
+    pub verdict: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub witnesses: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub open_duties: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub providers: Vec<String>,
+    /// witnesses a pack claims and the estate does not emit
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub missing: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pack: Option<String>,
+    /// (pack, reason) for a declared deviation
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub reasons: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub contributes_only: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub(crate) struct RequireSummary {
+    pub satisfied: usize,
+    pub partial: usize,
+    pub deviations: usize,
+    pub unmet: usize,
+    pub broken: usize,
+    pub organizational: usize,
+    pub inherited: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct RequireReport {
+    pub catalog: String,
+    pub version: String,
+    pub estate: String,
+    pub controls: Vec<ControlRow>,
+    pub summary: RequireSummary,
+}
+
+impl RequireReport {
+    /// The gate: an unmet technical control or a claim whose witnesses vanished.
+    /// A deviation is a disclosed decision and does not fail it.
+    pub(crate) fn gaps(&self) -> bool {
+        self.summary.unmet > 0 || self.summary.broken > 0
+    }
+}
+
+/// Compute the goal view. Pure: no printing, no files, no clock.
+pub(crate) fn require_report(
     framework: &str,
     input: &Path,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
     manifest: &Manifest,
-) -> Result<bool, BoxErr> {
+) -> Result<RequireReport, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
     let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
 
-    println!(
-        "\nrequire {} {} — goal view for {}\n",
-        catalog.catalog, catalog.version, input.display()
-    );
-
-    let (mut sat, mut part, mut unmet, mut broken, mut dev) =
-        (0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut summary = RequireSummary::default();
+    let mut controls = Vec::with_capacity(goals.len());
     for (id, goal) in &goals {
-        let title = &catalog.controls[id].title;
+        let title = catalog.controls[id].title.clone();
+        let mut row = ControlRow {
+            id: id.clone(),
+            title,
+            verdict: "",
+            witnesses: Vec::new(),
+            open_duties: Vec::new(),
+            providers: Vec::new(),
+            missing: Vec::new(),
+            pack: None,
+            reasons: Vec::new(),
+            contributes_only: false,
+        };
         match goal {
             Goal::Satisfied { witnesses } => {
-                sat += 1;
-                println!("  ✓ {:5} {:45} — {}", id, title, witnesses.join(", "));
+                summary.satisfied += 1;
+                row.verdict = "satisfied";
+                row.witnesses = witnesses.clone();
             }
             Goal::Partial { open_duties, contributes_only, .. } => {
-                part += 1;
-                let why = if *contributes_only {
+                summary.partial += 1;
+                row.verdict = "partial";
+                row.open_duties = open_duties.clone();
+                row.contributes_only = *contributes_only;
+            }
+            Goal::ClaimBroken { missing, pack } => {
+                summary.broken += 1;
+                row.verdict = "broken";
+                row.missing = missing.clone();
+                row.pack = Some(pack.clone());
+            }
+            Goal::Deviation { reasons, open_duties, .. } => {
+                summary.deviations += 1;
+                row.verdict = "deviation";
+                row.reasons = reasons.clone();
+                row.open_duties = open_duties.clone();
+            }
+            Goal::Unmet { providers } => {
+                summary.unmet += 1;
+                row.verdict = "unmet";
+                row.providers = providers.clone();
+            }
+            Goal::Organizational => {
+                summary.organizational += 1;
+                row.verdict = "organizational";
+            }
+            Goal::Inherited => {
+                summary.inherited += 1;
+                row.verdict = "inherited";
+            }
+        }
+        controls.push(row);
+    }
+
+    Ok(RequireReport {
+        catalog: catalog.catalog.clone(),
+        version: catalog.version.clone(),
+        estate: input.display().to_string(),
+        controls,
+        summary,
+    })
+}
+
+/// Render the goal view for a terminal. Takes the report and NOTHING else.
+pub(crate) fn render_require(r: &RequireReport) -> String {
+    let mut out = format!("\nrequire {} {} — goal view for {}\n\n", r.catalog, r.version, r.estate);
+    for c in &r.controls {
+        let line = match c.verdict {
+            "satisfied" => {
+                format!("  ✓ {:5} {:45} — {}", c.id, c.title, c.witnesses.join(", "))
+            }
+            "partial" => {
+                let why = if c.contributes_only {
                     "no implements claim included".to_string()
-                } else if open_duties.is_empty() {
+                } else if c.open_duties.is_empty() {
                     // a cross-walk fold can be partial with nothing open: some
                     // of the evidence it reads through is itself partial
                     "partial evidence".to_string()
                 } else {
-                    format!("open duties: {}", open_duties.join(", "))
+                    format!("open duties: {}", c.open_duties.join(", "))
                 };
-                println!("  ◐ {:5} {:45} — {}", id, title, why);
+                format!("  ◐ {:5} {:45} — {}", c.id, c.title, why)
             }
-            Goal::ClaimBroken { missing, pack } => {
-                broken += 1;
-                println!(
-                    "  ‼ {:5} {:45} — pack {} claims it but witnesses are missing: {}",
-                    id, title, pack, missing.join(", ")
-                );
-            }
-            Goal::Deviation { reasons, open_duties, .. } => {
-                dev += 1;
-                let why = reasons
+            "broken" => format!(
+                "  ‼ {:5} {:45} — pack {} claims it but witnesses are missing: {}",
+                c.id,
+                c.title,
+                c.pack.as_deref().unwrap_or(""),
+                c.missing.join(", ")
+            ),
+            "deviation" => {
+                let why = c
+                    .reasons
                     .iter()
                     .map(|(pack, reason)| format!("({}) {}", pack, reason))
                     .collect::<Vec<_>>()
                     .join(" | ");
-                let duties = if open_duties.is_empty() {
+                let duties = if c.open_duties.is_empty() {
                     String::new()
                 } else {
-                    format!(" open: {}", open_duties.join(", "))
+                    format!(" open: {}", c.open_duties.join(", "))
                 };
-                println!("  ⚠ {:5} {:45} — DEVIATION {}{}", id, title, why, duties);
+                format!("  ⚠ {:5} {:45} — DEVIATION {}{}", c.id, c.title, why, duties)
             }
-            Goal::Unmet { providers } => {
-                unmet += 1;
-                if providers.is_empty() {
-                    println!("  ✗ {:5} {:45} — unmet (no pack in the library provides it)", id, title);
-                } else {
-                    println!("  ✗ {:5} {:45} — unmet. Provides: {}", id, title, providers.join(", "));
-                }
+            "unmet" if c.providers.is_empty() => {
+                format!("  ✗ {:5} {:45} — unmet (no pack in the library provides it)", c.id, c.title)
             }
-            Goal::Organizational => {
-                println!("  ○ {:5} {:45} — organizational control (no IaC witness)", id, title);
+            "unmet" => {
+                format!("  ✗ {:5} {:45} — unmet. Provides: {}", c.id, c.title, c.providers.join(", "))
             }
-            Goal::Inherited => {
-                println!("  ◇ {:5} {:45} — inherited from the provider (shared responsibility)", id, title);
+            "organizational" => {
+                format!("  ○ {:5} {:45} — organizational control (no IaC witness)", c.id, c.title)
             }
-        }
+            _ => format!("  ◇ {:5} {:45} — inherited from the provider (shared responsibility)", c.id, c.title),
+        };
+        out.push_str(&line);
+        out.push('\n');
     }
 
-    println!(
+    let s = &r.summary;
+    out.push_str(&format!(
         "\n{} satisfied, {} partial, {} deviation(s), {} unmet, {} broken claim(s). \
-         Goal view judges the DECLARED estate; live verification is the evidence report.",
-        sat, part, dev, unmet, broken
-    );
-    if dev > 0 {
-        println!(
-            "Deviations are disclosed decisions with a stated reason, not gaps — they do not fail this gate."
+         Goal view judges the DECLARED estate; live verification is the evidence report.\n",
+        s.satisfied, s.partial, s.deviations, s.unmet, s.broken
+    ));
+    if s.deviations > 0 {
+        out.push_str(
+            "Deviations are disclosed decisions with a stated reason, not gaps — they do not fail this gate.\n",
         );
     }
-    Ok(unmet > 0 || broken > 0)
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +727,89 @@ pub(crate) fn run_require(
 
 #[cfg(test)]
 mod tests {
+    use super::{ControlRow, RequireReport, RequireSummary, render_require};
+
+    fn row(id: &str, verdict: &'static str) -> ControlRow {
+        ControlRow {
+            id: id.into(),
+            title: format!("control {}", id),
+            verdict,
+            witnesses: Vec::new(),
+            open_duties: Vec::new(),
+            providers: Vec::new(),
+            missing: Vec::new(),
+            pack: None,
+            reasons: Vec::new(),
+            contributes_only: false,
+        }
+    }
+
+    /// The renderer takes the report and NOTHING else — that is what keeps the
+    /// text and the JSON from drifting. This pins one line per verdict, because
+    /// the glyphs are what `scripts/smoke.sh` greps and what an operator scans.
+    #[test]
+    fn every_verdict_renders_its_own_line() {
+        let mut sat = row("1.1", "satisfied");
+        sat.witnesses = vec!["google_org_policy_policy.a".into()];
+        let mut part = row("1.2", "partial");
+        part.open_duties = vec!["review-allowlist".into()];
+        let mut contributes = row("1.3", "partial");
+        contributes.contributes_only = true;
+        let cross_walk = row("1.4", "partial");
+        let mut broken = row("1.5", "broken");
+        broken.pack = Some("some_pack".into());
+        broken.missing = vec!["google_x.y".into()];
+        let mut dev = row("1.6", "deviation");
+        dev.reasons = vec![("p".into(), "accepted".into())];
+        let mut unmet = row("1.7", "unmet");
+        unmet.providers = vec!["cis_extensions.cmek".into()];
+        let bare = row("1.8", "unmet");
+
+        let r = RequireReport {
+            catalog: "cis-gcp".into(),
+            version: "4.0".into(),
+            estate: "e.satz".into(),
+            controls: vec![sat, part, contributes, cross_walk, broken, dev, unmet, bare,
+                           row("1.9", "organizational"), row("2.0", "inherited")],
+            summary: RequireSummary { satisfied: 1, partial: 3, deviations: 1, unmet: 2, broken: 1, organizational: 1, inherited: 1 },
+        };
+        let out = render_require(&r);
+
+        assert!(out.contains("✓ 1.1"), "{out}");
+        assert!(out.contains("open duties: review-allowlist"), "{out}");
+        assert!(out.contains("no implements claim included"), "{out}");
+        // a cross-walk fold can be partial with nothing open
+        assert!(out.contains("partial evidence"), "{out}");
+        assert!(out.contains("pack some_pack claims it but witnesses are missing"), "{out}");
+        assert!(out.contains("DEVIATION (p) accepted"), "{out}");
+        assert!(out.contains("unmet. Provides: cis_extensions.cmek"), "{out}");
+        assert!(out.contains("unmet (no pack in the library provides it)"), "{out}");
+        assert!(out.contains("○ 1.9"), "{out}");
+        assert!(out.contains("◇ 2.0"), "{out}");
+        assert!(out.contains("1 satisfied, 3 partial, 1 deviation(s), 2 unmet, 1 broken claim(s)"), "{out}");
+        // a deviation is a disclosed decision, so the note appears
+        assert!(out.contains("do not fail this gate"), "{out}");
+    }
+
+    /// The gate is unmet-or-broken. A deviation is disclosed, not a gap — getting
+    /// this wrong would fail CI on every estate that documents an exception.
+    #[test]
+    fn deviations_do_not_fail_the_gate() {
+        let mut r = RequireReport {
+            catalog: "c".into(),
+            version: "1".into(),
+            estate: "e".into(),
+            controls: Vec::new(),
+            summary: RequireSummary { deviations: 3, ..Default::default() },
+        };
+        assert!(!r.gaps(), "a deviation must not fail the gate");
+        r.summary.unmet = 1;
+        assert!(r.gaps());
+        r.summary.unmet = 0;
+        r.summary.broken = 1;
+        assert!(r.gaps());
+    }
+
     use super::*;
 
     fn catalog() -> Catalog {
@@ -1319,7 +1516,7 @@ pub(crate) async fn run_report_compliance(
     manifest: &Manifest,
     org_id: Option<&str>,
     config_dir: &Path,
-    format: &str,
+    format: crate::OutFormat,
     report_path: Option<PathBuf>,
     prowler_path: Option<PathBuf>,
     checkov: Option<&crate::scan::Report>,
@@ -1682,11 +1879,11 @@ pub(crate) async fn run_report_compliance(
 
     let out_path = report_path.unwrap_or_else(|| hist_dir.join(format!("{}-latest.md", framework)));
     match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&evidence)?),
+        crate::OutFormat::Json => println!("{}", serde_json::to_string_pretty(&evidence)?),
         _ => {
             crate::fsx::write(&out_path, md.as_bytes())?;
             println!("Wrote evidence report to {} (history: {})", out_path.display(), hist.display());
-            if format == "pdf" {
+            if format == crate::OutFormat::Pdf {
                 crate::org_policy::try_pandoc_pdf(&out_path);
             }
         }
@@ -1958,7 +2155,7 @@ pub(crate) fn run_triage(
     included_claims: &[(String, Claim)],
     manifest: &Manifest,
     prowler_path: &Path,
-    format: &str,
+    format: crate::OutFormat,
     report_path: Option<PathBuf>,
 ) -> Result<(), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
@@ -1974,7 +2171,7 @@ pub(crate) fn run_triage(
     }
     let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
     let text = match format {
-        "json" => serde_json::to_string_pretty(&rows)?,
+        crate::OutFormat::Json => serde_json::to_string_pretty(&rows)?,
         _ => render_triage(&catalog, &rows),
     };
     match report_path {

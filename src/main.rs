@@ -132,6 +132,45 @@ fn default_auto_explode() -> Vec<String> {
 fn default_validation_level() -> String { "warn".to_string() }
 
 
+/// One output vocabulary for every reporting command. A `String` per command let a
+/// typo fall through to the default renderer silently — `--format jsom` printed
+/// markdown and exited 0. clap rejects an unknown value by name instead, and each
+/// command refuses the formats it cannot produce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum OutFormat {
+    /// human-readable terminal output
+    #[value(alias = "console")]
+    Text,
+    Markdown,
+    Json,
+    Pdf,
+}
+
+impl OutFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            OutFormat::Text => "text",
+            OutFormat::Markdown => "markdown",
+            OutFormat::Json => "json",
+            OutFormat::Pdf => "pdf",
+        }
+    }
+
+    /// Refuse a format this command cannot produce, naming what it can — a silent
+    /// fallback to another renderer is how a caller ends up parsing prose.
+    fn require_one_of(self, command: &str, allowed: &[OutFormat]) -> Result<Self, String> {
+        if allowed.contains(&self) {
+            return Ok(self);
+        }
+        Err(format!(
+            "{}: --format {} is not available here; use {}",
+            command,
+            self.as_str(),
+            allowed.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(" or ")
+        ))
+    }
+}
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, max_term_width = 110)]
 struct Cli {
@@ -323,8 +362,8 @@ enum Commands {
         #[arg(long)]
         report: Option<PathBuf>,
         /// Report format: console (default), markdown, json
-        #[arg(long, default_value = "console")]
-        format: String,
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
         /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
         ///
         /// Needs roles/cloudasset.viewer on the organization
@@ -345,8 +384,8 @@ enum Commands {
         #[arg(long, default_value = "active", value_parser = ["active", "inactive", "full"])]
         scope: String,
         /// Report format: markdown (default), json, pdf (pdf needs pandoc on PATH)
-        #[arg(long, default_value = "markdown")]
-        format: String,
+        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        format: OutFormat,
         /// Output path (default: <yaml_dir>/<Cxxxx>-orgpolicies-report.<ext>)
         #[arg(long)]
         report: Option<PathBuf>,
@@ -476,6 +515,9 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
+        /// Output format: text or json
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
     },
     /// Evidence report: the goal view joined with LIVE verification (Cloud Asset
     /// Inventory), manual-duty attestations and optional Prowler corroboration —
@@ -486,8 +528,8 @@ enum Commands {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// Output format
-        #[arg(long, default_value = "markdown")]
-        format: String,
+        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        format: OutFormat,
         /// Report file path (default: evidence/<framework>-latest.md beside config)
         #[arg(long)]
         report: Option<PathBuf>,
@@ -571,8 +613,8 @@ enum Commands {
         #[arg(long)]
         prowler: PathBuf,
         /// markdown (default) or json
-        #[arg(long, default_value = "markdown")]
-        format: String,
+        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        format: OutFormat,
         /// Write the plan here instead of stdout
         #[arg(long)]
         report: Option<PathBuf>,
@@ -725,7 +767,11 @@ fn save_global_settings(settings: &GlobalSettings) -> Result<(), Box<dyn std::er
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("satz v{} (built {})", env!("CARGO_PKG_VERSION"), env!("BUILD_DATE"));
+    // stderr, not stdout: stdout carries the ANSWER. A banner in front of it makes
+    // `--format json` unparseable by anything downstream, and once `satz mcp` speaks
+    // JSON-RPC over stdout a stray line there is a corrupt protocol stream rather
+    // than cosmetic noise. A human still sees it; a pipe no longer does.
+    eprintln!("satz v{} (built {})", env!("CARGO_PKG_VERSION"), env!("BUILD_DATE"));
     // A root-level help request is answered before parsing, because clap prints
     // and exits inside get_matches() and would print its own flat command list.
     // A request that names a command stays clap's: `satz help transpile` and
@@ -1301,6 +1347,10 @@ Thumbs.db
             Ok(())
         }
         Commands::DiffOrganizationalPolicies { estate, customer_organization_id, report, format, recursive } => {
+            let format = format.require_one_of(
+                "diff-organizational-policies",
+                &[OutFormat::Text, OutFormat::Markdown, OutFormat::Json],
+            )?;
             // The params table and the declared policy set both come from the
             // fragment pipeline; the desired set is what the estate emits.
             let config_path = estate_path(estate, &runtime_config);
@@ -1317,6 +1367,10 @@ Thumbs.db
             Ok(())
         }
         Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, report, recursive } => {
+            let format = format.require_one_of(
+                "report-organizational-policies",
+                &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
+            )?;
             // Satz-native: bootstrap needs the variable table, nothing more.
             let config_path = estate_path(estate, &runtime_config);
             configure_estate_impersonation(&config_path, &runtime_config);
@@ -1429,7 +1483,8 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Require { framework, input } => {
+        Commands::Require { framework, input, format } => {
+            let format = format.require_one_of("require", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             // This command REPORTS, it does not emit — it needs `main.tf` as a
             // value, never on disk. The stage-B block belongs in `transpile`
@@ -1438,19 +1493,27 @@ Thumbs.db
             let (manifest, included_claims, _org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
 
-            let gaps = crate::compliance::run_require(
+            let report = crate::compliance::require_report(
                 &framework,
                 &input_path,
                 &runtime_config.presets_dir,
                 &included_claims,
                 &manifest,
             )?;
-            if gaps {
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                _ => print!("{}", crate::compliance::render_require(&report)),
+            }
+            if report.gaps() {
                 std::process::exit(1);
             }
             Ok(())
         }
         Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov, fail_on } => {
+            let format = format.require_one_of(
+                "report-compliance",
+                &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
+            )?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             configure_estate_impersonation(&input_path, &runtime_config);
             // Reports, never emits — see the note in `require`.
@@ -1466,7 +1529,7 @@ Thumbs.db
                 &manifest,
                 org_id.as_deref(),
                 &config_dir,
-                &format,
+                format,
                 report,
                 prowler,
                 checkov_report.as_ref(),
@@ -1497,9 +1560,10 @@ Thumbs.db
             .await
         }
         Commands::Triage { framework, input, prowler, format, report } => {
+            let format = format.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json])?;
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
-            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, &format, report)
+            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, report)
         }
         Commands::RemediationPlan { framework, input, prowler, checkov, out } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -3080,7 +3144,7 @@ fn load_import_config(
 
     let total_types = config.resource_types.len();
     let enabled_types = config.resource_types.values().filter(|v| v.import).count();
-    println!("Loaded {} resource types from import config '{}' ({} enabled for import).", total_types, config_path.display(), enabled_types);
+    eprintln!("Loaded {} resource types from import config '{}' ({} enabled for import).", total_types, config_path.display(), enabled_types);
 
     Ok(Some(config))
 }
@@ -4997,5 +5061,33 @@ mod constraint_equivalents {
             }
         }
         assert!(problems.is_empty(), "\n  - {}\n", problems.join("\n  - "));
+    }
+}
+
+
+#[cfg(test)]
+mod out_format_tests {
+    use super::OutFormat;
+
+    /// A format a command cannot produce must be REFUSED, not quietly rendered as
+    /// something else. The old `&str` handlers fell through to the default arm, so
+    /// `--format jsom` printed markdown and exited 0 — a caller parsing that gets
+    /// prose and no error.
+    #[test]
+    fn an_unsupported_format_is_refused_by_name() {
+        let err = OutFormat::Pdf
+            .require_one_of("require", &[OutFormat::Text, OutFormat::Json])
+            .unwrap_err();
+        assert!(err.contains("require:"), "{err}");
+        assert!(err.contains("pdf"), "{err}");
+        assert!(err.contains("text or json"), "names what it can do: {err}");
+    }
+
+    #[test]
+    fn a_supported_format_passes_through() {
+        assert_eq!(
+            OutFormat::Json.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json]).unwrap(),
+            OutFormat::Json
+        );
     }
 }
