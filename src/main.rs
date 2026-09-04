@@ -4624,3 +4624,168 @@ mod presets_dir_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+
+#[cfg(test)]
+mod constraint_equivalents {
+    //! The rule: where Google replaces a legacy org-policy constraint with a
+    //! managed one, a pack runs the REPLACEMENT ALONE and declares the legacy
+    //! twin off. Both forms in force means every exemption has to lift two
+    //! policies, and for several constraints Google's only exemption path is to
+    //! disable the constraint org-wide, grant, and re-enable.
+    //!
+    //! The pairing is data, not memory: `presets/managed-constraint-equivalents.txt`,
+    //! generated from a live organisation by
+    //! `scripts/update_constraint_equivalents.py`. Google keeps adding managed
+    //! twins, so a rule enforced by re-auditing by hand is a rule enforced when
+    //! someone remembers.
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    fn root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// (legacy, managed) pairs, both the generated and the curated ones.
+    fn pairs() -> Vec<(String, String)> {
+        let path = root().join("presets/managed-constraint-equivalents.txt");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
+        let mut out = Vec::new();
+        for line in text.lines() {
+            if line.trim().is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut f = line.split('\t');
+            let (legacy, managed) = match (f.next(), f.next()) {
+                (Some(l), Some(m)) if !l.is_empty() && !m.is_empty() => (l, m),
+                _ => panic!("{}: malformed row: {:?}", path.display(), line),
+            };
+            let origin = f.next().unwrap_or("");
+            assert!(
+                origin == "GOOGLE" || origin == "OURS",
+                "{}: origin must be GOOGLE or OURS, got {:?} in {:?}",
+                path.display(),
+                origin,
+                line
+            );
+            if origin == "OURS" {
+                assert!(
+                    f.next().is_some_and(|n| n.trim().len() > 40),
+                    "{}: a pairing Google does not declare needs a note saying why: {:?}",
+                    path.display(),
+                    legacy
+                );
+            }
+            out.push((legacy.to_string(), managed.to_string()));
+        }
+        assert!(!out.is_empty(), "the equivalence table is empty");
+        out
+    }
+
+    /// One emitted org policy: the constraint it targets, and whether the body
+    /// switches it OFF (`reset = true`) rather than enforcing it.
+    struct Emitted {
+        reset: bool,
+        origin: String,
+    }
+
+    /// Every `google_org_policy_policy` a corpus case emits, by constraint name.
+    /// Parsed from the emitted HCL rather than from the pack sources: what the
+    /// fold and the params finally produce is what an estate applies.
+    fn emitted_policies(case: &Path) -> BTreeMap<String, Emitted> {
+        let name = case.file_name().unwrap().to_string_lossy().to_string();
+        let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| {
+            std::fs::read_to_string(case.join(p))
+                .or_else(|_| std::fs::read_to_string(root().join(p)))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap_or_else(|e| panic!("{}: front-end failed: {}", name, e));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx)
+            .unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
+
+        let mut found = BTreeMap::new();
+        let mut block: Option<Vec<String>> = None;
+        for line in out.main_tf.lines() {
+            if line.starts_with("resource \"google_org_policy_policy\" ") {
+                block = Some(Vec::new());
+            } else if line == "}" {
+                if let Some(b) = block.take() {
+                    let body = b.join("\n");
+                    if let Some(c) = body
+                        .lines()
+                        .find_map(|l| l.trim().strip_prefix("name = \""))
+                        .and_then(|l| l.trim_end_matches('"').rsplit("/policies/").next())
+                    {
+                        found.insert(
+                            c.to_string(),
+                            Emitted {
+                                reset: body.contains("reset = true"),
+                                origin: name.clone(),
+                            },
+                        );
+                    }
+                }
+            } else if let Some(b) = block.as_mut() {
+                b.push(line.to_string());
+            }
+        }
+        found
+    }
+
+    /// THE gate. Would have caught the pre-2.5 CIS pack, which ran the legacy
+    /// protocol-forwarding constraint while its managed twin existed, and left
+    /// five other superseded twins undeclared.
+    #[test]
+    fn no_pack_runs_a_superseded_constraint() {
+        let pairs = pairs();
+        let corpus = root().join("tests/corpus");
+        let mut cases: Vec<_> = std::fs::read_dir(&corpus)
+            .expect("corpus dir")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir() && p.join("main.satz").exists())
+            .collect();
+        cases.sort();
+
+        let mut policies: BTreeMap<String, Emitted> = BTreeMap::new();
+        for case in &cases {
+            policies.extend(emitted_policies(case));
+        }
+        assert!(
+            policies.len() > 20,
+            "the corpus stopped exercising the org-policy packs — this gate is judging nothing \
+             (found {} policies)",
+            policies.len()
+        );
+
+        let mut problems = Vec::new();
+        for (legacy, managed) in &pairs {
+            match (policies.get(legacy.as_str()), policies.get(managed.as_str())) {
+                // The legacy form is enforced even though a replacement exists.
+                (Some(l), _) if !l.reset => problems.push(format!(
+                    "{} enforces the legacy `{}`, replaced by `{}`. Emit the managed form and \
+                     declare this one `spec {{ reset = true }}`.",
+                    l.origin, legacy, managed
+                )),
+                // The replacement is enforced but nothing says the legacy one is off.
+                // Absence is not enough: a legacy policy already set on an organisation
+                // is invisible to an apply that does not declare it, so it goes on
+                // enforcing beside its twin and has to be deleted by hand.
+                (None, Some(m)) if !m.reset => problems.push(format!(
+                    "{} enables `{}` without declaring its superseded twin `{}` off. Add a block \
+                     with `spec {{ reset = true }}`.",
+                    m.origin, managed, legacy
+                )),
+                _ => {}
+            }
+        }
+        assert!(problems.is_empty(), "\n  - {}\n", problems.join("\n  - "));
+    }
+}

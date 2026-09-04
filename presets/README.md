@@ -617,6 +617,14 @@ the estate from saying the legacy constraint is off, so a policy already set on 
 organisation goes back to enforcing beside its managed twin, which is the situation the
 block exists to prevent.
 
+**The pairing is data, and the rule is a gate.** Which managed constraint replaces which
+lives in `presets/managed-constraint-equivalents.txt`, generated from a live organisation by
+`scripts/update_constraint_equivalents.py` and never hand-edited above its `CURATED` marker.
+`cargo test` compiles every corpus case against that table and fails when a pack enforces a
+legacy constraint that has a replacement, or enables a replacement without declaring its twin
+off. Google keeps adding managed twins, so a rule re-audited by hand is a rule enforced when
+someone remembers.
+
 Only pairs need this. Of the 60 managed constraints a live organisation offers, **45 have no
 legacy form at all** — nothing to switch off. Google declares the pairing in
 `equivalentConstraint`, asymmetrically (15 managed name a legacy twin; only 6 legacy name a

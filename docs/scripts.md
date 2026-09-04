@@ -151,6 +151,38 @@ unknown `content_type`) is a hard error; an enabled row with no `asset_type`
 (a type Cloud Asset does not carry — Cloud Identity groups, say) is reported
 once as "state shape only" and skipped there.
 
+## `update_constraint_equivalents.py` — which managed constraint replaces which
+
+Google publishes, per org-policy constraint, the constraint that replaces it
+(`equivalentConstraint`). The packs act on that pairing — run the managed replacement
+alone, declare the legacy twin off — so it lives in the repository as generated data:
+
+```
+uv run scripts/update_constraint_equivalents.py            # auto-detect org + quota project
+uv run scripts/update_constraint_equivalents.py --org 123456789012
+```
+
+Writes `presets/managed-constraint-equivalents.txt`. Needs ADC **and** a quota project —
+the OrgPolicy API refuses bare ADC. Nothing about the organisation reaches the file: the
+constraint catalogue is Google's and identical for every customer.
+
+Two things the script does that a one-liner would not:
+
+- **Reads the equivalence in both directions.** The declaration is asymmetric — far more
+  managed constraints name their legacy twin than the reverse — so reading one side finds
+  a fraction of the pairs.
+- **Preserves the curated section.** Below the `CURATED` marker sit pairs Google does not
+  declare at all, with a note each saying why we assert them. Today that is
+  `iam.allowedPolicyMemberDomains` ↔ `iam.managed.allowedPolicyMembers`: different names,
+  no declared equivalence in either direction, same control. The generated section above
+  the marker is rewritten wholesale and must never be hand-edited.
+
+The table is enforced offline by `constraint_equivalents::no_pack_runs_a_superseded_constraint`
+(`src/main.rs`), which compiles every corpus case and fails when a pack enforces a legacy
+constraint that has a replacement, or enables a replacement without declaring its twin off.
+So refreshing the table is a deliberate act needing credentials, while the rule it encodes
+is checked on every `cargo test` with none.
+
 ## `inspect_schema.py` — look at one type
 
 Prints one resource type's schema out of a `terraform providers schema -json`
