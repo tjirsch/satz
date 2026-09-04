@@ -138,8 +138,12 @@ google_service_account_iam_member {
 }
 
 // The auto-provisioner OIDC provider. The audience is Microsoft's application
-// id and the issuer is Microsoft's own tenant — both identical for every
-// customer, both from the generated script.
+// id and the issuer is Microsoft's own COMMERCIAL TENANT — both identical for
+// every customer, both from the generated script. Verified 2026-09-04 against
+// Microsoft's connector documentation, which publishes the tenant as the fixed
+// commercial endpoint; it is not the customer's tenant, and the privacy gate
+// allows both by name (docs/example-customers.md, vendor default identifiers).
+// The customer's own tenant id IS in this pack — as mdc_workload_pool_id.
 google_iam_workload_identity_pool_provider {
   mdc_auto_provisioner {
     project                            = mdc_mgmt_project_id
