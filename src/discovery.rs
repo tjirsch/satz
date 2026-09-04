@@ -656,8 +656,10 @@ impl Discoverer {
         discovery_config: Option<ImportConfig>,
         registry: Option<ResourceRegistry>,
     ) -> Result<Discovered, Box<dyn std::error::Error>> {
+        use google_cloud_gax::options::RequestOptionsBuilder;
         let client = crate::gcp::asset_service().await?;
-        
+        let quota_project = crate::org_policy::resolve_quota_project();
+
         let mut type_map: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
         
         // the enabled rows decide what is swept; a row that cannot be swept
@@ -719,12 +721,17 @@ impl Discoverer {
                  
                  println!("Fetching assets for type: {} (Content: {:?})", display_type, ctype);
 
-                 let mut stream = client.list_assets()
+                 // Same quota project every other Cloud Asset sweep sends; without
+                 // it a credential with no default quota project is refused.
+                 let mut builder = client.list_assets()
                     .set_parent(parent.to_string())
                     .set_asset_types(asset_types_vec)
                     .set_content_type(ctype.clone())
-                    .set_page_size(1000)
-                    .by_item();
+                    .set_page_size(1000);
+                 if let Some(qp) = &quota_project {
+                     builder = builder.with_quota_project(qp);
+                 }
+                 let mut stream = builder.by_item();
                 
                  while let Some(asset_result) = stream.next().await {
                      match asset_result {

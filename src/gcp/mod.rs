@@ -83,12 +83,63 @@ pub(crate) async fn access_token() -> Result<String, String> {
         .build_access_token_credentials()
         .map_err(|e| e.to_string())?;
     let base = credentials.access_token().await.map_err(|e| e.to_string())?.token;
-    let token = match impersonation_target() {
-        None => base,
-        Some(sa) => impersonated_token(&base, &sa).await?,
+    let token = match plan_impersonation(adc_impersonation_target().as_deref(), impersonation_target().as_deref())? {
+        Exchange::UseBase => base,
+        Exchange::Mint(sa) => impersonated_token(&base, &sa).await?,
     };
     identity::announce(&token).await;
     Ok(token)
+}
+
+/// What the token path has to do to end up acting as the estate's account.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Exchange {
+    /// The credential is already the right identity.
+    UseBase,
+    /// Exchange it for this service account's token.
+    Mint(String),
+}
+
+/// The service account the ADC FILE itself impersonates, if it is one of those.
+/// `gcloud auth application-default login --impersonate-service-account` writes
+/// exactly this shape.
+fn adc_impersonation_target() -> Option<String> {
+    let path = crate::org_policy::adc_file_path()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if json.get("type").and_then(|t| t.as_str()) != Some("impersonated_service_account") {
+        return None;
+    }
+    identity::email_from_adc_json(&json)
+}
+
+/// Reconcile the identity the CREDENTIAL already carries with the one the
+/// ESTATE asks for. Pure, so the four cases are testable without a network.
+///
+/// The two token paths used to answer this differently. REST always exchanged,
+/// so an ADC that already impersonated the estate's account asked
+/// `generateAccessToken` to mint that account a token for ITSELF — a 403 unless
+/// it holds TokenCreator on itself. gRPC returned such an ADC unwrapped but
+/// ignored the requested account entirely, so a credential impersonating one
+/// service account silently served an estate that declared another.
+pub(crate) fn plan_impersonation(
+    adc_target: Option<&str>,
+    estate_target: Option<&str>,
+) -> Result<Exchange, String> {
+    match (adc_target, estate_target) {
+        // Nothing asked for: whatever the credential is, is what we are.
+        (_, None) => Ok(Exchange::UseBase),
+        // The ordinary path: a human credential, exchanged for the estate's account.
+        (None, Some(sa)) => Ok(Exchange::Mint(sa.to_string())),
+        // Already that account. Exchanging again would be self-impersonation.
+        (Some(have), Some(want)) if have == want => Ok(Exchange::UseBase),
+        // Two different accounts is not a chain to build — it is a mistake to report.
+        (Some(have), Some(want)) => Err(format!(
+            "the credentials impersonate {} but this estate runs as {} — log in without \
+             --impersonate-service-account, or point satz at the estate whose account that is",
+            have, want
+        )),
+    }
 }
 
 /// Exchange the caller's token for one minted AS the service account —
@@ -144,8 +195,13 @@ pub(crate) async fn asset_service() -> Result<google_cloud_asset_v1::client::Ass
 
 /// The impersonating-ADC JSON, composed in memory: what `gcloud auth
 /// application-default login --impersonate-service-account` would write, with
-/// the existing ADC as the source. An ADC that already impersonates is kept
-/// as-is — re-wrapping would chain impersonations.
+/// the existing ADC as the source.
+///
+/// An ADC that ALREADY impersonates is kept as-is — re-wrapping would chain
+/// impersonations — but only when it names the same account. It used to be
+/// kept whatever account it named, which silently served the estate with a
+/// different service account's credentials; [`plan_impersonation`] now decides,
+/// and it is the same decision the REST path makes.
 fn impersonated_credential_json(sa: &str) -> Result<serde_json::Value, String> {
     let path = crate::org_policy::adc_file_path().ok_or(
         "no ADC file to impersonate from — run `gcloud auth application-default login`, or pass --no-impersonate",
@@ -154,6 +210,8 @@ fn impersonated_credential_json(sa: &str) -> Result<serde_json::Value, String> {
     let source: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("{}: {}", path.display(), e))?;
     if source.get("type").and_then(|t| t.as_str()) == Some("impersonated_service_account") {
+        // Errors on a mismatch, returns UseBase when it is already this account.
+        plan_impersonation(identity::email_from_adc_json(&source).as_deref(), Some(sa))?;
         return Ok(source);
     }
     Ok(serde_json::json!({
@@ -414,6 +472,44 @@ mod tests {
         let some = Identity::Bound(sa("svc-iac@acme-infra-001.iam.gserviceaccount.com"));
         assert!(describe_conflict(&none, &sa("svc-iac@acme-infra-001.iam.gserviceaccount.com")).is_err());
         assert!(describe_conflict(&some, &None).is_err());
+    }
+
+    // --- reconciling the credential's identity with the estate's --------------
+
+    const ACME: &str = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com";
+    const BOLT: &str = "svc-iac-001@bolt-infra-001.iam.gserviceaccount.com";
+
+    /// The ordinary case: a human credential, exchanged for the estate's account.
+    #[test]
+    fn a_human_credential_is_exchanged_for_the_estate_account() {
+        assert_eq!(plan_impersonation(None, Some(ACME)), Ok(Exchange::Mint(ACME.to_string())));
+    }
+
+    /// The REST path used to exchange unconditionally, so a credential that was
+    /// ALREADY the estate's account asked `generateAccessToken` to mint that
+    /// account a token for itself — a 403 unless it holds TokenCreator on itself.
+    #[test]
+    fn a_credential_that_is_already_the_estate_account_is_not_exchanged_again() {
+        assert_eq!(plan_impersonation(Some(ACME), Some(ACME)), Ok(Exchange::UseBase));
+    }
+
+    /// The gRPC path used to accept any impersonating credential and ignore the
+    /// account the estate asked for — so one customer's credentials quietly
+    /// served another customer's estate.
+    #[test]
+    fn a_credential_for_a_different_account_is_refused_and_names_both() {
+        let err = plan_impersonation(Some(BOLT), Some(ACME))
+            .expect_err("a mismatched credential must not be used");
+        assert!(err.contains("bolt-infra-001"), "the error hides the credential: {}", err);
+        assert!(err.contains("acme-infra-001"), "the error hides the estate: {}", err);
+    }
+
+    /// Nothing asked for: whatever the credential is, is what we are. This is
+    /// `--no-impersonate` and every local-mode estate.
+    #[test]
+    fn with_no_estate_target_the_credential_is_used_as_it_is() {
+        assert_eq!(plan_impersonation(None, None), Ok(Exchange::UseBase));
+        assert_eq!(plan_impersonation(Some(ACME), None), Ok(Exchange::UseBase));
     }
 
     /// `--no-impersonate` is the operator overruling the estate. It must not then

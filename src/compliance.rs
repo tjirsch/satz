@@ -1328,18 +1328,27 @@ type Inventory = BTreeMap<String, BTreeMap<String, serde_json::Value>>;
 
 async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<Inventory, BoxErr> {
     use google_cloud_asset_v1::model::ContentType;
+    use google_cloud_gax::options::RequestOptionsBuilder;
     let client = crate::gcp::asset_service().await?;
+    // Cloud Asset is billed to the quota project, and a request without one is
+    // refused outright when the credentials carry no default. `policy_tree`'s
+    // sweep has always sent it; this one did not, so the same organisation
+    // answered `report-organizational-policies` and refused `report-compliance`.
+    let quota_project = crate::org_policy::resolve_quota_project();
     let mut out: Inventory = BTreeMap::new();
     for at in asset_types {
         let mut ids: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         use google_cloud_gax::paginator::ItemPaginator as _;
-        let mut stream = client
+        let mut builder = client
             .list_assets()
             .set_parent(format!("organizations/{}", org_id))
             .set_asset_types(vec![at.clone()])
             .set_content_type(ContentType::Resource)
-            .set_page_size(1000)
-            .by_item();
+            .set_page_size(1000);
+        if let Some(qp) = &quota_project {
+            builder = builder.with_quota_project(qp);
+        }
+        let mut stream = builder.by_item();
         while let Some(asset) = stream.next().await {
             let asset: google_cloud_asset_v1::model::Asset = asset?;
             let data = asset

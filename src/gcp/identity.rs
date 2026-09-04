@@ -436,7 +436,7 @@ fn email_from_identity_json(v: &serde_json::Value) -> Option<String> {
 /// Read the service-account address out of an ADC credentials file: either a
 /// key file's `client_email`, or the impersonation target in
 /// `.../serviceAccounts/{email}:generateAccessToken`.
-fn email_from_adc_json(v: &serde_json::Value) -> Option<String> {
+pub(crate) fn email_from_adc_json(v: &serde_json::Value) -> Option<String> {
     if let Some(email) = v
         .get("client_email")
         .and_then(|e| e.as_str())
