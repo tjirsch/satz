@@ -28,12 +28,27 @@ jobs:
         # to an existing branch: before..sha. A push that creates a branch
         # (before = 0…0): what the branch adds over main; and a first push to
         # main itself: just HEAD.
+        #
+        # A FORCE-PUSH reports a `before` that no longer exists. Rebasing an open
+        # branch onto a moved main is the documented workflow, so this is routine
+        # rather than exotic. The range would then be unresolvable, and the gate
+        # refuses an unusable range instead of passing it — deliberately, because
+        # a range that silently checks nothing is how a privacy gate starts
+        # lying. So `before` is checked for EXISTENCE, not merely for not being
+        # all-zeros, and the branch-over-main range is the honest fallback: it is
+        # exactly what the branch adds.
         run: |
           zero=0000000000000000000000000000000000000000
+          before="${{ github.event.before }}"
+          if [ -n "$before" ] && [ "$before" != "$zero" ] \
+             && ! git rev-parse -q --verify "$before^{commit}" >/dev/null; then
+            echo "note: $before no longer resolves (force-push); judging the branch over main instead"
+            before="$zero"
+          fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             range="origin/${{ github.base_ref }}..HEAD"
-          elif [ "${{ github.event.before }}" != "$zero" ]; then
-            range="${{ github.event.before }}..${{ github.sha }}"
+          elif [ "$before" != "$zero" ]; then
+            range="$before..${{ github.sha }}"
           elif [ "${{ github.ref }}" != "refs/heads/main" ] && git rev-parse -q --verify origin/main >/dev/null; then
             range="origin/main..HEAD"
           else
