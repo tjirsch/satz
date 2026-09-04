@@ -164,6 +164,28 @@ struct Cli {
     command: Option<Commands>,
 }
 
+/// The `satz --help` groups. The ONE place the command taxonomy lives: the root
+/// help renders them in this order, and `satz --verbose` walks the per-command
+/// help in it too. A command the CLI has and this table does not — or the other
+/// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
+/// away from the binary the way a hand-kept list would.
+const COMMAND_GROUPS: &[(&str, &[&str])] = &[
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt"]),
+    ("HCL and OpenTofu", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration"]),
+    ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs"]),
+    (
+        "Organization policies",
+        &[
+            "export-organizational-policies",
+            "diff-organizational-policies",
+            "report-organizational-policies",
+            "adopt-org-policies",
+        ],
+    ),
+    ("Compliance and audit", &["require", "report-compliance", "scan", "triage", "remediation-plan"]),
+    ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help"]),
+];
+
 #[derive(Subcommand)]
 enum Commands {
     /// Compile an estate to HCL (a `.yaml` estate is migrated with `satz import`, never transpiled)
@@ -610,7 +632,7 @@ enum Commands {
         args: Vec<String>,
     },
     /// Run `<tf_tool> init` in the estate's hcl dir (extra args are passed through)
-    TfInit {
+    HclInit {
         /// Arguments passed straight to the tool, e.g. `-reconfigure`, `-migrate-state`
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -704,6 +726,14 @@ fn save_global_settings(settings: &GlobalSettings) -> Result<(), Box<dyn std::er
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("satz v{} (built {})", env!("CARGO_PKG_VERSION"), env!("BUILD_DATE"));
+    // A root-level help request is answered before parsing, because clap prints
+    // and exits inside get_matches() and would print its own flat command list.
+    // A request that names a command stays clap's: `satz help transpile` and
+    // `satz transpile --help` never reach here.
+    if let Some(long) = root_help_request() {
+        print_root_help(long);
+        std::process::exit(0);
+    }
     // parse into matches first: the subcommand NAME is what --html-help needs,
     // and clap only hands it out at this level
     let matches = <Cli as clap::CommandFactory>::command().get_matches();
@@ -720,12 +750,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(c) => c,
         None => {
             if cli.verbose {
-                let mut cmd = Cli::command();
-                print_recursive_help(&mut cmd);
+                print_recursive_help(false);
             } else {
-                let mut cmd = Cli::command();
-                let _ = cmd.print_help();
-                println!();
+                print_root_help(false);
             }
             std::process::exit(0);
         }
@@ -757,8 +784,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
                 Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. }
-                | Commands::Plan { .. } | Commands::Apply { .. } | Commands::TfInit { .. } => {
-                    // plan/apply/tf-init hand everything after the subcommand to the
+                | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
+                    // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
                     // those args. "config.toml not found" is baffling then, so name
                     // the actual fix.
@@ -1515,7 +1542,7 @@ Thumbs.db
         }
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
-        Commands::TfInit { args } => run_tf(&runtime_config, "init", &args),
+        Commands::HclInit { args } => run_tf(&runtime_config, "init", &args),
         Commands::CheckPresets { input, pristine_dir } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let drift = crate::presets::run_check_presets(
@@ -1704,7 +1731,7 @@ fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
     let (sub, args) = match cmd {
         Commands::Plan { args } => ("plan", args),
         Commands::Apply { args } => ("apply", args),
-        Commands::TfInit { args } => ("tf-init", args),
+        Commands::HclInit { args } => ("hcl-init", args),
         _ => return None,
     };
     let i = args.iter().position(|a| a == "--config" || a.starts_with("--config="))?;
@@ -1754,7 +1781,7 @@ fn run_tf(
     }
     if subcommand != "init" && !hcl_dir.join(".terraform").exists() {
         return Err(format!(
-            "'{}' is not initialised — run `satz tf-init` (same --config) first",
+            "'{}' is not initialised — run `satz hcl-init` (same --config) first",
             hcl_dir.display()
         )
         .into());
@@ -3058,27 +3085,157 @@ fn load_import_config(
     Ok(Some(config))
 }
 
-fn print_recursive_help(cmd: &mut clap::Command) {
-    let _ = cmd.print_help();
-    println!("\n");
+/// Is this invocation asking for the ROOT help, and in the long form? `Some(true)`
+/// for `--help`, `Some(false)` for `-h` and for `satz help`, `None` for everything
+/// else — including `satz help transpile` and `satz transpile --help`, which clap
+/// answers itself.
+///
+/// The test is "no argument names a command", and the value of an option is not
+/// an argument for this purpose: `satz --config plan --help` asks for the root
+/// help about a directory called `plan`, not for `plan`'s. Which options take a
+/// value is read off the command rather than listed here. Bare `satz` is not a
+/// root-help request at all — it parses, and the `None` command arm prints the
+/// same help afterwards.
+fn root_help_request() -> Option<bool> {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut cmd = Cli::command();
+    cmd.build();
+    let names: std::collections::HashSet<String> = cmd
+        .get_subcommands()
+        .filter(|s| s.get_name() != "help")
+        .flat_map(|s| {
+            std::iter::once(s.get_name().to_string())
+                .chain(s.get_all_aliases().map(|a| a.to_string()))
+        })
+        .collect();
+    let takes_value: std::collections::HashSet<String> = cmd
+        .get_arguments()
+        .filter(|a| a.get_num_args().is_none_or(|n| n.takes_values()))
+        .filter_map(|a| a.get_long())
+        .map(|l| format!("--{l}"))
+        .collect();
 
-    let mut subcmds: Vec<clap::Command> = cmd.get_subcommands().cloned().collect();
-    // Sort to ensure consistent output order
-    subcmds.sort_by(|a, b| a.get_name().cmp(b.get_name()));
-
-    for mut subcmd in subcmds {
-        // Skip hidden commands and help subcommand to keep output clean
-        if subcmd.is_hide_set() || subcmd.get_name() == "help" {
+    let mut skip_next = false;
+    for arg in &argv {
+        if std::mem::take(&mut skip_next) {
             continue;
         }
-        
-        // the rule matches what clap wraps to: the terminal, capped like max_term_width
-        let width = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(100).min(110);
+        // `--config=x` carries its value; `--config x` eats the token after it
+        if takes_value.contains(arg) {
+            skip_next = true;
+            continue;
+        }
+        if names.contains(arg) {
+            return None;
+        }
+    }
+    if argv.iter().any(|a| a == "--help") {
+        return Some(true);
+    }
+    if argv.iter().any(|a| a == "-h") || argv.first().is_some_and(|a| a == "help") {
+        return Some(false);
+    }
+    None
+}
+
+/// One group of `COMMAND_GROUPS`, rendered BY clap so the block matches the rest
+/// of the help in styling and wrapping — down to the `[aliases: …]` suffix the
+/// org-policy commands carry. The heading is clap's too: a
+/// `subcommand_help_heading` over an `{all-args}` template that has no args to
+/// print, which is what keeps it bold on a terminal and plain in a pipe.
+///
+/// The one adjustment to the clones is `display_order`. `write_subcommands`
+/// orders by `(display_order, name)` and every command defaults to the same 999,
+/// so without it a group would come out alphabetical instead of in the order the
+/// table names it.
+///
+/// Each group aligns to its own widest name rather than to the widest in the
+/// whole CLI. The heading already separates the blocks, so the column need not be
+/// shared, and not sharing it buys the short groups back the ~20 characters that
+/// `export-organizational-policies` would otherwise cost every one of them.
+fn print_group_block(heading: &'static str, names: &[&'static str], subcommands: &[clap::Command]) {
+    let mut block = clap::Command::new("satz")
+        .help_template("{all-args}")
+        .subcommand_help_heading(heading)
+        .max_term_width(110)
+        // no `help` command and no `-h` of its own: this throwaway exists to render
+        // one Commands block, and either would add an Options section under it
+        .disable_help_subcommand(true)
+        .disable_help_flag(true);
+    for (order, name) in names.iter().enumerate() {
+        let sub = subcommands
+            .iter()
+            .find(|s| s.get_name() == *name)
+            .unwrap_or_else(|| panic!("COMMAND_GROUPS names `{name}`, which is not a satz command"));
+        block = block.subcommand(sub.clone().display_order(order));
+    }
+    let _ = block.print_help();
+    println!();
+}
+
+/// `satz`, `satz -h`, `satz --help` and `satz help`: the help clap would print,
+/// with the one flat list of thirty commands replaced by the groups of
+/// `COMMAND_GROUPS`.
+///
+/// Printed in three parts rather than assembled into one template, because clap
+/// 4 can express neither half of this: a subcommand has no help heading to set
+/// (only `subcommand_help_heading`, which renames the single `Commands:` block
+/// as a whole), and `{options}` in a template deliberately flattens the
+/// `Global options` heading away. So head and tail are printed by clap off two
+/// throwaway copies and the groups go between them. The tail copy hides every
+/// subcommand — that is what makes `{all-args}` skip the flat list while still
+/// printing `Options:` and `Global options:` natively — and it is local to this
+/// function, so parsing, shell completion and clap's did-you-mean suggestions
+/// never see a hidden command.
+fn print_root_help(long: bool) {
+    let mut canonical = Cli::command();
+    canonical.build(); // `help` is generated here, and `COMMAND_GROUPS` lists it
+    let subcommands: Vec<clap::Command> = canonical.get_subcommands().cloned().collect();
+
+    // the about and the usage line, off an untouched copy so usage keeps [COMMAND]
+    let mut head =
+        Cli::command().help_template("{before-help}{about-with-newline}\n{usage-heading} {usage}\n");
+    let _ = if long { head.print_long_help() } else { head.print_help() };
+    println!();
+
+    for (heading, names) in COMMAND_GROUPS {
+        print_group_block(heading, names, &subcommands);
+    }
+
+    let mut tail = Cli::command()
+        .help_template("{all-args}{after-help}")
+        .disable_help_subcommand(true)
+        .mut_subcommands(|s| s.hide(true));
+    let _ = if long { tail.print_long_help() } else { tail.print_help() };
+    println!();
+}
+
+/// `satz --verbose` with no command: the grouped root help, then every command's
+/// own help, walked in `COMMAND_GROUPS` order so the long form reads like the
+/// short one.
+fn print_recursive_help(long: bool) {
+    print_root_help(long);
+    println!();
+
+    let mut canonical = Cli::command();
+    canonical.build();
+    let subcommands: Vec<clap::Command> = canonical.get_subcommands().cloned().collect();
+    // the rule matches what clap wraps to: the terminal, capped like max_term_width
+    let width = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(100).min(110);
+
+    for name in COMMAND_GROUPS.iter().flat_map(|(_, names)| names.iter()) {
+        // `help` would print the very thing we are already inside
+        if *name == "help" {
+            continue;
+        }
+        let Some(mut sub) = subcommands.iter().find(|s| s.get_name() == *name).cloned() else {
+            continue;
+        };
         println!("\n{}", "=".repeat(width));
-        println!("COMMAND: {}", subcmd.get_name());
+        println!("COMMAND: {name}");
         println!("{}\n", "=".repeat(width));
-        
-        print_recursive_help(&mut subcmd);
+        let _ = if long { sub.print_long_help() } else { sub.print_help() };
+        println!();
     }
 }
 
@@ -3505,6 +3662,59 @@ fn completion_install_path(shell: CompletionShell) -> Result<(PathBuf, Option<St
     };
     Ok((path, msg))
 }
+
+#[cfg(test)]
+mod command_groups {
+    //! `COMMAND_GROUPS` is what `satz --help` prints, and nothing about it is
+    //! derived: a command lands in a group because the table says so. So the one
+    //! thing that can go wrong is the table falling behind the CLI — a new
+    //! command that no group names would simply not be printed, and a help page
+    //! that quietly omits a command is worse than one that never grouped at all.
+    //! These tests make that a build failure instead of a discovery.
+
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn declared() -> Vec<&'static str> {
+        COMMAND_GROUPS.iter().flat_map(|(_, names)| names.iter().copied()).collect()
+    }
+
+    #[test]
+    fn command_groups_cover_the_cli() {
+        let mut cmd = Cli::command();
+        cmd.build(); // `help` is generated here, and the table lists it too
+        let cli: BTreeSet<&str> = cmd
+            .get_subcommands()
+            .filter(|s| !s.is_hide_set())
+            .map(|s| s.get_name())
+            .collect();
+        let table: BTreeSet<&str> = declared().into_iter().collect();
+
+        let missing: Vec<_> = cli.difference(&table).collect();
+        let unknown: Vec<_> = table.difference(&cli).collect();
+        assert!(
+            missing.is_empty(),
+            "these commands exist but no COMMAND_GROUPS group names them, so `satz --help` \
+             would not print them: {missing:?} — put each one in a group in src/main.rs"
+        );
+        assert!(
+            unknown.is_empty(),
+            "COMMAND_GROUPS names commands the CLI does not have: {unknown:?}"
+        );
+    }
+
+    #[test]
+    fn no_command_is_in_two_groups() {
+        let declared = declared();
+        let unique: BTreeSet<&str> = declared.iter().copied().collect();
+        assert_eq!(
+            declared.len(),
+            unique.len(),
+            "a command appears in more than one COMMAND_GROUPS group, so the help would list it twice"
+        );
+    }
+}
+
 // Presets ship to users verbatim via `get-presets`, so a malformed one reaches everybody.
 
 

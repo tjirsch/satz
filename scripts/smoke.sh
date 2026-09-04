@@ -286,6 +286,25 @@ long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80' | head -3)
 COLUMNS=80 "$satz" adopt -h 2>&1 | grep -q '^Global options:' || fail "the global options are not under their own heading"
 COLUMNS=80 "$satz" import -h 2>&1 | grep -q "see more with '--help'" || fail "-h did not become the short form (no summary/details split?)"
 
+step "the root help is grouped, on every path that prints it"
+# clap cannot group subcommands, so satz renders the root help itself. Four
+# invocations reach that renderer and all four must produce the same groups.
+for form in "--help" "-h" "help" ""; do
+  # shellcheck disable=SC2086
+  out=$(COLUMNS=80 "$satz" $form 2>&1)
+  for heading in "Estate:" "HCL and OpenTofu:" "Presets:" "Organization policies:" "Compliance and audit:" "Tool:"; do
+    printf '%s\n' "$out" | grep -qx "$heading" \
+      || fail "\`satz ${form:-<no args>}\` has no '$heading' section — the grouped root help did not render"
+  done
+  printf '%s\n' "$out" | grep -qx 'Global options:' \
+    || fail "\`satz ${form:-<no args>}\`: the globals lost their own heading"
+done
+# a command lands under its group, not just anywhere in the output
+COLUMNS=80 "$satz" --help 2>&1 | awk '/^Organization policies:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'adopt-org-policies' \
+  || fail "adopt-org-policies is not listed under Organization policies"
+COLUMNS=80 "$satz" --help 2>&1 | awk '/^HCL and OpenTofu:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'hcl-init' \
+  || fail "hcl-init is not listed under HCL and OpenTofu"
+
 step "transpile --check: compiles in memory, accepts the yaml/-prefixed form, writes nothing"
 rm -rf hcl
 "$satz" --config . transpile yaml/smoke.satz --check > tmp/check.txt

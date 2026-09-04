@@ -117,36 +117,67 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 ## CLI Usage
 
-All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. Commands and their options:
+All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
+
+**Estate**
 
 | Command | Options / Arguments |
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from-live` (derive the missing values from the ADC alone) |
 | `bootstrap <CONFIG_FILE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize a not-yet-existing organization) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
+| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
+
+**HCL and OpenTofu**
+
+| Command | Options / Arguments |
+|---------|---------------------|
+| `hcl-init [ARGS]` | runs `<tf_tool> init` in `hcl_dir`; everything after the command is handed to the tool verbatim, so `--config` must come before it |
+| `plan [ARGS]` | runs `<tf_tool> plan` in `hcl_dir`, arguments passed through |
+| `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through |
+| `migrate <INPUT>` | `--mode` |
+| `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
+| `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
+
+**Presets**
+
+| Command | Options / Arguments |
+|---------|---------------------|
+| `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
+| `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
+| `check-presets <INPUT>` | `--pristine-dir` |
+| `doc-packs` | `--out <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file; `--check` fails when the pages are behind |
+
+**Organization policies**
+
+| Command | Options / Arguments |
+|---------|---------------------|
 | `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
 | `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`console`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
 | `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
-| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims |
-| `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out <dir>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[AI]` columns empty, Review dropdown) + `meta.json` under `evidence/plan/`; offline and deterministic (the dossier hash names the run) |
-| `doc-packs` | `--out <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file; `--check` fails when the pages are behind |
-| `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
-| `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
-| `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
-| `update-schema` | `--providers`, `--version`, `--tf-tool` |
-| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
-| `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
-| `migrate <INPUT>` | `--mode` |
-| `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
+| `adopt-org-policies <INPUT>` | `--dry-run` — alias of `adopt --only google_org_policy_policy --activate --execute --import` |
+
+**Compliance and audit**
+
+| Command | Options / Arguments |
+|---------|---------------------|
 | `require <FRAMEWORK> <INPUT>` | *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
-| `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
-| `check-presets <INPUT>` | `--pristine-dir` |
-| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses; `adopt-org-policies <INPUT> [--dry-run]` is an alias |
+| `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
+| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims |
+| `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out <dir>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[AI]` columns empty, Review dropdown) + `meta.json` under `evidence/plan/`; offline and deterministic (the dossier hash names the run) |
+
+**Tool**
+
+| Command | Options / Arguments |
+|---------|---------------------|
+| `update-schema` | `--providers`, `--version`, `--tf-tool` |
+| `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
+| `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `whoami` | `--offline` — print which identity, credential type and quota project the ADC resolves to |
-| `completion [SHELL]` | `--install` |
 
 Details for each command are below.
 
@@ -221,7 +252,7 @@ satz transpile <INPUT> [options]
 - `--schema-dir, -s <DIR>`: Override the schema directory.
 - `--print-variables`: After transpilation, print the resolved variable table (`terraform.tfvars`) to stdout. Useful for debugging variable resolution across multiple include files.
 - `--scan`: after transpiling, run Checkov (terraform framework) over `hcl_dir` — `checkov` on PATH, else `uvx checkov` — and print every failed check under the resource it hit, with the Satz file and line that declared it (from the emission manifest) and Checkov's guideline link. Failed checks exit 1, so it gates like a test. `satz scan [<estate>]` does the same without transpiling first.
-- `--plan` / `--apply`: after transpiling, run `<tf_tool> plan` / `apply` in `hcl_dir` — one command from estate to plan. The dir is initialised first when it has no `.terraform`. The same as `satz transpile … && satz plan`; `satz plan`, `satz apply` and `satz tf-init` remain for running the tool on its own (extra arguments pass through).
+- `--plan` / `--apply`: after transpiling, run `<tf_tool> plan` / `apply` in `hcl_dir` — one command from estate to plan. The dir is initialised first when it has no `.terraform`. The same as `satz transpile … && satz plan`; `satz plan`, `satz apply` and `satz hcl-init` remain for running the tool on its own (extra arguments pass through).
 
 **Running from subdirectories:**
 You can run the transpile command from any directory (e.g., from within the `hcl/` folder) by specifying the config path. Both styles are supported:
@@ -780,7 +811,7 @@ satz plan  --config ~/estates/acme
 satz apply --config ~/estates/acme
 ```
 
-`plan`, `apply` and `tf-init` run the configured `tf_tool` (OpenTofu by default) in the
+`plan`, `apply` and `hcl-init` run the configured `tf_tool` (OpenTofu by default) in the
 estate's `hcl_dir`, inheriting stdio — so apply's approval prompt and the usual coloured
 output behave exactly as when run by hand — and propagating the tool's exit code, so
 `plan -detailed-exitcode` still returns 2 for "changes present". Everything after the
