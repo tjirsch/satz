@@ -5,6 +5,15 @@ preset. Two kinds live here: **cloud steps with no provider resource** (nothing
 in Terraform can express them, so they stay `gcloud`), and **build-time helpers**
 that maintain the repo's own data files.
 
+A cloud step still cannot be **authored** in Satz — that is what makes it a
+script. It can, since v0.46.69, be **declared and invoked** by an estate: an
+[`action`](satz-language.md#613-action--a-step-with-no-provider-resource) names
+the step, binds it to one of these files, and builds its arguments from the
+estate's own params, so `satz run-actions` runs it with the organisation id the
+estate already knows instead of a human retyping it. Nothing runs at transpile
+time and an action carries no claim; the script stays exactly as opaque to the
+compliance plane as it is today.
+
 | script | kind | what it does |
 |---|---|---|
 | `scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below |
@@ -26,6 +35,21 @@ organization inherit it.
 scripts/scc-enable-all.sh --organization 123456789012            # dry run
 scripts/scc-enable-all.sh --organization 123456789012 --apply    # write
 ```
+
+Its flag shape is also the shape an `action` binds to — `args` for the form that
+reads, `execute_args` for the flag that writes:
+
+```
+action "scc-services" {
+  reason       = "SCC service enablement has no provider resource (google 7.14.1)"
+  run          = "../scripts/scc-enable-all.sh"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+}
+```
+
+`satz run-actions <estate>.satz` then prints the resolved command line, `--check`
+runs the dry run, and `--execute` adds `--apply`.
 
 ### What is on by default, and what you have to ask for
 

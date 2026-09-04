@@ -1,0 +1,8 @@
+// A pack may ship an executable step. It still emits nothing.
+pack corpus_actions_pack version "1.0"
+
+action "pack-step" {
+  reason = "a pack-declared step"
+  run    = "./pack-enable.sh"
+  args   = ["--shortname", "{customer_shortname}"]
+}

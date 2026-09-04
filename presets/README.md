@@ -464,6 +464,28 @@ scripts/scc-enable-all.sh --organization 123456789012              # dry run
 scripts/scc-enable-all.sh --organization 123456789012 --apply      # write
 ```
 
+An estate can bind that step instead of a human retyping the org id, with an
+[`action`](../docs/satz-language.md#613-action--a-step-with-no-provider-resource):
+`args` carries the form that reads, `execute_args` the flag that writes, and
+`satz run-actions <estate>.satz --execute` runs it with the estate's own params.
+
+```
+action "scc-services" {
+  reason       = "SCC service enablement has no provider resource (google 7.14.1)"
+  run          = "../scripts/scc-enable-all.sh"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+}
+```
+
+A **pack** may declare an action too, and `satz doc-packs` puts it on the pack's
+page — but it stays a step satz merely runs, never a witness: no claim can cover
+what a script did, and nothing about it reaches `report-compliance`. Because
+`get-presets` downloads packs from this public repository, every compile warns
+when one declares an action, `--no-pack-actions` ignores pack-declared ones, and
+a downloaded script arrives without its executable bit, which satz refuses to set
+for you.
+
 Everything is on by default except Web Security Scanner (it actively crawls the
 customer's web apps), Artifact Analysis (billed per image scan) and the AWS/Azure
 connectors — `--with-optional` and `--with-multicloud` respectively. A detector for

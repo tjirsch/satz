@@ -167,6 +167,11 @@ pub struct FrontEnd {
     /// source order. This is the compliance plane's input: the packs that are
     /// really in this estate, with the witnesses they claim.
     pub claims: Vec<PackClaims>,
+    /// Declared `action`s from the estate and every file it actually `use`s, with
+    /// their arguments resolved. Like `hcl`, they bypass the fold and never reach
+    /// the emission manifest; unlike `hcl`, nothing emits them at all — they are
+    /// inert until `satz run-actions` is invoked.
+    pub actions: Vec<ResolvedAction>,
 }
 
 /// One file's declared claims, carried with the file that declared them.
@@ -190,6 +195,26 @@ pub struct HclPassthrough {
     pub file: String,
     pub body: String,
     pub trust: Option<String>,
+    pub line: usize,
+}
+
+/// One `action "…" { … }` with its arguments resolved, carried with the file that
+/// declared it.
+///
+/// The declaring file is not decoration: it is what tells an operator whether the
+/// step they are about to run came from their own estate or from a downloaded pack,
+/// and `--no-pack-actions` skips exactly the ones where `from_pack` is true.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedAction {
+    pub file: String,
+    pub name: String,
+    pub reason: String,
+    pub run: String,
+    pub args: Vec<String>,
+    pub execute_args: Vec<String>,
+    pub phase: String,
+    /// Declared by a `use`d file rather than by the estate itself.
+    pub from_pack: bool,
     pub line: usize,
 }
 
@@ -417,10 +442,11 @@ pub fn compile_estate(
     let env = build_env(&file, &Env::new(), file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     let tfvars = w.genv;
     let config = w.config;
+    let walked_actions = w.actions;
     let mut hcl: Vec<HclPassthrough> = file
         .hcl_blocks
         .iter()
@@ -454,7 +480,60 @@ pub fn compile_estate(
         claims.push(pack_claims(&file, file_name));
     }
     claims.extend(w.claims);
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims })
+
+    // The estate's own actions come first, then the `use`-visit order — the same
+    // order `hcl` is assembled in, so "declaration order" means one thing in this
+    // language and not two.
+    let mut actions = Vec::new();
+    for a in &file.actions {
+        actions.push(resolve_action(a, file_name, false, &tfvars)?);
+    }
+    for (f, a) in &walked_actions {
+        actions.push(resolve_action(a, f, true, &tfvars)?);
+    }
+    // A name is how `--only` selects one and how a runbook refers to it, so two
+    // actions answering to the same name is a hard error naming both files — the
+    // rule the fold already applies to a repeated address.
+    for (i, a) in actions.iter().enumerate() {
+        if let Some(first) = actions[..i].iter().find(|b| b.name == a.name) {
+            return Err(PipelineError {
+                file: a.file.clone(),
+                line: a.line,
+                msg: format!(
+                    "action \"{}\": declared twice — {}:{} and {}:{}",
+                    a.name, first.file, first.line, a.file, a.line
+                ),
+            });
+        }
+    }
+
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions })
+}
+
+/// Resolve one action's arguments against the finished parameter namespace. An
+/// unknown param is a hard error here exactly as it is in a resource body — an
+/// argument list that silently loses a value is a command run against the wrong
+/// organisation.
+fn resolve_action(
+    a: &satz::ActionDecl,
+    file_name: &str,
+    from_pack: bool,
+    env: &Env,
+) -> Result<ResolvedAction, PipelineError> {
+    let resolve_all = |parts: &[Vec<StrPart>]| -> Result<Vec<String>, PipelineError> {
+        parts.iter().map(|p| resolve_str(p, env, file_name, a.line)).collect()
+    };
+    Ok(ResolvedAction {
+        file: file_name.to_string(),
+        name: a.name.clone(),
+        reason: a.reason.clone(),
+        run: a.run.clone(),
+        args: resolve_all(&a.args)?,
+        execute_args: resolve_all(&a.execute_args)?,
+        phase: a.phase.clone(),
+        from_pack,
+        line: a.line,
+    })
 }
 
 fn pack_claims(file: &satz::File, file_name: &str) -> PackClaims {
@@ -607,7 +686,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -643,6 +722,10 @@ struct Walk<'a> {
     /// Raw HCL collected from every file the walk visits.
     hcl: Vec<HclPassthrough>,
     claims: Vec<PackClaims>,
+    /// Actions collected from every file the walk visits, still unresolved: the
+    /// param namespace is only complete once the walk has finished, so resolving
+    /// here would judge a pack's argument against a half-built environment.
+    actions: Vec<(String, satz::ActionDecl)>,
 }
 
 impl Walk<'_> {
@@ -658,6 +741,16 @@ impl Walk<'_> {
                 trust: h.trust.clone(),
                 line: h.line,
             });
+        }
+    }
+
+    /// Actions of a `use`d file. Called only after the `when` guard passed — the
+    /// same rule claims follow, and it matters more here: an unused pack that
+    /// contributed an action would put an executable step in front of an operator
+    /// for a pack the estate deliberately switched off.
+    fn absorb_actions(&mut self, file: &satz::File, file_name: &str) {
+        for a in &file.actions {
+            self.actions.push((file_name.to_string(), a.clone()));
         }
     }
 
@@ -716,6 +809,7 @@ impl Walk<'_> {
         self.absorb_params(&file, use_path)?;
         self.absorb_hcl(&file, use_path);
         self.absorb_claims(&file, use_path);
+        self.absorb_actions(&file, use_path);
         self.use_chain.push(use_path.to_string());
         Ok(file)
     }

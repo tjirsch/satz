@@ -158,6 +158,20 @@ hcl trust "reviewed 2026-08-30: static address until the provider gap closes" {
   }
 }
 
+// --- `action`: a deployment step that has no provider resource. --------------
+// The real case is SCC service enablement: the provider carries no binding for
+// it, so it cannot be written as a resource in any language satz compiles.
+// An action is inert until `satz run-actions` is invoked — nothing here runs at
+// transpile time — and no claim can cover it. `reason` is mandatory, because it
+// is what the warning quotes to whoever is about to run the script.
+action "showcase-step" {
+  reason       = "stands in for SCC service enablement: no google_* resource exists for it"
+  run          = "../scripts/showcase-action.sh"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+  phase        = "after-apply"
+}
+
 // --- Claims: what this estate proves, and what it declines on purpose. -------
 claim "cis-gcp" "4.0" "5.1" implements {
   resources      = ["google_storage_bucket.audit_logs"]

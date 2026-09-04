@@ -1,0 +1,37 @@
+// Corpus case: an `action` is inert at compile time.
+//
+// The estate and the pack each declare one, with interpolated arguments. The
+// snapshot below must contain nothing but the folder — no resource, no variable,
+// no comment, not a trace of either action. That is the whole point of the
+// construct: satz records that an executable step exists and refuses to run it as
+// part of compiling, so `transpile` stays a pure function of its sources and the
+// corpus snapshots, `check-presets` and the auto-fork proof keep meaning what they
+// say. `satz run-actions` is the only thing that ever executes one.
+
+estate corpus_actions
+
+params {
+  customer_organization_id = "123456789"
+  customer_shortname       = "corp"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+action "estate-step" {
+  reason       = "a step the provider has no resource for"
+  run          = "./enable.sh"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+  phase        = "before-apply"
+}
+
+google_folder {
+  logging {
+    display_name = "Logging"
+    use "pack.satz"
+  }
+}
