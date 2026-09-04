@@ -725,7 +725,14 @@ pub(crate) fn emit_providers(
 }
 
 /// variables.tf: one declaration per accumulated param, typed by value shape.
-pub(crate) fn emit_variables(tfvars: &Env) -> String {
+/// `descriptions` comes from the questions the packs declare: a param worth
+/// asking about is worth describing in the generated `variables.tf`, and the
+/// prompt is already the one-line human sentence for it. `why` stays out — it is
+/// prose, and belongs on the pack's page rather than in every estate.
+pub(crate) fn emit_variables(
+    tfvars: &Env,
+    descriptions: &std::collections::BTreeMap<String, String>,
+) -> String {
     let mut body = hcl::Body::builder();
     for (name, v) in tfvars {
         let ty = match v {
@@ -735,12 +742,13 @@ pub(crate) fn emit_variables(tfvars: &Env) -> String {
             serde_yaml::Value::Number(_) => "number",
             _ => "string",
         };
-        body = body.add_block(
-            hcl::Block::builder("variable")
-                .add_label(name.replace('_', "-"))
-                .add_attribute(("type", ty.parse::<hcl::Expression>().unwrap()))
-                .build(),
-        );
+        let mut blk = hcl::Block::builder("variable")
+            .add_label(name.replace('_', "-"))
+            .add_attribute(("type", ty.parse::<hcl::Expression>().unwrap()));
+        if let Some(d) = descriptions.get(name) {
+            blk = blk.add_attribute(("description", d.clone()));
+        }
+        body = body.add_block(blk.build());
     }
     hcl::to_string(&body.build()).unwrap_or_default()
 }

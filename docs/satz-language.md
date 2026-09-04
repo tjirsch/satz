@@ -1273,7 +1273,96 @@ failed call. It lives under `presets/` rather than `scripts/` because
 with it would declare an action that cannot find what it runs. See
 [`docs/scripts.md`](scripts.md).
 
-### 6.14 Provenance: pristine, fork, ledger
+### 6.14 `question` — what to ask, and what the answer costs
+
+A pack declares its params, its claims — and what a human must be asked before
+those params can be filled. Metadata: a question emits nothing, never enters the
+fold, and never reaches the emission manifest.
+
+```
+params {
+  customer_shortname = ""
+  default_region     = "europe-west3"
+}
+
+question customer_shortname {
+  prompt    = "Short name identifying this customer"
+  why       = "Project ids, bucket names and group prefixes derive from it, and those ids are globally unique."
+  reversal  = recreate
+  blast     = none
+}
+
+question default_region {
+  prompt    = "Which region should regional resources default to?"
+  reversal  = state_surgery
+  blast     = low
+  recommend = "europe-west3"
+  ask_when  = deploys_regional_resources     // optional: only ask when that param is true
+}
+```
+
+**Two costs, and conflating them is the mistake this exists to avoid.**
+`reversal` is what changing the answer does to the *estate* — `edit`,
+`state_surgery` or `recreate`. `blast` is what it does to the *running
+organisation* — `none`, `low` or `high`. They are orthogonal: enforcing OS Login
+is one boolean to reverse and cuts every existing SSH path. An answer is only
+safely deferred when both are low.
+
+`why` is **required** where `reversal = recreate` or `blast = high`, so that when
+satz refuses or warns it can quote the pack's own sentence rather than a generic
+one — the same rule that makes `reason` mandatory on a `deviates` claim.
+
+`recommend` is what an interview *offers*; the `params` default is what applies
+when nobody was asked. One default, one recommendation, never two channels.
+
+**A question must be declared in the file that declares its param.** Questions are
+absorbed after the `use … when` guard, exactly like claims — so a question that
+*gates* a pack cannot live in the gated pack, or it would be invisible until the
+answer was already yes. Satz refuses it at parse time rather than documenting it.
+
+#### An exclusive choice
+
+```
+params {
+  group_model_flat  = true
+  group_model_split = false
+}
+
+question oneof group_model {
+  prompt   = "Which security-group model does this customer run?"
+  why      = "Splitting network authority out later means a new group, membership moves and re-granted roles."
+  reversal = state_surgery
+  blast    = low
+  required = true                          // exactly one, rather than at most one
+  option group_model_flat  { label = "Flat — network authority sits with project admins" }
+  option group_model_split { label = "Split — a separate network-admins group" why = "For a distinct network team." }
+}
+```
+
+The options name **existing boolean params**, so an answer set stays a plain param
+map and a question never becomes a second way to set a value. What it buys, with
+no interview built at all: satz refuses two true branches, naming the choice and
+both params. Before this, the same mistake surfaced as an opaque fold conflict on
+whatever address the two branches happened to share.
+
+Composition follows from that: a choice between two packs is two booleans plus the
+`use … when` that already exists.
+
+#### Where they show up
+
+- `satz questions <estate>` — every question its packs contribute, joined with the
+  value the estate carries, and marked when the answer is expensive to change.
+  Offline and schema-free: an interview happens before anyone runs `update-schema`.
+- `satz doc-packs` gives each pack a **Questions** section.
+- A question's `prompt` becomes the `description` of the generated
+  `variables.tf` variable — the pack already wrote the one-line sentence.
+- `check-presets` reports a pack whose questions changed as **`questions`**, not as
+  drift: what the pack emits is byte-identical, so forking over a prompt typo would
+  be wrong — but a `recreate → edit` downgrade is a governance fact and must not
+  ship silently. Questions are canonicalised separately from the body for exactly
+  that reason.
+
+### 6.15 Provenance: pristine, fork, ledger
 
 Suffix carries meaning; the tooling enforces it.
 

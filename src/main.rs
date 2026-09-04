@@ -18,6 +18,7 @@ mod gcp;
 mod org_policy;
 mod cloud_identity;
 mod compliance;
+mod questions;
 mod mcp;
 mod dossier;
 mod presets;
@@ -242,7 +243,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
             "adopt-org-policies",
         ],
     ),
-    ("Compliance and audit", &["require", "report-compliance", "scan", "triage", "remediation-plan"]),
+    ("Compliance and audit", &["require", "questions", "report-compliance", "scan", "triage", "remediation-plan"]),
     ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
@@ -724,6 +725,17 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// What this estate can be asked: the questions its packs declare, joined with the answers its params already carry
+    ///
+    /// Read-only. Each question is `answered`, `defaulted`, or `unasked`, with what
+    /// changing the answer would cost.
+    Questions {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Output format: text or json
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
+    },
     /// Serve this estate over the Model Context Protocol (stdio), so an agent drives satz
     ///
     /// satz never calls a model; this is the other direction. `--allow` sets a ceiling the
@@ -888,7 +900,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Mcp { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Mcp { .. } | Commands::Questions { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1734,6 +1746,16 @@ Thumbs.db
             }
             Ok(())
         }
+        Commands::Questions { input, format } => {
+            let format = format.require_one_of("questions", &[OutFormat::Text, OutFormat::Json])?;
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let report = crate::questions::questions_report(&input_path, &runtime_config)?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                _ => print!("{}", crate::questions::render_questions(&report)),
+            }
+            Ok(())
+        }
         Commands::Mcp { allow, self_gated } => {
             let ceiling = crate::mcp::Level::parse(&allow)?;
             crate::mcp::serve(
@@ -1902,12 +1924,14 @@ fn pipeline_b_generate(
     if !NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
         crate::actions::warn(&fe.actions);
     }
+    // computed before the struct below takes ownership of `fe`'s fields
+    let descriptions = question_descriptions(&fe);
     Ok(PipelineBOut {
         actions: fe.actions,
         main_tf: append_hcl_passthrough(out.main_tf, &fe.hcl),
         manifest: out.manifest,
         providers_tf,
-        variables_tf: crate::emitter::emit_variables(&fe.tfvars),
+        variables_tf: crate::emitter::emit_variables(&fe.tfvars, &descriptions),
         tfvars: crate::emitter::emit_tfvars(&fe.tfvars),
         imports_tf: out.imports_tf,
         claims: fe.claims,
@@ -2956,6 +2980,27 @@ async fn run_adopt(
 }
 
 type ComplianceInputs = (crate::manifest::Manifest, Vec<(String, crate::compliance::Claim)>, Option<String>);
+
+/// The one-line description for each param a question asks about. A pack that
+/// bothered to write a prompt has already written the sentence `variables.tf`
+/// wants; nothing else in the pipeline had one.
+fn question_descriptions(
+    fe: &satz_core::pipeline::FrontEnd,
+) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for pq in &fe.questions {
+        for q in &pq.questions {
+            if q.oneof {
+                for o in &q.options {
+                    out.entry(o.param.clone()).or_insert_with(|| o.label.clone());
+                }
+            } else {
+                out.entry(q.subject.clone()).or_insert_with(|| q.prompt.clone());
+            }
+        }
+    }
+    out
+}
 
 fn compliance_inputs(
     input_path: &Path,

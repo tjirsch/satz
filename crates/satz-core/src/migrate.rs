@@ -596,6 +596,7 @@ const NEVER_A_TYPE_KEY: &[&str] = &[
     "backend",
     "hcl",
     "claim",
+    "question",
     "action",
     "suppress",
     "project_service",

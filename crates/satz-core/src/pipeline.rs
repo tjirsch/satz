@@ -172,6 +172,9 @@ pub struct FrontEnd {
     /// the emission manifest; unlike `hcl`, nothing emits them at all — they are
     /// inert until `satz run-actions` is invoked.
     pub actions: Vec<ResolvedAction>,
+    /// Declared `question`s from the estate and every file it actually `use`s.
+    /// Metadata only: they emit nothing and never reach the fold.
+    pub questions: Vec<PackQuestions>,
 }
 
 /// One file's declared claims, carried with the file that declared them.
@@ -187,6 +190,18 @@ pub struct PackClaims {
     pub version: String,
     pub file: String,
     pub claims: Vec<satz::ClaimDecl>,
+}
+
+/// One file's declared questions, carried with the file that declared them.
+///
+/// Same reasoning as `PackClaims`: a fork declares the same `pack` name as its
+/// pristine twin and may ask different questions, so a name is not a key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PackQuestions {
+    pub pack: String,
+    pub version: String,
+    pub file: String,
+    pub questions: Vec<satz::QuestionDecl>,
 }
 
 /// One `hcl { … }` block with the file it came from.
@@ -442,7 +457,7 @@ pub fn compile_estate(
     let env = build_env(&file, &Env::new(), file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     let tfvars = w.genv;
     let config = w.config;
@@ -507,7 +522,15 @@ pub fn compile_estate(
         }
     }
 
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions })
+    // the estate's own questions first, then those of the packs it used
+    let mut questions = Vec::new();
+    if !file.questions.is_empty() {
+        questions.push(pack_questions(&file, file_name));
+    }
+    questions.extend(w.questions);
+    check_oneof(&questions, &tfvars)?;
+
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions })
 }
 
 /// Resolve one action's arguments against the finished parameter namespace. An
@@ -534,6 +557,63 @@ fn resolve_action(
         from_pack,
         line: a.line,
     })
+}
+
+/// A `question oneof` names existing boolean params, so the answer set stays a
+/// plain param map — and satz gains a check it could not make before: at most one
+/// branch may be true, or exactly one when the group says `required`.
+///
+/// Without it the same mistake surfaces as an opaque fold conflict on whatever
+/// address the two branches happen to share, which names neither the choice nor
+/// the question. This is a user-visible win with no interview built at all.
+pub fn check_oneof(questions: &[PackQuestions], env: &Env) -> Result<(), PipelineError> {
+    for pq in questions {
+        for q in &pq.questions {
+            if !q.oneof {
+                continue;
+            }
+            let on: Vec<&str> = q
+                .options
+                .iter()
+                .filter(|o| truthy(env.get(&o.param)))
+                .map(|o| o.param.as_str())
+                .collect();
+            if on.len() > 1 {
+                return Err(PipelineError {
+                    file: pq.file.clone(),
+                    line: q.line,
+                    msg: format!(
+                        "{}: {} — but {} are both true. Exactly one branch of this choice may be set.",
+                        q.subject,
+                        q.prompt,
+                        on.join(" and ")
+                    ),
+                });
+            }
+            if q.required && on.is_empty() {
+                return Err(PipelineError {
+                    file: pq.file.clone(),
+                    line: q.line,
+                    msg: format!(
+                        "{}: {} — no branch is set, and this choice is required. Set one of: {}.",
+                        q.subject,
+                        q.prompt,
+                        q.options.iter().map(|o| o.param.as_str()).collect::<Vec<_>>().join(", ")
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pack_questions(file: &satz::File, file_name: &str) -> PackQuestions {
+    PackQuestions {
+        pack: file.estate.clone().unwrap_or_default(),
+        version: file.version.clone().unwrap_or_else(|| "unversioned".to_string()),
+        file: file_name.to_string(),
+        questions: file.questions.clone(),
+    }
 }
 
 fn pack_claims(file: &satz::File, file_name: &str) -> PackClaims {
@@ -584,6 +664,77 @@ const MAX_USE_DEPTH: usize = 64;
 /// resource body's nested attribute blocks (`labels { … }`, `spec { … }`) are
 /// indistinguishable from resource maps without a schema, and guessing made this
 /// walk reject `google_labels` on estates `transpile` compiles happily.
+/// The questions an estate can be asked, from itself and every pack it actually
+/// uses — with the params they answer, resolved.
+///
+/// Schema-free on purpose, like `estate_params`: an interview happens before
+/// anyone has run `update-schema`, and a question is metadata about a param, not
+/// about a resource. Requiring the provider registry here would make the first
+/// thing a new customer touches depend on a download.
+pub fn estate_questions(
+    file_name: &str,
+    src: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<(Vec<PackQuestions>, Env), PipelineError> {
+    let file = satz::parse(src)
+        .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
+    let mut env = build_env(&file, &Env::new(), file_name)?;
+    let mut out = Vec::new();
+    if !file.questions.is_empty() {
+        out.push(pack_questions(&file, file_name));
+    }
+    collect_questions(&file.items, file_name, load, &mut env, &mut out, 0)?;
+    check_oneof(&out, &env)?;
+    Ok((out, env))
+}
+
+/// The `use` walk of `collect_params`, gathering questions on the way. A pack
+/// behind a false `when` contributes neither params nor questions.
+fn collect_questions(
+    items: &[Entry],
+    file_name: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+    env: &mut Env,
+    out: &mut Vec<PackQuestions>,
+    depth: usize,
+) -> Result<(), PipelineError> {
+    if depth > MAX_USE_DEPTH {
+        return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
+    }
+    for item in items {
+        match item {
+            Entry::Attr { .. } => {}
+            Entry::Use { path, when, line, .. } => {
+                if let Some(p) = when {
+                    if !env.contains_key(p) {
+                        return perr(file_name, *line, format!("use … when {}: unknown param `{}`", p, p));
+                    }
+                    if !truthy(env.get(p)) {
+                        continue;
+                    }
+                }
+                let src = (load)(path)
+                    .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
+                let used = satz::parse(&src)
+                    .map_err(|e| PipelineError { file: path.to_string(), line: e.line, msg: e.msg })?;
+                for (name, v, pline) in satz::sort_params_by_deps(&used.params) {
+                    if env.contains_key(name) {
+                        continue;
+                    }
+                    let resolved = resolve_value(v, env, path, *pline)?;
+                    env.insert(name.clone(), resolved);
+                }
+                if !used.questions.is_empty() {
+                    out.push(pack_questions(&used, path));
+                }
+                collect_questions(&used.items, path, load, env, out, depth + 1)?;
+            }
+            Entry::Map { body, .. } => collect_questions(body, file_name, load, env, out, depth)?,
+        }
+    }
+    Ok(())
+}
+
 fn collect_params(
     items: &[Entry],
     file_name: &str,
@@ -686,7 +837,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -722,6 +873,7 @@ struct Walk<'a> {
     /// Raw HCL collected from every file the walk visits.
     hcl: Vec<HclPassthrough>,
     claims: Vec<PackClaims>,
+    questions: Vec<PackQuestions>,
     /// Actions collected from every file the walk visits, still unresolved: the
     /// param namespace is only complete once the walk has finished, so resolving
     /// here would judge a pack's argument against a half-built environment.
@@ -762,6 +914,17 @@ impl Walk<'_> {
             return;
         }
         self.claims.push(pack_claims(file, file_name));
+    }
+
+    /// Called from the same place as `absorb_claims` — after the `use … when`
+    /// guard, so a pack switched off contributes no questions either. That is
+    /// exactly why a question must be declared beside its param: a question that
+    /// GATES a pack cannot live in the gated pack.
+    fn absorb_questions(&mut self, file: &satz::File, file_name: &str) {
+        if file.questions.is_empty() {
+            return;
+        }
+        self.questions.push(pack_questions(file, file_name));
     }
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
@@ -809,6 +972,7 @@ impl Walk<'_> {
         self.absorb_params(&file, use_path)?;
         self.absorb_hcl(&file, use_path);
         self.absorb_claims(&file, use_path);
+        self.absorb_questions(&file, use_path);
         self.absorb_actions(&file, use_path);
         self.use_chain.push(use_path.to_string());
         Ok(file)

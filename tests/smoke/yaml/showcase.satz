@@ -19,7 +19,45 @@ params {
   audit_retention_days     = 400            # a number; interpolates like a string
   want_optional            = false          # a `use … when` switch, declared here
   pack_bucket_location     = "europe-west3" # overrides showcase-pack's "EU" default
+  group_model_flat         = true           # exactly one of these two — see `question oneof` below
+  group_model_split        = false
 }
+// ---------------------------------------------------------------------------
+// QUESTIONS — what to ask a customer so a param can be filled, and what getting
+// it wrong costs. Metadata: they emit nothing, and a question must be declared
+// in the file that declares its param (a question gating a pack cannot live in
+// the gated pack, because questions are absorbed after the `use … when` guard).
+// ---------------------------------------------------------------------------
+
+question customer_shortname {
+  prompt    = "Short name identifying this customer"
+  why       = "Project ids, bucket names and group prefixes derive from it, and those ids are globally unique — changing it later recreates them."
+  reversal  = recreate
+  blast     = none
+}
+
+question default_region {
+  prompt    = "Which region should regional resources default to?"
+  why       = "Moving a bucket or a dataset later is a copy, not an edit."
+  reversal  = state_surgery
+  blast     = low
+  recommend = "europe-west3"
+}
+
+// An exclusive choice: the options name existing boolean params, so an answer
+// set stays a plain param map and a question never becomes a second way to set
+// a value. `check_oneof` refuses two true branches by name — today the same
+// mistake surfaces as an opaque fold conflict on whatever address they share.
+question oneof group_model {
+  prompt   = "Which security-group model does this customer run?"
+  why      = "Splitting network authority out later means a new group, membership moves and re-granted roles."
+  reversal = state_surgery
+  blast    = low
+  required = true
+  option group_model_flat  { label = "Flat — network authority sits with project admins" }
+  option group_model_split { label = "Split — a separate network-admins group" why = "For customers with a distinct network team." }
+}
+
 
 // --- Estate configuration blocks: emitted as providers.tf / the backend. -----
 terraform {

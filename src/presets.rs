@@ -74,6 +74,12 @@ pub(crate) enum Drift {
     VariablesOnly(Vec<(String, VarEntry)>),
     /// Resource bodies or the variable set itself differ — not mechanically migratable.
     Structural { summary: String },
+    /// Only the pack's QUESTIONS differ. Reported loudly and never forked: what a
+    /// pack emits is byte-identical, so treating this as an emission change would
+    /// auto-fork every estate using it over a prompt typo — and call it "resource
+    /// lines differ", which is a lie. Leaving it invisible would be worse: a
+    /// `reversal: recreate → edit` downgrade is a governance fact.
+    QuestionsOnly { summary: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -162,11 +168,13 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
     if local == pristine {
         return Drift::Clean;
     }
-    let (l, p) = match (satz_core::satz::parse(local), satz_core::satz::parse(pristine)) {
-        (Ok(l), Ok(p)) => (satz_core::satz::canonical_parts(&l), satz_core::satz::canonical_parts(&p)),
+    let (lf, pf) = match (satz_core::satz::parse(local), satz_core::satz::parse(pristine)) {
+        (Ok(l), Ok(p)) => (l, p),
         // A pack that no longer parses is drift the operator must see, not a skip.
         _ => return Drift::Structural { summary: "differs from upstream and does not parse".into() },
     };
+    let questions_differ = satz_core::satz::canonical_questions(&lf) != satz_core::satz::canonical_questions(&pf);
+    let (l, p) = (satz_core::satz::canonical_parts(&lf), satz_core::satz::canonical_parts(&pf));
     if l.body != p.body {
         let lb: BTreeSet<&str> = l.body.lines().collect();
         let pb: BTreeSet<&str> = p.body.lines().collect();
@@ -195,6 +203,16 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
         .map(|(n, v)| (n.clone(), VarEntry { value: v.clone() }))
         .collect();
     if changed.is_empty() {
+        if questions_differ {
+            let (lq, pq) = (lf.questions.len(), pf.questions.len());
+            return Drift::QuestionsOnly {
+                summary: if lq == pq {
+                    format!("{} question(s), wording or costs differ", lq)
+                } else {
+                    format!("questions differ: {} here, {} upstream", lq, pq)
+                },
+            };
+        }
         Drift::Clean
     } else {
         Drift::VariablesOnly(changed)
@@ -263,6 +281,9 @@ pub(crate) struct PresetRow {
     pub changed_defaults: Vec<ChangedDefault>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub structural_summary: Option<String>,
+    /// set when ONLY the questions differ — reported, never forked
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub questions_summary: Option<String>,
     /// a stale pristine copy whose `.local` fork exists: leave it, it is the
     /// branch point the eventual merge needs
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
@@ -356,6 +377,17 @@ pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
                     "  missing locally: {} (new upstream preset — `get-presets` fetches it)\n",
                     row.file
                 ));
+            }
+            "questions-changed" => {
+                out.push_str(&format!(
+                    "  questions{}: {}{} — {}\n",
+                    tag,
+                    row.file,
+                    vtag,
+                    row.questions_summary.as_deref().unwrap_or("")
+                ));
+                out.push_str("    the pack emits the same HCL, so this is not drift to adopt or fork —\n");
+                out.push_str("    but what a customer is ASKED, or what an answer costs, has changed.\n");
             }
             "stale" if row.semantics_unchanged => {
                 out.push_str(&format!(
@@ -464,6 +496,7 @@ pub(crate) async fn check_presets_report(
             fork_of: None,
             changed_defaults: Vec::new(),
             structural_summary: None,
+            questions_summary: None,
             baseline_for_fork: false,
             same_version_different_content: false,
             semantics_unchanged: false,
@@ -512,12 +545,18 @@ pub(crate) async fn check_presets_report(
                             .collect();
                     }
                     Drift::Structural { summary } => row.structural_summary = Some(summary.clone()),
+                    Drift::QuestionsOnly { summary } => row.questions_summary = Some(summary.clone()),
                     Drift::Clean => {}
                 }
                 match (&drift, behind) {
                     (Drift::Clean, false) => {
                         summary.clean += 1;
                         row.status = "clean";
+                    }
+                    // Loud, but never a fork: the pack emits the same HCL.
+                    (Drift::QuestionsOnly { .. }, false) => {
+                        summary.clean += 1;
+                        row.status = "questions-changed";
                     }
                     // Version moved, semantics did not: comment or formatting
                     // churn upstream. Nothing to decide, nothing to fail.
@@ -1210,6 +1249,7 @@ mod tests {
             fork_of: None,
             changed_defaults: Vec::new(),
             structural_summary: None,
+            questions_summary: None,
             baseline_for_fork: false,
             same_version_different_content: false,
             semantics_unchanged: false,

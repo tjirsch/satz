@@ -206,6 +206,41 @@ fn render(rel: &Path, file: &File, src: &str, existing: Option<&str>) -> String 
         }
         md.push('\n');
     }
+    // A SECTION, not a column on the params table: a column rewrites all 25
+    // generated pages, a section touches only packs that declare a question.
+    if !file.questions.is_empty() {
+        md.push_str("## Questions\n\n");
+        md.push_str("What to ask before this pack is configured, and what changing the answer costs.\n\n");
+        md.push_str("| asks about | prompt | reversal | blast | recommends |\n|---|---|---|---|---|\n");
+        for q in &file.questions {
+            md.push_str(&format!(
+                "| `{}`{} | {} | {} | {} | {} |\n",
+                q.subject,
+                if q.oneof { " *(choice)*" } else { "" },
+                q.prompt.replace('|', "\\|"),
+                q.reversal.as_str(),
+                q.blast.as_str(),
+                q.recommend.as_ref().map(|v| format!("`{}`", value_text(v).replace('|', "\\|"))).unwrap_or_else(|| "—".into()),
+            ));
+        }
+        md.push('\n');
+        for q in &file.questions {
+            if q.options.is_empty() && q.why.is_none() {
+                continue;
+            }
+            md.push_str(&format!("**{}** — {}\n\n", q.subject, q.why.as_deref().unwrap_or("")));
+            for o in &q.options {
+                md.push_str(&format!(
+                    "- `{}` — {}{}\n",
+                    o.param,
+                    o.label,
+                    o.why.as_ref().map(|w| format!(" ({})", w)).unwrap_or_default()
+                ));
+            }
+            md.push('\n');
+        }
+    }
+
     let sh = shape(&file.items);
     md.push_str("## Contributes\n\n");
     if !sh.uses.is_empty() {
