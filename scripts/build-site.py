@@ -23,10 +23,48 @@ doc = importlib.import_module("build-satz-doc")
 ROOT = Path(__file__).resolve().parent.parent
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "_site"
 
+# Which `docs/*.md` the site publishes, and which it deliberately does not.
+#
+# A glob used to decide this, which meant a page appeared on the public site
+# because a file existed. Publishing is a decision now, and so is not publishing:
+# a doc must be named in exactly one of these two, or the build fails naming it.
+# That way a new doc cannot slip onto the site unnoticed, and cannot be silently
+# left off it either.
+SITE_DOCS: list[str] = [
+    "satz-language",
+    "mcp",
+    "presets-workflow",
+    "scripts",
+    "housekeeping",
+    "competitive",
+    "example-customers",
+    "interview-design",
+    "presets-commands-proposal",
+]
+
+# Not published, and why. These stay in the repository and stay linkable — a link
+# to one from a published page is rewritten to GitHub rather than left dead.
+SITE_DOCS_EXCLUDED: dict[str, str] = {
+    "security-toolset-integration": "proposal under rework; it describes an audit loop that is not what satz does today",
+    "fast-delta": "source material for the competitive matrix, which carries the conclusions",
+    "stage-b": "how the pipeline was built. The language reference is how it is used, and the migration commands are in the README",
+}
+
+_docs = {md.stem for md in (ROOT / "docs").glob("*.md")}
+_unclassified = sorted(_docs - set(SITE_DOCS) - set(SITE_DOCS_EXCLUDED))
+_missing = sorted((set(SITE_DOCS) | set(SITE_DOCS_EXCLUDED)) - _docs)
+if _unclassified or _missing:
+    lines = ["build-site: every docs/*.md must be published or excluded, explicitly."]
+    for stem in _unclassified:
+        lines.append(f"  docs/{stem}.md is in neither SITE_DOCS nor SITE_DOCS_EXCLUDED")
+    for stem in _missing:
+        lines.append(f"  docs/{stem}.md is listed but does not exist")
+    raise SystemExit("\n".join(lines))
+
 PAGES: list[tuple[Path, str, str]] = []  # (source md, output relative path, nav label)
 PAGES.append((ROOT / "README.md", "index.html", "satz"))
-for md in sorted((ROOT / "docs").glob("*.md")):
-    PAGES.append((md, f"docs/{md.stem}.html", md.stem))
+for stem in SITE_DOCS:
+    PAGES.append((ROOT / "docs" / f"{stem}.md", f"docs/{stem}.html", stem))
 PAGES.append((ROOT / "presets/README.md", "presets/index.html", "presets"))
 if (ROOT / "presets/CHANGELOG.md").exists():
     PAGES.append((ROOT / "presets/CHANGELOG.md", "presets/changelog.html", "presets changelog"))
@@ -34,7 +72,7 @@ PACK_PAGES: list[tuple[Path, str]] = []  # derived per-pack pages: rendered, lin
 for md in sorted((ROOT / "presets/docs").glob("*.md")):
     PACK_PAGES.append((md, f"presets/docs/{'index' if md.stem == 'README' else md.stem}.html"))
 
-NAV_ORDER = ["satz", "satz-language", "presets", "pack pages", "presets changelog", "presets-workflow", "scripts", "security-toolset-integration"]
+NAV_ORDER = ["satz", "satz-language", "mcp", "presets", "pack pages", "presets changelog", "presets-workflow", "scripts"]
 
 
 def nav_html(current_rel: str) -> str:
@@ -59,6 +97,82 @@ def nav_html(current_rel: str) -> str:
         + f'<script defer src="{up}search-index.js"></script>\n'
     )
 
+
+TOC_CSS = """
+  /* Long pages are the point — the reference is meant to be read straight
+     through — so the answer to navigating them is a contents column beside the
+     text, not shorter pages. */
+  .page { display: grid; grid-template-columns: 15.5rem minmax(0, 74ch); gap: 0 3rem;
+    justify-content: center; align-items: start; }
+  .page > main { margin: 0; }
+  details.toc { position: sticky; top: 4.4rem; margin: 84px 0 0; font-size: .9rem;
+    max-height: calc(100vh - 6rem); overflow-y: auto; overscroll-behavior: contain; }
+  details.toc summary { font-weight: 600; color: var(--ink-2); cursor: pointer; margin-bottom: .6rem;
+    list-style: none; }
+  details.toc summary::-webkit-details-marker { display: none; }
+  details.toc summary::before { content: "▾ "; color: var(--muted); }
+  details.toc:not([open]) summary::before { content: "▸ "; }
+  details.toc nav { display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+  details.toc a { color: var(--ink-2); text-decoration: none; line-height: 1.35;
+    padding: .18rem 0 .18rem .8rem; border-left: 2px solid transparent; margin-left: -1px; }
+  details.toc a:hover { color: var(--accent); }
+  details.toc a.active { color: var(--accent); border-left-color: var(--accent); }
+  details.toc a.lvl3 { padding-left: 1.7rem; font-size: .92em; color: var(--muted); }
+  details.toc a.lvl3:hover, details.toc a.lvl3.active { color: var(--accent); }
+  /* Narrow: the contents become a collapsed block above the text (the script
+     closes it on load), so a long list never buries the page it describes. */
+  @media (max-width: 1180px) {
+    .page { grid-template-columns: minmax(0, 74ch); }
+    details.toc { position: static; max-height: none; overflow: visible; margin: 28px 0 0; }
+  }
+  @media print { details.toc { display: none; } }
+"""
+
+TOC_JS = r"""
+/* The contents column: closed on narrow screens, and marking the section the
+   reader is actually in. No dependencies — the site ships no third-party JS. */
+(function () {
+  var toc = document.querySelector("details.toc");
+  if (!toc) return;
+  var narrow = window.matchMedia("(max-width: 1180px)");
+  if (narrow.matches) toc.open = false;
+  var links = [], heads = [];
+  Array.prototype.forEach.call(toc.querySelectorAll("a[href^='#']"), function (a) {
+    var el = document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)));
+    if (el) { links.push(a); heads.push(el); }
+  });
+  if (!heads.length) return;
+  var tops = [], active = null, queued = false;
+  function measure() {
+    tops = heads.map(function (el) { return el.getBoundingClientRect().top + window.scrollY; });
+  }
+  function update() {
+    queued = false;
+    /* the heading the reader has most recently passed, allowing for the sticky header */
+    var y = window.scrollY + 140, i = 0;
+    for (var k = 0; k < tops.length; k++) { if (tops[k] <= y) i = k; else break; }
+    var a = links[i];
+    if (a === active) return;
+    if (active) active.classList.remove("active");
+    active = a;
+    a.classList.add("active");
+    /* keep the mark visible in a long contents list, without scrolling the page:
+       only the aside's own scrollTop is touched */
+    if (!narrow.matches && toc.open && toc.scrollHeight > toc.clientHeight) {
+      var r = a.getBoundingClientRect(), t = toc.getBoundingClientRect();
+      if (r.top < t.top) toc.scrollTop -= (t.top - r.top) + 8;
+      else if (r.bottom > t.bottom) toc.scrollTop += (r.bottom - t.bottom) + 8;
+    }
+  }
+  function onScroll() { if (!queued) { queued = true; requestAnimationFrame(update); } }
+  measure();
+  update();
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", function () { measure(); update(); }, { passive: true });
+  /* fonts and inlined SVGs change the offsets after first paint */
+  window.addEventListener("load", function () { measure(); update(); });
+})();
+"""
 
 NAV_CSS = """
   header.site { position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--line);
@@ -194,10 +308,46 @@ def command_anchors(body: str) -> str:
     return re.sub(r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="[^"]*")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>', repl, body)
 
 
+GITHUB_BLOB = "https://github.com/tjirsch/satz/blob/main/"
+
+
+TOC_MIN_HEADINGS = 3
+
+
+def toc_html(body: str) -> str:
+    """"On this page" — the h2/h3 headings of the rendered body, as a sidebar.
+
+    Built AFTER `command_anchors` has run, so the hrefs are the ids the document
+    actually carries. h4 and deeper are left out: a table of contents that lists
+    every paragraph is another long page to navigate.
+    """
+    heads = re.findall(r'<h([23])[^>]*?\bid="([^"]+)"[^>]*>(.*?)</h\1>', body, flags=re.S)
+    if len(heads) < TOC_MIN_HEADINGS:
+        return ""
+    items = []
+    for level, anchor, inner in heads:
+        label = html_escape(strip_tags(inner))
+        items.append(f'<a class="lvl{level}" href="#{anchor}">{label}</a>')
+    return (
+        '<details class="toc" open><summary>On this page</summary><nav>'
+        + "".join(items)
+        + "</nav></details>\n"
+    )
+
+
+def html_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def rewrite_links(body: str, src_rel: Path) -> str:
-    """`docs/x.md` / `../README.md` / `#anchor` links → the rendered twins."""
+    """`docs/x.md` / `../README.md` / `#anchor` links → the rendered twins.
+
+    A link to a doc the site does not publish is sent to GitHub rather than left
+    as a `.md` href that 404s: the file is still there, it is simply not a page.
+    """
     targets = {str(src.relative_to(ROOT)): rel for src, rel, _ in PAGES}
     targets.update({str(src.relative_to(ROOT)): rel for src, rel in PACK_PAGES})
+    excluded = {f"docs/{stem}.md" for stem in SITE_DOCS_EXCLUDED}
 
     def repl(m: "re.Match[str]") -> str:
         href = m.group(1)
@@ -209,6 +359,8 @@ def rewrite_links(body: str, src_rel: Path) -> str:
         target = (src_rel.parent / path).resolve().relative_to(ROOT.resolve()) if not path.startswith("/") else Path(path.lstrip("/"))
         html = targets.get(str(target))
         if not html:
+            if str(target) in excluded:
+                return f'href="{GITHUB_BLOB}{target}{"#" + frag if frag else ""}"'
             return m.group(0)
         here = Path(targets[str(src_rel)]).parent
         rel = Path(*([".."] * len(here.parts))) / html if here.parts else Path(html)
@@ -236,13 +388,27 @@ def main() -> None:
         out = OUT / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
-            doc.HEAD.format(title=title) + "<style>" + doc.CSS + NAV_CSS + "</style>\n" + nav_html(rel) + "<main>\n" + body + "\n</main>\n",
+            doc.HEAD.format(title=title)
+            + "<style>"
+            + doc.CSS
+            + NAV_CSS
+            + TOC_CSS
+            + "</style>\n"
+            + nav_html(rel)
+            + '<div class="page">\n'
+            + toc_html(body)
+            + "<main>\n"
+            + body
+            + "\n</main>\n</div>\n",
             encoding="utf-8",
         )
         print(f"wrote {out.relative_to(OUT)} ({out.stat().st_size} bytes)")
     import json
 
-    (OUT / "search-index.js").write_text("window.SATZ_INDEX=" + json.dumps(index, ensure_ascii=False) + ";\n" + SEARCH_JS, encoding="utf-8")
+    (OUT / "search-index.js").write_text(
+        "window.SATZ_INDEX=" + json.dumps(index, ensure_ascii=False) + ";\n" + SEARCH_JS + TOC_JS,
+        encoding="utf-8",
+    )
     print(f"wrote search-index.js ({(OUT / 'search-index.js').stat().st_size} bytes, {len(index)} entries)")
     (OUT / ".nojekyll").write_text("")
 

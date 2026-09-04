@@ -30,7 +30,7 @@ second kind.
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
-| `build-site.py` | build | render the whole documentation site (README, `docs/*.md`, the presets docs) into `_site/` with a sticky navigation header and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box); `.github/workflows/pages.yml` publishes it on GitHub Pages on every release tag and on demand |
+| `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/example-customers.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every push (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
 
 ---
@@ -215,6 +215,40 @@ Exit status is non-zero if any call failed, so it can gate a runbook step.
 default, so no `mapfile` and no unguarded empty-array expansion.
 
 ---
+
+## `build-site.py` — which docs become pages
+
+Publishing a doc is a decision, and so is not publishing one. `build-site.py`
+carries two lists and **fails naming any `docs/*.md` that is in neither**:
+
+- `SITE_DOCS` — published, in navigation order.
+- `SITE_DOCS_EXCLUDED` — deliberately not published, each with its reason.
+
+A glob used to decide this, which meant a page appeared on the public site
+because a file existed. The gate replaces "someone will notice" with a build
+error, in both directions: a new doc cannot slip onto the site unreviewed, and
+cannot be silently left off it either. The smoke matrix runs the site build, so
+the check is enforced in CI.
+
+An excluded doc stays in the repository and stays linkable — a link to one from a
+published page is rewritten to its GitHub blob URL rather than left as a `.md`
+href that 404s.
+
+Currently excluded, and why:
+
+| doc | why not published |
+|---|---|
+| `security-toolset-integration.md` | a proposal under rework; it describes an audit loop that is not what satz does today |
+| `fast-delta.md` | source material for the competitive matrix, which carries the conclusions |
+| `stage-b.md` | how the pipeline was built. The language reference is how it is used, and the migration commands are in the README |
+
+### Navigating a long page
+
+The reference pages are long on purpose — the language reference is meant to be
+read straight through — so each page carries a **contents column** built from its
+own `h2`/`h3` headings, sticky beside the text, marking the section you are in.
+Below 1180px it becomes a collapsed block above the content. It is derived from
+the rendered headings, so it cannot drift from the page it describes.
 
 ## `update_import_config.py` — keep the type table current
 
