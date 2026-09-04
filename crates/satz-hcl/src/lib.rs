@@ -1770,7 +1770,7 @@ resource "google_storage_bucket" "logs" {
 resource "google_storage_bucket" "elsewhere" {
   name     = "acme-elsewhere"
   location = "EU"
-  project  = "some-other-project"
+  project  = "acme-other-project"
 }
 
 resource "google_storage_bucket" "orphaned" {
@@ -1860,7 +1860,7 @@ module "vpc" {
         );
         assert!(!c.contains("project=\"acme-infra-001\""), "the project reference became placement, not an attribute:\n{}", s);
         assert!(
-            c.contains("google_storage_bucket{elsewhere{name=\"acme-elsewhere\"location=\"EU\"project=\"some-other-project\"}}"),
+            c.contains("google_storage_bucket{elsewhere{name=\"acme-elsewhere\"location=\"EU\"project=\"acme-other-project\"}}"),
             "a literal project stays explicit at the top:\n{}",
             s
         );

@@ -359,6 +359,30 @@ grep -q 'corp-private-host' tmp/gate.txt || fail "the gate did not name the priv
 if bash "$root/scripts/check-names.sh" tmp/does-not-exist.txt >/dev/null 2>&1; then fail "a missing file passed the gate"; fi
 if bash "$root/scripts/check-names.sh" --commits deadbeef..HEAD >tmp/gate2.txt 2>&1; then fail "an unusable commit range passed the gate"; fi
 
+step "the privacy gate catches customer identifiers and lets vendor defaults through"
+# Assembled at runtime so the fixture itself never carries a value the gate rejects.
+pid="$(printf '%s-prod-infra-01' "kunde")"
+{
+  printf 'tenant = "%s-3d8e-4a56-9b1f-2c4d6e8a0b3c"\n' "7f9c2b41"
+  printf 'pool   = "%s3d8e4a569b1f2c4d6e8a0b3c"\n' "7f9c2b41"
+  printf 'project = "%s"\n' "$pid"
+  printf 'path: projects/%s\n' "$pid"
+} > tmp/ids.txt
+if bash "$root/scripts/check-names.sh" tmp/ids.txt >tmp/ids-out.txt 2>&1; then fail "customer identifiers passed the gate:\n$(cat tmp/ids-out.txt)"; fi
+for want in 'GUID' '32 hex' "projects/$pid" "project = \"$pid\""; do
+  grep -q -- "$want" tmp/ids-out.txt || fail "the gate did not report $want:\n$(cat tmp/ids-out.txt)"
+done
+# and the values that must NOT be rejected: a vendor default, an example customer's
+# project, and a value too short to be a project id at all
+{
+  printf 'issuer = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"\n'
+  printf 'audience = "api://d17a7d74-7e73-4e7d-bd41-8d9525e86cab"\n'
+  printf 'project = "acme-infra-001"\n'
+  printf 'project = "p"\n'
+} > tmp/ok.txt
+bash "$root/scripts/check-names.sh" tmp/ok.txt >tmp/ok-out.txt 2>&1 \
+  || fail "the gate rejected a vendor default or a documented example:\n$(cat tmp/ok-out.txt)"
+
 step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/satz-language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done

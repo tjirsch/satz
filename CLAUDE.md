@@ -22,8 +22,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   know any: `scripts/check-names.sh` rejects anything SHAPED like private data
   that is not a documented example value (`docs/example-customers.md`) — `C0…`
   directory ids, 11–13-digit org/project/folder numbers, billing accounts,
-  e-mail addresses, domains that are neither IANA-reserved nor a known vendor
-  host, repository URLs and checkout paths — in files and in commit messages;
+  GUIDs (an Entra tenant id) and their dashless 32-hex form (the workload
+  identity pool id), project ids in `projects/…`, `project = …` and
+  `--project`, e-mail addresses, domains that are neither IANA-reserved nor a
+  known vendor host, repository URLs and checkout paths — in files and in
+  commit messages;
   it rejects local files (`CLAUDE.local.md`, `*.local.md`, `.claude/`,
   `attestations.yaml`, `evidence/`) if they are ever staged; and it rejects
   any commit whose author or committer is not the maintainer's private
@@ -37,7 +40,13 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `git config core.hooksPath .githooks`. The gate judges tokens, not lines,
   and an unusable range or a missing file is a failure, never a pass. Examples
   use ONLY the four example customers. If an example needs a value the table
-  does not have, add it to the table in the same commit.
+  does not have, add it to the table in the same commit. Identifiers a VENDOR
+  publishes and every customer shares — Microsoft's commercial tenant, an
+  application id — are allowed by name in `ALLOW_GUID` and listed in that same
+  table; a GUID the gate does not know is assumed to identify a customer.
+  What the gate cannot see is a NAME: a display name or a company in prose has
+  no shape. That is what the local, never-committed denylist
+  (`$NAMES_DENYLIST`) is for, and what review is for.
 - **Release flow:** work commits on `main`; `cargo release patch|minor
   --execute --no-confirm` bumps, tags and pushes; the tag triggers cargo-dist.
   Release without asking when a discussed solution is releasable (tests +
