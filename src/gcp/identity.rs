@@ -7,6 +7,8 @@
 //! `credentials: <who> (<type>), quota project <p>` catches the wrong account
 //! before the first call; `satz whoami` is the explicit check.
 
+// schemars comes through rmcp: one version in the tree
+use rmcp::schemars;
 use google_cloud_auth::credentials::Builder;
 
 /// What kind of credential the ADC file holds.
@@ -124,6 +126,73 @@ pub(crate) fn mark_announced() {
 
 /// `satz whoami [--offline]`: the explicit check that the ADC is the account
 /// you think it is — the one-line answer to a fleet of per-customer logins.
+/// Who the credentials say we are, as data.
+///
+/// The `note` is the one thing the human line carries that the fields do not: a
+/// user ADC file stores no identity, so `--offline` cannot answer the question it
+/// was asked, and saying so is more useful than an empty email.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct WhoamiReport {
+    pub email: Option<String>,
+    /// user-adc | impersonated-sa | sa-key | unknown
+    pub kind: &'static str,
+    pub quota_project: Option<String>,
+    pub adc_file: Option<String>,
+    /// true when the answer came from the file alone, without minting a token
+    pub offline: bool,
+    pub note: Option<String>,
+}
+
+/// Resolve the identity without printing. `offline` reads the ADC file only.
+pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
+    let adc_file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
+    let kind_name = |k: &CredKind| match k {
+        CredKind::UserAdc => "user-adc",
+        CredKind::ImpersonatedSa => "impersonated-sa",
+        CredKind::SaKey => "sa-key",
+        CredKind::Unknown => "unknown",
+    };
+    if offline {
+        let Some(info) = credential_info_offline() else {
+            return Err("no Application Default Credentials file found — run `gcloud auth \
+                        application-default login`"
+                .into());
+        };
+        let note = (info.email.is_none() && info.kind == CredKind::UserAdc).then(|| {
+            "a user ADC file stores no identity — run without --offline to resolve it".to_string()
+        });
+        return Ok(WhoamiReport {
+            email: info.email,
+            kind: kind_name(&info.kind),
+            quota_project: info.quota_project,
+            adc_file,
+            offline: true,
+            note,
+        });
+    }
+
+    mark_announced();
+    let token = crate::gcp::access_token().await.map_err(|e| {
+        format!(
+            "could not get an Application Default Credentials token ({}) — run `gcloud auth \
+             application-default login`",
+            e
+        )
+    })?;
+    let info = credential_info(&token).await;
+    if info.email.is_none() {
+        return Err("could not determine the identity behind these credentials".into());
+    }
+    Ok(WhoamiReport {
+        email: info.email,
+        kind: kind_name(&info.kind),
+        quota_project: info.quota_project,
+        adc_file,
+        offline: false,
+        note: None,
+    })
+}
+
 pub(crate) async fn whoami(offline: bool) -> Result<(), Box<dyn std::error::Error>> {
     if offline {
         let Some(info) = credential_info_offline() else {

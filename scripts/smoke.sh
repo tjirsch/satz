@@ -561,9 +561,18 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"satz_questions","arguments":{"estate":"showcase.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"satz_triage","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0","prowler":"prowler.json"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"satz_report_compliance","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0","no_live":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_transpile","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"../../../README.md","framework":"cis-gcp-4.0"}}}'
-} | "$satz" --config . mcp 2>/dev/null > tmp/mcp.jsonl || true
+} > tmp/mcp-in.jsonl
+# Being ASKED for state is not a report run: satz_report_compliance must not append
+# to the evidence history. Compare the directory across the call rather than testing
+# for its absence — earlier steps create it legitimately.
+ls evidence 2>/dev/null | sort > tmp/evidence-before.txt || true
+"$satz" --config . mcp 2>/dev/null < tmp/mcp-in.jsonl > tmp/mcp.jsonl || true
+ls evidence 2>/dev/null | sort > tmp/evidence-after.txt || true
+diff -q tmp/evidence-before.txt tmp/evidence-after.txt >/dev/null \
+  || fail "satz_report_compliance appended to the evidence history:\n$(diff tmp/evidence-before.txt tmp/evidence-after.txt)"
 python3 - <<'PYEOF' || fail "the MCP handshake did not behave"
 import json
 lines = [l for l in open("tmp/mcp.jsonl") if l.strip()]
@@ -577,13 +586,15 @@ for l in lines:
 assert msgs[1]["result"]["serverInfo"]["name"] == "satz", msgs[1]
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 assert {"satz_require", "satz_check_presets", "satz_questions", "satz_triage",
-        "satz_transpile_check", "satz_transpile"} <= set(tools), sorted(tools)
+        "satz_transpile_check", "satz_transpile", "satz_report_compliance",
+        "satz_whoami"} <= set(tools), sorted(tools)
 
 # Every data tool publishes an OUTPUT SCHEMA and is ANNOTATED. The annotations are
 # the client's half of the safety model: the server's --allow ceiling says what is
 # permitted, readOnlyHint says what an agent may run without stopping to ask.
 for name in ("satz_require", "satz_questions", "satz_triage", "satz_check_presets",
-             "satz_transpile_check", "satz_transpile"):
+             "satz_transpile_check", "satz_transpile", "satz_report_compliance",
+             "satz_whoami"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
@@ -597,6 +608,9 @@ q = msgs[6]["result"]["structuredContent"]
 assert q["summary"]["one_way_doors"] >= 1, q["summary"]
 rows = msgs[7]["result"]["structuredContent"]
 assert rows and {"bucket", "control"} <= set(rows[0]), rows[:1]
+ev = msgs[8]["result"]["structuredContent"]
+assert ev["rows"], "the evidence report came back empty"
+assert ev["live"] is False, ev["live"]
 
 # a tool outside the granted level is refused as a tool RESULT, not a protocol
 # error — agents recover from the first and give up on the second
@@ -606,6 +620,7 @@ assert "needs 'write'" in msgs[4]["result"]["content"][0]["text"], msgs[4]
 # and a path that escapes the server's root is refused by name
 assert msgs[5]["result"]["isError"] is True, msgs[5]
 assert "outside the server's root" in msgs[5]["result"]["content"][0]["text"], msgs[5]
+
 PYEOF
 
 step "documentation site renders (what pages.yml publishes)"

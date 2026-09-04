@@ -179,6 +179,27 @@ pub(crate) struct CompileSummary {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct ReportComplianceArgs {
+    /// Estate file, e.g. `C0example.satz`
+    pub estate: String,
+    /// Catalog id, e.g. `cis-gcp-4.0`
+    pub framework: String,
+    /// Prowler export to corroborate with, a path under the server's root
+    #[serde(default)]
+    pub prowler: Option<String>,
+    /// Skip the live Cloud Asset Inventory read and judge the declared estate only
+    #[serde(default)]
+    pub no_live: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct WhoamiArgs {
+    /// Read the ADC file only — no network, no token minted
+    #[serde(default)]
+    pub offline: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct RestrictArgs {
     /// Groups to keep, comma-separated: read, write, exec
     pub allow: String,
@@ -444,6 +465,74 @@ impl SatzMcp {
                 addresses: out.manifest.addresses().into_iter().collect(),
             }))),
             Err(e) => Ok(Err(refused(format!("transpile: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_report_compliance",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<serde_json::Value>(),
+        description = "Evidence report: the goal view joined with LIVE verification through Cloud \
+                       Asset Inventory, manual-duty attestations and optional Prowler corroboration. \
+                       Reads the organisation with the estate's credentials. Writes nothing — unlike \
+                       the command, it does not append to the evidence history, because being ASKED \
+                       for state is not a report run.",
+        annotations(read_only_hint = true, idempotent_hint = false, open_world_hint = true)
+    )]
+    async fn report_compliance(
+        &self,
+        Parameters(args): Parameters<ReportComplianceArgs>,
+    ) -> Result<Result<Json<serde_json::Value>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let estate = match self.estate(&args.estate) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let prowler = match args.prowler.as_deref().map(|p| self.file(p)).transpose() {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let (manifest, claims, org_id) = match self.inputs(&estate) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::compliance::report_compliance_evidence(
+            &args.framework,
+            &estate,
+            &self.ctx.runtime.presets_dir,
+            &claims,
+            &manifest,
+            org_id.as_deref(),
+            &self.ctx.root,
+            prowler,
+            None,
+            args.no_live,
+        )
+        .await
+        {
+            Ok((evidence, _md)) => Ok(Ok(Json(evidence))),
+            Err(e) => Ok(Err(refused(format!("report-compliance: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_whoami",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::gcp::identity::WhoamiReport>(),
+        description = "Which identity, credential type and quota project the Application Default \
+                       Credentials resolve to. The first thing to check when a live call is refused.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn whoami(
+        &self,
+        Parameters(args): Parameters<WhoamiArgs>,
+    ) -> Result<Result<Json<crate::gcp::identity::WhoamiReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        match crate::gcp::identity::whoami_report(args.offline).await {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("whoami: {}", e)))),
         }
     }
 
