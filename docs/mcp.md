@@ -42,6 +42,8 @@ started in. That second one is not paranoia — `use "…"` resolves through
 | `satz_triage` | `read` | a Prowler export's FAILs sorted into buckets A–E against what the estate claims |
 | `satz_transpile_check` | `read` | compiles in memory and reports what it *would* emit — writes nothing |
 | `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
+| `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration |
+| `satz_whoami` | `read` | which identity, credential type and quota project the ADC resolve to — the first thing to check when a live call is refused |
 | `satz_transpile` | `write` | compiles the estate to OpenTofu HCL in `hcl_dir` |
 | `satz_restrict` | — | lowers this session's level; only with `--self-gated` |
 
@@ -50,6 +52,12 @@ tool result and a CLI answer are the same thing.
 
 A tool the level does not permit comes back as a tool **result** with `isError`, not a
 protocol error — an agent recovers from the first and gives up on the second.
+
+**`satz_report_compliance` reads live and writes nothing.** The command appends every
+run to an append-only evidence history — that history is the audit trail of a
+*deliberate* report. Being asked for current state is not that, so the tool does not
+append, and the smoke matrix compares the evidence directory across the call to prove
+it.
 
 ## Structured output, and why it matters
 
@@ -69,9 +77,9 @@ prevent.
 
 | annotation | on |
 |---|---|
-| `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets` |
+| `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami` |
 | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges |
-| `openWorldHint: true` | `satz_check_presets` only, which downloads the pristine library |
+| `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami` — the three that reach the network |
 
 Without them a client either prompts on every read (friction that makes the server
 tiresome) or auto-runs a write (wrong). Both halves are needed: the ceiling decides
@@ -115,10 +123,9 @@ asserts that every line the server emits parses as JSON-RPC.
 Checkov inherit stdio from the CLI; an exec tool has to **capture** its child's output
 first, and that plumbing ships with the first such tool rather than being hurried in
 beside the transport.
-- **`report_compliance`, `adopt`, `merge-presets`, `get-presets` and `whoami` are not
-  exposed yet.** Each still prints from inside its own walk, so exposing one would put
-  its output on stdout — which here is the protocol. They need the same
-  compute/render split `require` and `check-presets` went through first. That is the
-  work, not the tool definition.
+- **`adopt`, `merge-presets` and `get-presets` are not exposed yet.** Each still prints
+  from inside its own walk, so exposing one would put its output on stdout — which here
+  is the protocol. They need the same compute/render split the reporting commands went
+  through first. That is the work, not the tool definition.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.

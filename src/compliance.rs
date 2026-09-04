@@ -1506,25 +1506,24 @@ pub(crate) fn prowler_verdict(findings: &[ProwlerFinding], witness_ids: &[String
     cell
 }
 
-/// The `report-compliance` command: the evidence run. Joins goal view × live
-/// inventory × attestations × optional Prowler corroboration into an
-/// auditor-shaped report, and appends the run to the evidence history.
+/// The evidence report, computed: the goal view joined with LIVE verification,
+/// attestations and optional scanner corroboration. Returns the evidence value and
+/// the rendered Markdown; writes nothing and prints nothing, so the same run serves
+/// the terminal, `--format json`, and the MCP tool.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_report_compliance(
+pub(crate) async fn report_compliance_evidence(
     framework: &str,
     input: &Path,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
     manifest: &Manifest,
     org_id: Option<&str>,
+    // read-only here: the attestations file lives beside the config
     config_dir: &Path,
-    format: crate::OutFormat,
-    report_path: Option<PathBuf>,
     prowler_path: Option<PathBuf>,
     checkov: Option<&crate::scan::Report>,
     no_live: bool,
-    fail_on: &[String],
-) -> Result<(), BoxErr> {
+) -> Result<(serde_json::Value, String), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     // Checkov findings by emitted address: a failed check on a WITNESS is
     // evidence against the control it witnesses
@@ -1872,6 +1871,42 @@ pub(crate) async fn run_report_compliance(
         "estate": input.display().to_string(), "verified_at": verified_at,
         "live": !no_live, "rows": json_rows,
     });
+
+    Ok((evidence, md))
+}
+
+/// The `report-compliance` command: the evidence run. Joins goal view × live
+/// inventory × attestations × optional Prowler corroboration into an
+/// auditor-shaped report, and appends the run to the evidence history. The IO lives
+/// here so the computation above can be called by anything.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_report_compliance(
+    framework: &str,
+    input: &Path,
+    presets_dir: &str,
+    included_claims: &[(String, Claim)],
+    manifest: &Manifest,
+    org_id: Option<&str>,
+    config_dir: &Path,
+    format: crate::OutFormat,
+    report_path: Option<PathBuf>,
+    prowler_path: Option<PathBuf>,
+    checkov: Option<&crate::scan::Report>,
+    no_live: bool,
+    fail_on: &[String],
+) -> Result<(), BoxErr> {
+    let (evidence, md) = report_compliance_evidence(
+        framework, input, presets_dir, included_claims, manifest, org_id, config_dir, prowler_path,
+        checkov, no_live,
+    )
+    .await?;
+    let verified_at = evidence
+        .get("verified_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let empty = Vec::new();
+    let json_rows = evidence.get("rows").and_then(|r| r.as_array()).unwrap_or(&empty);
 
     // Append-only history — but NOT when the caller asked for the evidence as
     // data. The history is the audit trail of a deliberate report run; a caller
