@@ -1,0 +1,40 @@
+// CIS 4.11 — Confidential Computing.
+//
+//   use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
+//
+// Opt-in because Confidential VMs are limited to particular machine families and cost
+// more; enforcing this org-wide stops most ordinary workloads from starting.
+// CIS rates it Level 2 for the same reason.
+//
+// The constraint name and its shape were verified against a live
+// organisation's OrgPolicy `ListConstraints`, not transcribed.
+
+pack cis_extensions.confidential_computing version "1.0"
+
+google_org_policy_policy {
+  "compute-managed-restrictNonConfidentialComputing" {
+    name = "compute.managed.restrictNonConfidentialComputing"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+        enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}
+
+claim "cis-gcp" "4.0" "4.11" implements {
+  resources = [
+    "google_org_policy_policy.compute_managed_restrictNonConfidentialComputing",
+  ]
+  interpretation = "Instances must run as Confidential VMs, so memory stays encrypted in use."
+}
+claim "cis-gcp" "5.0" "4.11" implements {
+  resources = [
+    "google_org_policy_policy.compute_managed_restrictNonConfidentialComputing",
+  ]
+  interpretation = "As for 4.0 §4.11 (5.0 §4.11, unchanged)."
+}
+

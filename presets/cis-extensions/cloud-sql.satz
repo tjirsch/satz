@@ -1,0 +1,68 @@
+// CIS 6.5 and 6.6/6.7 — Cloud SQL network exposure.
+//
+//   use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
+//
+// Opt-in because an estate with existing Cloud SQL instances on public IPs loses
+// connectivity the moment this is enforced; the private path has to exist
+// first. Note the renumbering: public IP is §6.6 in 4.0 and §6.7 in 5.0, while
+// authorized networks stays §6.5 in both.
+//
+// The constraint name and its shape were verified against a live
+// organisation's OrgPolicy `ListConstraints`, not transcribed.
+
+pack cis_extensions.cloud_sql version "1.0"
+
+google_org_policy_policy {
+  "sql-managed-restrictAuthorizedNetworks" {
+    name = "sql.managed.restrictAuthorizedNetworks"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+        enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}
+
+google_org_policy_policy {
+  "sql-managed-restrictPublicIp" {
+    name = "sql.managed.restrictPublicIp"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+        enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}
+
+claim "cis-gcp" "4.0" "6.5" implements {
+  resources = [
+    "google_org_policy_policy.sql_managed_restrictAuthorizedNetworks",
+  ]
+  interpretation = "No Cloud SQL instance may carry an authorized network that whitelists every public address."
+}
+claim "cis-gcp" "5.0" "6.5" implements {
+  resources = [
+    "google_org_policy_policy.sql_managed_restrictAuthorizedNetworks",
+  ]
+  interpretation = "As for 4.0 §6.5 (5.0 §6.5, unchanged)."
+}
+
+claim "cis-gcp" "4.0" "6.6" implements {
+  resources = [
+    "google_org_policy_policy.sql_managed_restrictPublicIp",
+  ]
+  interpretation = "Cloud SQL instances may not be given public IP addresses."
+}
+claim "cis-gcp" "5.0" "6.7" implements {
+  resources = [
+    "google_org_policy_policy.sql_managed_restrictPublicIp",
+  ]
+  interpretation = "As for 4.0 §6.6 — 5.0 §6.7 (5.0 inserted 6.6 IAM database authentication)."
+}
+

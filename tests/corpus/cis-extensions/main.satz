@@ -1,0 +1,46 @@
+// Corpus case: the CIS coverage extensions, ALL of them on at once. No estate
+// would do this — that is the point. It pins the emitted body of each
+// constraint, because the three shapes differ and getting one wrong is a policy
+// that either does nothing or refuses everything:
+//   * a plain managed boolean  -> enforce only
+//   * a managed boolean with a parameter -> enforce + parameters
+//   * a plain list constraint  -> allow/deny values
+// Snapshot-gated.
+
+estate corpus_cis_extensions
+
+params {
+  customer_organization_id = "123456789"
+  billing_account_infra    = "01AA-BB-CC"
+  customer_domain          = "example.com"
+
+  cis_block_project_ssh_keys = true
+  cis_require_shielded_vm    = true
+  cis_confidential_computing = true
+  cis_cloud_sql_hardening    = true
+  cis_cmek_required          = true
+  cis_api_key_services       = true
+  cis_bucket_retention       = true
+
+  allowed_api_key_services = [
+    "storage.googleapis.com",
+  ]
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_org_policy_policy {
+  use "presets/CIS-GCP-Foundation-4.0.satz"
+}
+
+use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
+use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
+use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
+use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
+use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention

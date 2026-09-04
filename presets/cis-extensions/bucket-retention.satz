@@ -1,0 +1,54 @@
+// CIS 4.0 §2.3 / 5.0 §2.4 — retention on the log-export bucket.
+//
+//   use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
+//
+// Opt-in because it constrains EVERY bucket in the organisation, not only the
+// log sink's: once a duration list is set, a bucket may carry a retention
+// policy only if its duration is in the list. An estate with buckets on other
+// durations loses the ability to update them.
+//
+// The constraint is a MANAGED one carrying a parameter, not a bare boolean —
+// verified against a live organisation's OrgPolicy `ListConstraints`.
+//
+// It is a `contributes`, deliberately: the control asks for retention
+// configured USING BUCKET LOCK, and locking is a one-way door no org policy
+// performs. The audit-logsink pack carries the same duty.
+
+pack cis_extensions.bucket_retention version "1.0"
+
+params {
+  // Durations, in SECONDS, a bucket retention policy may use. The default is
+  // the 400 days the audit-logsink pack retains by default; add the others the
+  // estate legitimately uses before enforcing.
+  allowed_bucket_retention_seconds = [
+    "34560000",
+  ]
+}
+
+google_org_policy_policy {
+  "storage-managed-retentionPolicySeconds" {
+    name = "storage.managed.retentionPolicySeconds"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+          parameters = {
+            allowedRetentionPeriods = allowed_bucket_retention_seconds
+          }
+        },
+      ]
+    }
+  }
+}
+
+claim "cis-gcp" "4.0" "2.3" contributes {
+  resources = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
+  interpretation = "A bucket may only carry a retention policy of an approved duration, so the log-export bucket's retention cannot be quietly shortened. The LOCK remains a human decision."
+  duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
+}
+claim "cis-gcp" "5.0" "2.4" contributes {
+  resources = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
+  interpretation = "As for 4.0 §2.3 — 5.0 §2.4 (5.0 inserted a new 2.2 for Workspace data sharing)."
+  duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
+}

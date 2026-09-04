@@ -83,7 +83,11 @@ step "require cis-gcp-4.0 (goal view, offline)"
 "$satz" --config . require cis-gcp-4.0 smoke.satz > tmp/require.txt 2>&1 || true
 cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
-grep -q '2 unmet' tmp/require.txt || fail "expected exactly the two uncovered catalog controls (2.12 DNS logging, 2.13 CAI) unmet:\n$(tail -3 tmp/require.txt)"
+# 11 unmet: 2.12 DNS logging and 2.13 CAI, which no pack covers, plus the nine
+# controls the cis-extensions fragments cover and this estate does not turn on.
+# The catalog carries the full CIS surface, so an unclaimed control is visible
+# rather than absent — that is what makes the number meaningful.
+grep -q '11 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the nine opt-in extension controls unmet:\n$(tail -3 tmp/require.txt)"
 
 step "require cis-gcp-5.0: the same pack answers both benchmark versions"
 "$satz" --config . require cis-gcp-5.0 smoke.satz > tmp/require-50.txt 2>&1 || true
@@ -98,6 +102,30 @@ grep -qE '✓ 3.10 .*compute_requireVpcFlowLogs' tmp/require-50.txt || fail "4.0
 grep -qE '◐ 1.2 .*legacy-superseded' tmp/require-50.txt || fail "4.0 1.1 -> 5.0 1.2 did not carry over with its duties"
 # 1.1.4 asks whether the org constrains its projects centrally: the whole baseline is the witness
 grep -qE '◐ 1.1.4 .*review-baseline' tmp/require-50.txt || fail "the 5.0 §1.1.4 baseline claim is missing:\n$(grep '1.1.4' tmp/require-50.txt)"
+
+step "cis-extensions: opt-in coverage, off by default and on when asked"
+# off by default: the baseline must not enforce any of them
+grep -q 'compute.requireShieldedVm' hcl/main.tf && fail "an opt-in extension leaked into the baseline"
+grep -q 'gcp.restrictNonCmekServices' hcl/main.tf && fail "an opt-in extension leaked into the baseline"
+# and on when the estate asks. The three constraint SHAPES differ, and a wrong
+# body is a policy that either does nothing or refuses everything — so assert
+# each one, not just that something was emitted.
+sed -e 's/^params {/params {\n  cis_require_shielded_vm = true\n  cis_cmek_required = true\n  cis_api_key_services = true\n  allowed_api_key_services = ["storage.googleapis.com"]/' yaml/smoke.satz > tmp/ext.satz
+cat >> tmp/ext.satz <<'SATZ'
+use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
+SATZ
+"$satz" --config . transpile tmp/ext.satz --output "$PWD/tmp/ext-hcl" > tmp/ext.txt 2>&1 || fail "the extensions do not transpile:\n$(cat tmp/ext.txt)"
+grep -q 'name = "organizations/123456789012/policies/compute.requireShieldedVm"' tmp/ext-hcl/main.tf || fail "the plain boolean constraint is missing"
+grep -q 'parameters = "{\\"allowedServices\\":\[\\"storage.googleapis.com\\"\]}"' tmp/ext-hcl/main.tf || fail "the parameterised constraint did not JSON-encode its parameters:\n$(grep -A3 disableServiceAccountApiKey tmp/ext-hcl/main.tf)"
+grep -q 'denied_values' tmp/ext-hcl/main.tf || fail "the CMEK list constraint lost its values"
+"$satz" --config . require cis-gcp-4.0 tmp/ext.satz > tmp/ext-require.txt 2>&1 || true
+grep -q '0 broken claim' tmp/ext-require.txt || fail "an extension claims a witness it does not emit:\n$(grep -i broken tmp/ext-require.txt)"
+grep -qE '✓ 4.8 ' tmp/ext-require.txt || fail "4.8 did not become satisfied with its fragment on"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/ext-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the extensions do not validate"
+fi
 
 step "require iso27001-2022 (cross-walk: ISO verdicts folded from the CIS ones)"
 "$satz" --config . require iso27001-2022 smoke.satz > tmp/require-iso.txt 2>&1 || true

@@ -1,0 +1,107 @@
+// CIS 7.2, 7.3 and 8.1 — customer-managed encryption keys.
+//
+//   use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+//
+// Opt-in because it is the most disruptive control in this set: once a service
+// is listed, every NEW resource of that service must be created with a CMEK, so
+// the key rings, the keys and the grants have to exist first. It also needs a
+// decision the pack cannot make — which projects may supply keys.
+//
+// Both constraints are plain LIST constraints, not managed booleans — verified
+// against a live organisation's OrgPolicy `ListConstraints`.
+
+pack cis_extensions.cmek version "1.0"
+
+params {
+  // The services that must not create resources without a CMEK. The CIS
+  // controls this pack claims are BigQuery (7.2, 7.3) and Dataproc (8.1); add
+  // more once their keys are in place.
+  cmek_required_services = [
+    "bigquery.googleapis.com",
+    "dataproc.googleapis.com",
+  ]
+
+  // Which projects may supply the keys. The constraint takes resource PATHS,
+  // not bare project ids — `projects/<id>`, or `under:folders/<id>` /
+  // `under:organizations/<id>` for a whole subtree. Default: anywhere in this
+  // organisation, which is the loosest useful value; narrow it to the KMS
+  // project once there is one.
+  cmek_allowed_key_projects = [
+    "under:organizations/{customer_organization_id}",
+  ]
+}
+
+google_org_policy_policy {
+  "gcp-restrictNonCmekServices" {
+    name = "gcp.restrictNonCmekServices"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          values = {
+            denied_values = cmek_required_services
+          }
+        },
+      ]
+    }
+  }
+
+  "gcp-restrictCmekCryptoKeyProjects" {
+    name = "gcp.restrictCmekCryptoKeyProjects"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          values = {
+            allowed_values = cmek_allowed_key_projects
+          }
+        },
+      ]
+    }
+  }
+}
+
+claim "cis-gcp" "4.0" "7.2" implements {
+  resources = [
+    "google_org_policy_policy.gcp_restrictNonCmekServices",
+    "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
+  ]
+  interpretation = "BigQuery may not create resources without a customer-managed key, and the key must come from an approved project."
+  duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
+}
+claim "cis-gcp" "5.0" "7.2" implements {
+  resources = [
+    "google_org_policy_policy.gcp_restrictNonCmekServices",
+    "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
+  ]
+  interpretation = "As for 4.0 §7.2 (5.0 §7.2, unchanged)."
+  duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
+}
+
+claim "cis-gcp" "4.0" "7.3" contributes {
+  resources = ["google_org_policy_policy.gcp_restrictNonCmekServices"]
+  interpretation = "A dataset cannot be created without a CMEK, which is what makes a default key present; the default key ITSELF is a dataset attribute the org policy cannot set."
+  duty_default_key = "Set defaultEncryptionConfiguration on each dataset — the constraint forces a key to exist, not which one is the dataset default."
+}
+claim "cis-gcp" "5.0" "7.3" contributes {
+  resources = ["google_org_policy_policy.gcp_restrictNonCmekServices"]
+  interpretation = "As for 4.0 §7.3 (5.0 §7.3, unchanged)."
+  duty_default_key = "Set defaultEncryptionConfiguration on each dataset — the constraint forces a key to exist, not which one is the dataset default."
+}
+
+claim "cis-gcp" "4.0" "8.1" implements {
+  resources = [
+    "google_org_policy_policy.gcp_restrictNonCmekServices",
+    "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
+  ]
+  interpretation = "Dataproc may not create clusters without a customer-managed key, and the key must come from an approved project."
+  duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
+}
+claim "cis-gcp" "5.0" "8.1" implements {
+  resources = [
+    "google_org_policy_policy.gcp_restrictNonCmekServices",
+    "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
+  ]
+  interpretation = "As for 4.0 §8.1 (5.0 §8.1, unchanged)."
+  duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
+}

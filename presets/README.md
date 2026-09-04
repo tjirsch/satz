@@ -582,6 +582,40 @@ issues — `ciem-discovery`, `containers`, `containers-streams`,
 each need their own `api://` audience, service account and role set from that customer's
 script. They cannot be guessed, so they are not shipped.
 
+## cis-extensions/
+
+CIS coverage beyond the baseline, one fragment per control, all **opt-in**. The base
+pack declares the flags (`cis_require_shielded_vm` and friends, all `false`); an estate
+turns one on and `use`s its fragment:
+
+```
+cis_require_shielded_vm = true
+use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+```
+
+Opt-in rather than baseline because each one can break a workload that was legitimate
+the day before — Confidential Computing is limited to particular machine families,
+Shielded VM needs image support, CMEK needs the keys and grants to exist first, Cloud SQL
+hardening cuts public-IP connectivity, and the bucket-retention constraint applies to
+every bucket in the organisation, not only the log sink's. The comment at the top of each
+fragment says what specifically breaks.
+
+| fragment | controls | why it is not in the baseline |
+|---|---|---|
+| `block-project-ssh-keys` | 4.3 | the managed constraint is still PREVIEW, with no legacy equivalent |
+| `shielded-vm` | 4.8 | image support; the only one with no managed form and no dry-run |
+| `confidential-computing` | 4.11 | machine-family limited; CIS rates it Level 2 |
+| `cloud-sql` | 6.5, 6.6 (5.0: 6.7) | existing public-IP instances lose connectivity |
+| `cmek` | 7.2, 7.3, 8.1 | keys, key rings and service-agent grants must exist first |
+| `api-key-services` | 4.0 1.14 / 5.0 1.15 | narrows what an API key may call |
+| `bucket-retention` | 4.0 2.3 / 5.0 2.4 | constrains every bucket's retention duration |
+
+**Constraint names and shapes were verified against a live organisation's OrgPolicy
+`ListConstraints`**, not transcribed from documentation — which matters, because the three
+shapes differ and getting one wrong yields a policy that either does nothing or refuses
+everything: a plain managed boolean takes `enforce`; a managed boolean with a parameter
+takes `enforce` plus `parameters`; a list constraint takes allow/deny values.
+
 ## A big resource is a pack
 
 A resource with a long literal (a custom role with 1,400 permissions, an

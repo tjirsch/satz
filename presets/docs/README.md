@@ -5,8 +5,15 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`; the 
 
 | pack | version | file | resources | claims |
 |---|---|---|---|---|
-| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.3 | `CIS-GCP-Foundation-4.0.satz` | 18 | 27 |
+| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.4 | `CIS-GCP-Foundation-4.0.satz` | 19 | 29 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | `billing-account-permissions.satz` | 4 | 0 |
+| [`cis_extensions.api_key_services`](api-key-services.md) | 1.0 | `cis-extensions/api-key-services.satz` | 1 | 2 |
+| [`cis_extensions.block_project_ssh_keys`](block-project-ssh-keys.md) | 1.0 | `cis-extensions/block-project-ssh-keys.satz` | 1 | 2 |
+| [`cis_extensions.bucket_retention`](bucket-retention.md) | 1.0 | `cis-extensions/bucket-retention.satz` | 1 | 2 |
+| [`cis_extensions.cloud_sql`](cloud-sql.md) | 1.0 | `cis-extensions/cloud-sql.satz` | 2 | 4 |
+| [`cis_extensions.cmek`](cmek.md) | 1.0 | `cis-extensions/cmek.satz` | 2 | 6 |
+| [`cis_extensions.confidential_computing`](confidential-computing.md) | 1.0 | `cis-extensions/confidential-computing.satz` | 1 | 2 |
+| [`cis_extensions.shielded_vm`](shielded-vm.md) | 1.0 | `cis-extensions/shielded-vm.satz` | 1 | 2 |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.2 | `essential-contacts-organization.satz` | 1 | 0 |
 | [`integrations.microsoft_defender_for_cloud_cspm_role_default`](microsoft-defender-for-cloud-cspm-role-default.md) | 0.1 | `integrations/microsoft-defender-for-cloud-cspm-role-default.satz` | 1 | 0 |
 | [`integrations.microsoft_defender_for_cloud_cspm_role_least_privilege`](microsoft-defender-for-cloud-cspm-role-least-privilege.md) | 0.1 | `integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz` | 1 | 0 |

@@ -23,6 +23,9 @@ section-2-title: "Logging and Monitoring"
 section-3-title: "Networking"
 section-4-title: "Virtual Machines"
 section-5-title: "Storage"
+section-6-title: "Cloud SQL Database Services"
+section-7-title: "BigQuery"
+section-8-title: "Dataproc"
 controls:
   "1.1":
     title: "Corporate login credentials only"
@@ -119,4 +122,44 @@ controls:
   "5.2":
     title: "Uniform bucket-level access enabled"
     paraphrase: "Object ACLs are disabled; access is governed by IAM alone."
+    automatability: technical
+  "1.14":
+    title: "API keys restricted to the APIs the application needs"
+    paraphrase: "An API key may call only the services the application actually uses, never every enabled API."
+    automatability: technical
+  "4.3":
+    title: "Block project-wide SSH keys on VM instances"
+    paraphrase: "Instances do not accept project-wide SSH keys; access is granted per instance."
+    automatability: technical
+  "4.5":
+    title: "Serial port access not enabled on VM instances"
+    paraphrase: "Interactive serial console access is off, so a VM cannot be reached outside IAM-governed paths."
+    automatability: technical
+  "4.8":
+    title: "Compute instances launched with Shielded VM enabled"
+    paraphrase: "Instances boot with secure boot, vTPM and integrity monitoring."
+    automatability: technical
+  "4.11":
+    title: "Compute instances have Confidential Computing enabled"
+    paraphrase: "Instances run as Confidential VMs, so memory is encrypted in use."
+    automatability: technical
+  "6.5":
+    title: "Cloud SQL instances do not whitelist all public IPs"
+    paraphrase: "No Cloud SQL instance carries an authorized network of 0.0.0.0/0."
+    automatability: technical
+  "6.6":
+    title: "Cloud SQL instances do not have public IPs"
+    paraphrase: "Cloud SQL instances are reachable privately only."
+    automatability: technical
+  "7.2":
+    title: "BigQuery tables encrypted with a customer-managed key"
+    paraphrase: "BigQuery tables are protected by CMEK rather than Google-managed keys."
+    automatability: technical
+  "7.3":
+    title: "Default customer-managed key set for BigQuery datasets"
+    paraphrase: "Every BigQuery dataset carries a default CMEK, so new tables inherit it."
+    automatability: technical
+  "8.1":
+    title: "Dataproc clusters encrypted with a customer-managed key"
+    paraphrase: "Dataproc cluster data is protected by CMEK."
     automatability: technical
