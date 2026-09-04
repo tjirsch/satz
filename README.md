@@ -1428,14 +1428,23 @@ naming both. It is not silently ignored, which is what it used to be: the second
 estate's tools ran as the first estate's service account, deterministically and
 invisibly. Serve the other estate from a second server.
 
-Two things this does **not** cover, both deliberate and both worth knowing:
+**The state bucket runs as the same identity.** In cloud mode the emitted `gcs` backend
+carries `impersonate_service_account` too, so state reads and writes use the estate's
+service account rather than the human. It used to use the human, which meant one
+`tofu apply` authenticated as two principals and every operator needed standing object
+access on the state bucket. An estate that declares its own
+`impersonate_service_account` on the backend keeps it.
 
-- **The GCS state backend authenticates as the human**, not as the service account, so
-  the human needs object access on the state bucket even after the cloud migration. Only
-  resource operations go through the provider's impersonation.
-- **`roles/iam.serviceAccountTokenCreator` is granted at organization scope** to the
-  `svc-iac-users` group, so a member can impersonate every service account in the
-  organization, not only the IaC one.
+> **Upgrading an estate that is already in cloud mode:** the backend configuration
+> changes, so `tofu` will refuse the next command until the backend is re-initialised.
+> Run `tofu init -reconfigure` once in `hcl/` after the first transpile on the new
+> version. Estates still in local mode, and estates migrated with
+> `satz migrate --mode cloud` after upgrading, need nothing — `migrate` already
+> re-initialises.
+
+One thing this does **not** cover: **`roles/iam.serviceAccountTokenCreator` is granted at
+organization scope** to the `svc-iac-users` group, so a member can impersonate every
+service account in the organization, not only the IaC one.
 
 ## License
 
