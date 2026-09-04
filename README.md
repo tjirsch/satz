@@ -150,7 +150,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 |---------|---------------------|
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
-| `check-presets <INPUT>` | `--pristine-dir` |
+| `check-presets <INPUT>` | `--format` (`text`\|`json`), `--pristine-dir` |
 | `doc-packs` | `--out <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file; `--check` fails when the pages are behind |
 
 **Organization policies**

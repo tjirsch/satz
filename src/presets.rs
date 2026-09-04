@@ -229,51 +229,194 @@ fn indented(value: &str) -> String {
 /// The per-file detail of a drift verdict, shared by the STALE and EDITED arms
 /// so a version gap and a local edit are described the same way — only the
 /// headline and the remedy differ.
-fn print_drift_detail(drift: &Drift, estate_params: &BTreeSet<String>, stale: bool) {
-    match drift {
-        Drift::Clean => {}
-        // A STALE pack's local values are the OLD defaults. Telling the operator
-        // to pin them in the estate would freeze exactly what they are trying to
-        // move off, so name what moved and stop there — the remedy is adoption.
-        Drift::VariablesOnly(changed) if stale => {
-            let names: Vec<&str> = changed.iter().map(|(a, _)| a.as_str()).collect();
-            println!("    default(s) changed upstream: {}", names.join(", "));
+/// One default whose value differs from upstream.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct ChangedDefault {
+    pub name: String,
+    pub value: String,
+    /// The estate already pins this one, so the local edit changes nothing.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub overridden_in_estate: bool,
+}
+
+/// One preset file's verdict, as data. Every sentence the renderer prints is
+/// derived from these fields — it reaches nothing else, so the text cannot say
+/// anything the JSON omits.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct PresetRow {
+    pub file: String,
+    /// in the estate's `use` graph
+    pub included: bool,
+    /// clean | stale | edited | fork | local-only | missing-locally
+    pub status: &'static str,
+    /// for `edited`: "variables only" | "structural"
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub local_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub upstream_version: Option<String>,
+    /// for a `.local` fork: the pristine stem it forked from
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fork_of: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub changed_defaults: Vec<ChangedDefault>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub structural_summary: Option<String>,
+    /// a stale pristine copy whose `.local` fork exists: leave it, it is the
+    /// branch point the eventual merge needs
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub baseline_for_fork: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub same_version_different_content: bool,
+    /// stale, but the compiled form is identical — comment or format churn
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub semantics_unchanged: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub(crate) struct CheckPresetsSummary {
+    pub clean: usize,
+    pub stale: usize,
+    pub drift_in_use: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct CheckPresetsReport {
+    pub presets_dir: String,
+    pub packs: Vec<PresetRow>,
+    pub summary: CheckPresetsSummary,
+}
+
+/// The per-file detail of a drift verdict, shared by the STALE and EDITED arms
+/// so a version gap and a local edit are described the same way — only the
+/// headline and the remedy differ.
+fn render_drift_detail(row: &PresetRow, out: &mut String) {
+    if let Some(summary) = &row.structural_summary {
+        out.push_str(&format!("    {summary} — not mechanically migratable, review by hand\n"));
+        return;
+    }
+    if row.changed_defaults.is_empty() {
+        return;
+    }
+    // A STALE pack's local values are the OLD defaults. Telling the operator
+    // to pin them in the estate would freeze exactly what they are trying to
+    // move off, so name what moved and stop there — the remedy is adoption.
+    if row.status == "stale" {
+        let names: Vec<&str> = row.changed_defaults.iter().map(|c| c.name.as_str()).collect();
+        out.push_str(&format!("    default(s) changed upstream: {}\n", names.join(", ")));
+        return;
+    }
+    let mut to_add = Vec::new();
+    for c in &row.changed_defaults {
+        if c.overridden_in_estate {
+            out.push_str(&format!(
+                "    {} ={}\n      — already overridden in the estate's params; the local edit is redundant\n",
+                c.name,
+                indented(&c.value)
+            ));
+        } else {
+            to_add.push(c);
         }
-        Drift::VariablesOnly(changed) => {
-            let mut to_add = Vec::new();
-            for (name, entry) in changed {
-                if estate_params.contains(name) {
-                    println!(
-                        "    {} ={}\n      — already overridden in the estate's params; the local edit is redundant",
-                        name,
-                        indented(&entry.value)
-                    );
-                } else {
-                    to_add.push((name, entry));
-                }
-            }
-            if !to_add.is_empty() {
-                // Pin the value in the estate so the pack stays pristine.
-                println!("    override in the estate's `params {{ … }}` block, then restore the preset with `get-presets`:");
-                for (name, entry) in to_add {
-                    println!("      {} ={}", name, indented(&entry.value));
-                }
-            }
-        }
-        Drift::Structural { summary } => {
-            println!("    {summary} — not mechanically migratable, review by hand");
+    }
+    if !to_add.is_empty() {
+        // Pin the value in the estate so the pack stays pristine.
+        out.push_str("    override in the estate's `params { … }` block, then restore the preset with `get-presets`:\n");
+        for c in to_add {
+            out.push_str(&format!("      {} ={}\n", c.name, indented(&c.value)));
         }
     }
 }
 
-/// The `check-presets` command. Returns true if any *included* preset drifted
-/// (the caller turns that into a non-zero exit code for CI use).
-pub(crate) async fn run_check_presets(
+/// Render the drift report for a terminal. Takes the report and NOTHING else.
+pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
+    let mut out = format!("\ncheck-presets: comparing {} against upstream\n\n", r.presets_dir);
+    for row in &r.packs {
+        let tag = if row.included { " [included]" } else { "" };
+        let vtag = match (&row.local_version, &row.upstream_version) {
+            (Some(l), Some(u)) if l != u => format!(" — local v{l}, upstream v{u}"),
+            (Some(l), _) => format!(" — v{l}"),
+            _ => String::new(),
+        };
+        match row.status {
+            // a clean, current preset is counted, not printed
+            "clean" => {}
+            "fork" => {
+                let stem = row.fork_of.clone().unwrap_or_default();
+                out.push_str(&format!(
+                    "  fork{}: {} (deliberate fork of {} — updates to the upstream file accumulate in {}.diff.satz)\n",
+                    tag, row.file, stem, stem
+                ));
+            }
+            "local-only" => {
+                out.push_str(&format!("  local-only{}: {} (not an upstream preset — kept as-is)\n", tag, row.file));
+            }
+            "missing-locally" => {
+                out.push_str(&format!(
+                    "  missing locally: {} (new upstream preset — `get-presets` fetches it)\n",
+                    row.file
+                ));
+            }
+            "stale" if row.semantics_unchanged => {
+                out.push_str(&format!(
+                    "  STALE{}: {}{} — no semantic change; adopting costs nothing\n",
+                    tag, row.file, vtag
+                ));
+            }
+            "stale" => {
+                out.push_str(&format!("  STALE{}: {}{}\n", tag, row.file, vtag));
+                render_drift_detail(row, &mut out);
+                if row.baseline_for_fork {
+                    let fork = fork_sibling(std::path::Path::new(&row.file));
+                    out.push_str(&format!("    the estate runs {} — this pristine copy is that fork's\n", fork.display()));
+                    out.push_str("    baseline. Leave it; `merge-presets` refreshes it and rewrites the .diff.\n");
+                } else {
+                    out.push_str("    a newer release exists — the differences above are the version gap.\n");
+                    out.push_str("    Adopt it (copy the pristine file in), or `merge-presets` if this copy may\n");
+                    out.push_str("    ALSO have been edited. See docs/presets-workflow.md.\n");
+                }
+            }
+            _ => {
+                out.push_str(&format!(
+                    "  EDITED ({}){}: {}{}\n",
+                    row.kind.unwrap_or("structural"),
+                    tag,
+                    row.file,
+                    vtag
+                ));
+                render_drift_detail(row, &mut out);
+                if row.same_version_different_content {
+                    out.push_str("    same version as upstream, different content — a local edit (or an\n");
+                    out.push_str("    upstream release that changed without a version bump).\n");
+                }
+            }
+        }
+    }
+
+    out.push_str(&format!(
+        "\n{} preset(s) clean, {} behind upstream.\n",
+        r.summary.clean, r.summary.stale
+    ));
+    if r.summary.stale > 0 {
+        out.push_str("`clean` means unedited, not current — the version line is the staleness signal.\n");
+    }
+    if r.summary.drift_in_use {
+        out.push_str("Drift detected in included preset(s) — exit code 1.\n");
+    } else {
+        out.push_str("No drift in included presets.\n");
+    }
+    out
+}
+
+/// Compare the local preset library against pristine upstream. Downloads the
+/// pristine copy, then computes — no printing, so the same verdicts serve the
+/// terminal, `--format json` and (later) an MCP tool.
+pub(crate) async fn check_presets_report(
     input: &Path,
     presets_dir: &str,
     include_dirs: &[String],
     pristine_dir: Option<PathBuf>,
-) -> Result<bool, BoxErr> {
+) -> Result<CheckPresetsReport, BoxErr> {
     let local_base = PathBuf::from(presets_dir);
     if !local_base.is_dir() {
         return Err(format!(
@@ -302,11 +445,8 @@ pub(crate) async fn run_check_presets(
     let local_set: BTreeSet<_> = local_files.into_iter().collect();
     let pristine_set: BTreeSet<_> = pristine_files.into_iter().collect();
 
-    let mut drift_in_use = false;
-    let mut clean = 0usize;
-    let mut stale = 0usize;
-
-    println!("\ncheck-presets: comparing {} against upstream\n", local_base.display());
+    let mut summary = CheckPresetsSummary::default();
+    let mut packs = Vec::new();
 
     for rel in local_set.union(&pristine_set) {
         // bookkeeping is not a preset
@@ -314,23 +454,35 @@ pub(crate) async fn run_check_presets(
             continue;
         }
         let in_use = included.contains(rel);
-        let tag = if in_use { " [included]" } else { "" };
+        let mut row = PresetRow {
+            file: rel.display().to_string(),
+            included: in_use,
+            status: "clean",
+            kind: None,
+            local_version: None,
+            upstream_version: None,
+            fork_of: None,
+            changed_defaults: Vec::new(),
+            structural_summary: None,
+            baseline_for_fork: false,
+            same_version_different_content: false,
+            semantics_unchanged: false,
+        };
 
         match (local_set.contains(rel), pristine_set.contains(rel)) {
             (true, false) => {
                 let name = rel.file_name().unwrap_or_default().to_string_lossy();
                 if name.contains(".local.") {
-                    let stem = name.split(".local.").next().unwrap_or_default();
-                    println!("  fork{}: {} (deliberate fork of {} — updates to the upstream file accumulate in {}.diff.satz)", tag, rel.display(), stem, stem);
+                    row.status = "fork";
+                    row.fork_of = Some(name.split(".local.").next().unwrap_or_default().to_string());
                 } else if name.ends_with(".diff.satz") {
                     // ledger files are artifacts of merge-presets, not presets
+                    continue;
                 } else {
-                    println!("  local-only{}: {} (not an upstream preset — kept as-is)", tag, rel.display());
+                    row.status = "local-only";
                 }
             }
-            (false, true) => {
-                println!("  missing locally: {} (new upstream preset — `get-presets` fetches it)", rel.display());
-            }
+            (false, true) => row.status = "missing-locally",
             (true, true) => {
                 let local_text = crate::fsx::read_to_string(local_base.join(rel))?;
                 let pristine_text = crate::fsx::read_to_string(pristine_base.join(rel))?;
@@ -346,75 +498,69 @@ pub(crate) async fn run_check_presets(
                     (Some(l), Some(u)) => l != u,
                     _ => false,
                 };
-                let vtag = match (&lv, &uv) {
-                    (Some(l), Some(u)) if l != u => format!(" — local v{l}, upstream v{u}"),
-                    (Some(l), _) => format!(" — v{l}"),
-                    _ => String::new(),
-                };
+                row.local_version = lv.clone();
+                row.upstream_version = uv.clone();
+                match &drift {
+                    Drift::VariablesOnly(changed) => {
+                        row.changed_defaults = changed
+                            .iter()
+                            .map(|(name, entry)| ChangedDefault {
+                                name: name.clone(),
+                                value: entry.value.clone(),
+                                overridden_in_estate: estate_params.contains(name),
+                            })
+                            .collect();
+                    }
+                    Drift::Structural { summary } => row.structural_summary = Some(summary.clone()),
+                    Drift::Clean => {}
+                }
                 match (&drift, behind) {
-                    (Drift::Clean, false) => clean += 1,
+                    (Drift::Clean, false) => {
+                        summary.clean += 1;
+                        row.status = "clean";
+                    }
                     // Version moved, semantics did not: comment or formatting
                     // churn upstream. Nothing to decide, nothing to fail.
                     (Drift::Clean, true) => {
-                        stale += 1;
-                        println!(
-                            "  STALE{}: {}{} — no semantic change; adopting costs nothing",
-                            tag,
-                            rel.display(),
-                            vtag
-                        );
+                        summary.stale += 1;
+                        row.status = "stale";
+                        row.semantics_unchanged = true;
                     }
                     (_, true) => {
-                        stale += 1;
+                        summary.stale += 1;
+                        row.status = "stale";
                         if in_use {
-                            drift_in_use = true;
+                            summary.drift_in_use = true;
                         }
-                        println!("  STALE{}: {}{}", tag, rel.display(), vtag);
-                        print_drift_detail(&drift, &estate_params, true);
                         // A pristine file whose `.local` fork exists is not a
                         // candidate for adoption: the estate runs the fork, so
                         // overwriting this copy changes nothing it emits AND
                         // destroys the branch point the eventual merge needs.
-                        if local_set.contains(&fork_sibling(rel)) {
-                            println!("    the estate runs {} — this pristine copy is that fork's", fork_sibling(rel).display());
-                            println!("    baseline. Leave it; `merge-presets` refreshes it and rewrites the .diff.");
-                        } else {
-                            println!("    a newer release exists — the differences above are the version gap.");
-                            println!("    Adopt it (copy the pristine file in), or `merge-presets` if this copy may");
-                            println!("    ALSO have been edited. See docs/presets-workflow.md.");
-                        }
+                        row.baseline_for_fork = local_set.contains(&fork_sibling(rel));
                     }
                     (Drift::VariablesOnly(_) | Drift::Structural { .. }, false) => {
                         if in_use {
-                            drift_in_use = true;
+                            summary.drift_in_use = true;
                         }
-                        let kind = match &drift {
+                        row.status = "edited";
+                        row.kind = Some(match &drift {
                             Drift::VariablesOnly(_) => "variables only",
                             _ => "structural",
-                        };
-                        println!("  EDITED ({kind}){}: {}{}", tag, rel.display(), vtag);
-                        print_drift_detail(&drift, &estate_params, false);
-                        if lv.is_some() && lv == uv {
-                            println!("    same version as upstream, different content — a local edit (or an");
-                            println!("    upstream release that changed without a version bump).");
-                        }
+                        });
+                        row.same_version_different_content = lv.is_some() && lv == uv;
                     }
                 }
             }
             (false, false) => unreachable!(),
         }
+        packs.push(row);
     }
 
-    println!("\n{clean} preset(s) clean, {stale} behind upstream.");
-    if stale > 0 {
-        println!("`clean` means unedited, not current — the version line is the staleness signal.");
-    }
-    if drift_in_use {
-        println!("Drift detected in included preset(s) — exit code 1.");
-    } else {
-        println!("No drift in included presets.");
-    }
-    Ok(drift_in_use)
+    Ok(CheckPresetsReport {
+        presets_dir: local_base.display().to_string(),
+        packs,
+        summary,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1049,6 +1195,116 @@ fn text_diff(old: &str, new: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        ChangedDefault, CheckPresetsReport, CheckPresetsSummary, PresetRow, render_check_presets,
+    };
+
+    fn prow(file: &str, status: &'static str) -> PresetRow {
+        PresetRow {
+            file: file.into(),
+            included: true,
+            status,
+            kind: None,
+            local_version: None,
+            upstream_version: None,
+            fork_of: None,
+            changed_defaults: Vec::new(),
+            structural_summary: None,
+            baseline_for_fork: false,
+            same_version_different_content: false,
+            semantics_unchanged: false,
+        }
+    }
+
+    fn report(packs: Vec<PresetRow>, summary: CheckPresetsSummary) -> CheckPresetsReport {
+        CheckPresetsReport { presets_dir: "presets".into(), packs, summary }
+    }
+
+    /// The estate's smoke fixture is all-clean, so these arms would otherwise
+    /// only ever run against a customer's library. One line per verdict, pinned.
+    #[test]
+    fn every_verdict_renders_its_own_shape() {
+        let mut stale = prow("a.satz", "stale");
+        stale.local_version = Some("1.0".into());
+        stale.upstream_version = Some("1.1".into());
+        stale.changed_defaults = vec![ChangedDefault {
+            name: "region".into(),
+            value: "\"eu\"".into(),
+            overridden_in_estate: false,
+        }];
+
+        let mut churn = prow("b.satz", "stale");
+        churn.local_version = Some("2.0".into());
+        churn.upstream_version = Some("2.1".into());
+        churn.semantics_unchanged = true;
+
+        let mut baseline = prow("c.satz", "stale");
+        baseline.baseline_for_fork = true;
+
+        let mut edited = prow("d.satz", "edited");
+        edited.kind = Some("variables only");
+        edited.local_version = Some("1.0".into());
+        edited.upstream_version = Some("1.0".into());
+        edited.same_version_different_content = true;
+        edited.changed_defaults = vec![
+            ChangedDefault { name: "kept".into(), value: "\"x\"".into(), overridden_in_estate: false },
+            ChangedDefault { name: "pinned".into(), value: "\"y\"".into(), overridden_in_estate: true },
+        ];
+
+        let mut structural = prow("e.satz", "edited");
+        structural.kind = Some("structural");
+        structural.structural_summary = Some("2 resource(s) differ".into());
+
+        let mut fork = prow("f.local.satz", "fork");
+        fork.fork_of = Some("f".into());
+
+        let out = render_check_presets(&report(
+            vec![
+                prow("clean.satz", "clean"),
+                stale,
+                churn,
+                baseline,
+                edited,
+                structural,
+                fork,
+                prow("g.satz", "local-only"),
+                prow("h.satz", "missing-locally"),
+            ],
+            CheckPresetsSummary { clean: 1, stale: 3, drift_in_use: true },
+        ));
+
+        // a clean, current preset is counted and NOT printed
+        assert!(!out.contains("clean.satz"), "{out}");
+        assert!(out.contains("STALE [included]: a.satz — local v1.0, upstream v1.1"), "{out}");
+        // a stale pack's local values are the OLD defaults: name what moved, do not
+        // tell the operator to pin them
+        assert!(out.contains("default(s) changed upstream: region"), "{out}");
+        assert!(!out.contains("override in the estate's `params { … }` block, then restore the preset with `get-presets`:\n      region"), "{out}");
+        assert!(out.contains("no semantic change; adopting costs nothing"), "{out}");
+        assert!(out.contains("this pristine copy is that fork's"), "{out}");
+        assert!(out.contains("EDITED (variables only) [included]: d.satz — v1.0"), "{out}");
+        assert!(out.contains("already overridden in the estate's params"), "{out}");
+        assert!(out.contains("same version as upstream, different content"), "{out}");
+        assert!(out.contains("2 resource(s) differ — not mechanically migratable"), "{out}");
+        assert!(out.contains("fork [included]: f.local.satz (deliberate fork of f"), "{out}");
+        assert!(out.contains("local-only [included]: g.satz"), "{out}");
+        assert!(out.contains("missing locally: h.satz"), "{out}");
+        assert!(out.contains("1 preset(s) clean, 3 behind upstream."), "{out}");
+        assert!(out.contains("Drift detected in included preset(s) — exit code 1."), "{out}");
+    }
+
+    /// Drift outside the estate's `use` graph is reported but must not fail CI —
+    /// a customer's library carries packs they do not run.
+    #[test]
+    fn drift_outside_the_use_graph_does_not_fail() {
+        let out = render_check_presets(&report(
+            vec![prow("x.satz", "edited")],
+            CheckPresetsSummary { clean: 0, stale: 0, drift_in_use: false },
+        ));
+        assert!(out.contains("No drift in included presets."), "{out}");
+        assert!(!out.contains("exit code 1"), "{out}");
+    }
+
     use super::*;
 
     const PACK: &str = r#"pack demo version "1.0"
