@@ -1,0 +1,34 @@
+# Managed org-policy constraints and the legacy constraints they replace.
+#
+# One pair per line, tab-separated: <legacy>	<managed>	<origin>	<note>
+#
+# The packs run the managed replacement ALONE and declare the legacy twin off
+# (`spec { reset = true }`) — see "Superseded legacy constraints" in
+# presets/README.md for why both forms in force is a defect. The test
+# `constraint_equivalents::no_pack_runs_a_superseded_constraint` in src/main.rs
+# reads this file and fails the build when a pack breaks that rule in either
+# direction.
+#
+# Most managed constraints are NOT in here: they were born managed and have no
+# legacy form, so there is nothing to switch off.
+#
+# --- GENERATED, do not edit: rewritten by scripts/update_constraint_equivalents.py
+compute.disableGuestAttributesAccess	compute.managed.disableGuestAttributesAccess	GOOGLE
+compute.disableNestedVirtualization	compute.managed.disableNestedVirtualization	GOOGLE
+compute.disableSerialPortLogging	compute.managed.disableSerialPortLogging	GOOGLE
+compute.disallowGlobalDnsInZonalDnsProjects	compute.managed.disallowGlobalDns	GOOGLE
+compute.requireOsConfig	compute.managed.requireOsConfig	GOOGLE
+compute.requireOsLogin	compute.managed.requireOsLogin	GOOGLE
+compute.restrictProtocolForwardingCreationForTypes	compute.managed.restrictProtocolForwardingCreationForTypes	GOOGLE
+essentialcontacts.allowedContactDomains	essentialcontacts.managed.allowedContactDomains	GOOGLE
+iam.disableServiceAccountCreation	iam.managed.disableServiceAccountCreation	GOOGLE
+iam.disableServiceAccountKeyCreation	iam.managed.disableServiceAccountKeyCreation	GOOGLE
+iam.disableServiceAccountKeyUpload	iam.managed.disableServiceAccountKeyUpload	GOOGLE
+sql.restrictAuthorizedNetworks	sql.managed.restrictAuthorizedNetworks	GOOGLE
+sql.restrictPublicIp	sql.managed.restrictPublicIp	GOOGLE
+storage.retentionPolicySeconds	storage.managed.retentionPolicySeconds	GOOGLE
+storage.softDeletePolicySeconds	storage.managed.softDeletePolicySeconds	GOOGLE
+
+# --- CURATED, maintained by hand: pairs Google does not declare
+# Each line needs a note saying why we assert a pairing the API does not.
+iam.allowedPolicyMemberDomains	iam.managed.allowedPolicyMembers	OURS	Different names, no equivalentConstraint in either direction, but they enforce the same control: Domain Restricted Sharing. The legacy one cannot name exceptions for specific principals, so Google's own remedy for granting a service agent is to disable it org-wide, grant, and re-enable — running both turns every service activation into a window with the control off. CIS pack v2.0 dropped it, v2.5 declares it reset.

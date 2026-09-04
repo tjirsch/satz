@@ -51,6 +51,14 @@ and in the maintainer's notes. Nothing in this file names a customer.
   transpile-identity proof; comment/format churn upgrades silently. Pack
   versions live IN-FILE; filenames carry only framework versions. Never
   `.local.<n>.satz`.
+- **One form of a constraint, never two.** Where Google replaces a legacy
+  org-policy constraint with a managed one, a pack runs the replacement ALONE
+  and declares the legacy twin off (`spec { reset = true }`) — absence is not
+  enough, because a policy already set on an organisation is invisible to an
+  apply that does not declare it. The pairing is data
+  (`presets/managed-constraint-equivalents.txt`, refreshed from a live org by
+  `scripts/update_constraint_equivalents.py`, never by hand) and the rule is a
+  test that compiles every corpus case against it.
 - **Memberships stay OUT of presets** — presets define groups, humans grant
   membership.
 - **80% of customisation via params, the rest via `.local` forks** — no
