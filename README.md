@@ -132,7 +132,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
 
-**HCL and OpenTofu**
+**HCL**
 
 | Command | Options / Arguments |
 |---------|---------------------|
@@ -153,7 +153,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--pristine-dir` |
 | `doc-packs` | `--out <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file; `--check` fails when the pages are behind |
 
-**Organization policies**
+**Policies**
 
 | Command | Options / Arguments |
 |---------|---------------------|

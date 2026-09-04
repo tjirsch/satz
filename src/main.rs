@@ -232,10 +232,10 @@ static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::At
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt"]),
-    ("HCL and OpenTofu", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
+    ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs"]),
     (
-        "Organization policies",
+        "Policies",
         &[
             "export-organizational-policies",
             "diff-organizational-policies",
