@@ -633,6 +633,37 @@ issues — `ciem-discovery`, `containers`, `containers-streams`,
 each need their own `api://` audience, service account and role set from that customer's
 script. They cannot be guessed, so they are not shipped.
 
+## Questions
+
+A pack declares its params, its claims — and what a human must be asked before those
+params can be filled:
+
+```
+question customer_shortname {
+  prompt   = "Short name identifying this customer"
+  why      = "Project ids and bucket names derive from it, and those ids are globally unique."
+  reversal = recreate      // edit | state_surgery | recreate — cost to the ESTATE
+  blast    = none          // none | low | high — cost to the RUNNING organisation
+}
+```
+
+The two costs are orthogonal, and conflating them is the mistake the design exists to
+avoid: enforcing OS Login is one boolean to reverse and cuts every existing SSH path.
+`why` is required wherever satz will refuse or warn, so it can quote the pack's own
+sentence. An exclusive choice is `question oneof`, whose options name existing boolean
+params — so an answer set stays a plain param map and satz can refuse two true branches
+by name.
+
+A question must live in the file that declares its param: questions are absorbed after
+the `use … when` guard, so a question gating a pack cannot live in the gated pack.
+
+`satz questions <estate>` lists them with the values the estate carries; `satz
+doc-packs` gives each pack a Questions section; and the prompt becomes the generated
+`variables.tf` description. A pack whose questions changed is reported by
+`check-presets` as `questions` rather than drift — it emits identical HCL, so forking
+over a prompt typo would be wrong, but a `recreate → edit` downgrade must not ship
+silently.
+
 ## Superseded legacy constraints
 
 Where Google replaces a legacy org-policy constraint with a managed one, a pack runs the

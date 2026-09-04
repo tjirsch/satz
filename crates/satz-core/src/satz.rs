@@ -133,6 +133,104 @@ pub struct ActionDecl {
     pub line: usize,
 }
 
+/// What changing an answer costs the ESTATE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reversal {
+    /// one line, one apply
+    Edit,
+    /// a rename plus `state mv`, and whatever the old name is wired into
+    StateSurgery,
+    /// destroy and recreate — globally unique ids, mail addresses, buckets
+    Recreate,
+}
+
+/// What changing an answer costs the RUNNING organisation. Orthogonal to
+/// `Reversal`, and conflating the two is the mistake this design exists to
+/// avoid: enforcing OS Login is one boolean to reverse (edit) and cuts every
+/// existing SSH path (high).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blast {
+    None,
+    Low,
+    High,
+}
+
+impl Reversal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reversal::Edit => "edit",
+            Reversal::StateSurgery => "state_surgery",
+            Reversal::Recreate => "recreate",
+        }
+    }
+    fn parse(id: &str) -> Option<Self> {
+        match id {
+            "edit" => Some(Reversal::Edit),
+            "state_surgery" => Some(Reversal::StateSurgery),
+            "recreate" => Some(Reversal::Recreate),
+            _ => None,
+        }
+    }
+}
+
+impl Blast {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Blast::None => "none",
+            Blast::Low => "low",
+            Blast::High => "high",
+        }
+    }
+    fn parse(id: &str) -> Option<Self> {
+        match id {
+            "none" => Some(Blast::None),
+            "low" => Some(Blast::Low),
+            "high" => Some(Blast::High),
+            _ => None,
+        }
+    }
+}
+
+/// One branch of a `question oneof`. Names an existing boolean param, so an
+/// answer set stays a plain param map and a question never becomes a second
+/// channel for setting values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuestionOption {
+    pub param: String,
+    pub label: String,
+    pub why: Option<String>,
+    pub line: usize,
+}
+
+/// `question <param> { … }` — what to ask a customer so a param can be filled,
+/// and what getting it wrong costs.
+///
+/// Declared beside `params` and `claims`, in the file that owns the param,
+/// because a question that gates a pack cannot live in the gated pack: questions
+/// are absorbed after the `use … when` guard, so it would be invisible until the
+/// answer is already yes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuestionDecl {
+    /// the param this answers — or, for `oneof`, the group's own name
+    pub subject: String,
+    pub oneof: bool,
+    pub prompt: String,
+    /// Required where satz will refuse or warn, so it can quote the pack's own
+    /// sentence instead of a generic one.
+    pub why: Option<String>,
+    pub reversal: Reversal,
+    pub blast: Blast,
+    /// What the interview OFFERS. The `params` default is what applies when
+    /// nobody asked — one default, one recommendation, never two channels.
+    pub recommend: Option<Value>,
+    /// Only ask this when another param is truthy.
+    pub ask_when: Option<String>,
+    /// `oneof` only: exactly one option must be true, rather than at most one.
+    pub required: bool,
+    pub options: Vec<QuestionOption>,
+    pub line: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct File {
     pub estate: Option<String>,
@@ -151,6 +249,7 @@ pub struct File {
     pub suppressions: Vec<Suppression>,
     pub hcl_blocks: Vec<HclBlock>,
     pub actions: Vec<ActionDecl>,
+    pub questions: Vec<QuestionDecl>,
 }
 
 /// A control claim as language syntax:
@@ -816,6 +915,157 @@ impl P {
         Ok(decl)
     }
 
+    fn question_stmt(&mut self, line: usize) -> Result<QuestionDecl, SatzError> {
+        let oneof = matches!(self.peek(), Some(Tok::Ident(id)) if id == "oneof");
+        if oneof {
+            self.next();
+        }
+        let subject = match self.next() {
+            Some(Tok::Ident(id)) => id,
+            other => {
+                return err(
+                    line,
+                    format!(
+                        "question: expected the {} name, found {:?}",
+                        if oneof { "group" } else { "param" },
+                        other
+                    ),
+                );
+            }
+        };
+        self.expect(Tok::LBrace, "'{' after the question name")?;
+        let body = self.entries()?;
+
+        let mut prompt = None;
+        let mut why = None;
+        let mut reversal = None;
+        let mut blast = None;
+        let mut recommend = None;
+        let mut ask_when = None;
+        let mut required = false;
+        let mut options: Vec<QuestionOption> = Vec::new();
+
+        for e in body {
+            match e {
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "prompt" => {
+                    prompt = Some(lit_str(&parts, l, "question: prompt")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "why" => {
+                    why = Some(lit_str(&parts, l, "question: why")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Ref(id), line: l } if k == "reversal" => {
+                    reversal = Some(Reversal::parse(&id).ok_or_else(|| {
+                        SatzError { line: l, msg: format!(
+                            "question {}: reversal = {} is not one of edit | state_surgery | recreate",
+                            subject, id) }
+                    })?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Ref(id), line: l } if k == "blast" => {
+                    blast = Some(Blast::parse(&id).ok_or_else(|| {
+                        SatzError { line: l, msg: format!(
+                            "question {}: blast = {} is not one of none | low | high", subject, id) }
+                    })?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: v, .. } if k == "recommend" => {
+                    recommend = Some(v);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Ref(id), .. } if k == "ask_when" => {
+                    ask_when = Some(id);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Bool(b), .. } if k == "required" => {
+                    required = b;
+                }
+                Entry::Map { key: Key::Ident(k), name: Some(Key::Ident(param)), body, line: l }
+                    if k == "option" =>
+                {
+                    let mut label = None;
+                    let mut owhy = None;
+                    for oe in body {
+                        match oe {
+                            Entry::Attr { key: Key::Ident(ok), value: Value::Str(parts), line: ol }
+                                if ok == "label" =>
+                            {
+                                label = Some(lit_str(&parts, ol, "question option: label")?);
+                            }
+                            Entry::Attr { key: Key::Ident(ok), value: Value::Str(parts), line: ol }
+                                if ok == "why" =>
+                            {
+                                owhy = Some(lit_str(&parts, ol, "question option: why")?);
+                            }
+                            other => {
+                                return err(l, format!(
+                                    "question option {}: unexpected entry {:?} (only label and why)",
+                                    param, other));
+                            }
+                        }
+                    }
+                    let label = label.ok_or_else(|| SatzError {
+                        line: l,
+                        msg: format!("question option {}: label = \"…\" is required", param),
+                    })?;
+                    if let Some(first) = options.iter().find(|o| o.param == param) {
+                        return err(l, format!(
+                            "question oneof {}: option {} appears twice (line {} and line {})",
+                            subject, param, first.line, l));
+                    }
+                    options.push(QuestionOption { param, label, why: owhy, line: l });
+                }
+                other => {
+                    return err(line, format!(
+                        "question {}: unexpected entry {:?} — the keys are prompt, why, reversal, \
+                         blast, recommend, ask_when{}",
+                        subject, other,
+                        if oneof { ", required and `option <param> { … }`" } else { "" }));
+                }
+            }
+        }
+
+        let prompt = prompt.ok_or_else(|| SatzError {
+            line,
+            msg: format!("question {}: prompt = \"…\" is required — it is what a human is asked", subject),
+        })?;
+        let reversal = reversal.ok_or_else(|| SatzError {
+            line,
+            msg: format!(
+                "question {}: reversal = edit | state_surgery | recreate is required (what changing \
+                 the answer costs the estate)", subject),
+        })?;
+        let blast = blast.ok_or_else(|| SatzError {
+            line,
+            msg: format!(
+                "question {}: blast = none | low | high is required (what changing the answer costs \
+                 the running organisation — orthogonal to reversal)", subject),
+        })?;
+        // Where satz will refuse or warn, it must be able to quote the pack's own
+        // sentence. Same rule as `claim … deviates` requiring a reason.
+        if why.is_none() && (reversal == Reversal::Recreate || blast == Blast::High) {
+            return err(line, format!(
+                "question {}: why = \"…\" is required when reversal is recreate or blast is high — \
+                 that is the sentence satz quotes when it refuses to derive on a deferred answer",
+                subject));
+        }
+        if oneof {
+            if options.len() < 2 {
+                return err(line, format!(
+                    "question oneof {}: needs at least two `option <param> {{ … }}` branches (found {})",
+                    subject, options.len()));
+            }
+        } else {
+            if !options.is_empty() {
+                return err(line, format!(
+                    "question {}: `option` belongs to a `question oneof <group>`", subject));
+            }
+            if required {
+                return err(line, format!(
+                    "question {}: `required` belongs to a `question oneof <group>`", subject));
+            }
+        }
+
+        Ok(QuestionDecl {
+            subject, oneof, prompt, why, reversal, blast, recommend, ask_when, required, options, line,
+        })
+    }
+
     fn action_stmt(&mut self, line: usize) -> Result<ActionDecl, SatzError> {
         let name = match self.next() {
             Some(Tok::Str(parts)) => lit_str(&parts, line, "action: the name")?,
@@ -1049,6 +1299,19 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 p.next();
                 file.claims.push(p.claim_stmt(line)?);
             }
+            // Before the generic `IDENT IDENT "{"` arm below, which would other-
+            // wise swallow `question foo { … }` as a resource map and fail later
+            // in the walk with an error about a type nobody wrote.
+            Some(Tok::Ident(id)) if id == "question" => {
+                p.next();
+                let q = p.question_stmt(line)?;
+                if let Some(first) = file.questions.iter().find(|x| x.subject == q.subject) {
+                    return err(q.line, format!(
+                        "question {}: declared twice in this file (line {} and line {})",
+                        q.subject, first.line, q.line));
+                }
+                file.questions.push(q);
+            }
             Some(Tok::Ident(id)) if id == "action" => {
                 p.next();
                 let a = p.action_stmt(line)?;
@@ -1119,6 +1382,40 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 }
             }
             Some(other) => return err(line, format!("unexpected {:?} at top level", other)),
+        }
+    }
+
+    // A question must live in the file that declares its param. Questions are
+    // absorbed AFTER the `use … when` guard, so a question gating a pack would be
+    // invisible until the answer was already yes — the chicken-and-egg is made
+    // unrepresentable here rather than documented. (The repo already avoided it by
+    // accident: `cis_require_shielded_vm` is declared in the CIS pack, not in the
+    // extension it gates.)
+    let declared: std::collections::BTreeSet<&str> =
+        file.params.iter().map(|(n, _, _)| n.as_str()).collect();
+    for q in &file.questions {
+        if q.oneof {
+            for o in &q.options {
+                if !declared.contains(o.param.as_str()) {
+                    return err(o.line, format!(
+                        "question oneof {}: option {} names no param declared in this file — a \
+                         question travels with the param it answers",
+                        q.subject, o.param));
+                }
+            }
+        } else if !declared.contains(q.subject.as_str()) {
+            return err(q.line, format!(
+                "question {}: no param of that name is declared in this file — a question travels \
+                 with the param it answers, because a question that gates a pack cannot live in the \
+                 gated pack",
+                q.subject));
+        }
+        if let Some(w) = &q.ask_when {
+            if !declared.contains(w.as_str()) {
+                return err(q.line, format!(
+                    "question {}: ask_when names {}, which this file does not declare",
+                    q.subject, w));
+            }
         }
     }
     Ok(file)
@@ -1218,6 +1515,40 @@ pub fn canonical(file: &File) -> String {
     }
     s.push_str(&c.body);
     s
+}
+
+/// The questions of a file, canonically — a THIRD product beside `canonical_parts`,
+/// deliberately not folded into `canonical.body`.
+///
+/// `canonical` means "what this file emits". A pack whose questions changed emits
+/// byte-identical HCL, so putting them in the body would auto-fork every estate that
+/// uses the pack over a prompt typo, and report it as "N resource line(s) differ" —
+/// which is a lie. Leaving them out of everything would be worse: a
+/// `reversal: recreate → edit` downgrade is a governance fact and must not ship
+/// silently. So it is reported loudly and separately, and never forks.
+pub fn canonical_questions(file: &File) -> String {
+    let mut out = String::new();
+    let mut qs: Vec<&QuestionDecl> = file.questions.iter().collect();
+    qs.sort_by(|a, b| a.subject.cmp(&b.subject));
+    for q in qs {
+        out.push_str(&format!(
+            "question({}|{}|{}|{}|{}|{}|{}|{}|[{}])\n",
+            if q.oneof { "oneof" } else { "param" },
+            q.subject,
+            q.prompt,
+            q.why.as_deref().unwrap_or(""),
+            q.reversal.as_str(),
+            q.blast.as_str(),
+            q.recommend.as_ref().map(canon_value).unwrap_or_default(),
+            q.ask_when.as_deref().unwrap_or(""),
+            q.options
+                .iter()
+                .map(|o| format!("{}={}", o.param, o.label))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    out
 }
 
 pub fn canonical_parts(file: &File) -> Canonical {
@@ -1385,6 +1716,130 @@ fn collect_satz_deps(entries: &[Entry], out: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+    // ---- `question` -------------------------------------------------------
+
+    fn q(body: &str) -> String {
+        format!("pack demo version \"1.0\"\n\nparams {{\n  region = \"eu\"\n  a = true\n  b = false\n}}\n\n{}\n", body)
+    }
+
+    #[test]
+    fn a_question_parses_with_its_two_costs() {
+        let f = parse(&q("question region {\n  prompt = \"Which region?\"\n  reversal = state_surgery\n  blast = low\n  recommend = \"europe-west3\"\n}")).expect("parse");
+        assert_eq!(f.questions.len(), 1);
+        let x = &f.questions[0];
+        assert_eq!(x.subject, "region");
+        assert!(!x.oneof);
+        assert_eq!(x.reversal, Reversal::StateSurgery);
+        assert_eq!(x.blast, Blast::Low);
+        assert!(x.recommend.is_some());
+    }
+
+    /// A question that GATES a pack cannot live in the gated pack — questions are
+    /// absorbed after the `use … when` guard, so it would be invisible until the
+    /// answer was already yes. Making it a parse error makes that unrepresentable.
+    #[test]
+    fn a_question_must_travel_with_its_param() {
+        let e = parse(&q("question nowhere {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n}")).unwrap_err();
+        assert!(e.msg.contains("nowhere"), "{}", e.msg);
+        assert!(e.msg.contains("travels with the param it answers"), "{}", e.msg);
+    }
+
+    /// Where satz will refuse or warn it must quote the pack's OWN sentence, not a
+    /// generic one — the same rule that makes `reason` mandatory on a deviation.
+    #[test]
+    fn a_one_way_door_must_say_why() {
+        let e = parse(&q("question region {\n  prompt = \"?\"\n  reversal = recreate\n  blast = none\n}")).unwrap_err();
+        assert!(e.msg.contains("why"), "{}", e.msg);
+        let e = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = high\n}")).unwrap_err();
+        assert!(e.msg.contains("why"), "{}", e.msg);
+        // and it parses once the sentence is there
+        parse(&q("question region {\n  prompt = \"?\"\n  why = \"ids are global\"\n  reversal = recreate\n  blast = none\n}")).expect("parse");
+    }
+
+    #[test]
+    fn the_cost_vocabularies_are_closed() {
+        for (rev, blast) in [("rename", "none"), ("edit", "medium")] {
+            let e = parse(&q(&format!(
+                "question region {{\n  prompt = \"?\"\n  reversal = {}\n  blast = {}\n}}",
+                rev, blast
+            )))
+            .unwrap_err();
+            // the error names the vocabulary rather than saying "invalid"
+            assert!(e.msg.contains("is not one of"), "{}/{}: {}", rev, blast, e.msg);
+        }
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused_naming_the_keys() {
+        let e = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  urgency = \"high\"\n}")).unwrap_err();
+        assert!(e.msg.contains("prompt, why, reversal"), "{}", e.msg);
+    }
+
+    #[test]
+    fn prompt_reversal_and_blast_are_all_required() {
+        for missing in [
+            "question region {\n  reversal = edit\n  blast = none\n}",
+            "question region {\n  prompt = \"?\"\n  blast = none\n}",
+            "question region {\n  prompt = \"?\"\n  reversal = edit\n}",
+        ] {
+            assert!(parse(&q(missing)).is_err(), "{}", missing);
+        }
+    }
+
+    #[test]
+    fn a_question_declared_twice_names_both_lines() {
+        let e = parse(&q("question region {\n  prompt = \"a\"\n  reversal = edit\n  blast = none\n}\n\nquestion region {\n  prompt = \"b\"\n  reversal = edit\n  blast = none\n}")).unwrap_err();
+        assert!(e.msg.contains("declared twice"), "{}", e.msg);
+    }
+
+    #[test]
+    fn a_oneof_needs_two_branches_and_they_must_be_declared_params() {
+        let one = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n}";
+        let e = parse(&q(one)).unwrap_err();
+        assert!(e.msg.contains("at least two"), "{}", e.msg);
+
+        let undeclared = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n  option zz { label = \"Z\" }\n}";
+        let e = parse(&q(undeclared)).unwrap_err();
+        assert!(e.msg.contains("zz"), "{}", e.msg);
+
+        let good = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  required = true\n  option a { label = \"A\" }\n  option b { label = \"B\" why = \"for the other case\" }\n}";
+        let f = parse(&q(good)).expect("parse");
+        assert!(f.questions[0].oneof);
+        assert!(f.questions[0].required);
+        assert_eq!(f.questions[0].options.len(), 2);
+    }
+
+    #[test]
+    fn option_belongs_to_a_oneof_only() {
+        let e = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n}")).unwrap_err();
+        assert!(e.msg.contains("`option` belongs to"), "{}", e.msg);
+    }
+
+    /// Before this statement existed, `question foo { … }` fell into the generic
+    /// `IDENT IDENT "{"` arm, became a resource map, and failed later in the walk
+    /// with an error about a type nobody wrote.
+    #[test]
+    fn a_malformed_question_reports_a_question_error() {
+        let e = parse(&q("question region {\n  prompt = \"?\"\n}")).unwrap_err();
+        assert!(e.msg.starts_with("question region"), "{}", e.msg);
+    }
+
+    /// Questions are a THIRD canonical product. In `canonical.body` a prompt typo
+    /// would auto-fork every estate using the pack and report it as a resource
+    /// difference; out of everything, a `recreate → edit` downgrade would ship
+    /// silently.
+    #[test]
+    fn questions_are_canonical_separately_from_the_body() {
+        let a = parse(&q("question region {\n  prompt = \"A\"\n  reversal = edit\n  blast = none\n}")).unwrap();
+        let b = parse(&q("question region {\n  prompt = \"B\"\n  reversal = edit\n  blast = none\n}")).unwrap();
+        assert_eq!(canonical(&a), canonical(&b), "a prompt change must not read as an emission change");
+        assert_ne!(
+            canonical_questions(&a),
+            canonical_questions(&b),
+            "but it must be visible somewhere"
+        );
+    }
+
     #[test]
     fn long_string_param_with_escaped_quotes_round_trips() {
         let src = "pack demo version \"1.1\"\n\nparams {\n  logsink_filter = \"log_id(\\\"cloudaudit.googleapis.com/activity\\\") OR log_id(\\\"cloudaudit.googleapis.com/policy\\\")\"\n}\n\ngoogle_logging_organization_sink {\n  s {\n    filter = logsink_filter\n  }\n}\n";

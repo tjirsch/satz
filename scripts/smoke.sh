@@ -153,6 +153,38 @@ case "$(cd "$root" && git ls-files presets/scc/scc-enable-all.sh)" in
   *) fail "the SCC script is not tracked under presets/ — get-presets would not ship it" ;;
 esac
 
+step "questions: what the estate can be asked, and what the answers cost"
+"$satz" --config . questions showcase.satz > tmp/questions.txt 2>/dev/null || fail "satz questions failed"
+grep -q 'customer_shortname' tmp/questions.txt || fail "the showcase's question is missing"
+grep -q 'one-way' tmp/questions.txt || fail "a recreate-reversal question must be marked as a one-way door"
+grep -q 'group_model' tmp/questions.txt || fail "the oneof question is missing"
+"$satz" --config . questions showcase.satz --format json 2>/dev/null > tmp/questions.json || true
+python3 - <<'PYEOF' || fail "satz questions --format json did not emit parseable JSON"
+import json
+d = json.load(open("tmp/questions.json"))
+subs = {q["subject"]: q for q in d["questions"]}
+assert "customer_shortname" in subs, subs.keys()
+assert subs["customer_shortname"]["reversal"] == "recreate", subs["customer_shortname"]
+assert d["summary"]["one_way_doors"] >= 1, d["summary"]
+m = subs["group_model"]
+assert m["kind"] == "oneof" and len(m["options"]) == 2, m
+assert sum(1 for o in m["options"] if o["selected"]) == 1, m
+PYEOF
+grep -q 'satz v' tmp/questions.json && fail "the version banner is on stdout"
+
+# a question is metadata: it must reach variables.tf as a description and NOTHING else
+grep -q 'description = "Short name identifying this customer"' tmp/showcase-hcl/variables.tf \
+  || fail "the question's prompt did not become the variable's description"
+grep -q 'question' tmp/showcase-hcl/main.tf && fail "a question must emit nothing into main.tf"
+
+# and the exclusive choice is checked BEFORE the fold reaches a shared address
+sed 's/group_model_split        = false/group_model_split        = true/' yaml/showcase.satz > tmp/twochoice.satz
+if "$satz" --config . transpile tmp/twochoice.satz --check >tmp/twochoice.txt 2>&1; then
+  fail "two branches of a oneof were both accepted"
+fi
+grep -q 'group_model_flat and group_model_split are both true' tmp/twochoice.txt \
+  || fail "the oneof refusal does not name both branches:\n$(cat tmp/twochoice.txt)"
+
 step "require cis-gcp-4.0 (goal view, offline)"
 # `require` exits non-zero when a technical control is unmet — that IS the CI
 # gate; the smoke estate leaves 2.12 (DNS logging) and 2.13 (CAI) unmet on
