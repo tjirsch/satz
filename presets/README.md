@@ -464,10 +464,24 @@ scripts/scc-enable-all.sh --organization 123456789012              # dry run
 scripts/scc-enable-all.sh --organization 123456789012 --apply      # write
 ```
 
-Expect the §1.1 interaction above — each newly enabled service provisions
-another service agent whose auto-grant the domain lock refuses; the script says
-so instead of printing the raw API error. Flags, failure modes and the rest:
-[`docs/scripts.md`](../docs/scripts.md).
+Expect the §1.1 interaction above — SCC's service agents are granted their roles
+at the organization, and the domain lock refuses any agent the baseline does not
+list, which is what "won't stay activated / asks to activate on every console
+visit" looks like from the console.
+
+**How many agents is that? Five, and enabling more services does not add to them.**
+Measured 2026-09-04 on a live organization: with every service this SDK can set
+turned on, the org IAM policy carried exactly the five the baseline already lists
+(`securitycenter`, `cloudsecuritycompliance`, `dspm`, `externalexposure`,
+`containerthreatdetection` service agents). They come with SCC activation, not
+per service. A **notification config** adds
+`service-org-<ORG_ID>@gcp-sa-scc-notification.iam.gserviceaccount.com` with
+`roles/securitycenter.notificationServiceAgent` — but on the **Pub/Sub topic**,
+not at the organization, and creating one succeeded with the domain lock enforced
+and that agent absent from the list. Unproven on this org: Security Health
+Analytics (a failed precondition there) and the AWS/Azure connectors.
+
+Flags, failure modes and the rest: [`docs/scripts.md`](../docs/scripts.md).
 
 **Use**, then adopt what the organisation already has (`satz adopt --activate`
 activates managed constraints via the Org Policy API and imports existing policies

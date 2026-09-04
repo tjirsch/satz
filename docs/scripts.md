@@ -29,18 +29,50 @@ scripts/scc-enable-all.sh --organization 123456789012 --apply    # write
 
 ### Why it is a script
 
-google/google-beta 7.12.0 carry **no binding** for
+google/google-beta carry **no binding** for
 `securitycentermanagement.googleapis.com`'s `SecurityCenterService`. Turning
 Security Health Analytics, Event Threat Detection, Container Threat Detection,
 VM Threat Detection, Web Security Scanner or DSPM on or off therefore cannot be
 written as a resource in any language satz compiles, and neither can tier
-activation.
+activation. Re-checked against **7.14.1**: the provider ships 35 `google_scc_*` /
+`google_securityposture_*` types and none of them is service enablement or a
+tier — the `google_scc_management_*` ones are custom modules only.
 
 Everything **downstream** of activation is codeable and belongs in a preset:
-custom modules (SHA + ETD), sources and source IAM, notification configs (v1 and
-v2), BigQuery exports, mute configs, and
-`google_securityposture_posture(_deployment)`. This script covers only the part
-that has no resource to compile.
+custom modules (SHA + ETD), sources and source IAM, notification configs,
+BigQuery exports, mute configs, and
+`google_securityposture_posture(_deployment)`. Use the **v2** notification
+resources: the v1 API answers `This API is no longer available. Please use API
+V2` on a live org, so `google_scc_notification_config` is a dead end and
+`google_scc_v2_organization_notification_config` is the one to write.
+
+### What the first live run changed (2026-09-04)
+
+Until then this script had only ever run against a gcloud test double, and the
+double accepted everything. Against a real organization, four things were wrong:
+
+- **Discovery spoke the wrong dialect.** `gcloud scc manage services list`
+  answers `SECURITY_HEALTH_ANALYTICS`; `gcloud scc manage services update` takes
+  `security-health-analytics`. The discovered names were passed through verbatim,
+  so *every* call failed with "is not a valid service name" — discovery, the
+  feature meant to keep the list current, broke every run that used it. Names are
+  now lowercased and hyphenated.
+- **The API lists services gcloud cannot set.** A live org offered
+  `ARTIFACT_GUARD`, `ARTIFACT_ANALYSIS`, `AGENT_ENGINE_VULN_ASSESSMENT` and
+  `EXTERNAL_EXPOSURE`, none of which the SDK accepts. Discovery is intersected
+  with the settable set and the remainder is reported in one line instead of
+  producing a wall of errors.
+- **`external-exposure` was in the built-in fallback list** and is not a valid
+  name either — so the fallback path was broken too, in the same way, silently.
+- **VM Manager cannot be enabled here.** The API answers `Invalid
+  intended_enablement_state. ENABLED is not a valid enablement state`: SCC mirrors
+  whether GCE's VM Manager is running. It is skipped in the org pass with a note
+  and still swept to `INHERITED`, which the API does accept.
+
+One failure is **not** a script bug and is left to surface: Security Health
+Analytics answers `FAILED_PRECONDITION` at every level on an org where it is
+disabled and the subscription does not carry it. The script prints the API's own
+error rather than guessing at the cause.
 
 ### What it does
 
