@@ -323,6 +323,22 @@ grep -q 'declared as `google_storage_bucket' tmp/triage.md || fail "the bucket f
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --report tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
 grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
 
+step "report-compliance: the envelope says whether live state was actually read"
+# The report degrades to unverifiable witnesses rather than failing, so `live`
+# has to mean "the inventory WAS read", never "live was requested" — otherwise a
+# caller with no stderr (MCP, a pipeline) cannot tell a blind run from a
+# verified one. CI has no credentials, so `--no-live` is the case it can assert.
+"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format json > tmp/ev-envelope.json 2>/dev/null || fail "report-compliance --format json failed"
+python3 - <<'PYEOF' || fail "the evidence envelope does not describe the live run"
+import json
+o = json.load(open("tmp/ev-envelope.json"))
+for f in ("live", "live_status", "warnings"):
+    assert f in o, f"the envelope has no {f}: {sorted(o)}"
+assert o["live"] is False, o["live"]
+assert o["live_status"] == "skipped", o["live_status"]
+assert o["warnings"] == [], o["warnings"]
+PYEOF
+
 step "import-config: every derivable asset_type is filled (the CAI list is the source)"
 cp "$root/presets/import-config.yaml" tmp/import-config.yaml
 uv run --with ruamel.yaml "$root/scripts/update_import_config.py" --config-file tmp/import-config.yaml --cai-types "$root/presets/cai-asset-types.txt" | tee tmp/fill.txt

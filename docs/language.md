@@ -1559,7 +1559,8 @@ An attested duty moves from `open: validate-then-lock` to
 control at partial. No estate in the fleet has one yet.
 
 **Evidence history.** Every run appends `evidence/<framework>-<timestamp>.json`
-beside the config — `estate`, `framework`, `version`, `live`, `verified_at`,
+beside the config — `estate`, `framework`, `version`, `live`, `live_status`,
+`warnings`, `verified_at`,
 and one row per control with `control`, `title`, `status`, `witnesses`,
 `duties`, `paraphrase`, `interpretation`, `prowler`, `checkov` — and writes
 the report (`evidence/<framework>-latest.md`, or `--format pdf`; `--format
@@ -1567,7 +1568,12 @@ json` writes only the history entry, no markdown). `--prowler findings.json`
 ingests a Prowler export (OCSF or legacy JSON) as corroboration; `--checkov`
 adds a column from a Checkov run over `hcl_dir`. `--no-live` produces a
 declared-only report (statuses read *declared*) but still appends to the
-history. The exit code is 0 whatever the verdicts; `--fail-on
+history. `live` records whether the inventory was READ, not whether it was
+requested: a run whose read was refused reports `live: false`,
+`live_status: "unavailable"` and the reason in `warnings`, and its report header
+reads **NOT VERIFIED** instead of naming the service it never reached. The other
+outcomes are `verified`, `skipped` (`--no-live`), `no-organization-id` and
+`no-witnesses`. The exit code is 0 whatever the verdicts; `--fail-on
 not-enforced,drifted` (any status word, or `any`) makes the run fail for CI
 after the report is written. The report states check
 semantics — "a resource with these properties was verified at this time" —

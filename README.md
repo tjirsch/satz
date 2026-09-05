@@ -930,7 +930,9 @@ partial (open/attested duties), unmet, broken claim. Each run appends
 `evidence/<framework>-<timestamp>.json` beside the config — the evidence history —
 and writes the report (pandoc PDF like `report-organizational-policies`). Without
 credentials or with `--no-live`, the report degrades honestly to declared-estate
-status. The report states check semantics ("a resource with these properties was
+status — and records which: `live` says whether the inventory was actually read,
+`live_status` says why not (`skipped`, `no-organization-id`, `no-witnesses`,
+`unavailable`) and `warnings` carries the reasons the command prints to stderr. The report states check semantics ("a resource with these properties was
 verified at this time"), never legal conformity.
 
 ### Reconciling preset updates (`merge-presets`) — provenance by suffix
