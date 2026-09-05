@@ -296,11 +296,18 @@ E02     ~/estates/bolt
 ```
 
 or a markdown table, so a fleet note you already keep works unchanged — the code
-is the first cell shaped like one, the checkout is the first backticked path:
+is the **first** cell and the checkout is the first backticked absolute-or-`~`
+path, which may carry a note after it:
 
 ```
-| E01 | Customer A | `~/estates/acme` | … |
+| E01 | Customer A | `~/estates/acme` (also elsewhere) | … |
 ```
+
+A row without both is prose in a table, and is skipped. **The parser is strict
+on purpose.** A forgiving one finds "estates" in ordinary prose and in unrelated
+tables, reports every one of them UNAVAILABLE, and buries the estates that
+really were not checked — which is the one finding this script exists to make
+loud.
 
 Bare paths on the command line need no roster at all.
 

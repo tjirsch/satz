@@ -51,9 +51,11 @@ ESTATE   a path to an estate checkout (the directory holding config.toml), or a
          in the roster is checked.
 
   --roster FILE   which estates exist and where. Either `code<TAB>path` lines
-                  (# comments allowed) or a markdown table whose first
-                  backticked path cell per row is the checkout — so an existing
-                  fleet note works unchanged. Default: $FLEET_ROSTER.
+                  (# comments allowed), or a markdown table whose FIRST cell is
+                  the code and whose first backticked absolute-or-~ path is the
+                  checkout — so a fleet note you already keep works unchanged.
+                  A row without both is prose, and is skipped. Default:
+                  $FLEET_ROSTER.
   --scratch DIR   where copies are transpiled (default: a temp dir, removed).
                   Give one to keep the emitted trees for inspection.
   --require-all   an estate with no usable checkout fails the run.
@@ -115,34 +117,54 @@ import os
 import re
 import sys
 
+# A roster is read out of a document a human maintains, so the parser has to be
+# STRICT rather than forgiving. A loose one finds "estates" in prose — two words
+# on a line, a backticked path in an unrelated table — and every one of them is
+# then reported UNAVAILABLE, which buries the estates that really were not
+# checked under noise. Both shapes below require a code AND a path that looks
+# like a path; anything else is not a roster line.
+CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,15}\Z")
+PATH = re.compile(r"(~|\.{0,2})/\S*\Z")
+
 path_file, codes = sys.argv[1], sys.argv[2].split()
 wanted = set(codes)
 home = os.path.expanduser("~")
+seen = set()
 
 for line in open(path_file, encoding="utf-8"):
     line = line.rstrip("\n")
     if not line.strip() or line.lstrip().startswith("#"):
         continue
     if line.lstrip().startswith("|"):
-        # A markdown table row: the code is the first cell that looks like one,
-        # the checkout is the first backticked path.
+        # A markdown table row. The code is the FIRST cell — not any cell that
+        # happens to look like one — and the checkout is the first backticked
+        # path. A row without both is prose in a table, and is skipped.
         cells = [c.strip() for c in line.split("|")]
-        code = next((c for c in cells if re.fullmatch(r"[A-Za-z]\w*\d+", c)), "")
+        if len(cells) < 3:
+            continue
+        code = cells[1]
         path = ""
-        for c in cells:
-            m = re.match(r"`(~?/[^`]+)`", c)
-            if m:
+        for c in cells[2:]:
+            # The cell may carry a note after the path ("`~/a/b` (also `~/c`)"),
+            # so match the LEADING backticked token rather than the whole cell —
+            # while still requiring it to be shaped like a path, which is what
+            # keeps prose out.
+            m = re.match(r"`(\S+)`", c)
+            if m and PATH.fullmatch(m.group(1)):
                 path = m.group(1)
                 break
-        if not code or not path:
-            continue
     else:
-        parts = line.split("\t") if "\t" in line else line.split(None, 1)
+        parts = line.split("\t") if "\t" in line else line.split()
         if len(parts) != 2:
             continue
         code, path = parts[0].strip(), parts[1].strip()
+    if not CODE.fullmatch(code) or not PATH.fullmatch(path):
+        continue
     if wanted and code not in wanted:
         continue
+    if code in seen:
+        continue
+    seen.add(code)
     print(f"{code}\t{path.replace('~', home, 1)}")
 PY
 fi

@@ -846,6 +846,28 @@ grep -q 'UNAVAILABLE' tmp/fleet/out.txt || fail "a missing checkout was not repo
 run_v1 1 "--require-all" --roster tmp/fleet/roster.md --require-all
 grep -q 'never checked' tmp/fleet/out.txt || fail "--require-all did not fail on an unchecked estate:\n$(cat tmp/fleet/out.txt)"
 
+# 5 · the roster lives in a document a human maintains, so the parser has to be
+#     strict. A loose one finds "estates" in prose and in unrelated tables, and
+#     reports every one of them UNAVAILABLE — burying the estates that really
+#     were not checked. Only rows carrying a code AND a path count.
+cat > tmp/fleet/noisy.md <<EOF
+# A fleet note, most of which is not a roster
+
+Prose with two words. Another line mentioning ~/estates/acme in passing.
+
+| action | what it does | how |
+|---|---|---|
+| **V1** | verify on the current binary | \`satz transpile\` then compare |
+
+| code | customer | path |
+|---|---|---|
+| E01 | Customer A | \`$PWD/tmp/fleet/estate\` (also elsewhere) |
+EOF
+run_v1 0 "a noisy roster yields exactly one estate" --roster tmp/fleet/noisy.md
+[ "$(grep -c '^== ' tmp/fleet/out.txt)" = "1" ] \
+  || fail "the roster parser found estates in prose:\n$(cat tmp/fleet/out.txt)"
+grep -q '^== E01' tmp/fleet/out.txt || fail "the one real roster row was not read:\n$(cat tmp/fleet/out.txt)"
+
 step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
