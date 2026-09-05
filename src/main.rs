@@ -754,6 +754,10 @@ enum Commands {
     /// Show which identity, credential type and quota project the Application
     /// Default Credentials resolve to
     Whoami {
+        /// Estate to answer FOR (.satz, inside yaml_dir if relative): a
+        /// cloud-mode estate reports its IaC service account, the identity its
+        /// live commands actually run as. Omit to report the ambient credentials.
+        input: Option<PathBuf>,
         /// Read the ADC file only — no network, no token minted
         #[arg(long)]
         offline: bool,
@@ -1780,7 +1784,25 @@ Thumbs.db
             .await
         }
         Commands::OpenReadme => open_url(DOCS_URL),
-        Commands::Whoami { offline } => crate::gcp::identity::whoami(offline).await,
+        Commands::Whoami { input, offline } => {
+            // An estate changes the question from "who is the human" to "who
+            // does this estate act as". A path that does not resolve has to say
+            // so: the binding helper reads an unreadable estate as "nothing to
+            // impersonate", which would quietly answer the other question.
+            if let Some(estate) = input {
+                let path = estate_path(estate, &runtime_config);
+                if !path.exists() {
+                    return Err(format!(
+                        "estate not found: {} — `satz whoami` without an estate reports the \
+                         ambient credentials",
+                        path.display()
+                    )
+                    .into());
+                }
+                configure_estate_impersonation(&path, &runtime_config)?;
+            }
+            crate::gcp::identity::whoami(offline).await
+        }
         Commands::Completion { shell, install } => {
             let using_default = shell.is_none();
             let shell = match shell {
@@ -3184,10 +3206,11 @@ fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
 ///
 /// THE RULE: post-init, anything that reads or writes a customer's estate runs
 /// as that estate's service account. The exceptions are deliberate and few —
-/// `whoami` (it asks about the human), `bootstrap` and `init --from-live` (no
-/// SA exists yet), and `map-types` (no credentials at all). A live command that
-/// calls neither this nor `disable_impersonation` runs as the human by
-/// accident, which is what `every_live_command_binds_an_identity` gates.
+/// bare `whoami` (it asks about the human; given an estate it binds like
+/// everything else), `bootstrap` and `init --from-live` (no SA exists yet), and
+/// `map-types` (no credentials at all). A live command that calls neither this
+/// nor `disable_impersonation` runs as the human by accident, which is what
+/// `the_estate_commands_are_the_ones_that_bind` gates.
 ///
 /// Errors when the process is already acting as a different estate — see
 /// `gcp::configure_impersonation`.
@@ -3961,6 +3984,9 @@ mod command_groups {
         NoGoogleApi,
         /// `mcp` binds per tool call, from the estate each tool names.
         PerTool,
+        /// The human by default, the estate's service account when the command
+        /// is GIVEN an estate to answer for. One command, two questions.
+        HumanOrEstate(&'static str),
     }
 
     /// EVERY command, classified. A new one fails `every_command_declares_an_identity`
@@ -3978,7 +4004,12 @@ mod command_groups {
         ("import", Identity::EstateSa),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
         ("init", Identity::Human("--from-live runs before the estate exists")),
-        ("whoami", Identity::Human("the question IS who the human is")),
+        (
+            "whoami",
+            Identity::HumanOrEstate(
+                "bare, the question IS who the human is; given an estate, who that estate acts as",
+            ),
+        ),
         ("map-types", Identity::Human("Discovery documents are public — no credential at all")),
         ("mcp", Identity::PerTool),
         ("transpile", Identity::NoGoogleApi),
@@ -4038,6 +4069,7 @@ mod command_groups {
         &["report-compliance"],
         &["adopt", "adopt-org-policies"],
         &["import"],
+        &["whoami"],
     ];
 
     /// The classification is a claim about the code, so check it against the code.
@@ -4049,7 +4081,7 @@ mod command_groups {
         let bound: BTreeSet<&str> = BINDING_SITES.iter().flat_map(|s| s.iter().copied()).collect();
         let claimed: BTreeSet<&str> = IDENTITIES
             .iter()
-            .filter(|(_, i)| *i == Identity::EstateSa)
+            .filter(|(_, i)| matches!(i, Identity::EstateSa | Identity::HumanOrEstate(_)))
             .map(|(n, _)| *n)
             .collect();
         assert_eq!(

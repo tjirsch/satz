@@ -531,6 +531,41 @@ grep -q 'svc-iac@acme-infra-001' tmp/who2.txt || fail "impersonation target not 
 grep -q 'impersonated service account' tmp/who2.txt || fail "credential type not shown:\n$(cat tmp/who2.txt)"
 grep -q 'quota project acme-infra-001' tmp/who2.txt || fail "quota project not shown:\n$(cat tmp/who2.txt)"
 
+step "whoami <estate>: the command answers the question only the MCP tool could"
+# An estate turns "who is the human" into "who does this estate act as", answered
+# from the estate file alone — no network, no credentials, no right to impersonate
+# needed yet. `satz_whoami` has taken an estate since the identity work; the command
+# had not, so one name covered two questions and only one surface could ask the
+# second. Both now resolve through the same function.
+cat > yaml/identity-whoami.satz <<'EOF'
+estate whoami_smoke
+
+params {
+  customer_organization_id = "123456789012"
+  customer_shortname = "acme"
+  infra_project_name = "acme-infra-001"
+  svc_iac_account = "svc-iac-001"
+  deployment_engine = "tofu"
+  deployment_mode = "cloud"
+}
+EOF
+GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami identity-whoami.satz --offline > tmp/who3.txt 2>&1 \
+  || fail "whoami <estate> failed without credentials, but it reads the estate file only:\n$(cat tmp/who3.txt)"
+grep -q 'svc-iac-001@acme-infra-001' tmp/who3.txt || fail "whoami <estate> did not name the estate's service account:\n$(cat tmp/who3.txt)"
+grep -q 'impersonated service account' tmp/who3.txt || fail "whoami <estate> did not name the credential type:\n$(cat tmp/who3.txt)"
+# A local-mode estate impersonates nothing, so the answer is the human again.
+GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" --config . whoami smoke.satz --offline > tmp/who4.txt 2>&1 \
+  || fail "whoami on a local-mode estate failed:\n$(cat tmp/who4.txt)"
+if grep -q 'svc-iac-001@acme-infra-001' tmp/who4.txt; then
+  fail "a local-mode estate must not report an estate service account:\n$(cat tmp/who4.txt)"
+fi
+# An estate that does not resolve must say so: binding treats an unreadable estate
+# as "nothing to impersonate", which would quietly answer the other question.
+if "$satz" --config . whoami does-not-exist.satz --offline > tmp/who5.txt 2>&1; then
+  fail "whoami with a missing estate must fail:\n$(cat tmp/who5.txt)"
+fi
+grep -q 'estate not found' tmp/who5.txt || fail "the missing estate was not named:\n$(cat tmp/who5.txt)"
+
 step "the privacy gate judges tokens, not lines, and refuses an unusable range"
 # the private-looking address is assembled at runtime so the fixture itself
 # never carries a domain the gate would reject

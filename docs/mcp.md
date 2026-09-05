@@ -192,7 +192,9 @@ service account every time.
 
 `satz_whoami` takes an optional `estate` for this reason. Without it you learn the
 server's ambient fallback; with it you learn the identity that estate's tools actually
-run as.
+run as. The command takes the same argument — `satz whoami <estate>` — and both resolve
+it through one function, so the terminal and the tool cannot answer the same question
+differently. They did once: only the tool knew that a bound estate changes the answer.
 
 ### Still missing
 
