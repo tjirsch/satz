@@ -755,6 +755,97 @@ for c in want.values():
     assert f"{c}-infra-001" in text, f"the refusal does not name {c}: {text}"
 PYEOF
 
+step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"
+# V1 is the only check that catches an estate which quietly stopped compiling or
+# whose emitted resource SET moved. Its own four outcomes are worth a gate,
+# because the one that matters most — a checkout that was never looked at — is
+# the one a naive script reports as success.
+mkdir -p tmp/fleet/estate/yaml tmp/fleet/estate/presets
+cp -R "$root/tests/schemas" tmp/fleet/estate/schemas
+cat > tmp/fleet/estate/config.toml <<'EOF'
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+include_dirs = [".", "yaml"]
+schema_dir = "schemas"
+presets_dir = "presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+EOF
+cat > tmp/fleet/estate/yaml/fixture.satz <<'EOF'
+estate fleet_fixture
+
+params {
+  customer_organization_id = "123456789012"
+  customer_shortname = "acme"
+  infra_project_name = "acme-infra-001"
+  deployment_engine = "tofu"
+  deployment_mode = "local"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_folder {
+  first { display_name = "First" }
+  second { display_name = "Second" }
+}
+EOF
+# The baseline: what the estate emitted "before".
+"$satz" --config tmp/fleet/estate transpile fixture.satz >/dev/null 2>&1 \
+  || fail "the fleet-v1 fixture does not transpile"
+cp -R tmp/fleet/estate/hcl tmp/fleet/baseline
+
+run_v1() {  # run_v1 <expected-exit> <label> [args...]
+  local want="$1" label="$2"; shift 2
+  local rc=0
+  SATZ="$satz" bash "$root/scripts/fleet-v1.sh" "$@" > tmp/fleet/out.txt 2>&1 || rc=$?
+  [ "$rc" = "$want" ] || fail "fleet-v1 $label: expected exit $want, got $rc:\n$(cat tmp/fleet/out.txt)"
+}
+
+# 1 · nothing changed
+run_v1 0 "clean" tmp/fleet/estate
+grep -q 'no body delta' tmp/fleet/out.txt || fail "fleet-v1 did not report a clean estate:\n$(cat tmp/fleet/out.txt)"
+
+# 2 · a block body differs — the estate is the same shape, an attribute is not
+sed -i.bak 's/display_name = "First"/display_name = "Moved"/' tmp/fleet/estate/hcl/main.tf
+run_v1 2 "body delta" tmp/fleet/estate
+grep -q 'address set identical' tmp/fleet/out.txt || fail "a body delta was not reported as one:\n$(cat tmp/fleet/out.txt)"
+grep -q 'google_folder.first' tmp/fleet/out.txt || fail "the changed block was not named:\n$(cat tmp/fleet/out.txt)"
+
+# 3 · the address set moved — a resource the baseline never had. BLOCKER.
+rm -rf tmp/fleet/estate/hcl
+cp -R tmp/fleet/baseline tmp/fleet/estate/hcl
+python3 - <<'PYEOF'
+import pathlib
+p = pathlib.Path("tmp/fleet/estate/hcl/main.tf")
+text = p.read_text()
+start = text.index('resource "google_folder" "second"')
+end = text.index("\n}\n", start) + 3
+p.write_text(text[:start] + text[end:])
+PYEOF
+run_v1 1 "moved address set" tmp/fleet/estate
+grep -q 'address set moved' tmp/fleet/out.txt || fail "a new address was not reported as a blocker:\n$(cat tmp/fleet/out.txt)"
+grep -q '+ google_folder.second' tmp/fleet/out.txt || fail "the added address was not named:\n$(cat tmp/fleet/out.txt)"
+
+# 4 · an estate nobody checked is not a pass. The roster is read in the markdown
+#     table form a fleet note already uses, so no second list has to be kept.
+rm -rf tmp/fleet/estate/hcl
+cp -R tmp/fleet/baseline tmp/fleet/estate/hcl
+cat > tmp/fleet/roster.md <<EOF
+| code | repo | path |
+|---|---|---|
+| E01 | fixture | \`$PWD/tmp/fleet/estate\` |
+| E02 | gone | \`$PWD/tmp/fleet/not-here\` |
+EOF
+run_v1 0 "unavailable is not a failure by default" --roster tmp/fleet/roster.md
+grep -q 'UNAVAILABLE' tmp/fleet/out.txt || fail "a missing checkout was not reported:\n$(cat tmp/fleet/out.txt)"
+run_v1 1 "--require-all" --roster tmp/fleet/roster.md --require-all
+grep -q 'never checked' tmp/fleet/out.txt || fail "--require-all did not fail on an unchecked estate:\n$(cat tmp/fleet/out.txt)"
+
 step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
