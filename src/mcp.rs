@@ -561,7 +561,9 @@ impl SatzMcp {
                        Asset Inventory, manual-duty attestations and optional Prowler corroboration. \
                        Reads the organisation with the estate's credentials. Writes nothing — unlike \
                        the command, it does not append to the evidence history, because being ASKED \
-                       for state is not a report run.",
+                       for state is not a report run. Check `live_status` before trusting the rows: \
+                       a run whose inventory could not be read answers `live: false` with the reason \
+                       in `warnings`, and every witness reads unverified.",
         annotations(read_only_hint = true, idempotent_hint = false, open_world_hint = true)
     )]
     async fn report_compliance(

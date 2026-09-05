@@ -1190,6 +1190,121 @@ pub(crate) enum LiveState {
     Unverifiable(String),
 }
 
+/// What actually happened to LIVE verification, as opposed to what was asked
+/// for. The report deliberately degrades — a witness whose inventory could not
+/// be read becomes `Unverifiable` rather than failing the run — so the envelope
+/// has to carry the outcome, or a caller cannot tell a verified report from a
+/// blind one. The command prints the reasons to stderr, which is enough for a
+/// human at a terminal and nothing at all for an agent over MCP or a pipeline
+/// reading `--format json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LiveOutcome {
+    /// `--no-live`: never attempted.
+    Skipped,
+    /// Attempted, but the estate names no organisation to read.
+    NoOrganizationId,
+    /// Attempted, but no witness in this catalog has a live check to make.
+    NoWitnesses,
+    /// Attempted and failed (the reason). Every live witness reads unverifiable.
+    Unavailable(String),
+    /// The inventory was read; witnesses were compared against live state.
+    Verified,
+}
+
+impl LiveOutcome {
+    /// The stable machine-readable id for the report envelope.
+    pub(crate) fn id(&self) -> &'static str {
+        match self {
+            Self::Skipped => "skipped",
+            Self::NoOrganizationId => "no-organization-id",
+            Self::NoWitnesses => "no-witnesses",
+            Self::Unavailable(_) => "unavailable",
+            Self::Verified => "verified",
+        }
+    }
+
+    /// Whether live state was actually read. This is what `live` means in the
+    /// evidence JSON: not "live was requested" but "witnesses were checked".
+    pub(crate) fn verified(&self) -> bool {
+        matches!(self, Self::Verified)
+    }
+
+    /// How the report's own header describes the run.
+    fn describe(&self) -> String {
+        match self {
+            Self::Skipped => "off (--no-live)".to_string(),
+            Self::NoOrganizationId => {
+                "**not verified** — the estate declares no customer-organization-id".to_string()
+            }
+            Self::NoWitnesses => "nothing to verify live in this catalog".to_string(),
+            Self::Unavailable(why) => {
+                format!("**NOT VERIFIED** — the live inventory could not be read ({})", why)
+            }
+            Self::Verified => "Cloud Asset Inventory".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_outcome_tests {
+    //! The report degrades rather than fails when the live inventory cannot be
+    //! read, so the ENVELOPE is the only thing that can tell a caller a report
+    //! verified nothing. Before this, `live` was `!no_live` — the intent — and a
+    //! blind run was indistinguishable from a verified one to everything that
+    //! could not read stderr.
+    use super::LiveOutcome;
+
+    #[test]
+    fn only_a_completed_read_counts_as_live() {
+        assert!(LiveOutcome::Verified.verified());
+        for o in [
+            LiveOutcome::Skipped,
+            LiveOutcome::NoOrganizationId,
+            LiveOutcome::NoWitnesses,
+            LiveOutcome::Unavailable("403".into()),
+        ] {
+            assert!(!o.verified(), "{:?} must not report as live-verified", o);
+        }
+    }
+
+    /// The ids are a public surface: an agent branches on them and the archived
+    /// evidence record is read back later. They are also what separates the four
+    /// reasons a report has no live data, which a bare `false` cannot.
+    #[test]
+    fn every_reason_has_its_own_stable_id() {
+        let ids: Vec<&str> = [
+            LiveOutcome::Skipped,
+            LiveOutcome::NoOrganizationId,
+            LiveOutcome::NoWitnesses,
+            LiveOutcome::Unavailable("403".into()),
+            LiveOutcome::Verified,
+        ]
+        .iter()
+        .map(|o| o.id())
+        .collect();
+        assert_eq!(
+            ids,
+            ["skipped", "no-organization-id", "no-witnesses", "unavailable", "verified"]
+        );
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len(), "two outcomes share an id");
+    }
+
+    /// The header is what an auditor reads first. A run that read nothing must
+    /// not print the name of the service it failed to reach.
+    #[test]
+    fn a_failed_run_does_not_describe_itself_as_verified() {
+        let d = LiveOutcome::Unavailable("PERMISSION_DENIED".into()).describe();
+        assert!(d.contains("NOT VERIFIED"), "{}", d);
+        assert!(d.contains("PERMISSION_DENIED"), "the reason is dropped: {}", d);
+        assert!(!d.contains("Cloud Asset Inventory"), "{}", d);
+        assert_eq!(LiveOutcome::Verified.describe(), "Cloud Asset Inventory");
+        assert!(LiveOutcome::Skipped.describe().contains("--no-live"));
+    }
+}
+
 /// Identify a witness in the live estate: which CAI asset type to list and which
 /// HCL attribute carries the matchable identifier.
 /// Alert policies and notification channels have server-assigned names, so their
@@ -1554,6 +1669,12 @@ pub(crate) async fn report_compliance_evidence(
     let verified_at = chrono_free_timestamp();
     let mut live: BTreeMap<String, LiveState> = BTreeMap::new();
     let declared = manifest.declared_enforcement();
+    // Collected rather than printed on the spot: the command prints them to
+    // stderr, and the report carries them to every caller that has no stderr to
+    // read — an agent over MCP, a pipeline reading `--format json`, the archived
+    // evidence record.
+    let mut warnings: Vec<String> = Vec::new();
+    let mut outcome = LiveOutcome::Skipped;
     if !no_live {
         // Which asset types do the satisfied/partial witnesses need?
         let mut needed: BTreeSet<String> = BTreeSet::new();
@@ -1584,25 +1705,43 @@ pub(crate) async fn report_compliance_evidence(
         let numbers = match project_numbers(&needed_projects).await {
             Ok(n) => n,
             Err(e) => {
-                eprintln!("warning: project numbers unavailable ({}); project-scoped witnesses read unverifiable", e);
+                warnings.push(format!(
+                    "project numbers unavailable ({}); project-scoped witnesses read unverifiable",
+                    e
+                ));
                 BTreeMap::new()
             }
         };
         let inventory = match org_id {
-            Some(org) if !needed.is_empty() => match live_inventory(org, &needed).await {
-                Ok(inv) => Some(inv),
+            None => {
+                outcome = LiveOutcome::NoOrganizationId;
+                None
+            }
+            Some(_) if needed.is_empty() => {
+                outcome = LiveOutcome::NoWitnesses;
+                None
+            }
+            Some(org) => match live_inventory(org, &needed).await {
+                Ok(inv) => {
+                    outcome = LiveOutcome::Verified;
+                    Some(inv)
+                }
                 Err(e) => {
-                    eprintln!("warning: live inventory unavailable ({}); report marks witnesses unverifiable", e);
-                    eprintln!(
-                        "warning: the two usual causes — cloudasset.googleapis.com not enabled on the quota \
+                    warnings.push(format!(
+                        "live inventory unavailable ({}); report marks witnesses unverifiable",
+                        e
+                    ));
+                    warnings.push(
+                        "the two usual causes — cloudasset.googleapis.com not enabled on the quota \
                          project (the init template's infra project lists it), or the caller without org-wide \
                          cloudasset read access: roles/cloudasset.viewer, granted to the security groups by \
                          s1-group-permissions v1.1 (roles/iam.securityReviewer does NOT carry it)"
+                            .to_string(),
                     );
+                    outcome = LiveOutcome::Unavailable(e.to_string());
                     None
                 }
             },
-            _ => None,
         };
         for goal in goals.values() {
             let ws = match goal {
@@ -1667,6 +1806,9 @@ pub(crate) async fn report_compliance_evidence(
             }
         }
     }
+    for w in &warnings {
+        eprintln!("warning: {}", w);
+    }
 
     // ---- attestations + prowler ----
     let attestations: Attestations = {
@@ -1700,7 +1842,7 @@ pub(crate) async fn report_compliance_evidence(
         catalog.version,
         input.display(),
         verified_at,
-        if no_live { "off (--no-live)" } else { "Cloud Asset Inventory" },
+        outcome.describe(),
     ));
 
     let mut json_rows = Vec::new();
@@ -1878,7 +2020,8 @@ pub(crate) async fn report_compliance_evidence(
     let evidence = serde_json::json!({
         "framework": catalog.catalog, "version": catalog.version,
         "estate": input.display().to_string(), "verified_at": verified_at,
-        "live": !no_live, "rows": json_rows,
+        "live": outcome.verified(), "live_status": outcome.id(),
+        "warnings": warnings, "rows": json_rows,
     });
 
     Ok((evidence, md))

@@ -96,6 +96,15 @@ run to an append-only evidence history — that history is the audit trail of a
 append, and the smoke matrix compares the evidence directory across the call to prove
 it.
 
+**A report that verified nothing says so.** `live` is whether the inventory was
+actually READ, not whether it was asked for; `live_status` says which of the five
+outcomes it was — `verified`, `skipped` (`--no-live`), `no-organization-id`,
+`no-witnesses`, `unavailable` — and `warnings` carries the reasons, in the words the
+command prints to its terminal. The report degrades to unverifiable witnesses rather
+than failing the run, so a caller that cannot read stderr — an agent here, a pipeline
+reading `--format json` — would otherwise have no way to tell a blind run from a
+verified one.
+
 ## Structured output, and why it matters
 
 Every data tool returns its report as **`structuredContent`** and publishes the
