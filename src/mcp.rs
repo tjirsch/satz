@@ -133,11 +133,28 @@ impl Level {
     }
 }
 
-struct Ctx {
+/// The estate a session is working on, and everything that follows from it.
+///
+/// It follows from the estate rather than from the server because estates do not
+/// share a `config.toml`: presets, schemas and the provider version are the
+/// estate's own. A server pinned to one config could only ever serve estates
+/// that agreed with it.
+#[derive(Clone)]
+struct Open {
     tool: ToolConfig,
     runtime: ToolConfig,
-    /// every estate path a tool resolves must stay under this directory
+    estate: PathBuf,
+    /// The service account this estate's live calls run as — derived exactly as
+    /// the CLI and the emitted provider block derive it. `None` for a local-mode
+    /// estate, which impersonates nothing.
+    sa: Option<String>,
+}
+
+struct Ctx {
+    /// every config and estate a tool resolves must stay under this directory
     root: PathBuf,
+    /// what `satz_open` last opened; nothing until a client opens something
+    open: Mutex<Option<Open>>,
 }
 
 #[derive(Clone)]
@@ -154,22 +171,63 @@ pub(crate) struct SatzMcp {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct EstateArg {
-    /// Estate file, e.g. `C0example.satz` (resolved inside the configured yaml_dir)
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+}
+
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct OpenArgs {
+    /// The estate's `config.toml`, or the directory holding it
+    pub config: String,
+    /// The estate's main `.satz` file — absolute, or relative to that config's yaml_dir
     pub estate: String,
 }
 
+/// What opening actually resolved. Returned rather than assumed, because every
+/// later call depends on it — including which service account the live tools run
+/// as, which is the one thing an agent must never be wrong about.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct OpenReport {
+    pub config: String,
+    pub estate: String,
+    /// `cloud` or `local`, as the estate declares it
+    pub deployment_mode: Option<String>,
+    /// The identity this estate's LIVE tools run as. Null when the estate
+    /// impersonates nothing and the calls are the ADC identity itself.
+    pub runs_as: Option<String>,
+}
+
+/// One estate found under the server's root.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct EstateEntry {
+    pub config: String,
+    pub estate: String,
+    pub deployment_mode: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct EstatesReport {
+    pub root: String,
+    pub estates: Vec<EstateEntry>,
+}
+
+
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct RequireArgs {
-    /// Estate file, e.g. `C0example.satz`
-    pub estate: String,
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
     /// Catalog id, e.g. `cis-gcp-4.0`
     pub framework: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct TriageArgs {
-    /// Estate file, e.g. `C0example.satz`
-    pub estate: String,
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
     /// Catalog id, e.g. `cis-gcp-4.0`
     pub framework: String,
     /// Prowler export (OCSF or legacy JSON), a path under the server's root
@@ -186,8 +244,9 @@ pub(crate) struct CompileSummary {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct ReportComplianceArgs {
-    /// Estate file, e.g. `C0example.satz`
-    pub estate: String,
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
     /// Catalog id, e.g. `cis-gcp-4.0`
     pub framework: String,
     /// Prowler export to corroborate with, a path under the server's root
@@ -283,6 +342,47 @@ fn refused(msg: String) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(msg)])
 }
 
+/// Every `config.toml` under `root`, depth-limited and blind to the directories
+/// that never hold one. A fleet root is somebody's home directory in the worst
+/// case; this walk has to stay cheap and finite.
+fn find_configs(root: &std::path::Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth == 0 || out.len() >= 200 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let mut dirs = Vec::new();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = e.path();
+        if path.is_dir() {
+            // hcl/ is output, target/ is a build, evidence/ is a report history:
+            // none of them holds an estate, and all of them are large.
+            if !matches!(name.as_str(), "hcl" | "target" | "evidence" | "node_modules") {
+                dirs.push(path);
+            }
+        } else if name == "config.toml" {
+            out.push(path);
+        }
+    }
+    dirs.sort();
+    for d in dirs {
+        find_configs(&d, depth - 1, out);
+    }
+}
+
+/// Whether a `.satz` file is an ESTATE rather than a pack or a fragment. The
+/// statement is the definition, so read for it instead of guessing from a name.
+fn declares_an_estate(path: &std::path::Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else { return false };
+    text.lines().any(|l| {
+        let l = l.trim_start();
+        l.starts_with("estate ") || l == "estate"
+    })
+}
+
 // Every handler returns `Json<T>` on success. The SDK puts that in the result's
 // `structuredContent` and publishes T's schema as the tool's `outputSchema`, so a
 // client gets a typed value instead of a string it has to parse. Returning the
@@ -291,15 +391,9 @@ fn refused(msg: String) -> CallToolResult {
 
 #[tool_router]
 impl SatzMcp {
-    pub(crate) fn new(
-        tool: ToolConfig,
-        runtime: ToolConfig,
-        root: PathBuf,
-        ceiling: Level,
-        self_gated: bool,
-    ) -> Self {
+    pub(crate) fn new(root: PathBuf, ceiling: Level, self_gated: bool) -> Self {
         Self {
-            ctx: Arc::new(Ctx { tool, runtime, root }),
+            ctx: Arc::new(Ctx { root, open: Mutex::new(None) }),
             level: Arc::new(Mutex::new(ceiling)),
             ceiling,
             self_gated,
@@ -324,9 +418,40 @@ impl SatzMcp {
     /// Resolve an estate argument and refuse anything outside the root. Without
     /// this a tool argument is an arbitrary-file read: `use "…"` resolves
     /// through include_dirs, so a path is not just a path.
-    fn estate(&self, name: &str) -> Result<PathBuf, CallToolResult> {
-        let p = crate::estate_path(PathBuf::from(name), &self.ctx.runtime);
-        self.confine(p)
+    /// The estate a call works on, and the configuration it works under.
+    ///
+    /// `None` means the one that is open — which is the normal case, and the
+    /// point of opening: an agent working through a fleet names the estate once.
+    /// A name still resolves inside the OPEN estate's config, because a
+    /// `config.toml` is what gives a bare name a meaning.
+    fn target(&self, name: Option<&str>) -> Result<(Open, PathBuf), CallToolResult> {
+        let open = self.opened()?;
+        let estate = match name {
+            None => open.estate.clone(),
+            Some(n) => {
+                let p = crate::estate_path(PathBuf::from(n), &open.runtime);
+                self.confine(p)?
+            }
+        };
+        Ok((open, estate))
+    }
+
+    /// What is open, or the refusal that says how to open something. An agent
+    /// reads the message and recovers; that is why it is a tool result.
+    fn opened(&self) -> Result<Open, CallToolResult> {
+        self.ctx
+            .open
+            .lock()
+            .expect("the open lock is never poisoned")
+            .clone()
+            .ok_or_else(|| {
+                refused(
+                    "no estate is open. Call `satz_open` with the estate's config.toml and its \
+                     main .satz file first — `satz_estates` lists what is available under this \
+                     server's root."
+                        .to_string(),
+                )
+            })
     }
 
     /// Any other path argument — a Prowler export, a report to read back.
@@ -342,11 +467,13 @@ impl SatzMcp {
     /// reached — `report-compliance` on the command line ran as the service
     /// account, `satz_report_compliance` here ran as the human.
     ///
-    /// One process serves one identity, so a second estate needing a different
-    /// service account is REFUSED. That is a tool-result error, which an agent
-    /// can read and act on, rather than a protocol error, which it cannot.
-    fn bind_identity(&self, estate: &std::path::Path) -> Result<(), CallToolResult> {
-        crate::configure_estate_impersonation(estate, &self.ctx.runtime).map_err(refused)
+    /// The identity is SCOPED to the call rather than bound to the process:
+    /// this server works through estates in turn, and a process-wide binding
+    /// could only ever be right for the first one. Nothing is configured — the
+    /// account is derived from the estate, the way the emitted provider block
+    /// derives it, and the ADC mints it.
+    fn identity_of(open: &Open) -> Option<String> {
+        open.sa.clone()
     }
 
     fn confine(&self, p: PathBuf) -> Result<PathBuf, CallToolResult> {
@@ -365,9 +492,112 @@ impl SatzMcp {
     }
 
     /// The manifest and claims every compliance tool starts from.
-    fn inputs(&self, estate: &std::path::Path) -> Result<crate::ComplianceInputs, CallToolResult> {
-        crate::compliance_inputs(estate, &self.ctx.tool, &self.ctx.runtime)
+    fn inputs(
+        &self,
+        open: &Open,
+        estate: &std::path::Path,
+    ) -> Result<crate::ComplianceInputs, CallToolResult> {
+        crate::compliance_inputs(estate, &open.tool, &open.runtime)
             .map_err(|e| refused(format!("{}: {}", estate.display(), e)))
+    }
+
+    #[tool(
+        name = "satz_open",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<OpenReport>(),
+        description = "Open an estate for this session: its `config.toml` and its main `.satz` \
+                       file. Every later tool then works on that estate, under that config — its \
+                       presets, its schemas, its provider version. Call it again to move to the \
+                       next estate; a server serves a fleet, one estate at a time. The answer \
+                       states which service account the estate's live tools will run as.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn open(
+        &self,
+        Parameters(args): Parameters<OpenArgs>,
+    ) -> Result<Result<Json<OpenReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let given = PathBuf::from(&args.config);
+        let candidate = if given.is_absolute() { given } else { self.ctx.root.join(given) };
+        let candidate = match self.confine(candidate) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let config = if candidate.is_dir() { candidate.join("config.toml") } else { candidate };
+        if !config.is_file() {
+            return Ok(Err(refused(format!(
+                "{} is not a config.toml — pass the estate's config.toml, or the directory \
+                 holding it",
+                config.display()
+            ))));
+        }
+        let tool = match crate::parse_tool_config(&config) {
+            Ok(c) => c,
+            Err(described) => return Ok(Err(refused(described))),
+        };
+        let dir = config.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let runtime = crate::resolved_config(&tool, &dir);
+
+        let estate = crate::estate_path(PathBuf::from(&args.estate), &runtime);
+        let estate = match self.confine(estate) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        if !estate.is_file() {
+            return Ok(Err(refused(format!("no estate file at {}", estate.display()))));
+        }
+
+        // Derived here, once, and carried by everything the session does next —
+        // never configured, and never asked for. The estate says who it is.
+        let sa = crate::estate_impersonation_target(&estate, &runtime);
+        let report = OpenReport {
+            config: config.display().to_string(),
+            estate: estate.display().to_string(),
+            deployment_mode: crate::estate_param(&estate, &runtime, "deployment-mode"),
+            runs_as: sa.clone(),
+        };
+        *self.ctx.open.lock().expect("the open lock is never poisoned") =
+            Some(Open { tool, runtime, estate, sa });
+        Ok(Ok(Json(report)))
+    }
+
+    #[tool(
+        name = "satz_estates",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<EstatesReport>(),
+        description = "Which estates this server can open: every `config.toml` under its root, \
+                       with the estate files beside it. Read this before `satz_open` rather than \
+                       guessing a path.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn estates(&self) -> Result<Result<Json<EstatesReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let mut configs = Vec::new();
+        find_configs(&self.ctx.root, 5, &mut configs);
+        configs.sort();
+        let mut estates = Vec::new();
+        for config in configs {
+            let Ok(tool) = crate::parse_tool_config(&config) else { continue };
+            let dir = config.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+            let runtime = crate::resolved_config(&tool, &dir);
+            let Ok(entries) = std::fs::read_dir(&runtime.yaml_dir) else { continue };
+            let mut found: Vec<PathBuf> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "satz") && declares_an_estate(p))
+                .collect();
+            found.sort();
+            for estate in found {
+                estates.push(EstateEntry {
+                    config: config.display().to_string(),
+                    deployment_mode: crate::estate_param(&estate, &runtime, "deployment-mode"),
+                    estate: estate.display().to_string(),
+                });
+            }
+        }
+        Ok(Ok(Json(EstatesReport { root: self.ctx.root.display().to_string(), estates })))
     }
 
     #[tool(
@@ -384,18 +614,18 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        let estate = match self.estate(&args.estate) {
-            Ok(p) => p,
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let (manifest, claims, _org) = match self.inputs(&estate) {
+        let (manifest, claims, _org) = match self.inputs(&open, &estate) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
         match crate::compliance::require_report(
             &args.framework,
             &estate,
-            &self.ctx.runtime.presets_dir,
+            &open.runtime.presets_dir,
             &claims,
             &manifest,
         ) {
@@ -419,11 +649,11 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        let estate = match self.estate(&args.estate) {
-            Ok(p) => p,
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::questions::questions_report(&estate, &self.ctx.runtime) {
+        match crate::questions::questions_report(&estate, &open.runtime) {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("questions: {}", e)))),
         }
@@ -444,21 +674,21 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        let estate = match self.estate(&args.estate) {
-            Ok(p) => p,
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
         let prowler = match self.file(&args.prowler) {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
-        let (manifest, claims, _org) = match self.inputs(&estate) {
+        let (manifest, claims, _org) = match self.inputs(&open, &estate) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
         match crate::compliance::triage_rows(
             &args.framework,
-            &self.ctx.runtime.presets_dir,
+            &open.runtime.presets_dir,
             &claims,
             &manifest,
             &prowler,
@@ -482,11 +712,11 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        let estate = match self.estate(&args.estate) {
-            Ok(p) => p,
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::pipeline_b_generate(&estate, &self.ctx.tool, &self.ctx.runtime) {
+        match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
             Ok(out) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
@@ -510,14 +740,14 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        let estate = match self.estate(&args.estate) {
-            Ok(p) => p,
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
         match crate::presets::check_presets_report(
             &estate,
-            &self.ctx.runtime.presets_dir,
-            &self.ctx.runtime.include_dirs,
+            &open.runtime.presets_dir,
+            &open.runtime.include_dirs,
             None,
         )
         .await
@@ -541,11 +771,11 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Write) {
             return Ok(Err(r));
         }
-        let estate = match self.estate(&args.estate) {
-            Ok(p) => p,
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::pipeline_b_generate(&estate, &self.ctx.tool, &self.ctx.runtime) {
+        match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
             Ok(out) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
@@ -573,25 +803,27 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        let estate = match self.estate(&args.estate) {
-            Ok(p) => p,
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        if let Err(r) = self.bind_identity(&estate) {
-            return Ok(Err(r));
-        }
         let prowler = match args.prowler.as_deref().map(|p| self.file(p)).transpose() {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
-        let (manifest, claims, org_id) = match self.inputs(&estate) {
+        let (manifest, claims, org_id) = match self.inputs(&open, &estate) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::compliance::report_compliance_evidence(
+        // Everything the report reads — Cloud Asset, the project numbers — mints
+        // as THIS estate's service account for the duration of this call, and
+        // nothing outside the call is affected.
+        match crate::gcp::with_identity(
+            Self::identity_of(&open),
+            crate::compliance::report_compliance_evidence(
             &args.framework,
             &estate,
-            &self.ctx.runtime.presets_dir,
+            &open.runtime.presets_dir,
             &claims,
             &manifest,
             org_id.as_deref(),
@@ -599,6 +831,7 @@ impl SatzMcp {
             prowler,
             None,
             args.no_live,
+        ),
         )
         .await
         {
@@ -623,19 +856,29 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        // Asking "who am I for this estate" has to bind the same identity the
-        // estate's other tools use, or the answer describes a different session
-        // than the one the agent is about to get.
-        if let Some(name) = args.estate.as_deref() {
-            let estate = match self.estate(name) {
-                Ok(p) => p,
+        // "Who am I" has two answers, and which one is wanted depends on whether
+        // an estate is in play. With one open, the honest answer is the identity
+        // that estate's live tools RUN as — so it is answered inside the same
+        // scope they use, not merely described.
+        let scoped = match self.ctx.open.lock().expect("the open lock is never poisoned").clone() {
+            Some(open) if args.estate.is_none() => Some(Self::identity_of(&open)),
+            Some(_) => match self.target(args.estate.as_deref()) {
+                Ok((open, estate)) => {
+                    Some(crate::estate_impersonation_target(&estate, &open.runtime))
+                }
                 Err(r) => return Ok(Err(r)),
-            };
-            if let Err(r) = self.bind_identity(&estate) {
-                return Ok(Err(r));
+            },
+            // Nothing open: the question is about the ambient credentials, which
+            // is exactly what `satz whoami` answers with no estate.
+            None => None,
+        };
+        let report = match scoped {
+            Some(sa) => {
+                crate::gcp::with_identity(sa, crate::gcp::identity::whoami_report(args.offline)).await
             }
-        }
-        match crate::gcp::identity::whoami_report(args.offline).await {
+            None => crate::gcp::identity::whoami_report(args.offline).await,
+        };
+        match report {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("whoami: {}", e)))),
         }
@@ -744,8 +987,6 @@ impl ServerHandler for SatzMcp {
 /// banner, schema-loader progress, emitter warnings — already goes to stderr for
 /// exactly this reason; a stray line on stdout is a corrupt stream, not noise.
 pub(crate) async fn serve(
-    tool: ToolConfig,
-    runtime: ToolConfig,
     root: PathBuf,
     ceiling: Level,
     self_gated: bool,
@@ -755,7 +996,7 @@ pub(crate) async fn serve(
         ceiling.describe(),
         if self_gated { ", self-gated" } else { "" }
     );
-    let service = match SatzMcp::new(tool, runtime, root, ceiling, self_gated)
+    let service = match SatzMcp::new(root, ceiling, self_gated)
         .serve(rmcp::transport::stdio())
         .await
     {

@@ -1419,7 +1419,7 @@ estate's service account.** Every exception is deliberate and listed here.
 | `whoami` | the human's ADC | the question *is* who the human is |
 | `whoami <estate>` | the estate's service account | a different question — who that estate acts as — so a different answer |
 | `map-types` | no credential at all | Discovery documents are public |
-| `mcp` | per tool call, from the estate each tool names | see below |
+| `mcp` | per tool call, from the estate that is open | one server, a fleet: `satz_open` moves to the next estate, and the identity follows it |
 | `plan`, `apply`, `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
 
 `--no-impersonate` pins the process to the plain ADC and outranks every estate.

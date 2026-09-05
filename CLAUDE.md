@@ -61,9 +61,13 @@ and in the maintainer's notes. Nothing in this file names a customer.
   are bare `whoami` (given an estate it binds like everything else, to answer
   what that estate acts as), `bootstrap`, `init --from-live` and `map-types`, each named with
   its reason in `IDENTITIES` (`src/main.rs`), which a test forces every new
-  command to join. One process serves one identity: a second, different binding
-  is refused, never ignored — `satz mcp` dispatches concurrently, and a silently
-  dropped binding is how one customer's tools run as another's service account.
+  command to join. One command, one identity: the CLI binds it for the process
+  and a second, different binding is refused, never ignored. `satz mcp` is
+  long-lived and works through estates in turn, so it SCOPES the identity to each
+  call instead — same rule, stated per call. It must be a scope rather than a
+  mutable global because the server dispatches concurrently, and a target that
+  changed under a call in flight is how one customer's tools run as another's
+  service account.
 - **Presets, provenance by suffix:** `X.satz` pristine, upstream-owned, always
   overwritable / `X.local.satz` the user's fork, never touched by updates /
   `X.diff.satz` the current adoption delta, rewritten on every merge. A preset

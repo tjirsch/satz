@@ -600,10 +600,49 @@ bash "$root/scripts/check-names.sh" tmp/ok.txt >tmp/ok-out.txt 2>&1 \
   || fail "the gate rejected a vendor default or a documented example:\n$(cat tmp/ok-out.txt)"
 
 step "satz mcp: a client that never says hello is not an error"
+# A request driver: send one, wait for its reply, send the next. A batch written
+# straight into stdin is dispatched CONCURRENTLY by the server, so `satz_open`
+# would race the calls that depend on it — and a racing gate is worse than none.
+cat > tmp/mcp-drive.py <<'PYEOF'
+import json
+import subprocess
+import sys
+
+proc = subprocess.Popen(
+    sys.argv[1:], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL, text=True, bufsize=1,
+)
+seen = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    proc.stdin.write(line + "\n")
+    proc.stdin.flush()
+    if "id" not in req:
+        continue
+    while True:
+        resp = proc.stdout.readline()
+        if not resp:
+            sys.exit("the server closed the stream")
+        seen.append(resp)
+        try:
+            if json.loads(resp).get("id") == req["id"]:
+                break
+        except json.JSONDecodeError:
+            # Kept in the output on purpose: stdout IS the protocol, and the
+            # caller asserts that every line parses.
+            continue
+proc.stdin.close()
+proc.wait(timeout=120)
+sys.stdout.write("".join(seen))
+PYEOF
+
 # The first thing anyone does to check the command is run it by hand. Closed stdin
 # means the client hung up before `initialize`, which is not a failure — exiting
 # non-zero there teaches an operator to distrust a server that is working.
-if ! printf '' | "$satz" --config . mcp >tmp/mcp-eof.txt 2>&1; then
+if ! printf '' | "$satz" mcp --root . >tmp/mcp-eof.txt 2>&1; then
   fail "a closed stdin made satz mcp exit non-zero:\n$(cat tmp/mcp-eof.txt)"
 fi
 grep -q 'before the client said hello' tmp/mcp-eof.txt \
@@ -617,6 +656,8 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"satz_estates","arguments":{}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":9,"method":"resources/list","params":{}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"satz://guide"}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0"}}}'
@@ -630,7 +671,7 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
 # to the evidence history. Compare the directory across the call rather than testing
 # for its absence — earlier steps create it legitimately.
 ls evidence 2>/dev/null | sort > tmp/evidence-before.txt || true
-"$satz" --config . mcp 2>/dev/null < tmp/mcp-in.jsonl > tmp/mcp.jsonl || true
+python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-in.jsonl > tmp/mcp.jsonl 2>/dev/null || true
 ls evidence 2>/dev/null | sort > tmp/evidence-after.txt || true
 diff -q tmp/evidence-before.txt tmp/evidence-after.txt >/dev/null \
   || fail "satz_report_compliance appended to the evidence history:\n$(diff tmp/evidence-before.txt tmp/evidence-after.txt)"
@@ -659,7 +700,18 @@ assert "Never edit `hcl/`" in guide, "the guide lost its hard rules"
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 assert {"satz_require", "satz_check_presets", "satz_questions", "satz_triage",
         "satz_transpile_check", "satz_transpile", "satz_report_compliance",
-        "satz_whoami"} <= set(tools), sorted(tools)
+        "satz_whoami", "satz_open", "satz_estates"} <= set(tools), sorted(tools)
+
+# The server holds no estate until a client opens one, so it has to be able to
+# say which ones it could open — otherwise the first call is a guess at a path.
+found = msgs[11]["result"]["structuredContent"]
+assert any(e["estate"].endswith("smoke.satz") for e in found["estates"]), found
+assert any(e["deployment_mode"] == "local" for e in found["estates"]), found
+opened = msgs[12]["result"]["structuredContent"]
+assert opened["estate"].endswith("smoke.satz"), opened
+assert opened["deployment_mode"] == "local", opened
+# A local-mode estate impersonates nothing: the calls ARE the ADC identity.
+assert opened["runs_as"] is None, opened
 
 # Every data tool publishes an OUTPUT SCHEMA and is ANNOTATED. The annotations are
 # the client's half of the safety model: the server's --allow ceiling says what is
@@ -695,12 +747,16 @@ assert "outside the server's root" in msgs[5]["result"]["content"][0]["text"], m
 
 PYEOF
 
-step "satz mcp: one process serves one identity, and a second estate is refused"
+step "satz mcp: one server works through estates in turn, each as its own identity"
 # The identity a live tool runs as is invisible in its output, so it is asserted
-# here instead. Two cloud-mode estates with DIFFERENT service accounts: the first
-# binds, the second must be refused by name. It used to be silently ignored, which
-# meant the second estate's tools ran as the first estate's service account.
-# Offline throughout: whoami reports the bound target without minting a token.
+# here. Two cloud-mode estates with DIFFERENT service accounts, opened in turn in
+# ONE server: each must answer as its own, and re-opening the first must come back
+# to the first. Nothing is configured — the account is derived from the estate.
+#
+# This replaced a refusal. The identity used to be bound to the PROCESS, so the
+# second estate was rejected and an operator restarted the server per estate;
+# working through a fleet is normal, so the identity is now scoped to the call.
+# Offline throughout: whoami reports the target without minting a token.
 for c in acme bolt; do
   cat > "yaml/identity-$c.satz" <<EOF
 estate identity_$c
@@ -720,11 +776,16 @@ done
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"estate":"identity-acme.satz","offline":true}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"estate":"identity-bolt.satz","offline":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"satz_require","arguments":{"framework":"cis-gcp-4.0"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"identity-acme.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"identity-bolt.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"identity-acme.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
 } > tmp/mcp-id-in.jsonl
-"$satz" --config . mcp 2>/dev/null < tmp/mcp-id-in.jsonl > tmp/mcp-id.jsonl || true
-python3 - <<'PYEOF' || fail "the identity binding did not behave"
+python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-id-in.jsonl > tmp/mcp-id.jsonl 2>/dev/null || true
+python3 - <<'PYEOF' || fail "the identity did not follow the open estate"
 import json
 msgs = {}
 for l in open("tmp/mcp-id.jsonl"):
@@ -733,26 +794,23 @@ for l in open("tmp/mcp-id.jsonl"):
         if "id" in d:
             msgs[d["id"]] = d
 
-want = {20: "acme", 21: "bolt"}
-results = {i: msgs[i]["result"] for i in want}
+# Before anything is open there is no estate to be, and the refusal has to say
+# how to fix that rather than merely failing.
+first = msgs[19]["result"]
+assert first.get("isError"), first
+assert "satz_open" in first["content"][0]["text"], first
 
-# Which of the two binds is NOT asserted: the server dispatches requests
-# concurrently, so they race, and either may win. What must hold is that exactly
-# one wins — the outcome the old silent no-op could not give, since there the
-# loser ran happily as the winner's service account.
-ok = [i for i, r in results.items() if not r.get("isError")]
-refused = [i for i, r in results.items() if r.get("isError")]
-assert len(ok) == 1 and len(refused) == 1, f"expected one bound and one refused, got {results}"
+for open_id, who_id, want in ((20, 21, "acme"), (22, 23, "bolt"), (24, 25, "acme")):
+    opened = msgs[open_id]["result"]
+    assert not opened.get("isError"), f"opening {want} was refused: {opened}"
+    sa = f"svc-iac-001@{want}-infra-001.iam.gserviceaccount.com"
+    assert opened["structuredContent"]["runs_as"] == sa, opened
+    assert opened["structuredContent"]["deployment_mode"] == "cloud", opened
 
-who = results[ok[0]]["structuredContent"]
-assert who["email"] == f"svc-iac-001@{want[ok[0]]}-infra-001.iam.gserviceaccount.com", who
-assert who["kind"] == "impersonated-sa", who
-
-# The refusal has to name both, or the operator cannot tell which estate the
-# process belongs to and which one they asked for.
-text = json.dumps(results[refused[0]])
-for c in want.values():
-    assert f"{c}-infra-001" in text, f"the refusal does not name {c}: {text}"
+    who = msgs[who_id]["result"]
+    assert not who.get("isError"), f"whoami after opening {want} was refused: {who}"
+    assert who["structuredContent"]["email"] == sa, who
+    assert who["structuredContent"]["kind"] == "impersonated-sa", who
 PYEOF
 
 step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"
