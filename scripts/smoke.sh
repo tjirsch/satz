@@ -904,6 +904,37 @@ grep -q 'UNAVAILABLE' tmp/fleet/out.txt || fail "a missing checkout was not repo
 run_v1 1 "--require-all" --roster tmp/fleet/roster.md --require-all
 grep -q 'never checked' tmp/fleet/out.txt || fail "--require-all did not fail on an unchecked estate:\n$(cat tmp/fleet/out.txt)"
 
+# 5 · a hand-written .tf beside the emitted ones is not a deletion. An estate may
+#     keep one — a write-only secret cannot come from the estate, so its
+#     `variable` block has to live in hcl/ — and comparing it against an emission
+#     that never contained it would report two destroys that no apply would make.
+cat > tmp/fleet/estate/hcl/hand-written.tf <<'EOF'
+variable "vpn_psk" {
+  type      = string
+  sensitive = true
+}
+EOF
+run_v1 0 "a hand-written file is context, not a deletion" tmp/fleet/estate
+grep -q 'hand-written.tf' tmp/fleet/out.txt || fail "the un-emitted file was not named:\n$(cat tmp/fleet/out.txt)"
+if grep -q 'variable.vpn_psk' tmp/fleet/out.txt; then
+  fail "a hand-written block was reported as a deletion:\n$(cat tmp/fleet/out.txt)"
+fi
+rm -f tmp/fleet/estate/hcl/hand-written.tf
+
+# 6 · schemas/ is a derived cache that estate repos gitignore, so a fresh clone has
+#     none and nothing compiles. That is a fact about the CHECKOUT: reported as
+#     UNAVAILABLE with the remedy, never as an estate that stopped compiling.
+mv tmp/fleet/estate/schemas tmp/fleet/schemas-parked
+run_v1 0 "a missing schema cache is not a broken estate" tmp/fleet/estate
+grep -q 'UNAVAILABLE — no provider schema' tmp/fleet/out.txt \
+  || fail "a missing schema cache was not reported as unavailable:\n$(cat tmp/fleet/out.txt)"
+grep -q 'update-schema' tmp/fleet/out.txt || fail "the remedy was not named:\n$(cat tmp/fleet/out.txt)"
+# The summary line always carries the word, so match the FINDING form.
+if grep -q 'BLOCKER —' tmp/fleet/out.txt; then
+  fail "a missing schema cache was called a blocker:\n$(cat tmp/fleet/out.txt)"
+fi
+mv tmp/fleet/schemas-parked tmp/fleet/estate/schemas
+
 # 5 · the roster lives in a document a human maintains, so the parser has to be
 #     strict. A loose one finds "estates" in prose and in unrelated tables, and
 #     reports every one of them UNAVAILABLE — burying the estates that really

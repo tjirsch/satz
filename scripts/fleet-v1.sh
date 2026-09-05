@@ -218,6 +218,20 @@ while IFS="$(printf '\t')" read -r code repo; do
     continue
   fi
 
+  # schemas/ is a derived cache and estate repos gitignore it, so a fresh clone
+  # has none — and without it every resource type is "unknown" and the estate
+  # fails to compile. That is a fact about the CHECKOUT, not about the estate:
+  # calling it a blocker would cry wolf on every clone, which is how a fleet
+  # report trains its reader to skim.
+  schema_dir="$(sed -n 's/^schema_dir *= *"\(.*\)"/\1/p' "$work/config.toml" | head -1)"
+  schema_dir="${schema_dir:-schemas}"
+  if [ -z "$(ls -A "$work/$schema_dir" 2>/dev/null)" ]; then
+    printf '   UNAVAILABLE — no provider schema in %s/ (a gitignored cache). Run `satz --config %s update-schema` in the checkout\n\n' \
+      "$schema_dir" "$repo"
+    unavailable="$unavailable $code"
+    continue
+  fi
+
   yaml_dir="$(sed -n 's/^yaml_dir *= *"\(.*\)"/\1/p' "$work/config.toml" | head -1)"
   yaml_dir="${yaml_dir:-yaml}"
   estates="$(grep -lE '^estate[[:space:]]' "$work/$yaml_dir"/*.satz 2>/dev/null || true)"
@@ -264,15 +278,24 @@ def normalise(body: str) -> str:
     return "\n".join(keep)
 
 
-def blocks(root: pathlib.Path) -> dict[str, str]:
+def blocks(root: pathlib.Path, only: set[str] | None = None) -> dict[str, str]:
     """Top-level HCL blocks, keyed by address.
 
     Braces inside strings, comments and heredocs are not structure. Counting
     them would mis-split a file and report differences that are an artefact of
     this script rather than of the estate.
+
+    `only` restricts the walk to a set of file names. V1 asks whether satz still
+    emits what it emitted before, so the comparison set is satz's OWN output. An
+    estate may keep a hand-written `.tf` beside it — a write-only secret cannot
+    come from the estate, so its `variable` block has to live in `hcl/` — and
+    comparing that against an emission which never contained it reports its
+    blocks as deletions that no apply would ever make.
     """
     found: dict[str, list[str]] = {}
     for path in sorted(root.rglob("*.tf")):
+        if only is not None and path.name not in only:
+            continue
         text = path.read_text(encoding="utf-8", errors="replace")
         depth = start = 0
         i, n = 0, len(text)
@@ -360,7 +383,14 @@ def blocks(root: pathlib.Path) -> dict[str, str]:
 
 old_root, new_root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 verbose = sys.argv[3] == "1"
-old, new = blocks(old_root), blocks(new_root)
+emitted = {p.name for p in new_root.rglob("*.tf")}
+old, new = blocks(old_root, emitted), blocks(new_root)
+
+# A `.tf` in hcl/ that this emission did not produce is either hand-written or a
+# file satz used to emit and no longer does. The two are not the same thing and
+# the script cannot tell them apart, so it names them and lets the reader decide
+# rather than silently ignoring them or calling them deletions.
+foreign = sorted({p.name for p in old_root.rglob("*.tf")} - emitted)
 
 added = sorted(set(new) - set(old))
 removed = sorted(set(old) - set(new))
@@ -368,6 +398,9 @@ changed = sorted(a for a in set(old) & set(new) if old[a] != new[a])
 
 print(f"ADDR {len(added)} {len(removed)}")
 print(f"BODY {len(changed)}")
+print(f"FOREIGN {len(foreign)}")
+for f in foreign:
+    print(f"  ! {f} — in hcl/ but not emitted (hand-written, or no longer produced)")
 for a in added:
     print(f"  + {a}")
 for a in removed:
@@ -385,7 +418,9 @@ PY
     n_added="$(printf '%s' "$out" | awk '/^ADDR/{print $2}')"
     n_removed="$(printf '%s' "$out" | awk '/^ADDR/{print $3}')"
     n_body="$(printf '%s' "$out" | awk '/^BODY/{print $2}')"
-    detail="$(printf '%s' "$out" | grep -E '^  ' || true)"
+    n_foreign="$(printf '%s' "$out" | awk '/^FOREIGN/{print $2}')"
+    # `!` lines are printed separately: they are context, not a difference.
+    detail="$(printf '%s' "$out" | grep -E '^  [-+~]' || true)"
 
     if [ "$n_added" != "0" ] || [ "$n_removed" != "0" ]; then
       printf '   BLOCKER — %s: address set moved (+%s / -%s); %s body delta(s)\n' \
@@ -398,6 +433,9 @@ PY
       delta=1
     else
       printf '   clean — %s: address set identical, no body delta\n' "$name"
+    fi
+    if [ "${n_foreign:-0}" != "0" ]; then
+      printf '%s\n' "$out" | grep -E '^  !' | sed 's/^/   /' || true
     fi
   done
 
