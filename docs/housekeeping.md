@@ -161,9 +161,11 @@ the packs that implement them is safe and is the right order.
 
 - **Competitive re-audit** — quarterly or at a phase gate, appended as a dated entry
   to `docs/competitive.md`. Keeps the framework inputs, never replaces them.
-- **Fleet re-transpile after every satz release** — outside this repository, but it
-  belongs on the same list: an estate whose committed HCL no longer matches what the
-  current binary emits is a release blocker, not a nuisance.
+- **Fleet re-transpile after every satz release** — the estates live outside this
+  repository, but the check no longer does: [`fleet-v1.sh`](#fleet-v1sh--every-estate-on-the-current-binary).
+  An estate whose emitted HCL no longer matches what the current binary produces is a
+  release blocker, not a nuisance — and the longer between runs, the harder the finding
+  is to attribute to the release that caused it.
 
 ## The scripts
 
@@ -195,6 +197,7 @@ second kind.
 | `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
 | `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
+| `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it emitted before. Not run by CI — CI has no estates. Run it after every release |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
@@ -260,6 +263,92 @@ SATZ=~/.cargo/bin/satz scripts/smoke.sh
 
 `.github/workflows/smoke.yml` runs it on every push and pull request with OpenTofu
 installed. A new command that reads an estate gets a step here in the same PR.
+
+## `fleet-v1.sh` — every estate on the current binary
+
+Releases are small and frequent. An estate is transpiled when someone happens to
+touch it. Between those two facts sits the question this script answers: **does
+every estate you operate still compile, and does it still emit the same
+infrastructure?**
+
+Nothing else asks it. The corpus proves the compiler against fixtures; the smoke
+matrix proves the commands against one estate; `tofu plan` proves an estate
+against its own cloud, one at a time, and only for someone who has that
+credential. An estate that quietly stopped compiling under a language tightening
+is visible in none of them until the day someone needs it.
+
+```bash
+scripts/fleet-v1.sh ~/estates/acme            # one estate
+scripts/fleet-v1.sh --roster ~/fleet.tsv      # the fleet
+scripts/fleet-v1.sh --roster ~/fleet.tsv -v   # ... with the diffs
+```
+
+### The roster
+
+Which estates exist, and where, is **not in this repository** — it is operator
+state, and for most operators it is confidential. The script takes it as an
+argument (or `$FLEET_ROSTER`) in either of two shapes:
+
+```
+# code<TAB>path, comments allowed
+E01     ~/estates/acme
+E02     ~/estates/bolt
+```
+
+or a markdown table, so a fleet note you already keep works unchanged — the code
+is the first cell shaped like one, the checkout is the first backticked path:
+
+```
+| E01 | Customer A | `~/estates/acme` | … |
+```
+
+Bare paths on the command line need no roster at all.
+
+### Reading the result
+
+| outcome | what it means | what to do |
+|---|---|---|
+| **clean** | the address set is identical and no block body moved | nothing |
+| **delta** | same address set, some block body differs | not a release blocker. Carry it into the estate's next pickup and commit the re-transpiled `hcl/` |
+| **BLOCKER** | the estate does not transpile, or its **address set moved** — a resource appeared or disappeared | stop. Nothing ships on top of an estate whose emitted resource set changed by surprise |
+| **UNAVAILABLE** | no checkout, no `config.toml`, no `hcl/` to compare against | run it where the checkouts are. `--require-all` turns this into a failure |
+
+Exit codes follow: `0` clean, `1` blocker (or `--require-all` with an unchecked
+estate), `2` delta only.
+
+**Why the address set is the severe half.** A body delta says an attribute is
+rendered differently — the same resources, described differently. A moved
+address says satz would now create or destroy something. The first is
+housekeeping; the second is a plan you have not seen.
+
+### When the delta is the state backend
+
+A `terraform` block whose backend gained `impersonate_service_account` is the
+expected delta on every estate in `deployment_mode = "cloud"` since v0.46.87 —
+the state bucket now authenticates as the estate's IaC service account rather
+than as the human. Changing backend configuration means `tofu` refuses the next
+command until it is re-initialised, once per estate:
+
+```bash
+cd hcl/ && tofu init -reconfigure
+```
+
+Local-mode estates need nothing, and `satz migrate --mode cloud` re-initialises
+on its own.
+
+### What it deliberately does not do
+
+- **It never writes into a checkout.** Every estate is copied to a scratch
+  directory and transpiled there. Estate repositories carry work in progress; a
+  verification pass that writes into one costs more than it proves. Pass
+  `--scratch DIR` to keep the emitted trees.
+- **It does not diff text.** `git diff hcl/` reports a block that merely moved,
+  and after enough releases that buries the finding that matters. Blocks are
+  matched by **address**, so only content counts and order never does.
+- **It does not treat a missing checkout as a pass.** Silence about an estate
+  nobody looked at is how a fleet report starts lying.
+- **It reads no cloud.** V1 is about what satz *emits*. What the organisation
+  actually has is `report-compliance`, and it needs that estate's credentials.
 
 ## `build-site.py` — which docs become pages
 
