@@ -26,12 +26,35 @@ enum Identity {
 /// identity tofu applies with) and consulted by the token chokepoint and the
 /// Cloud Asset client.
 ///
-/// One process, one identity. That is free for the CLI — one command, one
-/// estate — but `satz mcp` is long-lived and its tools each name an estate, so
-/// a second, DIFFERENT binding is refused rather than ignored. It used to be
-/// ignored, which meant a tool call on estate B silently ran as estate A's
-/// service account: deterministic, silent, and cross-customer.
+/// One process, one identity — for the CLI, where it is free: one command, one
+/// estate. `satz mcp` is long-lived and works through estates in turn, so it
+/// does NOT use this. It scopes the identity to each call instead
+/// ([`with_identity`]), which is the same rule stated per call rather than per
+/// process.
 static IMPERSONATE: std::sync::OnceLock<Identity> = std::sync::OnceLock::new();
+
+tokio::task_local! {
+    /// The identity for the CALL in progress, when something scoped one.
+    ///
+    /// A task-local rather than a second global because the guarantee needed is
+    /// per call, not per process: whatever else the server is doing, the work
+    /// inside this scope runs as this service account for its whole duration.
+    /// `LocalKey::scope` binds the value to the FUTURE, so it holds across every
+    /// await inside it and cannot leak into a call running beside it — and
+    /// nothing in this tree spawns a task, so nothing escapes the scope.
+    static CALL_IDENTITY: Option<String>;
+}
+
+/// Run `f` as `sa`. Everything the future touches — every `access_token`, every
+/// client built inside it — mints as that service account, and a call scoped to
+/// a different one at the same time is unaffected.
+///
+/// This is what lets one server serve many estates without the process ever
+/// having a single answer to "who am I": the question is only ever asked inside
+/// a call, and a call always knows.
+pub(crate) async fn with_identity<T>(sa: Option<String>, f: impl std::future::Future<Output = T>) -> T {
+    CALL_IDENTITY.scope(sa, f).await
+}
 
 /// Bind the identity, or confirm it is already what the caller wants.
 ///
@@ -64,7 +87,19 @@ fn describe_conflict(current: &Identity, wanted: &Option<String>) -> Result<(), 
     }
 }
 
+/// Who the calls in flight run as: the scope's answer if this code is inside
+/// one, the process binding otherwise.
+///
+/// `--no-impersonate` is checked FIRST and outranks both. The operator asked for
+/// the plain ADC, and a per-call scope is no more entitled to override that than
+/// an estate binding was.
 pub(crate) fn impersonation_target() -> Option<String> {
+    if matches!(IMPERSONATE.get(), Some(Identity::Disabled)) {
+        return None;
+    }
+    if let Ok(scoped) = CALL_IDENTITY.try_with(Clone::clone) {
+        return scoped;
+    }
     match IMPERSONATE.get() {
         Some(Identity::Bound(sa)) => sa.clone(),
         Some(Identity::Disabled) | None => None,

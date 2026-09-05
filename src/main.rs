@@ -742,6 +742,11 @@ enum Commands {
     /// client cannot raise: read (compile and report), write (writes files in the estate),
     /// exec (runs external tools or changes a live org).
     Mcp {
+        /// Directory the server may work under: every config and estate it opens
+        /// must live inside it (default: the current directory). The server has
+        /// no estate until a client opens one, so one server serves a fleet
+        #[arg(long)]
+        root: Option<PathBuf>,
         /// Capability groups to grant, comma-separated: read, write, exec
         #[arg(long, default_value = "read")]
         allow: String,
@@ -904,7 +909,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Mcp { .. } | Commands::Questions { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -918,7 +923,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
-                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } => {
+                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }
@@ -940,56 +945,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config_dir = config_file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
-    let tool_config: ToolConfig = if config_file_path.exists() {
-        let content = fsx::read_to_string(&config_file_path)?;
+    let tool_config: ToolConfig = match parse_tool_config(&config_file_path) {
+        Ok(c) => c,
         // Printed rather than returned: `main` renders a returned error with `Debug`,
         // which escapes the newlines and inlines the entire file.
-        toml::from_str(&content).map_err(|e| {
-            eprintln!("\n{}\n", describe_toml_error(&config_file_path, &content, &e));
-            format!("could not parse '{}' as TOML", config_file_path.display())
-        })?
-    } else {
-        ToolConfig {
-            yaml_dir: default_yaml_dir(),
-            hcl_dir: default_hcl_dir(),
-            include_dirs: default_include_dirs(),
-            schema_dir: default_schema_dir(),
-            presets_dir: default_presets_dir(),
-            tf_tool: default_tf_tool(),
-            google_providers: default_google_providers(),
-            aws_providers: Vec::new(),
-            azure_providers: Vec::new(),
-            alibaba_providers: Vec::new(),
-            provider_version: default_version(),
-            auto_explode: default_auto_explode(),
-            validation_level: default_validation_level(),
-            import_config: None,
+        Err(described) => {
+            eprintln!("\n{}\n", described);
+            return Err(format!("could not parse '{}' as TOML", config_file_path.display()).into());
         }
     };
-
-    // Create a copy for runtime use with resolved paths
-    let mut runtime_config = tool_config.clone();
-
-    // Resolve relative paths in runtime_config relative to the config file directory
-    if Path::new(&runtime_config.yaml_dir).is_relative() {
-        runtime_config.yaml_dir = config_dir.join(&runtime_config.yaml_dir).to_str().unwrap().to_string();
-    }
-    if Path::new(&runtime_config.hcl_dir).is_relative() {
-        runtime_config.hcl_dir = config_dir.join(&runtime_config.hcl_dir).to_str().unwrap().to_string();
-    }
-    if Path::new(&runtime_config.schema_dir).is_relative() {
-        runtime_config.schema_dir = config_dir.join(&runtime_config.schema_dir).to_str().unwrap().to_string();
-    }
-    if Path::new(&runtime_config.presets_dir).is_relative() {
-        runtime_config.presets_dir = config_dir.join(&runtime_config.presets_dir).to_str().unwrap().to_string();
-    }
-    runtime_config.include_dirs = runtime_config.include_dirs.into_iter().map(|d| {
-        if Path::new(&d).is_relative() {
-            config_dir.join(d).to_str().unwrap().to_string()
-        } else {
-            d
-        }
-    }).collect();
+    let mut runtime_config = resolved_config(&tool_config, &config_dir);
 
 
     match cmd_choice {
@@ -1772,16 +1737,28 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Mcp { allow, self_gated } => {
+        Commands::Mcp { root, allow, self_gated } => {
+            // A server started the old way would silently root itself at the
+            // working directory instead of the estate, and answer confidently
+            // about the wrong tree. Refuse and name the replacement.
+            if cli.config.is_some() {
+                return Err("`satz mcp` takes --root, not --config: the server holds no estate \
+                            until a client opens one, so it is given a boundary rather than a \
+                            configuration. Use `satz mcp --root <dir>`, and open estates inside \
+                            it with the satz_open tool."
+                    .into());
+            }
             let ceiling = crate::mcp::Level::parse(&allow)?;
-            crate::mcp::serve(
-                tool_config.clone(),
-                runtime_config.clone(),
-                config_dir.clone(),
-                ceiling,
-                self_gated,
-            )
-            .await
+            // The server starts with no estate. A client opens one, and with it
+            // that estate's own config — presets, schemas, provider version —
+            // which is the only way one server can serve estates that do not
+            // share a config.toml.
+            let root = match root {
+                Some(r) => r,
+                None => std::env::current_dir()?,
+            };
+            let root = root.canonicalize().map_err(|e| format!("{}: {}", root.display(), e))?;
+            crate::mcp::serve(root, ceiling, self_gated).await
         }
         Commands::OpenReadme => open_url(DOCS_URL),
         Commands::Whoami { input, offline } => {
@@ -3178,6 +3155,75 @@ fn provider_maps(tool_config: &ToolConfig) -> (HashMap<String, String>, HashMap<
 /// turned into `yaml/yaml/X.satz → not found`); otherwise it is looked up
 /// inside yaml_dir. When both exist, the current-directory file wins and the
 /// shadowing is named.
+/// Read a `config.toml`, or the defaults when there is none.
+///
+/// Shared with `satz mcp`, which loads one per estate it opens rather than one
+/// per process: estates do not agree about presets, schemas or the provider
+/// version, and a server pinned to a single config could serve only the estates
+/// that happened to match it.
+///
+/// The error is the DESCRIBED parse failure, so a caller can print it whole.
+pub(crate) fn parse_tool_config(path: &Path) -> Result<ToolConfig, String> {
+    if !path.exists() {
+        return Ok(ToolConfig {
+            yaml_dir: default_yaml_dir(),
+            hcl_dir: default_hcl_dir(),
+            include_dirs: default_include_dirs(),
+            schema_dir: default_schema_dir(),
+            presets_dir: default_presets_dir(),
+            tf_tool: default_tf_tool(),
+            google_providers: default_google_providers(),
+            aws_providers: Vec::new(),
+            azure_providers: Vec::new(),
+            alibaba_providers: Vec::new(),
+            provider_version: default_version(),
+            auto_explode: default_auto_explode(),
+            validation_level: default_validation_level(),
+            import_config: None,
+        });
+    }
+    let content = fsx::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    toml::from_str(&content).map_err(|e| describe_toml_error(path, &content, &e))
+}
+
+/// The same config with every relative path resolved against the config's own
+/// directory, which is what makes a command runnable from anywhere.
+pub(crate) fn resolved_config(tool: &ToolConfig, config_dir: &Path) -> ToolConfig {
+    let mut rc = tool.clone();
+    let at = |d: &str| config_dir.join(d).to_string_lossy().into_owned();
+    if Path::new(&rc.yaml_dir).is_relative() {
+        rc.yaml_dir = at(&rc.yaml_dir);
+    }
+    if Path::new(&rc.hcl_dir).is_relative() {
+        rc.hcl_dir = at(&rc.hcl_dir);
+    }
+    if Path::new(&rc.schema_dir).is_relative() {
+        rc.schema_dir = at(&rc.schema_dir);
+    }
+    if Path::new(&rc.presets_dir).is_relative() {
+        rc.presets_dir = at(&rc.presets_dir);
+    }
+    rc.include_dirs = rc
+        .include_dirs
+        .into_iter()
+        .map(|d| if Path::new(&d).is_relative() { at(&d) } else { d })
+        .collect();
+    rc
+}
+
+/// One declared parameter of an estate, in the dialect's kebab-case spelling.
+pub(crate) fn estate_param(
+    input_path: &Path,
+    runtime_config: &ToolConfig,
+    key: &str,
+) -> Option<String> {
+    satz_estate_params(input_path, &runtime_config.include_dirs)
+        .ok()?
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
 fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
     if estate.is_absolute() {
         return estate;
@@ -3218,7 +3264,20 @@ fn configure_estate_impersonation(
     input_path: &Path,
     runtime_config: &ToolConfig,
 ) -> Result<(), String> {
-    let sa = satz_estate_params(input_path, &runtime_config.include_dirs).ok().and_then(|params| {
+    crate::gcp::configure_impersonation(estate_impersonation_target(input_path, runtime_config))
+}
+
+/// WHICH service account an estate's live calls run as — the derivation alone,
+/// with nothing bound.
+///
+/// The CLI binds it for the process; `satz mcp` scopes it to one call, because
+/// it works through estates in turn. Both need the same answer, and deriving it
+/// in one place is what keeps them from disagreeing.
+pub(crate) fn estate_impersonation_target(
+    input_path: &Path,
+    runtime_config: &ToolConfig,
+) -> Option<String> {
+    satz_estate_params(input_path, &runtime_config.include_dirs).ok().and_then(|params| {
         let get = |k: &str| params.get(k).and_then(|v| v.as_str()).map(str::to_string);
         if get("deployment-mode").as_deref() != Some("cloud") {
             return None;
@@ -3229,8 +3288,7 @@ fn configure_estate_impersonation(
             }
             _ => None,
         }
-    });
-    crate::gcp::configure_impersonation(sa)
+    })
 }
 
 /// The parameter table of a `.satz` estate, in the dialect's kebab-case

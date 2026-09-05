@@ -27,7 +27,7 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-  | satz --config /path/to/estate mcp
+  | satz mcp --root /path/to/estates
 ```
 
 ## What an agent may do
@@ -74,6 +74,8 @@ one.
 
 | tool | group | what it answers |
 |---|---|---|
+| `satz_estates` | `read` | which estates this server can open: every `config.toml` under its root, with the estate files beside it |
+| `satz_open` | `read` | open one for the session — its `config.toml` and its main `.satz`. Answers with what it resolved, including the identity that estate's live tools will run as |
 | `satz_require` | `read` | which controls of a catalog the **declared** estate satisfies, from its packs' claims. Offline |
 | `satz_questions` | `read` | every question the estate's packs declare, joined with the answers its params carry, and what changing each costs |
 | `satz_triage` | `read` | a Prowler export's FAILs sorted into buckets A–E against what the estate claims |
@@ -138,7 +140,7 @@ what is *possible*, the annotation decides what is *unremarkable*.
   "mcpServers": {
     "satz": {
       "command": "satz",
-      "args": ["--config", "/path/to/estate", "mcp", "--allow", "read"]
+      "args": ["mcp", "--root", "/path/to/estates", "--allow", "read"]
     }
   }
 }
@@ -171,30 +173,52 @@ Two unit tests cover what the matrix cannot: one scans this module, the other sc
 code a tool reaches transitively — the token chokepoint and the announce path. A new
 live code path on a tool's route belongs in the second one.
 
-## One server, one identity
+## One server, a fleet, one identity per call
 
-A live tool runs as the estate it names — for a `deployment_mode = "cloud"` estate, that
-estate's IaC service account, exactly as the same command does from the shell. This was
-not true at first: the server never bound an identity, so `satz_report_compliance` read
-the organisation as the human who started it while `satz report-compliance` read it as
-the service account. Same code, two principals, no visible difference in the output.
+The server holds **no estate** until a client opens one. `satz_open` names a
+`config.toml` and a main `.satz`; everything after works on that estate, under that
+config — its presets, its schemas, its provider version. Call it again for the next
+estate. `satz_estates` lists what is available under the root, so the first call is not
+a guess at a path.
 
-The binding is per tool call, from the estate argument, but the **process** holds one
-identity. The first live call binds it; a call needing a different service account is
-refused, and the refusal names both. Serve a second estate from a second server.
+The root, given as `satz mcp --root <dir>`, is a **boundary, not a configuration**: every
+config and estate a tool resolves must live inside it, and anything outside is refused by
+name. It is the only thing the server is started with.
 
-Refusing is the point. The alternative — rebinding per call — is not merely untidy: the
-server dispatches requests concurrently (the smoke matrix demonstrates two calls racing),
-so a mutable target would hand one estate's tools another estate's credentials, at
-random, across customers. The old behaviour was worse still and needed no concurrency at
-all: the second binding was silently dropped, so estate B's tools ran as estate A's
-service account every time.
+That shape exists because estates do not share a `config.toml`. A server pinned to one
+could serve only the estates that happened to agree with it — which is why `--config` is
+gone from this command.
 
-`satz_whoami` takes an optional `estate` for this reason. Without it you learn the
-server's ambient fallback; with it you learn the identity that estate's tools actually
-run as. The command takes the same argument — `satz whoami <estate>` — and both resolve
-it through one function, so the terminal and the tool cannot answer the same question
-differently. They did once: only the tool knew that a bound estate changes the answer.
+### Which identity, and who decides
+
+A live tool runs as the estate it is working on: for `deployment_mode = "cloud"`, that
+estate's IaC service account, exactly as the same command does from the shell. Nothing is
+configured and no tool sets it. The ADC authenticates, and satz's first act is to exchange
+it for the account the estate itself names — `svc_iac_account` + `infra_project_name`, the
+same derivation the emitted provider block uses. `satz_open` reports the result as
+`runs_as` so it is stated rather than assumed, and `null` there means the estate
+impersonates nothing and the calls are the ADC identity itself.
+
+**The identity is scoped to the call, not bound to the process.** That is the difference
+that lets one server work through a fleet. It also has to be per call rather than a
+mutable global, because the server dispatches requests concurrently — the smoke matrix
+demonstrated two calls racing — so a global that changed underneath a call in flight would
+hand one estate's tools another estate's credentials, at random, across customers. A
+scope cannot do that: work started under one estate finishes under it.
+
+Two earlier versions of this were wrong in instructive ways. The first bound nothing, so
+`satz_report_compliance` read the organisation as the human while `satz report-compliance`
+read it as the service account — same code, two principals, no visible difference in the
+output. The second bound the **process** on the first live call and refused any estate
+needing a different account, which was safe but meant restarting the server for every
+estate; working through a fleet is ordinary, so that refusal was the wrong trade.
+
+`satz_whoami` answers for whatever is open, inside the same scope its neighbours use, so
+it describes the session an agent is about to get rather than a different one. With
+nothing open it answers for the ambient credentials — the question `satz whoami` answers
+with no estate. `--no-impersonate` still outranks everything: the operator asked for the
+plain ADC, and a per-call scope is no more entitled to override that than a process
+binding was.
 
 ### Still missing
 
