@@ -318,10 +318,20 @@ Bare paths on the command line need no roster at all.
 | **clean** | the address set is identical and no block body moved | nothing |
 | **delta** | same address set, some block body differs | not a release blocker. Carry it into the estate's next pickup and commit the re-transpiled `hcl/` |
 | **BLOCKER** | the estate does not transpile, or its **address set moved** — a resource appeared or disappeared | stop. Nothing ships on top of an estate whose emitted resource set changed by surprise |
-| **UNAVAILABLE** | no checkout, no `config.toml`, no `hcl/` to compare against | run it where the checkouts are. `--require-all` turns this into a failure |
+| **UNAVAILABLE** | no checkout, no `config.toml`, no `hcl/` to compare against — or no provider schema, which estate repos gitignore as a derived cache, so a fresh clone has none | run it where the checkouts are, or `satz update-schema` in that one. `--require-all` turns this into a failure |
 
 Exit codes follow: `0` clean, `1` blocker (or `--require-all` with an unchecked
 estate), `2` delta only.
+
+**A hand-written `.tf` in `hcl/` is context, not a deletion.** The comparison set is
+what satz *emits*; a file this emission did not produce is listed with `!` and its blocks
+are left out of the count. Estates do keep one occasionally — a write-only secret cannot
+come from the estate, so the `variable` block declaring it has to live in `hcl/` beside
+the generated files. Compared against an emission that never contained it, its blocks
+would otherwise read as deletions, and a deletion is the finding that stops a release. If
+a named file is one satz *used* to emit rather than a hand-written one, that is worth
+chasing — the script cannot tell them apart, so it names it and leaves the judgment to
+the reader.
 
 **Why the address set is the severe half.** A body delta says an attribute is
 rendered differently — the same resources, described differently. A moved
