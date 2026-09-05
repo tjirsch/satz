@@ -183,7 +183,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated` — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Seven tools, each returning structured content with a published output schema and annotated so a client knows what is safe to run unattended. satz never calls a model; this is the other direction. See [docs/mcp.md](docs/mcp.md) |
-| `whoami` | `--offline` — print which identity, credential type and quota project the ADC resolves to |
+| `whoami [INPUT]` | `--offline` — print which identity, credential type and quota project the ADC resolves to; with an estate, the identity THAT estate's live commands run as |
 
 Details for each command are below.
 
@@ -1417,6 +1417,7 @@ estate's service account.** Every exception is deliberate and listed here.
 | `import` without `--into` | the human's ADC | the output is a new file; there is no estate to be |
 | `bootstrap`, `init --from-live` | the human's ADC | day 0 — the service account does not exist yet |
 | `whoami` | the human's ADC | the question *is* who the human is |
+| `whoami <estate>` | the estate's service account | a different question — who that estate acts as — so a different answer |
 | `map-types` | no credential at all | Discovery documents are public |
 | `mcp` | per tool call, from the estate each tool names | see below |
 | `plan`, `apply`, `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
@@ -1435,6 +1436,7 @@ configuration directory and name the file it writes:
 CLOUDSDK_CONFIG=~/.gcloud-acme gcloud auth application-default login
 export GOOGLE_APPLICATION_CREDENTIALS=~/.gcloud-acme/application_default_credentials.json
 satz whoami          # names that file, and mints from it
+satz whoami e.satz   # who that estate's live commands run as
 ```
 
 `CLOUDSDK_CONFIG` alone is not enough: gcloud reads it, satz and `tofu` do not.

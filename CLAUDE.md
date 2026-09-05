@@ -58,7 +58,8 @@ and in the maintainer's notes. Nothing in this file names a customer.
   reads or writes a customer's estate runs as that estate's IaC service
   account, derived from `svc_iac_account` + `infra_project_name` exactly as the
   emitter derives the provider's `impersonate_service_account`. The exceptions
-  are `whoami`, `bootstrap`, `init --from-live` and `map-types`, each named with
+  are bare `whoami` (given an estate it binds like everything else, to answer
+  what that estate acts as), `bootstrap`, `init --from-live` and `map-types`, each named with
   its reason in `IDENTITIES` (`src/main.rs`), which a test forces every new
   command to join. One process serves one identity: a second, different binding
   is refused, never ignored — `satz mcp` dispatches concurrently, and a silently

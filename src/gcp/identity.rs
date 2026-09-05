@@ -158,33 +158,34 @@ pub(crate) struct WhoamiReport {
     pub note: Option<String>,
 }
 
-/// Resolve the identity without printing. `offline` reads the ADC file only.
-pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
-    let adc_file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
-    let kind_name = |k: &CredKind| match k {
-        CredKind::UserAdc => "user-adc",
-        CredKind::ImpersonatedSa => "impersonated-sa",
-        CredKind::SaKey => "sa-key",
-        CredKind::Unknown => "unknown",
-    };
-    // When the process is bound to an estate, the honest answer to "who am I"
-    // is the identity the live calls RUN as — the estate's IaC service account
-    // — not the human behind it. Nothing binds for the plain `satz whoami`, so
-    // this is inert there; it fires for `satz_whoami` asked about an estate.
-    // Known without a network either way, so it answers `--offline` too.
+/// The answer to "who am I", resolved ONCE for both surfaces.
+///
+/// The terminal command and `satz_whoami` used to resolve it separately, and
+/// they drifted: only the tool knew that a bound estate changes the answer, so
+/// `satz whoami` could not be asked the question the tool could answer. One
+/// resolver, two renderings — the divergence cannot come back.
+///
+/// Returns the credential and the one thing the fields cannot say for
+/// themselves.
+async fn resolve_whoami(
+    offline: bool,
+) -> Result<(CredentialInfo, Option<String>), Box<dyn std::error::Error>> {
+    // When the process is bound to an estate, the honest answer is the identity
+    // the live calls RUN as — the estate's IaC service account — not the human
+    // behind it. Known without a network, so it answers `--offline` too.
     if let Some(sa) = crate::gcp::impersonation_target() {
-        return Ok(WhoamiReport {
-            email: Some(sa),
-            kind: kind_name(&CredKind::ImpersonatedSa),
-            quota_project: crate::org_policy::resolve_quota_project(),
-            adc_file,
-            offline,
-            note: Some(
+        return Ok((
+            CredentialInfo {
+                email: Some(sa),
+                kind: CredKind::ImpersonatedSa,
+                quota_project: crate::org_policy::resolve_quota_project(),
+            },
+            Some(
                 "impersonated for this estate — the ADC file above is the human this \
                  service account is reached through"
                     .to_string(),
             ),
-        });
+        ));
     }
 
     if offline {
@@ -196,14 +197,7 @@ pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn
         let note = (info.email.is_none() && info.kind == CredKind::UserAdc).then(|| {
             "a user ADC file stores no identity — run without --offline to resolve it".to_string()
         });
-        return Ok(WhoamiReport {
-            email: info.email,
-            kind: kind_name(&info.kind),
-            quota_project: info.quota_project,
-            adc_file,
-            offline: true,
-            note,
-        });
+        return Ok((info, note));
     }
 
     mark_announced();
@@ -218,48 +212,38 @@ pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn
     if info.email.is_none() {
         return Err("could not determine the identity behind these credentials".into());
     }
+    Ok((info, None))
+}
+
+/// Resolve the identity without printing. `offline` reads the ADC file only.
+pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
+    let adc_file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
+    let (info, note) = resolve_whoami(offline).await?;
     Ok(WhoamiReport {
         email: info.email,
-        kind: kind_name(&info.kind),
+        kind: match info.kind {
+            CredKind::UserAdc => "user-adc",
+            CredKind::ImpersonatedSa => "impersonated-sa",
+            CredKind::SaKey => "sa-key",
+            CredKind::Unknown => "unknown",
+        },
         quota_project: info.quota_project,
         adc_file,
-        offline: false,
-        note: None,
+        offline,
+        note,
     })
 }
 
+/// The terminal rendering of `resolve_whoami` — the same answer `satz_whoami`
+/// returns as data.
 pub(crate) async fn whoami(offline: bool) -> Result<(), Box<dyn std::error::Error>> {
-    if offline {
-        let Some(info) = credential_info_offline() else {
-            return Err("no Application Default Credentials file found — run `gcloud auth \
-                        application-default login`"
-                .into());
-        };
-        println!("{}", render_credential_line(&info));
-        if let Some(p) = crate::org_policy::adc_file_path() {
-            println!("adc file: {}", p.display());
-        }
-        if info.email.is_none() && info.kind == CredKind::UserAdc {
-            println!("note: a user ADC file stores no identity — run `satz whoami` without --offline to resolve it");
-        }
-        return Ok(());
-    }
-
-    mark_announced();
-    let token = crate::gcp::access_token().await.map_err(|e| {
-        format!(
-            "could not get an Application Default Credentials token ({}) — run `gcloud auth \
-             application-default login`",
-            e
-        )
-    })?;
-    let info = credential_info(&token).await;
+    let (info, note) = resolve_whoami(offline).await?;
     println!("{}", render_credential_line(&info));
     if let Some(p) = crate::org_policy::adc_file_path() {
         println!("adc file: {}", p.display());
     }
-    if info.email.is_none() {
-        return Err("could not determine the identity behind these credentials".into());
+    if let Some(n) = note {
+        println!("note: {}", n);
     }
     Ok(())
 }

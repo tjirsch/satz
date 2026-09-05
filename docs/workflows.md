@@ -88,7 +88,10 @@ the estate and come into being on the first `tofu apply`.
 key), quota project <p>` — so a wrong per-customer login surfaces immediately
 instead of as a downstream 403. `satz whoami` is the explicit check (`--offline` for
 the file-only view; a user ADC file stores no identity, so the online form resolves
-it via token introspection).
+it via token introspection). `satz whoami <estate>` answers the other question — the
+identity that estate's live commands actually run as, which on a cloud-mode estate is
+its IaC service account and not you. It reads the estate file alone, so it needs
+neither a network nor the right to impersonate yet.
 
 **Impersonation.** On a `deployment_mode = "cloud"` estate, every live command
 impersonates the estate's IaC service account
