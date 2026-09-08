@@ -1,0 +1,34 @@
+// Corpus case: the CIS alert pack WITHOUT the audit-logsink pack beside it.
+//
+// Since v1.4 the alert project defaults to `logsink_project_name` — the logsink
+// pack's param, by reference. With that pack absent the name is undeclared, so
+// an estate using this pack alone MUST say where the alerting bucket lives.
+// This case pins that it can: the override is read, and nothing reaches for the
+// missing param.
+//
+// The companion case is `real-packs`, which uses both packs and sets nothing.
+
+estate corpus_alerts_pack_alone
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0TEST"
+  customer_domain = "example.com"
+  customer_shortname = "corp"
+  default_region = "europe-west3"
+  billing_account_infra = "01AA-BB-CC"
+  cis_central_bucket_project = "corp-alerts-only-001"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_folder {
+  logging {
+    display_name = "Logging"
+    use "presets/monitoring/organization-cis-log-alerts-central.satz"
+  }
+}

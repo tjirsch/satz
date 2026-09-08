@@ -9,7 +9,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.5 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 29 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.6 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 29 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | Billing-account IAM, split by audience. | 4 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.2 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
 | [`organization_budget`](organization-budget.md) | 1.0 | An organization-wide budget on the infrastructure billing account, with alert thresholds at 50, 80 and 100 % of current spend. | 1 | — |
@@ -40,7 +40,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
 | [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.2 | Organization-wide audit log sink into a GCS bucket — the compliance archive. | 5 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
-| [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.3 | Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in 4.0. | 20 | 18 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.4 | Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in 4.0. | 20 | 18 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`project_cis_log_alerts`](project-cis-log-alerts.md) | 1.0 | CIS log metric filters and alert policies, per project. | 17 | — |
 
 ## `scc/`

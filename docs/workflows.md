@@ -470,6 +470,17 @@ overwriting it destroys the only record of where the fork branched.
   from later reading as a customer fork.
 - **`check-presets` answers "am I behind?" directly** — it prints the local and
   upstream version and a STALE verdict.
+- **Upgrading the CIS baseline to v2.6 replaces the superseded policies.** Each legacy
+  constraint the pack declares off (`spec { reset = true }`) carries a `-superseded`
+  address since v2.6, so the plan shows one **destroy + create** per legacy policy that
+  exists live with rules. That is deliberate and it is the only form that works: the
+  provider PATCHes the rules it holds in state together with `reset`, and the API refuses
+  the pair — `400 Cannot set PolicyRules if reset is true`. Before v2.6 the switch looked
+  like an in-place update, failed, and every estate needed
+  `tofu apply -replace=google_org_policy_policy.<addr>` by hand for each one. The managed
+  replacement enforces the control throughout, so the moment between destroy and create
+  is uneventful. An estate that already did the manual `-replace` sees the replace once
+  more, and then never again.
 - **A pack that ADDS org policies may add ones Google already set.** The apply then
   fails with `already exists` on exactly those, because the organisation has the
   constraint and the state does not. Adopt them before applying:

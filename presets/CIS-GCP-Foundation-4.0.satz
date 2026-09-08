@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.5"
+pack CIS_GCP_Foundation_4_0 version "2.6"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -27,6 +27,21 @@ params {
   cis_cmek_required          = false
   cis_api_key_services       = false
   cis_bucket_retention       = false
+
+  // CIS §2 resource locations (gcp.resourceLocations): where resources may be
+  // created. The default is the two multi-region groups this baseline has always
+  // emitted, so upgrading changes no estate — but it is a DEFAULT, not the
+  // control: an estate serving one jurisdiction narrows it here rather than
+  // forking the pack. Value groups are Google's (`in:eu-locations`,
+  // `in:us-locations`, `in:europe-west3-locations`, …); a bare region works too.
+  //
+  // Before v2.6 this list was hard-coded, so an operator who tightened the live
+  // policy by hand had it widened again by the next apply — which is exactly
+  // what happened on one organisation, and why the value is a param now.
+  allowed_resource_locations = [
+    "in:eu-locations",
+    "in:us-locations",
+  ]
 
   // CIS §1.1 Domain Restricted Sharing (iam.managed.allowedPolicyMembers):
   // PRINCIPAL SETS whose members may be granted IAM roles. Default = the
@@ -229,10 +244,7 @@ params {
     rules = [
       {
         values {
-          allowed_values = [
-            "in:eu-locations",
-            "in:us-locations",
-          ]
+          allowed_values = allowed_resource_locations
         }
       },
     ]
@@ -395,6 +407,20 @@ params {
 // `satz adopt --only google_org_policy_policy --execute --import` before the
 // apply, so the existing policy is imported rather than created twice.
 //
+// WHY THE ADDRESSES CARRY `-superseded` (v2.6). Switching a policy from rules to
+// `reset = true` cannot be an in-place update: the provider PATCHes the rules it
+// still holds in state together with `reset`, and the API refuses the pair —
+// `400 Cannot set PolicyRules if reset is true`. v2.5 kept the legacy addresses
+// and called the switch an in-place update; it is not, and every estate upgrading
+// needed `tofu apply -replace=…` by hand for each of these.
+//
+// The address is therefore deliberately DIFFERENT from the one a pre-2.6 estate
+// carries. tofu then plans a destroy of the old address and a create of the new
+// one — the replace, by construction, with no manual step and nothing to
+// remember. The policy NAME is unchanged, so this is one org policy being
+// reset, not two. The managed replacement is already enforcing throughout, which
+// is what makes the moment between destroy and create uneventful.
+//
 // A constraint is listed here ONLY when this pack enables its managed
 // replacement; `cis-extensions/` carries its own, next to the fragment that
 // enables them. Managed constraints with no legacy form — most of them, 45 of
@@ -404,7 +430,7 @@ params {
 // Superseded by iam.managed.allowedPolicyMembers (CIS 1.1 / 5.0 1.2). Google
 // declares no equivalence between these two names, so the pairing is ours; the
 // reasoning is in the claim's duty_legacy_superseded.
-"iam-allowedPolicyMemberDomains" {
+"iam-allowedPolicyMemberDomains-superseded" {
   name = "iam.allowedPolicyMemberDomains"
   parent = "organizations/{customer_organization_id}"
   spec {
@@ -413,7 +439,7 @@ params {
 }
 
 // Superseded by compute.managed.requireOsLogin.
-"compute-requireOsLogin" {
+"compute-requireOsLogin-superseded" {
   name = "compute.requireOsLogin"
   parent = "organizations/{customer_organization_id}"
   spec {
@@ -422,7 +448,7 @@ params {
 }
 
 // Superseded by essentialcontacts.managed.allowedContactDomains.
-"essentialcontacts-allowedContactDomains" {
+"essentialcontacts-allowedContactDomains-superseded" {
   name = "essentialcontacts.allowedContactDomains"
   parent = "organizations/{customer_organization_id}"
   spec {
@@ -431,7 +457,7 @@ params {
 }
 
 // Superseded by iam.managed.disableServiceAccountKeyCreation.
-"iam-disableServiceAccountKeyCreation" {
+"iam-disableServiceAccountKeyCreation-superseded" {
   name = "iam.disableServiceAccountKeyCreation"
   parent = "organizations/{customer_organization_id}"
   spec {
@@ -440,7 +466,7 @@ params {
 }
 
 // Superseded by iam.managed.disableServiceAccountKeyUpload.
-"iam-disableServiceAccountKeyUpload" {
+"iam-disableServiceAccountKeyUpload-superseded" {
   name = "iam.disableServiceAccountKeyUpload"
   parent = "organizations/{customer_organization_id}"
   spec {
@@ -449,10 +475,10 @@ params {
 }
 
 // Superseded by compute.managed.restrictProtocolForwardingCreationForTypes as of
-// v2.5. This block kept its address deliberately: an estate on v2.4 carries the
-// legacy policy under exactly this name, so the switch is an in-place update
-// rather than a destroy and a create of the same org policy in one apply.
-"compute-restrictProtocolForwardingCreationForTypes" {
+// v2.5. The address carries `-superseded` since v2.6: the switch to `reset` is a
+// REPLACE, never an in-place update — see the section note above for why the API
+// refuses the in-place form.
+"compute-restrictProtocolForwardingCreationForTypes-superseded" {
   name = "compute.restrictProtocolForwardingCreationForTypes"
   parent = "organizations/{customer_organization_id}"
   spec {

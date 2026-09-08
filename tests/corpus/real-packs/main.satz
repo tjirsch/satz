@@ -1,4 +1,9 @@
 // Corpus case: uses the REAL shipped monitoring packs. Snapshot-gated.
+//
+// It wires NOTHING between them: since alerts pack v1.4 the alert project
+// defaults to the logsink pack's own project param, by reference. The snapshot
+// is what proves the two packs meet — an estate that had to repeat the project
+// name is one rename away from pointing at nothing.
 
 estate corpus_real_packs
 
@@ -10,7 +15,6 @@ params {
   default_region = "europe-west3"
   billing_account_infra = "01AA-BB-CC"
   logsink_project_name = "corp-log-infra-001"
-  cis_central_bucket_project = logsink_project_name
 }
 
 terraform {

@@ -19,7 +19,6 @@ params {
   first_admin = "admin@example.com"
   billing_account_infra = "01AA-BB-CC"
   logsink_project_name = "corp-log-infra-001"
-  cis_central_bucket_project = logsink_project_name
   deployment_engine = "tofu"
   deployment_mode = "local"
   default_region = "europe-west3"
