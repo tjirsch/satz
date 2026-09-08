@@ -589,10 +589,31 @@ fn render_template(
 // Report and sinks
 // ---------------------------------------------------------------------------
 
-pub(crate) fn render_table(resolutions: &[Resolution]) -> String {
+/// What `--execute --import` would actually do to each resource.
+///
+/// The state comes FIRST, exactly as the import path orders it: an address the
+/// state already manages is skipped whatever its outcome, so a dry run that
+/// ranked it by outcome answered a question nobody asked. On one organisation
+/// that read as 25 resources to import when 22 were already managed and the
+/// three that mattered — the ones failing `apply` with "already exists" — were
+/// indistinguishable in the list.
+pub(crate) fn render_table(
+    resolutions: &[Resolution],
+    in_state: &std::collections::BTreeSet<String>,
+) -> String {
     let mut s = String::new();
     let w = resolutions.iter().map(|r| r.address.len()).max().unwrap_or(20).min(72);
     for r in resolutions {
+        if in_state.contains(&r.address) {
+            // The same words the import path prints, so the dry run and the run
+            // are recognisably the same statement.
+            s.push_str(&format!(
+                "  {:w$}  {:30}  {}\n",
+                r.address, "already managed in the state", "skipped",
+                w = w
+            ));
+            continue;
+        }
         let (verdict, detail) = match &r.outcome {
             Outcome::AlreadyAdopted(id) => ("adopted", id.clone()),
             Outcome::Resolved { id, verified: true } => ("IMPORT", id.clone()),
@@ -615,10 +636,18 @@ pub(crate) fn render_table(resolutions: &[Resolution]) -> String {
     s
 }
 
-pub(crate) fn summary(resolutions: &[Resolution]) -> String {
-    let count = |f: &dyn Fn(&Outcome) -> bool| resolutions.iter().filter(|r| f(&r.outcome)).count();
+pub(crate) fn summary(
+    resolutions: &[Resolution],
+    in_state: &std::collections::BTreeSet<String>,
+) -> String {
+    // Counted over what adopt would ACT on. Leaving the managed ones in every
+    // bucket is what made the headline number wrong by an order of magnitude.
+    let acts_on: Vec<&Resolution> =
+        resolutions.iter().filter(|r| !in_state.contains(&r.address)).collect();
+    let managed = resolutions.len() - acts_on.len();
+    let count = |f: &dyn Fn(&Outcome) -> bool| acts_on.iter().filter(|r| f(&r.outcome)).count();
     format!(
-        "adopt: {} to import ({} verified live, {} derived), {} need activation, {} already adopted, {} on apply, {} on apply with their project, {} ambiguous, {} without a rule, {} unresolvable, {} failed",
+        "adopt: {} to import ({} verified live, {} derived), {} need activation, {} already adopted, {} on apply, {} on apply with their project, {} ambiguous, {} without a rule, {} unresolvable, {} failed, {} already managed in the state",
         count(&|o| matches!(o, Outcome::Resolved { .. })),
         count(&|o| matches!(o, Outcome::Resolved { verified: true, .. })),
         count(&|o| matches!(o, Outcome::Resolved { verified: false, .. })),
@@ -630,15 +659,23 @@ pub(crate) fn summary(resolutions: &[Resolution]) -> String {
         count(&|o| matches!(o, Outcome::NoRule)),
         count(&|o| matches!(o, Outcome::Unresolvable(_))),
         count(&|o| matches!(o, Outcome::Failed(_))),
+        managed,
     )
 }
 
 /// The resolutions that mean the run did not answer its question: a failed
 /// lookup, an unresolvable or ambiguous resource, a type without a rule.
 /// Zero means the table is complete; anything else is a non-zero exit.
-pub(crate) fn unanswered(resolutions: &[Resolution]) -> usize {
+/// Rows that did not answer their question — and that adopt would actually act
+/// on. A resource the state already manages is skipped either way, so an
+/// unresolved one is not a reason to refuse the run.
+pub(crate) fn unanswered(
+    resolutions: &[Resolution],
+    in_state: &std::collections::BTreeSet<String>,
+) -> usize {
     resolutions
         .iter()
+        .filter(|r| !in_state.contains(&r.address))
         .filter(|r| matches!(r.outcome, Outcome::Failed(_) | Outcome::Unresolvable(_) | Outcome::Ambiguous(_) | Outcome::NoRule))
         .count()
 }
@@ -916,6 +953,12 @@ impl Live for RealLive {
 
 #[cfg(test)]
 mod tests {
+    /// No state read: nothing is managed, so every row is judged on its outcome
+    /// alone — what these tests are about.
+    fn none() -> std::collections::BTreeSet<String> {
+        std::collections::BTreeSet::new()
+    }
+
     use super::*;
     use crate::config::ImportResourceConfig;
 
@@ -1166,8 +1209,8 @@ import {
         // is written for it or its children
         assert!(!live.calls.iter().any(|c| c.starts_with("search projects/acme-infra-001")), "{:?}", live.calls);
         assert!(!rs.iter().any(|r| matches!(r.outcome, Outcome::Resolved { verified: false, .. })), "no derived ids may survive a missing parent");
-        assert_eq!(unanswered(&rs), rs.iter().filter(|r| matches!(r.outcome, Outcome::Ambiguous(_) | Outcome::NoRule)).count(), "a missing project is a finding, not a failure");
-        assert!(summary(&rs).contains("2 on apply with their project"), "{}", summary(&rs));
+        assert_eq!(unanswered(&rs, &none()), rs.iter().filter(|r| matches!(r.outcome, Outcome::Ambiguous(_) | Outcome::NoRule)).count(), "a missing project is a finding, not a failure");
+        assert!(summary(&rs, &none()).contains("2 on apply with their project"), "{}", summary(&rs, &none()));
     }
 
     #[tokio::test]
@@ -1185,7 +1228,7 @@ import {
         let sa = outcome(&rs, "google_service_account.sa");
         assert!(matches!(sa, Outcome::Failed(e) if e.contains("google_project.infra") && e.contains("403")), "{:?}", sa);
         // a failed run is unanswered → the command exits non-zero
-        assert!(unanswered(&rs) >= 2, "{}", summary(&rs));
+        assert!(unanswered(&rs, &none()) >= 2, "{}", summary(&rs, &none()));
     }
 
     #[tokio::test]
@@ -1338,5 +1381,83 @@ import {
         assert_eq!(by("google_billing_budget.infra"), Outcome::Resolved { id: "billingAccounts/012345-6789AB-CDEF01/budgets/aaaa".into(), verified: true });
         assert!(matches!(by("google_billing_budget.twice"), Outcome::Ambiguous(ref c) if c.len() == 2));
         assert!(f.calls.iter().any(|c| c == "budgets 012345-6789AB-CDEF01"), "{:?}", f.calls);
+    }
+}
+
+#[cfg(test)]
+mod state_aware_tests {
+    //! `--execute --import` skips every address the state already manages, so a
+    //! dry run that ranks those as "IMPORT" describes a run that will not
+    //! happen. On one organisation the table read as 25 resources to import when
+    //! 22 were already managed and the three that mattered — the ones failing
+    //! `apply` with "already exists" — were indistinguishable in the list.
+    use super::{Outcome, Resolution, render_table, summary, unanswered};
+    use std::collections::BTreeSet;
+
+    fn res(address: &str, outcome: Outcome) -> Resolution {
+        Resolution {
+            address: address.to_string(),
+            tf_type: "google_org_policy_policy".into(),
+            natural_key: String::new(),
+            outcome,
+            origin: None,
+            org_policy: None,
+        }
+    }
+
+    fn three() -> Vec<Resolution> {
+        vec![
+            res("google_org_policy_policy.a", Outcome::Resolved { id: "a".into(), verified: true }),
+            res("google_org_policy_policy.b", Outcome::Resolved { id: "b".into(), verified: true }),
+            res("google_org_policy_policy.c", Outcome::Resolved { id: "c".into(), verified: true }),
+        ]
+    }
+
+    fn managed(addresses: &[&str]) -> BTreeSet<String> {
+        addresses.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn a_managed_address_is_reported_as_skipped_not_as_an_import() {
+        let rs = three();
+        let table = render_table(&rs, &managed(&["google_org_policy_policy.a"]));
+        let a = table.lines().find(|l| l.contains(".a ")).unwrap_or_default();
+        // The same words the import path prints, so the dry run and the run are
+        // recognisably the same statement.
+        assert!(a.contains("already managed in the state"), "{}", table);
+        assert!(!a.contains("IMPORT"), "{}", table);
+        assert!(table.lines().any(|l| l.contains(".b") && l.contains("IMPORT")), "{}", table);
+    }
+
+    /// The headline number is the one an operator acts on. Counting managed
+    /// resources into it is what made it wrong by an order of magnitude.
+    #[test]
+    fn the_summary_counts_only_what_adopt_would_act_on() {
+        let rs = three();
+        let out = summary(&rs, &managed(&["google_org_policy_policy.a", "google_org_policy_policy.b"]));
+        assert!(out.starts_with("adopt: 1 to import"), "{}", out);
+        assert!(out.contains("2 already managed in the state"), "{}", out);
+
+        // With no state read, nothing is managed and the count is what it was.
+        let out = summary(&rs, &BTreeSet::new());
+        assert!(out.starts_with("adopt: 3 to import"), "{}", out);
+        assert!(out.contains("0 already managed in the state"), "{}", out);
+    }
+
+    /// An address the state manages is skipped either way, so failing to resolve
+    /// it is not a reason to refuse the run.
+    #[test]
+    fn an_unresolved_row_the_state_already_manages_is_not_a_failure() {
+        let rs = vec![
+            res("google_org_policy_policy.a", Outcome::NoRule),
+            res("google_org_policy_policy.b", Outcome::NoRule),
+        ];
+        assert_eq!(unanswered(&rs, &BTreeSet::new()), 2);
+        assert_eq!(unanswered(&rs, &managed(&["google_org_policy_policy.a"])), 1);
+        assert_eq!(
+            unanswered(&rs, &managed(&["google_org_policy_policy.a", "google_org_policy_policy.b"])),
+            0,
+            "every unresolved row is already managed — there is nothing to refuse"
+        );
     }
 }
