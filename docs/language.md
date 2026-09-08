@@ -460,6 +460,14 @@ Resolution rules:
    compiler sorts by dependency.
 3. The namespace is one document-ordered space: packs see every earlier file's
    params. (True lexical pack scoping is a deliberate future change, not v0.)
+   A pack's **default may therefore reference another pack's param**, and that is
+   the right way to wire two packs that share a value — the CIS alert pack
+   defaults its project to the audit-logsink pack's `logsink_project_name`, so an
+   estate using both sets nothing, and renaming the logsink project moves the
+   alerts with it. A repeated literal would not: it would keep pointing at the
+   old name, or at a project that never existed. Used without the pack that
+   declares the name, the reference stops with `unknown param` — which is correct,
+   because the value is then genuinely undecided and the estate has to say it.
 4. Overriding a **list replaces it** — v0 has no concatenation — so an estate
    that adds to a pack's list repeats the entries it keeps.
 

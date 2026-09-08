@@ -308,23 +308,23 @@ resource "google_org_policy_policy" "compute_managed_restrictNonConfidentialComp
 resource "google_org_policy_policy" "compute_managed_restrictProtocolForwardingCreationForTypes" {
 resource "google_org_policy_policy" "compute_managed_vmCanIpForward" {
 resource "google_org_policy_policy" "compute_managed_vmExternalIpAccess" {
-resource "google_org_policy_policy" "compute_requireOsLogin" {
+resource "google_org_policy_policy" "compute_requireOsLogin_superseded" {
 resource "google_org_policy_policy" "compute_requireShieldedVm" {
 resource "google_org_policy_policy" "compute_requireVpcFlowLogs" {
-resource "google_org_policy_policy" "compute_restrictProtocolForwardingCreationForTypes" {
+resource "google_org_policy_policy" "compute_restrictProtocolForwardingCreationForTypes_superseded" {
 resource "google_org_policy_policy" "compute_setNewProjectDefaultToZonalDNSOnly" {
 resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
-resource "google_org_policy_policy" "essentialcontacts_allowedContactDomains" {
+resource "google_org_policy_policy" "essentialcontacts_allowedContactDomains_superseded" {
 resource "google_org_policy_policy" "essentialcontacts_managed_allowedContactDomains" {
 resource "google_org_policy_policy" "gcp_detailedAuditLoggingMode" {
 resource "google_org_policy_policy" "gcp_resourceLocations" {
 resource "google_org_policy_policy" "gcp_restrictCmekCryptoKeyProjects" {
 resource "google_org_policy_policy" "gcp_restrictNonCmekServices" {
-resource "google_org_policy_policy" "iam_allowedPolicyMemberDomains" {
+resource "google_org_policy_policy" "iam_allowedPolicyMemberDomains_superseded" {
 resource "google_org_policy_policy" "iam_automaticIamGrantsForDefaultServiceAccounts" {
 resource "google_org_policy_policy" "iam_disableAuditLoggingExemption" {
-resource "google_org_policy_policy" "iam_disableServiceAccountKeyCreation" {
-resource "google_org_policy_policy" "iam_disableServiceAccountKeyUpload" {
+resource "google_org_policy_policy" "iam_disableServiceAccountKeyCreation_superseded" {
+resource "google_org_policy_policy" "iam_disableServiceAccountKeyUpload_superseded" {
 resource "google_org_policy_policy" "iam_managed_allowedPolicyMembers" {
 resource "google_org_policy_policy" "iam_managed_disableServiceAccountApiKeyCreation" {
 resource "google_org_policy_policy" "iam_managed_disableServiceAccountKeyCreation" {
@@ -382,6 +382,8 @@ resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
   "INTERNAL"
   "bigquery.googleapis.com",
   "dataproc.googleapis.com"
+  "in:eu-locations",
+  "in:us-locations"
   "serviceAccount:service-org-123456789@gcp-sa-csc-hpsa.iam.gserviceaccount.com",
   "serviceAccount:service-org-123456789@gcp-sa-dspm-hpsa.iam.gserviceaccount.com",
   "serviceAccount:service-org-123456789@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
@@ -397,11 +399,13 @@ resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
 ]
 ]
 ]
+]
 allowed-api-key-services = [
 allowed-bucket-retention-seconds = [
 allowed-policy-member-principal-sets = [
 allowed-policy-member-subjects = [
 allowed-protocol-forwarding-schemes = [
+allowed-resource-locations = [
 billing-account-infra = "01AA-BB-CC"
 cis-api-key-services = true
 cis-block-project-ssh-keys = true
