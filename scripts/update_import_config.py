@@ -688,6 +688,15 @@ KIND_OVERRIDES = {
 # bindings/members/policies and audit configs (IAM_POLICY on the parent),
 # organization-policy v1 shapes, and pure provider constructs. They keep
 # TODO/UNKNOWN on purpose and are reported as "no CAI shape".
+# Terraform types satz resolves through a DEDICATED API rather than Cloud Asset
+# Inventory. They keep TODO/UNKNOWN for the same reason as NOT_A_CAI_RESOURCE
+# below, but the reason differs and is worth saying: an asset type here would be
+# data claiming a lookup path the code does not take.
+RESOLVED_BY_OWN_API = {
+    # src/adopt.rs -> src/gcp/billing.rs: budgets come from the Billing API.
+    "google_billing_budget": "no CAI shape (resolved through the Billing API)",
+}
+
 NOT_A_CAI_RESOURCE = re.compile(
     r"_(iam_(member|binding|policy|audit_config)|organization_policy|service_identity|default_service_accounts|usage_export_bucket)$"
 )
@@ -711,6 +720,8 @@ def camel(tokens: list[str]) -> str:
 
 def derive(tf_type: str, cai: set[str]) -> tuple[str | None, str]:
     """(asset_type, reason). Exact hits only; the reason names why not."""
+    if tf_type in RESOLVED_BY_OWN_API:
+        return None, RESOLVED_BY_OWN_API[tf_type]
     if NOT_A_CAI_RESOURCE.search(tf_type):
         return None, "no CAI shape (policy or provider construct)"
     kind = KIND_OVERRIDES.get(tf_type, "?")

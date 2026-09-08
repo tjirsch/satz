@@ -61,9 +61,6 @@ google_folder {
 }
 ```
 
-**Required from the estate:** `customer_organization_id`, `billing_account_infra`,
-`customer_shortname`, `default_region`
-
 **Overridable defaults** (names are derived from `customer_shortname`, so they are
 globally unique without overrides):
 
@@ -110,9 +107,6 @@ metrics with alert policies — covering the whole organization. Multi-resource-
 ```
 use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_central_bucket_project
 ```
-
-**Required from the estate:** `customer_organization_id`, `customer_domain`,
-`customer_shortname`, `default_region`
 
 **Overridable defaults:**
 
@@ -231,8 +225,6 @@ not from where the `use` sits):
 use "presets/monitoring/project-cis-log-alerts.satz" when cis_alert_project
 ```
 
-**Required from the estate:** `customer_domain`, `infra_project_name`
-
 **Overridable defaults:**
 
 | Param | Default | Meaning |
@@ -328,9 +320,6 @@ To adopt groups (and their declared members) that already exist in the tenant, r
 `--execute` writes the verified ids back as `"import-id"`. Members not declared in the
 estate stay unmanaged.
 
-**Required from the estate:** `customer_domain`, `first_admin`, `svc_iac_account`,
-`infra_project_name`
-
 **Overridable defaults:** the five `gcp_*_name` group names
 (`gcp_organization_admins_name`, `gcp_project_admins_name`, `gcp_security_admins_name`,
 `gcp_security_viewers_name`, `gcp_billing_admins_name`).
@@ -348,8 +337,6 @@ no remediation rights (`roles/viewer`, `iam.securityReviewer`,
 ```
 use "presets/security-audit/sa-security-audit.satz"
 ```
-
-**Required from the estate:** `customer_domain`, `first_admin`
 
 **Overridable defaults:**
 
@@ -535,8 +522,6 @@ google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
 satz adopt C0example.satz --only google_org_policy_policy --activate --execute --import
 ```
 
-**Required from the estate:** `customer_organization_id`, `customer_id`, `customer_domain`
-
 ## billing-account-permissions.satz
 
 Billing-account IAM, split by audience: everyone in the domain gets
@@ -548,18 +533,12 @@ the IaC service account keeps `billing.admin`. Declares its own
 
 **Use** (root level): `use "presets/billing-account-permissions.satz"`
 
-**Required from the estate:** `billing_account_infra`, `customer_domain`,
-`svc_iac_account`, `infra_project_name`; override `billing_admins_group` for a
-group outside the s1 naming.
-
 ## organization-budget.satz
 
 A global budget (1000 EUR, thresholds at 50/80/100% of current spend) on the infra
 billing account (declares its own `google_billing_budget` map).
 
 **Use** (root level): `use "presets/organization-budget.satz"`
-
-**Required from the estate:** `billing_account_infra`
 
 **Notes:** contains a placeholder `"import-id"` for adopting an existing budget — remove
 it for a fresh budget, or replace it with the real budget id (`satz adopt` cannot resolve
@@ -576,8 +555,6 @@ A content pack: use it inside the resource map.
 ```
 google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }
 ```
-
-**Required from the estate:** `customer_organization_id`, `customer_domain`
 
 **Overridable defaults:**
 
@@ -609,9 +586,6 @@ use "presets/integrations/microsoft-defender-for-cloud.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
 use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
 ```
-
-**Required from the estate:** `customer_organization_id`. The management project takes
-`billing_account_infra` unless the estate sets `billing_account` on it.
 
 **Params:** `mdc_workload_pool_id` (the customer's Entra tenant id without dashes — that is
 what Microsoft's wizard uses as the pool id), `mdc_mgmt_project_id`, `mdc_plan_cspm`, and

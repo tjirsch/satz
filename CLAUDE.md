@@ -139,6 +139,16 @@ and in the maintainer's notes. Nothing in this file names a customer.
   Run it locally before a docs PR: `uv run --with markdown
   scripts/build-site.py _site` and open `_site/index.html`. `satz open-readme`
   and the post-install step open that site.
+- **A decision that was not obvious gets an ADR.** `docs/adr/`, MADR form, one
+  file per decision, numbered and never renumbered: the context, the options with
+  their real trade-offs, what was chosen and what it costs. The bar is "would
+  reversing this be expensive, or would a reader ask why on earth" — most changes
+  are neither. A commit message explains one change to whoever reads that commit;
+  an ADR answers the same question months later, when the alternative has started
+  to look attractive again, which is how decisions here got re-proposed after the
+  reasoning was lost. A superseded record stays, with its status changed and its
+  successor named. These pages are not on the site: `build-site.py` reads
+  `docs/*.md` only, so a record implies no navigation decision.
 - **Docs are derived from the parser, not from intent.** Every example in
   `docs/language.md` compiles; where the doc and the parser disagree, the
   parser is right and the doc is a bug.
@@ -148,7 +158,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   titles are the one exception: they stay lowercase (`# satz language`), being
   the site's identity line rather than prose.
 
-## Language state (v0, satz v0.46.48)
+## Language state (v0)
 
 - The fragment pipeline parses Satz directly: per-file fragments, the ⊕ fold
   (same address, different body = hard error naming both files), schema-typed
