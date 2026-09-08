@@ -470,6 +470,22 @@ overwriting it destroys the only record of where the fork branched.
   from later reading as a customer fork.
 - **`check-presets` answers "am I behind?" directly** — it prints the local and
   upstream version and a STALE verdict.
+- **A pack that ADDS org policies may add ones Google already set.** The apply then
+  fails with `already exists` on exactly those, because the organisation has the
+  constraint and the state does not. Adopt them before applying:
+
+  ```bash
+  satz adopt <estate>.satz --only google_org_policy_policy            # read the table
+  satz adopt <estate>.satz --only google_org_policy_policy --execute --import
+  satz plan
+  ```
+
+  The dry run consults the state, so an address the state already manages reads
+  `already managed in the state — skipped` and the summary counts it separately.
+  On one organisation that was the difference between "25 to import" and the three
+  that were actually failing the apply. A state that cannot be read is a note on the
+  dry run — a first adopt has none — and a hard error on `--execute --import`, where
+  every import would fail the same way.
 
 ### When upstream stops answering: the GitHub quota
 

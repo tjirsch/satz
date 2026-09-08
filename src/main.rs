@@ -2847,14 +2847,38 @@ async fn run_adopt(
     let mut live = adopt::RealLive::new(&out.customer_id).await?;
     let resolutions = adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
 
+    // What the state already manages, read ONCE and used by both halves of the
+    // command. The dry run has to know it: `--execute --import` skips those
+    // addresses, so a table that ranks them as "IMPORT" describes a run that
+    // will not happen.
+    //
+    // Unreadable here is a NOTE, never a failure — a first adopt has no state,
+    // and refusing to describe the estate because of that would be refusing the
+    // only thing a dry run is for. The import path below still fails fast,
+    // because there the imports really would all fail the same way.
+    let state = crate::bootstrap::state_addresses(
+        &runtime_config.tf_tool,
+        Path::new(&runtime_config.hcl_dir),
+    );
+    let in_state = state.clone().unwrap_or_default();
+
     println!("\nadopt {} — {} resources declared\n", input_path.display(), out.manifest.resources.len());
-    print!("{}", adopt::render_table(&resolutions));
-    println!("\n{}", adopt::summary(&resolutions));
+    print!("{}", adopt::render_table(&resolutions, &in_state));
+    println!("\n{}", adopt::summary(&resolutions, &in_state));
+    if let Err(e) = &state {
+        println!(
+            "\nnote: the state could not be read ({}), so nothing below is marked as already \
+             managed — run `{} init` in {} for the full picture",
+            e.lines().next().unwrap_or("(no output)"),
+            runtime_config.tf_tool,
+            runtime_config.hcl_dir
+        );
+    }
 
     // A table with a FAILED / unresolvable / ambiguous / no-rule row did not
     // answer its question: that is an error exit, not a summary count. The
     // table is above; nothing has been changed at this point.
-    let unanswered = adopt::unanswered(&resolutions);
+    let unanswered = adopt::unanswered(&resolutions, &in_state);
     if unanswered > 0 {
         return Err(format!(
             "adopt: {} resolution(s) failed, unresolvable, ambiguous or without a rule — see the rows above; nothing was changed",
@@ -2877,21 +2901,21 @@ async fn run_adopt(
         // E04: with no "import-id" in the estate every resolvable resource
         // counts as "to import", and a re-run then issued `tofu import` for
         // addresses the state already manages (17/18 once) — noisy, slow, and
-        // each a needless state write. Read the state once and skip those.
+        // each a needless state write. The read above already has them.
         // A FIRST adopt is fine: an initialized empty state lists nothing and
         // errors nothing. An UNREADABLE state (uninitialized dir, changed
         // backend) means every import below would fail the same way — so this
-        // fails fast with the fix instead of printing it 117 times.
-        let in_state = crate::bootstrap::state_addresses(&runtime_config.tf_tool, hcl_dir)
-            .map_err(|e| {
-                format!(
-                    "could not read the state ({}) — the imports would fail the same way; run `{} init` \
-                     (or `init -reconfigure` after a backend change) in {} first",
-                    e.lines().next().unwrap_or("(no output)"),
-                    runtime_config.tf_tool,
-                    runtime_config.hcl_dir
-                )
-            })?;
+        // fails fast with the fix instead of printing it 117 times. The dry run
+        // above only noted it, because describing an estate needs no state.
+        let in_state = state.map_err(|e| {
+            format!(
+                "could not read the state ({}) — the imports would fail the same way; run `{} init` \
+                 (or `init -reconfigure` after a backend change) in {} first",
+                e.lines().next().unwrap_or("(no output)"),
+                runtime_config.tf_tool,
+                runtime_config.hcl_dir
+            )
+        })?;
         // activation posts the DECLARED spec — parameterized managed
         // constraints (allowedContactDomains, allowedPolicyMembers) require
         // their `parameters` and reject a synthesized enforce-only rule
