@@ -82,7 +82,7 @@ one.
 | `satz_transpile_check` | `read` | compiles in memory and reports what it *would* emit — writes nothing |
 | `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
 | `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration |
-| `satz_whoami` | `read` | which identity, credential type and quota project the ADC resolve to — the first thing to check when a live call is refused |
+| `satz_whoami` | `read` | both halves of the identity — the ADC account and the open estate's service account — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable. The first thing to check when a live call is refused |
 | `satz_transpile` | `write` | compiles the estate to OpenTofu HCL in `hcl_dir` |
 | `satz_restrict` | — | lowers this session's level; only with `--self-gated` |
 

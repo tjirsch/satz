@@ -183,7 +183,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated` — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Seven tools, each returning structured content with a published output schema and annotated so a client knows what is safe to run unattended. satz never calls a model; this is the other direction. See [docs/mcp.md](docs/mcp.md) |
-| `whoami [INPUT]` | `--offline` — print which identity, credential type and quota project the ADC resolves to; with an estate, the identity THAT estate's live commands run as |
+| `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and (with an estate) the service account that estate's live commands run as, checked — may this credential become it, and is the quota project reachable |
 
 Details for each command are below.
 
@@ -1442,6 +1442,18 @@ satz whoami e.satz   # who that estate's live commands run as
 `CLOUDSDK_CONFIG` alone is not enough: gcloud reads it, satz and `tofu` do not.
 satz used to honour it when *reporting* and not when *minting*, which meant
 `whoami` could name a credential no API call ever used.
+
+**It reports both halves, and checks them.** The ADC account is who you are to
+Google; the estate's service account is who satz then acts as, and after init that
+is what every read and write runs as. `whoami <estate>` prints both, and — online
+— makes the two calls that decide whether the next command will work at all: one
+`generateAccessToken` to see whether this credential may become that service
+account (the token is discarded), and one `projects.get` on the quota project. A
+quota project the credentials cannot reach is the trap worth naming: it is
+accepted by everything that merely prints it, then fails every API call with
+`UserProjectInvalid` or "cannot create the authentication headers", naming neither
+the project nor the fix. Every live command now checks it once and refuses early;
+`whoami` reports it and exits non-zero.
 
 **If your ADC already impersonates** — `gcloud auth application-default login
 --impersonate-service-account` — satz uses it as-is when it names the estate's own

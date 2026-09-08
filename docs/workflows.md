@@ -90,8 +90,19 @@ instead of as a downstream 403. `satz whoami` is the explicit check (`--offline`
 the file-only view; a user ADC file stores no identity, so the online form resolves
 it via token introspection). `satz whoami <estate>` answers the other question — the
 identity that estate's live commands actually run as, which on a cloud-mode estate is
-its IaC service account and not you. It reads the estate file alone, so it needs
-neither a network nor the right to impersonate yet.
+its IaC service account and not you. Both halves print together, because a live
+command uses both, and online it CHECKS them: one `generateAccessToken` (token
+discarded) for whether this credential may become that account, and one
+`projects.get` for whether the quota project is reachable. `--offline` reads the
+estate file alone and says the checks were not made rather than implying they
+passed.
+
+**The quota-project trap.** An ADC carrying a quota project the caller cannot see —
+a typo of the real one — is accepted by everything that only prints it, and then
+fails every API call with `UserProjectInvalid`, or `report-compliance` with "live
+inventory unavailable". Live commands now check it once, before the work, and refuse
+with the project named and `gcloud auth application-default set-quota-project
+<infra_project_name>` as the fix.
 
 **Impersonation.** On a `deployment_mode = "cloud"` estate, every live command
 impersonates the estate's IaC service account

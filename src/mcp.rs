@@ -843,10 +843,12 @@ impl SatzMcp {
     #[tool(
         name = "satz_whoami",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::gcp::identity::WhoamiReport>(),
-        description = "Which identity, credential type and quota project the Application Default \
-                       Credentials resolve to. The first thing to check when a live call is refused. \
-                       Pass `estate` to be told the identity THAT estate's live tools run as — a \
-                       cloud-mode estate answers with its IaC service account, not with the human.",
+        description = "BOTH halves of the identity: the Application Default Credentials account \
+                       and its file, and the service account the open estate's live tools actually \
+                       run as. Online it also CHECKS them — whether this credential may become that \
+                       service account, and whether the quota project is reachable — so a refused \
+                       live call is explained here rather than guessed at. The first thing to check \
+                       when anything live fails.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
     )]
     async fn whoami(
