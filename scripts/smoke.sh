@@ -529,7 +529,13 @@ GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" whoami --offline > tm
   || fail "whoami --offline failed on a valid impersonated-SA ADC:\n$(cat tmp/who2.txt)"
 grep -q 'svc-iac@acme-infra-001' tmp/who2.txt || fail "impersonation target not shown:\n$(cat tmp/who2.txt)"
 grep -q 'impersonated service account' tmp/who2.txt || fail "credential type not shown:\n$(cat tmp/who2.txt)"
-grep -q 'quota project acme-infra-001' tmp/who2.txt || fail "quota project not shown:\n$(cat tmp/who2.txt)"
+grep -q 'quota project: acme-infra-001' tmp/who2.txt || fail "quota project not shown:\n$(cat tmp/who2.txt)"
+# BOTH halves, always. Reporting the ADC and stopping is what cost two orgs a
+# round-trip: the credential was fine and the thing that was broken — the account
+# it must become, the project it bills — was not on screen.
+grep -q '^runs as:' tmp/who2.txt || fail "the identity the estate runs as is not reported:\n$(cat tmp/who2.txt)"
+grep -q 'not checked (--offline)' tmp/who2.txt \
+  || fail "--offline must say the live checks were not made, never imply they passed:\n$(cat tmp/who2.txt)"
 
 step "whoami <estate>: the command answers the question only the MCP tool could"
 # An estate turns "who is the human" into "who does this estate act as", answered
@@ -551,8 +557,10 @@ params {
 EOF
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami identity-whoami.satz --offline > tmp/who3.txt 2>&1 \
   || fail "whoami <estate> failed without credentials, but it reads the estate file only:\n$(cat tmp/who3.txt)"
-grep -q 'svc-iac-001@acme-infra-001' tmp/who3.txt || fail "whoami <estate> did not name the estate's service account:\n$(cat tmp/who3.txt)"
-grep -q 'impersonated service account' tmp/who3.txt || fail "whoami <estate> did not name the credential type:\n$(cat tmp/who3.txt)"
+grep -q '^runs as: *svc-iac-001@acme-infra-001' tmp/who3.txt \
+  || fail "whoami <estate> did not name the estate's service account:\n$(cat tmp/who3.txt)"
+grep -q 'not checked (--offline)' tmp/who3.txt \
+  || fail "whoami <estate> --offline must not imply the impersonation check passed:\n$(cat tmp/who3.txt)"
 # A local-mode estate impersonates nothing, so the answer is the human again.
 GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" --config . whoami smoke.satz --offline > tmp/who4.txt 2>&1 \
   || fail "whoami on a local-mode estate failed:\n$(cat tmp/who4.txt)"
@@ -809,8 +817,14 @@ for open_id, who_id, want in ((20, 21, "acme"), (22, 23, "bolt"), (24, 25, "acme
 
     who = msgs[who_id]["result"]
     assert not who.get("isError"), f"whoami after opening {want} was refused: {who}"
-    assert who["structuredContent"]["email"] == sa, who
-    assert who["structuredContent"]["kind"] == "impersonated-sa", who
+    # BOTH halves: the estate's service account is what the tools RUN as, and the
+    # ADC is the credential that becomes it. Reporting only one is what this
+    # report shape exists to prevent.
+    reported = who["structuredContent"]
+    assert reported["estate"]["service_account"] == sa, reported
+    assert "adc" in reported and "kind" in reported["adc"], reported
+    # Offline: the checks were not made, and must not be reported as passed.
+    assert reported["estate"]["may_impersonate"] is None, reported
 PYEOF
 
 step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"

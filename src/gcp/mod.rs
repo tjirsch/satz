@@ -112,18 +112,71 @@ pub(crate) fn impersonation_target() -> Option<String> {
 /// print the credential line exactly once, before the first API call, without
 /// any command knowing about it.
 pub(crate) async fn access_token() -> Result<String, String> {
-    use google_cloud_auth::credentials::Builder;
-    let credentials = Builder::default()
-        .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
-        .build_access_token_credentials()
-        .map_err(|e| e.to_string())?;
-    let base = credentials.access_token().await.map_err(|e| e.to_string())?.token;
+    let base = base_access_token().await?;
+    ensure_quota_project(&base).await?;
     let token = match plan_impersonation(adc_impersonation_target().as_deref(), impersonation_target().as_deref())? {
         Exchange::UseBase => base,
         Exchange::Mint(sa) => impersonated_token(&base, &sa).await?,
     };
     identity::announce(&token).await;
     Ok(token)
+}
+
+/// The credential's OWN token, before any estate exchange.
+///
+/// `whoami` needs it to answer both halves: who you logged in as is a question
+/// about the base credential, and the impersonation check has to be made AS that
+/// credential — asking the estate's account whether it may impersonate itself
+/// answers a different question.
+pub(crate) async fn base_access_token() -> Result<String, String> {
+    use google_cloud_auth::credentials::Builder;
+    let credentials = Builder::default()
+        .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
+        .build_access_token_credentials()
+        .map_err(|e| e.to_string())?;
+    Ok(credentials.access_token().await.map_err(|e| e.to_string())?.token)
+}
+
+/// A quota project nothing can reach fails EVERY api call, later and less
+/// clearly — `UserProjectInvalid`, or "cannot create the authentication
+/// headers", naming neither the project nor the fix. Checked once, here, where
+/// every live command mints, so the failure arrives before the work instead of
+/// during it.
+///
+/// Verified once per process: on success it is never re-checked, and on failure
+/// every attempt fails, which is what a wrong quota project deserves.
+static QUOTA_OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+async fn ensure_quota_project(base: &str) -> Result<(), String> {
+    if QUOTA_OK.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(());
+    }
+    let Some(id) = crate::org_policy::resolve_quota_project() else {
+        QUOTA_OK.store(true, std::sync::atomic::Ordering::Relaxed);
+        return Ok(());
+    };
+    // The estate's own infra project is the right answer in every estate, so
+    // name it rather than telling the operator to think of one.
+    let bound = impersonation_target();
+    let suggest = bound.as_deref().and_then(identity::project_of);
+    identity::check_quota_project(base, &id, suggest).await?;
+    QUOTA_OK.store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// Whether this credential may act as `sa`: one `generateAccessToken`, the token
+/// discarded.
+///
+/// It is the very call every live command makes after init, so a failure here is
+/// exactly the failure that command would hit — reported once, by name, instead
+/// of as the first denied API call somewhere downstream.
+pub(crate) async fn may_impersonate(base: &str, sa: &str) -> Result<(), String> {
+    // Already that account: it does not need to impersonate itself, and asking
+    // would report a 403 that means nothing.
+    if adc_impersonation_target().as_deref() == Some(sa) {
+        return Ok(());
+    }
+    impersonated_token(base, sa).await.map(|_| ())
 }
 
 /// What the token path has to do to end up acting as the estate's account.

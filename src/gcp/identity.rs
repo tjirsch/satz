@@ -139,23 +139,85 @@ pub(crate) fn mark_announced() {
     ANNOUNCED.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// `satz whoami [--offline]`: the explicit check that the ADC is the account
-/// you think it is — the one-line answer to a fleet of per-customer logins.
+/// `satz whoami [--offline]`: the explicit check that the ADC is the account you
+/// think it is — the one-line answer to a fleet of per-customer logins.
+///
+/// BOTH halves, because a live command uses both. The ADC is who you are to
+/// Google; the estate's service account is who satz then acts as, and after init
+/// that is what every read and write runs as. Reporting only the first cost a
+/// round-trip on two organisations: the answer looked right and the next command
+/// failed for a reason the line did not mention.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct Credential {
+    /// Absent for a user ADC file read offline: the file stores no identity.
+    pub account: Option<String>,
+    /// user-adc | impersonated-sa | sa-key | unknown
+    pub kind: &'static str,
+    pub file: Option<String>,
+}
+
+/// The identity an estate's live calls run as, and whether this credential may
+/// actually become it.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct EstateIdentity {
+    pub service_account: String,
+    /// `None` when not checked (offline). Checked with one `generateAccessToken`
+    /// whose token is discarded — the same call every live command makes, so a
+    /// failure here is the failure that command would hit.
+    pub may_impersonate: Option<bool>,
+    pub error: Option<String>,
+}
+
+/// The project every API call is billed and quota'd against.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct QuotaProject {
+    pub id: String,
+    /// `None` when not checked (offline).
+    pub reachable: Option<bool>,
+    pub error: Option<String>,
+}
+
 /// Who the credentials say we are, as data.
 ///
 /// The `note` is the one thing the human line carries that the fields do not: a
 /// user ADC file stores no identity, so `--offline` cannot answer the question it
-/// was asked, and saying so is more useful than an empty email.
+/// was asked, and saying so is more useful than an empty account.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct WhoamiReport {
-    pub email: Option<String>,
-    /// user-adc | impersonated-sa | sa-key | unknown
-    pub kind: &'static str,
-    pub quota_project: Option<String>,
-    pub adc_file: Option<String>,
+    pub adc: Credential,
+    /// Absent when no estate is in play — then the ADC identity is the answer.
+    pub estate: Option<EstateIdentity>,
+    pub quota_project: Option<QuotaProject>,
     /// true when the answer came from the file alone, without minting a token
     pub offline: bool,
     pub note: Option<String>,
+}
+
+/// Whether the credential can reach the project it names as its quota project.
+///
+/// The trap this exists for: an ADC file carrying a quota project the user
+/// cannot see — a typo of the real one — is accepted by everything that merely
+/// PRINTS it, and then fails every API call with `UserProjectInvalid`, or with
+/// "cannot create the authentication headers", naming neither the project nor
+/// the fix. Two organisations lost a round-trip to it.
+pub(crate) async fn check_quota_project(
+    token: &str,
+    project: &str,
+    suggest: Option<&str>,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let fix = format!(
+        "run `gcloud auth application-default set-quota-project {}`",
+        suggest.unwrap_or("<the estate's infra_project_name>")
+    );
+    match crate::gcp::resourcemanager::get_project_number(&client, token, project).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(format!(
+            "quota project {}: not accessible to these credentials (or does not exist) — {}",
+            project, fix
+        )),
+        Err(e) => Err(format!("quota project {}: {} — {}", project, e, fix)),
+    }
 }
 
 /// The answer to "who am I", resolved ONCE for both surfaces.
@@ -164,44 +226,55 @@ pub(crate) struct WhoamiReport {
 /// they drifted: only the tool knew that a bound estate changes the answer, so
 /// `satz whoami` could not be asked the question the tool could answer. One
 /// resolver, two renderings — the divergence cannot come back.
-///
-/// Returns the credential and the one thing the fields cannot say for
-/// themselves.
-async fn resolve_whoami(
-    offline: bool,
-) -> Result<(CredentialInfo, Option<String>), Box<dyn std::error::Error>> {
-    // When the process is bound to an estate, the honest answer is the identity
-    // the live calls RUN as — the estate's IaC service account — not the human
-    // behind it. Known without a network, so it answers `--offline` too.
-    if let Some(sa) = crate::gcp::impersonation_target() {
-        return Ok((
-            CredentialInfo {
-                email: Some(sa),
-                kind: CredKind::ImpersonatedSa,
-                quota_project: crate::org_policy::resolve_quota_project(),
-            },
-            Some(
-                "impersonated for this estate — the ADC file above is the human this \
-                 service account is reached through"
-                    .to_string(),
-            ),
-        ));
-    }
+pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
+    let file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
+    let kind_name = |k: &CredKind| match k {
+        CredKind::UserAdc => "user-adc",
+        CredKind::ImpersonatedSa => "impersonated-sa",
+        CredKind::SaKey => "sa-key",
+        CredKind::Unknown => "unknown",
+    };
+    let bound = crate::gcp::impersonation_target();
+    let quota = crate::org_policy::resolve_quota_project();
 
     if offline {
-        let Some(info) = credential_info_offline() else {
+        // The file alone: no token, so neither check can run, and saying "not
+        // checked" is the honest answer rather than an optimistic one.
+        // With an estate in play there is still an answer without a credential —
+        // WHICH account this estate runs as is read off the estate, not off the
+        // ADC. Only when neither exists is there nothing to report.
+        let found = credential_info_offline();
+        if found.is_none() && bound.is_none() {
             return Err("no Application Default Credentials file found — run `gcloud auth \
                         application-default login`"
                 .into());
-        };
+        }
+        let info = found.unwrap_or(CredentialInfo {
+            email: None,
+            kind: CredKind::Unknown,
+            quota_project: None,
+        });
         let note = (info.email.is_none() && info.kind == CredKind::UserAdc).then(|| {
             "a user ADC file stores no identity — run without --offline to resolve it".to_string()
         });
-        return Ok((info, note));
+        return Ok(WhoamiReport {
+            adc: Credential { account: info.email, kind: kind_name(&info.kind), file },
+            estate: bound.map(|sa| EstateIdentity {
+                service_account: sa,
+                may_impersonate: None,
+                error: None,
+            }),
+            quota_project: quota.map(|id| QuotaProject { id, reachable: None, error: None }),
+            offline: true,
+            note,
+        });
     }
 
+    // The BASE credential, never the impersonated one: the question "who am I"
+    // is about the account you logged in as, and the estate half is reported
+    // beside it rather than in place of it.
     mark_announced();
-    let token = crate::gcp::access_token().await.map_err(|e| {
+    let token = crate::gcp::base_access_token().await.map_err(|e| {
         format!(
             "could not get an Application Default Credentials token ({}) — run `gcloud auth \
              application-default login`",
@@ -212,40 +285,131 @@ async fn resolve_whoami(
     if info.email.is_none() {
         return Err("could not determine the identity behind these credentials".into());
     }
-    Ok((info, None))
-}
 
-/// Resolve the identity without printing. `offline` reads the ADC file only.
-pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
-    let adc_file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
-    let (info, note) = resolve_whoami(offline).await?;
+    let quota_project = match quota {
+        None => None,
+        Some(id) => {
+            let checked = check_quota_project(&token, &id, bound.as_deref().and_then(project_of)).await;
+            Some(QuotaProject {
+                id,
+                reachable: Some(checked.is_ok()),
+                error: checked.err(),
+            })
+        }
+    };
+
+    let estate = match &bound {
+        None => None,
+        Some(sa) => {
+            let allowed = crate::gcp::may_impersonate(&token, sa).await;
+            Some(EstateIdentity {
+                service_account: sa.clone(),
+                may_impersonate: Some(allowed.is_ok()),
+                error: allowed.err(),
+            })
+        }
+    };
+
     Ok(WhoamiReport {
-        email: info.email,
-        kind: match info.kind {
-            CredKind::UserAdc => "user-adc",
-            CredKind::ImpersonatedSa => "impersonated-sa",
-            CredKind::SaKey => "sa-key",
-            CredKind::Unknown => "unknown",
-        },
-        quota_project: info.quota_project,
-        adc_file,
-        offline,
-        note,
+        adc: Credential { account: info.email, kind: kind_name(&info.kind), file },
+        estate,
+        quota_project,
+        offline: false,
+        note: None,
     })
 }
 
-/// The terminal rendering of `resolve_whoami` — the same answer `satz_whoami`
+/// The project an estate's service account lives in — the right answer to
+/// "which project should the quota project be", because it is the one the
+/// estate itself declares.
+pub(crate) fn project_of(sa: &str) -> Option<&str> {
+    sa.split_once('@')?.1.strip_suffix(".iam.gserviceaccount.com")
+}
+
+/// The terminal rendering of `whoami_report` — the same answer `satz_whoami`
 /// returns as data.
 pub(crate) async fn whoami(offline: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let (info, note) = resolve_whoami(offline).await?;
-    println!("{}", render_credential_line(&info));
-    if let Some(p) = crate::org_policy::adc_file_path() {
-        println!("adc file: {}", p.display());
-    }
-    if let Some(n) = note {
-        println!("note: {}", n);
+    let r = whoami_report(offline).await?;
+    println!("{}", render_whoami(&r));
+    // A credential that cannot become the estate's account, or a quota project
+    // nothing can reach, makes every later command fail. `whoami` is the command
+    // an operator runs to find that out, so it says so in its exit code too.
+    let broken = r.estate.as_ref().is_some_and(|e| e.may_impersonate == Some(false))
+        || r.quota_project.as_ref().is_some_and(|q| q.reachable == Some(false));
+    if broken {
+        return Err("the credentials cannot do what this estate needs — see above".into());
     }
     Ok(())
+}
+
+/// A Google API error carries its whole JSON body, which is fifteen lines of
+/// braces around one sentence. `whoami` exists to be READ, so the terminal gets
+/// the head and the tail — the tail is where satz appends the remedy — and the
+/// report keeps the error whole for anything that wants it.
+fn brief(msg: &str) -> String {
+    let flat = msg.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 240 {
+        return flat;
+    }
+    let head: String = flat.chars().take(110).collect();
+    let tail: String = flat.chars().skip(flat.chars().count().saturating_sub(110)).collect();
+    // Start the tail at a word, not mid-token: a cut inside a role name reads as
+    // a different role.
+    let tail = tail.split_once(' ').map_or(tail.as_str(), |(_, rest)| rest);
+    format!("{} […] {}", head.trim_end(), tail.trim_start())
+}
+
+/// Both halves, one block. The ADC line keeps the wording every live command
+/// prints, so the two are recognisably the same fact.
+pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
+    let kind = match r.adc.kind {
+        "user-adc" => "user ADC",
+        "impersonated-sa" => "impersonated service account",
+        "sa-key" => "service account key",
+        _ => "unknown credential type",
+    };
+    let mut out = format!(
+        "credentials: {} ({})",
+        r.adc.account.as_deref().unwrap_or("(identity unknown)"),
+        kind
+    );
+    if let Some(f) = &r.adc.file {
+        out.push_str(&format!("\nadc file:    {}", f));
+    }
+    match &r.estate {
+        None => out.push_str(
+            "\nruns as:     the credentials themselves — no estate, or a local-mode one",
+        ),
+        Some(e) => {
+            out.push_str(&format!("\nruns as:     {}", e.service_account));
+            match (e.may_impersonate, &e.error) {
+                (Some(true), _) => out.push_str(" — may impersonate"),
+                (Some(false), Some(why)) => {
+                    out.push_str(&format!("\n             CANNOT IMPERSONATE: {}", brief(why)))
+                }
+                (Some(false), None) => out.push_str(" — CANNOT IMPERSONATE"),
+                (None, _) => out.push_str(" — not checked (--offline)"),
+            }
+        }
+    }
+    match &r.quota_project {
+        None => out.push_str("\nquota project: none — API calls are billed to the caller's own"),
+        Some(q) => {
+            out.push_str(&format!("\nquota project: {}", q.id));
+            match (q.reachable, &q.error) {
+                (Some(true), _) => out.push_str(" — reachable"),
+                (Some(false), Some(why)) => {
+                    out.push_str(&format!("\n             UNREACHABLE: {}", brief(why)))
+                }
+                (Some(false), None) => out.push_str(" — UNREACHABLE"),
+                (None, _) => out.push_str(" — not checked (--offline)"),
+            }
+        }
+    }
+    if let Some(n) = &r.note {
+        out.push_str(&format!("\nnote: {}", n));
+    }
+    out
 }
 
 /// Everything `init --from-live` can derive from the ADC alone.
@@ -609,5 +773,112 @@ mod tests {
             render_credential_line(&unknown),
             "credentials: (identity unknown) (unknown credential type), no quota project"
         );
+    }
+}
+
+#[cfg(test)]
+mod whoami_render_tests {
+    //! `whoami` is the command an operator runs when something is already wrong,
+    //! so what it PRINTS is the feature. Two organisations lost a round-trip to a
+    //! line that reported the ADC and nothing else: the credential was fine, and
+    //! the thing that was broken — the account it has to become, the project it
+    //! bills — was not on screen.
+    use super::{Credential, EstateIdentity, QuotaProject, WhoamiReport, brief, project_of, render_whoami};
+
+    fn report() -> WhoamiReport {
+        WhoamiReport {
+            adc: Credential {
+                account: Some("person@example.com".into()),
+                kind: "user-adc",
+                file: Some("/adc.json".into()),
+            },
+            estate: None,
+            quota_project: None,
+            offline: false,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn both_halves_are_named_even_when_there_is_no_estate() {
+        let out = render_whoami(&report());
+        assert!(out.contains("person@example.com (user ADC)"), "{}", out);
+        assert!(out.contains("/adc.json"), "{}", out);
+        // Silence about the second half is what cost the round-trips: say that
+        // the credentials are the answer, rather than leaving the line out.
+        assert!(out.contains("runs as:"), "{}", out);
+        assert!(out.contains("quota project:"), "{}", out);
+    }
+
+    #[test]
+    fn a_credential_that_cannot_become_the_estate_says_so_loudly() {
+        let mut r = report();
+        r.estate = Some(EstateIdentity {
+            service_account: "svc-iac-001@acme-infra-001.iam.gserviceaccount.com".into(),
+            may_impersonate: Some(false),
+            error: Some("403 denied".into()),
+        });
+        let out = render_whoami(&r);
+        assert!(out.contains("CANNOT IMPERSONATE"), "{}", out);
+        assert!(out.contains("svc-iac-001@acme-infra-001"), "{}", out);
+        assert!(out.contains("403 denied"), "{}", out);
+    }
+
+    #[test]
+    fn an_unreachable_quota_project_says_so_loudly() {
+        let mut r = report();
+        r.quota_project = Some(QuotaProject {
+            id: "acme-infra-001".into(),
+            reachable: Some(false),
+            error: Some("not accessible — run `gcloud …`".into()),
+        });
+        let out = render_whoami(&r);
+        assert!(out.contains("UNREACHABLE"), "{}", out);
+        assert!(out.contains("acme-infra-001"), "{}", out);
+    }
+
+    /// `--offline` mints no token, so neither check can run. "not checked" is the
+    /// honest word; reporting them as fine would be the more useful-looking lie.
+    #[test]
+    fn offline_reports_the_checks_as_not_made() {
+        let mut r = report();
+        r.offline = true;
+        r.estate = Some(EstateIdentity {
+            service_account: "svc-iac-001@acme-infra-001.iam.gserviceaccount.com".into(),
+            may_impersonate: None,
+            error: None,
+        });
+        r.quota_project =
+            Some(QuotaProject { id: "acme-infra-001".into(), reachable: None, error: None });
+        let out = render_whoami(&r);
+        assert_eq!(out.matches("not checked (--offline)").count(), 2, "{}", out);
+        assert!(!out.contains("CANNOT"), "{}", out);
+        assert!(!out.contains("UNREACHABLE"), "{}", out);
+    }
+
+    /// The remedy satz appends is at the END of an API error, so a truncation
+    /// that keeps only the head throws away the useful half.
+    #[test]
+    fn shortening_an_api_error_keeps_the_remedy() {
+        let long = format!("cannot impersonate x ({} ) — run `gcloud auth foo`", "{\"error\": 1} ".repeat(60));
+        let short = brief(&long);
+        assert!(short.contains("cannot impersonate x"), "{}", short);
+        assert!(short.ends_with("run `gcloud auth foo`"), "{}", short);
+        assert!(short.contains("[…]"), "{}", short);
+        assert!(!short.contains('\n'), "{}", short);
+        // A short message is passed through, not padded with an elision.
+        assert_eq!(brief("plain and short"), "plain and short");
+    }
+
+    /// The suggested quota project is the estate's own infra project, read off
+    /// the service account rather than asked for.
+    #[test]
+    fn the_infra_project_is_read_off_the_service_account() {
+        assert_eq!(
+            project_of("svc-iac-001@acme-infra-001.iam.gserviceaccount.com"),
+            Some("acme-infra-001")
+        );
+        assert_eq!(project_of("person@example.com"), None);
+        assert_eq!(project_of("nonsense"), None);
     }
 }
