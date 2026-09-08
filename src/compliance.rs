@@ -589,6 +589,8 @@ pub(crate) fn require_report(
 
     let mut summary = RequireSummary::default();
     let mut controls = Vec::with_capacity(goals.len());
+    // `goals` is a BTreeMap, so its order is lexical on the id — see
+    // `control_order` for why that is the wrong order to print.
     for (id, goal) in &goals {
         let title = catalog.controls[id].title.clone();
         let mut row = ControlRow {
@@ -643,6 +645,7 @@ pub(crate) fn require_report(
         }
         controls.push(row);
     }
+    controls.sort_by_cached_key(|c| control_order(&c.id));
 
     Ok(RequireReport {
         catalog: catalog.catalog.clone(),
@@ -1173,6 +1176,31 @@ resource "google_org_policy_policy" "os_login" {
 // ---------------------------------------------------------------------------
 // Evidence report: claims × declared estate × LIVE estate
 // ---------------------------------------------------------------------------
+
+/// One segment of a control id, ordered the way a reader expects.
+///
+/// Numbers before text, so `4.1` sorts under a numeric scheme and `A.8.1` under
+/// an alphabetic one without the two interleaving.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum IdSeg {
+    Num(u64),
+    Text(String),
+}
+
+/// Sort key for a control id.
+///
+/// Ids are dotted and part-numeric, so plain lexical order puts 1.16 before 1.4
+/// and A.8.10 before A.8.2. Both reports are read top to bottom by someone
+/// checking a control off a list; a §1.16 sitting between §1.1 and §1.4 is wrong
+/// on every row of every report, which is why this is not cosmetic.
+pub(crate) fn control_order(id: &str) -> Vec<IdSeg> {
+    id.split('.')
+        .map(|seg| match seg.parse::<u64>() {
+            Ok(n) => IdSeg::Num(n),
+            Err(_) => IdSeg::Text(seg.to_string()),
+        })
+        .collect()
+}
 
 /// Live verification result for one witness address.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -1848,7 +1876,10 @@ pub(crate) async fn report_compliance_evidence(
     ));
 
     let mut json_rows = Vec::new();
-    for (id, goal) in &goals {
+    let mut ordered: Vec<&String> = goals.keys().collect();
+    ordered.sort_by_cached_key(|id| control_order(id));
+    for id in ordered {
+        let goal = &goals[id];
         let control = &catalog.controls[id];
         let (status, witness_cell, duty_cell) = match goal {
             // A disclosed deviation is the one status an auditor most needs to
@@ -2573,5 +2604,50 @@ mod witness_scope_tests {
         let sink = Manifest::parse("resource \"google_logging_organization_sink\" \"s\" {\n  name = \"audit\"\n  org_id = \"1\"\n}\n");
         let key = expected_key("google_logging_organization_sink.s", "name", WitnessScope::Organization, &sink.witness_attrs(), &sink, "1", &numbers).unwrap();
         assert_eq!(key, "organizations/1/sinks/audit");
+    }
+}
+
+#[cfg(test)]
+mod control_order_tests {
+    //! Both reports are read top to bottom by someone checking controls off a
+    //! list. `BTreeMap` gives lexical order on the id, which puts 1.16 between
+    //! 1.1 and 1.4 — wrong on every row, and most visible on the 93-row ISO
+    //! cross-walk where it was found.
+    use super::{IdSeg, control_order};
+
+    fn sorted(ids: &[&str]) -> Vec<String> {
+        let mut v: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
+        v.sort_by_cached_key(|id| control_order(id));
+        v
+    }
+
+    #[test]
+    fn a_dotted_id_sorts_by_number_not_by_character() {
+        assert_eq!(
+            sorted(&["1.16", "1.4", "1.1", "2.10", "2.2", "10.1"]),
+            ["1.1", "1.4", "1.16", "2.2", "2.10", "10.1"]
+        );
+    }
+
+    #[test]
+    fn an_alphabetic_scheme_sorts_the_same_way_within_its_letter() {
+        assert_eq!(
+            sorted(&["A.8.10", "A.8.2", "A.5.1", "A.8.1"]),
+            ["A.5.1", "A.8.1", "A.8.2", "A.8.10"]
+        );
+    }
+
+    /// Numbers before text, so two schemes in one catalog do not interleave.
+    #[test]
+    fn the_two_schemes_do_not_interleave() {
+        assert_eq!(sorted(&["A.5.1", "2.1", "1.1"]), ["1.1", "2.1", "A.5.1"]);
+        assert!(IdSeg::Num(9999) < IdSeg::Text("A".into()));
+    }
+
+    /// Ids of unequal depth: the shorter one comes first, because it is the
+    /// parent — 2 before 2.1, never after it.
+    #[test]
+    fn a_parent_precedes_its_children() {
+        assert_eq!(sorted(&["2.1", "2", "2.1.1"]), ["2", "2.1", "2.1.1"]);
     }
 }

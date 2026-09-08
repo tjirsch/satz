@@ -2,7 +2,7 @@
 
 The complete specification of Satz, the language an estate is written in.
 
-**Version:** v0, as implemented in `crates/satz-core/src/satz.rs` (satz v0.46.41).
+**Version:** v0, as implemented in `crates/satz-core/src/satz.rs`.
 This document is derived from the parser, not from intent: where the two
 disagree, the parser is right and this file is a bug. Every example below was
 compiled on 2026-08-24 and the HCL shown is what came out — or it is lifted from

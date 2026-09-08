@@ -2207,7 +2207,14 @@ fn import_state(
         let content = fsx::read_to_string(&path)?;
         serde_json::from_str(&content)?
     } else {
-        let out = std::process::Command::new(&tool_config.tf_tool).arg("show").arg("-json").output()?;
+        // Every other spawn sets this. Without it `satz import <state>` reads
+        // the state of whatever directory the operator happens to stand in —
+        // which is usually none, and the error names neither.
+        let out = std::process::Command::new(&tool_config.tf_tool)
+            .current_dir(&runtime_config.hcl_dir)
+            .arg("show")
+            .arg("-json")
+            .output()?;
         if !out.status.success() {
             return Err(format!("Failed to run {} show -json: {}", tool_config.tf_tool, String::from_utf8_lossy(&out.stderr)).into());
         }
