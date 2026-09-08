@@ -664,6 +664,11 @@ enum Commands {
         /// Write the plan here instead of stdout
         #[arg(long)]
         report: Option<PathBuf>,
+        /// Also print the estate delta the findings imply — `use` lines to add,
+        /// resources to bring under management, and what has nothing to edit.
+        /// Proposed only: satz never writes the estate or the cloud from a finding
+        #[arg(long)]
+        fix: bool,
     },
     /// Build the remediation dossier — the findings workbook minus the prose
     ///
@@ -1611,11 +1616,11 @@ Thumbs.db
             )
             .await
         }
-        Commands::Triage { framework, input, prowler, format, report } => {
+        Commands::Triage { framework, input, prowler, format, report, fix } => {
             let format = format.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json])?;
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
-            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, report)
+            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, report, fix)
         }
         Commands::RemediationPlan { framework, input, prowler, checkov, out } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);

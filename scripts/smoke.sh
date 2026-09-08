@@ -320,6 +320,18 @@ step "triage: Prowler FAILs sorted into buckets against the estate's claims"
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
 grep -q '^## B ·' tmp/triage.md || fail "no bucket headings"
 grep -q 'declared as `google_storage_bucket' tmp/triage.md || fail "the bucket finding was not matched to its declaring block:\n$(cat tmp/triage.md)"
+# --fix turns the buckets into the estate edit they imply. The delta goes to
+# STDOUT even when the table went to a file: it is what the operator acts on now.
+"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix > tmp/triage-fix.txt 2>/dev/null \
+  || fail "triage --fix failed:\n$(cat tmp/triage-fix.txt)"
+grep -q 'proposed estate delta' tmp/triage-fix.txt || fail "--fix printed no delta:\n$(cat tmp/triage-fix.txt)"
+# The buckets with nothing to edit are still reported — a list naming only the
+# actionable ones reads as "nothing else to do".
+grep -q 'nothing to edit for' tmp/triage-fix.txt \
+  || fail "--fix said nothing about the buckets that have no edit:\n$(cat tmp/triage-fix.txt)"
+# It proposes; it never writes. The estate must be byte-identical afterwards.
+cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" \
+  || fail "triage --fix modified the estate — it proposes, it does not apply"
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --report tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
 grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
 

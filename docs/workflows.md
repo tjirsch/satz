@@ -481,6 +481,12 @@ overwriting it destroys the only record of where the fork branched.
   replacement enforces the control throughout, so the moment between destroy and create
   is uneventful. An estate that already did the manual `-replace` sees the replace once
   more, and then never again.
+- **`triage --fix` turns findings into the estate edit they imply.** `use` lines for
+  bucket A (one per pack, with the controls each closes), the resources to bring under
+  management for bucket D, and — deliberately — a line saying what B, C and E have
+  *nothing* to edit and why. It proposes; it never writes the estate and never touches
+  the cloud. satz's answer to a finding stays on the source of truth, and a compliance
+  finding is not something to apply unread.
 - **A pack that ADDS org policies may add ones Google already set.** The apply then
   fails with `already exists` on exactly those, because the organisation has the
   constraint and the state does not. Adopt them before applying:

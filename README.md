@@ -170,7 +170,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
-| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims |
+| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report`, `--fix` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims; `--fix` adds the estate delta they imply (proposed, never written) |
 | `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out <dir>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[AI]` columns empty, Review dropdown) + `meta.json` under `evidence/plan/`; offline and deterministic (the dossier hash names the run) |
 
 **Tool**
