@@ -2255,6 +2255,108 @@ pub(crate) struct TriageRow {
     pub plan: String,
 }
 
+/// Pack name → the `use` path an estate writes for it.
+///
+/// A triage names the pack that would close a finding; an estate needs the line
+/// that pulls it in. Without this the operator is left translating a pack name
+/// into a path by hand, which is exactly the step where the wrong pack gets
+/// added.
+pub(crate) fn pack_use_paths(presets_dir: &str) -> BTreeMap<String, String> {
+    let root = PathBuf::from(presets_dir);
+    let mut out = BTreeMap::new();
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let name = path.to_string_lossy().to_string();
+            if !name.ends_with(".satz") || name.ends_with(".diff.satz") {
+                continue;
+            }
+            let Ok(src) = crate::fsx::read_to_string(&path) else { continue };
+            let Ok(file) = satz_core::satz::parse(&src) else { continue };
+            let Some(pack) = file.estate.clone() else { continue };
+            // The estate always writes `presets/…`, whatever the configured
+            // presets_dir resolves to on this machine.
+            let rel = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+            out.insert(pack, format!("presets/{}", rel));
+        }
+    }
+    out
+}
+
+/// The estate edit a triage implies — proposed, never applied.
+///
+/// satz's answer to a finding stays on the source of truth: it edits the estate,
+/// or it says plainly that there is nothing to edit. It never patches the cloud,
+/// and it does not write the estate either — the delta is small enough to read,
+/// and a compliance finding is not something to apply unread.
+pub(crate) fn fix_plan(rows: &[TriageRow], presets_dir: &str) -> String {
+    let paths = pack_use_paths(presets_dir);
+    let mut out = String::from("\nproposed estate delta\n=====================\n");
+
+    // A · a pack already covers it. One `use` line per pack, with the controls
+    // it closes, because the same pack usually answers several findings.
+    let mut by_pack: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for r in rows.iter().filter(|r| r.bucket == Bucket::A) {
+        // The plan sentence is "adopt `pack` or `pack`" — the pack names are the
+        // only part a delta can act on.
+        for pack in r.plan.split('`').skip(1).step_by(2) {
+            by_pack.entry(pack.to_string()).or_default().insert(r.control.clone());
+        }
+    }
+    if by_pack.is_empty() {
+        out.push_str("\nA · nothing to adopt.\n");
+    } else {
+        out.push_str("\nA · add to the estate — a pack in the library already covers these:\n\n");
+        for (pack, controls) in &by_pack {
+            let ids: Vec<&str> = controls.iter().map(String::as_str).collect();
+            match paths.get(pack) {
+                Some(path) => out.push_str(&format!("    use \"{}\"   // {}\n", path, ids.join(", "))),
+                // A pack the library named but this checkout does not have is a
+                // finding of its own, not a line to paste.
+                None => out.push_str(&format!(
+                    "    // {} covers {} but is not in this presets_dir — run `satz get-presets`\n",
+                    pack,
+                    ids.join(", ")
+                )),
+            }
+        }
+    }
+
+    // D · unmanaged but expressible. The resources, not a command to run blind.
+    let unmanaged: BTreeSet<&str> =
+        rows.iter().filter(|r| r.bucket == Bucket::D && !r.resource.is_empty()).map(|r| r.resource.as_str()).collect();
+    if unmanaged.is_empty() {
+        out.push_str("\nD · nothing unmanaged.\n");
+    } else {
+        out.push_str(&format!(
+            "\nD · bring under management ({} resource(s)) — `satz import <source> --into <estate>`,\n    then declare or generalise what it writes:\n\n",
+            unmanaged.len()
+        ));
+        for r in &unmanaged {
+            out.push_str(&format!("    {}\n", r));
+        }
+    }
+
+    // B, C and E have no edit — and saying so is the point. A fix list that
+    // silently omits three of five buckets reads as "nothing else to do".
+    let count = |b: Bucket| rows.iter().filter(|r| r.bucket == b).count();
+    out.push_str(&format!(
+        "\nnothing to edit for {} B finding(s) (declared already — check the live value, or the \
+         scanner disagrees), {} C (an accepted deviation — re-assess the reason, do not silence \
+         it) and {} E (a manual duty — do it, then record an attestation).\n",
+        count(Bucket::B),
+        count(Bucket::C),
+        count(Bucket::E)
+    ));
+    out
+}
+
 /// The bucket of one finding, from what the estate says about its control.
 pub(crate) fn bucket_for(goal: Option<&Goal>, status: &str, has_resource: bool) -> Bucket {
     if status == "MANUAL" {
@@ -2400,6 +2502,7 @@ pub(crate) fn triage_rows(
     Ok((catalog, rows))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_triage(
     framework: &str,
     presets_dir: &str,
@@ -2408,6 +2511,7 @@ pub(crate) fn run_triage(
     prowler_path: &Path,
     format: crate::OutFormat,
     report_path: Option<PathBuf>,
+    fix: bool,
 ) -> Result<(), BoxErr> {
     let (catalog, rows) = triage_rows(framework, presets_dir, included_claims, manifest, prowler_path)?;
 
@@ -2422,8 +2526,19 @@ pub(crate) fn run_triage(
             }
             crate::fsx::write(&p, &text)?;
             println!("Wrote {}", p.display());
+            if fix {
+                // To stdout even when the table went to a file: the delta is what
+                // the operator acts on now, and burying it in the report is how
+                // it goes unread.
+                println!("{}", fix_plan(&rows, presets_dir));
+            }
         }
-        None => print!("{}", text),
+        None => {
+            print!("{}", text);
+            if fix {
+                println!("{}", fix_plan(&rows, presets_dir));
+            }
+        }
     }
     let counts: BTreeMap<String, usize> = rows.iter().fold(BTreeMap::new(), |mut m, r| {
         *m.entry(format!("{:?}", r.bucket)).or_default() += 1;
@@ -2649,5 +2764,104 @@ mod control_order_tests {
     #[test]
     fn a_parent_precedes_its_children() {
         assert_eq!(sorted(&["2.1", "2", "2.1.1"]), ["2", "2.1", "2.1.1"]);
+    }
+}
+
+#[cfg(test)]
+mod fix_plan_tests {
+    //! The delta is what an operator acts on, so the two things that must never
+    //! happen are a `use` line for a pack that is not there, and silence about
+    //! the buckets that have nothing to edit — a list that names only A and D
+    //! reads as "nothing else to do".
+    use super::{Bucket, TriageRow, fix_plan, pack_use_paths};
+
+    fn presets() -> String {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("presets")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn row(bucket: Bucket, control: &str, plan: &str, resource: &str) -> TriageRow {
+        TriageRow {
+            bucket,
+            control: control.into(),
+            title: "t".into(),
+            check: "c".into(),
+            status: "FAIL".into(),
+            severity: "high".into(),
+            resource: resource.into(),
+            project: String::new(),
+            declared: None,
+            plan: plan.into(),
+        }
+    }
+
+    #[test]
+    fn a_pack_name_becomes_the_use_line_an_estate_writes() {
+        let paths = pack_use_paths(&presets());
+        assert_eq!(
+            paths.get("CIS_GCP_Foundation_4_0").map(String::as_str),
+            Some("presets/CIS-GCP-Foundation-4.0.satz"),
+            "the shipped baseline should resolve to its use path"
+        );
+    }
+
+    #[test]
+    fn bucket_a_emits_one_use_line_per_pack_with_the_controls_it_closes() {
+        let rows = vec![
+            row(Bucket::A, "1.14", "adopt `CIS_GCP_Foundation_4_0`", ""),
+            row(Bucket::A, "2.13", "adopt `CIS_GCP_Foundation_4_0`", ""),
+        ];
+        let out = fix_plan(&rows, &presets());
+        assert_eq!(
+            out.matches("presets/CIS-GCP-Foundation-4.0.satz").count(),
+            1,
+            "one pack, one line — not one per finding:\n{}",
+            out
+        );
+        assert!(out.contains("1.14, 2.13"), "the line does not say what it closes:\n{}", out);
+    }
+
+    /// A pack the library named but this checkout does not have is a finding of
+    /// its own. Emitting a `use` for it would be a line that does not compile.
+    #[test]
+    fn a_pack_that_is_not_installed_is_named_not_pasted() {
+        let rows = vec![row(Bucket::A, "9.9", "adopt `not_a_real_pack`", "")];
+        let out = fix_plan(&rows, &presets());
+        assert!(out.contains("not in this presets_dir"), "{}", out);
+        assert!(out.contains("get-presets"), "the remedy is not named:\n{}", out);
+        assert!(!out.contains("use \"presets/not_a_real_pack"), "{}", out);
+    }
+
+    #[test]
+    fn bucket_d_lists_the_resources_once_each() {
+        let rows = vec![
+            row(Bucket::D, "5.1", "", "//storage.googleapis.com/b1"),
+            row(Bucket::D, "5.2", "", "//storage.googleapis.com/b1"),
+            row(Bucket::D, "5.2", "", "//storage.googleapis.com/b2"),
+        ];
+        let out = fix_plan(&rows, &presets());
+        assert_eq!(out.matches("//storage.googleapis.com/b1").count(), 1, "{}", out);
+        assert!(out.contains("//storage.googleapis.com/b2"), "{}", out);
+        assert!(out.contains("import"), "the command to run is not named:\n{}", out);
+    }
+
+    /// B, C and E have no edit, and the plan says so with counts. Omitting them
+    /// would let a reader take "A · nothing to adopt" for "nothing to do".
+    #[test]
+    fn the_buckets_with_no_edit_are_still_reported() {
+        let rows = vec![
+            row(Bucket::B, "1.1", "", ""),
+            row(Bucket::C, "1.2", "", ""),
+            row(Bucket::E, "1.3", "", ""),
+            row(Bucket::E, "1.4", "", ""),
+        ];
+        let out = fix_plan(&rows, &presets());
+        assert!(out.contains("1 B finding(s)"), "{}", out);
+        assert!(out.contains("1 C"), "{}", out);
+        assert!(out.contains("2 E"), "{}", out);
+        assert!(out.contains("A · nothing to adopt"), "{}", out);
+        assert!(out.contains("D · nothing unmanaged"), "{}", out);
     }
 }
