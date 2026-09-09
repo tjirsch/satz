@@ -400,6 +400,15 @@ visible one-line overrides — never forks.
 | `essential_contacts_allowed_domains` | `[customer_domain]` | domains the Essential Contacts constraint allows — a LIST since v2.2 |
 | `allowed_resource_locations` | `["in:eu-locations", "in:us-locations"]` | `gcp.resourceLocations` (§2): where resources may be created. A param since v2.6 — the default is what the pack always emitted, so upgrading changes nothing; narrow it here instead of forking |
 
+**Questions (v2.7).** Ten of these are asked, not defaulted in silence: the seven opt-in
+controls (each can break a workload that was legitimate the day before) and the three
+lists that say where and who — `allowed_resource_locations`,
+`allowed_policy_member_principal_sets`, `allowed_policy_member_subjects`. An estate
+using the pack has to bind all ten before `bootstrap` or `transpile --apply` run;
+`satz interview <estate> --accept-defaults` binds every default in one pass, since none
+of the ten needs a typed value. The technical defaults (protocol-forwarding schemes,
+the contacts domain) are not decisions and are not asked. See [satz interview](../docs/interview.md).
+
 **The two lists must stay consistent**: a directory allowed by
 `allowed_policy_member_customers` needs its org in
 `allowed_policy_member_principal_sets` too, or grants to its members pass the first
@@ -865,6 +874,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.7 | 2026-09-10 | ten `question` blocks: the seven opt-in controls and the three lists a customer decides (locations, principal sets, subjects), each with the sentence that says what breaks when the answer is wrong. Nothing emitted changes; an estate using the pack has ten questions to answer before bootstrap or apply — all with defaults, so `satz interview --accept-defaults` settles them in one pass. Not asked: the protocol-forwarding schemes and the contacts domain, which are technical defaults rather than decisions |
 | `estate_core` | 1.0 | 2026-09-09 | first version: the seventeen day-0 params `satz init` writes, each with its `question` — what to ask, why, and what changing it later costs — plus the security-group model as two booleans and a `question oneof`. Emits nothing; exists so an interview (`satz interview --create`, the MCP tool `satz_interview`) has something to ask before an estate exists. Seven params have no possible default and block until typed; the rest offer one, and a derived default (`"{customer_shortname}-infra-001"`) is offered only once its inputs are answered |
 | `ci.verification_runner` | 1.0 | 2026-09-09 | first version: continuous verification as a pack. Two Cloud Build triggers in the hosting project — `satz-check` on every push (`transpile --check`) and `satz-compliance` nightly via Cloud Scheduler (`report-compliance --fail-on`) — plus the runner service account and its two project roles. Build steps are INLINE in the trigger, not a file in the watched repository, so control of the pipeline follows ownership of the service account; satz is installed at build time from the release (`ci_satz_release`, default `latest`). The runner never acts as itself — satz exchanges its identity for the estate's IaC account, which the companion grant pack permits. v1 reports through the exit code and log; no evidence write-back |
 | `ci.verification_runner_grant` | 1.0 | 2026-09-09 | first version: the one binding a verification runner needs — `roles/iam.serviceAccountTokenCreator` on the estate's IaC service account, and nothing on the organisation. Separate from the runner pack because in the MSP-hosted shape the two resources belong to two parties: the runner in the MSP's project, this grant on the customer's account, applied by the customer. Default names the runner pack's own account, so a customer-hosted estate using both wires nothing |
