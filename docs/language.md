@@ -1568,9 +1568,17 @@ control at partial. No estate in the fleet has one yet.
 
 **Evidence history.** Every run appends `evidence/<framework>-<timestamp>.json`
 beside the config — `estate`, `framework`, `version`, `live`, `live_status`,
-`warnings`, `verified_at`,
-and one row per control with `control`, `title`, `status`, `witnesses`,
-`duties`, `paraphrase`, `interpretation`, `prowler`, `checkov` — and writes
+`warnings`, `verified_at`, `estate_commit` (`sha` + `dirty`) — and one row per
+control with `control`, `title`, `status`, `responsibility`, `duties`,
+`paraphrase`, `interpretation`, `prowler`, `checkov` and `witnesses`, each of
+those an OBJECT: `address`, `state` (`verified` · `missing` · `diverged` ·
+`unverifiable` · `not-checked`), `live_id`, `detail` and `declared_at`
+(`file` + `line`). The report's witness column is markdown; the data carries
+none — an agent building an audit list is a first-class reader here, and it used
+to be handed the human's copy. `responsibility` is `inherited`, `customer`,
+`shared`, `satz-managed` or `unassigned` — the shared-responsibility split as a
+derived fact, not a written-up matrix; `unassigned` means nobody has taken the
+control yet, which is not the same as the customer's. — and writes
 the report (`evidence/<framework>-latest.md`, or `--format pdf`; `--format
 json` writes only the history entry, no markdown). `--prowler findings.json`
 ingests a Prowler export (OCSF or legacy JSON) as corroboration; `--checkov`

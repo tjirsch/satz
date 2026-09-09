@@ -98,6 +98,16 @@ run to an append-only evidence history — that history is the audit trail of a
 append, and the smoke matrix compares the evidence directory across the call to prove
 it.
 
+**The rows are data, not a rendered table.** Each witness is an object — address,
+live state, the id it matched, and `declared_at`, the `file:line` of the Satz that
+declares it. Each control carries a `responsibility` (`inherited` · `customer` ·
+`shared` · `satz-managed` · `unassigned`) and the report carries the estate's commit
+and whether the tree was dirty. That is deliberate: satz states facts and an agent
+authors the audit list, the spreadsheet or the remediation commands in whatever shape
+the engagement wants — so this tool's job is to be complete, not to be pretty.
+`declared_at` is the part no cloud-native compliance dashboard can offer: not "the
+organisation has this policy" but "here is the code that put it there, at this commit".
+
 **A report that verified nothing says so.** `live` is whether the inventory was
 actually READ, not whether it was asked for; `live_status` says which of the five
 outcomes it was — `verified`, `skipped` (`--no-live`), `no-organization-id`,

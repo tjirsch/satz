@@ -349,6 +349,27 @@ for f in ("live", "live_status", "warnings"):
 assert o["live"] is False, o["live"]
 assert o["live_status"] == "skipped", o["live_status"]
 assert o["warnings"] == [], o["warnings"]
+
+# The rows are DATA. An agent building an audit list is a first-class reader of
+# this report, and it used to be handed the rendered markdown column — `<br>`,
+# `<small>` and all — in the field it was supposed to consume.
+assert "estate_commit" in o, sorted(o)
+rows = o["rows"]
+assert all("responsibility" in r for r in rows), "a row carries no responsibility"
+assert {r["responsibility"] for r in rows} <= {
+    "inherited", "customer", "shared", "satz-managed", "unassigned"}, \
+    sorted({r["responsibility"] for r in rows})
+witnessed = [r for r in rows if r["witnesses"]]
+assert witnessed, "no row carries a witness"
+for r in witnessed:
+    for w in r["witnesses"]:
+        assert isinstance(w, dict), f"a witness is still a string: {w}"
+        assert {"address", "state", "declared_at"} <= set(w), sorted(w)
+assert "<br>" not in json.dumps([r["witnesses"] for r in rows]), \
+    "markup leaked into the witness data"
+# The link a cloud dashboard cannot make: control -> the line that declares it.
+assert any(w.get("declared_at") for r in witnessed for w in r["witnesses"]), \
+    "no witness names the Satz that declares it"
 PYEOF
 
 step "import-config: every derivable asset_type is filled (the CAI list is the source)"
