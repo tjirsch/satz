@@ -371,6 +371,13 @@ estate stay unmanaged.
 (`gcp_organization_admins_name`, `gcp_project_admins_name`, `gcp_security_admins_name`,
 `gcp_security_viewers_name`, `gcp_billing_admins_name`).
 
+**Questions (s1-group-definitions 1.3, s1-security-groups 1.1, s2-security-groups 1.1).**
+Every group name is asked, because a group's address is its identity: renaming one later
+is a new group, members moved by hand and roles re-granted. Each has its conventional
+default, so `satz interview <estate> --accept-defaults` settles a model in one pass. Which
+model — S1 or S2 — is the `security_model` choice in `estate-core.satz`, not a question
+in either model pack: a question that gates a pack cannot live in the pack it gates.
+
 ## security-audit/sa-security-audit.satz
 
 Read-only security-audit service account + impersonation group + org-level IAM in one
@@ -896,6 +903,9 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `s2_security_groups` | 1.1 | 2026-09-10 | six `question` blocks, one per group name — each a group's identity, so changing it later is a new group, moved members and re-granted roles. Nothing emitted changes |
+| `s1_security_groups` | 1.1 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |
+| `s1_group_definitions` | 1.3 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |
 | `ci.verification_runner` | 1.1 | 2026-09-10 | four `question` blocks — the hosting project, the watched estate's infra project, the repository name, the estate file: what the pack cannot know when an MSP hosts the runner. Schedule, time zone, region, catalog, fail-on and release stay technical defaults. Nothing emitted changes |
 | `ci.verification_runner_grant` | 1.1 | 2026-09-10 | one `question` block on the runner service account — the binding IS the pack, and a wrong address hands the estate to an account nobody meant. Nothing emitted changes |
 | `monitoring.organization_audit_logsink` | 1.3 | 2026-09-10 | four `question` blocks — the archive project, the bucket, its location, the retention — each with what changing it later costs (the first three are recreates; shortening the retention deletes what is already archived). Sink name and filter stay technical defaults, unasked. Nothing emitted changes |
