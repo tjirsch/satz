@@ -2891,7 +2891,7 @@ async fn run_adopt(
     // and refusing to describe the estate because of that would be refusing the
     // only thing a dry run is for. The import path below still fails fast,
     // because there the imports really would all fail the same way.
-    let state = crate::bootstrap::state_addresses(
+    let state = crate::bootstrap::state_index(
         &runtime_config.tf_tool,
         Path::new(&runtime_config.hcl_dir),
     );
@@ -2920,6 +2920,23 @@ async fn run_adopt(
             unanswered
         )
         .into());
+    }
+
+    // One live object with two declarations. A move would not resolve that —
+    // it would only change which of the two the next plan wants to create — so
+    // the run stops and names both ends. The estate has to drop one first.
+    let conflicts = adopt::move_conflicts(&resolutions, &in_state);
+    if !conflicts.is_empty() {
+        let mut msg =
+            String::from("adopt: the estate declares both ends of a state move; nothing was changed:\n");
+        for (new_address, old_address) in &conflicts {
+            msg.push_str(&format!(
+                "  {} is the same live object as {}, which the estate still declares\n",
+                new_address, old_address
+            ));
+        }
+        msg.push_str("  drop one of the two declarations, then re-run adopt");
+        return Err(msg.into());
     }
 
     if !execute {
@@ -2964,11 +2981,27 @@ async fn run_adopt(
             })
             .collect();
         let (mut activated, mut imported, mut failed) = (0usize, 0usize, 0usize);
-        let mut already_managed = 0usize;
+        let (mut already_managed, mut moved) = (0usize, 0usize);
         for r in &resolutions {
-            if in_state.contains(&r.address) {
+            if in_state.manages(&r.address) {
                 println!("  {:60} already managed in the state — skipped", r.address);
                 already_managed += 1;
+                continue;
+            }
+            // Before the outcome is read: the outcome says IMPORT, and for a
+            // renamed block importing is what puts one live object in the state
+            // twice. The object is already managed — only its name changed.
+            if let Some(old_address) = adopt::moved_from(r, &in_state) {
+                if crate::bootstrap::run_state_mv(
+                    &runtime_config.tf_tool,
+                    hcl_dir,
+                    old_address,
+                    &r.address,
+                ) {
+                    moved += 1;
+                } else {
+                    failed += 1;
+                }
                 continue;
             }
             let id = match &r.outcome {
@@ -3022,11 +3055,11 @@ async fn run_adopt(
             }
         }
         println!(
-            "\nadopt: {} activated, {} imported, {} already managed (skipped), {} failed. Now run `satz plan` — it should show no create for what was imported.",
-            activated, imported, already_managed, failed
+            "\nadopt: {} activated, {} imported, {} moved, {} already managed (skipped), {} failed. Now run `satz plan` — it should show no create for what was imported and no destroy for what was moved.",
+            activated, imported, moved, already_managed, failed
         );
         if failed > 0 {
-            return Err(format!("adopt: {} activation(s)/import(s) failed — see above", failed).into());
+            return Err(format!("adopt: {} activation(s)/import(s)/move(s) failed — see above", failed).into());
         }
     } else {
         let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)))?;
