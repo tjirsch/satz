@@ -840,6 +840,13 @@ Params and the `use` blocks: [docs/verification-runner.md](docs/verification-run
 the hosted shape: [docs/workflows.md](../docs/workflows.md#continuous-verification);
 the reasoning: [ADR 0004](../docs/adr/0004-the-verification-runner-is-a-pack-and-its-pipeline-is-inline.md).
 
+**Questions (runner 1.1, grant 1.1).** The runner asks where it lives (`ci_runner_project`),
+whose project it reads as (`ci_target_infra_project`), which repository and which file
+it watches (`ci_repo_name`, `ci_estate_file`); the grant asks which runner account may
+become the estate's (`ci_runner_service_account`). All five default to the customer-hosted
+shape, so an estate hosting its own runner accepts them; an MSP answers the project and
+the account. Schedule, time zone, catalog and release are technical defaults, unasked.
+
 ## catalogs/
 
 Compliance catalogs (`cis-gcp-4.0.yaml`, `cis-gcp-5.0.yaml`): control ids with this
@@ -889,6 +896,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `ci.verification_runner` | 1.1 | 2026-09-10 | four `question` blocks — the hosting project, the watched estate's infra project, the repository name, the estate file: what the pack cannot know when an MSP hosts the runner. Schedule, time zone, region, catalog, fail-on and release stay technical defaults. Nothing emitted changes |
+| `ci.verification_runner_grant` | 1.1 | 2026-09-10 | one `question` block on the runner service account — the binding IS the pack, and a wrong address hands the estate to an account nobody meant. Nothing emitted changes |
 | `monitoring.organization_audit_logsink` | 1.3 | 2026-09-10 | four `question` blocks — the archive project, the bucket, its location, the retention — each with what changing it later costs (the first three are recreates; shortening the retention deletes what is already archived). Sink name and filter stay technical defaults, unasked. Nothing emitted changes |
 | `monitoring.organization_cis_log_alerts_central` | 1.5 | 2026-09-10 | two `question` blocks: the alert mailbox (`cis_central_email` — a wrong one drops every alert silently) and the hosting project (`cis_central_bucket_project`, default the logsink pack's project by reference). Nothing emitted changes |
 | `project_cis_log_alerts` | 1.1 | 2026-09-10 | two `question` blocks: the one project this use watches, and the alert recipient's local part. Nothing emitted changes |

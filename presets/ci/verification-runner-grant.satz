@@ -16,13 +16,22 @@
 // — the default names its service account. With the runner elsewhere, set
 // ci_runner_service_account to that runner's email.
 
-pack ci.verification_runner_grant version "1.0"
+pack ci.verification_runner_grant version "1.1"
 
 params {
   // The runner that may become this estate's service account. Defaults to the
   // runner pack's account in the same project, so a customer-hosted estate using
   // both packs sets nothing; an MSP-hosted runner is named explicitly.
   ci_runner_service_account = "satz-runner@{ci_runner_project}.iam.gserviceaccount.com"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question ci_runner_service_account {
+  prompt   = "The runner service account that may become this estate's IaC account"
+  why      = "This binding is the whole pack: whoever holds this account reads the estate as its service account. The default names the runner pack's own account in the same project; an MSP-hosted runner is named explicitly, and a wrong address either fails every nightly run or hands the estate to an account nobody meant."
+  reversal = edit
+  blast    = high
 }
 
 google_service_account_iam_member {

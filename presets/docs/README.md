@@ -19,8 +19,8 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`ci.verification_runner_grant`](verification-runner-grant.md) | 1.0 | Lets a verification runner act as this estate's IaC service account. | 1 | — |
-| [`ci.verification_runner`](verification-runner.md) | 1.0 | Watches an estate's repository: every push must still compile, every night the live organisation must still match. | 7 | — |
+| [`ci.verification_runner_grant`](verification-runner-grant.md) | 1.1 | Lets a verification runner act as this estate's IaC service account. | 1 | — |
+| [`ci.verification_runner`](verification-runner.md) | 1.1 | Watches an estate's repository: every push must still compile, every night the live organisation must still match. | 7 | — |
 
 ## `cis-extensions/`
 
