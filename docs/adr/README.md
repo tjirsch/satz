@@ -17,7 +17,10 @@ exists to prevent.
 
 ## Conventions
 
-- `NNNN-kebab-title.md`, numbered in order, never renumbered.
+- `NNNN-kebab-title.md`, numbered in order, never renumbered. Take the next free
+  number from the directory, not from memory: two records were both written as 0005
+  on 2026-09-09, and a collision is fixed the day it is made, before anything links
+  to the record.
 - **Status** is `proposed`, `accepted`, `superseded by ADR-NNNN`, or `rejected`.
   A superseded record is not deleted — the reasoning that was right at the time is
   the thing worth keeping, and the successor should say what changed.
@@ -39,4 +42,5 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0002](0002-superseded-org-policies-replace-by-construction.md) | superseded org policies change address so the plan is a replace | accepted |
 | [0003](0003-evidence-is-data-the-audit-pack-is-not-satz-s-to-render.md) | evidence is data; the audit pack is the agent's to render | accepted |
 | [0004](0004-the-verification-runner-is-a-pack-and-its-pipeline-is-inline.md) | the verification runner is a pack, and its pipeline is inline | accepted |
-| [0005](0005-an-answer-is-a-param-the-estate-binds.md) | an answer is a param the estate binds; nothing may be left unanswered | accepted |
+| [0005](0005-adopt-moves-a-renamed-block-rather-than-importing-it-again.md) | adopt moves a renamed block rather than importing it again | accepted |
+| [0006](0006-an-answer-is-a-param-the-estate-binds.md) | an answer is a param the estate binds; nothing may be left unanswered | accepted |

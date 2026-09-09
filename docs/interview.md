@@ -224,4 +224,4 @@ is read to the customer when the pack's questions begin. Write it for them.
   the flow; a richer terminal UI can sit on the same report if the flow turns out to
   want one.
 
-The reasoning is [ADR 0005](adr/0005-an-answer-is-a-param-the-estate-binds.md).
+The reasoning is [ADR 0006](adr/0006-an-answer-is-a-param-the-estate-binds.md).

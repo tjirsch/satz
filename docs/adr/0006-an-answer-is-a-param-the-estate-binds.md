@@ -1,4 +1,4 @@
-# 0005 — an answer is a param the estate binds; nothing may be left unanswered
+# 0006 — an answer is a param the estate binds; nothing may be left unanswered
 
 - **Status:** accepted
 - **Date:** 2026-09-09
