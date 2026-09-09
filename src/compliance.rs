@@ -1202,6 +1202,108 @@ pub(crate) fn control_order(id: &str) -> Vec<IdSeg> {
         .collect()
 }
 
+/// Which party a control is on, under the shared-responsibility model.
+///
+/// An auditor asks this of every control, and it is a FACT the estate already
+/// carries — derivable from the goal, not a judgement someone writes up. Putting
+/// it in the data is what lets an agent build the matrix in whatever shape the
+/// engagement wants, instead of satz rendering one shape and freezing it.
+pub(crate) fn responsibility_of(goal: &Goal) -> &'static str {
+    match goal {
+        // The provider's own certified controls: physical security, cabling.
+        Goal::Inherited => "inherited",
+        // No IaC witness is possible; a human does it and attests.
+        Goal::Organizational => "customer",
+        // A deliberate non-conformance is the customer's decision to own, even
+        // where witnesses exist — an auditor reads it as an accepted risk.
+        Goal::Deviation { .. } => "customer",
+        // Witnesses AND open duties: the estate does its half, a human does the
+        // rest. Flattening this to one party is the thing the matrix exists to
+        // avoid.
+        Goal::Partial { open_duties, .. } if !open_duties.is_empty() => "shared",
+        Goal::Satisfied { .. } | Goal::Partial { .. } => "satz-managed",
+        // satz claims it and its witnesses are missing — satz's problem.
+        Goal::ClaimBroken { .. } => "satz-managed",
+        // Nobody has taken it. Not the same as "the customer's": saying so
+        // would quietly assign work no one agreed to.
+        Goal::Unmet { .. } => "unassigned",
+    }
+}
+
+/// The witnesses a goal rests on, whatever its shape.
+fn goal_witnesses(goal: &Goal) -> &[String] {
+    match goal {
+        Goal::Satisfied { witnesses }
+        | Goal::Partial { witnesses, .. }
+        | Goal::Deviation { witnesses, .. } => witnesses,
+        _ => &[],
+    }
+}
+
+/// Each witness as DATA: address, what the live check found, and the line of
+/// Satz that declares it.
+///
+/// The report's witness column is markdown — `<br>`, `<small>`, backticks —
+/// because it is a column. The JSON used to carry that same string, so anything
+/// consuming it had to parse presentation back out of the data. An agent
+/// building an audit list is the primary consumer of this report; giving it HTML
+/// was giving it the human's copy.
+///
+/// `declared_at` is the link a cloud-native compliance dashboard cannot make:
+/// not "the organisation has this policy" but "here is the code that put it
+/// there".
+fn witness_facts(
+    goal: &Goal,
+    live: &BTreeMap<String, LiveState>,
+    manifest: &Manifest,
+) -> Vec<serde_json::Value> {
+    goal_witnesses(goal)
+        .iter()
+        .map(|w| {
+            let (state, live_id, detail) = match live.get(w) {
+                Some(LiveState::Verified(id)) => ("verified", Some(id.clone()), None),
+                Some(LiveState::Missing) => ("missing", None, None),
+                Some(LiveState::Diverged(d)) => ("diverged", None, Some(d.clone())),
+                Some(LiveState::Unverifiable(why)) => ("unverifiable", None, Some(why.clone())),
+                None => ("not-checked", None, None),
+            };
+            let declared_at = manifest
+                .resources
+                .get(w)
+                .and_then(|r| r.origin.as_ref())
+                .map(|(file, line)| serde_json::json!({ "file": file, "line": line }));
+            serde_json::json!({
+                "address": w,
+                "state": state,
+                "live_id": live_id,
+                "detail": detail,
+                "declared_at": declared_at,
+            })
+        })
+        .collect()
+}
+
+/// The estate's commit, and whether the tree was dirty when the report ran.
+///
+/// Evidence without it answers "what was true" but not "of which code" — and a
+/// dirty tree means the answer describes something that exists on one machine.
+/// Best-effort: an estate that is not in git is not an error.
+fn estate_commit(estate: &Path) -> Option<serde_json::Value> {
+    let dir = estate.parent()?;
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let sha = run(&["rev-parse", "HEAD"])?;
+    let dirty = run(&["status", "--porcelain"]).map(|s| !s.is_empty());
+    Some(serde_json::json!({ "sha": sha, "dirty": dirty }))
+}
+
 /// Live verification result for one witness address.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) enum LiveState {
@@ -2043,7 +2145,10 @@ pub(crate) async fn report_compliance_evidence(
             "control": id, "title": control.title, "paraphrase": control.paraphrase,
             "interpretation": interpretations.join(" · "),
             "status": status.replace("**",""),
-            "witnesses": witness_cell.replace("**","").replace('`',""),
+            // Structured, not the rendered column: an agent building an audit
+            // list is the primary consumer here, and markup is the human's copy.
+            "witnesses": witness_facts(goal, &live, manifest),
+            "responsibility": responsibility_of(goal),
             "duties": duty_cell, "prowler": prowler_cell.replace("**",""),
             "prowler_findings": prowler_findings.cloned().unwrap_or_default(),
             "checkov": checkov_cell.replace("**","").replace('`',""),
@@ -2054,7 +2159,8 @@ pub(crate) async fn report_compliance_evidence(
         "framework": catalog.catalog, "version": catalog.version,
         "estate": input.display().to_string(), "verified_at": verified_at,
         "live": outcome.verified(), "live_status": outcome.id(),
-        "warnings": warnings, "rows": json_rows,
+        "warnings": warnings, "estate_commit": estate_commit(input),
+        "rows": json_rows,
     });
 
     Ok((evidence, md))
@@ -2863,5 +2969,101 @@ mod fix_plan_tests {
         assert!(out.contains("2 E"), "{}", out);
         assert!(out.contains("A · nothing to adopt"), "{}", out);
         assert!(out.contains("D · nothing unmanaged"), "{}", out);
+    }
+}
+
+#[cfg(test)]
+mod evidence_facts_tests {
+    //! The evidence report is read by an agent building an audit list, not only
+    //! by a human reading a table. It used to hand that agent the human's copy:
+    //! the `witnesses` field was the rendered markdown column, `<br>` and
+    //! `<small>` included, so anything consuming it had to parse presentation
+    //! back out of the data.
+    use super::{Goal, LiveState, Manifest, responsibility_of, witness_facts};
+    use std::collections::BTreeMap;
+
+    fn satisfied(w: &[&str]) -> Goal {
+        Goal::Satisfied { witnesses: w.iter().map(|s| s.to_string()).collect() }
+    }
+
+    #[test]
+    fn every_goal_shape_names_a_responsible_party() {
+        assert_eq!(responsibility_of(&Goal::Inherited), "inherited");
+        assert_eq!(responsibility_of(&Goal::Organizational), "customer");
+        assert_eq!(responsibility_of(&satisfied(&["a"])), "satz-managed");
+        assert_eq!(
+            responsibility_of(&Goal::Unmet { providers: vec![] }),
+            "unassigned",
+            "nobody has taken it — calling that 'customer' assigns work no one agreed to"
+        );
+        assert_eq!(
+            responsibility_of(&Goal::Deviation {
+                reasons: vec![],
+                witnesses: vec!["a".into()],
+                open_duties: vec![]
+            }),
+            "customer",
+            "an accepted deviation is the customer's decision to own"
+        );
+    }
+
+    /// Witnesses AND open duties is the case the matrix exists for: flattening
+    /// it to one party is what makes a responsibility matrix useless.
+    #[test]
+    fn witnesses_plus_open_duties_is_shared_not_one_or_the_other() {
+        let part = |duties: Vec<String>| Goal::Partial {
+            witnesses: vec!["a".into()],
+            open_duties: duties,
+            contributes_only: false,
+        };
+        assert_eq!(responsibility_of(&part(vec!["lock-the-bucket".into()])), "shared");
+        assert_eq!(responsibility_of(&part(vec![])), "satz-managed");
+    }
+
+    #[test]
+    fn a_witness_carries_its_live_state_and_the_line_that_declares_it() {
+        let mut live = BTreeMap::new();
+        live.insert("google_org_policy_policy.a".to_string(), LiveState::Verified("organizations/1/policies/x".into()));
+        live.insert("google_org_policy_policy.b".to_string(), LiveState::Unverifiable("no live check".into()));
+
+        let mut manifest = Manifest::default();
+        manifest.resources.insert(
+            "google_org_policy_policy.a".to_string(),
+            crate::manifest::EmittedResource {
+                tf_type: "google_org_policy_policy".into(),
+                label: "a".into(),
+                attrs: BTreeMap::new(),
+                refs: BTreeMap::new(),
+                nested: BTreeMap::new(),
+                enforce: None,
+                import_id: None,
+                origin: Some(("presets/x.satz".to_string(), 12)),
+            },
+        );
+
+        let facts = witness_facts(&satisfied(&["google_org_policy_policy.a", "google_org_policy_policy.b"]), &live, &manifest);
+        assert_eq!(facts.len(), 2);
+
+        assert_eq!(facts[0]["state"], "verified");
+        assert_eq!(facts[0]["live_id"], "organizations/1/policies/x");
+        assert_eq!(facts[0]["declared_at"]["file"], "presets/x.satz");
+        assert_eq!(facts[0]["declared_at"]["line"], 12);
+
+        assert_eq!(facts[1]["state"], "unverifiable");
+        assert_eq!(facts[1]["detail"], "no live check");
+        // A derived resource has no declaring line, and saying null is honest.
+        assert!(facts[1]["declared_at"].is_null());
+    }
+
+    /// The whole point: no markup in the data.
+    #[test]
+    fn the_facts_carry_no_presentation() {
+        let mut live = BTreeMap::new();
+        live.insert("a".to_string(), LiveState::Diverged("declared TRUE, live OFF".into()));
+        let facts = witness_facts(&satisfied(&["a"]), &live, &Manifest::default());
+        let text = serde_json::to_string(&facts).unwrap();
+        for markup in ["<br>", "<small>", "**", "`"] {
+            assert!(!text.contains(markup), "{} leaked into the data: {}", markup, text);
+        }
     }
 }
