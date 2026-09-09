@@ -1,0 +1,116 @@
+// The map: which packs make up this estate, asked as questions — so an interview
+// has a path. First the day-0 params (estate-core), then these choices, then the
+// questions of every pack the answers switched on.
+//
+//   use "presets/estate-map.satz"
+//
+// The map declares the choices and nothing else. The estate carries the matching
+// `use … when` lines, one per choice, in this order — `satz interview --create`
+// and the MCP tool `satz_interview` write them. A pack switched on brings its own
+// questions with it; one switched off asks nothing and emits nothing. A question
+// that gates a pack cannot live in the pack it gates, which is why they all live
+// here.
+//
+// Not a choice: the CIS baseline. It is what the estate is for, and its opt-in
+// extensions are the baseline pack's own questions. Not on the map: the
+// per-project alert pack (the central one covers every project), Defender's plan
+// fragments (added by hand once Defender is on, per that pack's header), and the
+// MSP-hosted runner shape (the grant alone in the customer's estate, the runner in
+// the MSP's — wired by hand).
+//
+// Turning a pack off later destroys what it created. The `reversal` of each
+// choice says so; the `blast` says how much that costs the running organisation.
+
+pack estate_map version "1.0"
+
+params {
+  // ---- the security-group model: exactly one ------------------------------
+  security_model_s1 = true
+  security_model_s2 = false
+
+  // ---- recommended: on unless the customer says otherwise -------------------
+  use_audit_logsink       = true
+  use_central_alerts      = true
+  use_billing_permissions = true
+  use_essential_contacts  = true
+
+  // ---- optional: off until the customer asks --------------------------------
+  use_budget               = false
+  use_scc_enablement       = false
+  use_security_audit_sa    = false
+  use_defender             = false
+  use_verification_runner  = false
+}
+
+question oneof security_model {
+  prompt   = "Which security-group model does this customer run?"
+  why      = "Splitting network authority out later means a new group, membership moves and re-granted roles."
+  reversal = state_surgery
+  blast    = low
+  required = true
+  option security_model_s1 { label = "S1 — five admin groups; network authority sits with project admins" why = "A small team that separates org admins, project admins and security roles, and nothing more." }
+  option security_model_s2 { label = "S2 — S1 plus a distinct network-admins group" why = "For a customer with a separate network team." }
+}
+
+question use_audit_logsink {
+  prompt   = "Archive the organisation's audit logs into a bucket in a logging project?"
+  why      = "The compliance archive: every Admin Activity, Data Access, System Event and Policy log, organisation-wide, in one bucket with a retention. Without it there is no record to answer an auditor with. Turning it off later destroys the logging project and the archive."
+  reversal = recreate
+  blast    = high
+}
+
+question use_central_alerts {
+  prompt   = "Alert on the CIS log events — ownership, IAM, firewall, route, network, bucket and SQL changes — organisation-wide?"
+  why      = "CIS 2.5–2.12 as eight metrics and alert policies in the logging project, into one mailbox. Needs the audit-log archive above: it lives in that project. Turning it off later destroys the alerting bucket and its policies, and with them thirty days of alert history."
+  reversal = recreate
+  blast    = low
+}
+
+question use_billing_permissions {
+  prompt   = "Grant the billing-admins group its roles on the billing account?"
+  why      = "billing.admin and billing.costsManager for the model's billing-admins group, and use/view for the domain. Without it nobody but the first admin and the IaC account can see or move spend."
+  reversal = edit
+  blast    = low
+}
+
+question use_essential_contacts {
+  prompt   = "Register the organisation's essential contact?"
+  why      = "Google's suspension, security and legal notices need an address to go to. Without a contact they go to nobody, and the first sign of a problem is the consequence."
+  reversal = recreate
+  blast    = low
+}
+
+question use_budget {
+  prompt   = "Put a budget with alerts at 50, 80 and 100 % on the infrastructure billing account?"
+  why      = "The one alarm on runaway cost. The pack carries an import-id placeholder for adopting a budget that already exists — delete it for a fresh one, as its header says."
+  reversal = recreate
+  blast    = none
+}
+
+question use_scc_enablement {
+  prompt   = "Turn every Security Command Center service on at the organisation (a script satz run-actions runs)?"
+  why      = "SCC Premium or Enterprise is licensed per organisation and costs money; its activation has no provider resource, so the pack binds the script that does it and the estate declares the step."
+  reversal = edit
+  blast    = low
+}
+
+question use_security_audit_sa {
+  prompt   = "Create a read-only security-audit service account with an impersonation group for auditors?"
+  why      = "Auditor access without keys and without remediation rights. Turning it off later removes the account and every auditor's access with it."
+  reversal = recreate
+  blast    = low
+}
+
+question use_defender {
+  prompt   = "Onboard Microsoft Defender for Cloud through workload identity federation to the customer's Entra tenant?"
+  why      = "Only for a customer who runs Defender. It needs the two ids from Microsoft's onboarding script and creates a workload identity pool; turning it off later removes the pool and Defender loses its connector. The plan fragments are added by hand per that pack's header."
+  reversal = recreate
+  blast    = high
+}
+
+question use_verification_runner {
+  prompt   = "Run continuous verification from this estate's own project — transpile --check on every push, report-compliance every night?"
+  why      = "The customer-hosted shape: Cloud Build triggers and a runner account in the infrastructure project, plus the grant that lets the runner read as the estate. An MSP-hosted runner is the grant alone here and the runner in the MSP's estate, wired by hand."
+  reversal = recreate
+  blast    = low
+}

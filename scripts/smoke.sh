@@ -190,12 +190,14 @@ grep -q 'All 3 questions are answered' tmp/decisions.md || fail "the decisions s
 step "interview: a skeleton, piped answers, derived defaults, the gate, and the decisions sheet"
 # The third way to start an estate. `init` takes every answer as a flag; this asks.
 # Piped input: accept the opening offer, type the seven values nobody can default,
-# then Enter twice for the two names that became offers once the short name landed.
+# then Enter for each name that became an offer once its inputs landed — the two
+# infra names, the two logging names, the alert project, the three addresses and the
+# CIS principal lists that derive from the org id.
 rm -rf tmp/iv && mkdir -p tmp/iv
-printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' \
+printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 13 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirteen usable defaults (eight day-0, five S1 group names):\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 33 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-three usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
@@ -208,7 +210,7 @@ grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 22 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 49 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -219,7 +221,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 22 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 49 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
@@ -943,17 +945,18 @@ for l in open("tmp/mcp-iv.jsonl"):
             msgs[d["id"]] = d
 a = msgs[3]["result"]["structuredContent"]
 assert a["created"] is True, a
-# 17 day-0 questions plus the S1 model's five group names (S1 is the default model)
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (22, 9), a["summary"]
-assert len(a["questions"]) == 22 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+# the whole path: 17 day-0, 10 map choices, 10 CIS, the default packs' own (S1 names,
+# archive, alerts, billing group, contact) — 16 of them need a value until their inputs land
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (49, 16), a["summary"]
+assert len(a["questions"]) == 49 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
 assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every default: 9 day-0 plus the S2 model's six names (S1's five vanish with the switch)
-assert b["written"] == 23 and b["summary"]["complete"] is True, b["summary"]
+# 8 answers, then every default; the S2 model's six names replace S1's five, so 50 in all
+assert b["written"] == 50 and b["summary"]["complete"] is True, b["summary"]
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]

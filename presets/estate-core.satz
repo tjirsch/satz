@@ -17,14 +17,13 @@
 // the region — and accepting one is an answer, recorded by writing it. A derived
 // default is offered only once what it derives from is answered.
 //
-// Also here: the choice of security-group model, as two booleans and a `oneof`,
-// because a question that gates a pack cannot live in the pack it gates. The
-// estate carries the matching `use … when` lines.
+// Which packs make up the estate — the security-group model included — is the
+// next pack, estate-map.satz: this one is the day-0 params and nothing else.
 //
 // This pack emits nothing. An estate that uses it and answers everything compiles
 // to exactly what `satz init` would have written.
 
-pack estate_core version "1.0"
+pack estate_core version "2.0"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
@@ -46,10 +45,6 @@ params {
   deployment_mode     = "local"
   default_region      = "europe-west3"
   default_zone        = "{default_region}-a"
-
-  // ---- the security-group model: exactly one ------------------------------
-  security_model_s1 = true
-  security_model_s2 = false
 }
 
 question customer_id {
@@ -162,14 +157,4 @@ question default_zone {
   prompt    = "The default zone, inside that region"
   reversal  = edit
   blast     = low
-}
-
-question oneof security_model {
-  prompt   = "Which security-group model does this customer run?"
-  why      = "Splitting network authority out later means a new group, membership moves and re-granted roles."
-  reversal = state_surgery
-  blast    = low
-  required = true
-  option security_model_s1 { label = "S1 — five admin groups; network authority sits with project admins" why = "A small team that separates org admins, project admins and security roles, and nothing more." }
-  option security_model_s2 { label = "S2 — S1 plus a distinct network-admins group" why = "For a customer with a separate network team." }
 }

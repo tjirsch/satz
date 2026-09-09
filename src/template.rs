@@ -156,13 +156,24 @@ google_folder {
 
 /// The estate an INTERVIEW starts from: every question open, nothing decided.
 ///
-/// The params and their questions come from `presets/estate-core.satz`; the
-/// security-group model is the choice that pack asks, wired here as the two
-/// `use … when` lines a choice between packs always is; the resources are the
-/// scaffold `init` writes. Answering a question is adding its param to
-/// `params {}`. The file is complete when `satz questions` says so — and until
-/// then `bootstrap` and `transpile --apply` refuse it.
+/// The day-0 params and their questions come from `presets/estate-core.satz`;
+/// which packs make up the estate is `presets/estate-map.satz`, whose every
+/// choice is one `use … when` line here, in the map's order — a pack switched
+/// on brings its own questions with it. The CIS baseline is not a choice. The
+/// resources are the scaffold `init` writes, with the logging packs placed in
+/// the infrastructure folder beside the infrastructure project. Answering a
+/// question is adding its param to `params {}`; the file is complete when
+/// `satz questions` says so, and until then `bootstrap` and `transpile --apply`
+/// refuse it.
 pub(crate) fn skeleton(stem: &str) -> String {
+    let scaffold = SCAFFOLD.replacen(
+        "    display_name = infra_folder_name\n",
+        "    display_name = infra_folder_name\n\
+         \x20   use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink\n\
+         \x20   use \"presets/monitoring/organization-cis-log-alerts-central.satz\" when use_central_alerts\n",
+        1,
+    );
+    debug_assert!(scaffold != SCAFFOLD, "the folder anchor the skeleton hangs the logging packs on is gone");
     format!(
         r#"// Written for an interview: a question is open until its param is bound below.
 // `satz questions {stem}.satz --unanswered` lists what is still to decide;
@@ -173,14 +184,44 @@ estate {estate}
 params {{
 }}
 
+// The day-0 params with their questions, then the map: which packs, as questions.
 use "presets/estate-core.satz"
+use "presets/estate-map.satz"
+
+// The CIS baseline is not a choice — it is what the estate is for. Its opt-in
+// extensions are the baseline pack's own questions.
+google_org_policy_policy {{
+  use "presets/CIS-GCP-Foundation-4.0.satz"
+}}
+use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
+use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
+use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
+use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
+use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
+
+// The map's choices, one line each. The audit archive and the central alerts are
+// in the infrastructure folder below, beside the infrastructure project.
 use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
 use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
+use "presets/billing-account-permissions.satz" when use_billing_permissions
+use "presets/organization-budget.satz" when use_budget
+use "presets/scc/scc-service-enablement.satz" when use_scc_enablement
+use "presets/security-audit/sa-security-audit.satz" when use_security_audit_sa
+use "presets/ci/verification-runner.satz" when use_verification_runner
+use "presets/ci/verification-runner-grant.satz" when use_verification_runner
+// Defender's plan fragments are added by hand once this is true — see that pack's header.
+use "presets/integrations/microsoft-defender-for-cloud.satz" when use_defender
+
+google_essential_contacts_contact {{
+  use "presets/essential-contacts-organization.satz" when use_essential_contacts
+}}
 
 {scaffold}"#,
         stem = stem,
         estate = estate_name(stem),
-        scaffold = SCAFFOLD,
+        scaffold = scaffold,
     )
 }
 
@@ -252,6 +293,25 @@ pub(crate) mod tests {
             bucket_id: "acme-iac-infra".into(),
             first_admin: first_admin.into(),
         }
+    }
+
+    #[test]
+    fn the_skeleton_carries_one_use_line_per_choice_the_map_declares() {
+        // Two places for one list — the map declares the choices, the skeleton
+        // carries their `use … when` lines. This is what keeps them equal.
+        let map = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/presets/estate-map.satz")).unwrap();
+        let map = satz_core::satz::parse(&map).unwrap();
+        let sk = skeleton("x");
+        for (name, _, _) in &map.params {
+            assert!(sk.contains(&format!(" when {}\n", name)), "the map declares `{}` and the skeleton has no `use … when {}`", name, name);
+        }
+        for line in sk.lines().filter(|l| l.contains(" when ")) {
+            let param = line.rsplit(" when ").next().unwrap().trim();
+            let declared = map.params.iter().any(|(n, _, _)| n == param) || param.starts_with("cis_");
+            assert!(declared, "the skeleton gates a pack on `{}`, which neither the map nor the CIS baseline declares", param);
+        }
+        assert!(sk.contains("use \"presets/estate-map.satz\"\n"));
+        assert!(sk.contains("    use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink\n"), "the logging packs sit in the infrastructure folder");
     }
 
     #[test]

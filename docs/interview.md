@@ -65,24 +65,56 @@ the estate's params.
 `summary.complete` in the JSON report is the same boolean. Bare `satz plan` and
 `satz apply` are not gated: they run the tool in `hcl_dir` and know no estate.
 
-## The day-0 questions: `presets/estate-core.satz`
+## The path: day-0 params, then the map, then the packs
 
-`init` writes seventeen params from its flags. The pack `estate-core` carries the same
-seventeen, each with its question, so an interview has something to ask before an
-estate exists. Seven have no possible default and block until typed; the rest offer
-one — the two derived names once the short name is in. It also asks which
-security-group model the customer runs — S1, or S2 with a separate network-admins
-group — as two booleans and a `question oneof`, because a question that gates a pack
-cannot live in the pack it gates. The estate carries the matching lines:
+An interview follows the estate file's order, and the skeleton is written so that
+order is a path:
+
+1. **`presets/estate-core.satz`** — the seventeen params `init` writes from its flags,
+   each with its question. Seven have no possible default and block until typed; the
+   rest offer one, the two derived names once the short name is in. The pack emits
+   nothing. An estate written by `init` does not use it and does not need to: given
+   its flags, `init` has answered everything.
+2. **`presets/estate-map.satz`** — which packs make up the estate, as questions: the
+   security-group model (S1, or S2 with a separate network-admins group) as a
+   `question oneof`, and one boolean per optional pack, each with what the pack is
+   for and what turning it off later destroys. Four are on by default — the audit-log
+   archive, the central CIS alerts, the billing permissions, the essential contact —
+   and five off: budget, SCC enablement, the security-audit account, Defender, the
+   verification runner. The map declares the choices and nothing else; the estate
+   carries one `use … when` line per choice, in the map's order.
+3. **The CIS baseline**, always — it is what the estate is for. Its ten questions
+   follow the map's, and its seven opt-in extensions are its own questions.
+4. **Every pack a choice switched on**, with its own questions: the group names of
+   the chosen model, the archive's project and retention, the alert mailbox, and so
+   on. Switch a choice and the rest of the interview re-shapes; the report re-reads
+   after every answer.
 
 ```satz
 use "presets/estate-core.satz"
+use "presets/estate-map.satz"
+
+google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
+use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+…
 use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
 use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
+use "presets/billing-account-permissions.satz" when use_billing_permissions
+…
+google_folder {
+  infra_folder {
+    display_name = infra_folder_name
+    use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink
+    use "presets/monitoring/organization-cis-log-alerts-central.satz" when use_central_alerts
+    google_project { infra { … } }
+  }
+}
 ```
 
-The pack emits nothing. An estate written by `init` does not use it and does not
-need to: given its flags, `init` has answered everything.
+Why the lines live in the estate and not in the map — and what stays hand-wired
+(Defender's plan fragments, the MSP-hosted runner, the per-project alert pack) — is
+[ADR 0007](adr/0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md).
+A test keeps the map's params and the skeleton's lines equal.
 
 ## At the terminal: `satz interview`
 
@@ -91,14 +123,15 @@ satz interview yaml/new-customer.satz --create
 ```
 
 `--create` writes the estate first when it does not exist: an empty `params {}`, the
-three `use` lines above, and the same day-0 resources `init` writes — the folder, the
-project, the state bucket, the IaC group and service account. Then the interview:
+`use` lines of the path above, and the same day-0 resources `init` writes — the
+folder, the project, the state bucket, the IaC group and service account. Then the
+interview:
 
 ```
-22 open question(s): 13 have a default, 9 need a value.
-Accept all defaults now and answer only those 9? [Y/n] — n goes through every question
+49 open question(s): 33 have a default, 16 need a value.
+Accept all defaults now and answer only those 16? [Y/n] — n goes through every question
 > y
-  accepted 13 default(s).
+  accepted 33 default(s).
 
 ── estate_core ──
 The questions every estate has to answer on day 0, with the params they answer.
@@ -155,8 +188,9 @@ it. Its arguments:
 
 The loop an agent runs:
 
-1. `satz_interview {create: true}` on a new name → twenty-two open questions (the
-   seventeen day-0 ones and the default model's five group names), nine `blocking`, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
+1. `satz_interview {create: true}` on a new name → every open question of the path —
+   the seventeen day-0 ones, the map's choices, the baseline's ten, the packs the
+   defaults switch on — sixteen of them `blocking` until their inputs land, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
    and `default` where one is usable.
 2. Ask the human, in whatever order and words fit the conversation. Offer the
    defaults as defaults — "the project will be called acme-infra-001 unless you say

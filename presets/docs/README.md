@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's conventions and its per-family prose are [`presets/README.md`](../README.md); its version history is [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under **History** on each page here.
 
-**27 packs · 145 resources · 73 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**28 packs · 145 resources · 73 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Root — `presets/*.satz`
 
@@ -12,7 +12,8 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.7 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 29 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.2 | Billing-account IAM, split by audience. | 4 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.3 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
-| [`estate_core`](estate-core.md) | 1.0 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
+| [`estate_core`](estate-core.md) | 2.0 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
+| [`estate_map`](estate-map.md) | 1.0 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`organization_budget`](organization-budget.md) | 1.0 | An organization-wide budget on the infrastructure billing account, with alert thresholds at 50, 80 and 100 % of current spend. | 1 | — |
 
 ## `ci/`
