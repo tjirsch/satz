@@ -47,7 +47,7 @@
 // with an asset-viewer role at organization level — the same two read
 // dependencies `report-compliance` needs from a workstation.
 
-pack ci.verification_runner version "1.0"
+pack ci.verification_runner version "1.1"
 
 params {
   // The project that hosts the triggers and the runner service account. For a
@@ -74,6 +74,40 @@ params {
   // The satz release the runner installs. `latest` follows every release —
   // which is what continuous verification means; pin a version to opt out.
   ci_satz_release   = "latest"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+// Where the runner lives, what it watches, and which estate it reads as: the
+// pack cannot know the repository's name or which project is the customer's
+// when an MSP hosts the runner. Schedule, time zone, region, catalog, fail-on
+// statuses and the satz release are technical defaults and are not asked.
+
+question ci_runner_project {
+  prompt   = "The project that hosts the triggers and the runner service account"
+  why      = "For a Cloud Source Repositories estate this must be the repository's own project — Cloud Build can only watch a repository in its project. Moving it later recreates the triggers, the runner account and every grant made to it."
+  reversal = recreate
+  blast    = low
+}
+
+question ci_target_infra_project {
+  prompt   = "The watched estate's infrastructure project — where the nightly read is billed and Cloud Asset Inventory is enabled"
+  why      = "The same as this estate's own project when the customer hosts the runner; an MSP names the customer's. A wrong one fails every nightly run with a quota-project error rather than a finding."
+  reversal = edit
+  blast    = low
+}
+
+question ci_repo_name {
+  prompt   = "The repository the triggers watch, as Cloud Source Repositories names it (a name, not a URL)"
+  why      = "The default is the convention `<shortname>-<customer id>`; a repository named otherwise is watched by nothing, and the check that never runs looks exactly like a check that passes."
+  reversal = edit
+  blast    = low
+}
+
+question ci_estate_file {
+  prompt   = "The estate file inside that repository's yaml_dir"
+  why      = "The push trigger compiles this file and the nightly run judges it. A wrong name fails on the first push — loudly, which is the good case."
+  reversal = edit
+  blast    = none
 }
 
 google_project_service {
