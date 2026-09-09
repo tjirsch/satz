@@ -170,6 +170,6 @@ the params could not express.
    param is used rather than trusting a hand-written annotation that can rot.
 3. **Where do cross-pack questions live?** `customer_shortname` is not owned by
    any one pack. A `core` question module, or the estate itself declaring them?
-4. **How many questions is the real target?** The roadmap says 6 for Cloud Cockpit
+4. **How many questions is the real target?** The roadmap says 6 for satz
    core. Reading them off the fleet (§7) will produce a number — worth checking
    whether it is 6, 16, or 60 before committing to the format.
