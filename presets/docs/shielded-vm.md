@@ -29,7 +29,7 @@ use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
 
 **Needs from outside the pack:**
 
-- `customer_organization_id` — no pack in the library declares it, so the estate must.
+- `customer_organization_id` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

@@ -138,9 +138,9 @@ fn value_block(name: &str, v: &Value, indent: &str) -> String {
 /// the page renders structurally, so it is lifted out of the prose rather than
 /// printed twice. The converter's provenance line is neither.
 #[derive(Default)]
-struct Header {
-    purpose: Vec<String>,
-    invocation: Option<String>,
+pub(crate) struct Header {
+    pub(crate) purpose: Vec<String>,
+    pub(crate) invocation: Option<String>,
 }
 
 /// A header line is this pack's canonical invocation when it is a bare `use` of
@@ -153,7 +153,7 @@ fn is_invocation(line: &str, rel: &Path) -> bool {
     line.starts_with("use ") || (line.ends_with('}') && line.contains("{ use "))
 }
 
-fn header(src: &str, rel: &Path) -> Result<Header, BoxErr> {
+pub(crate) fn header(src: &str, rel: &Path) -> Result<Header, BoxErr> {
     let mut h = Header::default();
     for line in src.lines() {
         let t = line.trim();

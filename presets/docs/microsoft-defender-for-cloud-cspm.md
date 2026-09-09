@@ -31,7 +31,7 @@ use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_
 
 **Needs from outside the pack:**
 
-- `customer_organization_id` — no pack in the library declares it, so the estate must.
+- `customer_organization_id` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 - `mdc_mgmt_project_id` — declared by `integrations.microsoft_defender_for_cloud`; use one of them alongside, or declare it in the estate.
 - `mdc_workload_pool_id` — declared by `integrations.microsoft_defender_for_cloud`; use one of them alongside, or declare it in the estate.
 

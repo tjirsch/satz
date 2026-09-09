@@ -258,6 +258,38 @@ alert working but silently breaks the compliance check — see the preset header
 source of truth and the end-to-end test. Prowler also never checks whether a policy has a
 recipient; `notification_channels = []` passes CIS and notifies nobody.
 
+## estate-core.satz
+
+The questions every estate has to answer on day 0, with the params they answer — the
+seventeen `satz init` writes from its flags, each with a `question`: what to ask, why,
+and what changing the answer later costs. Plus the choice of security-group model as
+two booleans and a `question oneof`, because a question that gates a pack cannot live
+in the pack it gates.
+
+```
+use "presets/estate-core.satz"
+use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
+use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
+```
+
+The pack **emits nothing**. It exists so an interview has something to ask before
+anything else exists: `satz interview <estate> --create` and the MCP tool
+`satz_interview` write an estate that uses it, with every question open. An estate
+written by `init` does not need it — `init` was given every answer and binds every
+param, which is what "answered" means.
+
+Two kinds of param, and the interview treats them differently:
+
+| kind | params | in the report |
+|---|---|---|
+| **no possible default** | `customer_id`, `customer_organization_id`, `customer_domain`, `customer_shortname`, `customer_longname`, `first_admin`, `billing_account_infra` | `blocking: true` — a value has to be typed |
+| **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `svc_iac_users_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, the security model | `default` offered — accepting it is an answer, recorded by writing it |
+
+A derived default is offered only once what it derives from is answered:
+`infra_project_name` is `"{customer_shortname}-infra-001"`, and with the short name
+still open that is `-infra-001`, a string and not a default — so it blocks until the
+short name is typed, then offers `acme-infra-001`. See [satz interview](../docs/interview.md).
+
 ## security-group-models/
 
 The security group models: admin groups plus their org-level role grants.
@@ -636,9 +668,19 @@ by name.
 A question must live in the file that declares its param: questions are absorbed after
 the `use … when` guard, so a question gating a pack cannot live in the gated pack.
 
-`satz questions <estate>` lists them with the values the estate carries; `satz
-doc-packs` gives each pack a Questions section; and the prompt becomes the generated
-`variables.tf` description. A pack whose questions changed is reported by
+A question is **answered when the estate's own `params {}` binds its param** — to the
+pack's default or to anything else; accepting a default is an answer, recorded by
+writing the default in. A question whose param the estate does not bind is
+`unanswered`, and **every question must be answered before the estate touches an
+organisation**: `bootstrap` and `transpile --apply` refuse while one is open,
+`transpile --plan` warns. A question with no usable default is `blocking` — a value has
+to be typed. `ask_when` names a boolean param; when it is false the question is
+`not-applicable` and counts toward nothing.
+
+`satz questions <estate>` lists them with their state (`--unanswered` for the open ones,
+`--format markdown` for the decisions sheet a customer signs off); `satz interview` asks
+them and writes the answers; `satz doc-packs` gives each pack a Questions section; and
+the prompt becomes the generated `variables.tf` description. A pack whose questions changed is reported by
 `check-presets` as `questions` rather than drift — it emits identical HCL, so forking
 over a prompt typo would be wrong, but a `recreate → edit` downgrade must not ship
 silently.
@@ -823,6 +865,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `estate_core` | 1.0 | 2026-09-09 | first version: the seventeen day-0 params `satz init` writes, each with its `question` — what to ask, why, and what changing it later costs — plus the security-group model as two booleans and a `question oneof`. Emits nothing; exists so an interview (`satz interview --create`, the MCP tool `satz_interview`) has something to ask before an estate exists. Seven params have no possible default and block until typed; the rest offer one, and a derived default (`"{customer_shortname}-infra-001"`) is offered only once its inputs are answered |
 | `ci.verification_runner` | 1.0 | 2026-09-09 | first version: continuous verification as a pack. Two Cloud Build triggers in the hosting project — `satz-check` on every push (`transpile --check`) and `satz-compliance` nightly via Cloud Scheduler (`report-compliance --fail-on`) — plus the runner service account and its two project roles. Build steps are INLINE in the trigger, not a file in the watched repository, so control of the pipeline follows ownership of the service account; satz is installed at build time from the release (`ci_satz_release`, default `latest`). The runner never acts as itself — satz exchanges its identity for the estate's IaC account, which the companion grant pack permits. v1 reports through the exit code and log; no evidence write-back |
 | `ci.verification_runner_grant` | 1.0 | 2026-09-09 | first version: the one binding a verification runner needs — `roles/iam.serviceAccountTokenCreator` on the estate's IaC service account, and nothing on the organisation. Separate from the runner pack because in the MSP-hosted shape the two resources belong to two parties: the runner in the MSP's project, this grant on the customer's account, applied by the customer. Default names the runner pack's own account, so a customer-hosted estate using both wires nothing |
 | `CIS_GCP_Foundation_4_0` | 2.6 | 2026-09-08 | `gcp.resourceLocations` becomes the `allowed_resource_locations` param (default = the two multi-region groups it always emitted, so no estate changes on upgrade) — a hard-coded value silently widened a policy an operator had narrowed by hand. And the six superseded legacy blocks take a `-superseded` address suffix, which makes the switch to `spec { reset = true }` a REPLACE by construction: the provider PATCHes the rules it holds together with `reset` and the API refuses the pair (`400 Cannot set PolicyRules if reset is true`), so the in-place form v2.5 assumed never worked. Estates upgrading from 2.4 or 2.5 see one destroy + create per legacy policy, in the plan, instead of needing `tofu apply -replace=` by hand |

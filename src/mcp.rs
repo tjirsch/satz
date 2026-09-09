@@ -35,6 +35,7 @@
 //!
 //! `self-update` is not exposed at any level: it replaces the binary.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -176,6 +177,59 @@ pub(crate) struct EstateArg {
     pub estate: Option<String>,
 }
 
+
+/// Which questions `satz_interview` returns.
+#[derive(Debug, Default, Clone, Copy, PartialEq, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum InterviewFilter {
+    /// only what the estate has not decided — the worklist
+    #[default]
+    Unanswered,
+    /// every question with its state — the decisions sheet
+    All,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct InterviewArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// `unanswered` (default) or `all`
+    #[serde(default)]
+    pub filter: InterviewFilter,
+    /// Write the estate if it does not exist yet: a skeleton that uses
+    /// `presets/estate-core.satz` (the day-0 params with their questions), carries
+    /// the security-model choice, and holds the same resources `satz init` writes.
+    /// Needs the 'write' capability. An existing file is never touched.
+    #[serde(default)]
+    pub create: bool,
+    /// Answers to write before reporting, keyed by the question's subject: a param's
+    /// value, or for a `oneof` the chosen option's param name (its siblings are set
+    /// false). Each is checked against a question the estate asks; one refused
+    /// answer means nothing is written. Needs 'write'.
+    #[serde(default)]
+    pub answers: BTreeMap<String, serde_json::Value>,
+    /// Also write every default the report offers — the answer a customer gives
+    /// when they accept what the pack proposes. Needs 'write'.
+    #[serde(default)]
+    pub accept_defaults: bool,
+}
+
+/// The interview's view: the questions report, filtered, plus what this call did
+/// to the file and where the file belongs once the customer id is known.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct InterviewReport {
+    /// this call wrote the estate file
+    pub created: bool,
+    /// how many params this call wrote — answers given plus defaults accepted
+    pub written: usize,
+    /// The estate binds `customer_id` but the file is not named after it, as
+    /// `init` would have named it. `git mv` to this and set the `estate` line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rename_to: Option<String>,
+    #[serde(flatten)]
+    pub report: crate::questions::QuestionsReport,
+}
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct OpenArgs {
@@ -657,6 +711,90 @@ impl SatzMcp {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("questions: {}", e)))),
         }
+    }
+
+    #[tool(
+        name = "satz_interview",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<InterviewReport>(),
+        description = "Run an interview against an estate: the questions its packs declare that the \
+                       estate has not answered yet (or all of them, with `filter: all`), each with the \
+                       default the pack offers — or `blocking: true` when no default is possible and a \
+                       value must be typed. Answering is writing the param into the estate's `params {}`; \
+                       accepting a default is writing the default. `summary.complete` is the gate: \
+                       bootstrap and apply refuse until it is true. With `create: true` (needs 'write') \
+                       the estate file is written first if it does not exist, so an interview can start \
+                       before anything does. Offline and schema-free.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn interview(
+        &self,
+        Parameters(args): Parameters<InterviewArgs>,
+    ) -> Result<Result<Json<InterviewReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let open = match self.opened() {
+            Ok(o) => o,
+            Err(r) => return Ok(Err(r)),
+        };
+        let named = match &args.estate {
+            None => open.estate.clone(),
+            Some(n) => crate::estate_path(PathBuf::from(n), &open.runtime),
+        };
+        let mut created = false;
+        if !named.exists() {
+            if !args.create {
+                return Ok(Err(refused(format!(
+                    "{}: no such estate. Pass `create: true` to start the interview there — the file is \
+                     written as a skeleton that uses presets/estate-core.satz, and every question is open.",
+                    named.display()
+                ))));
+            }
+            if let Err(r) = self.permits(Group::Write) {
+                return Ok(Err(r));
+            }
+            // The file does not exist yet, so confine its DIRECTORY.
+            let dir = named.parent().map(PathBuf::from).unwrap_or_default();
+            if let Err(r) = self.confine(dir) {
+                return Ok(Err(r));
+            }
+            let stem = named.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
+            if let Err(e) = crate::fsx::write(&named, crate::template::skeleton(stem)) {
+                return Ok(Err(refused(format!("{}: {}", named.display(), e))));
+            }
+            created = true;
+        }
+        let estate = match self.confine(named) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let mut written = 0;
+        if !args.answers.is_empty() || args.accept_defaults {
+            if let Err(r) = self.permits(Group::Write) {
+                return Ok(Err(r));
+            }
+            let mut answers = BTreeMap::new();
+            for (k, v) in &args.answers {
+                match serde_yaml::to_value(v) {
+                    Ok(y) => answers.insert(k.clone(), y),
+                    Err(e) => return Ok(Err(refused(format!("interview: {}: {}", k, e)))),
+                };
+            }
+            written = match crate::interview::apply(&estate, &open.runtime, &answers, args.accept_defaults) {
+                Ok(n) => n,
+                Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
+            };
+        }
+        let mut report = match crate::questions::questions_report(&estate, &open.runtime) {
+            Ok(r) => r,
+            Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
+        };
+        let rename_to = crate::questions::rename_to(&estate, &report);
+        if args.filter == InterviewFilter::Unanswered {
+            // The summary stays whole: it describes the estate, not the filter.
+            report.questions.retain(|q| q.state == "unanswered");
+        }
+        Ok(Ok(Json(InterviewReport { created, written, rename_to, report })))
     }
 
     #[tool(

@@ -35,8 +35,8 @@ use "presets/ci/verification-runner-grant.satz"
 **Needs from outside the pack:**
 
 - `ci_runner_project` — declared by `ci.verification_runner`; use one of them alongside, or declare it in the estate.
-- `infra_project_name` — no pack in the library declares it, so the estate must.
-- `svc_iac_account` — no pack in the library declares it, so the estate must.
+- `infra_project_name` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `svc_iac_account` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

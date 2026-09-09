@@ -28,10 +28,10 @@ use "presets/monitoring/organization-audit-logsink.satz"
 
 **Needs from outside the pack:**
 
-- `billing_account_infra` — no pack in the library declares it, so the estate must.
-- `customer_organization_id` — no pack in the library declares it, so the estate must.
-- `customer_shortname` — no pack in the library declares it, so the estate must.
-- `default_region` — no pack in the library declares it, so the estate must.
+- `billing_account_infra` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `customer_organization_id` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `customer_shortname` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `default_region` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

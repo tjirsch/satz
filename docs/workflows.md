@@ -32,7 +32,17 @@ satz init \
   --iac-user "admin@example.com"
 ```
 
+**Without the flags** — when the values come out of a conversation rather than a
+ticket — `satz interview yaml/<name>.satz --create` writes the estate and asks for the
+same seventeen values one question at a time, offering the derived ones as defaults; an
+agent does the same over MCP. Both end at the file `init` would have written, and
+[satz interview](interview.md) describes the rules they share: an answer is a param the
+estate binds, and nothing below runs while one is missing.
+
 ### Bootstrap the organisation
+
+`bootstrap` refuses while any question the estate's packs declare is unanswered — the
+estate is complete first, then it touches the organisation. `--dry-run` warns instead.
 
 `bootstrap` creates the day-0 infrastructure — the infrastructure folder, the
 management project, the billing link, the foundation APIs (which is the
@@ -182,6 +192,10 @@ tofu plan
 ```
 
 ### The params `init` writes
+
+The same seventeen, each with its question, are `presets/estate-core.satz` — what
+`satz interview` asks when there are no flags. An estate `init` wrote binds all of
+them and is complete; one the interview wrote is complete when it says so.
 
 | Param | Default | Description |
 |-------|---------|-------------|

@@ -34,8 +34,8 @@ google_cloud_identity_group { use "presets/security-group-models/s1-group-defini
 
 **Needs from outside the pack:**
 
-- `infra_project_name` — no pack in the library declares it, so the estate must.
-- `svc_iac_account` — no pack in the library declares it, so the estate must.
+- `infra_project_name` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `svc_iac_account` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

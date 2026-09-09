@@ -49,8 +49,8 @@ google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
 
 **Needs from outside the pack:**
 
-- `customer_domain` — no pack in the library declares it, so the estate must.
-- `customer_organization_id` — no pack in the library declares it, so the estate must.
+- `customer_domain` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `customer_organization_id` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

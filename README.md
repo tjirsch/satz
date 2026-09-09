@@ -166,7 +166,8 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `questions <INPUT>` | `--format` (`text`\|`json`) — every question the estate's packs declare, joined with the answers its params already carry, and marked where changing one is expensive |
+| `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`), `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
+| `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. See [satz interview](docs/interview.md) |
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
@@ -218,6 +219,11 @@ satz init \
 - Generates a default `config.toml` and `.gitignore`.
 - If customer details are provided, generates the Day-0 estate `yaml/<customer-id>.satz` (params, providers, the IaC group and service account, the management folder/project/state bucket — the labels `bootstrap` imports by name).
 - Fetches the latest provider schemas for the configured providers.
+
+**Without the flags:** `satz interview yaml/<name>.satz --create` writes an estate that
+asks for the same seventeen values one at a time and offers the derived ones as defaults;
+an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
+every question is answered — [satz interview](docs/interview.md).
 
 ### Day 0 Bootstrap (`bootstrap`)
 The `bootstrap` command automates the entire onboarding process for a new customer organization.

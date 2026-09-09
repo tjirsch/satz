@@ -37,10 +37,10 @@ use "presets/monitoring/organization-cis-log-alerts-central.satz"
 
 **Needs from outside the pack:**
 
-- `customer_domain` — no pack in the library declares it, so the estate must.
-- `customer_organization_id` — no pack in the library declares it, so the estate must.
-- `customer_shortname` — no pack in the library declares it, so the estate must.
-- `default_region` — no pack in the library declares it, so the estate must.
+- `customer_domain` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `customer_organization_id` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `customer_shortname` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `default_region` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 - `logsink_project_name` — declared by `monitoring.organization_audit_logsink`; use one of them alongside, or declare it in the estate.
 
 ## Params

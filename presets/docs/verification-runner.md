@@ -74,10 +74,10 @@ use "presets/ci/verification-runner.satz"
 
 **Needs from outside the pack:**
 
-- `customer_id` — no pack in the library declares it, so the estate must.
-- `customer_shortname` — no pack in the library declares it, so the estate must.
-- `default_region` — no pack in the library declares it, so the estate must.
-- `infra_project_name` — no pack in the library declares it, so the estate must.
+- `customer_id` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `customer_shortname` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `default_region` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `infra_project_name` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

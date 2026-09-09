@@ -77,7 +77,8 @@ one.
 | `satz_estates` | `read` | which estates this server can open: every `config.toml` under its root, with the estate files beside it |
 | `satz_open` | `read` | open one for the session — its `config.toml` and its main `.satz`. Answers with what it resolved, including the identity that estate's live tools will run as |
 | `satz_require` | `read` | which controls of a catalog the **declared** estate satisfies, from its packs' claims. Offline |
-| `satz_questions` | `read` | every question the estate's packs declare, joined with the answers its params carry, and what changing each costs |
+| `satz_questions` | `read` | every question the estate's packs declare with its state — `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible — and `summary.complete`, the gate bootstrap and apply refuse on |
+| `satz_interview` | `read` / `write` | the interview: the open questions (or all, with `filter: all`), each with its pack's description and its offer. With `write`: `create` writes the estate first, `answers` writes what the human decided, `accept_defaults` writes every offer — and the report comes back as it now stands. [satz interview](interview.md) |
 | `satz_triage` | `read` | a Prowler export's FAILs sorted into buckets A–E against what the estate claims |
 | `satz_transpile_check` | `read` | compiles in memory and reports what it *would* emit — writes nothing |
 | `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
@@ -136,7 +137,7 @@ prevent.
 | annotation | on |
 |---|---|
 | `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami` |
-| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write` |
 | `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami` — the three that reach the network |
 
 Without them a client either prompts on every read (friction that makes the server

@@ -102,8 +102,8 @@ use "presets/monitoring/project-cis-log-alerts.satz"
 
 **Needs from outside the pack:**
 
-- `customer_domain` — no pack in the library declares it, so the estate must.
-- `infra_project_name` — no pack in the library declares it, so the estate must.
+- `customer_domain` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
+- `infra_project_name` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

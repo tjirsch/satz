@@ -19,6 +19,7 @@ mod org_policy;
 mod cloud_identity;
 mod compliance;
 mod questions;
+mod interview;
 mod mcp;
 mod dossier;
 mod presets;
@@ -243,7 +244,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
             "adopt-org-policies",
         ],
     ),
-    ("Compliance and audit", &["require", "questions", "report-compliance", "scan", "triage", "remediation-plan"]),
+    ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "triage", "remediation-plan"]),
     ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
@@ -737,9 +738,30 @@ enum Commands {
     Questions {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: text or json
+        /// Output format: text, json, or markdown — the decisions sheet a human reads
+        /// before an organisation is touched
         #[arg(long, value_enum, default_value_t = OutFormat::Text)]
         format: OutFormat,
+        /// Only the questions the estate has not answered yet — the interview's worklist
+        #[arg(long)]
+        unanswered: bool,
+    },
+    /// Answer what the estate's packs ask, one question at a time, writing each answer
+    /// into the estate's params. The third way to start an estate: `init` takes every
+    /// answer as a flag, an agent asks over MCP, this asks a person at a terminal
+    Interview {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Write the estate first if it does not exist: a skeleton that uses
+        /// presets/estate-core.satz, with every question open
+        #[arg(long)]
+        create: bool,
+        /// Ask every question, answered ones too, with the current answer as the default
+        #[arg(long)]
+        all: bool,
+        /// Accept every offered default up front and ask only what needs a value
+        #[arg(long)]
+        accept_defaults: bool,
     },
     /// Serve this estate over the Model Context Protocol (stdio), so an agent drives satz
     ///
@@ -914,7 +936,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1043,6 +1065,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             write_file("terraform.tfvars", tfvars)?;
             write_file("imports.tf", imports_tf)?;
             if plan || apply {
+                // Same gate as bootstrap: apply refuses, plan warns.
+                match crate::questions::require_complete(&input_path, &runtime_config, if apply { "apply" } else { "plan" }) {
+                    Ok(()) => {}
+                    Err(e) if !apply => eprintln!("warning: {}", e),
+                    Err(e) => return Err(e.into()),
+                }
                 // one tool: transpile, then the tool, in the estate's hcl dir
                 if output.is_some() {
                     return Err("--plan/--apply run in hcl_dir; drop --output".into());
@@ -1400,6 +1428,13 @@ Thumbs.db
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
+            // The quality gate: an estate may not touch an organisation while a
+            // question is open. A dry run is how you look, so it warns instead.
+            match crate::questions::require_complete(&config_path, &runtime_config, "bootstrap") {
+                Ok(()) => {}
+                Err(e) if dry_run => eprintln!("warning: {}", e),
+                Err(e) => return Err(e.into()),
+            }
             crate::bootstrap::bootstrap(
                 config_path,
                 dry_run,
@@ -1755,12 +1790,42 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Questions { input, format } => {
-            let format = format.require_one_of("questions", &[OutFormat::Text, OutFormat::Json])?;
+        Commands::Interview { input, create, all, accept_defaults } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let report = crate::questions::questions_report(&input_path, &runtime_config)?;
+            if !input_path.exists() {
+                if !create {
+                    return Err(format!(
+                        "{}: no such estate. `satz interview {} --create` writes it first — a skeleton that uses \
+                         presets/estate-core.satz, with every question open",
+                        input_path.display(),
+                        input
+                    )
+                    .into());
+                }
+                let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
+                if let Some(dir) = input_path.parent() {
+                    crate::fsx::create_dir_all(dir)?;
+                }
+                crate::fsx::write(&input_path, crate::template::skeleton(stem))?;
+                eprintln!("wrote {}", input_path.display());
+            }
+            let stdin = std::io::stdin();
+            let mut input = stdin.lock();
+            let mut out = std::io::stdout();
+            crate::interview::run(&input_path, &runtime_config, all, accept_defaults, &mut input, &mut out)?;
+            Ok(())
+        }
+        Commands::Questions { input, format, unanswered } => {
+            let format = format.require_one_of("questions", &[OutFormat::Text, OutFormat::Json, OutFormat::Markdown])?;
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let mut report = crate::questions::questions_report(&input_path, &runtime_config)?;
+            if unanswered {
+                // The summary stays whole: it describes the estate, not the filter.
+                report.questions.retain(|q| q.state == "unanswered");
+            }
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                OutFormat::Markdown => print!("{}", crate::questions::render_decisions(&report)),
                 _ => print!("{}", crate::questions::render_questions(&report)),
             }
             Ok(())
@@ -4176,6 +4241,7 @@ mod command_groups {
         ("doc-packs", Identity::NoGoogleApi),
         ("require", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
+        ("interview", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),
         ("triage", Identity::NoGoogleApi),
         ("remediation-plan", Identity::NoGoogleApi),
