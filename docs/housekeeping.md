@@ -32,7 +32,7 @@ exists rather than a promise that CI has it covered.
 
 ## The provider schema fixture
 
-`tests/schemas/google.json` — 26 resource types, cut from the real provider.
+`tests/schemas/google.json` — 28 resource types, cut from the real provider.
 
 The corpus and the smoke estate classify types through this fixture exactly the way
 production classifies them through a real schema. It is not a stub: a type missing

@@ -263,6 +263,12 @@ is inert until `satz run-actions`. Both are last resorts; prefer a real resource
 
 The loop, and the order matters:
 
+0. **`satz_estates`, then `satz_open`.** The server holds no estate until you open
+   one — it is started with a root directory, not a config. `satz_estates` lists every
+   `config.toml` under that root with the estate files beside it; `satz_open` names one
+   config and one `.satz`, and every later call works on that estate under its own
+   config. Its answer includes `runs_as`: the service account the estate's live tools
+   run as. Call it again to move to the next estate; nothing else changes.
 1. **`satz_questions`** — what this customer still has to decide. Start here for
    anything that touches params.
 2. **Write or edit the `.satz`.**
@@ -276,7 +282,17 @@ The loop, and the order matters:
 
 Also available: `satz_check_presets` (is the pack library current, or forked?),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
-(which identity — check this first when a live call is refused).
+(both halves of the identity — the ADC account and the estate's service account — with
+live checks that the one may become the other and that the quota project is reachable;
+check this first when a live call is refused).
+
+**`satz_report_compliance` returns data, not a table.** Read `live_status` before
+trusting the rows: `verified` means the inventory was read; `unavailable` means it was
+not, and `warnings` says why. Each row carries `responsibility` (`inherited` · `customer`
+· `shared` · `satz-managed` · `unassigned`) and each witness is an object — `address`,
+`state`, `live_id`, and `declared_at`, the `file:line` of the Satz that declares it. That
+is enough to write an audit list, a spreadsheet or the remediation commands in whatever
+shape is asked for; satz does not render those, you do.
 
 A tool your capability level does not permit comes back as an ordinary result marked
 `isError`, with a sentence naming the level and what would be needed. That is

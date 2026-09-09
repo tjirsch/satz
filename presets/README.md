@@ -112,7 +112,7 @@ use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_centr
 
 | Param | Default | Meaning |
 |---|---|---|
-| `cis_central_bucket_project` | `"{customer_shortname}-organization-log-alerts"` | project hosting bucket, metrics, policies, channel |
+| `cis_central_bucket_project` | `logsink_project_name` | project hosting bucket, metrics, policies, channel. Since v1.4 the audit-logsink pack's own project, **by reference** — an estate using both packs sets nothing. Before, a literal naming a project nothing creates |
 | `cis_central_bucket_id` | `"{customer_shortname}-organization-log-alerts"` | Cloud Logging bucket id |
 | `cis_central_bucket_location` | `default_region` | bucket location |
 | `cis_central_bucket_retention_days` | `30` | short on purpose — the archive lives in GCS |
@@ -365,7 +365,8 @@ visible one-line overrides — never forks.
 | `allowed_policy_member_customers` | `[customer_id]` | `iam.allowedPolicyMemberDomains`: DIRECTORY customer ids (`C0…`) whose identities may be granted IAM roles. **Never DNS domain names.** |
 | `allowed_policy_member_principal_sets` | own org (`//cloudresourcemanager.googleapis.com/organizations/<org-id>`) | `iam.managed.allowedPolicyMembers`: principal sets allowed past the managed lock |
 | `allowed_policy_member_subjects` | `[]` | individual principals past both locks — typically Google SYSTEM service accounts that org-level products grant roles to (Firebase Hosting `firebase-hosting@system…`, SCC premium agents `service-org-<id>@gcp-sa-*-hpsa…` / `@security-center-api…`) |
-| `essential_contacts_allowed_domain` | `customer_domain` | domain the Essential Contacts constraint allows |
+| `essential_contacts_allowed_domains` | `[customer_domain]` | domains the Essential Contacts constraint allows — a LIST since v2.2 |
+| `allowed_resource_locations` | `["in:eu-locations", "in:us-locations"]` | `gcp.resourceLocations` (§2): where resources may be created. A param since v2.6 — the default is what the pack always emitted, so upgrading changes nothing; narrow it here instead of forking |
 
 **The two lists must stay consistent**: a directory allowed by
 `allowed_policy_member_customers` needs its org in
@@ -648,7 +649,7 @@ Where Google replaces a legacy org-policy constraint with a managed one, a pack 
 **replacement alone** and declares the legacy twin OFF in the same file:
 
 ```
-"compute-requireOsLogin" {
+"compute-requireOsLogin-superseded" {
   name = "compute.requireOsLogin"
   parent = "organizations/{customer_organization_id}"
   spec {
@@ -656,6 +657,12 @@ Where Google replaces a legacy org-policy constraint with a managed one, a pack 
   }
 }
 ```
+
+The `-superseded` address suffix (pack v2.6) is load-bearing: switching a policy from rules
+to `reset` cannot be an in-place update — the provider PATCHes the rules it still holds
+together with `reset`, and the API refuses the pair — so the address differs from the one a
+pre-2.6 estate carries and the plan is a destroy + create by construction. The policy NAME
+is unchanged; it is one policy being reset, not two. [ADR 0002](../docs/adr/0002-superseded-org-policies-replace-by-construction.md).
 
 Both forms in force is a defect, not extra safety. Org-policy constraints AND together, so
 an exemption has to lift **two** policies — and for several legacy constraints Google's only
@@ -750,6 +757,22 @@ track it, and any estate can share it. A params-only pack (`permissions =
 <param>`) is the shape when the LIST itself is the shared thing. There is no
 value-position include in Satz on purpose: `use` is a language construct
 (params, provenance, claims), not a preprocessor splice.
+
+## ci/ — continuous verification
+
+Two packs that turn the fleet sweep into something that runs on its own:
+`ci/verification-runner.satz` (a Cloud Build trigger `satz-check` on every push running
+`transpile --check`, a nightly `satz-compliance` via Cloud Scheduler running
+`report-compliance --fail-on`, the runner service account and its two project roles)
+and `ci/verification-runner-grant.satz` (one binding on the ESTATE's IaC service
+account so the runner may become it). Split along ownership: customer-hosted uses both
+in one estate and wires nothing; MSP-hosted puts the runner in the MSP's estate and the
+grant in the customer's. The build steps are inline in the trigger, not a file in the
+watched repository — whoever controls the build file controls what runs as the runner.
+Params and the `use` blocks: [docs/verification-runner.md](docs/verification-runner.md),
+[docs/verification-runner-grant.md](docs/verification-runner-grant.md); the workflow and
+the hosted shape: [docs/workflows.md](../docs/workflows.md#continuous-verification);
+the reasoning: [ADR 0004](../docs/adr/0004-the-verification-runner-is-a-pack-and-its-pipeline-is-inline.md).
 
 ## catalogs/
 

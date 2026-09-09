@@ -128,9 +128,9 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from-live` (derive the missing values from the ADC alone) |
 | `bootstrap <CONFIG_FILE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize a not-yet-existing organization) |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), the first line of `main.tf` names the satz that emitted it (a triage hint across a fleet, never a substitute for re-transpiling), `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
-| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
+| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
 
 **HCL**
 
@@ -1096,7 +1096,9 @@ autoload -Uz compinit && compinit
 
 Standing an organisation up from nothing, adopting one that already exists, and
 keeping the preset library current are three walkthroughs on one page:
-**[docs/workflows.md](docs/workflows.md)**. The command reference is above.
+**[docs/workflows.md](docs/workflows.md)**. The command reference is above. Design
+decisions that were a genuine choice — and what the alternatives would have cost — are
+in [docs/adr/](docs/adr/).
 
 ## Configuration
 

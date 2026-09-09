@@ -47,6 +47,16 @@ If you have an idea for a new feature or improvement, please create a new issue 
 -   Use `cargo fmt` to format your code before committing.
 -   Use `cargo clippy` to catch common mistakes and improve code quality.
 
+## Decisions
+
+A change that was a genuine choice between defensible alternatives — one a reader of
+the code would later ask "why on earth" about, or one that would be expensive to
+reverse — gets an architecture decision record in `docs/adr/`, in MADR form: the
+context, the options with their real trade-offs (the chosen one included), what was
+decided and what it costs. Most changes are none of those and need no record. See
+`docs/adr/README.md` for the conventions; number the file one past the highest, and
+never renumber.
+
 ## Privacy gate
 
 This is a public repository and a privacy gate runs on every push and pull

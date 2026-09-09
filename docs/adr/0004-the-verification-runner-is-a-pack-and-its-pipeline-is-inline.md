@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-09
+- **Shipped in:** v0.46.96
 
 ## Context
 
