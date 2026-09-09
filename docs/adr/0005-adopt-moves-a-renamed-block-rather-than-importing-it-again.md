@@ -1,7 +1,7 @@
-# 5. Adopt moves a renamed block rather than importing it again
+# 0005 — adopt moves a renamed block rather than importing it again
 
-- Status: accepted
-- Date: 2026-09-09
+- **Status:** accepted
+- **Date:** 2026-09-09
 
 ## Context
 
