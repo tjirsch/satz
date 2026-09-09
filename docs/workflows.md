@@ -282,6 +282,57 @@ done, and the estate is the only way the infrastructure is managed from here.
 
 ---
 
+## Continuous verification
+
+The fleet sweep answers, once, whether every estate still compiles on the current
+binary. Two triggers answer it continuously, per estate, and add the question the
+sweep cannot ask — whether the live organisation still matches:
+
+| trigger | when | runs | fails when |
+|---|---|---|---|
+| `satz-check` | every push to `main` | `satz transpile --check <estate>` | the estate no longer compiles |
+| `satz-compliance` | nightly, Cloud Scheduler | `satz report-compliance <framework> <estate> --fail-on <statuses>` | a witness is DRIFTED or NOT ENFORCED |
+
+Both are one pack:
+
+```
+use "presets/ci/verification-runner.satz"
+use "presets/ci/verification-runner-grant.satz"
+```
+
+The runner is a service account of its own and holds nothing about the estate.
+Inside the build, satz's first act is to exchange the runner's identity for the
+estate's IaC service account — exactly what it does on a workstation — and the
+grant pack is the one IAM binding that permits it. `satz whoami` inside the build
+answers the same question it answers on your laptop.
+
+**Where the runner lives decides who it is for.**
+
+- **Customer-hosted:** `ci_runner_project` is the estate's own infra project; both
+  packs in the same estate; nothing to wire, the grant's default names the runner's
+  own account.
+- **MSP-hosted — the retainer:** the runner pack in the MSP's estate, the grant pack
+  in the customer's, with `ci_runner_service_account` set to the MSP runner's email.
+  No credential crosses; one IAM binding does. A Cloud Source Repositories trigger
+  can only watch a repository in its own project, so the MSP runner must live in the
+  project the estate repositories are hosted in.
+
+**The build steps are inline in the trigger** — there is no `cloudbuild.yaml` in the
+estate repository. Whoever controls the build file controls what runs as the runner;
+in the hosted shape that file would sit in a repository the MSP does not own. Here
+the pipeline is defined by whoever applies the pack. The steps install satz from the
+release at build time (`ci_satz_release`, default `latest` — which is what continuous
+means) and, for the nightly run, tofu, because `update-schema` needs it.
+
+**Two things to know before the first night.** The nightly run has the same two read
+dependencies `report-compliance` has anywhere — Cloud Asset Inventory enabled on the
+estate's infra project and an asset-viewer role at organization level — and
+`unverified` is deliberately not in the default `--fail-on` set, so an organisation
+without them fails for drift, not for plumbing. And v1 writes nothing back: the
+signal is the exit code and the build log. Committing evidence into the watched
+repository needs write access the runner may not have, and is a decision for whoever
+adopts it.
+
 ## Keeping presets current
 
 How to tell whether a newer preset exists, what to do about it, and which command to

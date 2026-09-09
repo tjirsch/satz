@@ -1,0 +1,182 @@
+// Watches an estate's repository: every push must still compile, every night the
+// live organisation must still match.
+//
+//   use "presets/ci/verification-runner.satz"
+//
+// Two Cloud Build triggers and a scheduler, in the project that HOSTS the runner:
+//
+//   satz-check       on every push to main — `satz transpile --check <estate>`.
+//                    A language tightening that breaks an estate fails one PR in
+//                    one repo on the day it lands, instead of waiting for a fleet
+//                    sweep to find it.
+//   satz-compliance  nightly, via Cloud Scheduler — `satz report-compliance
+//                    --fail-on <statuses>`. Someone widens an org policy in the
+//                    console at four; the job is red by morning.
+//
+// The runner is a service account of its own. It holds nothing about the
+// estate: satz's first act inside the build is to exchange the runner's identity
+// for the ESTATE's IaC service account, exactly as it does on a workstation. The
+// grant that permits that lives on the estate's account and is the companion
+// pack, `ci/verification-runner-grant.satz` — separate on purpose, because in the
+// hosted shape the two resources belong to two different parties.
+//
+// Where it runs decides who it is for:
+//
+//   customer-hosted   ci_runner_project = the estate's own infra project; use
+//                     this pack AND the grant pack in the same estate.
+//   MSP-hosted        ci_runner_project = the MSP's project, which must be the
+//                     Cloud Source Repositories project the estate repo lives in
+//                     (a trigger can only watch a repository in its own project);
+//                     the MSP's estate uses THIS pack — with ci_repo_name,
+//                     ci_estate_file and ci_target_infra_project naming the
+//                     customer's — and the customer's estate uses the grant pack
+//                     with ci_runner_service_account set to the MSP runner's
+//                     email. No credential crosses; one IAM binding does.
+//
+// The build steps are INLINE in the trigger, not a cloudbuild.yaml in the
+// watched repository. Whoever controls the build file controls what runs as the
+// runner's identity; in the hosted shape that file would sit in a repository the
+// MSP does not own. Here the pipeline is defined by whoever applies this pack.
+//
+// v1 reports through the build's exit code and log. It writes no evidence back
+// into the repository — that needs write access to a repo the runner may not
+// own, and is a decision for whoever adopts it.
+//
+// Requires the estate's IaC service account to exist (post-init), and, for the
+// live nightly run, Cloud Asset Inventory enabled on the estate's infra project
+// with an asset-viewer role at organization level — the same two read
+// dependencies `report-compliance` needs from a workstation.
+
+pack ci.verification_runner version "1.0"
+
+params {
+  // The project that hosts the triggers and the runner service account. For a
+  // Cloud Source Repositories estate this MUST be the repository's own project.
+  ci_runner_project = infra_project_name
+  ci_region         = default_region
+  // The WATCHED estate's infra project — the quota project for the nightly read,
+  // because that is where Cloud Asset Inventory is enabled and where the calls
+  // should be billed. Same as this estate's own when customer-hosted; the MSP
+  // names the customer's.
+  ci_target_infra_project = infra_project_name
+  // The repository the triggers watch, as Cloud Source Repositories names it —
+  // the estate repo's name, not a URL.
+  ci_repo_name      = "{customer_shortname}-{customer_id}"
+  // The estate file inside that repository's yaml_dir.
+  ci_estate_file    = "{customer_id}.satz"
+  ci_framework      = "cis-gcp-4.0"
+  // Which statuses make the nightly run fail. `unverified` is deliberately not
+  // in the default: an org whose read dependencies are not yet in place would
+  // fail every night for a reason that is not drift.
+  ci_fail_on        = "drifted,not-enforced"
+  ci_schedule       = "0 3 * * *"
+  ci_time_zone      = "Europe/Berlin"
+  // The satz release the runner installs. `latest` follows every release —
+  // which is what continuous verification means; pin a version to opt out.
+  ci_satz_release   = "latest"
+}
+
+google_project_service {
+  cloudbuild {
+    project = ci_runner_project
+    service = "cloudbuild.googleapis.com"
+  }
+  cloudscheduler {
+    project = ci_runner_project
+    service = "cloudscheduler.googleapis.com"
+  }
+}
+
+google_service_account {
+  satz_runner {
+    project      = ci_runner_project
+    account_id   = "satz-runner"
+    display_name = "satz continuous verification runner"
+  }
+}
+
+// logWriter: Cloud Build requires it for any build running as a custom service
+// account. builds.editor: what Cloud Scheduler's call to `triggers:run` needs.
+google_project_iam_member {
+  "serviceAccount:satz-runner@{ci_runner_project}.iam.gserviceaccount.com" = [
+    "roles/logging.logWriter",
+    "roles/cloudbuild.builds.editor",
+  ]
+}
+
+google_cloudbuild_trigger {
+  // The check-in trigger. A regex branch matches pushes; `transpile --check`
+  // compiles in memory and writes nothing, so this needs neither tofu nor a
+  // credential beyond the runner's own — no schema fetch, no impersonation.
+  satz_check {
+    project         = ci_runner_project
+    location        = ci_region
+    name            = "satz-check"
+    description     = "on every push: does the estate still compile"
+    service_account = "${{google_service_account.satz_runner.id}}"
+    trigger_template {
+      project_id  = ci_runner_project
+      repo_name   = ci_repo_name
+      branch_name = "^main$"
+    }
+    build {
+      timeout = "600s"
+      step {
+        id         = "check"
+        name       = "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+        entrypoint = "bash"
+        args       = ["-c", "curl -fsSL https://github.com/tjirsch/satz/releases/{ci_satz_release}/download/satz-installer.sh | sh && $HOME/.local/bin/satz --config . transpile {ci_estate_file} --check"]
+      }
+      options {
+        logging = "CLOUD_LOGGING_ONLY"
+      }
+    }
+  }
+  // The nightly trigger. A CONCRETE branch, because Cloud Scheduler starts it
+  // through `triggers:run`, which resolves the template's branch rather than
+  // matching a push against a regex. `update-schema` needs tofu, so the step
+  // installs it; the quota project is the estate's infra project, which is the
+  // right answer in every estate.
+  satz_compliance {
+    project         = ci_runner_project
+    location        = ci_region
+    name            = "satz-compliance"
+    description     = "nightly: does the live organisation still match the estate"
+    service_account = "${{google_service_account.satz_runner.id}}"
+    trigger_template {
+      project_id  = ci_runner_project
+      repo_name   = ci_repo_name
+      branch_name = "main"
+    }
+    build {
+      timeout = "1200s"
+      step {
+        id         = "report"
+        name       = "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+        entrypoint = "bash"
+        env        = ["GOOGLE_CLOUD_QUOTA_PROJECT={ci_target_infra_project}"]
+        args       = ["-c", "curl -fsSL https://github.com/tjirsch/satz/releases/{ci_satz_release}/download/satz-installer.sh | sh && curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh -s -- --install-method standalone --skip-verify && export PATH=$HOME/.local/bin:$PATH && satz --config . update-schema && satz --config . report-compliance {ci_framework} {ci_estate_file} --format json --fail-on {ci_fail_on}"]
+      }
+      options {
+        logging = "CLOUD_LOGGING_ONLY"
+      }
+    }
+  }
+}
+
+google_cloud_scheduler_job {
+  satz_nightly {
+    project   = ci_runner_project
+    region    = ci_region
+    name      = "satz-nightly-compliance"
+    schedule  = ci_schedule
+    time_zone = ci_time_zone
+    http_target {
+      http_method = "POST"
+      uri         = "https://cloudbuild.googleapis.com/v1/projects/{ci_runner_project}/locations/{ci_region}/triggers/satz-compliance:run"
+      oauth_token {
+        service_account_email = "${{google_service_account.satz_runner.email}}"
+      }
+    }
+  }
+}

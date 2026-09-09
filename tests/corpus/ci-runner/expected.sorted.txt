@@ -1,0 +1,129 @@
+        "-c",
+        "-c",
+        "GOOGLE_CLOUD_QUOTA_PROJECT=acme-infra-001"
+        "curl -fsSL https://github.com/tjirsch/satz/releases/latest/download/satz-installer.sh | sh && $HOME/.local/bin/satz --config . transpile C0example.satz --check"
+        "curl -fsSL https://github.com/tjirsch/satz/releases/latest/download/satz-installer.sh | sh && curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh -s -- --install-method standalone --skip-verify && export PATH=$HOME/.local/bin:$PATH && satz --config . update-schema && satz --config . report-compliance cis-gcp-4.0 C0example.satz --format json --fail-on drifted,not-enforced"
+      ]
+      ]
+      ]
+      args = [
+      args = [
+      entrypoint = "bash"
+      entrypoint = "bash"
+      env = [
+      id = "check"
+      id = "report"
+      logging = "CLOUD_LOGGING_ONLY"
+      logging = "CLOUD_LOGGING_ONLY"
+      name = "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+      name = "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+      service_account_email = "${google_service_account.satz_runner.email}"
+    branch_name = "^main$"
+    branch_name = "main"
+    http_method = "POST"
+    oauth_token {
+    options {
+    options {
+    project_id = "acme-infra-001"
+    project_id = "acme-infra-001"
+    repo_name = "acme-C0example"
+    repo_name = "acme-C0example"
+    step {
+    step {
+    timeout = "1200s"
+    timeout = "600s"
+    uri = "https://cloudbuild.googleapis.com/v1/projects/acme-infra-001/locations/europe-west3/triggers/satz-compliance:run"
+    }
+    }
+    }
+    }
+    }
+  account_id = "satz-runner"
+  build {
+  build {
+  description = "nightly: does the live organisation still match the estate"
+  description = "on every push: does the estate still compile"
+  display_name = "satz continuous verification runner"
+  http_target {
+  location = "europe-west3"
+  location = "europe-west3"
+  member = "serviceAccount:satz-runner@acme-infra-001.iam.gserviceaccount.com"
+  member = "serviceAccount:satz-runner@acme-infra-001.iam.gserviceaccount.com"
+  member = "serviceAccount:satz-runner@acme-infra-001.iam.gserviceaccount.com"
+  name = "satz-check"
+  name = "satz-compliance"
+  name = "satz-nightly-compliance"
+  project = ""
+  project = ""
+  project = "acme-infra-001"
+  project = "acme-infra-001"
+  project = "acme-infra-001"
+  project = "acme-infra-001"
+  project = "acme-infra-001"
+  project = "acme-infra-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  region = "europe-west3"
+  role = "roles/cloudbuild.builds.editor"
+  role = "roles/iam.serviceAccountTokenCreator"
+  role = "roles/logging.logWriter"
+  schedule = "0 3 * * *"
+  service = "cloudbuild.googleapis.com"
+  service = "cloudscheduler.googleapis.com"
+  service_account = "${google_service_account.satz_runner.id}"
+  service_account = "${google_service_account.satz_runner.id}"
+  service_account_id = "projects/acme-infra-001/serviceAccounts/svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  time_zone = "Europe/Berlin"
+  trigger_template {
+  trigger_template {
+  }
+  }
+  }
+  }
+  }
+resource "google_cloud_scheduler_job" "satz_nightly" {
+resource "google_cloudbuild_trigger" "satz_check" {
+resource "google_cloudbuild_trigger" "satz_compliance" {
+resource "google_project_iam_member" "iam_serviceAccount_satz_runner_acme_infra_001_iam_gserviceaccount_com_525b152e27c87332" {
+resource "google_project_iam_member" "iam_serviceAccount_satz_runner_acme_infra_001_iam_gserviceaccount_com_a38560111ae487e1" {
+resource "google_project_service" "cloudbuild" {
+resource "google_project_service" "cloudscheduler" {
+resource "google_service_account" "satz_runner" {
+resource "google_service_account_iam_member" "verification_runner_impersonates_iac" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+ci-estate-file = "C0example.satz"
+ci-fail-on = "drifted,not-enforced"
+ci-framework = "cis-gcp-4.0"
+ci-region = "europe-west3"
+ci-repo-name = "acme-C0example"
+ci-runner-project = "acme-infra-001"
+ci-runner-service-account = "satz-runner@acme-infra-001.iam.gserviceaccount.com"
+ci-satz-release = "latest"
+ci-schedule = "0 3 * * *"
+ci-target-infra-project = "acme-infra-001"
+ci-time-zone = "Europe/Berlin"
+customer-domain = "example.com"
+customer-id = "C0example"
+customer-organization-id = "123456789012"
+customer-shortname = "acme"
+default-region = "europe-west3"
+deployment-engine = "tofu"
+deployment-mode = "local"
+infra-project-name = "acme-infra-001"
+svc-iac-account = "svc-iac-001"

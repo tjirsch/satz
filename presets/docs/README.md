@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's conventions and its per-family prose are [`presets/README.md`](../README.md); its version history is [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under **History** on each page here.
 
-**24 packs · 137 resources · 73 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**26 packs · 145 resources · 73 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Root — `presets/*.satz`
 
@@ -13,6 +13,13 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | Billing-account IAM, split by audience. | 4 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.2 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
 | [`organization_budget`](organization-budget.md) | 1.0 | An organization-wide budget on the infrastructure billing account, with alert thresholds at 50, 80 and 100 % of current spend. | 1 | — |
+
+## `ci/`
+
+| pack | version | what it does | resources | claims |
+|---|---|---|---|---|
+| [`ci.verification_runner_grant`](verification-runner-grant.md) | 1.0 | Lets a verification runner act as this estate's IaC service account. | 1 | — |
+| [`ci.verification_runner`](verification-runner.md) | 1.0 | Watches an estate's repository: every push must still compile, every night the live organisation must still match. | 7 | — |
 
 ## `cis-extensions/`
 

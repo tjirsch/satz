@@ -1,0 +1,28 @@
+// Corpus case: the continuous-verification runner in its customer-hosted shape —
+// runner and grant in one estate, the grant's default naming the runner's own
+// account so the estate wires nothing between them. Snapshot-gated: the triggers'
+// inline build steps are the pipeline, and a change to them is a change to what
+// runs as the runner on every push and every night.
+
+estate corpus_ci_runner
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0example"
+  customer_domain = "example.com"
+  customer_shortname = "acme"
+  default_region = "europe-west3"
+  infra_project_name = "acme-infra-001"
+  svc_iac_account = "svc-iac-001"
+  deployment_engine = "tofu"
+  deployment_mode = "local"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/ci/verification-runner.satz"
+use "presets/ci/verification-runner-grant.satz"

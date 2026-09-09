@@ -1,0 +1,34 @@
+// Lets a verification runner act as this estate's IaC service account.
+//
+//   use "presets/ci/verification-runner-grant.satz"
+//
+// One IAM binding: the runner may mint tokens for the estate's service account
+// (`roles/iam.serviceAccountTokenCreator`), which is the same right a human
+// operator holds through the svc-iac-users group. Nothing else — the runner gets
+// no role on the organisation, because it never acts as itself; satz exchanges
+// its identity for the estate's account before the first API call.
+//
+// Separate from `ci/verification-runner.satz` because the two resources belong
+// to two parties in the hosted shape: the runner lives in the MSP's project,
+// this grant lives on the CUSTOMER's account, and the customer applies it.
+//
+// Estate wiring: nothing to set when the runner pack is used in the same estate
+// — the default names its service account. With the runner elsewhere, set
+// ci_runner_service_account to that runner's email.
+
+pack ci.verification_runner_grant version "1.0"
+
+params {
+  // The runner that may become this estate's service account. Defaults to the
+  // runner pack's account in the same project, so a customer-hosted estate using
+  // both packs sets nothing; an MSP-hosted runner is named explicitly.
+  ci_runner_service_account = "satz-runner@{ci_runner_project}.iam.gserviceaccount.com"
+}
+
+google_service_account_iam_member {
+  verification_runner_impersonates_iac {
+    service_account_id = "projects/{infra_project_name}/serviceAccounts/{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"
+    role               = "roles/iam.serviceAccountTokenCreator"
+    member             = "serviceAccount:{ci_runner_service_account}"
+  }
+}
