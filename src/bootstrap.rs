@@ -313,28 +313,145 @@ fn rewrite_param_line(text: &str, param: &str, value: &str) -> Result<String, St
     }
 }
 
-/// The addresses already in the Terraform state (`tf_tool state list` in
-/// `working_dir`). An unreadable state comes back as the error string — the
-/// caller decides whether that is fatal; on a first adopt there is no state
-/// yet, which is not an error condition.
-pub(crate) fn state_addresses(
+/// What the state manages: every address, and the live object behind each one.
+///
+/// A set of addresses answers "is THIS address managed". It cannot answer the
+/// question a pack rename asks — "is this LIVE object already managed, under
+/// some other name" — and that is the question whose wrong answer imports one
+/// live policy into the state twice (E08, 2026-09-09: CIS 2.6 renamed six
+/// superseded blocks, adopt re-imported the live policies under the new
+/// addresses, and the next plan proposed to DESTROY the old ones, which would
+/// have deleted the policies for real).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct StateIndex {
+    addresses: std::collections::BTreeSet<String>,
+    /// `(type, live id)` → the address managing it. Keyed by type as well as
+    /// id because an id is only unique within its type.
+    by_object: std::collections::BTreeMap<(String, String), String>,
+}
+
+impl StateIndex {
+    pub(crate) fn manages(&self, address: &str) -> bool {
+        self.addresses.contains(address)
+    }
+
+    /// The address this exact live object is managed under, if any. Exact
+    /// match on both halves: a near-match is not evidence of sameness, and
+    /// guessing here would move the wrong resource.
+    pub(crate) fn address_of(&self, tf_type: &str, id: &str) -> Option<&str> {
+        self.by_object.get(&(tf_type.to_string(), id.to_string())).map(String::as_str)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_objects(objects: &[(&str, &str, &str)]) -> Self {
+        let mut idx = Self::default();
+        for (address, tf_type, id) in objects {
+            idx.addresses.insert((*address).to_string());
+            idx.by_object.insert(((*tf_type).to_string(), (*id).to_string()), (*address).to_string());
+        }
+        idx
+    }
+}
+
+/// The state as `tf_tool show -json` in `working_dir` reports it. An unreadable
+/// state comes back as the error string — the caller decides whether that is
+/// fatal; on a first adopt there is no state yet, which is not an error
+/// condition.
+pub(crate) fn state_index(
     tf_tool: &str,
     working_dir: &std::path::Path,
-) -> Result<std::collections::BTreeSet<String>, String> {
+) -> Result<StateIndex, String> {
     let output = std::process::Command::new(tf_tool)
         .current_dir(working_dir)
-        .args(["state", "list"])
+        .args(["show", "-json"])
         .output()
-        .map_err(|e| format!("could not run {} state list: {}", tf_tool, e))?;
+        .map_err(|e| format!("could not run {} show -json: {}", tf_tool, e))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    Ok(parse_state_list(&String::from_utf8_lossy(&output.stdout)))
+    parse_state_json(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// The pure half of the state read: one address per non-empty line.
-fn parse_state_list(stdout: &str) -> std::collections::BTreeSet<String> {
-    stdout.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+/// The pure half of the state read. An empty state prints no `values` at all,
+/// which is an empty index and not a parse failure.
+fn parse_state_json(stdout: &str) -> Result<StateIndex, String> {
+    let mut idx = StateIndex::default();
+    if stdout.trim().is_empty() {
+        return Ok(idx);
+    }
+    let doc: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|e| format!("the state did not parse as JSON: {}", e))?;
+    if let Some(root) = doc.get("values").and_then(|v| v.get("root_module")) {
+        index_module(root, &mut idx);
+    }
+    Ok(idx)
+}
+
+fn index_module(module: &serde_json::Value, idx: &mut StateIndex) {
+    if let Some(resources) = module.get("resources").and_then(|r| r.as_array()) {
+        for res in resources {
+            let Some(address) = res.get("address").and_then(|a| a.as_str()) else { continue };
+            idx.addresses.insert(address.to_string());
+            // A data source is read, not managed: it can be neither imported
+            // nor moved, so indexing it could only produce a wrong match.
+            if res.get("mode").and_then(|m| m.as_str()) == Some("data") {
+                continue;
+            }
+            let (Some(tf_type), Some(id)) = (
+                res.get("type").and_then(|t| t.as_str()),
+                res.get("values").and_then(|v| v.get("id")).and_then(|i| i.as_str()),
+            ) else {
+                continue;
+            };
+            // First address wins. One live object under two addresses is
+            // already the damage this index exists to prevent; reading it back
+            // is not the moment to repair it.
+            idx.by_object
+                .entry((tf_type.to_string(), id.to_string()))
+                .or_insert_with(|| address.to_string());
+        }
+    }
+    if let Some(children) = module.get("child_modules").and_then(|c| c.as_array()) {
+        for child in children {
+            index_module(child, idx);
+        }
+    }
+}
+
+/// `tf_tool state mv <old> <new>`: the same live object, under the name the
+/// estate now gives it. Returns whether the move succeeded.
+pub(crate) fn run_state_mv(
+    tf_tool: &str,
+    working_dir: &std::path::Path,
+    old_address: &str,
+    new_address: &str,
+) -> bool {
+    println!("Moving {} -> {} (same live object)...", old_address, new_address);
+    let output = std::process::Command::new(tf_tool)
+        .current_dir(working_dir)
+        .arg("state")
+        .arg("mv")
+        .arg(old_address)
+        .arg(new_address)
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            println!("- {}: moved from {}.", new_address, old_address);
+            true
+        }
+        Ok(out) => {
+            println!(
+                "- {}: move failed. (stderr: {})",
+                new_address,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            false
+        }
+        Err(e) => {
+            println!("- {}: could not run {} state mv: {}", new_address, tf_tool, e);
+            false
+        }
+    }
 }
 
 /// Read a bootstrap config the same way `transpile` does: expand `!include` directives,
@@ -897,15 +1014,70 @@ mod tests {
         assert!(rewrite_param_line(prefixed, "customer_organization_id", "1").is_err());
     }
 
-    // --- state list parsing ------------------------------------------------
+    // --- state parsing -----------------------------------------------------
+
+    const STATE_JSON: &str = r#"{
+      "format_version": "1.0",
+      "values": {
+        "root_module": {
+          "resources": [
+            {"address": "google_project.infra", "mode": "managed", "type": "google_project",
+             "values": {"id": "projects/acme-infra-001"}},
+            {"address": "google_org_policy_policy.forwarding", "mode": "managed",
+             "type": "google_org_policy_policy",
+             "values": {"id": "organizations/1/policies/compute.restrictProtocolForwardingCreationForTypes"}},
+            {"address": "data.google_project.lookup", "mode": "data", "type": "google_project",
+             "values": {"id": "projects/bolt-infra-001"}}
+          ],
+          "child_modules": [
+            {"resources": [
+              {"address": "module.vpc_stack.google_compute_network.vpc", "mode": "managed",
+               "type": "google_compute_network", "values": {"id": "projects/acme-infra-001/global/networks/vpc"}}
+            ]}
+          ]
+        }
+      }
+    }"#;
 
     #[test]
-    fn state_list_output_parses_to_addresses() {
-        let set = parse_state_list("google_project.infra\ngoogle_storage_bucket.state\n\n  \n");
-        assert_eq!(set.len(), 2);
-        assert!(set.contains("google_project.infra"));
-        assert!(set.contains("google_storage_bucket.state"));
-        assert!(parse_state_list("").is_empty());
+    fn state_json_indexes_addresses_and_objects() {
+        let idx = parse_state_json(STATE_JSON).unwrap();
+        assert!(idx.manages("google_project.infra"));
+        assert!(idx.manages("module.vpc_stack.google_compute_network.vpc"), "child modules are walked");
+        assert_eq!(
+            idx.address_of(
+                "google_org_policy_policy",
+                "organizations/1/policies/compute.restrictProtocolForwardingCreationForTypes"
+            ),
+            Some("google_org_policy_policy.forwarding")
+        );
+    }
+
+    #[test]
+    fn state_json_does_not_index_data_sources() {
+        let idx = parse_state_json(STATE_JSON).unwrap();
+        // The address is known — it IS in the state — but it is not a movable
+        // object, so a resource resolving to the same id must not match it.
+        assert!(idx.manages("data.google_project.lookup"));
+        assert_eq!(idx.address_of("google_project", "projects/bolt-infra-001"), None);
+    }
+
+    #[test]
+    fn state_json_type_is_part_of_the_key() {
+        let idx = parse_state_json(STATE_JSON).unwrap();
+        assert_eq!(idx.address_of("google_folder", "projects/acme-infra-001"), None);
+    }
+
+    #[test]
+    fn empty_state_is_an_empty_index_not_a_failure() {
+        assert!(!parse_state_json("").unwrap().manages("anything"));
+        let empty = parse_state_json(r#"{"format_version":"1.0"}"#).unwrap();
+        assert_eq!(empty.address_of("google_project", "projects/acme-infra-001"), None);
+    }
+
+    #[test]
+    fn unparsable_state_is_an_error_not_an_empty_index() {
+        assert!(parse_state_json("not json at all").is_err());
     }
 
     // --- identity comparison -----------------------------------------------------

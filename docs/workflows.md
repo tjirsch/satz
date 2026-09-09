@@ -570,6 +570,28 @@ overwriting it destroys the only record of where the fork branched.
   that were actually failing the apply. A state that cannot be read is a note on the
   dry run — a first adopt has none — and a hard error on `--execute --import`, where
   every import would fail the same way.
+- **A pack that RENAMES a block moves the state; it does not import again.** Renaming
+  changes the name the estate gives an object, never the object in the cloud. Adopt
+  therefore asks whether this *live object* is already managed — by an exact match on
+  the resource type and the live id — and not merely whether this *address* is:
+
+  ```
+  google_org_policy_policy.compute_restrictProtocolForwarding_superseded
+      MOVE   in state as google_org_policy_policy.compute_restrictProtocolForwarding —
+             the same live object, so `state mv`, not an import
+  ```
+
+  `--execute --import` then runs `tofu state mv` for that row and reports it as
+  `moved`; the summary counts moves apart from imports. Importing instead would put
+  one live object into the state twice, and the next plan would propose to **destroy**
+  it under its old address — which deletes it in the cloud. Nothing is guessed: a
+  near-match is not evidence of sameness, so anything short of an exact type-and-id
+  match is still an import.
+
+  If the estate declares **both** ends — the old address as well as the new one — adopt
+  stops and names the pair. One live object with two declarations is not something a
+  move resolves; it only changes which of the two the next plan wants to create, so the
+  estate has to drop one first.
 
 ### When upstream stops answering: the GitHub quota
 

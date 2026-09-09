@@ -597,19 +597,77 @@ fn render_template(
 /// that read as 25 resources to import when 22 were already managed and the
 /// three that mattered — the ones failing `apply` with "already exists" — were
 /// indistinguishable in the list.
+/// The address this same live object is ALREADY managed under, when the estate
+/// now declares it somewhere else.
+///
+/// A pack that renames a block does not change the object in the cloud, only
+/// the name the estate gives it. Asking "is this address managed" answers no,
+/// so adopt used to import — and a live policy that is in state twice is one
+/// the next plan proposes to DESTROY under its old name, which deletes it for
+/// real (E08, 2026-09-09, the first 2.1→2.6 upgrade). The answer is a
+/// `state mv`, and the only safe evidence of sameness is an exact match on
+/// both the type and the live id.
+pub(crate) fn moved_from<'a>(
+    r: &Resolution,
+    state: &'a crate::bootstrap::StateIndex,
+) -> Option<&'a str> {
+    if state.manages(&r.address) {
+        return None;
+    }
+    let id = match &r.outcome {
+        Outcome::Resolved { id, .. }
+        | Outcome::NeedsActivation { id, .. }
+        | Outcome::AlreadyAdopted(id) => id,
+        _ => return None,
+    };
+    state.address_of(&r.tf_type, id).filter(|old| *old != r.address)
+}
+
+/// Moves the estate itself blocks, as `(new address, old address)` pairs.
+///
+/// If the estate still DECLARES the old address, then one live object has two
+/// declarations. Moving would not resolve that — it would only change which of
+/// the two the next plan wants to create. Naming both and stopping is the only
+/// honest answer; the estate has to drop one of them first.
+pub(crate) fn move_conflicts(
+    resolutions: &[Resolution],
+    state: &crate::bootstrap::StateIndex,
+) -> Vec<(String, String)> {
+    let declared: std::collections::BTreeSet<&str> = resolutions
+        .iter()
+        .filter(|r| !matches!(r.outcome, Outcome::Skipped))
+        .map(|r| r.address.as_str())
+        .collect();
+    resolutions
+        .iter()
+        .filter_map(|r| moved_from(r, state).map(|old| (r.address.clone(), old.to_string())))
+        .filter(|(_, old)| declared.contains(old.as_str()))
+        .collect()
+}
+
 pub(crate) fn render_table(
     resolutions: &[Resolution],
-    in_state: &std::collections::BTreeSet<String>,
+    in_state: &crate::bootstrap::StateIndex,
 ) -> String {
     let mut s = String::new();
     let w = resolutions.iter().map(|r| r.address.len()).max().unwrap_or(20).min(72);
     for r in resolutions {
-        if in_state.contains(&r.address) {
+        if in_state.manages(&r.address) {
             // The same words the import path prints, so the dry run and the run
             // are recognisably the same statement.
             s.push_str(&format!(
                 "  {:w$}  {:30}  {}\n",
                 r.address, "already managed in the state", "skipped",
+                w = w
+            ));
+            continue;
+        }
+        if let Some(old) = moved_from(r, in_state) {
+            // Said before the outcome, because the outcome is "IMPORT" and
+            // importing is precisely the wrong move here.
+            s.push_str(&format!(
+                "  {:w$}  {:30}  in state as {} — the same live object, so `state mv`, not an import\n",
+                r.address, "MOVE", old,
                 w = w
             ));
             continue;
@@ -638,19 +696,24 @@ pub(crate) fn render_table(
 
 pub(crate) fn summary(
     resolutions: &[Resolution],
-    in_state: &std::collections::BTreeSet<String>,
+    in_state: &crate::bootstrap::StateIndex,
 ) -> String {
     // Counted over what adopt would ACT on. Leaving the managed ones in every
     // bucket is what made the headline number wrong by an order of magnitude.
     let acts_on: Vec<&Resolution> =
-        resolutions.iter().filter(|r| !in_state.contains(&r.address)).collect();
+        resolutions.iter().filter(|r| !in_state.manages(&r.address)).collect();
     let managed = resolutions.len() - acts_on.len();
-    let count = |f: &dyn Fn(&Outcome) -> bool| acts_on.iter().filter(|r| f(&r.outcome)).count();
+    // A move is not an import and must not be counted as one: the whole point
+    // of the row is that importing it would be wrong.
+    let (to_move, rest): (Vec<&Resolution>, Vec<&Resolution>) =
+        acts_on.into_iter().partition(|r| moved_from(r, in_state).is_some());
+    let count = |f: &dyn Fn(&Outcome) -> bool| rest.iter().filter(|r| f(&r.outcome)).count();
     format!(
-        "adopt: {} to import ({} verified live, {} derived), {} need activation, {} already adopted, {} on apply, {} on apply with their project, {} ambiguous, {} without a rule, {} unresolvable, {} failed, {} already managed in the state",
+        "adopt: {} to import ({} verified live, {} derived), {} to move (already in state under another address), {} need activation, {} already adopted, {} on apply, {} on apply with their project, {} ambiguous, {} without a rule, {} unresolvable, {} failed, {} already managed in the state",
         count(&|o| matches!(o, Outcome::Resolved { .. })),
         count(&|o| matches!(o, Outcome::Resolved { verified: true, .. })),
         count(&|o| matches!(o, Outcome::Resolved { verified: false, .. })),
+        to_move.len(),
         count(&|o| matches!(o, Outcome::NeedsActivation { .. })),
         count(&|o| matches!(o, Outcome::AlreadyAdopted(_))),
         count(&|o| matches!(o, Outcome::OnApply)),
@@ -671,11 +734,11 @@ pub(crate) fn summary(
 /// unresolved one is not a reason to refuse the run.
 pub(crate) fn unanswered(
     resolutions: &[Resolution],
-    in_state: &std::collections::BTreeSet<String>,
+    in_state: &crate::bootstrap::StateIndex,
 ) -> usize {
     resolutions
         .iter()
-        .filter(|r| !in_state.contains(&r.address))
+        .filter(|r| !in_state.manages(&r.address))
         .filter(|r| matches!(r.outcome, Outcome::Failed(_) | Outcome::Unresolvable(_) | Outcome::Ambiguous(_) | Outcome::NoRule))
         .count()
 }
@@ -955,8 +1018,8 @@ impl Live for RealLive {
 mod tests {
     /// No state read: nothing is managed, so every row is judged on its outcome
     /// alone — what these tests are about.
-    fn none() -> std::collections::BTreeSet<String> {
-        std::collections::BTreeSet::new()
+    fn none() -> crate::bootstrap::StateIndex {
+        crate::bootstrap::StateIndex::default()
     }
 
     use super::*;
@@ -1391,8 +1454,7 @@ mod state_aware_tests {
     //! happen. On one organisation the table read as 25 resources to import when
     //! 22 were already managed and the three that mattered — the ones failing
     //! `apply` with "already exists" — were indistinguishable in the list.
-    use super::{Outcome, Resolution, render_table, summary, unanswered};
-    use std::collections::BTreeSet;
+    use super::{Outcome, Resolution, move_conflicts, moved_from, render_table, summary, unanswered};
 
     fn res(address: &str, outcome: Outcome) -> Resolution {
         Resolution {
@@ -1413,8 +1475,12 @@ mod state_aware_tests {
         ]
     }
 
-    fn managed(addresses: &[&str]) -> BTreeSet<String> {
-        addresses.iter().map(|a| a.to_string()).collect()
+    /// Addresses the state manages, with no live object behind them — enough
+    /// for the "already managed" rows, which are decided on the address alone.
+    fn managed(addresses: &[&str]) -> crate::bootstrap::StateIndex {
+        let objects: Vec<(&str, &str, &str)> =
+            addresses.iter().map(|a| (*a, "", "")).collect();
+        crate::bootstrap::StateIndex::from_objects(&objects)
     }
 
     #[test]
@@ -1439,7 +1505,7 @@ mod state_aware_tests {
         assert!(out.contains("2 already managed in the state"), "{}", out);
 
         // With no state read, nothing is managed and the count is what it was.
-        let out = summary(&rs, &BTreeSet::new());
+        let out = summary(&rs, &managed(&[]));
         assert!(out.starts_with("adopt: 3 to import"), "{}", out);
         assert!(out.contains("0 already managed in the state"), "{}", out);
     }
@@ -1452,12 +1518,112 @@ mod state_aware_tests {
             res("google_org_policy_policy.a", Outcome::NoRule),
             res("google_org_policy_policy.b", Outcome::NoRule),
         ];
-        assert_eq!(unanswered(&rs, &BTreeSet::new()), 2);
+        assert_eq!(unanswered(&rs, &managed(&[])), 2);
         assert_eq!(unanswered(&rs, &managed(&["google_org_policy_policy.a"])), 1);
         assert_eq!(
             unanswered(&rs, &managed(&["google_org_policy_policy.a", "google_org_policy_policy.b"])),
             0,
             "every unresolved row is already managed — there is nothing to refuse"
         );
+    }
+
+    // --- the renamed block: move, never import (E08, 2026-09-09) ------------
+
+    /// The live policy CIS 2.6 renamed. The estate declares the `-superseded`
+    /// address; the state still carries the object under the old one.
+    const LIVE_ID: &str = "organizations/1/policies/compute.restrictProtocolForwardingCreationForTypes";
+    const OLD: &str = "google_org_policy_policy.compute_restrictProtocolForwarding";
+    const NEW: &str = "google_org_policy_policy.compute_restrictProtocolForwarding_superseded";
+
+    fn renamed() -> (Vec<Resolution>, crate::bootstrap::StateIndex) {
+        let rs = vec![res(NEW, Outcome::Resolved { id: LIVE_ID.into(), verified: true })];
+        let state = crate::bootstrap::StateIndex::from_objects(&[(OLD, "google_org_policy_policy", LIVE_ID)]);
+        (rs, state)
+    }
+
+    /// The defect itself: adopt imported the live policy a second time, and the
+    /// next plan then proposed to DESTROY the old address — deleting the policy.
+    #[test]
+    fn a_renamed_block_is_a_move_not_an_import() {
+        let (rs, state) = renamed();
+        assert_eq!(moved_from(&rs[0], &state), Some(OLD));
+
+        let table = render_table(&rs, &state);
+        assert!(table.contains("MOVE"), "{}", table);
+        assert!(table.contains(OLD), "the row names the address to move FROM: {}", table);
+        assert!(!table.contains("IMPORT"), "importing it is the defect: {}", table);
+    }
+
+    #[test]
+    fn the_summary_counts_a_move_apart_from_an_import() {
+        let (rs, state) = renamed();
+        let out = summary(&rs, &state);
+        assert!(out.starts_with("adopt: 0 to import"), "{}", out);
+        assert!(out.contains("1 to move (already in state under another address)"), "{}", out);
+    }
+
+    /// The ordinary case must not become a move: same object, same address, so
+    /// there is nothing to rename and the existing "already managed" row stands.
+    #[test]
+    fn an_object_already_at_its_own_address_is_managed_not_moved() {
+        let rs = vec![res(NEW, Outcome::Resolved { id: LIVE_ID.into(), verified: true })];
+        let state = crate::bootstrap::StateIndex::from_objects(&[(NEW, "google_org_policy_policy", LIVE_ID)]);
+        assert_eq!(moved_from(&rs[0], &state), None);
+        assert!(render_table(&rs, &state).contains("already managed in the state"));
+    }
+
+    /// Sameness is proven by an exact match on type AND id. Anything less would
+    /// move a resource that only looks like the one being adopted.
+    #[test]
+    fn only_an_exact_object_match_is_a_move() {
+        let rs = [res(NEW, Outcome::Resolved { id: LIVE_ID.into(), verified: true })];
+
+        let other_id = crate::bootstrap::StateIndex::from_objects(&[(
+            OLD,
+            "google_org_policy_policy",
+            "organizations/1/policies/compute.somethingElse",
+        )]);
+        assert_eq!(moved_from(&rs[0], &other_id), None, "a different live id is a different object");
+
+        let other_type =
+            crate::bootstrap::StateIndex::from_objects(&[(OLD, "google_folder", LIVE_ID)]);
+        assert_eq!(moved_from(&rs[0], &other_type), None, "an id is only unique within its type");
+    }
+
+    /// A row with no live id cannot be shown to be the same object as anything.
+    #[test]
+    fn an_outcome_without_an_id_never_moves() {
+        let state = crate::bootstrap::StateIndex::from_objects(&[(OLD, "google_org_policy_policy", LIVE_ID)]);
+        for outcome in [
+            Outcome::OnApply,
+            Outcome::NoRule,
+            Outcome::Ambiguous(vec![LIVE_ID.into()]),
+            Outcome::ParentOnApply("project is not live".into()),
+        ] {
+            let r = res(NEW, outcome);
+            assert_eq!(moved_from(&r, &state), None, "{:?} carries no id", r.outcome);
+        }
+    }
+
+    /// A derived (unverified) id still identifies the object, so a renamed block
+    /// whose id was rendered from the rule moves rather than importing twice.
+    #[test]
+    fn a_derived_id_moves_too() {
+        let r = res(NEW, Outcome::Resolved { id: LIVE_ID.into(), verified: false });
+        let state = crate::bootstrap::StateIndex::from_objects(&[(OLD, "google_org_policy_policy", LIVE_ID)]);
+        assert_eq!(moved_from(&r, &state), Some(OLD));
+    }
+
+    /// If the estate still declares the OLD address, moving would only change
+    /// which of the two declarations the next plan wants to create. Both ends
+    /// get named and the run stops.
+    #[test]
+    fn declaring_both_ends_of_a_move_is_a_conflict() {
+        let (mut rs, state) = renamed();
+        assert!(move_conflicts(&rs, &state).is_empty(), "the old address is not declared");
+
+        rs.push(res(OLD, Outcome::OnApply));
+        let conflicts = move_conflicts(&rs, &state);
+        assert_eq!(conflicts, vec![(NEW.to_string(), OLD.to_string())]);
     }
 }
