@@ -1393,7 +1393,10 @@ question oneof group_model {
 The options name **existing boolean params**, so an answer set stays a plain param
 map and a question never becomes a second way to set a value. What it buys, with
 no interview built at all: satz refuses two true branches, naming the choice and
-both params. Before this, the same mistake surfaced as an opaque fold conflict on
+both params. `required` is checked at compile and only when the choice applies —
+a required choice whose `ask_when` param is false has no missing answer. `satz
+questions` never refuses a required choice with no branch set: it reports it as
+unanswered and blocking, which is what an interview needs in order to ask it. Before this, the same mistake surfaced as an opaque fold conflict on
 whatever address the two branches happened to share.
 
 Composition follows from that: a choice between two packs is two booleans plus the

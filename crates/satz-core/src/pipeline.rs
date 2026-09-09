@@ -528,7 +528,7 @@ pub fn compile_estate(
         questions.push(pack_questions(&file, file_name));
     }
     questions.extend(w.questions);
-    check_oneof(&questions, &tfvars)?;
+    check_oneof(&questions, &tfvars, true)?;
 
     Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions })
 }
@@ -566,7 +566,12 @@ fn resolve_action(
 /// Without it the same mistake surfaces as an opaque fold conflict on whatever
 /// address the two branches happen to share, which names neither the choice nor
 /// the question. This is a user-visible win with no interview built at all.
-pub fn check_oneof(questions: &[PackQuestions], env: &Env) -> Result<(), PipelineError> {
+///
+/// Two true branches are a contradiction wherever they are met. A `required`
+/// choice with NO branch set is refused only with `require_answer` — at compile.
+/// The questions report passes `false`: that state is exactly the one it exists
+/// to report, as an unanswered, blocking question an interview can still ask.
+pub fn check_oneof(questions: &[PackQuestions], env: &Env, require_answer: bool) -> Result<(), PipelineError> {
     for pq in questions {
         for q in &pq.questions {
             if !q.oneof {
@@ -590,7 +595,11 @@ pub fn check_oneof(questions: &[PackQuestions], env: &Env) -> Result<(), Pipelin
                     ),
                 });
             }
-            if q.required && on.is_empty() {
+            // A choice nobody is asked — its `ask_when` param is false — is not
+            // one nobody made: the branches it would pick between are off with
+            // it. The contradiction check above still applies; this one does not.
+            let asked = q.ask_when.as_ref().map(|gate| truthy(env.get(gate))).unwrap_or(true);
+            if require_answer && q.required && asked && on.is_empty() {
                 return Err(PipelineError {
                     file: pq.file.clone(),
                     line: q.line,
@@ -684,7 +693,9 @@ pub fn estate_questions(
         out.push(pack_questions(&file, file_name));
     }
     collect_questions(&file.items, file_name, load, &mut env, &mut out, 0)?;
-    check_oneof(&out, &env)?;
+    // Contradictions only: a required choice nobody has made yet is what this
+    // report is for.
+    check_oneof(&out, &env, false)?;
     Ok((out, env))
 }
 
@@ -1636,6 +1647,39 @@ pub fn fold_fragments(table: &dyn TypeTable, frags: &[Fragment]) -> Folded {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_required_choice_nobody_is_asked_is_not_a_missing_answer() {
+        // `required` says exactly one branch once the choice applies; `ask_when`
+        // says when it applies. A gated choice with the gate off has no missing
+        // answer — but two true branches stay a contradiction either way.
+        let src = r#"pack p version "1"
+params { plan = false a = false b = false }
+question oneof mode {
+  prompt = "Which?" reversal = edit blast = low required = true ask_when = plan
+  option a { label = "A" }
+  option b { label = "B" }
+}
+"#;
+        let file = satz::parse(src).unwrap();
+        let qs = vec![pack_questions(&file, "p.satz")];
+        let b = serde_yaml::Value::Bool;
+        let mut env: Env = BTreeMap::new();
+        env.insert("plan".into(), b(false));
+        env.insert("a".into(), b(false));
+        env.insert("b".into(), b(false));
+        assert!(check_oneof(&qs, &env, true).is_ok(), "gate off: no answer is missing");
+        env.insert("plan".into(), b(true));
+        assert!(check_oneof(&qs, &env, true).unwrap_err().msg.contains("no branch is set"));
+        // the questions report does not refuse it — it REPORTS it, as blocking
+        assert!(check_oneof(&qs, &env, false).is_ok());
+        env.insert("a".into(), b(true));
+        assert!(check_oneof(&qs, &env, true).is_ok());
+        env.insert("plan".into(), b(false));
+        env.insert("b".into(), b(true));
+        assert!(check_oneof(&qs, &env, true).unwrap_err().msg.contains("both true"));
+        assert!(check_oneof(&qs, &env, false).unwrap_err().msg.contains("both true"));
+    }
 
     struct Table;
     impl TypeResolver for Table {
