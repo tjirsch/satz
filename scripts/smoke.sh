@@ -177,8 +177,51 @@ assert d["summary"]["one_way_doors"] >= 1, d["summary"]
 m = subs["group_model"]
 assert m["kind"] == "oneof" and len(m["options"]) == 2, m
 assert sum(1 for o in m["options"] if o["selected"]) == 1, m
+# ANSWERED means the estate's own params bind it — the showcase binds all three
+assert all(q["state"] == "answered" for q in d["questions"]), [(q["subject"], q["state"]) for q in d["questions"]]
+assert d["summary"]["complete"] is True and d["summary"]["unanswered"] == 0, d["summary"]
 PYEOF
 grep -q 'satz v' tmp/questions.json && fail "the version banner is on stdout"
+"$satz" --config . questions showcase.satz --unanswered > tmp/questions-open.txt 2>/dev/null || fail "questions --unanswered failed"
+if grep -q 'customer_shortname' tmp/questions-open.txt; then fail "an answered question must not be listed under --unanswered"; fi
+"$satz" --config . questions showcase.satz --format markdown > tmp/decisions.md 2>/dev/null || fail "questions --format markdown failed"
+grep -q 'All 3 questions are answered' tmp/decisions.md || fail "the decisions sheet must say the showcase is complete"
+
+step "interview: a skeleton, piped answers, derived defaults, the gate, and the decisions sheet"
+# The third way to start an estate. `init` takes every answer as a flag; this asks.
+# Piped input: accept the opening offer, type the seven values nobody can default,
+# then Enter twice for the two names that became offers once the short name landed.
+rm -rf tmp/iv && mkdir -p tmp/iv
+printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' \
+  | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
+  || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 8 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the eight usable defaults:\n$(cat tmp/iv/run.txt)"
+grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
+grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
+grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
+grep -q 'customer_shortname = "acme"' tmp/iv/new.satz || fail "the answer was not written into params"
+grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof default must write the option"
+"$satz" --config . transpile "$PWD/tmp/iv/new.satz" --check > tmp/iv/check.txt 2>&1 || fail "the interviewed estate does not compile:\n$(cat tmp/iv/check.txt)"
+# THE GATE. An estate with an open question is refused by apply and by bootstrap;
+# a dry run warns — looking is how you find out.
+"$satz" --config . interview "$PWD/tmp/iv/open.satz" --create < /dev/null > /dev/null 2>&1 || fail "--create with no input must still write the skeleton"
+if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
+  fail "apply on an unanswered estate was not refused"
+fi
+grep -q 'apply refused: 17 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
+  fail "bootstrap on an unanswered estate was not refused"
+fi
+grep -q 'bootstrap refused' tmp/iv/boot.txt || fail "bootstrap must refuse before it does anything else:\n$(cat tmp/iv/boot.txt)"
+sed '/default_zone/d' tmp/iv/new.satz > tmp/iv/almost.satz
+GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/almost.satz" --dry-run > tmp/iv/dry.txt 2>&1 \
+  || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
+grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
+"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
+grep -q '1 of 17 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
+grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
 # a question is metadata: it must reach variables.tf as a description and NOTHING else
 grep -q 'description = "Short name identifying this customer"' tmp/showcase-hcl/variables.tf \
@@ -711,6 +754,8 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"satz://guide"}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"satz_questions","arguments":{"estate":"showcase.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"satz_interview","arguments":{"estate":"showcase.satz","filter":"all"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"satz_interview","arguments":{"estate":"tmp/none.satz","create":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"satz_triage","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0","prowler":"prowler.json"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"satz_report_compliance","arguments":{"estate":"smoke.satz","framework":"cis-gcp-4.0","no_live":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_transpile","arguments":{"estate":"smoke.satz"}}}'
@@ -747,7 +792,7 @@ guide = msgs[10]["result"]["contents"][0]["text"]
 assert guide.startswith("# satz for llms"), guide[:80]
 assert "Never edit `hcl/`" in guide, "the guide lost its hard rules"
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
-assert {"satz_require", "satz_check_presets", "satz_questions", "satz_triage",
+assert {"satz_require", "satz_check_presets", "satz_questions", "satz_interview", "satz_triage",
         "satz_transpile_check", "satz_transpile", "satz_report_compliance",
         "satz_whoami", "satz_open", "satz_estates"} <= set(tools), sorted(tools)
 
@@ -765,7 +810,7 @@ assert opened["runs_as"] is None, opened
 # Every data tool publishes an OUTPUT SCHEMA and is ANNOTATED. The annotations are
 # the client's half of the safety model: the server's --allow ceiling says what is
 # permitted, readOnlyHint says what an agent may run without stopping to ask.
-for name in ("satz_require", "satz_questions", "satz_triage", "satz_check_presets",
+for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
@@ -779,6 +824,12 @@ rep = msgs[3]["result"]["structuredContent"]
 assert rep["summary"]["unmet"] == 11, rep["summary"]
 q = msgs[6]["result"]["structuredContent"]
 assert q["summary"]["one_way_doors"] >= 1, q["summary"]
+# the interview at read level: it reports, and it will not create
+iv = msgs[13]["result"]["structuredContent"]
+assert iv["created"] is False and iv["written"] == 0 and iv["summary"]["complete"] is True, iv
+assert len(iv["questions"]) == 3, "filter: all returns every question"
+create = msgs[14]["result"]
+assert create["isError"] is True and "needs 'write'" in create["content"][0]["text"], create
 rows = msgs[7]["result"]["structuredContent"]
 assert rows and {"bucket", "control"} <= set(rows[0]), rows[:1]
 ev = msgs[8]["result"]["structuredContent"]
@@ -867,6 +918,48 @@ for open_id, who_id, want in ((20, 21, "acme"), (22, 23, "bolt"), (24, 25, "acme
     # Offline: the checks were not made, and must not be reported as passed.
     assert reported["estate"]["may_impersonate"] is None, reported
 PYEOF
+
+step "satz mcp: the interview loop closes without a filesystem — create, answer, accept, complete"
+# An agent that only speaks MCP cannot edit the estate itself. `answers` and
+# `accept_defaults` are how it writes what the human decided; the report it gets
+# back is the estate as it now stands.
+rm -f tmp/iv/agent.satz
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"create\":true}}}"
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"customer_id\":\"C0example\",\"customer_organization_id\":\"123456789012\",\"customer_domain\":\"example.com\",\"customer_shortname\":\"acme\",\"customer_longname\":\"Acme\",\"first_admin\":\"first.admin\",\"billing_account_infra\":\"012345-6789AB-CDEF01\",\"security_model\":\"security_model_s2\"},\"accept_defaults\":true}}}"
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"nobody\":\"x\"}}}}"
+} > tmp/mcp-iv-in.jsonl
+python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-iv-in.jsonl > tmp/mcp-iv.jsonl 2>/dev/null || true
+python3 - <<'PYEOF' || fail "the MCP interview loop did not close"
+import json
+msgs = {}
+for l in open("tmp/mcp-iv.jsonl"):
+    if l.strip():
+        d = json.loads(l)
+        if "id" in d:
+            msgs[d["id"]] = d
+a = msgs[3]["result"]["structuredContent"]
+assert a["created"] is True, a
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (17, 9), a["summary"]
+assert len(a["questions"]) == 17 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+by = {q["subject"]: q for q in a["questions"]}
+assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
+assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
+assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
+assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
+b = msgs[4]["result"]["structuredContent"]
+assert b["written"] == 17 and b["summary"]["complete"] is True, b["summary"]
+assert b["rename_to"] == "C0example.satz", b
+assert b["questions"] == [], "nothing is open once every answer landed"
+r = msgs[5]["result"]
+assert r["isError"] is True and "no pack this estate uses asks that" in r["content"][0]["text"], r
+PYEOF
+grep -q 'security_model_s2 = true' tmp/iv/agent.satz || fail "the oneof answer was not written"
+grep -q 'security_model_s1 = false' tmp/iv/agent.satz || fail "the oneof siblings were not set false"
+"$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
 
 step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"
 # V1 is the only check that catches an estate which quietly stopped compiling or

@@ -23,7 +23,7 @@ pub struct TemplateArgs {
 }
 
 /// The estate name: the customer id as a Satz identifier.
-fn estate_name(customer_id: &str) -> String {
+pub(crate) fn estate_name(customer_id: &str) -> String {
     let mut s: String = customer_id
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
@@ -32,6 +32,156 @@ fn estate_name(customer_id: &str) -> String {
         s.insert(0, '_');
     }
     s
+}
+
+/// Everything an estate carries besides its params: the backend, the providers,
+/// the IaC group and service account, the management folder, project and state
+/// bucket — the labels `bootstrap` imports by name. Shared by `init` and the
+/// interview skeleton, so the two ways to start end at the same file.
+pub(crate) const SCAFFOLD: &str = r#"terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+    gcs {
+      bucket = infra_bucket_name
+      prefix = "hcl/state"
+    }
+  }
+}
+
+providers {
+  "google" {
+    project               = infra_project_name
+    region                = default_region
+    alias                 = "google"
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+  "google-beta" {
+    project               = infra_project_name
+    region                = default_region
+    alias                 = "google-beta"
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+}
+
+google_cloud_identity_group {
+  svc_iac_users {
+    id           = "{svc_iac_users_group}@{customer_domain}"
+    display_name = "Service Account IaC Users"
+    description  = "Service account users allowed to impersonate the IaC service account"
+    owner        = [ "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" ]
+    member       = [ "user:{first_admin}@{customer_domain}" ]
+  }
+}
+
+google_organization_iam_member {
+  // the service account needs the Groups Admin role in the Workspace console as well
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/billing.user",
+    "roles/billing.projectManager",
+    "roles/iam.organizationRoleAdmin",
+    "roles/orgpolicy.policyAdmin",
+    "roles/owner",
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.organizationAdmin",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/iam.serviceAccountAdmin",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/serviceusage.serviceUsageConsumer",
+  ]
+  "group:{svc_iac_users_group}@{customer_domain}" = [
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/iam.serviceAccountUser",
+    "roles/serviceusage.serviceUsageConsumer",
+  ]
+}
+
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/billing.admin",
+  ]
+}
+
+google_folder {
+  infra_folder {
+    display_name = infra_folder_name
+    google_project {
+      infra {
+        project_id      = infra_project_name
+        billing_account = billing_account_infra
+        project_service = [
+          "cloudasset.googleapis.com",
+          "cloudbilling.googleapis.com",
+          "cloudidentity.googleapis.com",
+          "cloudresourcemanager.googleapis.com",
+          "iam.googleapis.com",
+          "iamcredentials.googleapis.com",
+          "logging.googleapis.com",
+          "orgpolicy.googleapis.com",
+          "securitycenter.googleapis.com",
+          "securitycentermanagement.googleapis.com",
+          "serviceusage.googleapis.com",
+          "essentialcontacts.googleapis.com",
+        ]
+        google_storage_bucket {
+          state {
+            "import-id"                 = infra_bucket_name
+            name                        = infra_bucket_name
+            location                    = default_region
+            force_destroy               = true
+            public_access_prevention    = "enforced"
+            uniform_bucket_level_access = true
+            lifecycle_rule = [
+              { action { type = "Delete" }
+                condition { num_newer_versions = 100 with_state = "ARCHIVED" } },
+              { action { type = "Delete" }
+                condition { days_since_noncurrent_time = 365 } },
+            ]
+          }
+        }
+        google_service_account {
+          provisioner {
+            account_id   = svc_iac_account
+            display_name = "Primary IaC Provisioner"
+          }
+        }
+      }
+    }
+  }
+}
+"#;
+
+/// The estate an INTERVIEW starts from: every question open, nothing decided.
+///
+/// The params and their questions come from `presets/estate-core.satz`; the
+/// security-group model is the choice that pack asks, wired here as the two
+/// `use … when` lines a choice between packs always is; the resources are the
+/// scaffold `init` writes. Answering a question is adding its param to
+/// `params {}`. The file is complete when `satz questions` says so — and until
+/// then `bootstrap` and `transpile --apply` refuse it.
+pub(crate) fn skeleton(stem: &str) -> String {
+    format!(
+        r#"// Written for an interview: a question is open until its param is bound below.
+// `satz questions {stem}.satz --unanswered` lists what is still to decide;
+// bootstrap and apply refuse until nothing is.
+
+estate {estate}
+
+params {{
+}}
+
+use "presets/estate-core.satz"
+use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
+use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
+
+{scaffold}"#,
+        stem = stem,
+        estate = estate_name(stem),
+        scaffold = SCAFFOLD,
+    )
 }
 
 pub fn generate_template(args: &TemplateArgs, output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -60,121 +210,8 @@ params {{
   default_zone             = "{region}-a"
 }}
 
-terraform {{
-  backend {{
-    local {{ path = "terraform.tfstate" }}
-    gcs {{
-      bucket = infra_bucket_name
-      prefix = "hcl/state"
-    }}
-  }}
-}}
-
-providers {{
-  "google" {{
-    project               = infra_project_name
-    region                = default_region
-    alias                 = "google"
-    user_project_override = true
-    billing_project       = infra_project_name
-  }}
-  "google-beta" {{
-    project               = infra_project_name
-    region                = default_region
-    alias                 = "google-beta"
-    user_project_override = true
-    billing_project       = infra_project_name
-  }}
-}}
-
-google_cloud_identity_group {{
-  svc_iac_users {{
-    id           = "{{svc_iac_users_group}}@{{customer_domain}}"
-    display_name = "Service Account IaC Users"
-    description  = "Service account users allowed to impersonate the IaC service account"
-    owner        = [ "{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com" ]
-    member       = [ "user:{{first_admin}}@{{customer_domain}}" ]
-  }}
-}}
-
-google_organization_iam_member {{
-  // the service account needs the Groups Admin role in the Workspace console as well
-  "serviceAccount:{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com" = [
-    "roles/billing.user",
-    "roles/billing.projectManager",
-    "roles/iam.organizationRoleAdmin",
-    "roles/orgpolicy.policyAdmin",
-    "roles/owner",
-    "roles/resourcemanager.folderAdmin",
-    "roles/resourcemanager.organizationAdmin",
-    "roles/resourcemanager.projectIamAdmin",
-    "roles/resourcemanager.projectCreator",
-    "roles/iam.serviceAccountAdmin",
-    "roles/serviceusage.serviceUsageAdmin",
-    "roles/serviceusage.serviceUsageConsumer",
-  ]
-  "group:{{svc_iac_users_group}}@{{customer_domain}}" = [
-    "roles/iam.serviceAccountTokenCreator",
-    "roles/iam.serviceAccountUser",
-    "roles/serviceusage.serviceUsageConsumer",
-  ]
-}}
-
-google_billing_account_iam_member {{
-  billing_account_id = billing_account_infra
-  "serviceAccount:{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com" = [
-    "roles/billing.admin",
-  ]
-}}
-
-google_folder {{
-  infra_folder {{
-    display_name = infra_folder_name
-    google_project {{
-      infra {{
-        project_id      = infra_project_name
-        billing_account = billing_account_infra
-        project_service = [
-          "cloudasset.googleapis.com",
-          "cloudbilling.googleapis.com",
-          "cloudidentity.googleapis.com",
-          "cloudresourcemanager.googleapis.com",
-          "iam.googleapis.com",
-          "iamcredentials.googleapis.com",
-          "logging.googleapis.com",
-          "orgpolicy.googleapis.com",
-          "securitycenter.googleapis.com",
-          "securitycentermanagement.googleapis.com",
-          "serviceusage.googleapis.com",
-          "essentialcontacts.googleapis.com",
-        ]
-        google_storage_bucket {{
-          state {{
-            "import-id"                 = infra_bucket_name
-            name                        = infra_bucket_name
-            location                    = default_region
-            force_destroy               = true
-            public_access_prevention    = "enforced"
-            uniform_bucket_level_access = true
-            lifecycle_rule = [
-              {{ action {{ type = "Delete" }}
-                condition {{ num_newer_versions = 100 with_state = "ARCHIVED" }} }},
-              {{ action {{ type = "Delete" }}
-                condition {{ days_since_noncurrent_time = 365 }} }},
-            ]
-          }}
-        }}
-        google_service_account {{
-          provisioner {{
-            account_id   = svc_iac_account
-            display_name = "Primary IaC Provisioner"
-          }}
-        }}
-      }}
-    }}
-  }}
-}}
-"#,
+{scaffold}"#,
+        scaffold = SCAFFOLD,
         estate = estate_name(&args.customer_id),
         customer_id = args.customer_id,
         project_id = args.project_id,

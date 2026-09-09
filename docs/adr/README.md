@@ -39,3 +39,4 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0002](0002-superseded-org-policies-replace-by-construction.md) | superseded org policies change address so the plan is a replace | accepted |
 | [0003](0003-evidence-is-data-the-audit-pack-is-not-satz-s-to-render.md) | evidence is data; the audit pack is the agent's to render | accepted |
 | [0004](0004-the-verification-runner-is-a-pack-and-its-pipeline-is-inline.md) | the verification runner is a pack, and its pipeline is inline | accepted |
+| [0005](0005-an-answer-is-a-param-the-estate-binds.md) | an answer is a param the estate binds; nothing may be left unanswered | accepted |

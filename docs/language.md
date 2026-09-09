@@ -1401,9 +1401,15 @@ Composition follows from that: a choice between two packs is two booleans plus t
 
 #### Where they show up
 
-- `satz questions <estate>` — every question its packs contribute, joined with the
-  value the estate carries, and marked when the answer is expensive to change.
+- `satz questions <estate>` — every question its packs contribute with its state:
+  `answered` when the estate's own `params {}` binds the param (accepting a default
+  is an answer, written as the default), `unanswered` with the default the pack
+  offers or `blocking` when none is possible, `not-applicable` when its `ask_when`
+  is false. `--unanswered` is the worklist, `--format markdown` the decisions sheet.
   Offline and schema-free: an interview happens before anyone runs `update-schema`.
+- `bootstrap` and `transpile --apply` **refuse while a question is unanswered**;
+  `--dry-run` and `--plan` warn. `satz interview` asks and writes the answers —
+  [satz interview](interview.md).
 - `satz doc-packs` gives each pack a **Questions** section.
 - A question's `prompt` becomes the `description` of the generated
   `variables.tf` variable — the pack already wrote the one-line sentence.

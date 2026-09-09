@@ -31,7 +31,7 @@ use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege
 
 **Needs from outside the pack:**
 
-- `customer_organization_id` — no pack in the library declares it, so the estate must.
+- `customer_organization_id` — declared by `estate_core`; use one of them alongside, or declare it in the estate.
 
 ## Params
 

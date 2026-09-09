@@ -1,0 +1,175 @@
+// The questions every estate has to answer on day 0, with the params they answer.
+//
+//   use "presets/estate-core.satz"
+//
+// `satz init` writes these seventeen params from its flags; an INTERVIEW asks for
+// them one at a time, and this pack is where the asking lives. Every param below
+// has a question, and every question says what changing the answer later costs —
+// so an agent can offer a default with a clear conscience where one exists, and
+// insist on a value where none is possible.
+//
+// Two kinds of param, and the interview treats them differently. Seven have NO
+// POSSIBLE DEFAULT — the directory customer id, the organisation id, the domain,
+// the short name, the display name, the first admin, the billing account: the
+// pack can name the question, it cannot guess the answer, and these block until
+// typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
+// names built from the short name, the folder name, the service account names,
+// the region — and accepting one is an answer, recorded by writing it. A derived
+// default is offered only once what it derives from is answered.
+//
+// Also here: the choice of security-group model, as two booleans and a `oneof`,
+// because a question that gates a pack cannot live in the pack it gates. The
+// estate carries the matching `use … when` lines.
+//
+// This pack emits nothing. An estate that uses it and answers everything compiles
+// to exactly what `satz init` would have written.
+
+pack estate_core version "1.0"
+
+params {
+  // ---- no possible default: the pack cannot know these --------------------
+  customer_id              = ""
+  customer_organization_id = ""
+  customer_domain          = ""
+  customer_shortname       = ""
+  first_admin              = ""
+  billing_account_infra    = ""
+  customer_longname        = ""
+
+  // ---- derived from the answers above -------------------------------------
+  infra_folder_name   = "Infrastructure"
+  infra_project_name  = "{customer_shortname}-infra-001"
+  infra_bucket_name   = "{customer_shortname}-infra-001-state"
+  svc_iac_account     = "svc-iac-001"
+  svc_iac_users_group = "svc-iac-users"
+  deployment_engine   = "tofu"
+  deployment_mode     = "local"
+  default_region      = "europe-west3"
+  default_zone        = "{default_region}-a"
+
+  // ---- the security-group model: exactly one ------------------------------
+  security_model_s1 = true
+  security_model_s2 = false
+}
+
+question customer_id {
+  prompt   = "The Google Workspace / Cloud Identity directory customer id (C0…)"
+  why      = "Every group in the estate is created under this customer. There is no changing it afterwards; a different id is a different estate."
+  reversal = recreate
+  blast    = high
+}
+
+question customer_organization_id {
+  prompt   = "The organisation id (the number, not the domain)"
+  why      = "Every org policy, org grant and sink is scoped to it. A different organisation is a different estate."
+  reversal = recreate
+  blast    = high
+}
+
+question customer_domain {
+  prompt   = "The customer's primary domain"
+  why      = "Group addresses and the first admin are composed from it, and the Essential Contacts constraint allows it. Changing it renames every group."
+  reversal = recreate
+  blast    = high
+}
+
+question customer_shortname {
+  prompt   = "A short name for this customer — lowercase, no spaces"
+  why      = "Project ids, the state bucket and group prefixes derive from it, and those ids are globally unique and immutable once created."
+  reversal = recreate
+  blast    = high
+}
+
+question customer_longname {
+  prompt    = "The customer's display name, as it should appear in descriptions"
+  reversal  = edit
+  blast     = none
+}
+
+question first_admin {
+  prompt   = "The first admin's account, local part only (the domain is added)"
+  why      = "This is the human satz bootstraps as, and the first member of the IaC users group — the one account that can act before any service account exists."
+  reversal = edit
+  blast    = low
+}
+
+question billing_account_infra {
+  prompt   = "The billing account for the infrastructure project (XXXXXX-XXXXXX-XXXXXX)"
+  why      = "Relinking a project's billing is an update, but a project with no valid billing account cannot enable a single API — the bootstrap stops there."
+  reversal = state_surgery
+  blast    = low
+}
+
+question infra_folder_name {
+  prompt    = "Display name of the folder that holds the infrastructure project"
+  reversal  = edit
+  blast     = none
+  recommend = "Infrastructure"
+}
+
+question infra_project_name {
+  prompt   = "The infrastructure project id"
+  why      = "A project id is immutable. Changing it creates a second project and abandons the first, with the state bucket inside it."
+  reversal = recreate
+  blast    = high
+}
+
+question infra_bucket_name {
+  prompt   = "The state bucket name (globally unique)"
+  why      = "The bucket holds the Terraform state for the whole estate. Renaming it means migrating state by hand and re-initialising every checkout."
+  reversal = recreate
+  blast    = high
+}
+
+question svc_iac_account {
+  prompt   = "Account id of the IaC service account (the part before @)"
+  why      = "Everything after init runs as this account and every provider block impersonates it. A different name is a new account, new grants, and a re-initialised backend."
+  reversal = recreate
+  blast    = high
+}
+
+question svc_iac_users_group {
+  prompt    = "The group whose members may impersonate the IaC service account"
+  why       = "Membership of this group is what lets a human operate the estate. Renaming it moves every member."
+  reversal  = recreate
+  blast     = low
+}
+
+question deployment_engine {
+  prompt    = "Which tool applies the emitted HCL: tofu or terraform"
+  reversal  = edit
+  blast     = none
+  recommend = "tofu"
+}
+
+question deployment_mode {
+  prompt    = "Where the state lives: local while bootstrapping, cloud once the bucket exists"
+  why       = "`satz migrate --mode cloud` moves it and re-initialises the backend; starting in cloud mode needs a bucket that does not exist yet."
+  reversal  = state_surgery
+  blast     = low
+  recommend = "local"
+}
+
+question default_region {
+  prompt   = "The default region for regional resources"
+  why      = "Regional resources — the alerting bucket, sinks with a location — cannot move regions; a change recreates them."
+  reversal = recreate
+  blast    = high
+  recommend = "europe-west3"
+}
+
+question default_zone {
+  prompt    = "The default zone, inside that region"
+  reversal  = edit
+  blast     = low
+}
+
+question oneof security_model {
+  prompt   = "Which security-group model does this customer run?"
+  why      = "Splitting network authority out later means a new group, membership moves and re-granted roles."
+  reversal = state_surgery
+  blast    = low
+  required = true
+  option security_model_s1 { label = "S1 — five admin groups; network authority sits with project admins" why = "A small team that separates org admins, project admins and security roles, and nothing more." }
+  option security_model_s2 { label = "S2 — S1 plus a distinct network-admins group" why = "For a customer with a separate network team." }
+}

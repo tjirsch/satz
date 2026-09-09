@@ -236,7 +236,19 @@ The two costs are independent. Call `satz_questions` before proposing values: it
 you which answers are cheap to change and which are one-way doors. **Do not invent an
 answer to a one-way door** — ask the human.
 
+A question is **answered when the estate's own `params {}` binds its param** — accepting
+the pack's default is an answer, written as the default. Unanswered questions carry the
+`default` the pack offers, or `blocking: true` when none is possible (a customer id, a
+billing account): those need the human's value. **Every question must be answered before
+bootstrap or apply**; `summary.complete` says whether they are.
+
 A question must be declared in the same file as the param it answers.
+
+**Interviewing a customer** is `satz_interview`: the open questions with their offers;
+`create: true` writes a new estate from `presets/estate-core.satz` first; `answers:
+{subject: value}` writes what was decided (a `oneof` takes the chosen option's name) and
+`accept_defaults: true` writes every offer. Offer defaults as defaults, never invent a
+blocking answer, and repeat until `summary.complete`.
 
 ## Adopting what already exists
 
@@ -270,7 +282,9 @@ The loop, and the order matters:
    config. Its answer includes `runs_as`: the service account the estate's live tools
    run as. Call it again to move to the next estate; nothing else changes.
 1. **`satz_questions`** — what this customer still has to decide. Start here for
-   anything that touches params.
+   anything that touches params. For a new estate, `satz_interview {create: true}`
+   writes the file and returns the open questions; pass what the human decides back
+   as `answers` until `summary.complete`.
 2. **Write or edit the `.satz`.**
 3. **`satz_transpile_check`** — compiles in memory, writes nothing. Run it after every
    edit; it is the cheapest feedback there is.
