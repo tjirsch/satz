@@ -81,13 +81,29 @@
 // gcloud iam roles delete cis_probe --project=<p>
 // # expect an alert from the 2.7 policy within ~5 minutes
 
-pack project_cis_log_alerts version "1.0"
+pack project_cis_log_alerts version "1.1"
 
 params {
   cis_alert_project = "{infra_project_name}"
   cis_alert_email_local = "gcp-security"
   cis_alert_channel_name = "CIS Security Alerts"
   cis_alert_window = "300s"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question cis_alert_project {
+  prompt   = "The one project this pack watches — its metrics, policies and channel are created there"
+  why      = "One project per use: the labels are fixed, so a second project means a fork. Changing the project later recreates all eight metrics and policies in the new one and loses the alert history of the old."
+  reversal = recreate
+  blast    = low
+}
+
+question cis_alert_email_local {
+  prompt   = "The local part of the alert recipient's address (the customer domain is added)"
+  why      = "Monitoring sends from alerting-noreply@google.com, so the mailbox must exist and accept external mail; a group whose members have no mailboxes drops every alert silently. A group, never a person."
+  reversal = edit
+  blast    = high
 }
 
 google_monitoring_notification_channel {

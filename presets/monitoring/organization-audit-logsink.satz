@@ -5,7 +5,7 @@
 // Params are overridable defaults: define the same param in the estate to
 // override one. Claims are read from this source by the compliance plane.
 
-pack monitoring.organization_audit_logsink version "1.2"
+pack monitoring.organization_audit_logsink version "1.3"
 
 params {
   logsink_name            = "{customer_shortname}-organization-audit-gcs"
@@ -16,6 +16,39 @@ params {
   // Audit logs only by default — widen deliberately (e.g. add vpc_flows) by
   // overriding this param in the estate.
   logsink_filter          = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+// The project and the bucket are immutable once created; the location cannot
+// move; the retention is a compliance decision the pack cannot make. The sink's
+// display name and the filter are technical defaults and are not asked.
+
+question logsink_project_name {
+  prompt   = "The project that holds the audit-log archive"
+  why      = "A project id is immutable. Changing it later creates a second project and abandons the first, with the archive bucket inside it — and every pack that points at the logging project by reference moves with it."
+  reversal = recreate
+  blast    = high
+}
+
+question logsink_bucket_name {
+  prompt   = "The archive bucket's name (globally unique)"
+  why      = "The bucket holds the organisation's audit history. Renaming it means a new bucket and copying the archive by hand, or losing continuity of the evidence."
+  reversal = recreate
+  blast    = high
+}
+
+question logsink_bucket_location {
+  prompt   = "Where the archive bucket lives (a region or multi-region)"
+  why      = "A bucket's location cannot change. Audit logs are the record a regulator asks for, so where they are stored is the customer's data-residency decision, not the pack's; the default follows the estate's default region."
+  reversal = recreate
+  blast    = high
+}
+
+question logsink_retention_days {
+  prompt   = "How many days the archive keeps audit logs before the lifecycle deletes them"
+  why      = "Shortening it later deletes everything already archived past the new age at the next lifecycle run, and there is no undo. 400 days covers a year plus the audit that follows it."
+  reversal = edit
+  blast    = high
 }
 
 // 0) The destination project. Lands wherever this pack is used: at root ->
