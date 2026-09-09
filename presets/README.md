@@ -277,14 +277,11 @@ recipient; `notification_channels = []` passes CIS and notifies nobody.
 
 The questions every estate has to answer on day 0, with the params they answer — the
 seventeen `satz init` writes from its flags, each with a `question`: what to ask, why,
-and what changing the answer later costs. Plus the choice of security-group model as
-two booleans and a `question oneof`, because a question that gates a pack cannot live
-in the pack it gates.
+and what changing the answer later costs. Which packs make up the estate is the next
+pack, `estate-map.satz`; since v2.0 this one is the day-0 params and nothing else.
 
 ```
 use "presets/estate-core.satz"
-use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
-use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
 ```
 
 The pack **emits nothing**. It exists so an interview has something to ask before
@@ -304,6 +301,42 @@ A derived default is offered only once what it derives from is answered:
 `infra_project_name` is `"{customer_shortname}-infra-001"`, and with the short name
 still open that is `-infra-001`, a string and not a default — so it blocks until the
 short name is typed, then offers `acme-infra-001`. See [satz interview](../docs/interview.md).
+
+## estate-map.satz
+
+Which packs make up the estate, asked as questions — the map an interview follows
+after the day-0 params. One boolean per optional pack plus the S1/S2 model as a
+`question oneof`, each with what the pack is for and what turning it off later
+destroys. The map declares the choices and nothing else; the estate carries one
+`use … when` line per choice, in the map's order — `satz interview --create` writes
+them, and a test keeps the two lists equal ([ADR 0007](../docs/adr/0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md)).
+
+```
+use "presets/estate-core.satz"
+use "presets/estate-map.satz"
+use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
+use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
+use "presets/billing-account-permissions.satz" when use_billing_permissions
+…
+```
+
+| choice | default | pack |
+|---|---|---|
+| `security_model` (oneof) | S1 | `security-group-models/s1-security-groups` or `s2-security-groups` |
+| `use_audit_logsink` | on | `monitoring/organization-audit-logsink`, in the infrastructure folder |
+| `use_central_alerts` | on | `monitoring/organization-cis-log-alerts-central`, beside it — needs the archive |
+| `use_billing_permissions` | on | `billing-account-permissions` |
+| `use_essential_contacts` | on | `essential-contacts-organization` |
+| `use_budget` | off | `organization-budget` |
+| `use_scc_enablement` | off | `scc/scc-service-enablement` |
+| `use_security_audit_sa` | off | `security-audit/sa-security-audit` |
+| `use_defender` | off | `integrations/microsoft-defender-for-cloud` — its plan fragments by hand |
+| `use_verification_runner` | off | `ci/verification-runner` and its grant, the customer-hosted shape |
+
+**Not a choice:** the CIS baseline — the skeleton always uses it, and its opt-in
+extensions are the baseline pack's own questions. **Not on the map:** the per-project
+alert pack, Defender's plan fragments, the MSP-hosted runner shape; each is wired by
+hand, and the map's header says so.
 
 ## security-group-models/
 
@@ -920,6 +953,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `estate_map` | 1.0 | 2026-09-10 | first version: which packs make up the estate, as questions — the S1/S2 model as a `oneof` (moved here from estate-core) and one boolean per optional pack, four on by default (audit archive, central alerts, billing permissions, essential contact), five off (budget, SCC enablement, security-audit account, Defender, verification runner). Declares the choices only; the estate carries the `use … when` lines, which the interview skeleton writes and a test keeps in step (ADR 0006) |
+| `estate_core` | 2.0 | 2026-09-10 | the security-model choice moves to `estate_map`; this pack is the seventeen day-0 params and their questions, nothing else. A major bump because two params left — no estate in the fleet uses the pack, it exists for interview skeletons |
 | `cis_extensions.cmek` | 1.1 | 2026-09-10 | two `question` blocks: the services that must use a CMEK and the projects that may supply keys — both refuse resource creation when wrong. Nothing emitted changes |
 | `cis_extensions.bucket_retention` | 1.2 | 2026-09-10 | one `question` block on the allowed durations: every bucket on another duration becomes un-updatable once enforced. Nothing emitted changes |
 | `cis_extensions.api_key_services` | 1.1 | 2026-09-10 | one `question` block on the allowed services; the empty default blocks on purpose — it is a legitimate answer, but it has to be the customer's. Nothing emitted changes |
