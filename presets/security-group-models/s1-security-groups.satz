@@ -15,7 +15,7 @@
 // Memberships are deliberately NOT part of this pack: presets define groups,
 // humans grant membership.
 
-pack s1_security_groups version "1.0"
+pack s1_security_groups version "1.1"
 
 params {
   gcp_organization_admins_name = "gcp-organization-admins"
@@ -23,6 +23,46 @@ params {
   gcp_security_admins_name     = "gcp-security-admins"
   gcp_security_viewers_name    = "gcp-security-viewers"
   gcp_billing_admins_name      = "gcp-billing-admins"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+// The five group names. Each is a naming convention with a sensible default —
+// and each is a group's identity, so changing one later is a new group, moved
+// members and re-granted roles. Accepting the defaults is one pass.
+
+question gcp_organization_admins_name {
+  prompt   = "The organization admins group's name (the local part; the customer domain is added)"
+  why      = "The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted. This group holds the organisation's highest roles."
+  reversal = recreate
+  blast    = low
+}
+
+question gcp_project_admins_name {
+  prompt   = "The project admins group's name (the local part; the customer domain is added)"
+  why      = "The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted."
+  reversal = recreate
+  blast    = low
+}
+
+question gcp_security_admins_name {
+  prompt   = "The security admins group's name (the local part; the customer domain is added)"
+  why      = "The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted."
+  reversal = recreate
+  blast    = low
+}
+
+question gcp_security_viewers_name {
+  prompt   = "The security viewers group's name (the local part; the customer domain is added)"
+  why      = "The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted."
+  reversal = recreate
+  blast    = low
+}
+
+question gcp_billing_admins_name {
+  prompt   = "The billing admins group's name (the local part; the customer domain is added)"
+  why      = "The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted."
+  reversal = recreate
+  blast    = low
 }
 
 google_cloud_identity_group {

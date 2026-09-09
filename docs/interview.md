@@ -95,10 +95,10 @@ three `use` lines above, and the same day-0 resources `init` writes — the fold
 project, the state bucket, the IaC group and service account. Then the interview:
 
 ```
-17 open question(s): 8 have a default, 9 need a value.
+22 open question(s): 13 have a default, 9 need a value.
 Accept all defaults now and answer only those 9? [Y/n] — n goes through every question
 > y
-  accepted 8 default(s).
+  accepted 13 default(s).
 
 ── estate_core ──
 The questions every estate has to answer on day 0, with the params they answer.
@@ -155,8 +155,8 @@ it. Its arguments:
 
 The loop an agent runs:
 
-1. `satz_interview {create: true}` on a new name → seventeen open questions, seven
-   `blocking`, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
+1. `satz_interview {create: true}` on a new name → twenty-two open questions (the
+   seventeen day-0 ones and the default model's five group names), nine `blocking`, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
    and `default` where one is usable.
 2. Ask the human, in whatever order and words fit the conversation. Offer the
    defaults as defaults — "the project will be called acme-infra-001 unless you say
