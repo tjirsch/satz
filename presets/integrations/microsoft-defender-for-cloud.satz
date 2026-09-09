@@ -36,7 +36,7 @@
 //      below. The estate must allow the `sts.windows.net/<microsoft tenant>`
 //      issuer, or document the exception.
 
-pack integrations.microsoft_defender_for_cloud version "0.1"
+pack integrations.microsoft_defender_for_cloud version "0.2"
 
 params {
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
@@ -59,6 +59,43 @@ params {
   // conflict on the role address, which is the loud failure it should be.
   mdc_cspm_default_access = false
   mdc_cspm_least_privilege = false
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+// The two ids only Microsoft's wizard knows, which plan is licensed, and — only
+// when CSPM is on — which access mode. The access mode is the one `oneof` in the
+// library gated by another answer: `ask_when` hides it until the plan is chosen.
+
+question mdc_workload_pool_id {
+  prompt   = "The customer's Microsoft Entra tenant id without dashes — the workload identity pool id from Microsoft's generated onboarding script"
+  why      = "It is per customer and cannot be guessed. The pool is created with this id; a different id is a new pool, and Defender's connector has to be onboarded again."
+  reversal = recreate
+  blast    = high
+}
+
+question mdc_mgmt_project_id {
+  prompt   = "The management project Defender is onboarded through"
+  why      = "Customers name projects their own way, so there is no default. The pool, the provider and the service accounts are created in this project; moving them is a new onboarding."
+  reversal = recreate
+  blast    = high
+}
+
+question mdc_plan_cspm {
+  prompt   = "Is the Defender CSPM plan licensed for this customer?"
+  why      = "Each licensed plan pulls in its fragment with the roles that plan needs. A plan that is on without a licence grants roles nothing uses; one that is off with a licence leaves the connector without access."
+  reversal = edit
+  blast    = low
+}
+
+question oneof mdc_cspm_access {
+  prompt   = "Which access does CSPM get?"
+  why      = "Switching later replaces the custom role and its binding; both modes true is a fold conflict on the role address, which is the loud failure it should be."
+  reversal = edit
+  blast    = low
+  required = true
+  ask_when = mdc_plan_cspm
+  option mdc_cspm_default_access  { label = "Default access — roles/viewer plus a five-permission custom role" why = "Microsoft's default; the smaller surface to reason about." }
+  option mdc_cspm_least_privilege { label = "Least privilege — a custom role enumerating 82 permissions instead of viewer" why = "For a customer who will not grant roles/viewer to a third party." }
 }
 
 // The management project. `project_service` expands to one

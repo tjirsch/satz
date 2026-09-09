@@ -6,12 +6,19 @@
 // IaC service account keeps `billing.admin`: it manages this account's budgets
 // and project links on every apply.
 
-pack billing_account_permissions version "1.1"
+pack billing_account_permissions version "1.2"
 
 params {
   // The group holding billing.admin and billing.costsManager on the billing
   // account. The s1 group model's default; any existing group works.
   billing_admins_group = "gcp-billing-admins@{customer_domain}"
+}
+
+question billing_admins_group {
+  prompt   = "The group that administers the billing account (a full address)"
+  why      = "This group gets billing.admin and billing.costsManager on the account: it can move projects between billing accounts and see every cost. The default is the S1 model's billing-admins group; another model names its own."
+  reversal = edit
+  blast    = high
 }
 
 google_billing_account_iam_member {

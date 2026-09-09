@@ -404,6 +404,8 @@ use "presets/security-audit/sa-security-audit.satz"
 **Notes:** enable `iamcredentials.googleapis.com` in the SA's project manually after
 apply — impersonation fails without it.
 
+**Questions (v1.1).** The hosting project (no default — it blocks), the account id and the auditors group are asked; each is a recreate. The display name is not a decision.
+
 ## CIS-GCP-Foundation-4.0.satz
 
 The CIS GCP Foundation 4.0 organization-policy set as `google_org_policy_policy`
@@ -597,6 +599,8 @@ the IaC service account keeps `billing.admin`. Declares its own
 
 **Use** (root level): `use "presets/billing-account-permissions.satz"`
 
+**Question (v1.2).** `billing_admins_group` is asked: the group can move projects between billing accounts and see every cost.
+
 ## organization-budget.satz
 
 A global budget (1000 EUR, thresholds at 50/80/100% of current spend) on the infra
@@ -633,6 +637,8 @@ each category — `BILLING`, `SUSPENSION`, `SECURITY`, `TECHNICAL`, `LEGAL`,
 (in a `.local` fork, or the estate declares them directly), give each a
 distinct address, and narrow or delete the `all` contact: one address may
 appear once per parent, and an address on ALL already receives everything.
+
+**Question (v1.3).** `essential_contacts_email` is asked: the mailbox must exist and accept external mail, or Google's suspension, security and legal notices are read by nobody.
 
 ## integrations/microsoft-defender-for-cloud*.satz
 
@@ -674,6 +680,11 @@ issues — `ciem-discovery`, `containers`, `containers-streams`,
 `data-security-posture-storage`, `defender-for-databases-arc-ap`, `defender-for-servers` —
 each need their own `api://` audience, service account and role set from that customer's
 script. They cannot be guessed, so they are not shipped.
+
+**Questions (v0.2).** `mdc_workload_pool_id` and `mdc_mgmt_project_id` block until typed —
+only Microsoft's generated script knows them; `mdc_plan_cspm` asks whether the plan is
+licensed; and the access mode is a `question oneof` with `ask_when = mdc_plan_cspm`, so
+it is asked only once CSPM is on. The first gated choice in the library.
 
 ## Questions
 
@@ -805,6 +816,12 @@ shapes differ and getting one wrong yields a policy that either does nothing or 
 everything: a plain managed boolean takes `enforce`; a managed boolean with a parameter
 takes `enforce` plus `parameters`; a list constraint takes allow/deny values.
 
+**Questions (api-key-services 1.1, bucket-retention 1.2, cmek 1.1).** The three fragments
+with a list to fill ask for it: the API services a key may target (empty blocks on
+purpose — a legitimate answer, but the customer's), the allowed retention durations, the
+CMEK services and key projects. Whether a fragment is on at all is the CIS pack's
+question, not the fragment's — a question that gates a pack cannot live in the gated pack.
+
 ## A big resource is a pack
 
 A resource with a long literal (a custom role with 1,400 permissions, an
@@ -903,6 +920,13 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `cis_extensions.cmek` | 1.1 | 2026-09-10 | two `question` blocks: the services that must use a CMEK and the projects that may supply keys — both refuse resource creation when wrong. Nothing emitted changes |
+| `cis_extensions.bucket_retention` | 1.2 | 2026-09-10 | one `question` block on the allowed durations: every bucket on another duration becomes un-updatable once enforced. Nothing emitted changes |
+| `cis_extensions.api_key_services` | 1.1 | 2026-09-10 | one `question` block on the allowed services; the empty default blocks on purpose — it is a legitimate answer, but it has to be the customer's. Nothing emitted changes |
+| `sa_security_audit` | 1.1 | 2026-09-10 | three `question` blocks — the hosting project (no default, blocks), the account id, the auditors group; each a recreate. The display name is not asked. Nothing emitted changes |
+| `integrations.microsoft_defender_for_cloud` | 0.2 | 2026-09-10 | four `question` blocks: the two ids only Microsoft's wizard knows (both block until typed), whether CSPM is licensed, and — only when it is — the access mode as a `oneof` under `ask_when`, the library's first gated choice. Nothing emitted changes |
+| `essential_contacts_organization` | 1.3 | 2026-09-10 | one `question` block on the contact address: Google's suspension, security and legal notices go there and nowhere else. Nothing emitted changes |
+| `billing_account_permissions` | 1.2 | 2026-09-10 | one `question` block on the billing-admins group: it can move projects between billing accounts and see every cost. Nothing emitted changes |
 | `s2_security_groups` | 1.1 | 2026-09-10 | six `question` blocks, one per group name — each a group's identity, so changing it later is a new group, moved members and re-granted roles. Nothing emitted changes |
 | `s1_security_groups` | 1.1 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |
 | `s1_group_definitions` | 1.3 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |

@@ -14,7 +14,7 @@
 // configured USING BUCKET LOCK, and locking is a one-way door no org policy
 // performs. The audit-logsink pack carries the same duty.
 
-pack cis_extensions.bucket_retention version "1.1"
+pack cis_extensions.bucket_retention version "1.2"
 
 params {
   // Durations, in SECONDS, a bucket retention policy may use. The default is
@@ -23,6 +23,13 @@ params {
   allowed_bucket_retention_seconds = [
     "34560000",
   ]
+}
+
+question allowed_bucket_retention_seconds {
+  prompt   = "The retention durations, in seconds, a bucket's retention policy may use"
+  why      = "The default is the 400 days the audit-logsink pack retains. Every bucket in the organisation with a retention policy on another duration can no longer be updated once this is enforced, so the estate's other durations have to be listed first."
+  reversal = edit
+  blast    = low
 }
 
 google_org_policy_policy {
