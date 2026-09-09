@@ -10,8 +10,8 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
 | [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.7 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 29 — cis-gcp 4.0, cis-gcp 5.0 |
-| [`billing_account_permissions`](billing-account-permissions.md) | 1.1 | Billing-account IAM, split by audience. | 4 | — |
-| [`essential_contacts_organization`](essential-contacts-organization.md) | 1.2 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
+| [`billing_account_permissions`](billing-account-permissions.md) | 1.2 | Billing-account IAM, split by audience. | 4 | — |
+| [`essential_contacts_organization`](essential-contacts-organization.md) | 1.3 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
 | [`estate_core`](estate-core.md) | 1.0 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
 | [`organization_budget`](organization-budget.md) | 1.0 | An organization-wide budget on the infrastructure billing account, with alert thresholds at 50, 80 and 100 % of current spend. | 1 | — |
 
@@ -26,11 +26,11 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`cis_extensions.api_key_services`](api-key-services.md) | 1.0 | CIS 4.0 §1.14 / 5.0 §1.15 — API keys restricted to the APIs an application needs. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`cis_extensions.api_key_services`](api-key-services.md) | 1.1 | CIS 4.0 §1.14 / 5.0 §1.15 — API keys restricted to the APIs an application needs. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.block_project_ssh_keys`](block-project-ssh-keys.md) | 1.0 | CIS 4.3 — block project-wide SSH keys. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
-| [`cis_extensions.bucket_retention`](bucket-retention.md) | 1.1 | CIS 4.0 §2.3 / 5.0 §2.4 — retention on the log-export bucket. | 2 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`cis_extensions.bucket_retention`](bucket-retention.md) | 1.2 | CIS 4.0 §2.3 / 5.0 §2.4 — retention on the log-export bucket. | 2 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.cloud_sql`](cloud-sql.md) | 1.1 | CIS 6.5 and 6.6/6.7 — Cloud SQL network exposure. | 4 | 4 — cis-gcp 4.0, cis-gcp 5.0 |
-| [`cis_extensions.cmek`](cmek.md) | 1.0 | CIS 7.2, 7.3 and 8.1 — customer-managed encryption keys. | 2 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`cis_extensions.cmek`](cmek.md) | 1.1 | CIS 7.2, 7.3 and 8.1 — customer-managed encryption keys. | 2 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.confidential_computing`](confidential-computing.md) | 1.0 | CIS 4.11 — Confidential Computing. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.shielded_vm`](shielded-vm.md) | 1.0 | CIS 4.8 — Shielded VM. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 
@@ -41,7 +41,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`integrations.microsoft_defender_for_cloud_cspm_role_default`](microsoft-defender-for-cloud-cspm-role-default.md) | 0.1 | Microsoft Defender for Cloud — the CSPM custom role, DEFAULT access mode. | 1 | — |
 | [`integrations.microsoft_defender_for_cloud_cspm_role_least_privilege`](microsoft-defender-for-cloud-cspm-role-least-privilege.md) | 0.1 | Microsoft Defender for Cloud — the CSPM custom role, LEAST PRIVILEGE mode. | 1 | — |
 | [`integrations.microsoft_defender_for_cloud_cspm`](microsoft-defender-for-cloud-cspm.md) | 0.1 | Microsoft Defender for Cloud — the CSPM plan. | 5 | — |
-| [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.1 | Microsoft Defender for Cloud — GCP onboarding, the foundation. | 6 | — |
+| [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.2 | Microsoft Defender for Cloud — GCP onboarding, the foundation. | 6 | — |
 
 ## `monitoring/`
 
@@ -61,7 +61,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`sa_security_audit`](sa-security-audit.md) | 1.0 | A read-only security-audit service account, with the group that may impersonate it. | 4 | — |
+| [`sa_security_audit`](sa-security-audit.md) | 1.1 | A read-only security-audit service account, with the group that may impersonate it. | 4 | — |
 
 ## `security-group-models/`
 

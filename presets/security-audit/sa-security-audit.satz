@@ -20,13 +20,36 @@
 // - no service-account keys: access is by token-creator impersonation only
 // - no remediation rights: the role set is deliberately read-only throughout
 
-pack sa_security_audit version "1.0"
+pack sa_security_audit version "1.1"
 
 params {
   security_audit_sa_project = ""
   security_audit_sa_name = "sa-security-audit"
   security_audit_sa_display_name = "Security Audit (read-only)"
   security_audit_auditors_group = "grp-security-auditors"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question security_audit_sa_project {
+  prompt   = "The project that hosts the security-audit service account"
+  why      = "There is no default: customers name projects their own way, and the account's address is derived from the project. Moving it later is a new account and every auditor re-onboarded to it."
+  reversal = recreate
+  blast    = low
+}
+
+question security_audit_sa_name {
+  prompt   = "The service account's id (the part before @)"
+  why      = "The account's address is its identity: renaming it is a new account, new grants, and every auditor's impersonation re-pointed."
+  reversal = recreate
+  blast    = low
+}
+
+question security_audit_auditors_group {
+  prompt   = "The group whose members may impersonate the audit account (the local part)"
+  why      = "Membership of this group is what makes someone an auditor. Renaming it is a new group with every member moved by hand."
+  reversal = recreate
+  blast    = low
 }
 
 google_service_account {

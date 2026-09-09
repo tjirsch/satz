@@ -10,7 +10,7 @@
 // Both constraints are plain LIST constraints, not managed booleans — verified
 // against a live organisation's OrgPolicy `ListConstraints`.
 
-pack cis_extensions.cmek version "1.0"
+pack cis_extensions.cmek version "1.1"
 
 params {
   // The services that must not create resources without a CMEK. The CIS
@@ -29,6 +29,22 @@ params {
   cmek_allowed_key_projects = [
     "under:organizations/{customer_organization_id}",
   ]
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question cmek_required_services {
+  prompt   = "The services whose new resources must be created with a customer-managed key"
+  why      = "Every new resource of a listed service is refused without a CMEK, so the key rings, keys and service-agent grants for that service have to exist first. The default is the two services the claimed CIS controls cover."
+  reversal = edit
+  blast    = high
+}
+
+question cmek_allowed_key_projects {
+  prompt   = "Which projects may supply the keys (resource paths: projects/<id>, under:folders/<id>, under:organizations/<id>)"
+  why      = "The default is anywhere in this organisation — the loosest useful value. Narrowing it to the KMS project later refuses every key that lives elsewhere, and a resource whose key is refused cannot be created."
+  reversal = edit
+  blast    = high
 }
 
 google_org_policy_policy {

@@ -12,12 +12,19 @@
 // are non-empty and limited to `allowed_api_key_services`, which is exactly
 // what the control asks for.
 
-pack cis_extensions.api_key_services version "1.0"
+pack cis_extensions.api_key_services version "1.1"
 
 params {
   // The services an API key may target. Empty means no service-account API key
   // may be created at all — the strictest reading, and a legitimate one.
   allowed_api_key_services = []
+}
+
+question allowed_api_key_services {
+  prompt   = "The services an API key bound to a service account may target"
+  why      = "The pack cannot know which APIs the customer's applications call. Empty is a legitimate answer — no such key may be created at all — but it has to be the customer's answer: every key whose targets are not in this list stops working the moment the control is enforced."
+  reversal = edit
+  blast    = high
 }
 
 google_org_policy_policy {
