@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.6"
+pack CIS_GCP_Foundation_4_0 version "2.7"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -115,6 +115,83 @@ params {
   essential_contacts_allowed_domains = [
     "@{customer_domain}",
   ]
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+// Questions only where the pack cannot know the answer or being wrong is
+// expensive: the seven opt-in controls (each can break a workload that was
+// legitimate the day before) and the three lists that say WHO and WHERE. The
+// technical defaults — protocol-forwarding schemes, the contacts domain derived
+// from the customer's — are not decisions and are not asked.
+
+question cis_block_project_ssh_keys {
+  prompt   = "Block project-wide SSH keys on every instance (CIS 4.3)?"
+  why      = "An estate that relies on project-wide keys for break-glass access loses it the moment this is enforced, and the managed constraint is still PREVIEW with no legacy form to fall back to. Per-instance keys and OS Login keep working."
+  reversal = edit
+  blast    = low
+}
+
+question cis_require_shielded_vm {
+  prompt   = "Require Shielded VM for every new instance (CIS 4.8)?"
+  why      = "Not every image supports Shielded VM: an organisation with custom or older images fails instance creation until they are rebuilt — and this is the one constraint with no dry-run, so it cannot be rehearsed before it bites."
+  reversal = edit
+  blast    = high
+}
+
+question cis_confidential_computing {
+  prompt   = "Require Confidential Computing for every new instance (CIS 4.11, Level 2)?"
+  why      = "Confidential VMs are limited to particular machine families and cost more; enforced organisation-wide this stops most ordinary workloads from starting."
+  reversal = edit
+  blast    = high
+}
+
+question cis_cloud_sql_hardening {
+  prompt   = "Forbid public IPs and open authorized networks on Cloud SQL (CIS 6.5, 6.6)?"
+  why      = "Existing instances reached over a public IP lose connectivity the moment this is enforced; the private path has to exist first."
+  reversal = edit
+  blast    = high
+}
+
+question cis_cmek_required {
+  prompt   = "Require customer-managed encryption keys for new resources (CIS 7.2, 7.3, 8.1)?"
+  why      = "The most disruptive control in the set: every new resource of a listed service must be created with a CMEK, so the key rings, the keys and the grants have to exist first — and the pack cannot know which projects may supply keys."
+  reversal = edit
+  blast    = high
+}
+
+question cis_api_key_services {
+  prompt   = "Restrict API keys to the services an application needs (CIS 4.0 §1.14 / 5.0 §1.15)?"
+  why      = "An API key that today calls anything stops working the moment this is enforced unless its targets are already narrowed. Set the allowed services first, then enforce."
+  reversal = edit
+  blast    = high
+}
+
+question cis_bucket_retention {
+  prompt   = "Constrain bucket retention durations organisation-wide (CIS 4.0 §2.3 / 5.0 §2.4)?"
+  why      = "It constrains EVERY bucket, not only the log sink's: once set, a bucket may carry a retention policy only if its duration is in the list, so buckets on other durations can no longer be updated."
+  reversal = edit
+  blast    = low
+}
+
+question allowed_resource_locations {
+  prompt   = "Where may resources be created (gcp.resourceLocations)?"
+  why      = "Data residency is the customer's decision, not the pack's. Narrowing later refuses creation outside the list and leaves what already exists elsewhere non-compliant; widening later is what an operator once did by hand, and the next apply undid it."
+  reversal = edit
+  blast    = high
+}
+
+question allowed_policy_member_principal_sets {
+  prompt   = "Which organisations' identities may be granted IAM roles (CIS §1.1, domain restricted sharing)?"
+  why      = "The default is the customer's own organisation. A partner organisation whose identities need roles here has to be listed, or every grant to them is refused; one listed too many opens the estate to a directory the customer does not control."
+  reversal = edit
+  blast    = high
+}
+
+question allowed_policy_member_subjects {
+  prompt   = "Which individual principals may be granted roles despite the lock (Google service agents)?"
+  why      = "The default is Security Command Center's five organisation-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding."
+  reversal = edit
+  blast    = high
 }
 
 // CIS 4.5 — interactive serial console access is off org-wide. Safe enough for
