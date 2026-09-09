@@ -30,3 +30,12 @@ These pages are **not** published to <https://tjirsch.github.io/satz/>. The site
 navigation is a decided list of pages for people using satz; these are records for
 people changing it. `scripts/build-site.py` only reads `docs/*.md`, so a record here
 needs no entry in `SITE_DOCS` and implies no navigation decision.
+
+## Records
+
+| | decision | status |
+|---|---|---|
+| [0001](0001-mcp-identity-is-scoped-to-the-call.md) | the MCP server scopes the identity to each call, not the process | accepted |
+| [0002](0002-superseded-org-policies-replace-by-construction.md) | superseded org policies change address so the plan is a replace | accepted |
+| [0003](0003-evidence-is-data-the-audit-pack-is-not-satz-s-to-render.md) | evidence is data; the audit pack is the agent's to render | accepted |
+| [0004](0004-the-verification-runner-is-a-pack-and-its-pipeline-is-inline.md) | the verification runner is a pack, and its pipeline is inline | accepted |
