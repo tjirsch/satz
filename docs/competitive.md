@@ -1,6 +1,6 @@
 # satz competitive
 
-Standing reference — promote and defend — for positioning Cloud Cockpit against other frameworks.
+Standing reference — promote and defend — for positioning satz against other frameworks.
 Detailed technical diffs live in their own audit docs (currently
 [fast-delta.md](fast-delta.md)); this file holds the landscape, the arguments,
 and the battle-review log. Keep ALL framework inputs — every audit adds a row
@@ -14,7 +14,7 @@ and its raw findings stay in the repo.
 | **GCP Hardening Toolkit** (Google, 2025-12) | Gemini CLI LLM agent over CAI/SCC exports + blueprint library | none (HIPAA/SOC2/PCI bundles) | yes (remediation blueprints, no import into managed estate) | no | none |
 | **compliance.tf** | Paid CIS-enforced TF module library | CIS, module-level | no | n/a | none |
 | **OSCAL ecosystem** (iac2oscal, GRC tools) | Mapping examples & documentation tooling | OSCAL, docs-side | n/a | n/a | GRC reporting, not provisioning |
-| **Cloud Cockpit (us)** | CIS-mapped org foundation compiled from Satz estates | claims → CIS 4.0/5.0 catalogs | yes — import into an ongoing managed estate | yes — presets + merge-presets/fork/ledger | `require` goal view + `report-compliance` live witnesses |
+| **satz (us)** | CIS-mapped org foundation compiled from Satz estates | claims → CIS 4.0/5.0 catalogs | yes — import into an ongoing managed estate | yes — presets + merge-presets/fork/ledger | `require` goal view + `report-compliance` live witnesses |
 
 ## Core arguments
 

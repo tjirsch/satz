@@ -4,7 +4,7 @@ Date: 2026-08-22. Source: `GoogleCloudPlatform/cloud-foundation-fabric` @ master
 `fast/stages/0-org-setup/datasets/classic` (the full reference dataset).
 Purpose: bound the content debt vs Google's Fabric FAST and generate interview
 questions. This is an **audit, not an adoption plan** — FAST is greenfield
-landing-zone tooling; Cloud Cockpit is CIS-mapped, brownfield-importing org
+landing-zone tooling; satz is CIS-mapped, brownfield-importing org
 foundation. The deltas below are classified accordingly.
 
 ## FAST has been restructured (finding 0)
