@@ -73,6 +73,12 @@ globally unique without overrides):
 | `logsink_name` | `"{customer_shortname}-organization-audit-gcs"` | display name of the sink |
 | `logsink_filter` | the four Cloud Audit log streams | sink filter — extend to archive more (e.g. VPC flow logs), never narrow below the audit streams |
 
+**Questions (v1.3).** The project, the bucket, its location and the retention are asked;
+each is a recreate or an irreversible deletion if changed later. The sink name and the
+filter are technical defaults. `satz interview <estate> --accept-defaults` binds all
+four once `customer_shortname` and `default_region` are answered — the names derive
+from them, and a derived default is offered only when its inputs are in.
+
 **Notes:**
 Retention lock (`retention_policy.is_locked`) is deliberately not set; see the preset
 header. DATA_READ org-wide can be voluminous — measure a week before pruning.
@@ -120,6 +126,11 @@ use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_centr
 | `cis_central_email` | `"gcp-security@{customer_domain}"` | recipient — a FULL address since pack v1.2, any domain. The mailbox must exist and receive external mail (Monitoring sends from alerting-noreply@google.com); a group whose members have no mailboxes silently drops everything |
 | `cis_central_channel_name` | `"CIS Security Alerts (org)"` | channel display name |
 | `cis_central_alert_window` | `"300s"` | alert alignment period |
+
+**Questions (v1.5).** `cis_central_email` — the mailbox must exist and accept external
+mail, or every alert is dropped without a trace — and `cis_central_bucket_project`,
+which defaults to the logsink pack's project by reference. The rest are technical
+defaults, unasked.
 
 **How the credit works.** Prowler's CIS metric checks are written per-project, but it credits
 a child project when an org sink with `include_children` routes its logs to a Cloud Logging
@@ -233,6 +244,10 @@ use "presets/monitoring/project-cis-log-alerts.satz" when cis_alert_project
 | `cis_alert_email_local` | `"gcp-security"` | local part of the recipient group address |
 | `cis_alert_channel_name` | `"CIS Security Alerts"` | channel display name |
 | `cis_alert_window` | `"300s"` | alert alignment period |
+
+**Questions (v1.1).** `cis_alert_project` (one project per use) and
+`cis_alert_email_local` (the mailbox rule above). The channel name and window are not
+decisions.
 
 **One project per use — no parameterisation of labels.** The resource labels are fixed,
 so using the pack twice folds the same addresses with different bodies — a hard error.
@@ -874,6 +889,9 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `monitoring.organization_audit_logsink` | 1.3 | 2026-09-10 | four `question` blocks — the archive project, the bucket, its location, the retention — each with what changing it later costs (the first three are recreates; shortening the retention deletes what is already archived). Sink name and filter stay technical defaults, unasked. Nothing emitted changes |
+| `monitoring.organization_cis_log_alerts_central` | 1.5 | 2026-09-10 | two `question` blocks: the alert mailbox (`cis_central_email` — a wrong one drops every alert silently) and the hosting project (`cis_central_bucket_project`, default the logsink pack's project by reference). Nothing emitted changes |
+| `project_cis_log_alerts` | 1.1 | 2026-09-10 | two `question` blocks: the one project this use watches, and the alert recipient's local part. Nothing emitted changes |
 | `CIS_GCP_Foundation_4_0` | 2.7 | 2026-09-10 | ten `question` blocks: the seven opt-in controls and the three lists a customer decides (locations, principal sets, subjects), each with the sentence that says what breaks when the answer is wrong. Nothing emitted changes; an estate using the pack has ten questions to answer before bootstrap or apply — all with defaults, so `satz interview --accept-defaults` settles them in one pass. Not asked: the protocol-forwarding schemes and the contacts domain, which are technical defaults rather than decisions |
 | `estate_core` | 1.0 | 2026-09-09 | first version: the seventeen day-0 params `satz init` writes, each with its `question` — what to ask, why, and what changing it later costs — plus the security-group model as two booleans and a `question oneof`. Emits nothing; exists so an interview (`satz interview --create`, the MCP tool `satz_interview`) has something to ask before an estate exists. Seven params have no possible default and block until typed; the rest offer one, and a derived default (`"{customer_shortname}-infra-001"`) is offered only once its inputs are answered |
 | `ci.verification_runner` | 1.0 | 2026-09-09 | first version: continuous verification as a pack. Two Cloud Build triggers in the hosting project — `satz-check` on every push (`transpile --check`) and `satz-compliance` nightly via Cloud Scheduler (`report-compliance --fail-on`) — plus the runner service account and its two project roles. Build steps are INLINE in the trigger, not a file in the watched repository, so control of the pipeline follows ownership of the service account; satz is installed at build time from the release (`ci_satz_release`, default `latest`). The runner never acts as itself — satz exchanges its identity for the estate's IaC account, which the companion grant pack permits. v1 reports through the exit code and log; no evidence write-back |

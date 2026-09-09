@@ -12,7 +12,7 @@
 // filters reference metric names (dependency edge) and pin resource.type=
 // "logging_bucket" (bucket-scoped metrics report against it — verified live).
 
-pack monitoring.organization_cis_log_alerts_central version "1.4"
+pack monitoring.organization_cis_log_alerts_central version "1.5"
 
 params {
   // The logsink pack's project, BY REFERENCE — not a repeated literal. One
@@ -39,6 +39,27 @@ params {
   cis_central_channel_name          = "CIS Security Alerts (org)"
   // 300s is the shortest sensible period for log-based DELTA metrics.
   cis_central_alert_window          = "300s"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+// Two of these: the mailbox the alerts go to — the pack cannot know it, and a
+// wrong one drops every alert without a trace — and the project that hosts the
+// alerting, which defaults to the logsink pack's by reference. Bucket id, sink
+// name, channel name, window and the short bucket retention are technical
+// defaults and are not asked.
+
+question cis_central_email {
+  prompt   = "The address the organisation's security alerts are sent to (a group, never a person)"
+  why      = "Monitoring sends from alerting-noreply@google.com, so the mailbox must exist and accept external mail; a group whose members have no mailboxes drops every alert silently, and nothing in the estate can detect that. People leave; groups have owners."
+  reversal = edit
+  blast    = high
+}
+
+question cis_central_bucket_project {
+  prompt   = "The project that hosts the alerting bucket, the metrics and the alert policies"
+  why      = "Every metric and policy is created in this project; moving them is a recreate and loses alert history. The default is the audit-logsink pack's project, by reference — one logging project for the archive and the alerting — and needs no answer beyond accepting it when that pack is used."
+  reversal = recreate
+  blast    = low
 }
 
 // 0) The Cloud Logging bucket the metrics are scoped to.
