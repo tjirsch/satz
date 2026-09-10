@@ -419,10 +419,15 @@ Currently excluded, and why:
 `build-satz-doc.py` is the renderer `build-site.py` imports: it turns one
 `docs/*.md` into a self-contained, theme-aware HTML page, inlining any SVG that
 sits beside the markdown and recolouring it through CSS tokens so it follows the
-viewer's theme. Code in a table cell breaks between its words and never inside
-one, so a long command cannot claim its column's whole width; a single word too
-long to share a row with two others may also break before a `/`, `.` or `_`.
-Run on its own it renders the language reference:
+viewer's theme. Inline code never pushes a page or a column wide. In a table
+cell it breaks between its words and never inside one, so a long command cannot
+claim its column's whole width. A word too long to share a table row with two
+others, in a cell or in running text, may also break before a `/`, `.` or `_`,
+and a piece of it that is still that long where a lowercase letter meets a
+capital. In a heading every word may break before a `/`, `.` or `_`, because
+heading type outruns a phone with a pack's name alone. Whatever still cannot fit
+a line breaks where it must; a code block scrolls inside itself instead. Run on
+its own it renders the language reference:
 
 ```bash
 uv run --with markdown scripts/build-satz-doc.py [MD] [OUT.html] [TITLE]
