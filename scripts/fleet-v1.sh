@@ -291,9 +291,15 @@ def blocks(root: pathlib.Path, only: set[str] | None = None) -> dict[str, str]:
     come from the estate, so its `variable` block has to live in `hcl/` — and
     comparing that against an emission which never contained it reports its
     blocks as deletions that no apply would ever make.
+
+    The walk is FLAT. satz emits into `hcl/` itself, never below it, so a
+    subdirectory there belongs to the estate — a module, a landing zone kept
+    beside the emission — and its `main.tf` is not the emitted `main.tf` that
+    happens to share the name. Walking it would compare a whole tree against a
+    flat emission and report every block in it as removed.
     """
     found: dict[str, list[str]] = {}
-    for path in sorted(root.rglob("*.tf")):
+    for path in sorted(root.glob("*.tf")):
         if only is not None and path.name not in only:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -383,14 +389,17 @@ def blocks(root: pathlib.Path, only: set[str] | None = None) -> dict[str, str]:
 
 old_root, new_root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 verbose = sys.argv[3] == "1"
-emitted = {p.name for p in new_root.rglob("*.tf")}
+emitted = {p.name for p in new_root.glob("*.tf")}
 old, new = blocks(old_root, emitted), blocks(new_root)
 
 # A `.tf` in hcl/ that this emission did not produce is either hand-written or a
 # file satz used to emit and no longer does. The two are not the same thing and
 # the script cannot tell them apart, so it names them and lets the reader decide
-# rather than silently ignoring them or calling them deletions.
-foreign = sorted({p.name for p in old_root.rglob("*.tf")} - emitted)
+# rather than silently ignoring them or calling them deletions. A subdirectory is
+# the same kind of thing one level up: satz never emits one, so whatever it holds
+# belongs to the estate and is named, not compared.
+foreign = sorted({p.name for p in old_root.glob("*.tf")} - emitted)
+subdirs = sorted(p.name + "/" for p in old_root.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 added = sorted(set(new) - set(old))
 removed = sorted(set(old) - set(new))
@@ -398,9 +407,11 @@ changed = sorted(a for a in set(old) & set(new) if old[a] != new[a])
 
 print(f"ADDR {len(added)} {len(removed)}")
 print(f"BODY {len(changed)}")
-print(f"FOREIGN {len(foreign)}")
+print(f"FOREIGN {len(foreign) + len(subdirs)}")
 for f in foreign:
     print(f"  ! {f} — in hcl/ but not emitted (hand-written, or no longer produced)")
+for d in subdirs:
+    print(f"  ! {d} — a directory in hcl/; satz emits flat files, so its contents belong to the estate and were not compared")
 for a in added:
     print(f"  + {a}")
 for a in removed:
@@ -419,8 +430,9 @@ PY
     n_removed="$(printf '%s' "$out" | awk '/^ADDR/{print $3}')"
     n_body="$(printf '%s' "$out" | awk '/^BODY/{print $2}')"
     n_foreign="$(printf '%s' "$out" | awk '/^FOREIGN/{print $2}')"
-    # `!` lines are printed separately: they are context, not a difference.
-    detail="$(printf '%s' "$out" | grep -E '^  [-+~]' || true)"
+    # `!` lines are printed separately: they are context, not a difference. The
+    # diff lines under a `~` (--verbose) are indented deeper and belong with it.
+    detail="$(printf '%s' "$out" | grep -E '^  ([-+~]|    )' || true)"
 
     if [ "$n_added" != "0" ] || [ "$n_removed" != "0" ]; then
       printf '   BLOCKER — %s: address set moved (+%s / -%s); %s body delta(s)\n' \
