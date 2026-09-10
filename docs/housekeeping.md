@@ -419,7 +419,10 @@ Currently excluded, and why:
 `build-satz-doc.py` is the renderer `build-site.py` imports: it turns one
 `docs/*.md` into a self-contained, theme-aware HTML page, inlining any SVG that
 sits beside the markdown and recolouring it through CSS tokens so it follows the
-viewer's theme. Run on its own it renders the language reference:
+viewer's theme. Code in a table cell breaks between its words and never inside
+one, so a long command cannot claim its column's whole width; a single word too
+long to share a row with two others may also break before a `/`, `.` or `_`.
+Run on its own it renders the language reference:
 
 ```bash
 uv run --with markdown scripts/build-satz-doc.py [MD] [OUT.html] [TITLE]

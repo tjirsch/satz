@@ -296,6 +296,8 @@ SEARCH_JS = """
 
 
 def strip_tags(html: str) -> str:
+    # a <wbr> sits inside a word (table_code), so it goes without a space
+    html = html.replace("<wbr>", "")
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
 
 
@@ -416,13 +418,7 @@ def main() -> None:
         m = re.search(r"^# (.+)$", text, re.M)
         title = m.group(1).strip() if m else src.stem
         doc.MD = src  # the renderer inlines SVGs relative to the source
-        body = doc.markdown.markdown(
-            text, extensions=["tables", "fenced_code", "toc"], output_format="html5"
-        )
-        body = body.replace("<table>", '<div class="tablewrap"><table>').replace(
-            "</table>", "</table></div>"
-        )
-        body = doc.inline_images(body)
+        body = doc.render(text)
         body = rewrite_links(body, src.relative_to(ROOT))
         body = command_anchors(body)
         index.extend(index_entries(title, rel, body))
