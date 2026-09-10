@@ -1142,6 +1142,8 @@ grep -q '<td><code><span>satz</span> <span>init</span> <span>--customer-id</span
   || fail "site: table code is not split into words, so a long command sets its column's width"
 grep -q '<span>\[--check|--execute\]</span>' tmp/site/docs/language.html \
   || fail "site: an escaped pipe in table code renders with its backslash, which GitHub does not show"
+grep -q '<code>ci<wbr>.verification<wbr>_runner</code>' tmp/site/presets/docs/verification-runner.html \
+  || fail "site: a pack's name in its title has no break point, so the page scrolls sideways on a phone"
 
 step "corpus + unit tests"
 (cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)

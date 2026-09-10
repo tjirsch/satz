@@ -296,7 +296,7 @@ SEARCH_JS = """
 
 
 def strip_tags(html: str) -> str:
-    # a <wbr> sits inside a word (table_code), so it goes without a space
+    # a <wbr> sits inside a word (code_breaks), so it goes without a space
     html = html.replace("<wbr>", "")
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
 
