@@ -540,6 +540,109 @@ fn emit_use(out: &mut String, indent: usize, path: &str, cond: &Option<String>, 
     out.push('\n');
 }
 
+/// The Tier-2 (CDKTF-era) spelling of a resource-type block: a SEQUENCE of
+/// entries that carry their identity in a field, instead of the mapping of
+/// address → body every other estate uses.
+///
+/// ```yaml
+/// org_policy_policy:
+///   - constraint: iam.disableServiceAccountKeyCreation
+///     parent: organizations/123456789
+///     spec: { rules: [ { enforce: "TRUE" } ] }
+/// ```
+///
+/// Satz has no such form — a block's keys ARE the addresses — and without this
+/// the sequence fell through to the attribute arm and printed
+/// `org_policy_policy = [ … ]` at the top level, which is not a resource block
+/// and does not compile. The four estates still on the dialect all spell their
+/// org policies this way, so the converter could take none of them.
+///
+/// The identifying field becomes both the address and the resource's own
+/// `name`, spelled the way the preset library spells it: the constraint with
+/// its dots turned into dashes (`iam-disableServiceAccountKeyCreation`), so a
+/// converted estate and the pack that later replaces it agree on the address.
+///
+/// Returns `None` when the sequence is not this form, leaving the caller's
+/// normal path to handle it — a list of roles under an IAM member key is a
+/// value, not a block.
+fn list_form(key: &str, seq: &[serde_yaml::Value]) -> Result<Option<serde_yaml::Mapping>, MigrateError> {
+    /// The dialect's identifying field, per type. Only the shapes that exist in
+    /// the wild are listed: a sequence under any other key stays a value.
+    fn id_field(key: &str) -> Option<(&'static str, &'static str)> {
+        match key.trim_start_matches("google_") {
+            // (field carrying the identity, attribute it becomes)
+            "org_policy_policy" => Some(("constraint", "name")),
+            _ => None,
+        }
+    }
+    /// `type: list` is a dialect marker telling the old generator which API
+    /// shape to post. The provider has no such attribute, so carrying it over
+    /// produces an estate the schema rejects.
+    const DIALECT_ONLY: &[&str] = &["type"];
+
+    let Some((id, attr)) = id_field(key) else { return Ok(None) };
+    if seq.is_empty() {
+        return Ok(None);
+    }
+    let mut out = serde_yaml::Mapping::new();
+    for item in seq {
+        let serde_yaml::Value::Mapping(body) = item else {
+            return err(format!(
+                "`{}` is a list whose entries are not mappings — the Tier-2 list form needs `- {}: …` entries",
+                key, id
+            ));
+        };
+        let Some(id_val) = body.get(serde_yaml::Value::String(id.to_string())) else {
+            return err(format!(
+                "an entry of `{}` has no `{}` — the Tier-2 list form identifies each entry by it",
+                key, id
+            ));
+        };
+        let Some(id_str) = id_val.as_str() else {
+            return err(format!("`{}: {:?}` in `{}` is not a string", id, id_val, key));
+        };
+        let address = id_str.replace('.', "-");
+        let mut converted = serde_yaml::Mapping::new();
+        converted.insert(
+            serde_yaml::Value::String(attr.to_string()),
+            serde_yaml::Value::String(id_str.to_string()),
+        );
+        for (k, v) in body {
+            let Some(ks) = k.as_str() else {
+                converted.insert(k.clone(), v.clone());
+                continue;
+            };
+            if ks == id || DIALECT_ONLY.contains(&ks) {
+                continue;
+            }
+            converted.insert(k.clone(), v.clone());
+        }
+        let addr_key = serde_yaml::Value::String(address.clone());
+        if out.contains_key(&addr_key) {
+            return err(format!("`{}` declares `{}` twice — the addresses would collide", key, id_str));
+        }
+        out.insert(addr_key, serde_yaml::Value::Mapping(converted));
+    }
+    Ok(Some(out))
+}
+
+/// The body a key opens as a `{ … }` block, or `None` when the value is an
+/// attribute. A mapping is always a block; a sequence is one only in the
+/// Tier-2 list form (`list_form`), never as a plain list of values.
+fn as_block(
+    k: &serde_yaml::Value,
+    v: &serde_yaml::Value,
+) -> Result<Option<serde_yaml::Mapping>, MigrateError> {
+    match v {
+        serde_yaml::Value::Mapping(child) => Ok(Some(child.clone())),
+        serde_yaml::Value::Sequence(seq) => match k.as_str() {
+            Some(ks) => list_form(ks, seq),
+            None => Ok(None),
+        },
+        _ => Ok(None),
+    }
+}
+
 fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Result<(), MigrateError> {
     let pad = " ".repeat(indent);
     for (k, v) in m {
@@ -564,14 +667,14 @@ fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Res
             }
         }
         let (key, _) = key_expr(k)?;
-        match v {
-            serde_yaml::Value::Mapping(child) => {
+        match as_block(k, v)? {
+            Some(child) => {
                 let _ = writeln!(out, "{}{} {{", pad, key);
-                emit_entries(child, out, indent + 2)?;
+                emit_entries(&child, out, indent + 2)?;
                 let _ = writeln!(out, "{}}}", pad);
             }
-            other => {
-                let _ = writeln!(out, "{}{} = {}", pad, key, value_expr(other, indent)?);
+            None => {
+                let _ = writeln!(out, "{}{} = {}", pad, key, value_expr(v, indent)?);
             }
         }
     }
@@ -771,6 +874,36 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
     if !promoted.is_empty() {
         header.push(format!("Top-level scalars became params: {}.", promoted.join(", ")));
     }
+    // The Tier-2 dialect carries no `terraform:` block: the old generator built
+    // the backend from `infra-bucket-name` + `customer-id` + a shortname, and
+    // one of those was an empty array on at least one estate, so the live prefix
+    // is not derivable from the file. Without the block the conversion failed in
+    // the EMITTER ("Missing 'terraform' block"), which names neither the cause
+    // nor the fix. A local backend is written instead — it compiles, and it
+    // cannot silently read or write another estate's remote state — with the
+    // review note that says what to do. `satz migrate --mode cloud` or an edit
+    // then points it at the real bucket and prefix.
+    if kind_keyword == "estate" && !top.contains_key(serde_yaml::Value::String("terraform".into()))
+    {
+        let mut local = serde_yaml::Mapping::new();
+        local.insert(
+            serde_yaml::Value::String("path".into()),
+            serde_yaml::Value::String("terraform.tfstate".into()),
+        );
+        let mut backend = serde_yaml::Mapping::new();
+        backend.insert(serde_yaml::Value::String("local".into()), serde_yaml::Value::Mapping(local));
+        let mut tf = serde_yaml::Mapping::new();
+        tf.insert(serde_yaml::Value::String("backend".into()), serde_yaml::Value::Mapping(backend));
+        top.insert(serde_yaml::Value::String("terraform".into()), serde_yaml::Value::Mapping(tf));
+        header.push(
+            "NEEDS REVIEW: the source declared no backend, so a LOCAL one was written."
+                .to_string(),
+        );
+        header.push(
+            "Point it at the state this estate already has before any plan — the bucket and prefix are not in the source."
+                .to_string(),
+        );
+    }
     if pre.import_include_seen {
         header.push("NEEDS ADOPTION: the source used `!import-include` (a transpile-time live import).".to_string());
         header.push("It is a plain `use` here; run `satz adopt <estate> --execute` after converting to import what already exists.".to_string());
@@ -898,17 +1031,17 @@ pub fn convert_value(
             }
         }
         let (key, is_ident) = key_expr(k)?;
-        match v {
-            serde_yaml::Value::Mapping(child) => {
+        match as_block(k, v)? {
+            Some(child) => {
                 let _ = writeln!(out, "{} {{", key);
-                emit_entries(child, &mut out, 2)?;
+                emit_entries(&child, &mut out, 2)?;
                 out.push_str("}\n\n");
             }
-            other => {
+            None => {
                 let _ = is_ident;
                 // fragment packs: top-level entry with a value (IAM member -> roles list,
                 // scalar attrs) — legal Satz since top-level `key = value` landed
-                let _ = writeln!(out, "{} = {}\n", key, value_expr(other, 0)?);
+                let _ = writeln!(out, "{} = {}\n", key, value_expr(v, 0)?);
             }
         }
     }

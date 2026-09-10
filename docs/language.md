@@ -1835,6 +1835,32 @@ iam-managed-disableServiceAccountKeyCreation:
 }
 ```
 
+**The older spelling: a list instead of a mapping.** The dialect's first
+generation wrote org policies as a *sequence* whose entries carry their identity
+in `constraint:`, with no address at all:
+
+```yaml
+org_policy_policy:
+  - constraint: iam.managed.disableServiceAccountKeyCreation
+    parent: !format ["organizations/{}", *customer-organization-id]
+    spec:
+      rules:
+        - enforce: "TRUE"
+  - constraint: gcp.resourceLocations
+    type: list          # a marker for the old generator's API call
+    parent: !format ["organizations/{}", *customer-organization-id]
+    spec: { rules: [ { values: { allowedValues: ["in:eu-locations"] } } ] }
+```
+
+Satz addresses every resource, so the converter supplies the address the same
+way the preset library spells it — the constraint with dots turned into dashes,
+`iam-managed-disableServiceAccountKeyCreation` — and the constraint becomes the
+resource's `name`. The dialect-only `type:` marker is dropped: the provider has
+no such attribute, and carrying it over produced an estate the schema rejects.
+The same list may appear nested inside a project, and converts the same way.
+A duplicate constraint in one list is refused rather than silently folded, since
+the two entries would land on one address.
+
 **How a conversion is checked.** `satz import <file>.yaml` converts a file and
 compiles the result through the fragment pipeline — the pipeline that will
 actually read it — and prints the emitted resource set (`CONVERTED: … N

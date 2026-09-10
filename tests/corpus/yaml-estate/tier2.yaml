@@ -1,0 +1,69 @@
+# The Tier-2 (CDKTF-era) spelling of the YAML dialect, kept as a FIXTURE.
+#
+# `main.yaml` covers the dialect the converted fleet was written in. This one
+# covers the variant the estates that are STILL on YAML actually use, and it
+# is a different shape in one way that stopped the converter dead:
+#
+#   * `org_policy_policy` is a SEQUENCE of entries identified by `constraint:`,
+#     not a mapping of address → body. Satz has no such form, so the sequence
+#     fell through to the attribute arm and printed `org_policy_policy = [ … ]`
+#     at the top level — which is not a resource block, and every one of these
+#     estates failed to convert with "attributes live inside a resource block".
+#   * `type: list` on a policy is a dialect marker for the old generator's API
+#     call. The provider has no such attribute, so it must be dropped.
+#   * the same nesting as the wild files: a policy list also appears INSIDE a
+#     project, which is the path `emit_entries` takes rather than the top level.
+#
+# Values are Customer B's from docs/examples.md.
+version: 1.0
+infra-project-name: &infra-project-name "bolt-infra-001"
+infra-bucket-name: &infra-bucket-name "bolt-infra-001"
+customer-id: &customer-id "C0bolt002"
+customer-organization-id: &customer-organization-id "222222222222"
+customer-domain: &customer-domain "example.org"
+customer-shortname: &customer-shortname "bolt"
+deployment-engine: "tofu"
+deployment-mode: "local"
+
+terraform:
+  backend:
+    local:
+      path: "terraform.tfstate"
+
+org_policy_policy:
+  - constraint: iam.disableServiceAccountKeyCreation
+    parent: !format ["organizations/{}", *customer-organization-id]
+    spec:
+      rules:
+        - enforce: "TRUE"
+
+  - constraint: iam.managed.disableServiceAccountKeyUpload
+    parent: !format ["organizations/{}", *customer-organization-id]
+    spec:
+      rules:
+        - enforce: "TRUE"
+
+  # `type:` is the dialect's own marker and must not reach the emitted resource.
+  - constraint: gcp.resourceLocations
+    type: list
+    parent: !format ["organizations/{}", *customer-organization-id]
+    spec:
+      rules:
+        - values:
+            allowedValues:
+              - "in:eu-locations"
+
+folder:
+  infra_folder:
+    display_name: "Infrastructure"
+    project:
+      infra:
+        name: "Infrastructure"
+        project_id: *infra-project-name
+        # the same list form, one level down
+        org_policy_policy:
+          - constraint: compute.skipDefaultNetworkCreation
+            parent: !format ["projects/{}", *infra-project-name]
+            spec:
+              rules:
+                - enforce: "TRUE"

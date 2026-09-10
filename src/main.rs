@@ -4665,6 +4665,75 @@ mod yaml_estate_gate {
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    /// The Tier-2 spelling: org policies as a SEQUENCE identified by
+    /// `constraint:`, at the top level and nested in a project. Every estate
+    /// still on the dialect writes them this way, and the converter took none
+    /// of them — the sequence printed as a top-level attribute, which does not
+    /// compile. Guarded here because the fleet is the only other place it would
+    /// have shown up, one estate at a time, years after the fact.
+    #[test]
+    fn the_tier2_org_policy_list_form_converts_to_addressed_resources() {
+        let src = std::fs::read_to_string(fixture().join("tier2.yaml")).unwrap();
+        let is_type = |t: &str| FixtureTypes.known(t);
+        let satz = satz_core::migrate::convert(&src, "estate", "tier2_gate")
+            .unwrap_or_else(|e| panic!("the Tier-2 fixture failed to convert: {}", e));
+        let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
+
+        // The address is the constraint, dots to dashes — the spelling the
+        // preset library uses, so a converted estate and the pack that later
+        // replaces it name the same resource.
+        for want in [
+            "\"iam-disableServiceAccountKeyCreation\"",
+            "\"iam-managed-disableServiceAccountKeyUpload\"",
+            "\"gcp-resourceLocations\"",
+            "\"compute-skipDefaultNetworkCreation\"",
+        ] {
+            assert!(satz.contains(want), "{} missing from the conversion:\n{}", want, satz);
+        }
+        // Comments are excluded: the fixture's own header explains this failure
+        // mode and would otherwise match the text it warns about.
+        let code = |needle: &str| {
+            satz.lines().any(|l| !l.trim_start().starts_with("//") && l.contains(needle))
+        };
+        assert!(
+            !code("org_policy_policy ="),
+            "the list form printed as an attribute instead of a block:\n{}",
+            satz
+        );
+        // `type: list` is the dialect's own marker; the provider has no such
+        // attribute, so an estate carrying it would not validate.
+        assert!(!code("type = \"list\""), "the dialect-only `type:` marker reached the estate:\n{}", satz);
+
+        let fe = satz_core::pipeline::compile_estate(
+            "tier2.satz",
+            &satz,
+            &FixtureTypes,
+            &|p: &str| Err(format!("the Tier-2 fixture includes nothing, asked for {}", p)),
+        )
+        .unwrap_or_else(|e| panic!("the converted Tier-2 estate does not compile: {:?}", e));
+        let folded = satz_core::pipeline::fold_fragments(&FixtureTypes, &fe.fragments);
+        assert!(folded.conflicts().is_empty(), "conflicts: {:?}", folded.conflicts());
+        let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs: Vec<String> = out.manifest.addresses().into_iter().collect();
+        for want in [
+            "google_org_policy_policy.iam_disableServiceAccountKeyCreation",
+            "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
+            "google_org_policy_policy.gcp_resourceLocations",
+            "google_org_policy_policy.compute_skipDefaultNetworkCreation",
+            "google_folder.infra_folder",
+            "google_project.infra",
+        ] {
+            assert!(
+                addrs.iter().any(|a| a == want),
+                "{} missing after conversion — declared resources must never be \
+                 silently dropped.\ngot: {:?}",
+                want,
+                addrs
+            );
+        }
+    }
 }
 
 #[cfg(test)]
