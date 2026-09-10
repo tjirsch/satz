@@ -333,6 +333,13 @@ a named file is one satz *used* to emit rather than a hand-written one, that is 
 chasing — the script cannot tell them apart, so it names it and leaves the judgment to
 the reader.
 
+**A subdirectory in `hcl/` is the same thing one level up.** satz emits flat files into
+`hcl/` and never below it, so a `modules/` or `landing-zones/` tree an estate keeps
+there is its own, and the `main.tf` inside is not the emitted `main.tf` that shares the
+name. The walk is flat: a subdirectory is listed with `!` and nothing in it is
+compared. Walked, one such tree read as a hundred and thirty deletions on an estate
+whose emission had not changed at all.
+
 **Why the address set is the severe half.** A body delta says an attribute is
 rendered differently — the same resources, described differently. A moved
 address says satz would now create or destroy something. The first is

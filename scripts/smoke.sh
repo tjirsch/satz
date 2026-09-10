@@ -1026,6 +1026,10 @@ sed -i.bak 's/display_name = "First"/display_name = "Moved"/' tmp/fleet/estate/h
 run_v1 2 "body delta" tmp/fleet/estate
 grep -q 'address set identical' tmp/fleet/out.txt || fail "a body delta was not reported as one:\n$(cat tmp/fleet/out.txt)"
 grep -q 'google_folder.first' tmp/fleet/out.txt || fail "the changed block was not named:\n$(cat tmp/fleet/out.txt)"
+#     ... and --verbose shows WHAT differs, under the block it names.
+run_v1 2 "body delta, verbose" -v tmp/fleet/estate
+grep -q '^ *+ *display_name = "First"' tmp/fleet/out.txt \
+  || fail "--verbose did not print the block diff:\n$(cat tmp/fleet/out.txt)"
 
 # 3 · the address set moved — a resource the baseline never had. BLOCKER.
 rm -rf tmp/fleet/estate/hcl
@@ -1073,6 +1077,26 @@ if grep -q 'variable.vpn_psk' tmp/fleet/out.txt; then
   fail "a hand-written block was reported as a deletion:\n$(cat tmp/fleet/out.txt)"
 fi
 rm -f tmp/fleet/estate/hcl/hand-written.tf
+
+# 5b · a subdirectory in hcl/ is the same thing one level up. satz emits flat
+#      files, so a module or a landing zone an estate keeps below hcl/ is its
+#      own — and its main.tf is not the emitted main.tf that shares the name.
+#      Walked, a whole tree reads as blocks that disappeared.
+mkdir -p tmp/fleet/estate/hcl/landing-zones
+cat > tmp/fleet/estate/hcl/landing-zones/main.tf <<'EOF'
+module "project" {
+  source = "../modules/project"
+}
+variable "landing_zone_folder" {
+  type = string
+}
+EOF
+run_v1 0 "a subdirectory is context, not a deletion" tmp/fleet/estate
+grep -q '! landing-zones/' tmp/fleet/out.txt || fail "the subdirectory was not named:\n$(cat tmp/fleet/out.txt)"
+if grep -qE 'module.project|variable.landing_zone_folder|BLOCKER —' tmp/fleet/out.txt; then
+  fail "blocks below hcl/ were compared against the flat emission:\n$(cat tmp/fleet/out.txt)"
+fi
+rm -rf tmp/fleet/estate/hcl/landing-zones
 
 # 6 · schemas/ is a derived cache that estate repos gitignore, so a fresh clone has
 #     none and nothing compiles. That is a fact about the CHECKOUT: reported as
