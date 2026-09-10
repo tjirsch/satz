@@ -1380,7 +1380,9 @@ The only reader of the legacy YAML dialect: `satz import <file>.yaml` converts a
 (`!include` → `use`, anchors → params, `!format` → `"{param}"` interpolation, `!expr` →
 `"${{…}}"`), then compiles the result through the fragment pipeline and reports what it
 emits. An old `!import-include` becomes `use` plus a `NEEDS ADOPTION` note — its job is
-`satz adopt`.
+`satz adopt`. The dialect's older, addressless spelling of org policies — a list of
+entries identified by `constraint:` — becomes addressed resources, the constraint with
+dots turned into dashes ([docs/language.md §12.2](docs/language.md)).
 
 #### 5. Discovery Engine
 `satz import organizations/<n>` (and the `folders/`, `projects/`, `state.json` shapes) reverse-engineer a Satz estate from what exists.
