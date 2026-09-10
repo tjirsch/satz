@@ -1138,6 +1138,10 @@ step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
 grep -q 'href="docs/language.html"' tmp/site/index.html || fail "site: README link to the language reference was not rewritten to HTML"
+grep -q '<td><code><span>satz</span> <span>init</span> <span>--customer-id</span>' tmp/site/docs/interview.html \
+  || fail "site: table code is not split into words, so a long command sets its column's width"
+grep -q '<span>\[--check|--execute\]</span>' tmp/site/docs/language.html \
+  || fail "site: an escaped pipe in table code renders with its backslash, which GitHub does not show"
 
 step "corpus + unit tests"
 (cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)
