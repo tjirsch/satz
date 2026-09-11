@@ -86,6 +86,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   test that compiles every corpus case against it.
 - **Memberships stay OUT of presets** — presets define groups, humans grant
   membership.
+- **The IaC service account holds named roles, never `roles/owner`** (ADR 0009). A
+  pack that emits a resource type the role table in `src/iac_roles.rs` has no row for
+  adds the row in the same PR, verified with `scripts/check_iac_roles.py`; a new pack
+  gets a line in one of the `tests/iac/` cases. `iac_roles_gate` fails on either
+  omission.
 - **80% of customisation via params, the rest via `.local` forks** — no
   variable explosion. Names that must be globally unique derive from
   `customer_shortname`.
@@ -212,7 +217,7 @@ Its first half lists every file DERIVED from something outside this
 repository — the provider schema fixture, the CAI asset-type list, the
 managed/legacy constraint pairing, the catalogs, the version pins — with what
 refreshes each, what triggers it, and what catches it when nobody remembers.
-Three of them have no automatic check at all, which is the reason the page
+Four of them have no automatic check at all, which is the reason the page
 exists. Anything derived gets a script, else a gate, else a line on that page:
 a file that is out of date while the tests report success is how a compliance
 tool starts lying.

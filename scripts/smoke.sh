@@ -604,6 +604,43 @@ grep -q 'does not emit' tmp/badref.txt || fail "the reference check did not fire
 grep -q 'google_storage_bucket.lugs.name' tmp/badref.txt || fail "the error does not name the bad reference"
 grep -q 'emitted `google_storage_bucket` labels: logs' tmp/badref.txt || fail "the error does not name the labels that do exist:\n$(cat tmp/badref.txt)"
 
+step "iac-roles: the IaC service account holds what the estate's types need, and --execute writes a gap"
+"$satz" --config . iac-roles smoke.satz > tmp/iac.txt 2>&1 || fail "the smoke estate's IaC service account misses roles:\n$(cat tmp/iac.txt)"
+grep -q '^missing: none' tmp/iac.txt || fail "iac-roles did not report the smoke estate complete:\n$(cat tmp/iac.txt)"
+"$satz" --config . transpile smoke.satz --check > tmp/iac-clean.txt 2>&1
+if grep -q 'lacks roles' tmp/iac-clean.txt; then fail "a complete estate warned about roles:\n$(cat tmp/iac-clean.txt)"; fi
+# A gap: the storage role goes, the estate still has a bucket.
+grep -v '"roles/storage.admin",' yaml/smoke.satz > tmp/iac-gap.satz
+"$satz" --config . transpile tmp/iac-gap.satz --check > tmp/iac-warn.txt 2>&1 || fail "a role gap failed the compile at the default level:\n$(cat tmp/iac-warn.txt)"
+grep -q 'lacks roles' tmp/iac-warn.txt || fail "the compile did not warn about the gap:\n$(cat tmp/iac-warn.txt)"
+grep -q 'roles/storage.admin at the organization — for google_storage_bucket' tmp/iac-warn.txt \
+  || fail "the warning does not name the role and the type:\n$(cat tmp/iac-warn.txt)"
+if "$satz" --config . --validation error transpile tmp/iac-gap.satz --check > tmp/iac-err.txt 2>&1; then
+  fail "--validation error compiled an estate with a role gap"
+fi
+grep -q 'roles/storage.admin' tmp/iac-err.txt || fail "the refusal does not name the role:\n$(cat tmp/iac-err.txt)"
+"$satz" --config . --validation none transpile tmp/iac-gap.satz --check > tmp/iac-none.txt 2>&1
+if grep -q 'lacks roles' tmp/iac-none.txt; then fail "--validation none still checked roles"; fi
+if "$satz" --config . iac-roles tmp/iac-gap.satz > tmp/iac-dry.txt 2>&1; then
+  fail "iac-roles exited 0 on a gap:\n$(cat tmp/iac-dry.txt)"
+fi
+grep -q '1 role(s) missing' tmp/iac-dry.txt || fail "the dry run does not count the gap:\n$(cat tmp/iac-dry.txt)"
+"$satz" --config . iac-roles tmp/iac-gap.satz --execute > tmp/iac-exec.txt 2>&1 || fail "iac-roles --execute failed:\n$(cat tmp/iac-exec.txt)"
+grep -q 'wrote roles/storage.admin in google_organization_iam_member' tmp/iac-exec.txt \
+  || fail "--execute did not write the role:\n$(cat tmp/iac-exec.txt)"
+# into the account's existing list: no second block, no appended one
+[ "$(grep -c '^google_organization_iam_member {' tmp/iac-gap.satz)" = 1 ] || fail "--execute added a second grant block"
+[ "$(grep -c 'satz iac-roles' tmp/iac-gap.satz)" = "$(grep -c 'satz iac-roles' yaml/smoke.satz)" ] \
+  || fail "--execute appended a block where the list exists"
+"$satz" --config . iac-roles tmp/iac-gap.satz > /dev/null 2>&1 || fail "the gap is still reported after --execute"
+"$satz" iac-roles --format json > tmp/iac-table.json
+python3 - <<'PYEOF' || fail "iac-roles --format json did not print the table"
+import json
+t = json.load(open("tmp/iac-table.json"))
+assert t["read"], "no read entries"
+assert any(e["roles"] == ["roles/resourcemanager.projectCreator"] for e in t["types"]["google_project"]), t["types"]["google_project"]
+PYEOF
+
 step "generate-migration: the script cds into hcl_dir, paces, retries 429s and summarizes"
 printf 'google_project.old: google_project.new\n' > tmp/mapping.yaml
 "$satz" --config . generate-migration tmp/mapping.yaml --output tmp/migrate.sh

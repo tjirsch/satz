@@ -1001,10 +1001,13 @@ impl SatzMcp {
         // that estate's live tools RUN as — so it is answered inside the same
         // scope they use, not merely described.
         let scoped = match self.ctx.open.lock().expect("the open lock is never poisoned").clone() {
-            Some(open) if args.estate.is_none() => Some(Self::identity_of(&open)),
+            Some(open) if args.estate.is_none() => {
+                let estate = open.estate.clone();
+                Some((Self::identity_of(&open), open, estate))
+            }
             Some(_) => match self.target(args.estate.as_deref()) {
                 Ok((open, estate)) => {
-                    Some(crate::estate_impersonation_target(&estate, &open.runtime))
+                    Some((crate::estate_impersonation_target(&estate, &open.runtime), open, estate))
                 }
                 Err(r) => return Ok(Err(r)),
             },
@@ -1013,10 +1016,17 @@ impl SatzMcp {
             None => None,
         };
         let report = match scoped {
-            Some(sa) => {
-                crate::gcp::with_identity(sa, crate::gcp::identity::whoami_report(args.offline)).await
+            Some((sa, open, estate)) => {
+                // Online, the estate's resource types say which permissions to test;
+                // an estate that does not compile still gets its identity answered.
+                let probe = if args.offline {
+                    None
+                } else {
+                    crate::iac_probe(&estate, &open.tool, &open.runtime).ok()
+                };
+                crate::gcp::with_identity(sa, crate::gcp::identity::whoami_report(args.offline, probe)).await
             }
-            None => crate::gcp::identity::whoami_report(args.offline).await,
+            None => crate::gcp::identity::whoami_report(args.offline, None).await,
         };
         match report {
             Ok(report) => Ok(Ok(Json(report))),

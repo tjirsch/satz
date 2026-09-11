@@ -69,6 +69,21 @@ google_organization_iam_member {
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
     "roles/resourcemanager.organizationAdmin",
     "roles/orgpolicy.policyAdmin",
+    "roles/billing.projectManager",
+    "roles/browser",
+    "roles/cloudasset.viewer",
+    "roles/essentialcontacts.admin",
+    "roles/iam.securityReviewer",
+    "roles/logging.configWriter",
+    "roles/monitoring.alertPolicyEditor",
+    "roles/monitoring.notificationChannelEditor",
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectMover",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/serviceusage.serviceUsageConsumer",
+    "roles/storage.admin",
+    "roles/viewer",
   ]
   "group:{svc_iac_users_group}@{customer_domain}" = [
     "roles/iam.serviceAccountTokenCreator",
@@ -105,4 +120,12 @@ google_folder {
     use "presets/monitoring/organization-audit-logsink.satz"
     use "presets/monitoring/organization-cis-log-alerts-central.satz"
   }
+}
+
+// The IaC service account's roles for this estate's resource types (`satz iac-roles`).
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/billing.admin",
+  ]
 }

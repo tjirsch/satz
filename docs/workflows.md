@@ -103,7 +103,10 @@ identity that estate's live commands actually run as, which on a cloud-mode esta
 its IaC service account and not you. Both halves print together, because a live
 command uses both, and online it CHECKS them: one `generateAccessToken` (token
 discarded) for whether this credential may become that account, and one
-`projects.get` for whether the quota project is reachable. `--offline` reads the
+`projects.get` for whether the quota project is reachable. Given an estate that
+compiles, it also tests the permissions the estate's resource types need
+(`testIamPermissions` on the organization, the infra project and the billing account)
+and names each missing one with the role that carries it. `--offline` reads the
 estate file alone and says the checks were not made rather than implying they
 passed.
 
@@ -167,6 +170,13 @@ tofu apply
 
 The first apply creates the identity layer: the Cloud Identity groups, their IAM roles
 (`Token Creator` among them) and the rest of the management project.
+
+A pack added later can emit a resource type the IaC service account holds no role for.
+The compile names the role, and `satz iac-roles C0example.satz --execute` writes it into
+the estate's grant list. The apply then creates the grant and the resources that need it
+in one pass; a resource that meets a permission error on the role just granted is
+created by running the apply again once the grant has taken effect, which takes up to a
+few minutes.
 
 ### Verify
 
@@ -294,6 +304,11 @@ ambiguous.
 
 When `tofu plan` shows no changes, or only intended ones, the migration is complete;
 from then on the infrastructure is changed through the estate.
+
+The IaC service account reaches the adopted folders and projects, hand-made ones
+included, through the roles it holds at the organization: every folder and project
+inherits them. `satz iac-roles <estate>` names each role the adopted resource types need
+that the estate does not grant it yet, and `--execute` writes them.
 
 ---
 

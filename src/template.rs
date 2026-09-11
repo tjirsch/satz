@@ -76,20 +76,26 @@ google_cloud_identity_group {
 }
 
 google_organization_iam_member {
-  // the service account needs the Groups Admin role in the Workspace console as well
+  // The IaC service account: read on every project (import, adopt, reports), and
+  // the roles this estate's resource types need — `satz iac-roles` adds the ones
+  // further packs bring. Granted at the organization, so every folder and project
+  // inherits them, hand-made ones included. The Groups Admin role in the Workspace
+  // admin console is needed as well; it is not an IAM role.
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
-    "roles/billing.user",
-    "roles/billing.projectManager",
-    "roles/iam.organizationRoleAdmin",
-    "roles/orgpolicy.policyAdmin",
-    "roles/owner",
-    "roles/resourcemanager.folderAdmin",
-    "roles/resourcemanager.organizationAdmin",
-    "roles/resourcemanager.projectIamAdmin",
-    "roles/resourcemanager.projectCreator",
-    "roles/iam.serviceAccountAdmin",
-    "roles/serviceusage.serviceUsageAdmin",
+    "roles/viewer",
+    "roles/browser",
+    "roles/iam.securityReviewer",
+    "roles/cloudasset.viewer",
     "roles/serviceusage.serviceUsageConsumer",
+    "roles/resourcemanager.organizationAdmin",
+    "roles/orgpolicy.policyAdmin",
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectMover",
+    "roles/billing.projectManager",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/iam.serviceAccountAdmin",
+    "roles/storage.admin",
   ]
   "group:{svc_iac_users_group}@{customer_domain}" = [
     "roles/serviceusage.serviceUsageConsumer",

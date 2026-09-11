@@ -14,6 +14,7 @@ mod template;
 mod adopt;
 mod bootstrap;
 mod preflight;
+mod iac_roles;
 mod gcp;
 mod org_policy;
 mod cloud_identity;
@@ -232,7 +233,7 @@ static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::At
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "iac-roles"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs"]),
     (
@@ -628,6 +629,21 @@ enum Commands {
         #[arg(long)]
         activate: bool,
     },
+    /// The roles the IaC service account needs for the resource types the estate emits, against the roles the estate grants it; --execute writes the missing grants into the estate file
+    ///
+    /// A dry run unless --execute. Exits non-zero while a role is missing.
+    /// Without an estate: the table itself (--format json for scripts/check_iac_roles.py)
+    IacRoles {
+        /// Estate file (.satz, inside yaml_dir if relative); omit to print the table
+        input: Option<String>,
+        /// Write the missing roles into the estate file: into the service account's
+        /// grant list, or a new block at the end of the file
+        #[arg(long)]
+        execute: bool,
+        /// text (default) or json
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
+    },
     /// Derive the API→Terraform field map per resource type from the API's Discovery Document and the provider schema, into <presets_dir>/type-map.yaml — what the live import applies so imported resources plan clean
     ///
     /// Review the rows it marks renamed or unmatched; re-run after a provider
@@ -940,7 +956,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
                 Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. }
-                | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
+                | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
+                | Commands::IacRoles { input: Some(_), .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
                     // those args. "config.toml not found" is baffling then, so name
@@ -953,7 +970,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
-                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } => {
+                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. }
+                | Commands::IacRoles { input: None, .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }
@@ -1867,6 +1885,22 @@ Thumbs.db
             crate::mcp::serve(root, ceiling, self_gated).await
         }
         Commands::OpenReadme => open_url(DOCS_URL),
+        Commands::IacRoles { input, execute, format } => {
+            let format = format.require_one_of("iac-roles", &[OutFormat::Text, OutFormat::Json])?;
+            match input {
+                None => {
+                    match format {
+                        OutFormat::Json => println!("{}", serde_json::to_string_pretty(&crate::iac_roles::table_json())?),
+                        _ => print!("{}", crate::iac_roles::render_table()),
+                    }
+                    Ok(())
+                }
+                Some(estate) => {
+                    let path = estate_path(PathBuf::from(&estate), &runtime_config);
+                    run_iac_roles(&path, execute, format, &tool_config, &runtime_config)
+                }
+            }
+        }
         Commands::Whoami { input, offline } => {
             // An estate changes the question from "who is the human" to "who
             // does this estate act as". A path that does not resolve has to say
@@ -1883,8 +1917,22 @@ Thumbs.db
                     .into());
                 }
                 configure_estate_impersonation(&path, &runtime_config)?;
+                // Online, the estate's resource types say which permissions to test.
+                // An estate that does not compile still gets its identity answered.
+                let probe = if offline {
+                    None
+                } else {
+                    match iac_probe(&path, &tool_config, &runtime_config) {
+                        Ok(p) => Some(p),
+                        Err(e) => {
+                            eprintln!("note: permissions not tested — the estate does not compile: {}", e);
+                            None
+                        }
+                    }
+                };
+                return crate::gcp::identity::whoami(offline, probe).await;
             }
-            crate::gcp::identity::whoami(offline).await
+            crate::gcp::identity::whoami(offline, None).await
         }
         Commands::Completion { shell, install } => {
             let using_default = shell.is_none();
@@ -2036,6 +2084,7 @@ fn pipeline_b_generate(
     let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
     check_written_references(&folded, &out.manifest)?;
     report_missing_required(&out.missing_required, &runtime_config.validation_level)?;
+    report_iac_roles(&out.manifest, &fe.env, input_path, &runtime_config.validation_level)?;
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     let providers_tf = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
         .map_err(|e| format!("emit_providers: {}", e))?;
@@ -2060,6 +2109,216 @@ fn pipeline_b_generate(
         // reports "no customer-organization-id" instead of querying org "".
         org_id: Some(ctx.org_id.clone()).filter(|s| !s.is_empty()),
     })
+}
+
+/// Set by `iac-roles`, which reports the same finding itself and would otherwise
+/// print it twice.
+static IAC_ROLES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The roles the estate's resource types need that it does not grant its IaC
+/// service account, at the validation level: `warn` names them and the command
+/// that writes them, `error` refuses, `none` skips. A type the table does not know
+/// is a note, never an error — satz cannot say which role it needs.
+fn report_iac_roles(
+    manifest: &crate::manifest::Manifest,
+    env: &satz_core::pipeline::Env,
+    estate: &Path,
+    level: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if level == "none" || IAC_ROLES_QUIET.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(());
+    }
+    let get = |k: &str| env.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let Some(sa) = crate::iac_roles::service_account_of(get) else {
+        return Ok(());
+    };
+    let (needs, unknown) = crate::iac_roles::needs(manifest);
+    let granted = crate::iac_roles::granted(manifest, &sa);
+    let missing = crate::iac_roles::missing(&needs, &granted);
+    let file = estate.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    if !missing.is_empty() {
+        let msg = format!(
+            "the IaC service account {} lacks roles this estate's resource types need — \
+             `satz iac-roles {} --execute` writes them into the estate:\n  {}",
+            sa,
+            file,
+            crate::iac_roles::describe(&crate::iac_roles::plan(&missing, &granted)).join("\n  ")
+        );
+        if level == "error" {
+            return Err(msg.into());
+        }
+        eprintln!("warning: {}", msg);
+    }
+    if !granted.owner() && !unknown.is_empty() {
+        eprintln!(
+            "note: no role is known for {} — grant the one it needs to the IaC service account in the estate",
+            unknown.into_iter().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// What `whoami <estate>` tests live: the estate's needs, and its organization,
+/// infra project and billing account to test them on.
+pub(crate) fn iac_probe(
+    path: &Path,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<crate::iac_roles::Probe, Box<dyn std::error::Error>> {
+    // whoami reports the permissions live; the compile's own note would repeat them
+    IAC_ROLES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    let out = pipeline_b_generate(path, tool_config, runtime_config)?;
+    let params = estate_param_strings(path, runtime_config)?;
+    let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
+    Ok(crate::iac_roles::Probe {
+        needs: crate::iac_roles::needs(&out.manifest).0,
+        scope_root: get("customer_organization_id").map(|o| crate::org_policy::normalize_parent(&o)),
+        project: get("infra_project_name").map(|p| format!("projects/{}", p)),
+        billing_account: get("billing_account_infra"),
+    })
+}
+
+/// What `iac-roles <estate>` reports.
+#[derive(Debug, serde::Serialize)]
+struct IacRolesReport {
+    estate: String,
+    service_account: String,
+    granted: crate::iac_roles::Granted,
+    needs: Vec<crate::iac_roles::Need>,
+    missing: Vec<crate::iac_roles::Need>,
+    /// the roles `--execute` writes for `missing`
+    write: Vec<crate::iac_roles::Pick>,
+    /// emitted types the table has no entry for
+    unknown_types: Vec<String>,
+}
+
+/// The estate's params as strings, snake_case — what `{param}` interpolation reads.
+fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
+    Ok(satz_estate_params(path, &runtime_config.include_dirs)?
+        .into_iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.replace('-', "_"), s.to_string())))
+        .collect())
+}
+
+fn iac_roles_report(
+    path: &Path,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<IacRolesReport, Box<dyn std::error::Error>> {
+    let out = pipeline_b_generate(path, tool_config, runtime_config)?;
+    let params = estate_param_strings(path, runtime_config)?;
+    let sa = crate::iac_roles::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
+        format!(
+            "{}: the estate names no IaC service account (svc_iac_account and infra_project_name)",
+            path.display()
+        )
+    })?;
+    let (needs, unknown) = crate::iac_roles::needs(&out.manifest);
+    let granted = crate::iac_roles::granted(&out.manifest, &sa);
+    let missing = crate::iac_roles::missing(&needs, &granted);
+    Ok(IacRolesReport {
+        estate: path.display().to_string(),
+        service_account: sa,
+        unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
+        write: crate::iac_roles::plan(&missing, &granted),
+        granted,
+        needs,
+        missing,
+    })
+}
+
+fn render_iac_roles(r: &IacRolesReport) -> String {
+    let mut out = format!("IaC service account: {}\n", r.service_account);
+    out.push_str(&format!(
+        "the estate grants it {} role(s) at the organization and {} on the billing account; satz's reads and its resource types need {} permission(s)\n",
+        r.granted.organization.len(),
+        r.granted.billing_account.len(),
+        r.needs.iter().filter(|n| n.permission.is_some()).count()
+    ));
+    if r.granted.owner() {
+        out.push_str("roles/owner at the organization meets every organization and project need\n");
+    }
+    if r.missing.is_empty() {
+        out.push_str("missing: none\n");
+    } else {
+        out.push_str("missing:\n");
+        for l in crate::iac_roles::describe(&r.write) {
+            out.push_str(&format!("  {}\n", l));
+        }
+    }
+    let workspace: std::collections::BTreeSet<String> = r
+        .needs
+        .iter()
+        .filter(|n| n.scope == crate::iac_roles::Scope::Workspace)
+        .flat_map(|n| n.reason.iter().map(move |t| format!("{} — {}", t, n.roles[0])))
+        .collect();
+    for w in workspace {
+        out.push_str(&format!("not checked: {} (not an IAM role)\n", w));
+    }
+    if !r.unknown_types.is_empty() {
+        out.push_str(&format!(
+            "no role known for: {} — grant the one it needs in the estate\n",
+            r.unknown_types.join(", ")
+        ));
+    }
+    out
+}
+
+/// `iac-roles <estate>`: the report, and with `--execute` the missing roles
+/// written into the estate file. The edit proves itself — the estate compiles and
+/// nothing is missing afterwards — or the file is restored.
+fn run_iac_roles(
+    path: &Path,
+    execute: bool,
+    format: OutFormat,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    IAC_ROLES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    let report = iac_roles_report(path, tool_config, runtime_config)?;
+    let emit = |r: &IacRolesReport| -> Result<(), Box<dyn std::error::Error>> {
+        match format {
+            OutFormat::Json => println!("{}", serde_json::to_string_pretty(r)?),
+            _ => print!("{}", render_iac_roles(r)),
+        }
+        Ok(())
+    };
+    if !execute || report.missing.is_empty() {
+        emit(&report)?;
+        if !report.missing.is_empty() {
+            let (org, bill) = crate::iac_roles::to_write(&report.write);
+            return Err(format!(
+                "{} role(s) missing — `satz iac-roles {} --execute` writes them into the estate",
+                org.len() + bill.len(),
+                path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let (org, bill) = crate::iac_roles::to_write(&report.write);
+    let params = estate_param_strings(path, runtime_config)?;
+    let before = fsx::read_to_string(path)?;
+    let written = crate::iac_roles::write_grants(path, &params, &report.service_account, &org, &bill)?;
+    let restore = |why: String| -> Box<dyn std::error::Error> {
+        match std::fs::write(path, &before) {
+            Ok(()) => format!("{} — {} restored", why, path.display()).into(),
+            Err(e) => format!("{} — and restoring {} failed: {}", why, path.display(), e).into(),
+        }
+    };
+    match iac_roles_report(path, tool_config, runtime_config) {
+        Ok(after) if after.missing.is_empty() => {
+            for w in &written {
+                println!("wrote {} → {}", w, path.display());
+            }
+            emit(&after)
+        }
+        Ok(after) => Err(restore(format!(
+            "the grants were written and {} permission(s) are still missing",
+            after.missing.len()
+        ))),
+        Err(e) => Err(restore(format!("the edited estate does not compile ({})", e))),
+    }
 }
 
 /// Resources the provider will refuse for a missing required argument or block,
@@ -4044,7 +4303,7 @@ fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Er
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration", "run-actions",
+        "scan-plan", "generate-migration", "run-actions", "iac-roles",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
@@ -4284,6 +4543,7 @@ mod command_groups {
         ("map-types", Identity::Human("Discovery documents are public — no credential at all")),
         ("mcp", Identity::PerTool),
         ("transpile", Identity::NoGoogleApi),
+        ("iac-roles", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("plan", Identity::NoGoogleApi),
         ("apply", Identity::NoGoogleApi),
@@ -4944,7 +5204,7 @@ mod manifest_gate {
         out
     }
 
-    fn emit_case(case: &Path, reg: &crate::ResourceRegistry) -> (crate::emitter::EmitOut, satz_core::pipeline::FrontEnd) {
+    pub(super) fn emit_case(case: &Path, reg: &crate::ResourceRegistry) -> (crate::emitter::EmitOut, satz_core::pipeline::FrontEnd) {
         let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
         let case_dir = case.to_path_buf();
         let resolver = crate::EstateResolver { registry: reg };
@@ -5083,6 +5343,65 @@ hcl trust "test fixture" {
         assert!(addrs.contains("google_storage_bucket.real"), "{:?}", addrs);
         assert!(!addrs.contains("google_storage_bucket.ghost"), "a passthrough resource is not a witness: {:?}", addrs);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod iac_roles_gate {
+    //! Every resource type the library can emit has a row in the IaC service
+    //! account's role table (`src/iac_roles.rs`). The cases under `tests/iac/`
+    //! together use every pack, each one unconditionally, so a pack added without
+    //! a case, or a pack emitting a type the table does not know, fails here.
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    /// The `use "…"` paths of a case, refusing a `when`: a pack switched off
+    /// emits nothing, and a gate over nothing passes.
+    fn uses(case: &Path, src: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
+            let mut rest = line;
+            while let Some(i) = rest.find("use \"") {
+                let after = &rest[i + 5..];
+                let end = after.find('"').unwrap_or_else(|| panic!("{}: unterminated use: {}", case.display(), line));
+                let tail = after[end + 1..].trim_start();
+                assert!(!tail.starts_with("when"), "{}: `{}` — a gate case uses every pack unconditionally", case.display(), line.trim());
+                out.push(after[..end].to_string());
+                rest = &after[end + 1..];
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_type_the_library_emits_has_a_role() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let reg = super::corpus::registry();
+        let mut used = BTreeSet::new();
+        let mut types = BTreeSet::new();
+        for entry in std::fs::read_dir(root.join("tests/iac")).expect("tests/iac").flatten() {
+            let case = entry.path();
+            let src = std::fs::read_to_string(case.join("main.satz"))
+                .unwrap_or_else(|e| panic!("{}: {}", case.display(), e));
+            used.extend(uses(&case, &src));
+            let (out, _) = super::manifest_gate::emit_case(&case, &reg);
+            let (_, unknown) = crate::iac_roles::needs(&out.manifest);
+            assert!(
+                unknown.is_empty(),
+                "{}: no role known for {:?} — add the type's row to TYPES in src/iac_roles.rs",
+                case.display(),
+                unknown
+            );
+            types.extend(out.manifest.resources.values().map(|r| r.tf_type.clone()));
+        }
+        let packs: BTreeSet<String> = crate::doc_packs::packs(&root.join("presets"))
+            .expect("the preset library")
+            .into_iter()
+            .map(|(p, _, _)| format!("presets/{}", p.to_string_lossy()))
+            .collect();
+        let unused: Vec<&String> = packs.difference(&used).collect();
+        assert!(unused.is_empty(), "packs no case under tests/iac/ uses: {:?}", unused);
+        assert!(types.len() >= 20, "the gate checked only {} types: {:?}", types.len(), types);
     }
 }
 
@@ -5313,7 +5632,17 @@ mod init_template {
         assert!(out.main_tf.contains("id = \"first.admin@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("member = \"group:svc-iac-users@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("svc-iac-users@example.com"), "{}", out.main_tf);
-        assert_eq!(out.manifest.of_type("google_organization_iam_member").count(), 13);
+        assert_eq!(out.manifest.of_type("google_organization_iam_member").count(), 15);
+        // named roles, not owner — and exactly what the template's own resource
+        // types need, so a fresh estate has nothing to add
+        let get = |k: &str| fe.env.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let sa = crate::iac_roles::service_account_of(get).expect("the template names its IaC service account");
+        let granted = crate::iac_roles::granted(&out.manifest, &sa);
+        assert!(!granted.owner(), "the template grants roles/owner");
+        let (needs, unknown) = crate::iac_roles::needs(&out.manifest);
+        assert!(unknown.is_empty(), "the template emits types the role table does not know: {:?}", unknown);
+        let missing = crate::iac_roles::missing(&needs, &granted);
+        assert!(missing.is_empty(), "the template misses roles its own types need: {:?}", crate::iac_roles::describe(&crate::iac_roles::cover(&missing)));
         // the users group may become the IaC service account, and only that one:
         // TokenCreator and serviceAccountUser on the account, not on the org
         assert_eq!(out.manifest.of_type("google_service_account_iam_member").count(), 2);
