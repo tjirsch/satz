@@ -1137,7 +1137,20 @@ grep -q '^== E01' tmp/fleet/out.txt || fail "the one real roster row was not rea
 step "documentation site renders (what pages.yml publishes)"
 uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
-grep -q 'href="docs/language.html"' tmp/site/index.html || fail "site: README link to the language reference was not rewritten to HTML"
+# The menu always carries href="docs/language.html", so the rewrite is judged by a link
+# only the README's text has: one into a section of the language reference.
+grep -q 'href="docs/language.html#' tmp/site/index.html || fail "site: README's links into the language reference were not rewritten to HTML"
+if grep -rqE 'href="[^":#]+\.md(#[^"]*)?"' tmp/site; then
+  fail "site: a relative .md link survived the build, and it 404s on the site:\n$(grep -rhoE 'href="[^":#]+\.md(#[^"]*)?"' tmp/site | sort -u | head -5)"
+fi
+grep -q 'blob/main/docs/adr/0006-' tmp/site/docs/interview.html \
+  || fail "site: a link to an ADR, which the site does not publish, does not go to GitHub"
+if grep -rq '<title>[^<]*`' tmp/site; then
+  fail "site: a browser-tab title carries markdown backticks:\n$(grep -rho '<title>[^<]*`[^<]*' tmp/site | head -3)"
+fi
+if grep -rqE 'class="lvl[23]" href="[^"]*">[^<]*&amp;(amp|lt|gt|quot);' tmp/site; then
+  fail "site: a contents entry is escaped twice, so a reader sees an entity:\n$(grep -rhoE 'class="lvl[23]" href="[^"]*">[^<]*&amp;(amp|lt|gt|quot);[^<]*' tmp/site | head -3)"
+fi
 grep -q '<td><code><span>satz</span> <span>init</span> <span>--customer-id</span>' tmp/site/docs/interview.html \
   || fail "site: table code is not split into words, so a long command sets its column's width"
 grep -q '<span>\[--check|--execute\]</span>' tmp/site/docs/language.html \

@@ -121,11 +121,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `SITE_DOCS_EXCLUDED` (with its reason), and the build fails naming any doc in
   neither, so a page reaching the public site is a decision and so is a page not
   reaching it. The MENU is the same kind of decision: `NAV_ORDER` names every
-  page in reading order — `satz`, `language`, `presets`, `workflows`, `mcp`,
-  `examples`, `housekeeping`, `competitive`, `llms` — and a page it does not
-  name fails the build rather than being appended alphabetically. A page title
-  is that menu word after `satz` (`# satz language`, `# satz mcp`; the preset
-  library is `# satz library`) and carries no trailing explanation — what the
+  page in reading order — `satz`, `language`, `library`, `workflows`,
+  `interview`, `mcp`, `examples`, `housekeeping`, `competitive`, `llms` — and a
+  page it does not name fails the build rather than being appended
+  alphabetically. A page title is that menu word after `satz` (`# satz
+  language`, `# satz library`) and carries no trailing explanation — what the
   page IS belongs in its opening line. Published by
   `.github/workflows/pages.yml` on every release tag; nothing is written for
   the site separately, and a doc that is not in the repo is not documentation.

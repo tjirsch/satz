@@ -876,10 +876,10 @@ google_organization_iam_custom_role {
 
 and the estate says `use "presets/roles/application-owner-connected.satz"`.
 The resource gains a name, a version and a ledger entry, `merge-presets` can
-track it, and any estate can share it. A params-only pack (`permissions =
-<param>`) is the shape when the LIST itself is the shared thing. There is no
-value-position include in Satz on purpose: `use` is a language construct
-(params, provenance, claims), not a preprocessor splice.
+track it, and any estate can share it. A params-only pack
+(`permissions = <param>`) is the shape when the LIST itself is the shared thing.
+There is no value-position include in Satz on purpose: `use` is a language
+construct (params, provenance, claims), not a preprocessor splice.
 
 ## ci/ — continuous verification
 
