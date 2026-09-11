@@ -191,6 +191,34 @@ def code_breaks(body: str) -> str:
     return body.replace("</code>/<code>", "</code>/<wbr><code>")
 
 
+# Inline elements sit inside a run of text; every other tag ends one.
+INLINE_TAGS = "a|abbr|b|code|del|em|i|kbd|mark|s|samp|small|span|strong|sub|sup|u|wbr"
+
+
+def plain_text(fragment: str) -> str:
+    """HTML as the text a reader sees: an inline tag reads as nothing, so
+    "(`init`)" stays "(init)"; any other tag as a space, because between blocks
+    there is one; entities decoded, so `&` is `&` in a browser tab, the contents
+    column and the search index."""
+    text = re.sub(rf"</?(?:{INLINE_TAGS})\b[^>]*>", "", fragment)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def page_title(body: str, source: Path) -> str:
+    """The page's first h1 as plain text, so a pack's name in backticks reaches
+    the browser tab as the name. A page without one is refused: a tab titled
+    after a file name is a page nobody named."""
+    m = re.search(r"<h1[^>]*>(.*?)</h1>", body, re.S)
+    if not m:
+        raise SystemExit(f"{source}: the page has no `# ` title")
+    return plain_text(m.group(1))
+
+
+def head(title: str) -> str:
+    return HEAD.format(title=html.escape(title, quote=False))
+
+
 def render(text: str) -> str:
     """Markdown to the page body: the one rendering path, for this script and
     for build-site.py."""
@@ -204,14 +232,9 @@ def render(text: str) -> str:
 
 
 def main() -> None:
-    text = MD.read_text(encoding="utf-8")
-    title = TITLE
-    if not title:
-        m = re.search(r"^# (.+)$", text, re.M)
-        title = m.group(1).strip() if m else MD.stem
-    body = render(text)
+    body = render(MD.read_text(encoding="utf-8"))
     OUT.write_text(
-        HEAD.format(title=title)
+        head(TITLE or page_title(body, MD))
         + "<style>"
         + CSS
         + "</style>\n<main>\n"

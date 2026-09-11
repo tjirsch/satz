@@ -389,14 +389,15 @@ cannot be silently left off it either. The smoke matrix runs the site build, so
 the check is enforced in CI.
 
 **The menu is a third list, gated the same way.** `NAV_ORDER` names every page in
-reading order — `satz`, `language`, `presets`, `workflows`, `mcp`, `examples`,
-`housekeeping`, `competitive`, `llms` — and the build fails on a page it does not
-name, or on a name that is not a page. It used to append an unlisted page
-alphabetically, which is how a menu meant as a table of contents drifted into a
-directory listing. A page's title is its menu word after `satz` (`# satz
-language`, `# satz mcp`; the preset library is `# satz library`), with no trailing
-explanation: what the page IS goes in its opening line, where a reader who opened
-it will actually see it.
+reading order — `satz`, `language`, `library`, `workflows`, `interview`, `mcp`,
+`examples`, `housekeeping`, `competitive`, `llms` — and the build fails on a page
+it does not name, or on a name that is not a page. It used to append an unlisted
+page alphabetically, which is how a menu meant as a table of contents drifted
+into a directory listing. A page's title is its menu word after `satz` (`# satz
+language`, `# satz library`), with no trailing explanation: what the page IS goes
+in its opening line, where a reader who opened it will actually see it. The
+browser tab shows that title as plain text, taken from the rendered heading, and
+a page without a `# ` title fails the build.
 
 The 24 per-pack pages under `presets/docs/` are rendered and linked from the
 preset library, but carry no menu entry of their own — someone looking for a pack
@@ -404,7 +405,9 @@ starts at the library.
 
 An excluded doc stays in the repository and stays linkable — a link to one from a
 published page is rewritten to its GitHub blob URL rather than left as a `.md`
-href that 404s.
+href that 404s. So is a link to any other repository file the site does not
+publish, an ADR under `docs/adr/` for one; a link to a file that does not exist
+fails the build, naming the page and the link.
 
 Currently excluded, and why:
 
