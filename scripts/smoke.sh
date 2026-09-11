@@ -1135,7 +1135,7 @@ run_v1 0 "a noisy roster yields exactly one estate" --roster tmp/fleet/noisy.md
 grep -q '^== E01' tmp/fleet/out.txt || fail "the one real roster row was not read:\n$(cat tmp/fleet/out.txt)"
 
 step "documentation site renders (what pages.yml publishes)"
-uv run --with markdown "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
+uv run "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
 # The menu always carries href="docs/language.html", so the rewrite is judged by a link
 # only the README's text has: one into a section of the language reference.
@@ -1157,6 +1157,17 @@ grep -q '<span>\[--check|--execute\]</span>' tmp/site/docs/language.html \
   || fail "site: an escaped pipe in table code renders with its backslash, which GitHub does not show"
 grep -q '<code>ci<wbr>.verification<wbr>_runner</code>' tmp/site/presets/docs/verification-runner.html \
   || fail "site: a pack's name in its title has no break point, so the page scrolls sideways on a phone"
+# `satz <cmd> --html-help` opens the front page at #cmd-<cmd>, else at #cli-usage: the
+# binary's list is the contract, read from the source rather than copied here.
+documented="$(sed -n '/const DOCUMENTED: &\[&str\] = &\[/,/\];/p' "$root/src/main.rs" | grep -o '"[a-z-]*"' | tr -d '"')"
+[ -n "$documented" ] || fail "site: could not read the --html-help command list from src/main.rs"
+for cmd in $documented; do
+  grep -q "id=\"cmd-$cmd\"" tmp/site/index.html || fail "site: --html-help opens #cmd-$cmd, which the front page does not carry"
+done
+grep -q 'id="cli-usage"' tmp/site/index.html || fail "site: --html-help falls back to #cli-usage, which the front page does not carry"
+# GitHub's parser: a list may follow a line of text, as the README's CLI reference does.
+grep -q '<p><strong>Parameters:</strong></p>' tmp/site/index.html \
+  || fail "site: the README's Parameters lists run into their paragraph — not GitHub's parser"
 
 step "corpus + unit tests"
 (cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)

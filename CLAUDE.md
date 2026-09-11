@@ -136,9 +136,12 @@ and in the maintainer's notes. Nothing in this file names a customer.
   changelog edit makes a page stale. The index prints the first sentence of each
   pack's header comment and refuses one that says nothing; a pack the shape does
   not decide how to `use` states its own line in that header.
-  Run it locally before a docs PR: `uv run --with markdown
-  scripts/build-site.py _site` and open `_site/index.html`. `satz open-readme`
-  and the post-install step open that site.
+  The site parses with cmark-gfm, GitHub's own parser (ADR 0008), so it shows
+  what GitHub shows — lists, fences and heading anchors included; a link to an
+  anchor that does not exist fails the build. Run it locally before a docs PR:
+  `uv run scripts/build-site.py _site` (the script declares its dependency) and
+  open `_site/index.html`. `satz open-readme` and the post-install step open
+  that site.
 - **A decision that was not obvious gets an ADR.** `docs/adr/`, MADR form, one
   file per decision, numbered and never renumbered: the context, the options with
   their real trade-offs, what was chosen and what it costs. The bar is "would

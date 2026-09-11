@@ -1,8 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["cmarkgfm>=2025.10.22"]
+# ///
 """Render the documentation site: every Markdown page the repo keeps, as
 self-contained themed HTML, into one output directory (GitHub Pages).
 
-    uv run --with markdown scripts/build-site.py [_site]
+    uv run scripts/build-site.py [_site]
 
 Pages: README.md → index.html, docs/*.md → docs/<name>.html,
 presets/README.md → presets/index.html. Links between the Markdown files are
@@ -11,6 +15,7 @@ every page gets the same navigation bar. The Markdown stays the source GitHub
 shows — one text, two renderings. Rendering itself is `build-satz-doc.py`.
 """
 
+import posixpath
 import re
 import shutil
 import sys
@@ -322,14 +327,15 @@ def command_anchors(body: str) -> str:
     The rendered heading keeps its own generated id as a nested anchor."""
 
     def repl(m: "re.Match[str]") -> str:
-        level, attrs, inner = m.group(1), m.group(2), m.group(3)
+        level, attrs, slug, inner = m.group(1), m.group(2), m.group(3), m.group(4)
         cmds = re.findall(r"<code>([a-z][a-z0-9-]*)</code>", inner)
         if not cmds:
             return m.group(0)
-        return f'<h{level}{attrs} id="cmd-{cmds[0]}">{inner}</h{level}>'
+        keep = f'<a id="{slug}"></a>' if slug else ""
+        return f'<h{level}{attrs} id="cmd-{cmds[0]}">{keep}{inner}</h{level}>'
 
     return re.sub(
-        r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="[^"]*")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>',
+        r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="([^"]*)")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>',
         repl,
         body,
     )
@@ -416,11 +422,27 @@ def rewrite_links(body: str, src_rel: Path) -> str:
     return body
 
 
+def dead_anchors(pages: dict[str, str]) -> list[str]:
+    """Every `page.html#anchor` link between pages of the site whose target page
+    carries no such id. Heading ids are GitHub's (ADR 0008), so an anchor that
+    lands here lands on GitHub too, and one that does not is dead in both."""
+    ids = {rel: set(re.findall(r'\bid="([^"]+)"', page)) for rel, page in pages.items()}
+    dead = []
+    for rel, page in pages.items():
+        here = posixpath.dirname(rel)
+        for target, frag in re.findall(r'href="([^"#:]*)#([^"]+)"', page):
+            to = posixpath.normpath(posixpath.join(here, target)) if target else rel
+            if to in ids and frag not in ids[to]:
+                dead.append(f"  {rel}: #{frag} is not an anchor of {to}")
+    return dead
+
+
 def main() -> None:
     if OUT.exists():
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True)
     index: list[dict] = []
+    pages: dict[str, str] = {}
     for src, rel, _label in PAGES + [(s, r, "") for s, r in PACK_PAGES]:
         doc.MD = src  # the renderer inlines SVGs relative to the source
         body = doc.render(src.read_text(encoding="utf-8"))
@@ -428,9 +450,7 @@ def main() -> None:
         body = rewrite_links(body, src.relative_to(ROOT))
         body = command_anchors(body)
         index.extend(index_entries(title, rel, body))
-        out = OUT / rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
+        pages[rel] = (
             doc.head(title)
             + "<style>"
             + doc.CSS
@@ -442,9 +462,17 @@ def main() -> None:
             + toc_html(body)
             + "<main>\n"
             + body
-            + "\n</main>\n</div>\n",
-            encoding="utf-8",
+            + "\n</main>\n</div>\n"
         )
+    dead = dead_anchors(pages)
+    if dead:
+        raise SystemExit(
+            "build-site: links to anchors that do not exist:\n" + "\n".join(dead)
+        )
+    for rel, page in pages.items():
+        out = OUT / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(page, encoding="utf-8")
         print(f"wrote {out.relative_to(OUT)} ({out.stat().st_size} bytes)")
     import json
 

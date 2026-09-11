@@ -1,6 +1,6 @@
 # 0008 — the site renders markdown with GitHub's own parser
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-09-11
 - **Deciders:** the maintainer
 
@@ -79,26 +79,33 @@ autolinks, strikethrough and task lists, and it parses like GitHub by constructi
 
 ## Decision
 
-Proposed: **C**. The requirement is that the site shows the text GitHub shows, and
+**C**, cmarkgfm. The requirement is that the site shows the text GitHub shows, and
 running GitHub's parser is the only option where that holds by construction rather than
 by a growing list of rules and gates.
 
-## Consequences, if accepted
+## Consequences
 
-- **The builder's post-processing follows the new HTML.** `inline_images` matches
-  `<img alt=… src=…>`, and cmark-gfm writes `src` first. Fences come out as `<pre
-  lang="…">`. `toc_html`, `index_entries` and `command_anchors` read heading ids, which
-  the new slugger supplies. The `\|` unescape in `code_breaks` becomes dead code, since
-  GFM unescapes it itself, and is deleted.
-- **94 heading anchors change** to GitHub's. Outside links to those headings, such as
+- **The builder's post-processing follows the new HTML.** `inline_images` reads `src`
+  and `alt` in either order, and a missing image now fails the build. Fences come out as
+  `<pre lang="…">`. `heading_ids` gives every heading GitHub's id, and `toc_html`,
+  `index_entries` and `command_anchors` read it. The `\|` unescape in `code_breaks` was
+  dead once GFM unescaped the pipe itself, and is deleted, as is Python-Markdown.
+- **94 heading anchors changed** to GitHub's. Outside links to those headings, such as
   bookmarks, break once. The builder's `#cmd-` anchors, which `satz <cmd> --html-help`
-  opens, are unaffected. The seven links written against the site's slugs are
-  rewritten, after which all 47 resolve in both renderings.
-- **The build command changes.** It moves from `uv run --with markdown` to cmarkgfm in
-  `pages.yml`, `scripts/smoke.sh`, `CLAUDE.md` and `docs/housekeeping.md`. The
-  alternative is PEP 723 inline metadata in the two scripts, so that a bare `uv run
-  scripts/build-site.py` resolves its own dependency.
-- **Every page's HTML changes.** The switch is reviewed with a structural before/after
-  comparison of all pages, the same one that produced the numbers above.
+  opens, are unchanged; such a heading also keeps GitHub's id as a nested anchor, so a
+  link written on GitHub lands too. Smoke checks every command in the binary's
+  `--html-help` list against the front page.
+- **Eight links were rewritten**: four against the old slugs, two against the site-only
+  `#cmd-run-actions`, and two to a `#questions` heading that never existed. All 47
+  `#fragment` links now resolve in both renderings, and **a link to an anchor its
+  target page does not carry fails the site build**.
+- **The build command changed** from `uv run --with markdown` to a bare `uv run
+  scripts/build-site.py`: both scripts declare `cmarkgfm` in PEP 723 inline metadata,
+  as `scripts/update_constraint_equivalents.py` already did for its own needs.
+- **Every page's HTML changed, and only as intended.** After the switch, all 39 pages
+  parse the same as cmark-gfm alone, apart from the diagram caption the site adds; the
+  visible text changed only where list markers and fence languages had been literal
+  text; every heading anchor GitHub renders for the README, the language reference and
+  the housekeeping page exists on the site.
 - **Unaffected:** the content, the site's look, the search, the privacy gate and the
   published URLs.
