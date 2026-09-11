@@ -2,13 +2,22 @@
 """Maintain presets/import-config.yaml (the type table `satz import` and
 `satz adopt` read) from data, never by hand:
 
-  --schema-dir DIR   add a row for every provider resource type the schemas
-                     know and the table lacks (asset_type TODO/UNKNOWN,
-                     import: false)
+  --schema-dir DIR   the table becomes the provider's resource types: a row is
+                     added for every type the schemas know and the table lacks
+                     (asset_type TODO/UNKNOWN, import: false), and a row for a
+                     type no schema knows is removed. Needs --provider-version,
+                     the version the schemas were dumped from; it is recorded as
+                     `provider_version`, and `cargo test` holds it to the pin
   --cai-types FILE   resolve TODO/UNKNOWN rows: derive the Cloud Asset
                      Inventory name from the Terraform type and keep it only
                      when it is in FILE (presets/cai-asset-types.txt, Google's
                      published list); print what stayed unresolved and why
+  --probe PARENT     ask Cloud Asset Inventory for one page of every named
+                     row's asset type under PARENT (organizations/<n>,
+                     folders/<n>, projects/<id>), paced under the ListAssets
+                     quota; a row whose type ListAssets refuses at its
+                     content_type loses its asset_type (state shape only).
+                     Reads the Application Default Credentials through gcloud
 
 Run with: uv run --with ruamel.yaml scripts/update_import_config.py …
 Comments and row order in the YAML survive (ruamel round-trip).
@@ -16,9 +25,15 @@ Comments and row order in the YAML survive (ruamel round-trip).
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
+import time
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 try:
     from ruamel.yaml import YAML
@@ -767,14 +782,76 @@ def fill_asset_types(config, cai: set[str]) -> tuple[int, list[tuple[str, str]]]
     return filled, unresolved
 
 
+def quota_project() -> str:
+    """The project ListAssets bills, found the way satz finds it."""
+    for key in ("GOOGLE_CLOUD_QUOTA_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"):
+        if os.environ.get(key, "").strip():
+            return os.environ[key].strip()
+    adc = Path(os.environ.get("CLOUDSDK_CONFIG", Path.home() / ".config/gcloud")) / "application_default_credentials.json"
+    if adc.exists():
+        qp = json.loads(adc.read_text()).get("quota_project_id", "").strip()
+        if qp:
+            return qp
+    sys.exit("--probe: no quota project — set GOOGLE_CLOUD_QUOTA_PROJECT or run gcloud auth application-default set-quota-project")
+
+
+REFUSED = re.compile(r"No \w+ found that matches asset type")
+
+
+def probe(config, parent: str, per_minute: int) -> list[tuple[str, str]]:
+    """One ListAssets page per (asset_type, content_type) of the named rows.
+    Returns the (row, reason) pairs whose type the API refuses; any other
+    error ends the run."""
+    sys.stdout.reconfigure(line_buffering=True)
+    token = subprocess.run(
+        ["gcloud", "auth", "application-default", "print-access-token"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    headers = {"Authorization": f"Bearer {token}", "x-goog-user-project": quota_project()}
+    by_type: dict[tuple[str, str], list[str]] = {}
+    for tf_type, row in config["resource_types"].items():
+        asset_type = row.get("asset_type")
+        if asset_type and asset_type != TODO:
+            by_type.setdefault((asset_type, str(row.get("content_type", "RESOURCE"))), []).append(tf_type)
+    print(f"probing {len(by_type)} asset type(s) under {parent}, {per_minute}/min")
+    refused: list[tuple[str, str]] = []
+    for n, ((asset_type, content), tf_types) in enumerate(sorted(by_type.items()), 1):
+        query = urlencode({"assetTypes": asset_type, "contentType": content, "pageSize": 1})
+        request = Request(f"https://cloudasset.googleapis.com/v1/{parent}/assets?{query}", headers=headers)
+        while True:
+            time.sleep(60 / per_minute)
+            try:
+                with urlopen(request) as response:
+                    response.read()
+                break
+            except HTTPError as e:
+                error = json.loads(e.read() or b"{}").get("error", {})
+                if e.code == 429:
+                    print("  quota reached — waiting a minute")
+                    time.sleep(60)
+                    continue
+                if error.get("status") == "INVALID_ARGUMENT" and REFUSED.search(error.get("message", "")):
+                    refused += [(t, f"ListAssets refuses {asset_type} ({content})") for t in tf_types]
+                    print(f"  refused: {asset_type} ({content}) — {', '.join(tf_types)}")
+                    break
+                sys.exit(f"--probe: {asset_type} ({content}): HTTP {e.code} {error.get('status')}: {error.get('message')}")
+        if n % 50 == 0:
+            print(f"  {n}/{len(by_type)}")
+    return refused
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--schema-dir", type=Path, help="Directory containing provider schema JSON files.")
     parser.add_argument("--config-file", type=Path, required=True, help="Path to import-config.yaml.")
     parser.add_argument("--cai-types", type=Path, help="presets/cai-asset-types.txt: resolve TODO/UNKNOWN rows against it.")
+    parser.add_argument("--provider-version", help="with --schema-dir: the provider version the schemas were dumped from")
+    parser.add_argument("--probe", metavar="PARENT", help="organizations/<n>, folders/<n> or projects/<id>: drop asset types ListAssets refuses")
+    parser.add_argument("--probe-rate", type=int, default=80, help="--probe requests per minute (default 80)")
     args = parser.parse_args()
-    if not args.schema_dir and not args.cai_types:
-        parser.error("nothing to do: pass --schema-dir and/or --cai-types")
+    if not args.schema_dir and not args.cai_types and not args.probe:
+        parser.error("nothing to do: pass --schema-dir, --cai-types and/or --probe")
+    if args.schema_dir and not args.provider_version:
+        parser.error("--schema-dir needs --provider-version: the table records which provider it matches")
     if not args.config_file.exists():
         sys.exit(f"Config file {args.config_file} does not exist.")
 
@@ -789,7 +866,20 @@ def main() -> None:
 
     if args.schema_dir:
         resources = load_schemas(args.schema_dir)
+        if not resources:
+            sys.exit(f"no resource types in {args.schema_dir}")
         print(f"Loaded {len(resources)} resources from schemas.")
+        gone = sorted(t for t in config["resource_types"] if t not in resources)
+        for t in gone:
+            del config["resource_types"][t]
+            print(f"  removed {t}: no schema knows it")
+        changed |= bool(gone)
+        if config.get("provider_version") != args.provider_version:
+            if "provider_version" in config:
+                config["provider_version"] = args.provider_version
+            else:
+                config.insert(0, "provider_version", args.provider_version)
+            changed = True
         added = 0
         for res in sorted(resources):
             if res in config["resource_types"]:
@@ -815,6 +905,14 @@ def main() -> None:
             print(f"  {t}: {r}")
         # a no-shape row lost its TODO placeholder: that is a change to write too
         changed |= filled > 0 or bool(no_shape)
+
+    if args.probe:
+        refused = probe(config, args.probe, args.probe_rate)
+        for tf_type, reason in refused:
+            del config["resource_types"][tf_type]["asset_type"]
+            config["resource_types"].yaml_set_comment_before_after_key(tf_type, before=reason, indent=2)
+        print(f"refused by ListAssets: {len(refused)} row(s) — their asset_type is removed")
+        changed |= bool(refused)
 
     if changed:
         with args.config_file.open("w") as f:

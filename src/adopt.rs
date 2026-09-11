@@ -1149,7 +1149,7 @@ mod tests {
                 },
             );
         }
-        ImportConfig { root: None, only: None, resource_types }
+        ImportConfig { provider_version: None, root: None, only: None, exclude: None, resource_types }
     }
 
     const MAIN_TF: &str = r#"

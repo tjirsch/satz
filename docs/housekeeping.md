@@ -15,7 +15,8 @@ script: the refreshes and the gates.
 |---|---|---|---|
 | `tests/schemas/google.json` | `scripts/update_schema_fixture.py --add` | the provider pin moves | **nothing** — run `--check` |
 | `presets/cai-asset-types.txt` | by hand, from Google's docs | new asset types appear | indirect: unfilled `import-config` rows |
-| `presets/import-config.yaml` (`asset_type`) | `scripts/update_import_config.py --cai-types` | the CAI list above changes | smoke: *"every derivable asset_type is filled"* |
+| `presets/import-config.yaml` (rows) | `scripts/update_import_config.py --schema-dir … --provider-version …` | the provider pin moves | `cargo test`: `provider_version` must equal the pin |
+| `presets/import-config.yaml` (`asset_type`) | `scripts/update_import_config.py --cai-types`, then `--probe <parent>` | the CAI list above changes; Google changes what ListAssets serves | smoke: *"every derivable asset_type is filled"*; a type ListAssets refuses: the live import aborts naming it |
 | `presets/managed-constraint-equivalents.txt` | `scripts/update_constraint_equivalents.py` | Google ships a new managed twin | `cargo test` catches the *effect*, not the table |
 | `presets/docs/*.md` | `satz doc-packs` | any pack changes | smoke: `doc-packs --check` |
 | `presets/README.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
@@ -441,12 +442,17 @@ block above the content. It is built from the rendered headings.
 
 ## `update_import_config.py` — keep the type table current
 
-Two passes over `presets/import-config.yaml`, both from data, never by hand;
-existing rows are never rewritten and comments survive (`ruamel.yaml`):
+Three passes over `presets/import-config.yaml`, all from data, never by hand;
+comments and row order survive (`ruamel.yaml`):
 
-- `--schema-dir <dir>` reads every provider schema JSON there and adds a row
-  for each resource type the table lacks (`import: false`,
-  `asset_type: TODO/UNKNOWN`).
+- `--schema-dir <dir> --provider-version <v>` makes the rows the provider's
+  resource types: it reads every provider schema JSON there (google and
+  google-beta), adds a row for each type the table lacks (`import: false`,
+  `asset_type: TODO/UNKNOWN`), removes the rows no schema knows, and records `v`
+  as the table's `provider_version`. `cargo test` fails when that differs from
+  the pin in `tests/smoke/config.toml`. The schemas come from
+  `tofu providers schema -json > <dir>/schemas.json`, run in a directory
+  initialized with both providers at the pinned version.
 - `--cai-types presets/cai-asset-types.txt` resolves the `TODO/UNKNOWN` rows:
   the Cloud Asset Inventory name is derived from the Terraform type
   (`google_dns_managed_zone` → `dns.googleapis.com/ManagedZone`, with an alias
@@ -458,12 +464,25 @@ existing rows are never rewritten and comments survive (`ruamel.yaml`):
   the `asset_type` key: known, not unknown. What stays `TODO/UNKNOWN` is printed
   with what was tried. The smoke matrix runs this pass and fails when the
   table is behind the list.
+- `--probe <parent>` asks Cloud Asset Inventory for one page of every named
+  row's asset type under `<parent>` (`organizations/<n>`, `folders/<n>`,
+  `projects/<id>`), with the Application Default Credentials through gcloud and
+  80 requests a minute (`--probe-rate`), below the ListAssets quota. Google's
+  list names types ListAssets refuses at the row's `content_type` — the Access
+  Context Manager, Cloud Identity, Cloud SQL user and database types among
+  them; the refusal names the type and points at Google's supported-asset-types
+  page, while a type the scope merely has none of answers with an empty page.
+  A refused row loses its `asset_type`, gets a comment naming the refusal, and
+  is state shape only. Any other error ends the run. It needs a live
+  organization, so no gate runs it; run it after `--cai-types`.
 
 ```bash
 uv run --with ruamel.yaml scripts/update_import_config.py \
   --config-file presets/import-config.yaml \
-  --schema-dir <dir-of-schema-json> \
+  --schema-dir <dir-of-schema-json> --provider-version <pinned version> \
   --cai-types presets/cai-asset-types.txt
+uv run --with ruamel.yaml scripts/update_import_config.py \
+  --config-file presets/import-config.yaml --probe organizations/<n>
 ```
 
 To refresh the list itself: the page

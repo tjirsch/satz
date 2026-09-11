@@ -141,13 +141,19 @@ pub struct FolderRef {
 }
 
 /// `import-config.yaml`: what `satz import` reads. YAML on purpose — it is
-/// data that configures an import, not an estate. `root` and `only` are the
-/// repeatable form of the command line (`satz import <source> --only …`),
-/// which overrides them when given.
+/// data that configures an import, not an estate. `root`, `only` and `exclude`
+/// are the repeatable form of the command line (`satz import <source> --only …
+/// --exclude …`), which overrides them when given.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ImportConfig {
+    /// The provider version the rows were refreshed against
+    /// (`scripts/update_import_config.py --schema-dir`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<ImportRoot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub only: Option<Vec<String>>,
     pub resource_types: HashMap<String, ImportResourceConfig>,
@@ -161,6 +167,36 @@ impl ImportConfig {
         let mut off = Vec::new();
         for (name, rc) in self.resource_types.iter_mut() {
             if rc.import && !globs.iter().any(|g| glob_match(g, name)) {
+                rc.import = false;
+                off.push(name.clone());
+            }
+        }
+        off.sort();
+        off
+    }
+
+    /// Switch on every type the source can deliver, whatever its `import` flag:
+    /// for the live shape the rows Cloud Asset Inventory names (an `asset_type`
+    /// that is not a TODO), for the state shape every row. Returns how many
+    /// were off and are now on.
+    pub fn apply_all(&mut self, live: bool) -> usize {
+        let mut on = 0;
+        for rc in self.resource_types.values_mut() {
+            let deliverable = !live || rc.asset_type.as_deref().is_some_and(|a| !a.starts_with("TODO"));
+            if deliverable && !rc.import {
+                rc.import = true;
+                on += 1;
+            }
+        }
+        on
+    }
+
+    /// Switch off the types matching `globs`. Returns the names that were on
+    /// and are now off.
+    pub fn apply_exclude(&mut self, globs: &[String]) -> Vec<String> {
+        let mut off = Vec::new();
+        for (name, rc) in self.resource_types.iter_mut() {
+            if rc.import && globs.iter().any(|g| glob_match(g, name)) {
                 rc.import = false;
                 off.push(name.clone());
             }
@@ -219,5 +255,42 @@ mod glob_tests {
         assert_eq!(off, vec!["google_project".to_string()]);
         assert!(cfg.resource_types["google_folder"].import);
         assert!(!cfg.resource_types["google_project"].import);
+    }
+
+    #[test]
+    fn all_takes_what_the_source_can_deliver_and_exclude_takes_it_away() {
+        let yaml = "resource_types:\n  google_folder: {description: f, import: true, asset_type: cloudresourcemanager.googleapis.com/Folder}\n  google_bucket_x: {description: b, import: false, asset_type: storage.googleapis.com/Bucket}\n  google_todo: {description: t, import: false, asset_type: TODO/UNKNOWN}\n  google_project_iam_member: {description: m, import: false}\n";
+        // live: only what Cloud Asset Inventory names
+        let mut live: ImportConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(live.apply_all(true), 1);
+        assert!(live.resource_types["google_bucket_x"].import);
+        assert!(!live.resource_types["google_todo"].import && !live.resource_types["google_project_iam_member"].import);
+        // state: every row
+        let mut state: ImportConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(state.apply_all(false), 3);
+        let off = state.apply_exclude(&["google_*_iam_member".to_string(), "google_todo".to_string()]);
+        assert_eq!(off, ["google_project_iam_member", "google_todo"]);
+        assert!(state.resource_types["google_folder"].import);
+    }
+
+    /// The table is the provider's resource types at one version. A pin moved
+    /// without a refresh leaves new types without a row, and nothing else
+    /// notices: `scripts/update_import_config.py --schema-dir … --provider-version …`.
+    #[test]
+    fn the_import_table_matches_the_pinned_provider() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let cfg: ImportConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(root.join("presets/import-config.yaml")).unwrap()).unwrap();
+        let smoke = std::fs::read_to_string(root.join("tests/smoke/config.toml")).unwrap();
+        let pinned = smoke
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("provider_version = ").map(|v| v.trim_matches('"').to_string()))
+            .expect("tests/smoke/config.toml pins provider_version");
+        assert_eq!(
+            cfg.provider_version.as_deref(),
+            Some(pinned.as_str()),
+            "presets/import-config.yaml was refreshed against another provider than the pin — \
+             run scripts/update_import_config.py --schema-dir <schemas> --provider-version {pinned}"
+        );
     }
 }

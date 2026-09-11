@@ -127,7 +127,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from-live` (derive the missing values from the ADC alone) |
 | `bootstrap <CONFIG_FILE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize a not-yet-existing organization) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
-| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
 | `iac-roles [INPUT]` | `--execute`, `--format` (`text`\|`json`) — the roles the estate's IaC service account needs for the resource types the estate emits, against the roles the estate grants it; exits non-zero when one is missing; `--execute` writes the missing roles into the estate file. Without an estate: the table of resource types and roles. See [IaC service account roles](#iac-service-account-roles-iac-roles) |
 
@@ -662,7 +662,9 @@ satz import organizations/123456789012 --into C0example.satz   # only what the e
 
 **Parameters:**
 - `SOURCE`: what to import from; the shape is read off its form (`--from state|org|yaml|hcl` when it cannot tell). Omit it to use the import config's `root`.
+- `--all`: every type the source can deliver, not only the rows marked `import: true` — at the live shape every row with a Cloud Asset Inventory name, from a state file every row. `--only` and `--exclude` apply after it.
 - `--only <types>`: comma-separated resource types, `*` wildcards allowed (`google_*_iam_member`); everything else is switched off for this run. Overrides `only` in the import config.
+- `--exclude <types>`: comma-separated resource types, `*` wildcards allowed; these are switched off for this run. Overrides `exclude` in the import config.
 - `--output, -o <FILE>`: output inside `yaml_dir` (default `discovered.satz`; the extension is always `.satz`).
 - `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
 - yaml shape: `--kind estate|pack`, `--gate <estate>.satz` (compile a converted pack in context), `--fork` (write `<stem>.local.satz`).
@@ -677,6 +679,7 @@ root:                              # live shape; the command-line SOURCE overrid
   folder: { path: "Shared Services/Prod" }   # or { id: "456789" } — exactly one
   project: my-prj                  # narrows further
 only: [google_folder, google_project, "google_*_iam_member"]
+exclude: [google_project_iam_member]   # left out; --exclude overrides it
 resource_types:                    # per type: import on/off, attribute include/exclude,
   google_project:                  # asset_type, and the rules `satz adopt` reads
     import: true
@@ -687,10 +690,16 @@ exactly one folder may carry each name, otherwise the run stops and lists the
 candidates; nothing is guessed. The run prints the effective root and filter.
 
 **An import may be partial; every run ends with the skipped list** — each resource the source had and the estate does not, with
-its reason: `type off (import: false)`, `filtered by --only`, `unmapped` (no
+its reason: `type off (import: false)`, `filtered by --only/--exclude`, `unmapped` (no
 import-config row fits the asset), or `parent not imported`. Counts by reason
 always; every name with `--verbose`. The levers are the `import:` rows and
 `--only`.
+
+A resource's key is its name, sanitized. Where two containers hold the same
+name for one type — every project has a `_Default` log sink — the copies take
+their project or folder as a prefix, because an address is `<type>.<key>`
+across the estate. A folder nested under another folder carries no `parent`
+attribute: the nesting is the parent.
 
 **Delta import (`--into <estate>`).** Identity is the live id, never the label
 (the import names a folder `folder-<n>`, your estate calls it `infra_folder`).
