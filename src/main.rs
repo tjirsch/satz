@@ -5313,7 +5313,17 @@ mod init_template {
         assert!(out.main_tf.contains("id = \"first.admin@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("member = \"group:svc-iac-users@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("svc-iac-users@example.com"), "{}", out.main_tf);
-        assert_eq!(out.manifest.of_type("google_organization_iam_member").count(), 15);
+        assert_eq!(out.manifest.of_type("google_organization_iam_member").count(), 13);
+        // the users group may become the IaC service account, and only that one:
+        // TokenCreator and serviceAccountUser on the account, not on the org
+        assert_eq!(out.manifest.of_type("google_service_account_iam_member").count(), 2);
+        assert!(
+            !out.manifest
+                .of_type("google_organization_iam_member")
+                .any(|r| r.attrs.get("role").map(String::as_str) == Some("roles/iam.serviceAccountTokenCreator")),
+            "TokenCreator is granted at the organization:\n{}",
+            out.main_tf
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

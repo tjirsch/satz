@@ -92,9 +92,17 @@ google_organization_iam_member {
     "roles/serviceusage.serviceUsageConsumer",
   ]
   "group:{svc_iac_users_group}@{customer_domain}" = [
+    "roles/serviceusage.serviceUsageConsumer",
+  ]
+}
+
+// The users group may become the IaC service account — that account only, not
+// every service account in the organization.
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.provisioner.name}}"
+  "group:{svc_iac_users_group}@{customer_domain}" = [
     "roles/iam.serviceAccountTokenCreator",
     "roles/iam.serviceAccountUser",
-    "roles/serviceusage.serviceUsageConsumer",
   ]
 }
 

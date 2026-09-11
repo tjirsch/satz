@@ -1485,9 +1485,11 @@ estate that declares its own
 > backend is re-initialised: run `tofu init -reconfigure` once in `hcl/`.
 > `satz migrate --mode cloud` re-initialises by itself.
 
-One thing this does **not** cover: **`roles/iam.serviceAccountTokenCreator` is granted at
-organization scope** to the `svc-iac-users` group, so a member can impersonate every
-service account in the organization, not only the IaC one.
+**Who may become the IaC service account.** The estate `satz init` writes grants the
+`svc-iac-users` group `roles/iam.serviceAccountTokenCreator` and
+`roles/iam.serviceAccountUser` on the IaC service account itself
+(`google_service_account_iam_member`), so a member can act as that account and no other
+service account in the organization. Membership of the group is the operator's grant.
 
 ## License
 
