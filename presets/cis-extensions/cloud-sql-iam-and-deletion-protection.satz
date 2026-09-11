@@ -1,0 +1,83 @@
+// CIS 5.0 §6.6 / §6.9 — Cloud SQL instances sign database users in through IAM,
+// and cannot be deleted while deletion protection is on. Both are new in 5.0.
+//
+//   use "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz" when cis_cloud_sql_iam_and_deletion_protection
+//
+// Two custom constraints on `sqladmin.googleapis.com/Instance`, each enforced by a
+// policy on the organisation. A custom constraint is checked when an instance is
+// created or updated, never against one that exists: an existing instance that
+// breaks either is refused its next update, until that update fixes it.
+//
+// IAM database authentication is a database flag — `cloudsql.iam_authentication`
+// on PostgreSQL, `cloudsql_iam_authentication` on MySQL. SQL Server has no such
+// flag, and the IAM constraint lets SQL Server instances through.
+//
+// Opt-in because every Cloud SQL create and update in the organisation must then
+// carry both settings; tooling that creates instances without them fails.
+// Prowler has no check for either control, so report-compliance verifies them
+// through the two policies only.
+
+pack cis_extensions.cloud_sql_iam_and_deletion_protection version "1.0"
+
+google_org_policy_custom_constraint {
+  cis_sql_iam_authentication {
+    name = "custom.cisCloudSqlIamAuthentication"
+    parent = "organizations/{customer_organization_id}"
+    display_name = "Cloud SQL: IAM database authentication on"
+    description = "CIS 5.0 6.6. PostgreSQL and MySQL instances carry the IAM authentication flag set to on; SQL Server instances pass."
+    resource_types = ["sqladmin.googleapis.com/Instance"]
+    method_types = ["CREATE", "UPDATE"]
+    action_type = "ALLOW"
+    condition = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
+  }
+  cis_sql_deletion_protection {
+    name = "custom.cisCloudSqlDeletionProtection"
+    parent = "organizations/{customer_organization_id}"
+    display_name = "Cloud SQL: deletion protection on"
+    description = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
+    resource_types = ["sqladmin.googleapis.com/Instance"]
+    method_types = ["CREATE", "UPDATE"]
+    action_type = "ALLOW"
+    condition = "resource.settings.deletionProtectionEnabled == true"
+  }
+}
+
+google_org_policy_policy {
+  "custom-cisCloudSqlIamAuthentication" {
+    name = "custom.cisCloudSqlIamAuthentication"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+        enforce = "TRUE"
+        },
+      ]
+    }
+  }
+  "custom-cisCloudSqlDeletionProtection" {
+    name = "custom.cisCloudSqlDeletionProtection"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+        enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}
+
+claim "cis-gcp" "5.0" "6.6" implements {
+  resources = [
+    "google_org_policy_policy.custom_cisCloudSqlIamAuthentication",
+  ]
+  interpretation = "A Cloud SQL instance is created or updated only with IAM database authentication on (PostgreSQL and MySQL; SQL Server has no such flag)."
+  duty_existing_instances = "The constraint does not reach instances created before it: set the flag on each existing PostgreSQL and MySQL instance."
+}
+claim "cis-gcp" "5.0" "6.9" implements {
+  resources = [
+    "google_org_policy_policy.custom_cisCloudSqlDeletionProtection",
+  ]
+  interpretation = "A Cloud SQL instance is created or updated only with deletion protection enabled."
+  duty_existing_instances = "The constraint does not reach instances created before it: enable deletion protection on each existing instance."
+}

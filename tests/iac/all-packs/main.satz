@@ -30,6 +30,7 @@ params {
   security_audit_sa_project = "acme-infra-001"
   mdc_workload_pool_id = "11111111111111111111111111111111"
   mdc_mgmt_project_id = "acme-mdc-001"
+  access_approval_notification_emails = ["security@example.com"]
 }
 
 terraform {
@@ -55,6 +56,9 @@ use "presets/cis-extensions/cloud-sql.satz"
 use "presets/cis-extensions/cmek.satz"
 use "presets/cis-extensions/api-key-services.satz"
 use "presets/cis-extensions/bucket-retention.satz"
+use "presets/cis-extensions/access-approval.satz"
+use "presets/cis-extensions/internet-ssh-rdp.satz"
+use "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz"
 
 use "presets/security-group-models/s2-security-groups.satz"
 use "presets/billing-account-permissions.satz"

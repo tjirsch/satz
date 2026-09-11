@@ -204,7 +204,7 @@ rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 33 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-three usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 36 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-six usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
@@ -217,7 +217,7 @@ grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 49 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 52 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -228,7 +228,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 49 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 52 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
@@ -252,11 +252,11 @@ step "require cis-gcp-4.0 (goal view, offline)"
 "$satz" --config . require cis-gcp-4.0 smoke.satz > tmp/require.txt 2>&1 || true
 cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
-# 11 unmet: 2.12 DNS logging and 2.13 CAI, which no pack covers, plus the nine
+# 14 unmet: 2.12 DNS logging and 2.13 CAI, which no pack covers, plus the twelve
 # controls the cis-extensions fragments cover and this estate does not turn on.
 # The catalog carries the full CIS surface, so an unclaimed control is visible
 # rather than absent — that is what makes the number meaningful.
-grep -q '11 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the nine opt-in extension controls unmet:\n$(tail -3 tmp/require.txt)"
+grep -q '14 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the twelve opt-in extension controls unmet:\n$(tail -3 tmp/require.txt)"
 
 step "require --format json: stdout carries the answer and nothing else"
 # The reason this matters beyond convenience: once `satz mcp` speaks JSON-RPC over
@@ -271,7 +271,7 @@ assert d["catalog"] == "cis-gcp" and d["version"] == "4.0", d.get("catalog")
 assert len(d["controls"]) > 20, len(d["controls"])
 s = d["summary"]
 # the same numbers the text renderer prints, from the same report
-assert s["unmet"] == 11, s
+assert s["unmet"] == 14, s
 assert s["satisfied"] == 18, s
 # every row carries a verdict from the closed set
 verdicts = {c["verdict"] for c in d["controls"]}
@@ -933,7 +933,7 @@ assert tools["satz_transpile"]["annotations"]["readOnlyHint"] is False
 
 # a granted tool returns the report as STRUCTURED content, not a string to parse
 rep = msgs[3]["result"]["structuredContent"]
-assert rep["summary"]["unmet"] == 11, rep["summary"]
+assert rep["summary"]["unmet"] == 14, rep["summary"]
 q = msgs[6]["result"]["structuredContent"]
 assert q["summary"]["one_way_doors"] >= 1, q["summary"]
 # the interview at read level: it reports, and it will not create
@@ -1055,18 +1055,18 @@ for l in open("tmp/mcp-iv.jsonl"):
             msgs[d["id"]] = d
 a = msgs[3]["result"]["structuredContent"]
 assert a["created"] is True, a
-# the whole path: 17 day-0, 10 map choices, 10 CIS, the default packs' own (S1 names,
+# the whole path: 17 day-0, 10 map choices, 13 CIS, the default packs' own (S1 names,
 # archive, alerts, billing group, contact) — 16 of them need a value until their inputs land
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (49, 16), a["summary"]
-assert len(a["questions"]) == 49 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (52, 16), a["summary"]
+assert len(a["questions"]) == 52 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
 assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every default; the S2 model's six names replace S1's five, so 50 in all
-assert b["written"] == 50 and b["summary"]["complete"] is True, b["summary"]
+# 8 answers, then every default; the S2 model's six names replace S1's five, so 53 in all
+assert b["written"] == 53 and b["summary"]["complete"] is True, b["summary"]
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]

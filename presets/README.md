@@ -453,12 +453,12 @@ one-line param override in the estate.
 | `essential_contacts_allowed_domains` | `["@{customer_domain}"]` | domains the Essential Contacts constraint allows, each entry `@domain` |
 | `allowed_resource_locations` | `["in:eu-locations", "in:us-locations"]` | `gcp.resourceLocations` (§2): where resources may be created. Narrow it here instead of forking |
 
-**Questions.** Ten are asked: the seven opt-in controls (each can break a running
+**Questions.** Thirteen are asked: the ten opt-in controls (each can break a running
 workload) and the three lists that say where and who — `allowed_resource_locations`,
 `allowed_policy_member_principal_sets`, `allowed_policy_member_subjects`. An estate
-using the pack has to bind all ten before `bootstrap` or `transpile --apply` run;
+using the pack has to bind all thirteen before `bootstrap` or `transpile --apply` run;
 `satz interview <estate> --accept-defaults` binds every default in one pass, since
-none of the ten needs a typed value. The technical defaults (protocol-forwarding
+none of the thirteen needs a typed value. The technical defaults (protocol-forwarding
 schemes, the contacts domain) are not asked. See [satz interview](../docs/interview.md).
 
 **Cross-org grants** need the other organization in
@@ -788,9 +788,12 @@ use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
 
 Each is opt-in because it can break a running workload: Confidential Computing is limited to particular machine families,
 Shielded VM needs image support, CMEK needs the keys and grants to exist first, Cloud SQL
-hardening cuts public-IP connectivity, and the bucket-retention constraint applies to
-every bucket in the organisation, not only the log sink's. The comment at the top of each
-fragment says what specifically breaks.
+hardening cuts public-IP connectivity, the bucket-retention constraint applies to
+every bucket in the organisation, not only the log sink's, Access Approval makes every
+support case that needs the customer's content wait for an approval, the SSH/RDP policy
+ends every session that reaches an instance straight from the internet, and the Cloud SQL
+IAM/deletion-protection pair refuses every create or update without both settings. The
+comment at the top of each fragment says what specifically breaks.
 
 | fragment | controls | why it is not in the baseline |
 |---|---|---|
@@ -801,16 +804,33 @@ fragment says what specifically breaks.
 | `cmek` | 7.2, 7.3, 8.1 | keys, key rings and service-agent grants must exist first |
 | `api-key-services` | 4.0 1.14 / 5.0 1.15 | narrows what an API key may call |
 | `bucket-retention` | 4.0 2.3 / 5.0 2.4 | constrains every bucket's retention duration |
+| `access-approval` | 4.0 2.15 / 5.0 2.16 | support cases wait for an approval; Access Transparency must be on first |
+| `internet-ssh-rdp` | 3.6, 3.7 | ends SSH and RDP sessions that reach an instance straight from the internet |
+| `cloud-sql-iam-and-deletion-protection` | 5.0 6.6, 6.9 | every Cloud SQL create and update must carry both settings |
+
+Three fragments are not org-policy constraints. `access-approval` is an organisation
+setting (`google_organization_access_approval_settings`); Access Transparency, which it
+needs, has no provider resource and is switched on in the console first.
+`internet-ssh-rdp` is a hierarchical firewall policy attached to the organisation: TCP 22
+and 3389 from `admin_port_source_ranges` (Google's IAP range by default) pass to the VPC
+firewall rules, every other internet address is denied before any VPC rule is read.
+Prowler's checks read the VPC rules, so a VPC rule allowing 0.0.0.0/0 still fails there
+and the row reads CONTESTED until the rule is deleted. `cloud-sql-iam-and-deletion-protection`
+declares two custom constraints (`google_org_policy_custom_constraint`) and a policy
+enforcing each; the emitter makes each policy wait for its constraint. A custom
+constraint is checked when an instance is created or updated, never against one that
+already exists.
 
 **Constraint names and shapes come from a live organisation's OrgPolicy
 `ListConstraints`**, not from documentation. The three shapes differ, and a policy in
 the wrong shape either does nothing or refuses everything: a plain managed boolean takes `enforce`; a managed boolean with a parameter
 takes `enforce` plus `parameters`; a list constraint takes allow/deny values.
 
-**Questions.** The three fragments with a list to fill ask for it: the API services a
+**Questions.** The five fragments with a list to fill ask for it: the API services a
 key may target (the empty default blocks: an empty list is a valid answer, but the
 customer gives it), the allowed retention durations, the CMEK services and key
-projects. Whether a fragment is on at all is the CIS pack's
+projects, the addresses that receive access approval requests (empty blocks until
+named), and the ranges that may still reach SSH and RDP. Whether a fragment is on at all is the CIS pack's
 question, not the fragment's — a question that gates a pack cannot live in the gated pack.
 
 ## A big resource is a pack
@@ -910,6 +930,10 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.8 | 2026-09-11 | three more opt-in flags with their questions — `cis_access_approval`, `cis_block_internet_ssh_rdp`, `cis_cloud_sql_iam_and_deletion_protection` — for the three new `cis-extensions/` fragments. Nothing emitted changes; an estate using the pack has three more questions, all defaulting to off |
+| `cis_extensions.access_approval` | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
+| `cis_extensions.internet_ssh_rdp` | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
+| `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.0 | 2026-09-11 | CIS 5.0 6.6 and 6.9, opt-in: two custom constraints on Cloud SQL instances — IAM database authentication on (SQL Server exempt), deletion protection on — each enforced by a policy on the organisation |
 | `estate_map` | 1.0 | 2026-09-10 | first version: which packs make up the estate, as questions — the S1/S2 model as a `oneof` (moved here from estate-core) and one boolean per optional pack, four on by default (audit archive, central alerts, billing permissions, essential contact), five off (budget, SCC enablement, security-audit account, Defender, verification runner). Declares the choices only; the estate carries the `use … when` lines, which the interview skeleton writes and a test keeps in step (ADR 0006) |
 | `estate_core` | 2.0 | 2026-09-10 | the security-model choice moves to `estate_map`; this pack is the seventeen day-0 params and their questions, nothing else. A major bump because two params left — no estate in the fleet uses the pack, it exists for interview skeletons |
 | `cis_extensions.cmek` | 1.1 | 2026-09-10 | two `question` blocks: the services that must use a CMEK and the projects that may supply keys — both refuse resource creation when wrong. Nothing emitted changes |

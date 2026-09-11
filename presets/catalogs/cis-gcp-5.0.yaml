@@ -116,9 +116,21 @@ controls:
     title: "Cloud Asset Inventory enabled"
     paraphrase: "The Cloud Asset API is enabled so the organisation's resource inventory can be queried and its history kept."
     automatability: technical
+  "2.16":
+    title: "Access Approval enabled"
+    paraphrase: "Google personnel reach the organisation's content only after someone approves the request."
+    automatability: partial
   "3.1":
     title: "Default network does not exist"
     paraphrase: "New projects are created without the auto-mode default VPC and its permissive firewall rules."
+    automatability: technical
+  "3.6":
+    title: "SSH restricted from the internet"
+    paraphrase: "No firewall path lets an internet address reach TCP 22 on an instance."
+    automatability: technical
+  "3.7":
+    title: "RDP restricted from the internet"
+    paraphrase: "No firewall path lets an internet address reach TCP 3389 on an instance."
     automatability: technical
   "3.10":
     title: "VPC Flow Logs enabled on subnets"
@@ -171,6 +183,14 @@ controls:
   "6.7":
     title: "Cloud SQL instances do not have public IPs"
     paraphrase: "Cloud SQL instances are reachable privately only."
+    automatability: technical
+  "6.6":
+    title: "Cloud SQL IAM database authentication enabled"
+    paraphrase: "Database users of PostgreSQL and MySQL instances sign in with IAM identities."
+    automatability: technical
+  "6.9":
+    title: "Cloud SQL deletion protection enabled"
+    paraphrase: "A Cloud SQL instance cannot be deleted while its deletion protection is on."
     automatability: technical
   "7.2":
     title: "BigQuery tables encrypted with a customer-managed key"

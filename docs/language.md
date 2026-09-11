@@ -535,6 +535,12 @@ The label has a hyphen, so it is quoted; the address has an underscore, and
 that address — `google_org_policy_policy.compute_managed_requireOsLogin` — is
 what a claim names.
 
+A policy on a custom constraint names it the same way — `name =
+"custom.cisCloudSqlDeletionProtection"` — and when the estate declares that
+constraint (`google_org_policy_custom_constraint` with the same `name`), the
+emitted policy carries `depends_on` on it, so the apply creates the constraint
+first: the API refuses a policy on a constraint that does not exist yet.
+
 **Nested blocks** — a bucket with a nested block, a single block, and a
 *repeated* block:
 

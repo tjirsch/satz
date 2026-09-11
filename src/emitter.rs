@@ -206,20 +206,48 @@ fn order_after_service_accounts(blocks: &mut [hcl::Block]) {
             .and_then(|m| m.strip_prefix("serviceAccount:"))
             .or_else(|| r.nested.get("preferred_member_key.id").map(String::as_str));
         let Some(account) = named.and_then(|email| accounts.get(email)) else { continue };
-        let dep = crate::emit_shared::traversal_expr(account);
-        match b.body.0.iter_mut().find_map(|st| match st {
-            hcl::Structure::Attribute(a) if a.key() == "depends_on" => Some(a),
-            _ => None,
-        }) {
-            Some(existing) => {
-                if let hcl::Expression::Array(items) = &mut existing.expr {
-                    if !items.contains(&dep) {
-                        items.push(dep);
-                    }
+        add_depends_on(b, account);
+    }
+}
+
+/// A policy on a custom constraint names the constraint by its string
+/// (`…/policies/custom.x`), so tofu would create the policy beside the
+/// constraint, and the API refuses a policy on a constraint that does not exist
+/// yet. A policy on a constraint the estate declares gets a `depends_on` on it.
+fn order_after_custom_constraints(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let constraints: std::collections::BTreeMap<String, String> = manifest
+        .of_type("google_org_policy_custom_constraint")
+        .filter_map(|r| Some((r.attrs.get("name")?.clone(), r.address())))
+        .collect();
+    if constraints.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address).filter(|r| r.tf_type == "google_org_policy_policy") else { continue };
+        let Some(constraint) = r.attrs.get("name").and_then(|n| n.rsplit_once("/policies/")).map(|(_, c)| c) else { continue };
+        if let Some(declared) = constraints.get(constraint) {
+            add_depends_on(b, declared);
+        }
+    }
+}
+
+/// Add `address` to the block's `depends_on`, creating the attribute when absent.
+fn add_depends_on(b: &mut hcl::Block, address: &str) {
+    let dep = crate::emit_shared::traversal_expr(address);
+    match b.body.0.iter_mut().find_map(|st| match st {
+        hcl::Structure::Attribute(a) if a.key() == "depends_on" => Some(a),
+        _ => None,
+    }) {
+        Some(existing) => {
+            if let hcl::Expression::Array(items) = &mut existing.expr {
+                if !items.contains(&dep) {
+                    items.push(dep);
                 }
             }
-            None => b.body.0.push(hcl::Structure::Attribute(hcl::Attribute::new("depends_on", hcl::Expression::Array(vec![dep])))),
         }
+        None => b.body.0.push(hcl::Structure::Attribute(hcl::Attribute::new("depends_on", hcl::Expression::Array(vec![dep])))),
     }
 }
 
@@ -543,6 +571,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     }
 
     order_after_service_accounts(&mut blocks);
+    order_after_custom_constraints(&mut blocks);
 
     let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
     manifest.attach_imports(&imports);
@@ -1072,6 +1101,30 @@ resource "google_cloud_identity_group_membership" "owner" {
         // an account the estate does not declare orders nothing
         assert_eq!(depends_on(by("elsewhere")), None);
         assert_eq!(depends_on(by("iac")), None);
+    }
+
+    #[test]
+    fn a_policy_on_a_declared_custom_constraint_waits_for_it() {
+        let mut bs = blocks(
+            r#"
+resource "google_org_policy_custom_constraint" "sql_protection" {
+  name = "custom.cisCloudSqlDeletionProtection"
+  parent = "organizations/123456789012"
+}
+resource "google_org_policy_policy" "sql_protection" {
+  name = "organizations/123456789012/policies/custom.cisCloudSqlDeletionProtection"
+  parent = "organizations/123456789012"
+}
+resource "google_org_policy_policy" "managed" {
+  name = "organizations/123456789012/policies/compute.managed.vmCanIpForward"
+  parent = "organizations/123456789012"
+}
+"#,
+        );
+        order_after_custom_constraints(&mut bs);
+        let by = |label: &str| bs.iter().find(|b| b.labels()[0].as_str() == "google_org_policy_policy" && b.labels()[1].as_str() == label).unwrap();
+        assert_eq!(depends_on(by("sql_protection")).as_deref(), Some("[google_org_policy_custom_constraint.sql_protection]"));
+        assert_eq!(depends_on(by("managed")), None);
     }
 }
 

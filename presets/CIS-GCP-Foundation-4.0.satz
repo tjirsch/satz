@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.7"
+pack CIS_GCP_Foundation_4_0 version "2.8"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -27,6 +27,9 @@ params {
   cis_cmek_required          = false
   cis_api_key_services       = false
   cis_bucket_retention       = false
+  cis_access_approval        = false
+  cis_block_internet_ssh_rdp = false
+  cis_cloud_sql_iam_and_deletion_protection = false
 
   // CIS §2 resource locations (gcp.resourceLocations): where resources may be
   // created. The default is the two multi-region groups this baseline has always
@@ -119,7 +122,7 @@ params {
 
 // ---- what a customer decides, asked -------------------------------------------
 // Questions only where the pack cannot know the answer or being wrong is
-// expensive: the seven opt-in controls (each can break a workload that was
+// expensive: the ten opt-in controls (each can break a workload that was
 // legitimate the day before) and the three lists that say WHO and WHERE. The
 // technical defaults — protocol-forwarding schemes, the contacts domain derived
 // from the customer's — are not decisions and are not asked.
@@ -171,6 +174,27 @@ question cis_bucket_retention {
   why      = "It constrains EVERY bucket, not only the log sink's: once set, a bucket may carry a retention policy only if its duration is in the list, so buckets on other durations can no longer be updated."
   reversal = edit
   blast    = low
+}
+
+question cis_access_approval {
+  prompt   = "Require an approval before Google personnel reach the organisation's content (Access Approval, CIS 4.0 §2.15 / 5.0 §2.16)?"
+  why      = "Every support case that needs to look at the customer's content then waits for someone on the notification list to approve, and Access Transparency has to be switched on for the organisation first, in the console."
+  reversal = edit
+  blast    = low
+}
+
+question cis_block_internet_ssh_rdp {
+  prompt   = "Deny SSH and RDP from the internet across the whole organisation (CIS 3.6, 3.7)?"
+  why      = "A firewall policy on the organisation is read before every VPC rule: each session that reaches an instance straight from the internet on port 22 or 3389 ends the moment it is attached, unless its source is in the listed ranges. Move such access to IAP first."
+  reversal = edit
+  blast    = high
+}
+
+question cis_cloud_sql_iam_and_deletion_protection {
+  prompt   = "Require IAM database authentication and deletion protection on Cloud SQL (CIS 5.0 §6.6, §6.9)?"
+  why      = "Every Cloud SQL create and update in the organisation must then carry both settings; tooling that creates instances without them fails, and an existing instance that lacks one is refused its next update until that update adds it."
+  reversal = edit
+  blast    = high
 }
 
 question allowed_resource_locations {

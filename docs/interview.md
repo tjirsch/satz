@@ -82,8 +82,8 @@ order is a path:
    and five off: budget, SCC enablement, the security-audit account, Defender, the
    verification runner. The map declares the choices and nothing else; the estate
    carries one `use … when` line per choice, in the map's order.
-3. **The CIS baseline**, always. Its ten questions
-   follow the map's, and its seven opt-in extensions are its own questions.
+3. **The CIS baseline**, always. Its thirteen questions
+   follow the map's, and its ten opt-in extensions are its own questions.
 4. **Every pack a choice switched on**, with its own questions: the group names of
    the chosen model, the archive's project and retention, the alert mailbox, and so
    on. Switch a choice and the rest of the interview re-shapes; the report re-reads
@@ -127,10 +127,10 @@ folder, the project, the state bucket, the IaC group and service account. Then t
 interview:
 
 ```
-49 open question(s): 33 have a default, 16 need a value.
+52 open question(s): 36 have a default, 16 need a value.
 Accept all defaults now and answer only those 16? [Y/n] — n goes through every question
 > y
-  accepted 33 default(s).
+  accepted 36 default(s).
 
 ── estate_core ──
 The questions every estate has to answer on day 0, with the params they answer.

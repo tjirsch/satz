@@ -5,6 +5,9 @@
 //   * a plain managed boolean  -> enforce only
 //   * a managed boolean with a parameter -> enforce + parameters
 //   * a plain list constraint  -> allow/deny values
+// and the three that are not org-policy constraints: the Access Approval
+// setting, the hierarchical firewall policy with its rules and association, and
+// the Cloud SQL custom constraints, whose policies wait for them (`depends_on`).
 // Snapshot-gated.
 
 estate corpus_cis_extensions
@@ -21,9 +24,15 @@ params {
   cis_cmek_required          = true
   cis_api_key_services       = true
   cis_bucket_retention       = true
+  cis_access_approval        = true
+  cis_block_internet_ssh_rdp = true
+  cis_cloud_sql_iam_and_deletion_protection = true
 
   allowed_api_key_services = [
     "storage.googleapis.com",
+  ]
+  access_approval_notification_emails = [
+    "security@example.com",
   ]
 }
 
@@ -44,3 +53,6 @@ use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
 use "presets/cis-extensions/cmek.satz" when cis_cmek_required
 use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
 use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
+use "presets/cis-extensions/access-approval.satz" when cis_access_approval
+use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
+use "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz" when cis_cloud_sql_iam_and_deletion_protection
