@@ -8,7 +8,7 @@ Source: `presets/scc/scc-service-enablement.satz`
 Turns every Security Command Center service on at the organization, through
 the one step that has no provider resource.
 
-This pack contains no resources, and that is the whole point of it.
+This pack contains no resources.
 
 google/google-beta carry NO binding for securitycentermanagement's
 SecurityCenterService. Re-verified against provider 7.14.1: the provider
@@ -33,22 +33,21 @@ TIER ACTIVATION IS NOT HERE EITHER. Enabling a service on an organisation
 with no Premium/Enterprise subscription fails at the API, and no flag
 changes that. Activate the tier first — a console action — then run this.
 
-PREREQUISITES the script will tell you about, loudly, if they are missing:
+PREREQUISITES; the script reports each one that is missing:
 * `securitycenter.googleapis.com` and
 `securitycentermanagement.googleapis.com` enabled on the quota project.
-The first live call failed on exactly this.
 * The §1.1 domain-lock interaction: SCC's service agents are granted
 roles at the organisation, and a managed `iam.managed.allowedPolicyMembers`
-policy refuses any agent the baseline does not list. That is what
-"won't stay activated / asks to activate on every console visit" looks
-like from the console. The CIS pack's subject list already carries the
-five agents SCC activation mints; enabling more services does not add
-to them (measured on a live organisation).
+policy refuses any agent the baseline does not list. In the console, a
+refused agent shows as SCC not staying activated and asking to be
+activated on every visit. The CIS pack's subject list carries the five
+agents SCC activation creates; enabling more services does not add to
+them (measured on a live organisation).
 
 NOTHING RUNS AT TRANSPILE TIME. An action is inert until `run-actions` is
 invoked, it emits nothing, and no claim can cover it — satz records that
-the step exists and never says what it did. `report-compliance` will not
-tell you whether SCC is on; Cloud Asset Inventory does not carry it.
+the step exists and never says what it did. `report-compliance` does not
+report whether SCC is on; Cloud Asset Inventory does not carry it.
 
 ## Use it
 

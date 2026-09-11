@@ -14,8 +14,8 @@ allowed services first, then enforce.
 The constraint is a MANAGED one carrying a parameter, not a bare boolean —
 verified against a live organisation's OrgPolicy `ListConstraints`. It blocks
 creating an API key bound to a service account unless the key's API targets
-are non-empty and limited to `allowed_api_key_services`, which is exactly
-what the control asks for.
+are non-empty and limited to `allowed_api_key_services`, which is what the
+control asks for.
 
 ## Use it
 

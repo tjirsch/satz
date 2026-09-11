@@ -16,7 +16,7 @@ questions with it; one switched off asks nothing and emits nothing. A question
 that gates a pack cannot live in the pack it gates, which is why they all live
 here.
 
-Not a choice: the CIS baseline. It is what the estate is for, and its opt-in
+Not a choice: the CIS baseline. The skeleton always uses it, and its opt-in
 extensions are the baseline pack's own questions. Not on the map: the
 per-project alert pack (the central one covers every project), Defender's plan
 fragments (added by hand once Defender is on, per that pack's header), and the

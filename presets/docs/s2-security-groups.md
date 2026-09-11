@@ -18,7 +18,7 @@ Groups and grants in ONE file (typed sections beside the estate's own):
 
 To adopt groups that already exist in the tenant:
 satz adopt <estate> --only google_cloud_identity_group --execute
-Memberships are deliberately NOT part of this pack: presets define groups,
+Memberships are NOT part of this pack: presets define groups,
 humans grant membership.
 
 Required from the estate: customer_domain, svc_iac_account, infra_project_name

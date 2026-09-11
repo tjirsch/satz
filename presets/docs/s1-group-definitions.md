@@ -13,7 +13,7 @@ Each group is looked up by email over the Cloud Identity API and the verified
 ids are written into the estate as "import-id". That is why no group ids are
 hard-coded here — they are tenant-specific and do not belong in a shared preset.
 
-Memberships are deliberately NOT part of this preset: presets define groups,
+Memberships are NOT part of this preset: presets define groups,
 humans grant membership. Estates that need managed memberships declare them
 as estate-level resources.
 

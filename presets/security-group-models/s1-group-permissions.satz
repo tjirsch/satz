@@ -2,8 +2,8 @@
 //
 //   google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
 //
-// The groups themselves are `s1_group_definitions`; memberships are deliberately
-// not here — presets define groups, humans grant membership.
+// The groups themselves are `s1_group_definitions`; memberships are not here —
+// presets define groups, humans grant membership.
 
 pack s1_group_permissions version "1.1"
 

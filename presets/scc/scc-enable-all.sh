@@ -232,9 +232,9 @@ diagnose() {
       say "        -> caller lacks securitycentermanagement.securityCenterServices.update"
       say "           (roles/securitycenter.admin at the org, or the settings admin role)" ;;
     *constraint*|*allowedPolicyMemberDomains*|*allowedPolicyMembers*)
-      say "        -> blocked by the CIS §1.1 domain/principal locks: enabling a"
-      say "           service provisions a new SCC service agent and Google's"
-      say "           auto-grant is refused. See the SCC section of presets/README.md" ;;
+      say "        -> blocked by the CIS §1.1 domain/principal locks: Google's role"
+      say "           grant to a service agent was refused. Name the agent in"
+      say "           allowed_policy_member_subjects; see the SCC section of presets/README.md" ;;
     *"not supported"*|*NOT_FOUND*|*"is not enabled"*|*subscription*|*tier*)
       say "        -> service unavailable at this org's SCC tier, or its API is off."
       say "           Tier activation is NOT scriptable here — activate, then re-run." ;;
