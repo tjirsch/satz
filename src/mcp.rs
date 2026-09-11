@@ -285,6 +285,65 @@ pub(crate) struct TriageArgs {
     pub prowler: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct RemediationArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Catalog id, e.g. `cis-gcp-4.0`
+    pub framework: String,
+    /// Prowler 5 OCSF export (`--output-formats json-ocsf`), a path under the server's root
+    pub prowler: String,
+    /// Also run Checkov over hcl_dir and join its findings — needs the 'exec'
+    /// capability. It changes the dossier and its hash: author and render with the
+    /// same choice.
+    #[serde(default)]
+    pub checkov: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct AnnotateArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Catalog id, e.g. `cis-gcp-4.0`
+    pub framework: String,
+    /// Prowler 5 OCSF export, a path under the server's root — the one the items came from
+    pub prowler: String,
+    /// Whether the items were built with Checkov joined (needs 'exec' when true)
+    #[serde(default)]
+    pub checkov: bool,
+    /// The run directory to write into, a path under the server's root; created when absent
+    pub out: String,
+    /// The dossier sha256 the values were written against, from `satz_remediation_items`
+    pub dossier_sha256: String,
+    /// Authored values per item id (`F-0001`). `authored_by` and `authored_at` are
+    /// mandatory on every entry.
+    pub items: BTreeMap<String, crate::dossier::AuthoredItem>,
+}
+
+/// The dossier's items: the worklist for the `[Authored]` columns.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct RemediationItems {
+    pub framework: String,
+    pub estate: String,
+    /// What authored values must name to be accepted.
+    pub dossier_sha256: String,
+    pub summary: crate::dossier::Summary,
+    pub items: Vec<crate::dossier::Item>,
+    /// FAIL findings per Prowler check that map to no control of the framework
+    pub prowler_unmapped: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct AnnotateReport {
+    pub out: String,
+    pub dossier_sha256: String,
+    /// authored items on file after this call
+    pub authored_items: usize,
+    pub written: Vec<String>,
+}
+
 /// What a compile produced. The addresses are the estate's emitted resources —
 /// the same set the compliance plane witnesses against.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
@@ -957,6 +1016,118 @@ impl SatzMcp {
                 written: written.iter().map(|p| p.display().to_string()).collect(),
             }))),
             Err(e) => Ok(Err(refused(format!("transpile: {}", e)))),
+        }
+    }
+
+    /// The dossier for a remediation tool: the estate's compile, the Prowler export,
+    /// and Checkov when asked for (which needs 'exec').
+    async fn remediation(
+        &self,
+        estate: Option<&str>,
+        framework: &str,
+        prowler: &str,
+        checkov: bool,
+    ) -> Result<crate::compliance::RemediationRun, CallToolResult> {
+        if checkov {
+            self.permits(Group::Exec)?;
+        }
+        let (open, estate) = self.target(estate)?;
+        let prowler = self.file(prowler)?;
+        let (manifest, claims, _org) = self.inputs(&open, &estate)?;
+        let report = if checkov {
+            let dir = self.confine(PathBuf::from(&open.runtime.hcl_dir))?;
+            match tokio::task::spawn_blocking(move || crate::scan::run(&dir)).await {
+                Ok(Ok(r)) => Some(r),
+                Ok(Err(e)) => return Err(refused(format!("checkov: {}", e))),
+                Err(e) => return Err(refused(format!("checkov did not finish: {}", e))),
+            }
+        } else {
+            None
+        };
+        crate::compliance::remediation_run(framework, &open.runtime.presets_dir, &claims, &manifest, &estate, &prowler, report.as_ref())
+            .map_err(|e| refused(format!("remediation: {}", e)))
+    }
+
+    #[tool(
+        name = "satz_remediation_items",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<RemediationItems>(),
+        description = "The remediation dossier's items for an estate and a Prowler export: every finding \
+                       triaged, deduplicated and joined per (control, resource), with the dossier sha256 \
+                       authored values must name. The worklist for the [Authored] columns — write them back \
+                       with satz_remediation_annotate. Offline; `checkov: true` joins a Checkov run and needs 'exec'.",
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn remediation_items(
+        &self,
+        Parameters(args): Parameters<RemediationArgs>,
+    ) -> Result<Result<Json<RemediationItems>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov).await {
+            Ok(r) => r,
+            Err(r) => return Ok(Err(r)),
+        };
+        Ok(Ok(Json(RemediationItems {
+            framework: run.framework,
+            estate: run.estate,
+            dossier_sha256: run.hash,
+            summary: run.dossier.summary,
+            items: run.dossier.items,
+            prowler_unmapped: run.prowler_unmapped,
+        })))
+    }
+
+    #[tool(
+        name = "satz_remediation_annotate",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<AnnotateReport>(),
+        description = "Write authored values for dossier items into <out>/authored.json — merged per item id \
+                       with what is on file — and render the run there: dossier.json, findings.csv, \
+                       findings.xlsx with the [Authored] columns filled, meta.json. Refused when dossier_sha256 \
+                       is not the current dossier's, an id is unknown, or an entry lacks authored_by or \
+                       authored_at. Needs the 'write' capability.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn remediation_annotate(
+        &self,
+        Parameters(args): Parameters<AnnotateArgs>,
+    ) -> Result<Result<Json<AnnotateReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov).await {
+            Ok(r) => r,
+            Err(r) => return Ok(Err(r)),
+        };
+        let out = self.ctx.root.join(&args.out);
+        let existing = out.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| out.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let on_file = out.join("authored.json");
+        let mut authored = if on_file.is_file() {
+            match crate::compliance::read_authored(&on_file) {
+                Ok(a) => a,
+                Err(e) => return Ok(Err(refused(e.to_string()))),
+            }
+        } else {
+            crate::dossier::Authored::default()
+        };
+        let new = crate::dossier::Authored { dossier_sha256: args.dossier_sha256, items: args.items };
+        if let Err(e) = authored.merge(new) {
+            return Ok(Err(refused(format!("{}: {}", on_file.display(), e))));
+        }
+        if let Err(e) = crate::dossier::check_authored(&run.dossier, &run.hash, &authored) {
+            return Ok(Err(refused(e)));
+        }
+        match crate::compliance::write_remediation(&run, &out, Some(&authored)) {
+            Ok(written) => Ok(Ok(Json(AnnotateReport {
+                out: out.display().to_string(),
+                dossier_sha256: run.hash,
+                authored_items: authored.items.len(),
+                written: written.iter().map(|p| p.display().to_string()).collect(),
+            }))),
+            Err(e) => Ok(Err(refused(format!("remediation: {}", e)))),
         }
     }
 

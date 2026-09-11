@@ -172,8 +172,10 @@ index (§4); the param link in A is I5's `governs`.
 
 ### I6 — The dossier: everything mechanical about the findings, settled first
 
-*Status 2026-09-03: phase 1 shipped as `satz remediation-plan` — the dossier
-and the workbook, offline; the model pass (phase 3 of the design) is next.*
+*Status: shipped as `satz remediation-plan` — the dossier and the workbook,
+offline — and the authored round trip: `--merge <authored.json>` on the command
+line, `satz_remediation_items` and `satz_remediation_annotate` over MCP. The model
+pass is the agent's.*
 
 **What.** `satz remediation-plan <framework> <estate> --prowler <ocsf.json>
 [--checkov] [--out <dir>]` builds the **dossier**: the I3 triage rows joined
@@ -194,9 +196,10 @@ byte, and its SHA-256 names the run — `meta.json` carries it, and it is the
 cache key the model pass will use.
 
 **The workbook** is the findings deliverable minus the prose: a `Findings`
-sheet with the mechanical columns filled and the `[AI]` columns (what/why in
-customer language, recommended fix, owner, effort, phase, quick win, risk-
-acceptance candidate) tinted and empty, a `Review` dropdown
+sheet with the mechanical columns filled and the `[Authored]` columns (what/why
+in customer language, recommended fix, owner, effort, phase, quick win, risk-
+acceptance candidate, and who authored them when) tinted — empty until an
+`authored.json` pinned to the dossier's hash fills them — a `Review` dropdown
 (open / accepted / edited / rejected) with reviewer and date, `By control` and
 `By bucket` summaries as live formulas over Findings (edits propagate), an
 empty `Plan phases` sheet the model pass or the consultant fills, and
@@ -207,9 +210,9 @@ priorities in this customer's words, effort, what to accept as risk are
 judgment. But roughly seventy percent of the workbook *is* mechanical, and a
 model given two raw scanner exports re-derives it badly and differently every
 time. The dossier is the structured, triaged, PII-minimized input the model
-gets; it returns structured JSON for the `[AI]` columns and the phases; satz
-renders. Until the model pass exists, the workbook is already the consultant's
-starting point.
+gets; it returns the `[Authored]` values per item, each naming its author, and
+satz renders them beside the mechanical columns without touching `dossier.json`,
+so the hash that names the run stays the hash of what satz computed.
 
 ### I4 — `deviates` is the exception register
 

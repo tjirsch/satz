@@ -13,18 +13,22 @@
 //!
 //! The dossier is written under the estate's `evidence/` directory (git-
 //! ignored, gate-rejected) as JSON, CSV and XLSX. The XLSX carries the
-//! mechanical columns filled and the `[AI]` columns — the ones a model or a
-//! consultant authors — empty, beside a Review column: the findings workbook
-//! minus the prose.
+//! mechanical columns filled and the `[Authored]` columns — the ones a model or
+//! a consultant writes — beside a Review column. Authored values live apart, in
+//! `authored.json` (`Authored`): pinned to the dossier's hash, keyed by item id,
+//! each entry naming who wrote it and when. They are rendered into the
+//! workbook, never into `dossier.json`, so authoring does not move the hash that
+//! names the run.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
+use rmcp::schemars;
+use serde::{Deserialize, Serialize};
 
 use crate::compliance::{Bucket, Catalog, Goal, TriageRow};
 
 /// One finding as the dossier sees it.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 pub(crate) struct Item {
     /// Stable id `F-0001`, in dossier order (bucket, severity rank, control, resource).
     pub id: String,
@@ -60,7 +64,7 @@ pub(crate) struct Item {
     pub goal: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(tag = "scanner", rename_all = "lowercase")]
 pub(crate) enum Source {
     Prowler { check: String, status: String },
@@ -77,7 +81,7 @@ pub(crate) struct Dossier {
     pub items: Vec<Item>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub(crate) struct Summary {
     pub items: usize,
     pub by_bucket: BTreeMap<String, usize>,
@@ -295,10 +299,117 @@ fn describe_goal(goal: Option<&Goal>) -> (String, Vec<String>, Vec<String>, Vec<
 }
 
 // ---------------------------------------------------------------------------
+// Authored values: what a model or a person writes about an item
+// ---------------------------------------------------------------------------
+
+/// Values authored for a dossier's items, and who wrote each. Kept apart from the
+/// dossier: nothing here enters `dossier.json`, so the hash that names the run
+/// stays the hash of what satz computed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub(crate) struct Authored {
+    /// The dossier sha256 these values were written against.
+    pub dossier_sha256: String,
+    /// Per item id (`F-0001`).
+    pub items: BTreeMap<String, AuthoredItem>,
+}
+
+/// The `[Authored]` columns of one item. `authored_by` and `authored_at` are
+/// mandatory: a model's paragraph and a consultant's stay distinguishable
+/// beside verified evidence.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub(crate) struct AuthoredItem {
+    #[serde(default)]
+    pub what_why: String,
+    #[serde(default)]
+    pub recommended_fix: String,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub effort: String,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub quick_win: String,
+    #[serde(default)]
+    pub risk_acceptance: String,
+    /// Who wrote these values: a person, or the model and the tool it ran in.
+    pub authored_by: String,
+    /// When, as an RFC 3339 timestamp.
+    pub authored_at: String,
+}
+
+impl AuthoredItem {
+    /// The nine cells, in `COLUMNS` order from `AUTHORED_FROM`.
+    fn cells(&self) -> [&str; 9] {
+        [
+            &self.what_why,
+            &self.recommended_fix,
+            &self.owner,
+            &self.effort,
+            &self.phase,
+            &self.quick_win,
+            &self.risk_acceptance,
+            &self.authored_by,
+            &self.authored_at,
+        ]
+    }
+}
+
+impl Authored {
+    /// Take `other`'s entries, replacing this one's per item id. Both must be
+    /// written against the same dossier.
+    pub(crate) fn merge(&mut self, other: Authored) -> Result<(), String> {
+        if !self.dossier_sha256.is_empty() && self.dossier_sha256 != other.dossier_sha256 {
+            return Err(format!(
+                "the authored values on file were written against dossier {}, the new ones against {}",
+                short(&self.dossier_sha256),
+                short(&other.dossier_sha256)
+            ));
+        }
+        self.dossier_sha256 = other.dossier_sha256;
+        self.items.extend(other.items);
+        Ok(())
+    }
+}
+
+fn short(hash: &str) -> &str {
+    &hash[..hash.len().min(12)]
+}
+
+/// Whether `a` can be rendered into the dossier `d` whose hash is `hash`: written
+/// against this dossier, every id an item of it, every entry naming who wrote it
+/// and when, and authoring something.
+pub(crate) fn check_authored(d: &Dossier, hash: &str, a: &Authored) -> Result<(), String> {
+    if a.dossier_sha256 != hash {
+        return Err(format!(
+            "the authored values were written against dossier {}, and this run's is {} — the findings changed; author against the current dossier",
+            short(&a.dossier_sha256),
+            short(hash)
+        ));
+    }
+    for (id, it) in &a.items {
+        if !d.items.iter().any(|i| &i.id == id) {
+            return Err(format!("{}: no such item in this dossier", id));
+        }
+        if it.authored_by.trim().is_empty() || it.authored_at.trim().is_empty() {
+            return Err(format!(
+                "{}: authored_by and authored_at are mandatory — a model's text and a person's must stay distinguishable",
+                id
+            ));
+        }
+        if it.cells()[..7].iter().all(|c| c.trim().is_empty()) {
+            return Err(format!("{}: the entry authors nothing", id));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Renderings: CSV (diffable) and XLSX (the workbook)
 // ---------------------------------------------------------------------------
 
-/// Column order shared by CSV and XLSX. `[AI]` columns are authored, empty here.
+/// Column order shared by CSV and XLSX. The `[Authored]` columns and the two that
+/// name the author are filled from `authored.json`, empty without it.
 pub(crate) const COLUMNS: &[&str] = &[
     "Id",
     "Severity",
@@ -319,25 +430,27 @@ pub(crate) const COLUMNS: &[&str] = &[
     "Deviation reasons",
     "Open duties",
     "Goal",
-    "[AI] What / why",
-    "[AI] Recommended fix",
-    "[AI] Owner",
-    "[AI] Effort",
-    "[AI] Phase",
-    "[AI] Quick win",
-    "[AI] Risk-acceptance candidate",
+    "[Authored] What / why",
+    "[Authored] Recommended fix",
+    "[Authored] Owner",
+    "[Authored] Effort",
+    "[Authored] Phase",
+    "[Authored] Quick win",
+    "[Authored] Risk-acceptance candidate",
+    "Authored by",
+    "Authored at",
     "Review",
     "Reviewer",
     "Reviewed on",
     "Note",
 ];
 
-/// The first index of an `[AI]` column.
-const AI_FROM: usize = 19;
-/// The index of the Review column.
-const REVIEW_AT: usize = 26;
+/// The first index of an authored column.
+const AUTHORED_FROM: usize = 19;
+/// The index of the Review column (Excel column AC).
+const REVIEW_AT: usize = 28;
 
-fn row_of(it: &Item) -> Vec<String> {
+fn row_of(it: &Item, authored: Option<&AuthoredItem>) -> Vec<String> {
     let sources = it
         .sources
         .iter()
@@ -368,6 +481,9 @@ fn row_of(it: &Item) -> Vec<String> {
         it.open_duties.join("; "),
         it.goal.clone(),
     ];
+    if let Some(a) = authored {
+        row.extend(a.cells().iter().map(|c| c.to_string()));
+    }
     row.resize(COLUMNS.len(), String::new());
     row
 }
@@ -380,19 +496,20 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
-pub(crate) fn csv(d: &Dossier) -> String {
+pub(crate) fn csv(d: &Dossier, authored: Option<&Authored>) -> String {
     let mut out = COLUMNS.join(",") + "\n";
     for it in &d.items {
-        out.push_str(&row_of(it).iter().map(|c| csv_escape(c)).collect::<Vec<_>>().join(","));
+        let a = authored.and_then(|a| a.items.get(&it.id));
+        out.push_str(&row_of(it, a).iter().map(|c| csv_escape(c)).collect::<Vec<_>>().join(","));
         out.push('\n');
     }
     out
 }
 
-/// The workbook: Findings (mechanical columns filled, `[AI]` columns tinted
-/// and empty, Review dropdown), Summary sheets with live formulas over
-/// Findings, Provenance.
-pub(crate) fn xlsx(d: &Dossier, provenance: &[(String, String)]) -> Result<Vec<u8>, String> {
+/// The workbook: Findings (mechanical columns filled, `[Authored]` columns
+/// tinted and filled from `authored` when given, Review dropdown), Summary
+/// sheets with live formulas over Findings, Provenance.
+pub(crate) fn xlsx(d: &Dossier, provenance: &[(String, String)], authored: Option<&Authored>) -> Result<Vec<u8>, String> {
     use rust_xlsxwriter::{DataValidation, Format, FormatAlign, Workbook};
 
     let mut wb = Workbook::new();
@@ -405,12 +522,13 @@ pub(crate) fn xlsx(d: &Dossier, provenance: &[(String, String)]) -> Result<Vec<u
     // --- Findings -----------------------------------------------------------
     let ws = wb.add_worksheet().set_name("Findings").map_err(|e| e.to_string())?;
     for (c, name) in COLUMNS.iter().enumerate() {
-        let f = if (AI_FROM..REVIEW_AT).contains(&c) { &ai_header } else { &header };
+        let f = if (AUTHORED_FROM..REVIEW_AT).contains(&c) { &ai_header } else { &header };
         ws.write_string_with_format(0, c as u16, *name, f).map_err(|e| e.to_string())?;
     }
     for (r, it) in d.items.iter().enumerate() {
-        for (c, cell) in row_of(it).iter().enumerate() {
-            let f = if (AI_FROM..REVIEW_AT).contains(&c) { Some(&ai_cell) } else if c == 5 || c == 12 || c == 14 { Some(&wrap) } else { None };
+        let a = authored.and_then(|a| a.items.get(&it.id));
+        for (c, cell) in row_of(it, a).iter().enumerate() {
+            let f = if (AUTHORED_FROM..REVIEW_AT).contains(&c) { Some(&ai_cell) } else if c == 5 || c == 12 || c == 14 { Some(&wrap) } else { None };
             match f {
                 Some(f) => ws.write_string_with_format(r as u32 + 1, c as u16, cell, f).map_err(|e| e.to_string())?,
                 None => ws.write_string(r as u32 + 1, c as u16, cell).map_err(|e| e.to_string())?,
@@ -426,7 +544,7 @@ pub(crate) fn xlsx(d: &Dossier, provenance: &[(String, String)]) -> Result<Vec<u
     for (c, w) in [(0, 8), (1, 10), (2, 8), (3, 8), (4, 28), (5, 40), (6, 40), (7, 18), (8, 32), (9, 24), (10, 26), (11, 32), (12, 48), (13, 36), (14, 48), (15, 24), (16, 30), (17, 24), (18, 28)] {
         ws.set_column_width(c, w).map_err(|e| e.to_string())?;
     }
-    for c in AI_FROM..COLUMNS.len() {
+    for c in AUTHORED_FROM..COLUMNS.len() {
         ws.set_column_width(c as u16, 22).map_err(|e| e.to_string())?;
     }
 
@@ -445,7 +563,7 @@ pub(crate) fn xlsx(d: &Dossier, provenance: &[(String, String)]) -> Result<Vec<u
         ws.write_formula(
             row,
             3,
-            format!("=COUNTIFS(Findings!$D$2:$D${last},A{},Findings!$AA$2:$AA${last},\"accepted\")+COUNTIFS(Findings!$D$2:$D${last},A{},Findings!$AA$2:$AA${last},\"edited\")", row + 1, row + 1).as_str(),
+            format!("=COUNTIFS(Findings!$D$2:$D${last},A{},Findings!$AC$2:$AC${last},\"accepted\")+COUNTIFS(Findings!$D$2:$D${last},A{},Findings!$AC$2:$AC${last},\"edited\")", row + 1, row + 1).as_str(),
         )
         .map_err(|e| e.to_string())?;
     }
@@ -562,22 +680,75 @@ mod tests {
         let rows = vec![row(Bucket::D, "5.1", "Low", "//storage.googleapis.com/b,with\"quote", None)];
         let (empty_text, empty_at) = (BTreeMap::new(), BTreeMap::new());
         let d = build(&Inputs { framework: "cis-gcp-4.0", catalog: &cat, goals: &goals, estate: "x.satz", triage_rows: &rows, prowler_text: &empty_text, checkov: &[], declared_at: &empty_at });
-        let csv = csv(&d);
+        let csv = csv(&d, None);
         let header = csv.lines().next().unwrap();
         assert_eq!(header.split(',').count(), COLUMNS.len());
         assert!(csv.contains("\"//storage.googleapis.com/b,with\"\"quote\""), "{}", csv);
         // every row has exactly the column count (quoted commas do not split)
-        assert!(csv.lines().nth(1).unwrap().ends_with(",,,,,,,,,,,"), "AI + review columns are empty: {}", csv);
+        assert!(csv.lines().nth(1).unwrap().ends_with(",,,,,,,,,,,,,"), "authored + review columns are empty: {}", csv);
+        assert_eq!(COLUMNS[REVIEW_AT], "Review");
+        assert_eq!(COLUMNS[AUTHORED_FROM], "[Authored] What / why");
+    }
+
+    fn authored(hash: &str, id: &str, fix: &str, by: &str) -> Authored {
+        let mut items = BTreeMap::new();
+        items.insert(
+            id.to_string(),
+            AuthoredItem { recommended_fix: fix.into(), authored_by: by.into(), authored_at: "2026-09-11T20:00:00Z".into(), ..Default::default() },
+        );
+        Authored { dossier_sha256: hash.into(), items }
     }
 
     #[test]
-    fn xlsx_builds_with_the_sheets_and_the_ai_columns_empty() {
+    fn authored_values_render_beside_the_mechanical_ones_and_never_move_the_hash() {
         let cat = catalog();
         let goals = BTreeMap::new();
         let rows = vec![row(Bucket::B, "5.1", "High", "//storage.googleapis.com/b", Some("google_storage_bucket.b"))];
         let (empty_text, empty_at) = (BTreeMap::new(), BTreeMap::new());
         let d = build(&Inputs { framework: "cis-gcp-4.0", catalog: &cat, goals: &goals, estate: "x.satz", triage_rows: &rows, prowler_text: &empty_text, checkov: &[], declared_at: &empty_at });
-        let bytes = xlsx(&d, &[("dossier".into(), d.hash())]).expect("workbook builds");
+        let hash = d.hash();
+        let a = authored(&hash, "F-0001", "Enable public access prevention on the bucket", "a consultant");
+        check_authored(&d, &hash, &a).unwrap();
+        let csv = csv(&d, Some(&a));
+        let line = csv.lines().nth(1).unwrap();
+        assert!(line.contains("Enable public access prevention on the bucket"), "{}", line);
+        assert!(line.contains("a consultant,2026-09-11T20:00:00Z"), "{}", line);
+        // the dossier itself is untouched
+        assert_eq!(d.hash(), hash);
+        assert!(!d.json().contains("consultant"));
+    }
+
+    #[test]
+    fn authored_values_are_refused_when_they_do_not_belong_to_this_dossier() {
+        let cat = catalog();
+        let goals = BTreeMap::new();
+        let rows = vec![row(Bucket::B, "5.1", "High", "//storage.googleapis.com/b", None)];
+        let (empty_text, empty_at) = (BTreeMap::new(), BTreeMap::new());
+        let d = build(&Inputs { framework: "cis-gcp-4.0", catalog: &cat, goals: &goals, estate: "x.satz", triage_rows: &rows, prowler_text: &empty_text, checkov: &[], declared_at: &empty_at });
+        let hash = d.hash();
+        let stale = check_authored(&d, &hash, &authored("0123456789abcdef", "F-0001", "x", "someone")).unwrap_err();
+        assert!(stale.contains("the findings changed"), "{stale}");
+        let unknown = check_authored(&d, &hash, &authored(&hash, "F-0099", "x", "someone")).unwrap_err();
+        assert!(unknown.contains("F-0099: no such item"), "{unknown}");
+        let anonymous = check_authored(&d, &hash, &authored(&hash, "F-0001", "x", "")).unwrap_err();
+        assert!(anonymous.contains("authored_by and authored_at are mandatory"), "{anonymous}");
+        let empty = check_authored(&d, &hash, &authored(&hash, "F-0001", "", "someone")).unwrap_err();
+        assert!(empty.contains("authors nothing"), "{empty}");
+        // entries merge per id; a different dossier does not merge
+        let mut on_file = authored(&hash, "F-0001", "first", "a model via satz mcp");
+        on_file.merge(authored(&hash, "F-0001", "second", "a consultant")).unwrap();
+        assert_eq!(on_file.items["F-0001"].recommended_fix, "second");
+        assert!(on_file.merge(authored("ffff", "F-0001", "x", "y")).is_err());
+    }
+
+    #[test]
+    fn xlsx_builds_with_the_sheets_and_the_authored_columns_empty() {
+        let cat = catalog();
+        let goals = BTreeMap::new();
+        let rows = vec![row(Bucket::B, "5.1", "High", "//storage.googleapis.com/b", Some("google_storage_bucket.b"))];
+        let (empty_text, empty_at) = (BTreeMap::new(), BTreeMap::new());
+        let d = build(&Inputs { framework: "cis-gcp-4.0", catalog: &cat, goals: &goals, estate: "x.satz", triage_rows: &rows, prowler_text: &empty_text, checkov: &[], declared_at: &empty_at });
+        let bytes = xlsx(&d, &[("dossier".into(), d.hash())], None).expect("workbook builds");
         // a valid zip with the five sheets — inspect the package, no reader crate needed
         let cursor = std::io::Cursor::new(bytes);
         let mut zip = zip::ZipArchive::new(cursor).expect("xlsx is a zip");
@@ -587,7 +758,7 @@ mod tests {
         }
         let mut shared = String::new();
         std::io::Read::read_to_string(&mut zip.by_name("xl/sharedStrings.xml").unwrap(), &mut shared).unwrap();
-        assert!(shared.contains("[AI] Recommended fix"), "AI header present");
+        assert!(shared.contains("[Authored] Recommended fix"), "authored header present");
         assert!(shared.contains("google_storage_bucket.b"), "mechanical cell present");
         let mut sheet1 = String::new();
         std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut sheet1).unwrap();

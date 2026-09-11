@@ -371,10 +371,31 @@ rm -rf tmp/plan tmp/plan2
 "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan > tmp/plan.txt 2>&1 || fail "remediation-plan failed:\n$(cat tmp/plan.txt)"
 for f in dossier.json findings.csv findings.xlsx meta.json; do [ -s "tmp/plan/$f" ] || fail "remediation-plan: $f missing or empty"; done
 grep -q '"declared_address": "google_storage_bucket.state"' tmp/plan/dossier.json || fail "the bucket finding was not joined to its declaring block"
-grep -q '^\[AI\] Recommended fix' <(head -1 tmp/plan/findings.csv | tr ',' '\n') || fail "the CSV lacks the [AI] columns"
+grep -q '^\[Authored\] Recommended fix' <(head -1 tmp/plan/findings.csv | tr ',' '\n') || fail "the CSV lacks the [Authored] columns"
 "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan2 >/dev/null 2>&1
 h1=$(grep -o '"dossier_sha256": "[0-9a-f]*"' tmp/plan/meta.json); h2=$(grep -o '"dossier_sha256": "[0-9a-f]*"' tmp/plan2/meta.json)
 [ "$h1" = "$h2" ] || fail "the dossier is not deterministic: $h1 vs $h2"
+# The round trip: authored values, pinned to the dossier's hash, rendered beside the
+# mechanical columns — and the dossier and its hash unchanged by them.
+python3 - <<'PYEOF' || fail "could not write the authored fixture"
+import json
+meta = json.load(open("tmp/plan/meta.json"))
+first = json.load(open("tmp/plan/dossier.json"))["items"][0]["id"]
+json.dump({"dossier_sha256": meta["dossier_sha256"], "items": {first: {
+    "recommended_fix": "Turn on public access prevention for the state bucket",
+    "authored_by": "smoke", "authored_at": "2026-09-11T20:00:00Z"}}}, open("tmp/authored.json", "w"))
+json.dump({"dossier_sha256": "0" * 64, "items": {}}, open("tmp/authored-stale.json", "w"))
+PYEOF
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan3 --merge tmp/authored.json > tmp/plan3.txt 2>&1 \
+  || fail "remediation-plan --merge failed:\n$(cat tmp/plan3.txt)"
+grep -q 'Turn on public access prevention for the state bucket' tmp/plan3/findings.csv || fail "the authored value is not in the CSV"
+grep -q 'smoke,2026-09-11T20:00:00Z' tmp/plan3/findings.csv || fail "the CSV does not name who authored the value, and when"
+[ -s tmp/plan3/authored.json ] || fail "--merge did not keep authored.json beside the run"
+cmp -s tmp/plan/dossier.json tmp/plan3/dossier.json || fail "authoring changed dossier.json — the hash that names the run must not move"
+if "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan4 --merge tmp/authored-stale.json > tmp/plan4.txt 2>&1; then
+  fail "authored values written against another dossier were merged"
+fi
+grep -q 'the findings changed' tmp/plan4.txt || fail "the stale-hash refusal does not say why:\n$(cat tmp/plan4.txt)"
 
 step "triage: Prowler FAILs sorted into buckets against the estate's claims"
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
@@ -907,7 +928,8 @@ assert "Never edit `hcl/`" in guide, "the guide lost its hard rules"
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 assert {"satz_require", "satz_check_presets", "satz_questions", "satz_interview", "satz_triage",
         "satz_transpile_check", "satz_transpile", "satz_report_compliance",
-        "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov"} <= set(tools), sorted(tools)
+        "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
+        "satz_remediation_items", "satz_remediation_annotate"} <= set(tools), sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -925,7 +947,7 @@ assert opened["runs_as"] is None, opened
 # permitted, readOnlyHint says what an agent may run without stopping to ask.
 for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
-             "satz_whoami", "satz_scan_checkov"):
+             "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
@@ -971,6 +993,7 @@ rm -f hcl/main.tf
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_transpile","arguments":{}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_remediation_items","arguments":{"framework":"cis-gcp-4.0","prowler":"prowler.json"}}}'
 } > tmp/mcp-write-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-write-in.jsonl > tmp/mcp-write.jsonl 2>/dev/null || true
 [ -s hcl/main.tf ] || fail "satz_transpile at the write level wrote no main.tf:\n$(cat tmp/mcp-write.jsonl)"
@@ -981,7 +1004,28 @@ msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/mcp-write.jsonl") 
 r = msgs[3]["result"]["structuredContent"]
 assert any(w.endswith("main.tf") for w in r["written"]), r
 assert r["addresses"], r
+items = msgs[4]["result"]["structuredContent"]
+assert items["items"] and len(items["dossier_sha256"]) == 64, items
+# hand the worklist to the next session: the item id and the hash authored values must name
+open("tmp/mcp-items.json", "w").write(json.dumps({"id": items["items"][0]["id"], "hash": items["dossier_sha256"]}))
 PYEOF
+python3 - <<'PYEOF' || fail "could not build the annotate request"
+import json
+w = json.load(open("tmp/mcp-items.json"))
+call = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "satz_remediation_annotate", "arguments": {
+    "framework": "cis-gcp-4.0", "prowler": "prowler.json", "out": "tmp/mcp-plan", "dossier_sha256": w["hash"],
+    "items": {w["id"]: {"what_why": "written through MCP", "authored_by": "smoke via satz mcp", "authored_at": "2026-09-11T20:00:00Z"}}}}}
+lines = [
+    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}}},
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "satz_open", "arguments": {"config": ".", "estate": "smoke.satz"}}},
+    call,
+]
+open("tmp/mcp-annotate-in.jsonl", "w").write("\n".join(json.dumps(l) for l in lines) + "\n")
+PYEOF
+python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-annotate-in.jsonl > tmp/mcp-annotate.jsonl 2>/dev/null || true
+grep -q 'written through MCP' tmp/mcp-plan/findings.csv 2>/dev/null || fail "satz_remediation_annotate did not render the authored value:\n$(cat tmp/mcp-annotate.jsonl)"
+grep -q '"authored_by": "smoke via satz mcp"' tmp/mcp-plan/authored.json || fail "authored.json does not name the author"
 
 step "satz mcp: one server works through estates in turn, each as its own identity"
 # The identity a live tool runs as is invisible in its output, so it is asserted
