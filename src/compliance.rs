@@ -2861,11 +2861,23 @@ pub(crate) fn run_triage(
     Ok(())
 }
 
-/// The `remediation-plan` command, phase 1: the dossier and its renderings,
-/// offline. Writes `dossier.json`, `findings.csv`, `findings.xlsx` and
-/// `meta.json` into `out`.
+/// A remediation run, computed: the dossier, its hash, and the facts about the
+/// inputs its renderings name. No files — the CLI and the MCP tools share it.
+pub(crate) struct RemediationRun {
+    pub dossier: crate::dossier::Dossier,
+    pub hash: String,
+    pub framework: String,
+    pub estate: String,
+    pub prowler_export: String,
+    pub prowler_version: String,
+    pub prowler_unmapped: BTreeMap<String, usize>,
+    /// `v<version> — <n> findings`, or `None` when Checkov did not run
+    pub checkov: Option<String>,
+}
+
+/// The dossier for an estate and a Prowler export (and optionally a Checkov run).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_remediation_dossier(
+pub(crate) fn remediation_run(
     framework: &str,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
@@ -2873,8 +2885,7 @@ pub(crate) fn run_remediation_dossier(
     estate_path: &Path,
     prowler_path: &Path,
     checkov: Option<&crate::scan::Report>,
-    out: &Path,
-) -> Result<(), BoxErr> {
+) -> Result<RemediationRun, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
@@ -2911,43 +2922,117 @@ pub(crate) fn run_remediation_dossier(
         declared_at: &declared_at,
     });
     let hash = dossier.hash();
+    Ok(RemediationRun {
+        dossier,
+        hash,
+        framework: framework.to_string(),
+        estate,
+        prowler_export: prowler_path.display().to_string(),
+        prowler_version: export.version.clone(),
+        prowler_unmapped: export.unmapped_fails,
+        checkov: checkov.map(|r| format!("v{} — {} findings", r.version, r.findings.len())),
+    })
+}
 
+/// Read an `authored.json`.
+pub(crate) fn read_authored(path: &Path) -> Result<crate::dossier::Authored, BoxErr> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    serde_json::from_str(&text).map_err(|e| format!("{}: not an authored file ({})", path.display(), e).into())
+}
+
+/// Write a run into `out`: `dossier.json`, `findings.csv`, `findings.xlsx` and
+/// `meta.json`, and — when `authored` is given, already checked against the run —
+/// `authored.json` beside them, with its values in the `[Authored]` columns.
+pub(crate) fn write_remediation(
+    run: &RemediationRun,
+    out: &Path,
+    authored: Option<&crate::dossier::Authored>,
+) -> Result<Vec<PathBuf>, BoxErr> {
     crate::fsx::create_dir_all(out)?;
-    crate::fsx::write(out.join("dossier.json"), dossier.json())?;
-    crate::fsx::write(out.join("findings.csv"), crate::dossier::csv(&dossier))?;
+    let mut written = Vec::new();
+    let mut put = |name: &str, bytes: &[u8]| -> Result<(), BoxErr> {
+        let p = out.join(name);
+        std::fs::write(&p, bytes).map_err(|e| format!("{}: {}", p.display(), e))?;
+        written.push(p);
+        Ok(())
+    };
+    put("dossier.json", run.dossier.json().as_bytes())?;
+    put("findings.csv", crate::dossier::csv(&run.dossier, authored).as_bytes())?;
+    let authors: BTreeSet<&str> = authored.map(|a| a.items.values().map(|i| i.authored_by.as_str()).collect()).unwrap_or_default();
     let provenance = vec![
         ("satz".to_string(), env!("CARGO_PKG_VERSION").to_string()),
-        ("framework".to_string(), framework.to_string()),
-        ("estate".to_string(), estate.clone()),
-        ("prowler export".to_string(), prowler_path.display().to_string()),
-        ("prowler".to_string(), export.version.clone()),
+        ("framework".to_string(), run.framework.clone()),
+        ("estate".to_string(), run.estate.clone()),
+        ("prowler export".to_string(), run.prowler_export.clone()),
+        ("prowler".to_string(), run.prowler_version.clone()),
         (
             "prowler outside the framework".to_string(),
-            if export.unmapped_fails.is_empty() {
+            if run.prowler_unmapped.is_empty() {
                 "none".to_string()
             } else {
-                export.unmapped_fails.iter().map(|(c, n)| format!("{} ({})", c, n)).collect::<Vec<_>>().join(", ")
+                run.prowler_unmapped.iter().map(|(c, n)| format!("{} ({})", c, n)).collect::<Vec<_>>().join(", ")
             },
         ),
-        ("checkov".to_string(), checkov.map(|r| format!("v{} — {} findings", r.version, r.findings.len())).unwrap_or_else(|| "not run".to_string())),
-        ("dossier sha256".to_string(), hash.clone()),
+        ("checkov".to_string(), run.checkov.clone().unwrap_or_else(|| "not run".to_string())),
+        ("dossier sha256".to_string(), run.hash.clone()),
         ("generated".to_string(), chrono_free_timestamp()),
-        ("[AI] columns".to_string(), "empty — authored by a later model pass or by hand; Review column: open / accepted / edited / rejected".to_string()),
+        (
+            "[Authored] columns".to_string(),
+            match authored {
+                Some(a) => format!(
+                    "{} item(s) from authored.json, by {}; Review column: open / accepted / edited / rejected",
+                    a.items.len(),
+                    authors.iter().cloned().collect::<Vec<_>>().join(", ")
+                ),
+                None => "empty — written by a model or by hand into authored.json, merged with --merge; Review column: open / accepted / edited / rejected".to_string(),
+            },
+        ),
     ];
-    let xlsx = crate::dossier::xlsx(&dossier, &provenance)?;
-    std::fs::write(out.join("findings.xlsx"), xlsx).map_err(|e| format!("{}: {}", out.join("findings.xlsx").display(), e))?;
+    put("findings.xlsx", &crate::dossier::xlsx(&run.dossier, &provenance, authored)?)?;
+    if let Some(a) = authored {
+        put("authored.json", serde_json::to_string_pretty(a)?.as_bytes())?;
+    }
     let meta = serde_json::json!({
         "satz": env!("CARGO_PKG_VERSION"),
-        "framework": framework,
-        "estate": estate,
-        "dossier_sha256": hash,
+        "framework": run.framework,
+        "estate": run.estate,
+        "dossier_sha256": run.hash,
         "generated": chrono_free_timestamp(),
-        "summary": dossier.summary,
-        "prowler_unmapped": export.unmapped_fails,
+        "summary": run.dossier.summary,
+        "prowler_unmapped": run.prowler_unmapped,
+        "authored_items": authored.map(|a| a.items.len()).unwrap_or(0),
+        "authored_by": authors,
     });
-    crate::fsx::write(out.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
+    put("meta.json", serde_json::to_string_pretty(&meta)?.as_bytes())?;
+    Ok(written)
+}
 
-    let s = &dossier.summary;
+/// The `remediation-plan` command: the dossier and its renderings, offline, and
+/// with `--merge` the authored values rendered beside them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_remediation_dossier(
+    framework: &str,
+    presets_dir: &str,
+    included_claims: &[(String, Claim)],
+    manifest: &Manifest,
+    estate_path: &Path,
+    prowler_path: &Path,
+    checkov: Option<&crate::scan::Report>,
+    out: &Path,
+    merge: Option<&Path>,
+) -> Result<(), BoxErr> {
+    let run = remediation_run(framework, presets_dir, included_claims, manifest, estate_path, prowler_path, checkov)?;
+    let authored = match merge {
+        Some(p) => {
+            let a = read_authored(p)?;
+            crate::dossier::check_authored(&run.dossier, &run.hash, &a).map_err(|e| format!("{}: {}", p.display(), e))?;
+            Some(a)
+        }
+        None => None,
+    };
+    write_remediation(&run, out, authored.as_ref())?;
+
+    let s = &run.dossier.summary;
     println!(
         "remediation-plan: {} finding(s) — {}; {} corroborated by both scanners, {} declared (apply fixes them)",
         s.items,
@@ -2955,7 +3040,15 @@ pub(crate) fn run_remediation_dossier(
         s.corroborated,
         s.declared_apply_fixes
     );
-    println!("Wrote {} (dossier.json, findings.csv, findings.xlsx, meta.json) — dossier sha256 {}", out.display(), &hash[..12]);
+    if let Some(a) = &authored {
+        println!("remediation-plan: {} authored item(s) rendered into the [Authored] columns", a.items.len());
+    }
+    println!(
+        "Wrote {} (dossier.json, findings.csv, findings.xlsx, meta.json{}) — dossier sha256 {}",
+        out.display(),
+        if authored.is_some() { ", authored.json" } else { "" },
+        &run.hash[..12]
+    );
     Ok(())
 }
 

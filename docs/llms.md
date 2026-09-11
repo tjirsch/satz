@@ -291,6 +291,13 @@ The loop, in order:
 6. **`tofu plan` / `apply` — a human runs these.** No tool exposes them.
 7. **`satz_report_compliance`** — the live evidence view, afterwards.
 
+**Authoring the remediation plan.** `satz_remediation_items` returns the dossier's items
+and its `dossier_sha256`; write the judgment per item — what and why in the customer's
+words, the fix, owner, effort, phase, quick win, risk acceptance — and hand it to
+`satz_remediation_annotate` with `authored_by` naming you and the tool, and
+`authored_at`. It renders the workbook. Never author against a hash you did not get
+from `satz_remediation_items` for the same Prowler export.
+
 Also available: `satz_check_presets` (is the pack library current, or forked?),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
 (both halves of the identity — the ADC account and the estate's service account — with

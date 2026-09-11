@@ -709,6 +709,9 @@ enum Commands {
         /// Output directory (default: <config dir>/evidence/plan/<framework>-<timestamp>)
         #[arg(long)]
         out: Option<PathBuf>,
+        /// An authored.json written against this run's dossier: its values fill the [Authored] columns
+        #[arg(long, value_name = "AUTHORED_JSON")]
+        merge: Option<PathBuf>,
     },
     /// Run Checkov over the emitted HCL in hcl_dir and point each finding at the Satz block that declared the resource
     ///
@@ -1666,7 +1669,7 @@ Thumbs.db
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, report, fix)
         }
-        Commands::RemediationPlan { framework, input, prowler, checkov, out } => {
+        Commands::RemediationPlan { framework, input, prowler, checkov, out, merge } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
@@ -1682,6 +1685,7 @@ Thumbs.db
                 &prowler,
                 checkov_report.as_ref(),
                 &out,
+                merge.as_deref(),
             )
         }
         Commands::DocPacks { out, check } => {
