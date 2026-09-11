@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet, BTreeMap, BTreeSet};
 use serde_json::Value;
 use crate::config::{Config, ImportConfig, Folder, Project};
 use crate::schema::{ResourceRegistry, ResourceSchema, BlockSchema};
@@ -9,10 +9,16 @@ pub struct Discoverer {
     pub state: Value,
     pub registry: Option<ResourceRegistry>,
     pub enabled_types: Option<HashSet<String>>,
-    /// Types the run's `--only` / `only:` switched off — reported as
+    /// Types the run's `--only` / `--exclude` switched off — reported as
     /// "filtered", not "type off".
     pub filtered_types: HashSet<String>,
 }
+
+/// Asset types per ListAssets request. The quota counts requests
+/// ("ListAssets Requests per minute"), so a sweep that asks for one type at a
+/// time runs out of it long before `--all` is through; the types travel as
+/// query parameters, and a hundred keep the URL near 6 KB.
+const ASSET_TYPES_PER_REQUEST: usize = 100;
 
 /// Why a resource the source had is not in the written estate. An import is
 /// allowed to be partial; it is not allowed to be silent about it.
@@ -20,7 +26,7 @@ pub struct Discoverer {
 pub enum SkipReason {
     /// `import: false` in the import config.
     TypeOff,
-    /// Switched off by `--only` / `only:` for this run.
+    /// Switched off by `--only` / `--exclude` (`only:` / `exclude:`) for this run.
     Filtered,
     /// The source had it, but no import-config row maps it (detail says what
     /// was missing).
@@ -33,7 +39,7 @@ impl std::fmt::Display for SkipReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SkipReason::TypeOff => write!(f, "type off (import: false)"),
-            SkipReason::Filtered => write!(f, "filtered by --only"),
+            SkipReason::Filtered => write!(f, "filtered by --only/--exclude"),
             SkipReason::Unmapped(d) => write!(f, "unmapped: {}", d),
             SkipReason::ParentNotFound(p) => write!(f, "parent not imported: {}", p),
         }
@@ -285,6 +291,7 @@ impl Discoverer {
                 self.add_resource_to_config(&mut config, tf_type, tf_name, values, schema)?;
             }
         }
+        qualify_duplicate_keys(&mut config);
 
         Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None })
     }
@@ -649,7 +656,8 @@ impl Discoverer {
     }
 
     /// `parent` is any Cloud Asset Inventory scope: `organizations/<n>`,
-    /// `folders/<n>` or `projects/<id>`.
+    /// `folders/<n>` or `projects/<id>`. The enabled types are fetched
+    /// `ASSET_TYPES_PER_REQUEST` at a time.
     pub async fn discover_from_org(
         parent: &str,
         verbose: bool,
@@ -708,24 +716,22 @@ impl Discoverer {
 
         for (ctype_int, asset_types) in type_map {
             let ctype = ContentType::from(ctype_int as i32);
-            for asset_type in asset_types {
-                 let asset_types_vec = vec![asset_type.clone()];
-                 
-                 let display_type = if asset_type.starts_with("cloudresourcemanager.googleapis.com/") {
-                        asset_type.trim_start_matches("cloudresourcemanager.googleapis.com/").to_string()
-                    } else if asset_type.starts_with("orgpolicy.googleapis.com/") {
-                        asset_type.trim_start_matches("orgpolicy.googleapis.com/").to_string()
-                    } else {
-                        asset_type.split('/').next_back().unwrap_or(&asset_type).to_string()
-                    };
-                 
-                 println!("Fetching assets for type: {} (Content: {:?})", display_type, ctype);
+            let asset_types: Vec<String> = asset_types.into_iter().collect();
+            for batch in asset_types.chunks(ASSET_TYPES_PER_REQUEST) {
+                 println!("Fetching assets: {} type(s) (Content: {:?})", batch.len(), ctype);
+                 if verbose {
+                     for t in batch { println!("  {}", t); }
+                 }
+                 let what = match batch {
+                     [one] => one.clone(),
+                     _ => format!("{} type(s) {} … {}", batch.len(), batch[0], batch[batch.len() - 1]),
+                 };
 
                  // Same quota project every other Cloud Asset sweep sends; without
                  // it a credential with no default quota project is refused.
                  let mut builder = client.list_assets()
                     .set_parent(parent.to_string())
-                    .set_asset_types(asset_types_vec)
+                    .set_asset_types(batch.to_vec())
                     .set_content_type(ctype.clone())
                     .set_page_size(1000);
                  if let Some(qp) = &quota_project {
@@ -770,8 +776,8 @@ impl Discoverer {
                              all_assets.push(asset);
                          },
                          Err(e) => {
-                             eprintln!("Error fetching asset type '{}': {}", asset_type, e);
-                             fetch_errors.push(format!("{}: {}", asset_type, e));
+                             eprintln!("Error fetching {}: {}", what, e);
+                             fetch_errors.push(format!("{}: {}", what, e));
                              break;
                          }
                      }
@@ -783,7 +789,9 @@ impl Discoverer {
         // missing whole types, and the plan would then propose to create them.
         if !fetch_errors.is_empty() {
             return Err(format!(
-                "import aborted — {} asset type(s) could not be fetched, nothing written:\n  {}",
+                "import aborted — {} request(s) failed, nothing written:\n  {}\n\
+                 An asset type ListAssets refuses is named in the message: leave its row out with \
+                 --exclude, and correct the table with scripts/update_import_config.py --probe.",
                 fetch_errors.len(),
                 fetch_errors.join("\n  ")
             )
@@ -805,7 +813,8 @@ impl Discoverer {
         }
 
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
-        let (config, mut skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
+        let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
+        qualify_duplicate_keys(&mut config);
         for (tf_type, name) in unscoped {
             skipped.push(Skipped {
                 tf_type,
@@ -1808,9 +1817,12 @@ fn link_folders_to_parents(
         }
         match gcp_id_to_yaml_name.get(parent_id) {
             Some(parent_yaml) => {
-                let Some(child_folder) = folder_map.remove(&child_yaml) else {
+                let Some(mut child_folder) = folder_map.remove(&child_yaml) else {
                     return Err(format!("import: folder {} ({}) has a parent but no record to move", child_id, child_yaml));
                 };
+                // the nesting IS the parent; declared beside it, the emitter
+                // refuses the folder
+                child_folder.parent = None;
                 let Some(parent_folder) = folder_map.get_mut(parent_yaml) else {
                     return Err(format!(
                         "import: folder {} ({}) is the parent of {} but is not at the top level any more — nesting order is broken",
@@ -1836,6 +1848,98 @@ fn link_folders_to_parents(
         );
     }
     Ok(())
+}
+
+/// A Satz address is `<type>.<key>` across the whole estate, and two projects
+/// hold resources of the same name all the time (every project has a
+/// `_Default` log sink). Where one key is used by a type more than once, the
+/// copies inside a folder or project take that container's name as a prefix;
+/// the one at the organisation keeps the plain key. Without this the fold
+/// refuses the imported estate, naming both lines.
+fn qualify_duplicate_keys(config: &mut Config) {
+    fn count(extra: &HashMap<String, serde_yaml::Value>, seen: &mut BTreeMap<String, BTreeMap<String, usize>>) {
+        for (tf_type, val) in extra {
+            if let serde_yaml::Value::Mapping(m) = val {
+                for k in m.keys().filter_map(|k| k.as_str()) {
+                    *seen.entry(tf_type.clone()).or_default().entry(k.to_string()).or_default() += 1;
+                }
+            }
+        }
+    }
+    fn count_folder(f: &Folder, seen: &mut BTreeMap<String, BTreeMap<String, usize>>) {
+        count(&f.extra, seen);
+        for sub in f.folder.iter().flat_map(|m| m.values()) {
+            count_folder(sub, seen);
+        }
+        for p in f.project.iter().flat_map(|m| m.values()) {
+            count(&p.extra, seen);
+        }
+    }
+    fn qualify(
+        extra: &mut HashMap<String, serde_yaml::Value>,
+        container: &str,
+        seen: &BTreeMap<String, BTreeMap<String, usize>>,
+        taken: &mut BTreeMap<String, BTreeSet<String>>,
+    ) {
+        for (tf_type, val) in extra.iter_mut() {
+            let Some(dupes) = seen.get(tf_type) else { continue };
+            let serde_yaml::Value::Mapping(m) = val else { continue };
+            let keys: Vec<String> = m.keys().filter_map(|k| k.as_str()).map(str::to_string).collect();
+            for key in keys {
+                if dupes.get(&key).copied().unwrap_or(0) < 2 {
+                    continue;
+                }
+                let used = taken.entry(tf_type.clone()).or_default();
+                let mut name = format!("{}-{}", container, key);
+                let mut n = 2;
+                while used.contains(&name) || dupes.contains_key(&name) {
+                    name = format!("{}-{}-{}", container, key, n);
+                    n += 1;
+                }
+                used.insert(name.clone());
+                if let Some(v) = m.remove(serde_yaml::Value::String(key)) {
+                    m.insert(serde_yaml::Value::String(name), v);
+                }
+            }
+        }
+    }
+    fn qualify_folder(
+        f: &mut Folder,
+        label: &str,
+        seen: &BTreeMap<String, BTreeMap<String, usize>>,
+        taken: &mut BTreeMap<String, BTreeSet<String>>,
+    ) {
+        qualify(&mut f.extra, label, seen, taken);
+        for (name, sub) in f.folder.iter_mut().flat_map(|m| m.iter_mut()) {
+            let name = name.clone();
+            qualify_folder(sub, &name, seen, taken);
+        }
+        for (name, p) in f.project.iter_mut().flat_map(|m| m.iter_mut()) {
+            let name = name.clone();
+            qualify(&mut p.extra, &name, seen, taken);
+        }
+    }
+
+    let mut seen: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    count(&config.extra, &mut seen);
+    for f in config.folder.iter().flat_map(|m| m.values()) {
+        count_folder(f, &mut seen);
+    }
+    for p in config.project.iter().flat_map(|m| m.values()) {
+        count(&p.extra, &mut seen);
+    }
+    if !seen.values().any(|keys| keys.values().any(|n| *n > 1)) {
+        return;
+    }
+    let mut taken: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (name, f) in config.folder.iter_mut().flat_map(|m| m.iter_mut()) {
+        let name = name.clone();
+        qualify_folder(f, &name, &seen, &mut taken);
+    }
+    for (name, p) in config.project.iter_mut().flat_map(|m| m.iter_mut()) {
+        let name = name.clone();
+        qualify(&mut p.extra, &name, &seen, &mut taken);
+    }
 }
 
 /// The end of every import: what was left out, and why. Never silent — a
@@ -1865,7 +1969,7 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
     if !filtered_off.is_empty() && !skipped.iter().any(|s| s.reason == SkipReason::Filtered) {
         // live shape: filtered types are never fetched, so they have no
         // per-resource rows — say so at the type level
-        by_reason.insert(format!("type(s) filtered by --only, not fetched ({})", {
+        by_reason.insert(format!("type(s) filtered by --only/--exclude, not fetched ({})", {
             let mut v: Vec<&str> = filtered_off.iter().map(String::as_str).collect();
             v.sort();
             v.join(", ")
@@ -1874,7 +1978,7 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
     for s in skipped {
         let key = match &s.reason {
             SkipReason::TypeOff => "type off (import: false)".to_string(),
-            SkipReason::Filtered => "filtered by --only".to_string(),
+            SkipReason::Filtered => "filtered by --only/--exclude".to_string(),
             SkipReason::Unmapped(_) => "unmapped (no import-config row fits)".to_string(),
             SkipReason::ParentNotFound(_) => "parent not imported".to_string(),
         };
@@ -1891,7 +1995,51 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
             println!("  - {} {} — {}", s.tf_type, s.what, s.reason);
         }
     } else {
-        println!("  (--verbose lists every one; `import: false` rows and `--only` are the levers)");
+        println!("  (--verbose lists every one; `import: false` rows, `--all`, `--only` and `--exclude` are the levers)");
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    //! Two projects hold a resource of the same name — every project has a
+    //! `_Default` log sink — and a Satz address is `<type>.<key>` across the
+    //! estate, so the imported keys must not collide.
+    use super::*;
+
+    fn project(id: &str, sink: &str) -> Project {
+        let mut sinks = serde_yaml::Mapping::new();
+        sinks.insert(serde_yaml::Value::String(sink.into()), serde_yaml::Value::String("body".into()));
+        let mut extra = HashMap::new();
+        extra.insert("google_logging_project_sink".to_string(), serde_yaml::Value::Mapping(sinks));
+        Project { project_id: id.into(), extra, ..Default::default() }
+    }
+
+    fn keys(config: &Config, project: &str) -> Vec<String> {
+        let p = &config.project.as_ref().unwrap()[project];
+        let serde_yaml::Value::Mapping(m) = &p.extra["google_logging_project_sink"] else { panic!() };
+        m.keys().filter_map(|k| k.as_str()).map(str::to_string).collect()
+    }
+
+    #[test]
+    fn a_key_two_projects_share_takes_the_project_as_prefix() {
+        let mut config = Config { project: Some(HashMap::from([
+            ("alpha".to_string(), project("alpha", "-default")),
+            ("beta".to_string(), project("beta", "-default")),
+        ])), ..Default::default() };
+        qualify_duplicate_keys(&mut config);
+        assert_eq!(keys(&config, "alpha"), ["alpha--default"]);
+        assert_eq!(keys(&config, "beta"), ["beta--default"]);
+    }
+
+    #[test]
+    fn a_key_only_one_project_has_stays_as_it_is() {
+        let mut config = Config { project: Some(HashMap::from([
+            ("alpha".to_string(), project("alpha", "-default")),
+            ("beta".to_string(), project("beta", "audit")),
+        ])), ..Default::default() };
+        qualify_duplicate_keys(&mut config);
+        assert_eq!(keys(&config, "alpha"), ["-default"]);
+        assert_eq!(keys(&config, "beta"), ["audit"]);
     }
 }
 
@@ -1904,6 +2052,10 @@ mod nesting_tests {
 
     fn folder(name: &str) -> Folder {
         Folder { import_id: None, display_name: name.into(), parent: None, folder: None, project: None, extra: HashMap::new() }
+    }
+
+    fn folder_with_parent(name: &str, parent: &str) -> Folder {
+        Folder { parent: Some(parent.into()), ..folder(name) }
     }
 
     #[test]
@@ -1930,6 +2082,24 @@ mod nesting_tests {
         assert_eq!(map.keys().collect::<Vec<_>>(), vec!["a"]);
         let b = &map["a"].folder.as_ref().unwrap()["b"];
         assert!(b.folder.as_ref().unwrap().contains_key("c"), "c nests under b under a");
+    }
+
+    #[test]
+    fn a_nested_folder_drops_the_parent_it_was_discovered_with() {
+        // the nesting is the parent; declared beside it the emitter refuses the
+        // folder, so a live import of nested folders would not compile
+        let parents: HashMap<String, String> =
+            [("folders/2", "folders/1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let names: HashMap<String, String> =
+            [("folders/1", "a"), ("folders/2", "b")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut map: HashMap<String, Folder> = [
+            ("a".to_string(), folder("a")),
+            ("b".to_string(), folder_with_parent("b", "folders/1")),
+        ]
+        .into_iter()
+        .collect();
+        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        assert_eq!(map["a"].folder.as_ref().unwrap()["b"].parent, None);
     }
 
     #[test]

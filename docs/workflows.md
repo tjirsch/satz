@@ -247,14 +247,18 @@ Or straight from Google Cloud, with no state at all:
 satz import organizations/123456789012 -o migration-discovery.satz
 ```
 
-Only the resource types marked `import: true` in `presets/import-config.yaml` are
-taken (`--only` narrows further); enable more rows as needed — every row with an
-`asset_type` can be switched on. The table covers the provider's 895 resource types:
-389 with their Cloud Asset Inventory name (derived from the type name and checked
-against Google's list, `presets/cai-asset-types.txt`), 296 that are not Cloud Asset
-resources (IAM members, org-policy v1 shapes; state shape only), 209 marked
+The resource types marked `import: true` in `presets/import-config.yaml` are the
+default set. `--all` takes every type the source can deliver instead: from a state
+file every row, live every row with an `asset_type`. `--only` narrows either set,
+and `--exclude` leaves types out (`--all --exclude "google_*_iam_member"`). The
+table is the provider's resource types at its `provider_version` — google and
+google-beta, 1283 rows: 452 with their Cloud Asset Inventory name (derived from
+the type name, checked against Google's list, `presets/cai-asset-types.txt`, and
+asked of ListAssets), 439 that Cloud Asset does not serve as assets (IAM members,
+org-policy v1 shapes, the types ListAssets refuses; state shape only), 392 marked
 `TODO/UNKNOWN` (Cloud Asset does not inventory them, or the name could not be
-derived — `scripts/update_import_config.py` prints what it tried).
+derived — `scripts/update_import_config.py` prints what it tried). A copy of the table with your own `import:` flags, passed with
+`--import-config`, is the repeatable form.
 
 A live resource whose provider block would not plan is never written: a required
 attribute the asset data lacks is derived where it can be (`parent`,

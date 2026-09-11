@@ -468,6 +468,14 @@ enum Commands {
         /// (overrides `only` in the import config)
         #[arg(long, value_delimiter = ',')]
         only: Vec<String>,
+        /// Take every type the source can deliver, not only the rows marked
+        /// `import: true` (live: every type with a Cloud Asset Inventory name)
+        #[arg(long)]
+        all: bool,
+        /// Resource types to leave out, comma-separated, `*` wildcards allowed
+        /// (overrides `exclude` in the import config)
+        #[arg(long, value_delimiter = ',')]
+        exclude: Vec<String>,
         /// Output file inside yaml_dir (state/live shapes; default discovered.satz)
         #[arg(long, short)]
         output: Option<PathBuf>,
@@ -1350,7 +1358,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, output, import_config, gate, kind, fork, into, wrap_all } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, gate, kind, fork, into, wrap_all } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1368,6 +1376,10 @@ Thumbs.db
                 }
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
+                    if all {
+                        let on = cfg.apply_all(shape == "org");
+                        println!("import: --all — {} type(s) switched on beside the table's defaults", on);
+                    }
                     let filter: Vec<String> = if only.is_empty() { cfg.only.clone().unwrap_or_default() } else { only };
                     let mut filtered: std::collections::HashSet<String> = std::collections::HashSet::new();
                     if !filter.is_empty() {
@@ -1379,6 +1391,18 @@ Thumbs.db
                         filtered = off.into_iter().collect();
                         if !cfg.resource_types.values().any(|r| r.import) {
                             return Err(format!("import: --only {} matches no enabled type — nothing would be imported", filter.join(",")).into());
+                        }
+                    }
+                    let leave_out: Vec<String> = if exclude.is_empty() { cfg.exclude.clone().unwrap_or_default() } else { exclude };
+                    if !leave_out.is_empty() {
+                        let off = cfg.apply_exclude(&leave_out);
+                        println!("import: excluding {} — {} type(s) switched off", leave_out.join(","), off.len());
+                        if cli.verbose {
+                            for t in &off { println!("  excluded: {}", t); }
+                        }
+                        filtered.extend(off);
+                        if !cfg.resource_types.values().any(|r| r.import) {
+                            return Err(format!("import: --exclude {} leaves no enabled type — nothing would be imported", leave_out.join(",")).into());
                         }
                     }
                     let output = output.unwrap_or_else(|| PathBuf::from("discovered.satz"));

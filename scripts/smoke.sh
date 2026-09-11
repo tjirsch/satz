@@ -491,6 +491,23 @@ step "import, state shape"
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"
 "$satz" --config . transpile imported-state.satz --output "$PWD/tmp/imported-state-hcl"
 grep -q 'import {' tmp/imported-state-hcl/imports.tf || fail "state import produced no import blocks"
+# The table's `import: true` rows are the default set: --all takes every type the
+# source delivers, --exclude leaves types out. A copy of the table with the bucket
+# off shows all three.
+python3 - "$root/presets/import-config.yaml" <<'PYEOF' || fail "could not write the lean import table"
+import re, sys
+s = open(sys.argv[1]).read()
+s, n = re.subn(r"(\n  google_storage_bucket:\n(?:    .*\n)*?    import: )true", r"\1false", s)
+assert n == 1, n
+open("tmp/import-config-lean.yaml", "w").write(s)
+PYEOF
+"$satz" --config . import state.json --import-config "$PWD/tmp/import-config-lean.yaml" -o imported-lean-default.satz > /dev/null 2>&1 || fail "import with the lean table failed"
+"$satz" --config . import state.json --import-config "$PWD/tmp/import-config-lean.yaml" --all -o imported-lean-all.satz > tmp/imp-all.txt 2>&1 || fail "import --all failed:\n$(cat tmp/imp-all.txt)"
+"$satz" --config . import state.json --import-config "$PWD/tmp/import-config-lean.yaml" --all --exclude google_storage_bucket -o imported-lean-excl.satz > /dev/null 2>&1 || fail "import --all --exclude failed"
+if grep -q google_storage_bucket yaml/imported-lean-default.satz; then fail "the default set took a type the table has off"; fi
+grep -q google_storage_bucket yaml/imported-lean-all.satz || fail "--all did not take the type the table has off"
+grep -q 'switched on beside the table' tmp/imp-all.txt || fail "--all does not say what it switched on:\n$(cat tmp/imp-all.txt)"
+if grep -q google_storage_bucket yaml/imported-lean-excl.satz; then fail "--exclude did not leave the type out"; fi
 
 step "import, yaml shape (the legacy dialect converter)"
 cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pack.yaml" tmp/

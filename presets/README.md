@@ -904,12 +904,16 @@ shows few ISO controls satisfied.
 ## import-config.yaml
 
 Not a pack: the configuration `satz import` reads — an optional `root` (organization,
-folder by id or display-name path, project) and `only` list, and per resource type the
+folder by id or display-name path, project), `only` and `exclude` lists, and per resource type the
 import filter (`import`, `asset_type`, attribute include/exclude) **plus the adoption
 rules `satz adopt` reads** — `import_id` templates for user-chosen ids, `match_on` keys
 for GCP-assigned ones, `activate: managed` for org policies. A type without a rule is
 reported by `adopt` as "no rule"; adding one is a one-line change here. Referenced
 automatically from `presets_dir`, or explicitly via `--import-config`.
+
+Its rows are every resource type of the google and google-beta providers at
+`provider_version`, the pinned version; `import: true` marks the default set, and
+`satz import --all` takes every row the source can deliver.
 
 `cai-asset-types.txt` beside it is Google's published list of Cloud Asset Inventory
 resource types (dated in its header); `scripts/update_import_config.py --cai-types`
