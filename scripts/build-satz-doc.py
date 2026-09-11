@@ -1,21 +1,28 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["cmarkgfm>=2025.10.22"]
+# ///
 """Render a docs/*.md file as a self-contained, theme-aware HTML page.
 
-    uv run --with markdown scripts/build-satz-doc.py [MD] [OUT.html] [TITLE]
+    uv run scripts/build-satz-doc.py [MD] [OUT.html] [TITLE]
 
 Defaults: docs/language.md → docs/language.html, title from the
 first `# heading`. Any `![…](name.svg)` image whose file sits beside the
 markdown is inlined and recoloured through CSS tokens so it follows the
 viewer's theme. One source, two renderings: the markdown is what the repo
-keeps and GitHub shows; this page is the same text.
+keeps and GitHub shows; this page is the same text, parsed by the same
+parser: cmark-gfm, GitHub's own (ADR 0008).
 """
 
 import html
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
-import markdown
+import cmarkgfm
+from cmarkgfm.cmark import Options
 
 ROOT = Path(__file__).resolve().parent.parent
 MD = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "docs" / "language.md"
@@ -67,9 +74,9 @@ CSS = """
   table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
   th, td { text-align: left; vertical-align: top; padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line); }
   th { font-weight: 600; font-size: 12.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
-  /* Table code breaks between its words and never inside one: a flag split after
-     its hyphen reads as a hyphenated word. code_breaks() makes every word a span. */
-  td code > span { white-space: nowrap; }
+  /* Code breaks between its words and never inside a short one: a flag split after
+     its hyphen reads as a hyphenated word. code_breaks() makes those words spans. */
+  code > span { white-space: nowrap; }
   figure { margin: 24px 0 40px; }
   figure svg { display: block; width: 100%; height: auto; color: var(--ink); }
   figcaption { font-size: 14px; color: var(--ink-2); margin: 14px 0 0; }
@@ -98,14 +105,23 @@ def themed_svg(path: Path) -> str:
 
 
 def inline_images(body: str) -> str:
-    def repl(m: "re.Match[str]") -> str:
-        alt, src = m.group(1), m.group(2)
-        path = MD.parent / src
-        if not path.exists():
-            return m.group(0)
-        return f"<figure>{themed_svg(path)}<figcaption>{alt}</figcaption></figure>"
+    """An image that is a paragraph of its own and an SVG beside the markdown
+    becomes a themed figure, its alt text the caption. One whose file is not there
+    fails the build: GitHub would show it broken too."""
 
-    return re.sub(r'<p><img alt="([^"]*)" src="([^"]+\.svg)"\s*/?></p>', repl, body)
+    def repl(m: "re.Match[str]") -> str:
+        tag = m.group(1)
+        src = re.search(r'\bsrc="([^"]+)"', tag)
+        if not src or not src.group(1).endswith(".svg"):
+            return m.group(0)
+        alt = re.search(r'\balt="([^"]*)"', tag)
+        path = MD.parent / src.group(1)
+        if not path.is_file():
+            raise SystemExit(f"{MD}: the image {src.group(1)} does not exist")
+        caption = alt.group(1) if alt else ""
+        return f"<figure>{themed_svg(path)}<figcaption>{caption}</figcaption></figure>"
+
+    return re.sub(r"<p>(<img\b[^>]*>)</p>", repl, body)
 
 
 # A word of inline code longer than this may break before a `/`, `.` or `_`.
@@ -150,34 +166,40 @@ def code_breaks(body: str) -> str:
     - In a heading every word may break at its punctuation. Heading type is two to
       four times body size, so a pack's name alone outruns a phone and, at 64 px,
       the text column.
-    - Elsewhere a long word may break at its punctuation.
+    - Elsewhere a word of LONG_TOKEN characters or fewer is a span the CSS keeps
+      whole, so `--help` never ends a line as `--`; a longer one may break at
+      its punctuation and after a hyphen, because a phone line cannot hold it
+      whole.
 
     A slash that joins two code spans (`A`/`B`) is a break point, as a space
     between them would be.
 
-    Neither <span> nor <wbr> adds a character, so copied code is unchanged.
+    Neither <span> nor <wbr> adds a character, so copied code is unchanged."""
 
-    A pipe in a table cell is written `\\|`, inside code too. GitHub shows `|`;
-    Python-Markdown keeps the backslash in code, so it is dropped there."""
+    def prose_word(word: str) -> str:
+        if len(html.unescape(word)) > LONG_TOKEN:
+            return breakable(word)
+        return f"<span>{word}</span>"
 
     def cell_word(word: str) -> str:
         return f"<span>{long_word(word)}</span>"
 
-    def inner(region: str, each, unescape_pipe: bool = False) -> str:
-        def one(c: "re.Match[str]") -> str:
-            text = c.group(1).replace("\\|", "|") if unescape_pipe else c.group(1)
-            return code_words(text, each)
-
-        return re.sub(r"<code>(.*?)</code>", one, region, flags=re.S)
+    def inner(region: str, each) -> str:
+        return re.sub(
+            r"<code>(.*?)</code>",
+            lambda c: code_words(c.group(1), each),
+            region,
+            flags=re.S,
+        )
 
     def region(m: "re.Match[str]") -> str:
         if m.group("pre"):
             return m.group(0)
         if m.group("cell"):
-            return inner(m.group(0), cell_word, unescape_pipe=True)
+            return inner(m.group(0), cell_word)
         if m.group("head"):
             return inner(m.group(0), breakable)
-        return code_words(m.group("code"), long_word)
+        return code_words(m.group("code"), prose_word)
 
     body = re.sub(
         r"(?P<pre><pre[^>]*>.*?</pre>)"
@@ -219,12 +241,42 @@ def head(title: str) -> str:
     return HEAD.format(title=html.escape(title, quote=False))
 
 
+def github_slug(text: str) -> str:
+    """GitHub's anchor for a heading's text: lowercased, every character that is
+    not a letter, digit, underscore, hyphen or space dropped, each space a hyphen.
+    "6.13 `action` — a step" is `613-action--a-step`: the dash goes, both spaces
+    stay."""
+    return re.sub(r"[^\w\- ]", "", text.lower()).replace(" ", "-")
+
+
+def heading_ids(body: str) -> str:
+    """GitHub's id on every heading, a repeat numbered `-1`, `-2` in page order,
+    so an anchor written against GitHub lands on the site and the reverse.
+    cmark-gfm emits none; GitHub adds them after parsing, and so does this."""
+    seen: Counter = Counter()
+
+    def one(m: "re.Match[str]") -> str:
+        level, inner = m.group(1), m.group(2)
+        base = github_slug(plain_text(inner))
+        n = seen[base]
+        seen[base] += 1
+        slug = base if n == 0 else f"{base}-{n}"
+        return f'<h{level} id="{slug}">{inner}</h{level}>'
+
+    return re.sub(r"<h([1-6])>(.*?)</h\1>", one, body, flags=re.S)
+
+
+# What GitHub turns on for a .md file: its extensions (tables, autolinks,
+# strikethrough, task lists, the tag filter), footnotes, and raw HTML, which the
+# pack pages use (`<br>` in a table cell). GitHub sanitises raw HTML; the site
+# renders this repository's own text, and trusts it.
+GFM_OPTIONS = Options.CMARK_OPT_UNSAFE | Options.CMARK_OPT_FOOTNOTES
+
+
 def render(text: str) -> str:
     """Markdown to the page body: the one rendering path, for this script and
     for build-site.py."""
-    body = markdown.markdown(
-        text, extensions=["tables", "fenced_code", "toc"], output_format="html5"
-    )
+    body = heading_ids(cmarkgfm.github_flavored_markdown_to_html(text, GFM_OPTIONS))
     body = body.replace("<table>", '<div class="tablewrap"><table>').replace(
         "</table>", "</table></div>"
     )

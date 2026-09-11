@@ -1111,7 +1111,7 @@ missing.
 #### Running a script from inside the apply
 
 Because the body is verbatim Terraform, the passthrough is also the way to put a
-script *in the dependency graph* — the one thing [`action`](#613-action-a-step-with-no-provider-resource)
+script *in the dependency graph* — the one thing [`action`](#613-action--a-step-with-no-provider-resource)
 cannot do:
 
 ```
@@ -1212,7 +1212,7 @@ satz run-actions estate.satz --phase after-apply --execute
 sources and stays one: that is what lets the corpus snapshots, `check-presets`
 and the auto-fork transpile-identity proof mean what they say, and it is why
 cloning an estate and compiling it cannot execute anything. An action is inert
-until [`satz run-actions`](../README.md#cmd-run-actions) is invoked.
+until [`satz run-actions`](../README.md#run-actions-run-actions) is invoked.
 
 **An action emits nothing and can carry no claim.** It is not in `main.tf`, not
 in the emission manifest, and no `claim` can name it — the same opacity `hcl`
@@ -1322,7 +1322,7 @@ already has that shape — dry run by default, `--apply` to write, non-zero on a
 failed call. It lives under `presets/` rather than `scripts/` because
 `get-presets` ships only `presets/**`, and a pack whose script did not travel
 with it would declare an action that cannot find what it runs. See
-[`docs/housekeeping.md`](housekeeping.md#presetssccscc-enable-allsh-security-command-center-services).
+[`docs/housekeeping.md`](housekeeping.md#presetssccscc-enable-allsh--security-command-center-services).
 
 ### 6.14 `question` — what to ask, and what the answer costs
 

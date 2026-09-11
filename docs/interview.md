@@ -19,7 +19,7 @@ conversation that produces them — and for every question a pack adds later, wh
 ## What a question is, and what an answer is
 
 A pack that needs a param decided declares a `question` beside it — what to ask, why,
-and what changing the answer later costs ([the language reference](language.md#questions)
+and what changing the answer later costs ([the language reference](language.md#614-question--what-to-ask-and-what-the-answer-costs)
 has the syntax). The estate uses the pack; the questions come with it.
 
 **An answer is a param the estate's own `params {}` binds.** To the pack's default or
@@ -222,7 +222,7 @@ still open.
 
 A pack is interviewable when every param a customer must decide has a `question`,
 and every question says what it costs to be wrong about. The rules, from the
-[language reference](language.md#questions):
+[language reference](language.md#614-question--what-to-ask-and-what-the-answer-costs):
 
 - A question lives **in the file that declares its param**. Questions are absorbed
   after the `use … when` guard, so a question that gates a pack cannot live in the
