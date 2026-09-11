@@ -20,6 +20,9 @@
       service_account_email = "${google_service_account.satz_runner.email}"
     branch_name = "^main$"
     branch_name = "main"
+    google_service_account.satz_runner
+    google_service_account.satz_runner
+    google_service_account.satz_runner
     http_method = "POST"
     oauth_token {
     options {
@@ -38,9 +41,15 @@
     }
     }
     }
+  ]
+  ]
+  ]
   account_id = "satz-runner"
   build {
   build {
+  depends_on = [
+  depends_on = [
+  depends_on = [
   description = "nightly: does the live organisation still match the estate"
   description = "on every push: does the estate still compile"
   display_name = "satz continuous verification runner"

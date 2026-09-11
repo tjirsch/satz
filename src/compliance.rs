@@ -3168,6 +3168,7 @@ mod evidence_facts_tests {
                 refs: BTreeMap::new(),
                 nested: BTreeMap::new(),
                 enforce: None,
+                reset: false,
                 import_id: None,
                 origin: Some(("presets/x.satz".to_string(), 12)),
             },

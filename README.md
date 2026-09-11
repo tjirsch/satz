@@ -136,8 +136,8 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | Command | Options / Arguments |
 |---------|---------------------|
 | `hcl-init [ARGS]` | runs `<tf_tool> init` in `hcl_dir`; everything after the command is handed to the tool verbatim, so `--config` must come before it |
-| `plan [ARGS]` | runs `<tf_tool> plan` in `hcl_dir`, arguments passed through |
-| `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through |
+| `plan [ARGS]` | runs `<tf_tool> plan` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
+| `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
 | `migrate <INPUT>` | `--mode` |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
@@ -923,6 +923,15 @@ satz apply --config <estate> tf.plan
 Because the pass-through is verbatim, **`--config` must come before those arguments** —
 written after, it would be handed to OpenTofu instead. satz detects that case and
 prints the corrected command.
+
+`plan` and `apply` add one argument of their own: `-replace=<address>` for each org
+policy the state holds with rules while the estate declares it `spec { reset = true }`,
+with a note naming it. The provider would update such a policy by sending its rules
+together with `reset`, which the API refuses (`400 Cannot set PolicyRules if reset is
+true`); the replace deletes the policy and creates it reset. They read the state for
+this only when `main.tf` declares a reset policy. Nothing is added to an apply of a
+saved plan, to `-destroy` or `-refresh-only`, or for an address the arguments already
+replace. `tofu plan` run directly shows the in-place update instead.
 
 They do not transpile first, so the generated diff can be reviewed between `transpile`
 and `plan`; `transpile --plan` / `--apply` does both in one command.

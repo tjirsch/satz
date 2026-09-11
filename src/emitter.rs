@@ -174,6 +174,55 @@ fn block_address(b: &hcl::Block) -> Option<String> {
     }
 }
 
+/// Grants and group memberships that name a service account the estate declares
+/// carry its email as a string, not a reference, so tofu would run them beside the
+/// account: on create the API refuses a member that does not exist yet, and on
+/// destroy the account can go first and leave `deleted:serviceAccount:…` bindings
+/// behind. Each one gets a `depends_on` on the account.
+fn order_after_service_accounts(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let project_of = |r: &crate::manifest::EmittedResource| -> Option<String> {
+        r.attrs.get("project").cloned().or_else(|| {
+            let project = r.refs.get("project")?.strip_suffix(".project_id")?;
+            manifest.resources.get(project)?.attrs.get("project_id").cloned()
+        })
+    };
+    let accounts: std::collections::BTreeMap<String, String> = manifest
+        .of_type("google_service_account")
+        .filter_map(|r| {
+            let email = format!("{}@{}.iam.gserviceaccount.com", r.attrs.get("account_id")?, project_of(r)?);
+            Some((email, r.address()))
+        })
+        .collect();
+    if accounts.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address) else { continue };
+        let named = r
+            .attrs
+            .get("member")
+            .and_then(|m| m.strip_prefix("serviceAccount:"))
+            .or_else(|| r.nested.get("preferred_member_key.id").map(String::as_str));
+        let Some(account) = named.and_then(|email| accounts.get(email)) else { continue };
+        let dep = crate::emit_shared::traversal_expr(account);
+        match b.body.0.iter_mut().find_map(|st| match st {
+            hcl::Structure::Attribute(a) if a.key() == "depends_on" => Some(a),
+            _ => None,
+        }) {
+            Some(existing) => {
+                if let hcl::Expression::Array(items) = &mut existing.expr {
+                    if !items.contains(&dep) {
+                        items.push(dep);
+                    }
+                }
+            }
+            None => b.body.0.push(hcl::Structure::Attribute(hcl::Attribute::new("depends_on", hcl::Expression::Array(vec![dep])))),
+        }
+    }
+}
+
 /// A Terraform `import { to id }` block — the carried result of adoption.
 fn import_block(to: &str, id: &str) -> hcl::Block {
     hcl::Block::builder("import")
@@ -492,6 +541,8 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             }
         }
     }
+
+    order_after_service_accounts(&mut blocks);
 
     let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
     manifest.attach_imports(&imports);
@@ -955,6 +1006,72 @@ mod backend_identity_tests {
         let out = providers_tf(&config_with_both_backends(), &env);
         assert!(out.contains(r#"backend "gcs""#), "{}", out);
         assert!(!out.contains("impersonate_service_account"), "{}", out);
+    }
+}
+
+#[cfg(test)]
+mod service_account_order_tests {
+    //! A grant naming a service account by email ran beside the account's
+    //! creation and failed; on destroy it outlived the account.
+    use super::*;
+
+    fn blocks(tf: &str) -> Vec<hcl::Block> {
+        hcl::parse(tf).expect("fixture is valid HCL").blocks().cloned().collect()
+    }
+
+    fn depends_on(b: &hcl::Block) -> Option<String> {
+        b.body().attributes().find(|a| a.key() == "depends_on").map(|a| hcl::format::to_string(a.expr()).unwrap().split_whitespace().collect())
+    }
+
+    #[test]
+    fn grants_and_memberships_naming_a_declared_account_wait_for_it() {
+        let mut bs = blocks(
+            r#"
+resource "google_project" "infra" {
+  project_id = "acme-infra-001"
+}
+resource "google_service_account" "iac" {
+  account_id = "svc-iac-001"
+  project = google_project.infra.project_id
+}
+resource "google_service_account" "runner" {
+  account_id = "satz-runner"
+  project = "acme-infra-001"
+}
+resource "google_organization_iam_member" "iac_viewer" {
+  role = "roles/viewer"
+  member = "serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  org_id = "123456789012"
+}
+resource "google_project_iam_member" "runner_viewer" {
+  role = "roles/viewer"
+  member = "serviceAccount:satz-runner@acme-infra-001.iam.gserviceaccount.com"
+  project = "acme-infra-001"
+  depends_on = [google_project.infra]
+}
+resource "google_organization_iam_member" "elsewhere" {
+  role = "roles/viewer"
+  member = "serviceAccount:other@acme-infra-001.iam.gserviceaccount.com"
+  org_id = "123456789012"
+}
+resource "google_cloud_identity_group_membership" "owner" {
+  group = "groups/x"
+  preferred_member_key {
+    id = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  }
+}
+"#,
+        );
+        order_after_service_accounts(&mut bs);
+        let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
+        // the project reference resolves to the project's id
+        assert_eq!(depends_on(by("iac_viewer")).as_deref(), Some("[google_service_account.iac]"));
+        // an existing depends_on is extended, not replaced
+        assert_eq!(depends_on(by("runner_viewer")).as_deref(), Some("[google_project.infra,google_service_account.runner]"));
+        assert_eq!(depends_on(by("owner")).as_deref(), Some("[google_service_account.iac]"));
+        // an account the estate does not declare orders nothing
+        assert_eq!(depends_on(by("elsewhere")), None);
+        assert_eq!(depends_on(by("iac")), None);
     }
 }
 

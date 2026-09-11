@@ -641,6 +641,60 @@ assert t["read"], "no read entries"
 assert any(e["roles"] == ["roles/resourcemanager.projectCreator"] for e in t["types"]["google_project"]), t["types"]["google_project"]
 PYEOF
 
+step "plan/apply replace an org policy the state holds with rules and the estate declares reset"
+# After adopt moves a legacy twin onto its -superseded address, the state holds its
+# rules under a declaration that says reset; updating that in place is refused by
+# the API. A stand-in tool shows what satz hands to tofu.
+mkdir -p tmp/reset/hcl/.terraform
+cat > tmp/reset/config.toml <<EOF
+yaml_dir = "."
+hcl_dir = "hcl"
+tf_tool = "$root/tests/smoke/scripts/fake-tofu.sh"
+EOF
+cat > tmp/reset/hcl/main.tf <<'EOF'
+resource "google_org_policy_policy" "twin_superseded" {
+  name   = "organizations/123456789012/policies/compute.vmCanIpForward"
+  parent = "organizations/123456789012"
+  spec {
+    reset = true
+  }
+}
+resource "google_org_policy_policy" "kept" {
+  name   = "organizations/123456789012/policies/compute.managed.vmCanIpForward"
+  parent = "organizations/123456789012"
+  spec {
+    rules {
+      enforce = "TRUE"
+    }
+  }
+}
+EOF
+cat > tmp/reset/state.json <<'EOF'
+{"values": {"root_module": {"resources": [
+  {"address": "google_org_policy_policy.twin_superseded", "mode": "managed", "type": "google_org_policy_policy",
+   "values": {"id": "organizations/123456789012/policies/compute.vmCanIpForward", "spec": [{"reset": false, "rules": [{"enforce": "TRUE"}]}]}},
+  {"address": "google_org_policy_policy.kept", "mode": "managed", "type": "google_org_policy_policy",
+   "values": {"id": "organizations/123456789012/policies/compute.managed.vmCanIpForward", "spec": [{"reset": false, "rules": [{"enforce": "TRUE"}]}]}}
+]}}}
+EOF
+export FAKE_TOFU_STATE="$PWD/tmp/reset/state.json"
+"$satz" --config tmp/reset/config.toml apply -auto-approve > tmp/reset/apply.txt 2>&1 || fail "satz apply failed:\n$(cat tmp/reset/apply.txt)"
+grep -q '^fake-tofu apply -auto-approve -replace=google_org_policy_policy.twin_superseded$' tmp/reset/apply.txt \
+  || fail "apply did not replace the twin:\n$(cat tmp/reset/apply.txt)"
+grep -q 'google_org_policy_policy.twin_superseded — the state holds it with rules' tmp/reset/apply.txt \
+  || fail "apply did not say why it replaces:\n$(cat tmp/reset/apply.txt)"
+if grep -q 'replace=google_org_policy_policy.kept' tmp/reset/apply.txt; then fail "a policy that keeps its rules was replaced"; fi
+"$satz" --config tmp/reset/config.toml plan > tmp/reset/plan.txt 2>&1 || fail "satz plan failed:\n$(cat tmp/reset/plan.txt)"
+grep -q '^fake-tofu plan -replace=google_org_policy_policy.twin_superseded$' tmp/reset/plan.txt \
+  || fail "plan does not show the replace apply will make:\n$(cat tmp/reset/plan.txt)"
+"$satz" --config tmp/reset/config.toml apply saved.tfplan > tmp/reset/saved.txt 2>&1 || fail "satz apply <plan> failed:\n$(cat tmp/reset/saved.txt)"
+grep -q '^fake-tofu apply saved.tfplan$' tmp/reset/saved.txt || fail "a saved plan was given a -replace:\n$(cat tmp/reset/saved.txt)"
+"$satz" --config tmp/reset/config.toml apply -replace=google_org_policy_policy.twin_superseded > tmp/reset/own.txt 2>&1 \
+  || fail "satz apply -replace failed:\n$(cat tmp/reset/own.txt)"
+[ "$(grep -o 'replace=google_org_policy_policy.twin_superseded' tmp/reset/own.txt | wc -l | tr -d ' ')" = 1 ] \
+  || fail "a -replace the operator gave was added a second time:\n$(cat tmp/reset/own.txt)"
+unset FAKE_TOFU_STATE
+
 step "generate-migration: the script cds into hcl_dir, paces, retries 429s and summarizes"
 printf 'google_project.old: google_project.new\n' > tmp/mapping.yaml
 "$satz" --config . generate-migration tmp/mapping.yaml --output tmp/migrate.sh
