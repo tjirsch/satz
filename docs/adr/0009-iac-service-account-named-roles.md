@@ -77,6 +77,10 @@ Option 2. The table is a static list in `src/iac_roles.rs`, and the command writ
   is run by hand — `docs/housekeeping.md` lists it.
 - The apply that adds a role and the resources that need it runs them in one pass; a
   resource created before the grant takes effect fails and succeeds on the next apply.
+- Google makes a project's creator its owner, so the account is owner of every project
+  it creates and can delete those; a project it did not create needs
+  `roles/resourcemanager.projectDeleter` for its deletion, which the table does not
+  grant.
 - `organizationAdmin` remains, so the account can still grant itself anything. Named
   roles do not meet CIS 1.5 either: its audit flags a service account holding owner,
   editor or any role whose name contains `Admin`. What changes is that each is named.
@@ -84,6 +88,19 @@ Option 2. The table is a static list in `src/iac_roles.rs`, and the command writ
   as covered, so nothing breaks in the meantime. Migrating one is removing the
   `roles/owner` line and running `satz iac-roles <estate> --execute`, which then writes
   the named roles.
+
+## Verification
+
+On a test organization, 2026-09-11: a service account holding only the 16 roles
+`satz iac-roles --execute` wrote for a probe estate created, and then destroyed, a
+folder with an IAM grant and a folder-level org policy, a project with an IAM grant,
+an organization custom role, and — inside an existing project it had not created —
+a workload identity pool, a bucket, a log metric and a service account with an IAM
+grant. It moved the project between folder and organization in place. `satz whoami`
+tested 20 permissions as that account and named the one withheld on purpose, the
+billing link, which the provider's own pre-check then asked for by the same
+permission. `scripts/check_iac_roles.py` held all 51 table entries against Google's
+34 role definitions.
 
 ## Pros and cons of the options
 

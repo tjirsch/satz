@@ -72,8 +72,10 @@ pub(crate) const READ: &[Entry] = &[
 
 /// Per resource type: every type the preset library and the `init` template emit
 /// (a test holds the library to it), and the types `satz import` brings in.
-/// Deleting a project needs `roles/resourcemanager.projectDeleter`, which is not a
-/// standing grant: the provider's `deletion_policy` refuses the delete by default.
+/// No row carries `resourcemanager.projects.delete`. Google makes a project's
+/// creator its owner, so the account deletes the projects it created and no other;
+/// a project it did not create needs `roles/resourcemanager.projectDeleter`, which is
+/// not a standing grant. The provider's `deletion_policy` refuses the delete by default.
 pub(crate) const TYPES: &[(&str, &[Entry])] = &[
     ("google_artifact_registry_repository", &[project("artifactregistry.repositories.create", &["roles/artifactregistry.admin"])]),
     ("google_bigquery_dataset", &[project("bigquery.datasets.create", &["roles/bigquery.dataEditor"])]),
@@ -461,6 +463,18 @@ pub(crate) fn write_grants(
         }
         out = match add_to_existing(&out, block, &member, params, roles) {
             Some(edited) => edited,
+            // An appended billing block grants on `billing_account_infra`; an estate
+            // that binds none says nothing about which billing account its projects use.
+            None if block == "google_billing_account_iam_member"
+                && params.get("billing_account_infra").is_none_or(|v| v.is_empty()) =>
+            {
+                return Err(format!(
+                    "{}: the resource types need {} on a billing account, and the estate binds no \
+                     billing_account_infra to grant it on — nothing was written",
+                    estate.display(),
+                    roles.iter().cloned().collect::<Vec<_>>().join(", ")
+                ));
+            }
             None => append_block(&out, block, roles),
         };
         written.extend(roles.iter().map(|r| format!("{} in {}", r, block)));
@@ -729,6 +743,25 @@ mod tests {
         let one = "google_organization_iam_member {\n  \"serviceAccount:svc-iac-001@corp-infra-001.iam.gserviceaccount.com\" = [\"roles/viewer\"]\n}\n";
         let edited = add_to_existing(one, "google_organization_iam_member", &format!("serviceAccount:{}", SA), &params(), &roles(&["roles/browser"])).unwrap();
         assert!(edited.contains("= [\"roles/viewer\", \"roles/browser\"]\n"), "{}", edited);
+    }
+
+    #[test]
+    fn write_refuses_a_billing_block_with_no_billing_account_to_name() {
+        let dir = std::env::temp_dir().join(format!("satz-iac-billing-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let estate = dir.join("e.satz");
+        let src = "estate e\n\ngoogle_organization_iam_member {\n  \"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\" = [\n    \"roles/viewer\",\n  ]\n}\n";
+        std::fs::write(&estate, src).unwrap();
+        let err = write_grants(&estate, &params(), SA, &roles(&["roles/browser"]), &roles(&["roles/billing.admin"])).unwrap_err();
+        assert!(err.contains("billing_account_infra") && err.contains("roles/billing.admin"), "{}", err);
+        assert_eq!(std::fs::read_to_string(&estate).unwrap(), src, "nothing may be written");
+        // with the billing account bound, the block is appended
+        let mut with_billing = params();
+        with_billing.insert("billing_account_infra".into(), "01AA-BB-CC".into());
+        write_grants(&estate, &with_billing, SA, &roles(&["roles/browser"]), &roles(&["roles/billing.admin"])).unwrap();
+        let written = std::fs::read_to_string(&estate).unwrap();
+        assert!(written.contains("billing_account_id = billing_account_infra") && written.contains("\"roles/browser\","), "{}", written);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
