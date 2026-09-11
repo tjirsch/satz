@@ -60,13 +60,10 @@ pub(crate) enum Group {
     Read,
     /// writes files inside the estate
     Write,
-    /// Runs an external tool, or changes a live organisation. Grantable today
-    /// (`--allow exec`) but claimed by no tool yet, deliberately: an exec tool
-    /// must CAPTURE its child's output. `tofu` and Checkov inherit stdio from
-    /// the CLI, and here stdout is the protocol — a child writing to it is a
-    /// corrupt JSON-RPC stream, not interleaved logs. That plumbing comes with
-    /// the first exec tool rather than being hurried in beside the transport.
-    #[allow(dead_code)]
+    /// Runs an external tool (Checkov), or changes a live organisation. An exec
+    /// tool captures its child's output and gives it no stdin: here stdout is the
+    /// protocol and stdin the request stream, so a child inheriting either
+    /// corrupts the JSON-RPC session.
     Exec,
 }
 
@@ -294,6 +291,34 @@ pub(crate) struct TriageArgs {
 pub(crate) struct CompileSummary {
     pub estate: String,
     pub addresses: Vec<String>,
+    /// the files `satz_transpile` wrote; empty for a check
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub written: Vec<String>,
+}
+
+/// Checkov over the estate's emitted HCL: the counts, and each failed check with
+/// the Satz block that declared the resource.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ScanReport {
+    pub estate: String,
+    pub hcl_dir: String,
+    pub checkov_version: String,
+    pub passed: u64,
+    pub failed: u64,
+    pub skipped: u64,
+    pub resource_count: u64,
+    pub findings: Vec<ScanFinding>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ScanFinding {
+    pub check_id: String,
+    pub check_name: String,
+    /// Terraform address, `google_storage_bucket.audit_logs`
+    pub resource: String,
+    /// the Satz file and line that declared the resource, when the compile knows it
+    pub declared_at: Option<String>,
+    pub guideline: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -831,7 +856,7 @@ impl SatzMcp {
             &manifest,
             &prowler,
         ) {
-            Ok((_catalog, rows)) => Ok(Ok(Json(rows))),
+            Ok(t) => Ok(Ok(Json(t.rows))),
             Err(e) => Ok(Err(refused(format!("triage: {}", e)))),
         }
     }
@@ -858,6 +883,7 @@ impl SatzMcp {
             Ok(out) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
+                written: Vec::new(),
             }))),
             Err(e) => Ok(Err(refused(format!("transpile --check: {}", e)))),
         }
@@ -913,13 +939,88 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
-            Ok(out) => Ok(Ok(Json(CompileSummary {
+        let out = match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
+            Ok(out) => out,
+            Err(e) => return Ok(Err(refused(format!("transpile: {}", e)))),
+        };
+        // The directory, or the part of it that exists, must be inside the root.
+        let dir = PathBuf::from(&open.runtime.hcl_dir);
+        let existing = dir.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| dir.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let label = estate.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        match crate::write_hcl(&out, &dir, &label) {
+            Ok(written) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
+                written: written.iter().map(|p| p.display().to_string()).collect(),
             }))),
             Err(e) => Ok(Err(refused(format!("transpile: {}", e)))),
         }
+    }
+
+    #[tool(
+        name = "satz_scan_checkov",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ScanReport>(),
+        description = "Run Checkov over the estate's emitted HCL (the hcl_dir satz_transpile writes) and return \
+                       every failed check with the Satz block that declared the resource. Scans what is written: \
+                       transpile first. Needs the 'exec' capability — it runs an external tool (checkov on PATH, \
+                       else uvx checkov).",
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn scan_checkov(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<ScanReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Exec) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let dir = match self.confine(PathBuf::from(&open.runtime.hcl_dir)) {
+            Ok(d) => d,
+            Err(r) => return Ok(Err(r)),
+        };
+        // The compile says which Satz block declared each resource; the scan is of
+        // the files on disk.
+        let manifest = match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
+            Ok(out) => out.manifest,
+            Err(e) => return Ok(Err(refused(format!("scan: {}", e)))),
+        };
+        let scan_dir = dir.clone();
+        let report = match tokio::task::spawn_blocking(move || crate::scan::run(&scan_dir)).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Ok(Err(refused(format!("scan: {}", e)))),
+            Err(e) => return Ok(Err(refused(format!("scan: Checkov did not finish: {}", e)))),
+        };
+        let findings = report
+            .findings
+            .iter()
+            .map(|f| ScanFinding {
+                check_id: f.check_id.clone(),
+                check_name: f.check_name.clone(),
+                resource: f.resource.clone(),
+                declared_at: manifest
+                    .resources
+                    .get(&f.resource)
+                    .and_then(|r| r.origin.as_ref())
+                    .map(|(file, line)| format!("{}:{}", file, line)),
+                guideline: f.guideline.clone(),
+            })
+            .collect();
+        Ok(Ok(Json(ScanReport {
+            estate: estate.display().to_string(),
+            hcl_dir: dir.display().to_string(),
+            checkov_version: report.version,
+            passed: report.passed,
+            failed: report.failed,
+            skipped: report.skipped,
+            resource_count: report.resource_count,
+            findings,
+        })))
     }
 
     #[tool(
@@ -1260,6 +1361,19 @@ mod tests {
             .expect("mark_announced moved — re-point this gate");
         assert!(start < end, "the announce path is no longer one contiguous region");
         regions.push(("src/gcp/identity.rs (announce path)", &identity[start..end]));
+
+        // `satz_check_presets` downloads the pristine library and compares; the
+        // download counted itself on stdout once, which corrupted the stream.
+        regions.push(("src/github.rs", include_str!("github.rs")));
+        let presets = include_str!("presets.rs");
+        let start = presets
+            .find("async fn pristine_source")
+            .expect("pristine_source moved — re-point this gate");
+        let end = presets
+            .find("pub(crate) async fn check_presets_report")
+            .and_then(|at| presets[at..].find("\n}\n").map(|e| at + e))
+            .expect("check_presets_report moved — re-point this gate");
+        regions.push(("src/presets.rs (the check-presets path)", &presets[start..end]));
 
         for (what, src) in regions {
             for line in src.lines() {

@@ -76,7 +76,8 @@ every `satz` block in the guide.
 | `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
 | `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration |
 | `satz_whoami` | `read` | both halves of the identity — the ADC account and the open estate's service account — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable, does it hold the permissions the estate's resource types need (`permissions`, each missing one named with its role). The first thing to check when a live call is refused |
-| `satz_transpile` | `write` | compiles the estate to OpenTofu HCL in `hcl_dir` |
+| `satz_transpile` | `write` | compiles the estate and writes its OpenTofu HCL into `hcl_dir`, as `satz transpile` does; `written` lists the files |
+| `satz_scan_checkov` | `exec` | Checkov over the HCL in `hcl_dir` — the counts, and every failed check with the Satz file and line that declared the resource. Scans what is written: transpile first. Runs `checkov`, else `uvx checkov`, with its output captured |
 | `satz_restrict` | — | lowers this session's level; only with `--self-gated` |
 
 Each returns the same value the corresponding `--format json` command prints.
@@ -118,9 +119,9 @@ it may run without asking:
 
 | annotation | on |
 |---|---|
-| `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami` |
+| `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov` |
 | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write` |
-| `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami` — the three that reach the network |
+| `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov` — the four that can reach the network (`uvx checkov` fetches Checkov) |
 
 Without annotations a client either prompts on every read or runs a write without
 asking. The ceiling decides what is *possible*; the annotations decide what runs
@@ -195,8 +196,8 @@ estate. `--no-impersonate` outranks the scope: every tool then runs as the plain
 
 ### Not available
 
-- **No `exec` tool**, though the group is grantable: `tofu` and Checkov inherit stdio
-  from the CLI, and an exec tool has to **capture** its child's output first.
+- **No `tofu` tool.** `satz plan` and `satz apply` inherit stdio — apply's approval prompt
+  is interactive — and under MCP stdin and stdout are the protocol; a human runs them.
 - **`adopt`, `merge-presets` and `get-presets` are not exposed.** Each prints from
   inside its own walk, which under MCP would write to stdout, the protocol stream; they
   need a compute/render split first.

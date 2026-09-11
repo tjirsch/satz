@@ -49,7 +49,8 @@ async fn pristine_source(pristine_dir: Option<PathBuf>) -> Result<PathBuf, BoxEr
         )
         .into());
     }
-    println!("Fetched {n} upstream preset file(s).");
+    // stderr: `satz_check_presets` reaches this, and over MCP stdout is the protocol
+    eprintln!("Fetched {n} upstream preset file(s).");
     let _ = DOWNLOADED.set(tmp.clone());
     Ok(tmp)
 }

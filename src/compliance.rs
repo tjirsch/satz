@@ -1722,6 +1722,10 @@ pub(crate) struct ProwlerExport {
     /// every framework key seen in `unmapped.compliance` (`CIS-4.0`, …)
     pub frameworks: BTreeSet<String>,
     pub by_control: BTreeMap<String, Vec<ProwlerFinding>>,
+    /// FAIL findings per check that map to no control of the requested
+    /// framework — no compliance mapping at all, or none for this framework.
+    /// No row of a report holds them.
+    pub unmapped_fails: BTreeMap<String, usize>,
 }
 
 impl ProwlerExport {
@@ -1800,12 +1804,16 @@ pub(crate) fn ingest_prowler(
             return Err(format!("finding {} has no metadata.event_code, the check id Prowler 5 writes; {}", n, RERUN));
         }
         versions.insert(version);
+        let status = text(f.get("status_code"));
         let Some(map) = f.get("unmapped").and_then(|u| u.get("compliance")).and_then(|c| c.as_object()) else {
+            if status == "FAIL" {
+                *export.unmapped_fails.entry(check).or_default() += 1;
+            }
             continue;
         };
         let finding = ProwlerFinding {
             check,
-            status: text(f.get("status_code")),
+            status,
             severity: text(f.get("severity")),
             resource: text(
                 f.get("resources")
@@ -1818,6 +1826,7 @@ pub(crate) fn ingest_prowler(
             remediation: text(f.get("remediation").and_then(|r| r.get("desc"))),
             risk: text(f.get("risk_details")),
         };
+        let mut mapped = false;
         for (fw, controls) in map {
             export.frameworks.insert(fw.clone());
             let key = norm(fw);
@@ -1825,8 +1834,12 @@ pub(crate) fn ingest_prowler(
                 continue;
             }
             for c in controls.as_array().into_iter().flatten().filter_map(|c| c.as_str()) {
+                mapped = true;
                 export.by_control.entry(c.to_string()).or_default().push(finding.clone());
             }
+        }
+        if !mapped && finding.status == "FAIL" {
+            *export.unmapped_fails.entry(finding.check.clone()).or_default() += 1;
         }
     }
     export.version = versions.into_iter().collect::<Vec<_>>().join(", ");
@@ -2064,6 +2077,8 @@ pub(crate) async fn report_compliance_evidence(
         None => None,
     };
     let prowler_version = prowler_export.as_ref().map(|e| e.version.clone());
+    let prowler_unmapped: BTreeMap<String, usize> =
+        prowler_export.as_ref().map(|e| e.unmapped_fails.clone()).unwrap_or_default();
     let prowler: BTreeMap<String, Vec<ProwlerFinding>> = prowler_export.map(|e| e.by_control).unwrap_or_default();
 
     // ---- render ----
@@ -2265,12 +2280,16 @@ pub(crate) async fn report_compliance_evidence(
         }));
     }
 
+    md.push_str(&render_unmapped(&catalog, &prowler_unmapped));
+
     let evidence = serde_json::json!({
         "framework": catalog.catalog, "version": catalog.version,
         "estate": input.display().to_string(), "verified_at": verified_at,
         "live": outcome.verified(), "live_status": outcome.id(),
         "warnings": warnings, "estate_commit": estate_commit(input),
         "prowler_version": prowler_version,
+        // FAIL findings per Prowler check that map to no control of this framework
+        "prowler_unmapped": prowler_unmapped,
         "rows": json_rows,
     });
 
@@ -2423,6 +2442,31 @@ mod prowler_ocsf_tests {
         // the same export joined with 5.0 sees only what Prowler mapped to 5.0
         let five = read(&export("5.42.0"), "5.0").unwrap();
         assert_eq!(five.by_control.keys().cloned().collect::<Vec<_>>(), ["5.1"]);
+    }
+
+    #[test]
+    fn fails_outside_the_framework_are_counted_not_dropped() {
+        let json = format!(
+            "[{},{},{},{},{}]",
+            finding("5.42.0", "storage_bucket_public_access", "FAIL", r#"{"CIS-4.0":["5.1"]}"#, "r1"),
+            // mapped, but only to another framework
+            finding("5.42.0", "compute_loadbalancer_logging", "FAIL", r#"{"CIS-5.0":["2.17"]}"#, "r2"),
+            finding("5.42.0", "compute_loadbalancer_logging", "FAIL", r#"{"CIS-5.0":["2.17"]}"#, "r3"),
+            // no compliance mapping at all
+            finding("5.42.0", "logging_sink_created", "FAIL", "{}", "r4").replace(r#""unmapped":{"compliance":{}},"#, ""),
+            // a PASS outside the framework is not a finding anyone has to act on
+            finding("5.42.0", "iam_something", "PASS", r#"{"CIS-5.0":["1.2"]}"#, "r5"),
+        );
+        let e = read(&json, "4.0").unwrap();
+        assert_eq!(
+            e.unmapped_fails.iter().map(|(c, n)| (c.as_str(), *n)).collect::<Vec<_>>(),
+            [("compute_loadbalancer_logging", 2), ("logging_sink_created", 1)]
+        );
+        let catalog: Catalog = serde_yaml::from_str("catalog: cis-gcp\nversion: \"4.0\"\ncontrols: {}\n").unwrap();
+        let md = render_unmapped(&catalog, &e.unmapped_fails);
+        assert!(md.contains("## Prowler checks outside cis-gcp 4.0 (3 FAIL finding(s))"), "{md}");
+        assert!(md.contains("| compute_loadbalancer_logging | 2 |"), "{md}");
+        assert!(render_unmapped(&catalog, &BTreeMap::new()).is_empty());
     }
 
     #[test]
@@ -2696,6 +2740,25 @@ pub(crate) fn triage(
     rows
 }
 
+/// The Prowler FAIL findings that map to no control of the framework, as a
+/// Markdown section — empty when there are none.
+pub(crate) fn render_unmapped(catalog: &Catalog, unmapped: &BTreeMap<String, usize>) -> String {
+    if unmapped.is_empty() {
+        return String::new();
+    }
+    let total: usize = unmapped.values().sum();
+    let mut md = format!(
+        "\n## Prowler checks outside {} {} ({} FAIL finding(s))\n\n\
+         Prowler maps these checks to no control of this framework, so no row above holds their findings.\n\n\
+         | Check | FAIL findings |\n|---|---|\n",
+        catalog.catalog, catalog.version, total
+    );
+    for (check, n) in unmapped {
+        md.push_str(&format!("| {} | {} |\n", check, n));
+    }
+    md
+}
+
 pub(crate) fn render_triage(catalog: &Catalog, rows: &[TriageRow]) -> String {
     let mut md = format!("# Triage — {} {}\n\n", catalog.catalog, catalog.version);
     md.push_str("Every Prowler FAIL (and MANUAL) sorted into the bucket that says who fixes it and how. This is the skeleton of the remediation plan; the concrete steps, ordering and side effects are yours.\n");
@@ -2719,6 +2782,14 @@ pub(crate) fn render_triage(catalog: &Catalog, rows: &[TriageRow]) -> String {
 
 /// The `triage` command.
 #[allow(clippy::too_many_arguments)]
+/// What `triage_rows` computes: the rows, and the FAIL findings per check that
+/// map to no control of the framework.
+pub(crate) struct Triage {
+    pub catalog: Catalog,
+    pub rows: Vec<TriageRow>,
+    pub unmapped: BTreeMap<String, usize>,
+}
+
 /// The triage rows, computed. No printing, no files — so the same verdicts serve
 /// the terminal, `--format json` and the MCP tool.
 pub(crate) fn triage_rows(
@@ -2727,7 +2798,7 @@ pub(crate) fn triage_rows(
     included_claims: &[(String, Claim)],
     manifest: &Manifest,
     prowler_path: &Path,
-) -> Result<(Catalog, Vec<TriageRow>), BoxErr> {
+) -> Result<Triage, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
@@ -2736,7 +2807,7 @@ pub(crate) fn triage_rows(
     let export = read_prowler(prowler_path, &catalog.catalog, &catalog.version)?;
     export.require_mapping(prowler_path, &catalog)?;
     let rows = triage(&catalog, &goals, &export.by_control, &attrs, manifest);
-    Ok((catalog, rows))
+    Ok(Triage { catalog, rows, unmapped: export.unmapped_fails })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2750,11 +2821,11 @@ pub(crate) fn run_triage(
     report_path: Option<PathBuf>,
     fix: bool,
 ) -> Result<(), BoxErr> {
-    let (catalog, rows) = triage_rows(framework, presets_dir, included_claims, manifest, prowler_path)?;
+    let Triage { catalog, rows, unmapped } = triage_rows(framework, presets_dir, included_claims, manifest, prowler_path)?;
 
     let text = match format {
         crate::OutFormat::Json => serde_json::to_string_pretty(&rows)?,
-        _ => render_triage(&catalog, &rows),
+        _ => render_triage(&catalog, &rows) + &render_unmapped(&catalog, &unmapped),
     };
     match report_path {
         Some(p) => {
@@ -2781,7 +2852,12 @@ pub(crate) fn run_triage(
         *m.entry(format!("{:?}", r.bucket)).or_default() += 1;
         m
     });
-    eprintln!("triage: {}", counts.iter().map(|(b, n)| format!("{} {}", n, b)).collect::<Vec<_>>().join(", "));
+    let outside: usize = unmapped.values().sum();
+    eprintln!(
+        "triage: {}{}",
+        counts.iter().map(|(b, n)| format!("{} {}", n, b)).collect::<Vec<_>>().join(", "),
+        if outside == 0 { String::new() } else { format!("; {} FAIL finding(s) map to no control of this framework", outside) }
+    );
     Ok(())
 }
 
@@ -2845,6 +2921,14 @@ pub(crate) fn run_remediation_dossier(
         ("estate".to_string(), estate.clone()),
         ("prowler export".to_string(), prowler_path.display().to_string()),
         ("prowler".to_string(), export.version.clone()),
+        (
+            "prowler outside the framework".to_string(),
+            if export.unmapped_fails.is_empty() {
+                "none".to_string()
+            } else {
+                export.unmapped_fails.iter().map(|(c, n)| format!("{} ({})", c, n)).collect::<Vec<_>>().join(", ")
+            },
+        ),
         ("checkov".to_string(), checkov.map(|r| format!("v{} — {} findings", r.version, r.findings.len())).unwrap_or_else(|| "not run".to_string())),
         ("dossier sha256".to_string(), hash.clone()),
         ("generated".to_string(), chrono_free_timestamp()),
@@ -2859,6 +2943,7 @@ pub(crate) fn run_remediation_dossier(
         "dossier_sha256": hash,
         "generated": chrono_free_timestamp(),
         "summary": dossier.summary,
+        "prowler_unmapped": export.unmapped_fails,
     });
     crate::fsx::write(out.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
 
