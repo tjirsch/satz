@@ -2379,15 +2379,19 @@ fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
 
 /// Run the configured Terraform tool in the estate's hcl dir.
 ///
-/// A thin wrapper on purpose: the point is not to reimplement `plan`/`apply` but
-/// to make them location-independent like every other command, so
+/// A thin wrapper: the point is not to reimplement `plan`/`apply` but to make
+/// them location-independent like every other command, so
 /// `satz apply --config <estate>` works from anywhere. stdio is inherited, so
 /// apply's approval prompt and the usual coloured output behave normally, and the
 /// tool's own exit code is propagated — a failed plan must fail the caller.
 ///
-/// It deliberately does NOT transpile first: `hcl/` is generated, but coupling
-/// generation to the deploy step would change what `plan` means and hide a diff
-/// the operator should see. Transpile, look, then plan.
+/// The one thing it adds: `plan` and `apply` replace an org policy that the
+/// state holds with rules and the estate now declares reset
+/// (`reset_replacements`, ADR 0011), and say so.
+///
+/// It does NOT transpile first: `hcl/` is generated, but coupling generation to
+/// the deploy step would change what `plan` means and hide a diff the operator
+/// should see. Transpile, look, then plan.
 fn run_tf(
     runtime_config: &ToolConfig,
     subcommand: &str,
@@ -2408,11 +2412,22 @@ fn run_tf(
         )
         .into());
     }
+    let mut args = args.to_vec();
+    if subcommand == "plan" || subcommand == "apply" {
+        for address in reset_replacements_for(runtime_config, hcl_dir, &args)? {
+            eprintln!(
+                "note: {} — the state holds it with rules and the estate declares it reset; \
+                 replacing it (-replace), because the API refuses to switch a policy with rules to reset in place",
+                address
+            );
+            args.push(format!("-replace={}", address));
+        }
+    }
     eprintln!("{} {} (in {})", runtime_config.tf_tool, subcommand, hcl_dir.display());
     let status = std::process::Command::new(&runtime_config.tf_tool)
         .current_dir(hcl_dir)
         .arg(subcommand)
-        .args(args)
+        .args(&args)
         .status()
         .map_err(|e| format!("could not run '{}': {}", runtime_config.tf_tool, e))?;
     match status.code() {
@@ -2422,6 +2437,82 @@ fn run_tf(
         Some(code) => std::process::exit(code),
         None => Err(format!("{} {} was terminated by a signal", runtime_config.tf_tool, subcommand).into()),
     }
+}
+
+/// The org policies `plan` and `apply` replace instead of updating in place: each
+/// one the state holds with rules while the configuration declares it `reset`.
+/// The provider updates such a policy by sending the rules it holds together with
+/// `reset = true`, and the API refuses the pair (`Cannot set PolicyRules if reset
+/// is true`). That is the state after `adopt` moved a legacy twin onto its
+/// `-superseded` address. A replace deletes the policy and creates it reset.
+fn reset_replacements(manifest: &crate::manifest::Manifest, state: &crate::bootstrap::StateIndex) -> Vec<String> {
+    manifest
+        .of_type("google_org_policy_policy")
+        .filter(|r| r.reset && state.holds_rules(&r.address()))
+        .map(|r| r.address())
+        .collect()
+}
+
+/// Flags of `tofu plan`/`apply` that take their value as the next argument when
+/// written without `=`. Every other flag is a switch.
+const TF_VALUE_FLAGS: &[&str] =
+    &["-var", "-var-file", "-target", "-exclude", "-replace", "-lock-timeout", "-parallelism", "-state", "-state-out", "-backup", "-out", "-generate-config-out"];
+
+/// The addresses these arguments already replace, or `None` when satz must not add
+/// `-replace`: a saved plan (a positional argument) cannot take one, and a destroy
+/// or a refresh-only run replaces nothing.
+fn replace_args(args: &[String]) -> Option<std::collections::BTreeSet<String>> {
+    let mut replaced = std::collections::BTreeSet::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let bare = a.trim_start_matches('-');
+        if !a.starts_with('-') {
+            return None;
+        }
+        let (flag, value) = match a.split_once('=') {
+            Some((f, v)) => (format!("-{}", f.trim_start_matches('-')), Some(v.to_string())),
+            None => (format!("-{}", bare), None),
+        };
+        if flag == "-destroy" || flag == "-refresh-only" {
+            return None;
+        }
+        let value = match value {
+            Some(v) => Some(v),
+            None if TF_VALUE_FLAGS.contains(&flag.as_str()) => it.next().cloned(),
+            None => None,
+        };
+        if flag == "-replace" {
+            replaced.extend(value);
+        }
+    }
+    Some(replaced)
+}
+
+/// `reset_replacements` for the estate in `hcl_dir`, minus what the arguments
+/// already replace. The state is read only when the emitted configuration declares
+/// a reset policy at all.
+fn reset_replacements_for(
+    runtime_config: &ToolConfig,
+    hcl_dir: &Path,
+    args: &[String],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let Some(already) = replace_args(args) else {
+        return Ok(Vec::new());
+    };
+    let main_tf = hcl_dir.join("main.tf");
+    let text = match std::fs::read_to_string(&main_tf) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("{}: {}", main_tf.display(), e).into()),
+    };
+    let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
+    let manifest = crate::manifest::Manifest::from_blocks(body.blocks());
+    if !manifest.of_type("google_org_policy_policy").any(|r| r.reset) {
+        return Ok(Vec::new());
+    }
+    let state = crate::bootstrap::state_index(&runtime_config.tf_tool, hcl_dir)
+        .map_err(|e| format!("reading the state for org policies that must be replaced: {}", e))?;
+    Ok(reset_replacements(&manifest, &state).into_iter().filter(|a| !already.contains(a)).collect())
 }
 
 /// satz reads Satz estates. A `.yaml` estate is not an error the user can fix
@@ -3278,7 +3369,7 @@ async fn run_adopt(
     let in_state = state.clone().unwrap_or_default();
 
     println!("\nadopt {} — {} resources declared\n", input_path.display(), out.manifest.resources.len());
-    print!("{}", adopt::render_table(&resolutions, &in_state));
+    print!("{}", adopt::render_table(&resolutions, &in_state, &out.manifest));
     println!("\n{}", adopt::summary(&resolutions, &in_state));
     if let Err(e) = &state {
         println!(
@@ -5402,6 +5493,44 @@ mod iac_roles_gate {
         let unused: Vec<&String> = packs.difference(&used).collect();
         assert!(unused.is_empty(), "packs no case under tests/iac/ uses: {:?}", unused);
         assert!(types.len() >= 20, "the gate checked only {} types: {:?}", types.len(), types);
+    }
+}
+
+#[cfg(test)]
+mod reset_replace {
+    //! E14's first apply after the 2.7 pass: adopt had moved a legacy twin onto
+    //! its `-superseded` address, the plan updated it in place with its old rules
+    //! and `reset = true`, and the API refused. `plan` and `apply` replace it.
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_policy_holding_rules_and_declared_reset_is_replaced() {
+        let manifest = crate::manifest::Manifest::parse(
+            "resource \"google_org_policy_policy\" \"twin_superseded\" {\n  name = \"a\"\n  spec {\n    reset = true\n  }\n}\n\
+             resource \"google_org_policy_policy\" \"fresh_reset\" {\n  name = \"b\"\n  spec {\n    reset = true\n  }\n}\n\
+             resource \"google_org_policy_policy\" \"enforced\" {\n  name = \"c\"\n  spec {\n    rules {\n      enforce = \"TRUE\"\n    }\n  }\n}\n",
+        );
+        let state = crate::bootstrap::StateIndex::default()
+            .with_rules(&["google_org_policy_policy.twin_superseded", "google_org_policy_policy.enforced"]);
+        // not a reset declaration without rules in the state, and not a policy that keeps its rules
+        assert_eq!(reset_replacements(&manifest, &state), ["google_org_policy_policy.twin_superseded"]);
+    }
+
+    #[test]
+    fn a_saved_plan_a_destroy_and_a_refresh_take_no_replace() {
+        assert_eq!(replace_args(&args(&[])), Some(Default::default()));
+        assert!(replace_args(&args(&["-auto-approve", "-var-file", "x.tfvars", "-parallelism=4"])).is_some());
+        assert_eq!(replace_args(&args(&["plan.tfplan"])), None);
+        assert_eq!(replace_args(&args(&["-auto-approve", "plan.tfplan"])), None);
+        assert_eq!(replace_args(&args(&["-destroy"])), None);
+        assert_eq!(replace_args(&args(&["-refresh-only"])), None);
+        // what the operator already replaces is not added twice, in either form
+        let r = replace_args(&args(&["-replace=google_org_policy_policy.a", "-replace", "google_org_policy_policy.b"])).unwrap();
+        assert_eq!(r.into_iter().collect::<Vec<_>>(), ["google_org_policy_policy.a", "google_org_policy_policy.b"]);
     }
 }
 

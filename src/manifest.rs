@@ -35,6 +35,9 @@ pub(crate) struct EmittedResource {
     /// declares exactly one. Several, none, or a list constraint yield `None`:
     /// no verdict is better than a wrong one.
     pub enforce: Option<bool>,
+    /// An org policy whose `spec` declares `reset = true`: the constraint is
+    /// declared off, back to Google's default.
+    pub reset: bool,
     /// The `import { to id }` block emitted for this resource, if any — i.e.
     /// the estate already adopted it.
     pub import_id: Option<String>,
@@ -182,6 +185,9 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         [only] => Some(*only),
         _ => None,
     };
+    let reset = b.body().blocks().filter(|nb| nb.identifier() == "spec").any(|spec| {
+        spec.body().attributes().any(|a| a.key() == "reset" && matches!(a.expr(), hcl::Expression::Bool(true)))
+    });
     Some(EmittedResource {
         tf_type: tf_type.to_string(),
         label: label.to_string(),
@@ -189,6 +195,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         refs,
         nested,
         enforce,
+        reset,
         import_id: None,
         origin: None,
     })

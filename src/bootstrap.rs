@@ -328,6 +328,9 @@ pub(crate) struct StateIndex {
     /// `(type, live id)` → the address managing it. Keyed by type as well as
     /// id because an id is only unique within its type.
     by_object: std::collections::BTreeMap<(String, String), String>,
+    /// Org policies whose state holds rules and no `reset`. Switching one of
+    /// these to `reset = true` in place is refused by the API.
+    holding_rules: std::collections::BTreeSet<String>,
 }
 
 impl StateIndex {
@@ -340,6 +343,17 @@ impl StateIndex {
     /// guessing here would move the wrong resource.
     pub(crate) fn address_of(&self, tf_type: &str, id: &str) -> Option<&str> {
         self.by_object.get(&(tf_type.to_string(), id.to_string())).map(String::as_str)
+    }
+
+    /// Whether the state holds this org policy with rules and not reset.
+    pub(crate) fn holds_rules(&self, address: &str) -> bool {
+        self.holding_rules.contains(address)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_rules(mut self, addresses: &[&str]) -> Self {
+        self.holding_rules.extend(addresses.iter().map(|a| a.to_string()));
+        self
     }
 
     #[cfg(test)]
@@ -396,6 +410,14 @@ fn index_module(module: &serde_json::Value, idx: &mut StateIndex) {
             // nor moved, so indexing it could only produce a wrong match.
             if res.get("mode").and_then(|m| m.as_str()) == Some("data") {
                 continue;
+            }
+            if res.get("type").and_then(|t| t.as_str()) == Some("google_org_policy_policy") {
+                let spec = res.get("values").and_then(|v| v.get("spec")).and_then(|s| s.get(0));
+                let reset = spec.and_then(|s| s.get("reset")).and_then(|r| r.as_bool()) == Some(true);
+                let rules = spec.and_then(|s| s.get("rules")).and_then(|r| r.as_array()).is_some_and(|r| !r.is_empty());
+                if rules && !reset {
+                    idx.holding_rules.insert(address.to_string());
+                }
             }
             let (Some(tf_type), Some(id)) = (
                 res.get("type").and_then(|t| t.as_str()),
@@ -1064,6 +1086,24 @@ mod tests {
         // object, so a resource resolving to the same id must not match it.
         assert!(idx.manages("data.google_project.lookup"));
         assert_eq!(idx.address_of("google_project", "projects/bolt-infra-001"), None);
+    }
+
+    #[test]
+    fn state_json_names_the_org_policies_that_hold_rules() {
+        let idx = parse_state_json(
+            r#"{"values": {"root_module": {"resources": [
+              {"address": "google_org_policy_policy.ruled", "mode": "managed", "type": "google_org_policy_policy",
+               "values": {"id": "organizations/1/policies/a", "spec": [{"reset": false, "rules": [{"enforce": "TRUE"}]}]}},
+              {"address": "google_org_policy_policy.reset", "mode": "managed", "type": "google_org_policy_policy",
+               "values": {"id": "organizations/1/policies/b", "spec": [{"reset": true, "rules": []}]}},
+              {"address": "google_org_policy_policy.empty", "mode": "managed", "type": "google_org_policy_policy",
+               "values": {"id": "organizations/1/policies/c", "spec": [{"reset": false, "rules": []}]}}
+            ]}}}"#,
+        )
+        .unwrap();
+        assert!(idx.holds_rules("google_org_policy_policy.ruled"));
+        assert!(!idx.holds_rules("google_org_policy_policy.reset"));
+        assert!(!idx.holds_rules("google_org_policy_policy.empty"));
     }
 
     #[test]

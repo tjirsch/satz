@@ -671,6 +671,15 @@ The condition is hashed into the address, so the same role to the same member
 under two conditions is two resources. Emission order is by address, not by
 source order.
 
+**A member that names a service account the estate declares waits for it.** When the
+member is `serviceAccount:<account_id>@<project>.iam.gserviceaccount.com` of a
+`google_service_account` in the same estate, the grant carries
+`depends_on = [google_service_account.<label>]`, so the apply creates the account before
+the grant and destroys the grant before the account. Without it `tofu` runs both at
+once: the API refuses a member that does not exist yet, and an account deleted first
+leaves `deleted:serviceAccount:…` bindings behind. A group membership whose member key
+names such an account waits for it the same way.
+
 **Every `*_iam_member` type takes the member map.** The organisation's scope
 comes from `customer_organization_id`, a project's or folder's from the node the
 map is written in, and every other type writes its scope in the map — one key

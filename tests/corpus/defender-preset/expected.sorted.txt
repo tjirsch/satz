@@ -19,8 +19,14 @@
     ]
     allowed_audiences = [
     allowed_audiences = [
+    google_service_account.mdc_cspm
+    google_service_account.mdc_cspm
+    google_service_account.mdc_onboarding
     issuer_uri = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"
     issuer_uri = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+  ]
+  ]
+  ]
   ]
   ]
   account_id = "mdc-onboarding-sa"
@@ -28,6 +34,9 @@
   attribute_mapping = {
   attribute_mapping = {
   billing_account = "01AA-BB-CC"
+  depends_on = [
+  depends_on = [
+  depends_on = [
   description = "Microsoft Defender for cloud CSPM custom role"
   description = "Microsoft defender for cloud provisioner workload identity pool"
   description = "Microsoft organization custom role for onboarding"

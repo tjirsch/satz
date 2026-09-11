@@ -648,6 +648,7 @@ pub(crate) fn move_conflicts(
 pub(crate) fn render_table(
     resolutions: &[Resolution],
     in_state: &crate::bootstrap::StateIndex,
+    manifest: &crate::manifest::Manifest,
 ) -> String {
     let mut s = String::new();
     let w = resolutions.iter().map(|r| r.address.len()).max().unwrap_or(20).min(72);
@@ -670,6 +671,15 @@ pub(crate) fn render_table(
                 r.address, "MOVE", old,
                 w = w
             ));
+            // After the move the state holds its rules under an address the
+            // estate declares reset, which the API refuses as an update.
+            if in_state.holds_rules(old) && manifest.resources.get(&r.address).is_some_and(|m| m.reset) {
+                s.push_str(&format!(
+                    "  {:w$}  {:30}  holds rules and is declared reset — `satz plan` and `satz apply` replace it\n",
+                    "", "",
+                    w = w
+                ));
+            }
             continue;
         }
         let (verdict, detail) = match &r.outcome {
@@ -1486,7 +1496,7 @@ mod state_aware_tests {
     #[test]
     fn a_managed_address_is_reported_as_skipped_not_as_an_import() {
         let rs = three();
-        let table = render_table(&rs, &managed(&["google_org_policy_policy.a"]));
+        let table = render_table(&rs, &managed(&["google_org_policy_policy.a"]), &crate::manifest::Manifest::default());
         let a = table.lines().find(|l| l.contains(".a ")).unwrap_or_default();
         // The same words the import path prints, so the dry run and the run are
         // recognisably the same statement.
@@ -1548,10 +1558,24 @@ mod state_aware_tests {
         let (rs, state) = renamed();
         assert_eq!(moved_from(&rs[0], &state), Some(OLD));
 
-        let table = render_table(&rs, &state);
+        let table = render_table(&rs, &state, &crate::manifest::Manifest::default());
         assert!(table.contains("MOVE"), "{}", table);
         assert!(table.contains(OLD), "the row names the address to move FROM: {}", table);
         assert!(!table.contains("IMPORT"), "importing it is the defect: {}", table);
+        assert!(!table.contains("declared reset"), "{}", table);
+    }
+
+    /// The move carries the old rules to an address declared reset: the row says
+    /// the next plan replaces it, as `satz plan` and `satz apply` do.
+    #[test]
+    fn a_move_onto_a_reset_declaration_says_it_will_be_replaced() {
+        let (rs, state) = renamed();
+        let state = state.with_rules(&[OLD]);
+        let manifest = crate::manifest::Manifest::parse(
+            "resource \"google_org_policy_policy\" \"compute_restrictProtocolForwarding_superseded\" {\n  name = \"x\"\n  spec {\n    reset = true\n  }\n}\n",
+        );
+        let table = render_table(&rs, &state, &manifest);
+        assert!(table.contains("holds rules and is declared reset"), "{}", table);
     }
 
     #[test]
@@ -1569,7 +1593,7 @@ mod state_aware_tests {
         let rs = vec![res(NEW, Outcome::Resolved { id: LIVE_ID.into(), verified: true })];
         let state = crate::bootstrap::StateIndex::from_objects(&[(NEW, "google_org_policy_policy", LIVE_ID)]);
         assert_eq!(moved_from(&rs[0], &state), None);
-        assert!(render_table(&rs, &state).contains("already managed in the state"));
+        assert!(render_table(&rs, &state, &crate::manifest::Manifest::default()).contains("already managed in the state"));
     }
 
     /// Sameness is proven by an exact match on type AND id. Anything less would
