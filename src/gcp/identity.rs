@@ -428,7 +428,7 @@ pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
             out.push_str(&format!("\npermissions: {} tested for this estate's resource types — all held", p.tested));
         } else {
             out.push_str(&format!("\npermissions: {} of {} tested are MISSING:", p.missing.len(), p.tested));
-            for line in crate::iac_roles::describe(&p.missing) {
+            for line in crate::iac_roles::describe(&crate::iac_roles::cover(&p.missing)) {
                 out.push_str(&format!("\n  {}", line));
             }
         }

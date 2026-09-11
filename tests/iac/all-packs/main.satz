@@ -1,0 +1,79 @@
+// IaC-roles gate: every pack in the library that can share one estate, used
+// unconditionally, compiled against the corpus schema fixture. Every resource
+// type it emits must have a row in the IaC service account's role table
+// (`src/iac_roles.rs`). The alternatives that cannot share an estate with these —
+// the S1 group model in its two spellings, Defender's least-privilege role — are
+// the other cases under `tests/iac/`; together they use every pack.
+
+estate iac_all_packs
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0example"
+  customer_domain = "example.com"
+  customer_shortname = "acme"
+  customer_longname = "Acme Corp."
+  infra_folder_name = "Infrastructure"
+  infra_project_name = "acme-infra-001"
+  infra_bucket_name = "acme-infra-001-state"
+  svc_iac_account = "svc-iac-001"
+  svc_iac_users_group = "svc-iac-001-users"
+  first_admin = "admin@example.com"
+  billing_account_infra = "012345-6789AB-CDEF01"
+  logsink_project_name = "acme-log-001"
+  deployment_engine = "tofu"
+  deployment_mode = "local"
+  default_region = "europe-west3"
+  default_zone = "europe-west3-a"
+  allowed_api_key_services = ["storage.googleapis.com"]
+  cis_alert_project = "acme-infra-001"
+  security_audit_sa_project = "acme-infra-001"
+  mdc_workload_pool_id = "11111111111111111111111111111111"
+  mdc_mgmt_project_id = "acme-mdc-001"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/estate-core.satz"
+use "presets/estate-map.satz"
+
+google_essential_contacts_contact {
+  use "presets/essential-contacts-organization.satz"
+}
+
+google_org_policy_policy {
+  use "presets/CIS-GCP-Foundation-4.0.satz"
+}
+use "presets/cis-extensions/block-project-ssh-keys.satz"
+use "presets/cis-extensions/shielded-vm.satz"
+use "presets/cis-extensions/confidential-computing.satz"
+use "presets/cis-extensions/cloud-sql.satz"
+use "presets/cis-extensions/cmek.satz"
+use "presets/cis-extensions/api-key-services.satz"
+use "presets/cis-extensions/bucket-retention.satz"
+
+use "presets/security-group-models/s2-security-groups.satz"
+use "presets/billing-account-permissions.satz"
+use "presets/organization-budget.satz"
+use "presets/security-audit/sa-security-audit.satz"
+
+google_folder {
+  shared {
+    display_name = "Shared"
+    use "presets/monitoring/organization-audit-logsink.satz"
+  }
+}
+use "presets/monitoring/organization-cis-log-alerts-central.satz"
+use "presets/monitoring/project-cis-log-alerts.satz"
+
+use "presets/integrations/microsoft-defender-for-cloud.satz"
+use "presets/integrations/microsoft-defender-for-cloud-cspm.satz"
+use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz"
+
+use "presets/ci/verification-runner.satz"
+use "presets/ci/verification-runner-grant.satz"
+use "presets/scc/scc-service-enablement.satz"

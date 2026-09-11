@@ -318,6 +318,7 @@ recoverable: say what you would need and why, rather than retrying the same call
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |
 | a question names no local param | a question must travel with the param it answers |
+| the IaC service account … lacks roles | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run `satz iac-roles <estate> --execute` |
 
 ## Hard rules
 

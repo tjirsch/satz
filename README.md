@@ -129,6 +129,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--only <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
+| `iac-roles [INPUT]` | `--execute`, `--format` (`text`\|`json`) — the roles the estate's IaC service account needs for the resource types the estate emits, against the roles the estate grants it; exits non-zero when one is missing; `--execute` writes the missing roles into the estate file. Without an estate: the table of resource types and roles. See [IaC service account roles](#iac-service-account-roles-iac-roles) |
 
 **HCL**
 
@@ -182,7 +183,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated` — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Twelve tools, each returning structured content with a published output schema and annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
-| `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and (with an estate) the service account that estate's live commands run as, checked — may this credential become it, and is the quota project reachable |
+| `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and (with an estate) the service account that estate's live commands run as, checked — may this credential become it, is the quota project reachable, and does it hold the permissions the estate's resource types need |
 
 Details for each command are below.
 
@@ -248,6 +249,69 @@ satz bootstrap <CONFIG_FILE> [options]
     - **Transpile**: Compiles the estate to HCL.
     - **Init**: Runs `tofu init` to download plugins.
     - **Import**: Automatically imports the created Folder, Project, and Bucket into the local state.
+
+### IaC service account roles (`iac-roles`)
+
+The estate's IaC service account — `svc_iac_account` in `infra_project_name` — holds
+named roles at the organization, not `roles/owner`. A role granted at the organization
+is inherited by every folder and project under it, including those created by hand or
+before the estate, so the same roles reach them. `iac-roles` compares the roles the
+estate grants that account with the roles the resource types it emits need.
+
+```bash
+satz iac-roles <INPUT>             # the report; exits non-zero when a role is missing
+satz iac-roles <INPUT> --execute   # writes the missing roles into the estate file
+satz iac-roles --format json       # the table: per resource type, a permission and the roles that carry it
+```
+
+**What the account needs.**
+- Reads, whatever the estate emits: `roles/viewer`, `roles/browser`,
+  `roles/iam.securityReviewer`, `roles/cloudasset.viewer` and
+  `roles/serviceusage.serviceUsageConsumer`. `import`, `adopt` and
+  `report-compliance` read every folder and project with them.
+- Per resource type, one permission and the predefined roles that carry it:
+  `google_folder` needs `resourcemanager.folders.create`
+  (`roles/resourcemanager.folderAdmin`), `google_project` needs
+  `resourcemanager.projects.create` (`roles/resourcemanager.projectCreator`),
+  `resourcemanager.projects.update` for a project it did not create
+  (`roles/resourcemanager.projectMover`) and the billing link. `satz iac-roles`
+  without an estate prints the whole table; its source is `src/iac_roles.rs`.
+- Organization and project needs are met by a role granted at the organization, and
+  `roles/owner` there meets all of them. Billing-account needs are met by a grant on
+  the billing account (`google_billing_account_iam_member`).
+- `google_cloud_identity_group` needs the Groups Admin role of the Google Workspace
+  admin console. It is not an IAM role, so it is named and not checked.
+
+The roles granted are the `google_organization_iam_member` and
+`google_billing_account_iam_member` grants to
+`serviceAccount:<svc_iac_account>@<infra_project_name>.iam.gserviceaccount.com`, in the
+estate and in every pack it uses.
+
+**`--execute`** adds each missing role to the account's existing grant list — the list
+whose key names the account once `{param}`s are interpolated — or appends a new block
+when the estate has none. It writes the fewest roles: a need only one role meets takes
+that role, and a need with alternatives takes a role already chosen. A new
+billing-account block is itself a `google_billing_account_iam_member` and needs
+`roles/billing.admin`, which also carries the billing link, so that is the role written
+there. The command then compiles the estate again, and restores the file when a role
+is still missing.
+
+**Every compile checks the same**, at the [validation level](#schema-validation): `warn`
+(the default) prints the missing roles and the `iac-roles --execute` command that writes
+them, `error` refuses the compile, `none` skips the check. An estate that names no IaC
+service account is not checked. A resource type the table has no row for is named in a
+note.
+
+**`satz whoami <estate>`** tests the same needs live — the permissions themselves, with
+the credential the estate's live commands run as, on the organization, the infra
+project and the billing account. See
+[Which identity a command runs as](#which-identity-a-command-runs-as).
+
+`roles/resourcemanager.organizationAdmin` carries
+`resourcemanager.organizations.setIamPolicy`, so the account can grant itself any role
+at the organization. The named roles state what an apply uses; they do not limit what
+the account can grant. The reasoning is in
+[ADR 0009](docs/adr/0009-iac-service-account-named-roles.md).
 
 ### Transpile (`transpile`)
 Compiles the estate to HCL. Input is a `.satz` estate; a legacy `.yaml` estate is refused with a pointer to `satz import`.
@@ -1146,6 +1210,10 @@ emitted, so an argument satz derives — a project from its position, a group's
 declares it, `error` refuses the compile, `none` skips the check. Any other value
 is refused. `tofu plan` refuses such a resource either way.
 
+The same level governs the check that the IaC service account holds the roles the
+emitted resource types need — see
+[IaC service account roles](#iac-service-account-roles-iac-roles).
+
 ## Satz
 
 Estates are written in **Satz** (`.satz` files) — the language reference is
@@ -1461,6 +1529,14 @@ error that names neither the project nor the fix. Every live command therefore
 checks it once before its first call and refuses; `whoami` reports it and exits
 non-zero.
 
+Online, given an estate that compiles, `whoami <estate>` also tests the permissions the
+estate's resource types need (`testIamPermissions`) with the credential the estate's
+live commands run as: organization needs on the organization, project needs on the infra
+project, which inherits the organization's grants as every project does, and
+billing-account needs on the billing account. A missing permission is named with the
+role that carries it, and `whoami` exits non-zero. The Workspace Groups Admin role is
+named as not tested.
+
 **If your ADC already impersonates** — `gcloud auth application-default login
 --impersonate-service-account` — satz uses it as-is when it names the estate's own
 service account, and refuses when it names a different one; it neither chains the
@@ -1490,6 +1566,11 @@ estate that declares its own
 `roles/iam.serviceAccountUser` on the IaC service account itself
 (`google_service_account_iam_member`), so a member can act as that account and no other
 service account in the organization. Membership of the group is the operator's grant.
+
+**What the IaC service account holds.** Named roles at the organization and
+`roles/billing.admin` on the billing account — the reads and the roles its resource
+types need, as [IaC service account roles](#iac-service-account-roles-iac-roles)
+describes. `satz iac-roles --execute` adds the ones a new pack brings.
 
 ## License
 

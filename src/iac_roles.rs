@@ -285,32 +285,74 @@ pub(crate) fn missing(needs: &[Need], granted: &Granted) -> Vec<Need> {
         .collect()
 }
 
-/// The roles `--execute` writes: the first role of each missing need, by where
-/// it is granted — (organization, billing account).
-pub(crate) fn to_write(missing: &[Need]) -> (BTreeSet<String>, BTreeSet<String>) {
-    let mut org = BTreeSet::new();
-    let mut bill = BTreeSet::new();
-    for n in missing {
-        let role = n.roles[0].clone();
-        match n.scope {
-            Scope::BillingAccount => bill.insert(role),
-            Scope::Organization | Scope::Project => org.insert(role),
-            Scope::Workspace => false,
-        };
-    }
-    (org, bill)
+/// One role that meets missing needs: where it is granted — `organization` for
+/// organization and project needs, which inherit it, or `billing_account` — and
+/// what needs it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct Pick {
+    pub role: String,
+    pub scope: Scope,
+    pub reason: BTreeSet<String>,
 }
 
-/// One line per missing role, with the types that need it.
-pub(crate) fn describe(missing: &[Need]) -> Vec<String> {
-    let mut by_role: BTreeMap<(String, &'static str), BTreeSet<String>> = BTreeMap::new();
-    for n in missing {
-        let at = if n.scope == Scope::BillingAccount { "on the billing account" } else { "at the organization" };
-        by_role.entry((n.roles[0].clone(), at)).or_default().extend(n.reason.iter().cloned());
+/// The fewest roles that meet `needs`: a need only one role meets picks that role
+/// first, and a need with alternatives takes a role already picked before its
+/// first. Workspace needs are not IAM roles and pick nothing.
+pub(crate) fn cover(needs: &[Need]) -> Vec<Pick> {
+    let mut order: Vec<&Need> = needs.iter().filter(|n| n.scope != Scope::Workspace).collect();
+    order.sort_by_key(|n| n.roles.len());
+    let mut picks: Vec<Pick> = Vec::new();
+    for n in order {
+        let scope = if n.scope == Scope::BillingAccount { Scope::BillingAccount } else { Scope::Organization };
+        match picks.iter_mut().find(|p| p.scope == scope && n.roles.contains(&p.role)) {
+            Some(p) => p.reason.extend(n.reason.iter().cloned()),
+            None => picks.push(Pick { role: n.roles[0].clone(), scope, reason: n.reason.iter().cloned().collect() }),
+        }
     }
-    by_role
-        .into_iter()
-        .map(|((role, at), why)| format!("{} {} — for {}", role, at, why.into_iter().collect::<Vec<_>>().join(", ")))
+    picks.sort_by(|a, b| (a.scope == Scope::BillingAccount, &a.role).cmp(&(b.scope == Scope::BillingAccount, &b.role)));
+    picks
+}
+
+/// What `--execute` writes for the estate's gaps. A write grants on the
+/// organization or the billing account, and so emits that grant's resource type —
+/// `google_billing_account_iam_member` for a billing account the estate grants
+/// nothing on yet — whose own needs the same write meets.
+pub(crate) fn plan(gaps: &[Need], granted: &Granted) -> Vec<Pick> {
+    let mut all = gaps.to_vec();
+    for (billing, grant_type) in [(false, "google_organization_iam_member"), (true, "google_billing_account_iam_member")] {
+        let writes_here = gaps.iter().any(|n| n.scope != Scope::Workspace && (n.scope == Scope::BillingAccount) == billing);
+        if !writes_here {
+            continue;
+        }
+        let introduced: Vec<Need> = entries_for(grant_type)
+            .unwrap_or(&[])
+            .iter()
+            .map(|e| Need {
+                reason: vec![grant_type.to_string()],
+                permission: e.permission.map(str::to_string),
+                roles: e.roles.iter().map(|r| r.to_string()).collect(),
+                scope: e.scope,
+            })
+            .collect();
+        all.extend(missing(&introduced, granted));
+    }
+    cover(&all)
+}
+
+/// The roles of `picks`, by where they are granted — (organization, billing account).
+pub(crate) fn to_write(picks: &[Pick]) -> (BTreeSet<String>, BTreeSet<String>) {
+    let of = |scope: Scope| picks.iter().filter(|p| p.scope == scope).map(|p| p.role.clone()).collect();
+    (of(Scope::Organization), of(Scope::BillingAccount))
+}
+
+/// One line per picked role, with what needs it.
+pub(crate) fn describe(picks: &[Pick]) -> Vec<String> {
+    picks
+        .iter()
+        .map(|p| {
+            let at = if p.scope == Scope::BillingAccount { "on the billing account" } else { "at the organization" };
+            format!("{} {} — for {}", p.role, at, p.reason.iter().cloned().collect::<Vec<_>>().join(", "))
+        })
         .collect()
 }
 
@@ -624,6 +666,38 @@ mod tests {
         let (want, _) = needs(&m);
         let miss = missing(&want, &granted(&m, SA));
         assert_eq!(miss.iter().map(|n| n.scope).collect::<Vec<_>>(), [Scope::BillingAccount]);
+    }
+
+    #[test]
+    fn the_write_meets_the_grant_it_adds_with_the_fewest_roles() {
+        // A project on a billing account the estate grants nothing on: the
+        // association alone would take billing.user, but the grant block the write
+        // adds needs billing.admin, which carries the association too.
+        let tf = format!(
+            "{}resource \"google_project\" \"p\" {{\n  project_id = \"p\"\n  billing_account = \"01AA-BB-CC\"\n}}\n",
+            grant("google_organization_iam_member", "roles/resourcemanager.organizationAdmin"),
+        );
+        let m = manifest(&tf);
+        let g = granted(&m, SA);
+        let gaps = missing(&needs(&m).0, &g);
+        let (org, bill) = to_write(&plan(&gaps, &g));
+        assert_eq!(bill.into_iter().collect::<Vec<_>>(), ["roles/billing.admin"]);
+        assert!(org.contains("roles/resourcemanager.projectCreator") && org.contains("roles/viewer"), "{:?}", org);
+        assert!(!org.contains("roles/resourcemanager.organizationAdmin"), "already granted: {:?}", org);
+        // the line names the grant type as a reason, so the role is not a surprise
+        let lines = describe(&plan(&gaps, &g));
+        assert!(
+            lines.contains(&"roles/billing.admin on the billing account — for google_billing_account_iam_member, google_project".to_string()),
+            "{:?}",
+            lines
+        );
+
+        // an estate with no grant at all gets organizationAdmin for the block the write adds
+        let bare = manifest("resource \"google_storage_bucket\" \"s\" {\n  name = \"b\"\n}\n");
+        let g = granted(&bare, SA);
+        let (org, bill) = to_write(&plan(&missing(&needs(&bare).0, &g), &g));
+        assert!(org.contains("roles/resourcemanager.organizationAdmin") && org.contains("roles/storage.admin"), "{:?}", org);
+        assert!(bill.is_empty());
     }
 
     #[test]

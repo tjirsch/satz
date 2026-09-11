@@ -20,12 +20,14 @@ script: the refreshes and the gates.
 | `presets/docs/*.md` | `satz doc-packs` | any pack changes | smoke: `doc-packs --check` |
 | `presets/README.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
 | `presets/catalogs/*.yaml` | by hand, from the benchmark | a benchmark release | **nothing** |
+| `src/iac_roles.rs` (the IaC role table) | by hand, from Google's predefined roles | a pack emits a new resource type; Google changes a role | a new type: `cargo test` (`iac_roles_gate`); a changed role: **nothing** — run `scripts/check_iac_roles.py` |
 | `tests/corpus/*/expected.sorted.txt` | `UPDATE_CORPUS=1 cargo test` | emission changes | `cargo test` (that is the gate) |
 | provider version pin | by hand | a provider release | **nothing** |
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
 
-Three have **no** automatic check: refresh them on their trigger.
+Four have **no** automatic check, and the IaC role table has none for a changed
+role: refresh them on their trigger.
 
 ## The provider schema fixture
 
@@ -136,6 +138,26 @@ the packs that implement them.
   does not decide how it is used — a bare list of labels with no claims — must state
   its own `use` line in the header; the error shows the line to add.
 
+## The IaC role table
+
+`src/iac_roles.rs` — per resource type, the permission the IaC service account needs
+to manage it and the predefined roles that carry that permission, plus the reads every
+estate needs. `satz iac-roles` checks an estate against it and `--execute` writes the
+missing roles; `satz whoami <estate>` tests the permissions live. `satz iac-roles
+--format json` prints it.
+
+Two triggers make it stale:
+
+- **A pack emits a type the table has no row for.** `iac_roles_gate` in `cargo test`
+  compiles the cases under `tests/iac/` — together they use every pack, each one
+  unconditionally — and fails on an emitted type without a row, and on a pack no case
+  uses. A new pack gets a line in one of those cases; a new type gets its row.
+- **Google changes a predefined role** — a permission renamed, or moved out of the role
+  the table names. Nothing in the repository sees it. `scripts/check_iac_roles.py`
+  reads every role the table names from the IAM API and fails when an entry's
+  permission is in none of its roles: **run it when adding a row, and on each provider
+  pin move.**
+
 ## Versions
 
 - **Provider pin** (`provider_version`, currently 7.14.1, in each estate's
@@ -185,6 +207,7 @@ second kind.
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
 | `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it emitted before. Not run by CI — CI has no estates. Run it after every release |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
+| `check_iac_roles.py` | gate | hold the IaC role table (`src/iac_roles.rs`) against Google's predefined role definitions; needs ADC, not run by CI |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every push (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
@@ -510,6 +533,25 @@ because it sits in a raw `hcl { }` block, so usage in the sources does not show 
 types are needed.
 
 Needs `tofu` on PATH; talks to no organisation.
+
+## `check_iac_roles.py` — the role table against Google's roles
+
+The IaC role table names, per resource type, a permission and the predefined roles
+that carry it. The script reads the table from `satz iac-roles --format json` (of this
+checkout through `cargo run`, or of an installed binary with `--satz`), fetches each
+role it names from the IAM API (`roles.get`), and fails when none of an entry's roles
+carries the entry's permission: a typo in the table, a permission Google renamed, or a
+role Google narrowed.
+
+```bash
+uv run scripts/check_iac_roles.py                 # the table of this checkout
+uv run scripts/check_iac_roles.py --satz satz     # the table of an installed binary
+```
+
+Needs Application Default Credentials; predefined roles are Google's and the same for
+every organisation, so any credential that may call the IAM API will do. Workspace
+entries are not IAM roles and are skipped. Run it when adding a row and on each
+provider pin move; CI has no credentials to run it.
 
 ## `inspect_schema.py` — look at one type
 

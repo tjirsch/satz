@@ -1,0 +1,23 @@
+// IaC-roles gate: the S1 group model as two content packs, used under their
+// resource types. It cannot share an estate with S2 (`all-packs`) — both define
+// the same group addresses.
+
+estate iac_s1_split
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0example"
+  customer_domain = "example.com"
+  customer_shortname = "acme"
+  infra_project_name = "acme-infra-001"
+  svc_iac_account = "svc-iac-001"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
+google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }

@@ -2142,7 +2142,7 @@ fn report_iac_roles(
              `satz iac-roles {} --execute` writes them into the estate:\n  {}",
             sa,
             file,
-            crate::iac_roles::describe(&missing).join("\n  ")
+            crate::iac_roles::describe(&crate::iac_roles::plan(&missing, &granted)).join("\n  ")
         );
         if level == "error" {
             return Err(msg.into());
@@ -2186,6 +2186,8 @@ struct IacRolesReport {
     granted: crate::iac_roles::Granted,
     needs: Vec<crate::iac_roles::Need>,
     missing: Vec<crate::iac_roles::Need>,
+    /// the roles `--execute` writes for `missing`
+    write: Vec<crate::iac_roles::Pick>,
     /// emitted types the table has no entry for
     unknown_types: Vec<String>,
 }
@@ -2218,6 +2220,7 @@ fn iac_roles_report(
         estate: path.display().to_string(),
         service_account: sa,
         unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
+        write: crate::iac_roles::plan(&missing, &granted),
         granted,
         needs,
         missing,
@@ -2227,10 +2230,10 @@ fn iac_roles_report(
 fn render_iac_roles(r: &IacRolesReport) -> String {
     let mut out = format!("IaC service account: {}\n", r.service_account);
     out.push_str(&format!(
-        "the estate grants it {} role(s) at the organization and {} on the billing account; its resource types need {} capability(ies)\n",
+        "the estate grants it {} role(s) at the organization and {} on the billing account; satz's reads and its resource types need {} permission(s)\n",
         r.granted.organization.len(),
         r.granted.billing_account.len(),
-        r.needs.len()
+        r.needs.iter().filter(|n| n.permission.is_some()).count()
     ));
     if r.granted.owner() {
         out.push_str("roles/owner at the organization meets every organization and project need\n");
@@ -2239,7 +2242,7 @@ fn render_iac_roles(r: &IacRolesReport) -> String {
         out.push_str("missing: none\n");
     } else {
         out.push_str("missing:\n");
-        for l in crate::iac_roles::describe(&r.missing) {
+        for l in crate::iac_roles::describe(&r.write) {
             out.push_str(&format!("  {}\n", l));
         }
     }
@@ -2283,16 +2286,17 @@ fn run_iac_roles(
     if !execute || report.missing.is_empty() {
         emit(&report)?;
         if !report.missing.is_empty() {
+            let (org, bill) = crate::iac_roles::to_write(&report.write);
             return Err(format!(
                 "{} role(s) missing — `satz iac-roles {} --execute` writes them into the estate",
-                crate::iac_roles::to_write(&report.missing).0.len() + crate::iac_roles::to_write(&report.missing).1.len(),
+                org.len() + bill.len(),
                 path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
             )
             .into());
         }
         return Ok(());
     }
-    let (org, bill) = crate::iac_roles::to_write(&report.missing);
+    let (org, bill) = crate::iac_roles::to_write(&report.write);
     let params = estate_param_strings(path, runtime_config)?;
     let before = fsx::read_to_string(path)?;
     let written = crate::iac_roles::write_grants(path, &params, &report.service_account, &org, &bill)?;
@@ -2310,7 +2314,7 @@ fn run_iac_roles(
             emit(&after)
         }
         Ok(after) => Err(restore(format!(
-            "the grants were written and {} capability(ies) are still missing",
+            "the grants were written and {} permission(s) are still missing",
             after.missing.len()
         ))),
         Err(e) => Err(restore(format!("the edited estate does not compile ({})", e))),
@@ -5200,7 +5204,7 @@ mod manifest_gate {
         out
     }
 
-    fn emit_case(case: &Path, reg: &crate::ResourceRegistry) -> (crate::emitter::EmitOut, satz_core::pipeline::FrontEnd) {
+    pub(super) fn emit_case(case: &Path, reg: &crate::ResourceRegistry) -> (crate::emitter::EmitOut, satz_core::pipeline::FrontEnd) {
         let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
         let case_dir = case.to_path_buf();
         let resolver = crate::EstateResolver { registry: reg };
@@ -5339,6 +5343,65 @@ hcl trust "test fixture" {
         assert!(addrs.contains("google_storage_bucket.real"), "{:?}", addrs);
         assert!(!addrs.contains("google_storage_bucket.ghost"), "a passthrough resource is not a witness: {:?}", addrs);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod iac_roles_gate {
+    //! Every resource type the library can emit has a row in the IaC service
+    //! account's role table (`src/iac_roles.rs`). The cases under `tests/iac/`
+    //! together use every pack, each one unconditionally, so a pack added without
+    //! a case, or a pack emitting a type the table does not know, fails here.
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    /// The `use "…"` paths of a case, refusing a `when`: a pack switched off
+    /// emits nothing, and a gate over nothing passes.
+    fn uses(case: &Path, src: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
+            let mut rest = line;
+            while let Some(i) = rest.find("use \"") {
+                let after = &rest[i + 5..];
+                let end = after.find('"').unwrap_or_else(|| panic!("{}: unterminated use: {}", case.display(), line));
+                let tail = after[end + 1..].trim_start();
+                assert!(!tail.starts_with("when"), "{}: `{}` — a gate case uses every pack unconditionally", case.display(), line.trim());
+                out.push(after[..end].to_string());
+                rest = &after[end + 1..];
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_type_the_library_emits_has_a_role() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let reg = super::corpus::registry();
+        let mut used = BTreeSet::new();
+        let mut types = BTreeSet::new();
+        for entry in std::fs::read_dir(root.join("tests/iac")).expect("tests/iac").flatten() {
+            let case = entry.path();
+            let src = std::fs::read_to_string(case.join("main.satz"))
+                .unwrap_or_else(|e| panic!("{}: {}", case.display(), e));
+            used.extend(uses(&case, &src));
+            let (out, _) = super::manifest_gate::emit_case(&case, &reg);
+            let (_, unknown) = crate::iac_roles::needs(&out.manifest);
+            assert!(
+                unknown.is_empty(),
+                "{}: no role known for {:?} — add the type's row to TYPES in src/iac_roles.rs",
+                case.display(),
+                unknown
+            );
+            types.extend(out.manifest.resources.values().map(|r| r.tf_type.clone()));
+        }
+        let packs: BTreeSet<String> = crate::doc_packs::packs(&root.join("presets"))
+            .expect("the preset library")
+            .into_iter()
+            .map(|(p, _, _)| format!("presets/{}", p.to_string_lossy()))
+            .collect();
+        let unused: Vec<&String> = packs.difference(&used).collect();
+        assert!(unused.is_empty(), "packs no case under tests/iac/ uses: {:?}", unused);
+        assert!(types.len() >= 20, "the gate checked only {} types: {:?}", types.len(), types);
     }
 }
 
@@ -5579,7 +5642,7 @@ mod init_template {
         let (needs, unknown) = crate::iac_roles::needs(&out.manifest);
         assert!(unknown.is_empty(), "the template emits types the role table does not know: {:?}", unknown);
         let missing = crate::iac_roles::missing(&needs, &granted);
-        assert!(missing.is_empty(), "the template misses roles its own types need: {:?}", crate::iac_roles::describe(&missing));
+        assert!(missing.is_empty(), "the template misses roles its own types need: {:?}", crate::iac_roles::describe(&crate::iac_roles::cover(&missing)));
         // the users group may become the IaC service account, and only that one:
         // TokenCreator and serviceAccountUser on the account, not on the org
         assert_eq!(out.manifest.of_type("google_service_account_iam_member").count(), 2);
