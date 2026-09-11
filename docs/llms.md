@@ -286,6 +286,8 @@ The loop, in order:
 4. **`satz_require <framework>`** — does the estate still discharge what it claims? Run
    it after touching packs, claims or org policies.
 5. **`satz_transpile`** (needs the `write` capability) — writes `hcl/`.
+   `satz_scan_checkov` (needs `exec`) then runs Checkov over it and names the Satz block
+   behind each failed check.
 6. **`tofu plan` / `apply` — a human runs these.** No tool exposes them.
 7. **`satz_report_compliance`** — the live evidence view, afterwards.
 
