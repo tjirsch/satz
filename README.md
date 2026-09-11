@@ -901,8 +901,8 @@ The goal view joined with the **live estate**: every witness of a satisfied/part
 control is verified against Cloud Asset Inventory (org sinks, log metrics, alert
 policies, notification channels, buckets — matched by name/display name extracted from
 the generated HCL). Manual duties merge with `attestations.yaml` beside config.toml
-(`duty-id: {by, date, note}`), and a Prowler native-JSON export can be ingested as
-corroboration (`--prowler findings.json` — Prowler's OCSF output or its legacy JSON; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it).
+(`duty-id: {by, date, note}`), and a Prowler export can be ingested as
+corroboration (`--prowler findings.json` — the OCSF export of Prowler 5, `prowler gcp --output-formats json-ocsf`; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it). The report names the Prowler version that wrote the export; an export from an older Prowler, or with no version in `metadata.product`, is refused with the version it carries.
 
 The exit code is 0 whatever the verdicts — the report is the deliverable;
 `--fail-on not-enforced,drifted` (any status word; `any` = everything that is

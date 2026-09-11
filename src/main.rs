@@ -577,7 +577,7 @@ enum Commands {
         /// Report file path (default: evidence/<framework>-latest.md beside config)
         #[arg(long)]
         report: Option<PathBuf>,
-        /// Prowler native-JSON findings file to ingest as corroboration
+        /// Prowler 5 OCSF export to ingest as corroboration (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: Option<PathBuf>,
         /// Run Checkov over hcl_dir (transpile first) and add a column: failed
@@ -656,7 +656,7 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Prowler export (OCSF or legacy JSON)
+        /// Prowler 5 OCSF export (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: PathBuf,
         /// markdown (default) or json
@@ -684,7 +684,7 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Prowler export (OCSF or legacy JSON)
+        /// Prowler 5 OCSF export (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: PathBuf,
         /// Also run Checkov over hcl_dir and join its findings

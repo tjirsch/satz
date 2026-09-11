@@ -387,6 +387,14 @@ cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" \
   || fail "triage --fix modified the estate — it proposes, it does not apply"
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --report tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
 grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
+grep -q 'Prowler 5.42.0' tmp/ev2.md || fail "the report does not name the Prowler version that wrote the export"
+# An export from an older Prowler keeps the check id and the project elsewhere;
+# it is refused by its version, never half-read.
+sed 's/"version":"5.42.0"/"version":"4.6.1"/' prowler.json > tmp/prowler4.json
+if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler tmp/prowler4.json > tmp/p4.txt 2>&1; then
+  fail "triage accepted an export written by Prowler 4"
+fi
+grep -q 'written by Prowler 4.6.1' tmp/p4.txt || fail "the Prowler 4 refusal does not name the version:\n$(cat tmp/p4.txt)"
 
 step "report-compliance: the envelope says whether live state was actually read"
 # The report degrades to unverifiable witnesses rather than failing, so `live`

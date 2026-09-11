@@ -1528,7 +1528,9 @@ derived fact, not a written-up matrix; `unassigned` means nobody has taken the
 control yet, which is not the same as `customer`. Each run also writes
 the report (`evidence/<framework>-latest.md`, or `--format pdf`; `--format
 json` writes only the history entry, no markdown). `--prowler findings.json`
-ingests a Prowler export (OCSF or legacy JSON) as corroboration; `--checkov`
+ingests the OCSF export of Prowler 5 (`prowler gcp --output-formats json-ocsf`) as
+corroboration and records the Prowler version in `prowler_version`; an export from an
+older Prowler is refused with the version it carries. `--checkov`
 adds a column from a Checkov run over `hcl_dir`. `--no-live` produces a
 declared-only report (statuses read *declared*) but still appends to the
 history. `live` records whether the inventory was READ, not whether it was

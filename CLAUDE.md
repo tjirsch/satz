@@ -193,9 +193,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - Compliance plane: `require` is text only and judges the DECLARED estate;
   `report-compliance` verifies witnesses through Cloud Asset Inventory and
   compares org policies by VALUE — a policy that exists but is switched off
-  reads NOT ENFORCED, which outranks DRIFTED. `--prowler` reads Prowler's OCSF
-  output (≥ 4) and the legacy JSON; a FAIL on a verified witness makes the row
-  CONTESTED (integration proposal I2).
+  reads NOT ENFORCED, which outranks DRIFTED. `--prowler` reads the OCSF export
+  of Prowler 5 only — check id from `metadata.event_code`, project from
+  `cloud.account.uid`, the version from `metadata.product.version`, which is
+  checked (an older export is refused by its version); a FAIL on a verified
+  witness makes the row CONTESTED (integration proposal I2).
 - A key repeated inside one body is a parse error naming both lines (was the
   last known v0 silent-last-wins defect; repeated blocks are a list of
   objects, resource-type maps may repeat).
