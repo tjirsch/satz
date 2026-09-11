@@ -2,21 +2,6 @@
 
 The complete specification of Satz, the language an estate is written in.
 
-**Version:** v0, as implemented in `crates/satz-core/src/satz.rs`.
-This document is derived from the parser, not from intent: where the two
-disagree, the parser is right and this file is a bug. Every example below was
-compiled on 2026-08-24 and the HCL shown is what came out — or it is lifted from
-a shipped pack or a fleet estate, with the file named.
-
-*Satz*: German for both **sentence** and **theorem** — a file is at once a
-statement of intent and a provable claim. The two halves of that word are the
-two halves of this document: how you *state* an estate, and how the statement
-becomes something that can be *proven*.
-
-Written for people who already run infrastructure as code and want to know,
-precisely, what they gain and what they give up. Nothing is given up: Satz is
-built on HCL, and every hour spent learning the provider carries over.
-
 ---
 
 ## 1. The layers
@@ -36,22 +21,11 @@ value.
 | **Controls** | claims against a catalog | that each declared control has its witnesses *emitted* — a claim with a missing witness is reported, never silently satisfied | `require` |
 | **Evidence** | the goal view joined with the live estate | that each witness is live and — for org policies — *enforcing*, by value; a policy switched off in the console is **NOT ENFORCED**, which outranks DRIFTED | `report-compliance` |
 
-Two things the picture is careful about. First, the controls layer is **declared,
-not proven**: `require` judges the estate as written and never says "compliant".
-Only the evidence layer looks at the cloud, and even it states check semantics —
-"a resource with these properties was verified at this time" — never legal
-conformity. Second, the witness arrow points at **emitted HCL addresses**. That is
-what ties the layers together: a claim is not prose about a control, it is a list
-of Terraform addresses, so the same compile that produces `main.tf` produces the
-evidence the claim will be checked against.
-
-"Secure by policy and design" is the Satz layer's contribution, and it is a
-property of the language rather than of any pack: org policies are ordinary
-resources in versioned packs; a pack the estate includes never changes silently
-(a semantic upstream change forks and repoints with proof); declining a control
-is a visible one-liner that hard-errors when it goes stale; and there is no
-escape hatch the proof layer cannot see, because `hcl { … }` warns on every
-transpile until someone signs it.
+In the Satz layer, org policies are ordinary resources in versioned packs. A pack
+the estate includes never changes silently: a semantic upstream change forks and
+repoints with proof. Declining a control is a one-line `deviates` claim that
+hard-errors when it goes stale. `hcl { … }` warns on every transpile until someone
+signs it.
 
 ---
 
@@ -265,8 +239,8 @@ every merge.
 
 ## 5. How much shorter, measured
 
-Three numbers, all from the fleet on 2026-08-24, counting code lines (blank and
-comment-only lines removed on both sides):
+Three numbers from the fleet, counting code lines (blank and comment-only lines
+removed on both sides):
 
 | what is compared | median | range | typical estate |
 |---|---|---|---|
@@ -322,8 +296,7 @@ Every snippet in this section is either one of those files or compiles the
 same way (`terraform { backend { … } }` is required by the emitter — the
 snippets omit it for brevity where they are fragments of a larger estate).
 
-Every example in this section compiled on 2026-08-24 against the full
-google/google-beta 7.12.0 schema; where HCL is shown, it is the emitted text.
+Where HCL is shown, it is the emitted text.
 
 ### 6.1 Lexical structure
 
@@ -393,7 +366,7 @@ Without the check a typo compiles: Terraform catches most of them one cycle
 later, pointing at generated HCL instead of the line someone wrote, and the one
 it cannot catch is a typo that happens to name a different real resource.
 Suppressing a resource something else references is the same error, which is
-the point — the estate no longer emits it.
+the point: the estate does not emit it.
 
 **A reference is understood, not just emitted.** When a value is *nothing but*
 one reference — `service_account_id = "${{google_service_account.onb.name}}"` —
@@ -634,10 +607,9 @@ resource "google_storage_bucket" "audit_logs" {
 ```
 
 **A repeated block is a list of objects.** `lifecycle_rule { … }` written
-twice in one body is an error naming both lines (a repeat used to keep only
-the last one, silently). The list form is the only one. Resource-type maps
-(`google_…`) may repeat — two `google_org_policy_policy { … }` groups in one
-file are one map, folded by address.
+twice in one body is an error naming both lines. The list form is the only
+one. Resource-type maps (`google_…`) may repeat — two
+`google_org_policy_policy { … }` groups in one file are one map, folded by address.
 
 `google_cloud_identity_group` is a Satz abstraction that shares a Terraform
 type name: it is expanded into a group resource (deriving `group_key`, `parent =
@@ -804,9 +776,9 @@ resource "google_project" "alpha_prod" {
 ```
 
 Read the two `{ }` bodies inside `alpha_prod` against each other:
-`google_folder { … }` is a schema type and became a resource;
-`labels { … }` is an attribute and became `labels = { … }`. Same syntax; the
-schema decided.
+`google_folder { … }` is a schema type, so it emits a resource;
+`labels { … }` is an attribute, so it emits `labels = { … }`. Same syntax; the
+schema decides.
 
 ### 6.7 Adoption of existing resources
 
@@ -1572,8 +1544,8 @@ validate-then-lock:
 ```
 
 An attested duty moves from `open: validate-then-lock` to
-`attested: validate-then-lock (Jane Doe, 2026-08-20)` and no longer holds the
-control at partial. No estate in the fleet has one yet.
+`attested: validate-then-lock (Jane Doe, 2026-08-20)` and stops holding the
+control at partial.
 
 **Evidence history.** Every run appends `evidence/<framework>-<timestamp>.json`
 beside the config — `estate`, `framework`, `version`, `live`, `live_status`,
@@ -1600,9 +1572,8 @@ reads **NOT VERIFIED** instead of naming the service it never reached. The other
 outcomes are `verified`, `skipped` (`--no-live`), `no-organization-id` and
 `no-witnesses`. The exit code is 0 whatever the verdicts; `--fail-on
 not-enforced,drifted` (any status word, or `any`) makes the run fail for CI
-after the report is written. The report states check
-semantics — "a resource with these properties was verified at this time" —
-never legal conformity.
+after the report is written. The report states check semantics: "a resource with
+these properties was verified at this time".
 
 ---
 
@@ -1758,7 +1729,7 @@ asset path; for the others, `satz adopt` resolves them afterwards.
 | `import organizations/<n>` \| `folders/<n>` \| `projects/<id>` (or bare `import` with `root:` in `import-config.yaml`) | brownfield: nothing is in Terraform yet | one Cloud Asset sweep of the scope; every enabled type; import ids = the row's `import_id` template rendered from the resource (`{project} {name}` for a log metric), else the asset path with the project named by ID; required attributes the asset lacks derived (`parent`, `org_id`/`folder`/`project`, `location`/`region` from the asset name, a `*_id` from its last segment — `secret_id`, `repository_id` —, a service account's `account_id`); API vocabulary the provider spells differently is renamed per the row's `map:` (a firewall's `allowed[].IPProtocol` → `allow { protocol }`), and self-link `region`/`zone` and full-name `name` values are shortened to what the provider takes | only rows with `import: true` AND an `asset_type` are swept (21 enabled by default — the landing-zone types plus VPC network/subnet/firewall, Pub/Sub topic, Secret Manager secret, log metric, Artifact Registry repository, each verified live to plan as import-only; `--only` narrows, never widens; an enabled row with `asset_type: TODO` is an error); IAM conditions are not carried; no Cloud Identity groups (not in Cloud Asset — state shape or `adopt`); a resource whose required attribute cannot be derived is skipped and named; one fetch error aborts the run; a page is 1000 assets |
 | `--into <estate>` | the estate exists; take over what it does not declare yet | packs `imported-<scope>[-<container>].satz` plus `use` lines inserted at the declaring folder/project | live shape only; if ANY declared resource fails to resolve live (error, ambiguity), nothing is written; the packs are regenerated wholesale on every run — hand edits go into the estate, never into an `imported-*` pack; a `use` is inserted automatically only where the container is declared in the estate file itself |
 | `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out`) | `variable`/`locals` promoted to params; schema-known, identifier-labelled `resource` blocks whose values are literals, params or `${…}` references as Satz resources placed under the folder/project they reference; everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block | `terraform`/`provider` blocks are always dropped (the emitter writes them), `--wrap-all` included — and `--wrap-all` promotes nothing, since a param is a translation; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit; no import ids (`adopt`); a `${…}` reference is opaque to the compliance plane |
-| `import <file>.yaml --kind estate\|pack [--gate <estate>] [--fork]` | the legacy YAML dialect (until the last org is moved) | `<stem>.satz` beside the source, proven by compiling it (`CONVERTED … N resources emitted`) | refuses while a `use` still points at a YAML pack (each named — convert packs first); a result that does not compile is deleted and reported; `--fork` writes `<stem>.local.satz` (packs only); a pack without `--gate` is only parsed; interior comments are not carried; a `!include` in a `!format` value is refused (inline it) |
+| `import <file>.yaml --kind estate\|pack [--gate <estate>] [--fork]` | the YAML dialect, for migration | `<stem>.satz` beside the source, proven by compiling it (`CONVERTED … N resources emitted`) | refuses while a `use` still points at a YAML pack (each named — convert packs first); a result that does not compile is deleted and reported; `--fork` writes `<stem>.local.satz` (packs only); a pack without `--gate` is only parsed; interior comments are not carried; a `!include` in a `!format` value is refused (inline it) |
 
 ### 12.1 From existing Terraform (`./hcl/`)
 
@@ -1773,10 +1744,9 @@ inside `hcl trust "imported from <file>:<line>" { … }` — it deploys exactly 
 written, but the fold cannot compose it and the compliance plane cannot see into
 it. Every block is accounted for; nothing vanishes.
 
-Two things the report is careful about. A promoted declaration that a wrapped
-block still reads is **carried verbatim as well**, so the wrapped block's
-`var.x` keeps resolving. And *translated* is not *proven*: a `${…}` reference is
-opaque to the compliance plane, so a claim cannot reason about it.
+A promoted declaration that a wrapped block still reads is **carried verbatim as
+well**, so the wrapped block's `var.x` keeps resolving. A `${…}` reference is
+opaque to the compliance plane: a claim cannot reason about it.
 
 | HCL | Becomes |
 |---|---|
@@ -1794,13 +1764,13 @@ opaque to the compliance plane, so a claim cannot reason about it.
 
 ### 12.2 From the YAML dialect
 
-satz's first surface language was a YAML dialect with custom tags. Since
-v0.46.14 nothing reads it but `satz import <file>.yaml`: `transpile` and every
-other command take `.satz` and refuse a `.yaml` estate with a pointer to the
-converter. (Brownfield estates never need the dialect: the state and live
-shapes above write a Satz estate directly, through the same printer.)
+A YAML dialect with custom tags is read only by `satz import <file>.yaml`,
+which converts it to Satz: `transpile` and every other command take `.satz` and
+refuse a `.yaml` estate with a pointer to the converter. (Brownfield estates never
+need the dialect: the state and live shapes above write a Satz estate directly,
+through the same printer.)
 
-**What changed at the surface:**
+**How the dialect maps to Satz:**
 
 | YAML dialect | Satz |
 |---|---|
@@ -1835,9 +1805,9 @@ iam-managed-disableServiceAccountKeyCreation:
 }
 ```
 
-**The older spelling: a list instead of a mapping.** The dialect's first
-generation wrote org policies as a *sequence* whose entries carry their identity
-in `constraint:`, with no address at all:
+**A list instead of a mapping.** The dialect can also write org policies as a
+*sequence* whose entries carry their identity in `constraint:`, with no address
+at all:
 
 ```yaml
 org_policy_policy:
@@ -1847,7 +1817,7 @@ org_policy_policy:
       rules:
         - enforce: "TRUE"
   - constraint: gcp.resourceLocations
-    type: list          # a marker for the old generator's API call
+    type: list          # a dialect-only marker
     parent: !format ["organizations/{}", *customer-organization-id]
     spec: { rules: [ { values: { allowedValues: ["in:eu-locations"] } } ] }
 ```
@@ -1856,7 +1826,8 @@ Satz addresses every resource, so the converter supplies the address the same
 way the preset library spells it — the constraint with dots turned into dashes,
 `iam-managed-disableServiceAccountKeyCreation` — and the constraint becomes the
 resource's `name`. The dialect-only `type:` marker is dropped: the provider has
-no such attribute, and carrying it over produced an estate the schema rejects.
+no such attribute, and carrying it over would produce an estate the schema
+rejects.
 The same list may appear nested inside a project, and converts the same way.
 A duplicate constraint in one list is refused rather than silently folded, since
 the two entries would land on one address.
@@ -1868,7 +1839,7 @@ resources emitted`). An estate is gated on itself; a pack is gated on the
 `.satz` estate you pass with `--gate`, or only parsed when there is none. A
 result that does not compile is deleted and reported; a conversion that cannot
 be checked in context says `NEEDS-REVIEW`; the last word is `satz transpile`
-and a `tofu plan` that shows no destroy for what the old estate managed. An
+and a `tofu plan` that shows no destroy for what the YAML estate managed. An
 estate that used the dialect's `!import-include` converts to a plain `use`
 with a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
 
@@ -1876,7 +1847,6 @@ with a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
 the converter and by the compiler alike (`use "x.yaml": packs are Satz —
 convert it first: satz import x.yaml --kind pack`).
 
-**Why the dialect still parses at all:** to be migrated. That is the whole of
-its support (owner decision, 2026-08-29): YAML is never transpiled or generated
-by new functionality, and a YAML code path a cleanup breaks is removed rather
-than repaired. A migrated estate may need a manual edit or two.
+**Why the dialect parses at all:** to be migrated. That is the whole of its
+support: YAML is never transpiled or generated, and no other command reads it.
+A migrated estate may need a manual edit or two.

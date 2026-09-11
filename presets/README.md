@@ -13,8 +13,7 @@ the same name in the estate `params` block to override (the using document
 always wins). When a needed customization is not expressible as a param, fork:
 copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains the
 `.diff.satz` adoption ledger. **Rule of thumb: a fork whose whole diff could be a
-param is upstream debt — lift the param into the pack instead** (that is how
-`allowed_policy_member_*` and `essential_contacts_email` came to exist).
+param is upstream debt — lift the param into the pack instead**.
 
 Optional packs are gated on a single param: `use "presets/x.satz" when
 logsink_project_name` — a falsy value skips the pack entirely (no resources, no
@@ -118,7 +117,7 @@ use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_centr
 
 | Param | Default | Meaning |
 |---|---|---|
-| `cis_central_bucket_project` | `logsink_project_name` | project hosting bucket, metrics, policies, channel. Since v1.4 the audit-logsink pack's own project, **by reference** — an estate using both packs sets nothing. Before, a literal naming a project nothing creates |
+| `cis_central_bucket_project` | `logsink_project_name` | project hosting bucket, metrics, policies, channel: the audit-logsink pack's own project, **by reference** — an estate using both packs sets nothing |
 | `cis_central_bucket_id` | `"{customer_shortname}-organization-log-alerts"` | Cloud Logging bucket id |
 | `cis_central_bucket_location` | `default_region` | bucket location |
 | `cis_central_bucket_retention_days` | `30` | short on purpose — the archive lives in GCS |
@@ -278,7 +277,7 @@ recipient; `notification_channels = []` passes CIS and notifies nobody.
 The questions every estate has to answer on day 0, with the params they answer — the
 seventeen `satz init` writes from its flags, each with a `question`: what to ask, why,
 and what changing the answer later costs. Which packs make up the estate is the next
-pack, `estate-map.satz`; since v2.0 this one is the day-0 params and nothing else.
+pack, `estate-map.satz`; this one is the day-0 params and nothing else.
 
 ```
 use "presets/estate-core.satz"
@@ -454,8 +453,8 @@ visible one-line overrides — never forks.
 | `allowed_policy_member_customers` | `[customer_id]` | `iam.allowedPolicyMemberDomains`: DIRECTORY customer ids (`C0…`) whose identities may be granted IAM roles. **Never DNS domain names.** |
 | `allowed_policy_member_principal_sets` | own org (`//cloudresourcemanager.googleapis.com/organizations/<org-id>`) | `iam.managed.allowedPolicyMembers`: principal sets allowed past the managed lock |
 | `allowed_policy_member_subjects` | `[]` | individual principals past both locks — typically Google SYSTEM service accounts that org-level products grant roles to (Firebase Hosting `firebase-hosting@system…`, SCC premium agents `service-org-<id>@gcp-sa-*-hpsa…` / `@security-center-api…`) |
-| `essential_contacts_allowed_domains` | `[customer_domain]` | domains the Essential Contacts constraint allows — a LIST since v2.2 |
-| `allowed_resource_locations` | `["in:eu-locations", "in:us-locations"]` | `gcp.resourceLocations` (§2): where resources may be created. A param since v2.6 — the default is what the pack always emitted, so upgrading changes nothing; narrow it here instead of forking |
+| `essential_contacts_allowed_domains` | `[customer_domain]` | domains the Essential Contacts constraint allows — a list |
+| `allowed_resource_locations` | `["in:eu-locations", "in:us-locations"]` | `gcp.resourceLocations` (§2): where resources may be created. Narrow it here instead of forking |
 
 **Questions (v2.7).** Ten of these are asked, not defaulted in silence: the seven opt-in
 controls (each can break a workload that was legitimate the day before) and the three
@@ -513,9 +512,8 @@ allowed_policy_member_subjects = [
 **Known limitation: this is NOT sufficient.** The legacy
 `iam.allowedPolicyMemberDomains` constraint accepts only directory customer ids —
 individual subjects cannot be whitelisted there, and the Google service accounts do
-not belong to the customer's directory. Activation attempts still fail with the
-subjects in place (observed 2026-08, estate 1). Working procedure until this is resolved
-upstream:
+not belong to the customer's directory. Activation attempts fail with the subjects in
+place. Working procedure until this is resolved upstream:
 
 1. Set the subjects param (above) and apply — covers the managed constraint.
 2. **Temporarily lift the domains lock:** override
@@ -594,7 +592,7 @@ list, which is what "won't stay activated / asks to activate on every console
 visit" looks like from the console.
 
 **How many agents is that? Five, and enabling more services does not add to them.**
-Measured 2026-09-04 on a live organization, twice: with every service that can be
+Measured on a live organization, twice: with every service that can be
 enabled at all turned on — all fourteen GCP-side ones, including the four that are
 reachable only through the API — the org IAM policy carried exactly the five the
 baseline already lists
@@ -714,7 +712,7 @@ issues — `ciem-discovery`, `containers`, `containers-streams`,
 each need their own `api://` audience, service account and role set from that customer's
 script. They cannot be guessed, so they are not shipped.
 
-**Questions (v0.2).** `mdc_workload_pool_id` and `mdc_mgmt_project_id` block until typed —
+**Questions.** `mdc_workload_pool_id` and `mdc_mgmt_project_id` block until typed —
 only Microsoft's generated script knows them; `mdc_plan_cspm` asks whether the plan is
 licensed; and the access mode is a `question oneof` with `ask_when = mdc_plan_cspm`, so
 it is asked only once CSPM is on. The first gated choice in the library.
@@ -775,17 +773,17 @@ Where Google replaces a legacy org-policy constraint with a managed one, a pack 
 }
 ```
 
-The `-superseded` address suffix (pack v2.6) is load-bearing: switching a policy from rules
-to `reset` cannot be an in-place update — the provider PATCHes the rules it still holds
-together with `reset`, and the API refuses the pair — so the address differs from the one a
-pre-2.6 estate carries and the plan is a destroy + create by construction. The policy NAME
+The `-superseded` address suffix is load-bearing: switching a policy from rules to `reset`
+cannot be an in-place update — the provider PATCHes the rules it still holds together with
+`reset`, and the API refuses the pair — so the reset policy has its own address and the
+plan is a destroy + create by construction. The policy NAME
 is unchanged; it is one policy being reset, not two. [ADR 0002](../docs/adr/0002-superseded-org-policies-replace-by-construction.md).
 
 Both forms in force is a defect, not extra safety. Org-policy constraints AND together, so
 an exemption has to lift **two** policies — and for several legacy constraints Google's only
 documented exemption path is to disable the constraint org-wide, grant, and re-enable it,
-which is a window with the control switched off. That is the argument the CIS pack's
-`duty_legacy_superseded` has carried since v2.0, now applied to every pair it enables.
+which is a window with the control switched off. That is the argument of the CIS pack's
+`duty_legacy_superseded`, applied to every pair it enables.
 
 **Absence is not enough**, which is why these blocks exist rather than simply not being
 written. A legacy policy already set on an organisation is invisible to an apply that does
@@ -843,8 +841,8 @@ fragment says what specifically breaks.
 | `api-key-services` | 4.0 1.14 / 5.0 1.15 | narrows what an API key may call |
 | `bucket-retention` | 4.0 2.3 / 5.0 2.4 | constrains every bucket's retention duration |
 
-**Constraint names and shapes were verified against a live organisation's OrgPolicy
-`ListConstraints`**, not transcribed from documentation — which matters, because the three
+**Constraint names and shapes come from a live organisation's OrgPolicy
+`ListConstraints`**, not from documentation — which matters, because the three
 shapes differ and getting one wrong yields a policy that either does nothing or refuses
 everything: a plain managed boolean takes `enforce`; a managed boolean with a parameter
 takes `enforce` plus `parameters`; a list constraint takes allow/deny values.

@@ -155,6 +155,12 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **Docs are derived from the parser, not from intent.** Every example in
   `docs/language.md` compiles; where the doc and the parser disagree, the
   parser is right and the doc is a bug.
+- **Docs say what satz does, now (2026-09-11).** Facts in the present
+  tense: what a command, statement or pack does and what it refuses. No history —
+  versions, dates, "used to", "since vX", "no longer", how a rule came about;
+  that belongs to the changelogs, the ADRs and git. No interpretation and no
+  warnings or disclaimers around the facts. A reason stays when it is a present
+  fact ("so one apply authenticates as one principal"), not a story.
 - **`Satz` is the language; `satz` is everything else** — the binary, the
   project, the repository. "written in Satz", "a Satz estate", "a Satz
   abstraction"; "satz compiles", "a satz command", "the satz repository". Page

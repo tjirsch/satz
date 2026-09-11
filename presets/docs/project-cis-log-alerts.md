@@ -63,7 +63,6 @@ Filter strings must match Prowler's expectation verbatim — they are compared
 by substring. Reformatting or "improving" a filter silently breaks the check
 while leaving the alert working. Source of truth:
 prowler/providers/gcp/services/logging/logging_log_metric_filter_and_alert_for_*
-Validated against prowler master, 2026-08-18.
 
 ---------------------------------------------------------------------------
 PREREQUISITES

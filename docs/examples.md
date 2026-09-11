@@ -3,8 +3,8 @@
 Two kinds of example. First the **register of identifiers** every example in this
 repository is allowed to use — a rule the privacy gate enforces on every commit.
 Then **worked estates**: real files in this repository, transpiled by
-`scripts/smoke.sh` on every push, so an example here cannot describe a language the
-compiler no longer speaks.
+`scripts/smoke.sh` on every push, so an example here always describes the language
+the compiler speaks.
 
 ## Example customers
 

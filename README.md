@@ -1,6 +1,6 @@
 # satz
 
-**Infrastructure with a constitution — proven live.** satz compiles an estate — written in a language whose resource types and attributes are the Terraform provider's — to OpenTofu/Terraform HCL, and proves the controls it declares against the live Google Cloud organisation. It succeeds the tool that began as `cfg2hcl`.
+**Infrastructure with a constitution — proven live.** satz compiles an estate — written in a language whose resource types and attributes are the Terraform provider's — to OpenTofu/Terraform HCL, and proves the controls it declares against the live Google Cloud organisation.
 Builtin functions to bootstrap a Google Cloud Organization and do state import, migration and discovery of an existing GCP Organization from state or live infrastructure.
 
 > **📖 Documentation: <https://tjirsch.github.io/satz/>** — this README, the
@@ -278,7 +278,7 @@ satz transpile my-infra.satz --config ../config.toml
 This will correctly look for `../yaml/my-infra.satz` and update the files in the current directory.
 
 **Satz estates — the fragment pipeline:**
-A `.satz` input compiles through the stage-B fragment pipeline: every source
+A `.satz` input compiles through the fragment pipeline: every source
 file (estate + each `use`d pack) becomes its own fragment, the composition
 algebra folds them (grant union, deep-equal idempotence, conflicts reported
 with every contributing origin), and HCL is emitted from the folded result,
@@ -601,7 +601,7 @@ satz import organizations/123456789012 --into C0example.satz   # only what the e
 - `--output, -o <FILE>`: output inside `yaml_dir` (default `discovered.satz`; the extension is always `.satz`).
 - `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
 - yaml shape: `--kind estate|pack`, `--gate <estate>.satz` (compile a converted pack in context), `--fork` (write `<stem>.local.satz`).
-- Tier-2 (CDKTF-era) files convert too: unanchored top-level scalars become `params` entries (kebab→snake_case) and the top-level `version:` dialect marker is dropped — both mappings are named in the converted file's header, and a scalar that duplicates a `variables:` entry is refused rather than merged.
+- Tier-2 files, written for CDKTF, convert too: unanchored top-level scalars become `params` entries (kebab→snake_case) and the top-level `version:` dialect marker is dropped — both mappings are named in the converted file's header, and a scalar that duplicates a `variables:` entry is refused rather than merged.
 
 **The import config** (`presets/import-config.yaml`, YAML — it is data that
 configures an import, not an estate) is the repeatable form of the command line:
@@ -1399,11 +1399,11 @@ Aligns curated Org Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) with
 - **Pure diff core**: classification + `normalize_spec` are IO-free and unit-tested; they reconcile `enforce "TRUE"`↔`true`, `allowed_values` ordering, and `parameters` JSON-string↔object so semantically-equal policies don't show as diffs.
 
 #### 7. Cloud Identity Group Lookup (`src/cloud_identity.rs`)
-The group and membership resolvers `satz adopt` uses. A groups pack declares groups by name; adopting the ones that already exist needs their opaque `groups/<id>`, which used to be pasted in by hand.
+The group and membership resolvers `satz adopt` uses. A groups pack declares groups by name; adopting the ones that already exist needs their opaque `groups/<id>`.
 - **Lookup, not guesswork**: the group email the emitted HCL carries (`group_key.id`) is resolved via `cloudidentity.googleapis.com/v1/groups:lookup`; a member email via `memberships:lookup`. Existing ones are imported; missing ones are left for `tofu apply`.
 - **403 is ambiguous**: some tenants return it for a nonexistent group as well as for a permission problem, so a denied lookup falls back to listing `customers/<customer-id>` once and answers from that. If that fails too the resolution is reported as FAILED with an actionable hint rather than treated as absent.
 - **Declared memberships only**: `adopt` resolves the memberships the estate emits — live members the estate does not mention are never looked at, so adopting a group cannot make `apply` propose deleting somebody. The membership label is a `DefaultHasher` digest of `(group key, raw member string)` computed by the same `membership_resource_label` helper the emitter uses; `membership_address_matches_the_generated_resource` pins the two together.
-- **Quota project**: every request sends `x-goog-user-project`, resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT` or the ADC file's `quota_project_id`. Every Cloud Asset sweep sends it too — `report-compliance` and `import` used to omit it, so the same organisation could answer one reporting command and refuse another when the credentials carried no default.
+- **Quota project**: every request sends `x-goog-user-project`, resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT` or the ADC file's `quota_project_id`. Every Cloud Asset sweep sends it too, so every command gets the same answer from an organisation whose credentials carry no default quota project.
 
 ### Bootstrap Workflow (Declarative Tofu)
 Instead of hardcoded setup scripts, `satz` uses a two-phase Tofu approach:
@@ -1450,8 +1450,6 @@ satz whoami e.satz   # who that estate's live commands run as
 ```
 
 `CLOUDSDK_CONFIG` alone is not enough: gcloud reads it, satz and `tofu` do not.
-satz used to honour it when *reporting* and not when *minting*, which meant
-`whoami` could name a credential no API call ever used.
 
 **It reports both halves, and checks them.** The ADC account is who you are to
 Google; the estate's service account is who satz then acts as, and after init that
@@ -1462,7 +1460,7 @@ account (the token is discarded), and one `projects.get` on the quota project. A
 quota project the credentials cannot reach is the trap worth naming: it is
 accepted by everything that merely prints it, then fails every API call with
 `UserProjectInvalid` or "cannot create the authentication headers", naming neither
-the project nor the fix. Every live command now checks it once and refuses early;
+the project nor the fix. Every live command checks it once and refuses early;
 `whoami` reports it and exits non-zero.
 
 **If your ADC already impersonates** — `gcloud auth application-default login
@@ -1473,23 +1471,20 @@ silently preferring either.
 **One process serves one identity.** That is free on the command line — one command, one
 estate — but `satz mcp` is long-lived and each of its tools names an estate. The first
 live tool call binds; a later call needing a *different* service account is refused,
-naming both. It is not silently ignored, which is what it used to be: the second
-estate's tools ran as the first estate's service account, deterministically and
-invisibly. Serve the other estate from a second server.
+naming both. Ignored, the second estate's tools would run as the first estate's
+service account, deterministically and invisibly. Serve the other estate from a
+second server.
 
 **The state bucket runs as the same identity.** In cloud mode the emitted `gcs` backend
 carries `impersonate_service_account` too, so state reads and writes use the estate's
-service account rather than the human. It used to use the human, which meant one
-`tofu apply` authenticated as two principals and every operator needed standing object
-access on the state bucket. An estate that declares its own
+service account rather than the human, so one `tofu apply` authenticates as one
+principal and no operator needs standing object access on the state bucket. An
+estate that declares its own
 `impersonate_service_account` on the backend keeps it.
 
-> **Upgrading an estate that is already in cloud mode:** the backend configuration
-> changes, so `tofu` will refuse the next command until the backend is re-initialised.
-> Run `tofu init -reconfigure` once in `hcl/` after the first transpile on the new
-> version. Estates still in local mode, and estates migrated with
-> `satz migrate --mode cloud` after upgrading, need nothing — `migrate` already
-> re-initialises.
+> **When the emitted backend changes,** `tofu` refuses the next command until the
+> backend is re-initialised: run `tofu init -reconfigure` once in `hcl/`.
+> `satz migrate --mode cloud` re-initialises by itself.
 
 One thing this does **not** cover: **`roles/iam.serviceAccountTokenCreator` is granted at
 organization scope** to the `svc-iac-users` group, so a member can impersonate every
