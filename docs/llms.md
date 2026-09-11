@@ -298,6 +298,11 @@ words, the fix, owner, effort, phase, quick win, risk acceptance — and hand it
 `authored_at`. It renders the workbook. Never author against a hash you did not get
 from `satz_remediation_items` for the same Prowler export.
 
+**Adopting what exists.** Never invent an id: `satz_adopt` resolves every declared
+resource against the live organisation and says per row what it matched on; with
+`execute` it writes the verified ids into the estate as `"import-id"`. The import
+itself (`satz adopt --execute --import`) is a human's.
+
 Also available: `satz_check_presets` (is the pack library current, or forked?),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
 (both halves of the identity — the ADC account and the estate's service account — with

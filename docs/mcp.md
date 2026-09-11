@@ -77,6 +77,8 @@ every `satz` block in the guide.
 | `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration |
 | `satz_whoami` | `read` | both halves of the identity — the ADC account and the open estate's service account — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable, does it hold the permissions the estate's resource types need (`permissions`, each missing one named with its role). The first thing to check when a live call is refused |
 | `satz_transpile` | `write` | compiles the estate and writes its OpenTofu HCL into `hcl_dir`, as `satz transpile` does; `written` lists the files |
+| `satz_adopt` | `read` / `write` | every declared resource resolved against the **live** organisation, as the estate's service account: per row whether it would be imported, moved in the state, is already managed, or cannot be resolved, what it matched on, and the Satz line that declared it. With `execute` (`write`) the verified ids are written into the estate as `"import-id"`, refused while any row is unanswered or a live object is declared twice. `tofu import`, a state move and activating a managed constraint stay on the command line |
+| `satz_get_presets` | `write` | the upstream library into the open estate's `presets_dir`: missing files installed, identical ones left, changed ones the estate does not use refreshed; a pack the estate uses that upstream changed is refused unless `force`. `pristine_dir` copies from a library under the root instead of downloading. `presets_dir` must be inside the root |
 | `satz_remediation_items` | `read` | the remediation dossier's items for an estate and a Prowler export — triaged, deduplicated, joined per (control, resource) — with the `dossier_sha256` authored values must name. The worklist for the `[Authored]` columns; `checkov: true` joins a Checkov run and needs `exec` |
 | `satz_remediation_annotate` | `write` | writes authored values (`what_why`, `recommended_fix`, `owner`, `effort`, `phase`, `quick_win`, `risk_acceptance`, and the mandatory `authored_by` and `authored_at`) per item id into `<out>/authored.json`, merged with what is on file, and renders the run there with the `[Authored]` columns filled. Refused when the hash is not the current dossier's, an id is unknown, or an entry names no author |
 | `satz_scan_checkov` | `exec` | Checkov over the HCL in `hcl_dir` — the counts, and every failed check with the Satz file and line that declared the resource. Scans what is written: transpile first. Runs `checkov`, else `uvx checkov`, with its output captured |
@@ -122,8 +124,9 @@ it may run without asking:
 | annotation | on |
 |---|---|
 | `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_remediation_items` |
-| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write` |
-| `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov` — the four that can reach the network (`uvx checkov` fetches Checkov) |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write` |
+| `destructiveHint: true` | `satz_get_presets` — with `force` it overwrites packs the estate uses |
+| `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_adopt`, `satz_get_presets` — the ones that can reach the network (`uvx checkov` fetches Checkov) |
 
 Without annotations a client either prompts on every read or runs a write without
 asking. The ceiling decides what is *possible*; the annotations decide what runs
@@ -200,8 +203,10 @@ estate. `--no-impersonate` outranks the scope: every tool then runs as the plain
 
 - **No `tofu` tool.** `satz plan` and `satz apply` inherit stdio — apply's approval prompt
   is interactive — and under MCP stdin and stdout are the protocol; a human runs them.
-- **`adopt`, `merge-presets` and `get-presets` are not exposed.** Each prints from
-  inside its own walk, which under MCP would write to stdout, the protocol stream; they
-  need a compute/render split first.
+- **`merge-presets` is not exposed.** It prints from inside a walk that writes, journals
+  and rolls back, which under MCP would write to stdout, the protocol stream; it needs
+  its outcomes collected and rendered afterwards first. `satz adopt --execute --import`
+  (the `tofu import`, the state moves, activating managed constraints) is not exposed
+  either: `satz_adopt` writes the ids, a human imports.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.

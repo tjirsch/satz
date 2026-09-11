@@ -22,6 +22,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rmcp::schemars;
+
 use crate::config::ImportConfig;
 use crate::manifest::{EmittedResource, Manifest};
 
@@ -645,41 +647,59 @@ pub(crate) fn move_conflicts(
         .collect()
 }
 
-pub(crate) fn render_table(
+/// One row of the adopt table: what adopt found for a declared resource and what
+/// it would do. The table renders these; `satz_adopt` returns them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct AdoptRow {
+    pub address: String,
+    /// `IMPORT`, `MOVE`, `adopted`, `on apply`, `AMBIGUOUS`, `FAILED`, …
+    pub verdict: String,
+    pub detail: String,
+    /// what the live lookup matched on, when it matched on a natural key
+    pub matched_on: Option<String>,
+    /// the address the same live object is managed under, for a MOVE
+    pub move_from: Option<String>,
+    /// a second line the row carries
+    pub note: Option<String>,
+    /// the Satz file and line that declared the resource
+    pub declared_at: Option<String>,
+}
+
+/// The rows of the adopt table, one per declared resource adopt says something
+/// about: already managed, moved, or its resolution.
+pub(crate) fn rows(
     resolutions: &[Resolution],
     in_state: &crate::bootstrap::StateIndex,
     manifest: &crate::manifest::Manifest,
-) -> String {
-    let mut s = String::new();
-    let w = resolutions.iter().map(|r| r.address.len()).max().unwrap_or(20).min(72);
+) -> Vec<AdoptRow> {
+    let row = |r: &Resolution, verdict: &str, detail: String| AdoptRow {
+        address: r.address.clone(),
+        verdict: verdict.to_string(),
+        detail,
+        matched_on: None,
+        move_from: None,
+        note: None,
+        declared_at: r.origin.as_ref().map(|(f, l)| format!("{}:{}", f, l)),
+    };
+    let mut out = Vec::new();
     for r in resolutions {
         if in_state.manages(&r.address) {
             // The same words the import path prints, so the dry run and the run
             // are recognisably the same statement.
-            s.push_str(&format!(
-                "  {:w$}  {:30}  {}\n",
-                r.address, "already managed in the state", "skipped",
-                w = w
-            ));
+            out.push(row(r, "already managed in the state", "skipped".into()));
             continue;
         }
         if let Some(old) = moved_from(r, in_state) {
             // Said before the outcome, because the outcome is "IMPORT" and
             // importing is precisely the wrong move here.
-            s.push_str(&format!(
-                "  {:w$}  {:30}  in state as {} — the same live object, so `state mv`, not an import\n",
-                r.address, "MOVE", old,
-                w = w
-            ));
+            let mut moved = row(r, "MOVE", format!("in state as {} — the same live object, so `state mv`, not an import", old));
+            moved.move_from = Some(old.to_string());
             // After the move the state holds its rules under an address the
             // estate declares reset, which the API refuses as an update.
             if in_state.holds_rules(old) && manifest.resources.get(&r.address).is_some_and(|m| m.reset) {
-                s.push_str(&format!(
-                    "  {:w$}  {:30}  holds rules and is declared reset — `satz plan` and `satz apply` replace it\n",
-                    "", "",
-                    w = w
-                ));
+                moved.note = Some("holds rules and is declared reset — `satz plan` and `satz apply` replace it".into());
             }
+            out.push(moved);
             continue;
         }
         let (verdict, detail) = match &r.outcome {
@@ -696,9 +716,29 @@ pub(crate) fn render_table(
             Outcome::Failed(e) => ("FAILED", e.clone()),
             Outcome::Skipped => continue,
         };
-        s.push_str(&format!("  {:w$}  {:30}  {}\n", r.address, verdict, detail, w = w));
+        let mut resolved = row(r, verdict, detail);
         if !r.natural_key.is_empty() && !matches!(r.outcome, Outcome::Resolved { verified: false, .. } | Outcome::AlreadyAdopted(_)) {
-            s.push_str(&format!("  {:w$}  {:30}  matched on: {}\n", "", "", r.natural_key, w = w));
+            resolved.matched_on = Some(r.natural_key.clone());
+        }
+        out.push(resolved);
+    }
+    out
+}
+
+pub(crate) fn render_table(
+    resolutions: &[Resolution],
+    in_state: &crate::bootstrap::StateIndex,
+    manifest: &crate::manifest::Manifest,
+) -> String {
+    let mut s = String::new();
+    let w = resolutions.iter().map(|r| r.address.len()).max().unwrap_or(20).min(72);
+    for row in rows(resolutions, in_state, manifest) {
+        s.push_str(&format!("  {:w$}  {:30}  {}\n", row.address, row.verdict, row.detail, w = w));
+        if let Some(note) = &row.note {
+            s.push_str(&format!("  {:w$}  {:30}  {}\n", "", "", note, w = w));
+        }
+        if let Some(m) = &row.matched_on {
+            s.push_str(&format!("  {:w$}  {:30}  matched on: {}\n", "", "", m, w = w));
         }
     }
     s
@@ -1563,6 +1603,10 @@ mod state_aware_tests {
         assert!(table.contains(OLD), "the row names the address to move FROM: {}", table);
         assert!(!table.contains("IMPORT"), "importing it is the defect: {}", table);
         assert!(!table.contains("declared reset"), "{}", table);
+        // the rows the table renders are what satz_adopt returns
+        let r = crate::adopt::rows(&rs, &state, &crate::manifest::Manifest::default());
+        assert_eq!((r[0].verdict.as_str(), r[0].move_from.as_deref()), ("MOVE", Some(OLD)));
+        assert_eq!(r[0].matched_on, None);
     }
 
     /// The move carries the old rules to an address declared reset: the row says

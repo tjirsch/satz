@@ -3339,6 +3339,47 @@ fn infer_org_id(v: &serde_yaml::Value) -> Option<String> {
     }
 }
 
+/// The adopt dry run, computed: the estate's compile, every declared resource
+/// resolved against the live organisation, the live client (activation needs it),
+/// and what the state already manages. No printing — the CLI and `satz_adopt`
+/// share it. The identity is the caller's: the CLI binds it for the process, the
+/// MCP tool scopes it to the call.
+pub(crate) struct AdoptPlan {
+    pub out: PipelineBOut,
+    pub resolutions: Vec<crate::adopt::Resolution>,
+    pub live: crate::adopt::RealLive,
+    /// What the state already manages, read ONCE and used by both halves of the
+    /// command. The dry run has to know it: `--execute --import` skips those
+    /// addresses, so a table that ranks them as "IMPORT" describes a run that
+    /// will not happen.
+    ///
+    /// Unreadable is a NOTE for the dry run, never a failure — a first adopt has
+    /// no state, and refusing to describe the estate because of that would be
+    /// refusing the only thing a dry run is for. The import path still fails
+    /// fast, because there the imports really would all fail the same way.
+    pub state: Result<crate::bootstrap::StateIndex, String>,
+}
+
+pub(crate) async fn adopt_plan(
+    input_path: &Path,
+    only: Vec<String>,
+    activate: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<AdoptPlan, Box<dyn std::error::Error>> {
+    // Same compile the emitter uses, so the adopted addresses are exactly the
+    // ones `apply` will act on.
+    let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
+    let rules = load_import_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
+        "adoption rules live in <presets_dir>/import-config.yaml — run `satz get-presets` so it exists",
+    )?;
+    let opts = crate::adopt::Options { only: only.into_iter().collect(), activate };
+    let mut live = crate::adopt::RealLive::new(&out.customer_id).await?;
+    let resolutions = crate::adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
+    let state = crate::bootstrap::state_index(&runtime_config.tf_tool, Path::new(&runtime_config.hcl_dir));
+    Ok(AdoptPlan { out, resolutions, live, state })
+}
+
 /// `satz adopt`: compile, resolve every declared resource against the live
 /// org, report, and — only with `--execute` — write the verified ids into the
 /// estate or import them into state now.
@@ -3355,29 +3396,8 @@ async fn run_adopt(
     let input_path = estate_path(PathBuf::from(input), runtime_config);
     reject_yaml_estate(&input_path, "adopt")?;
     configure_estate_impersonation(&input_path, runtime_config)?;
-    // Same compile the emitter uses, so the adopted addresses are exactly the
-    // ones `apply` will act on.
-    let out = pipeline_b_generate(&input_path, tool_config, runtime_config)?;
-    let rules = load_import_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
-        "adoption rules live in <presets_dir>/import-config.yaml — run `satz get-presets` so it exists",
-    )?;
-    let opts = adopt::Options { only: only.into_iter().collect(), activate };
-    let mut live = adopt::RealLive::new(&out.customer_id).await?;
-    let resolutions = adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
-
-    // What the state already manages, read ONCE and used by both halves of the
-    // command. The dry run has to know it: `--execute --import` skips those
-    // addresses, so a table that ranks them as "IMPORT" describes a run that
-    // will not happen.
-    //
-    // Unreadable here is a NOTE, never a failure — a first adopt has no state,
-    // and refusing to describe the estate because of that would be refusing the
-    // only thing a dry run is for. The import path below still fails fast,
-    // because there the imports really would all fail the same way.
-    let state = crate::bootstrap::state_index(
-        &runtime_config.tf_tool,
-        Path::new(&runtime_config.hcl_dir),
-    );
+    let AdoptPlan { out, resolutions, mut live, state } =
+        adopt_plan(&input_path, only, activate, tool_config, runtime_config).await?;
     let in_state = state.clone().unwrap_or_default();
 
     println!("\nadopt {} — {} resources declared\n", input_path.display(), out.manifest.resources.len());

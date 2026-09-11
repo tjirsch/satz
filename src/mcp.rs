@@ -344,6 +344,58 @@ pub(crate) struct AnnotateReport {
     pub written: Vec<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct AdoptArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Resource types to adopt, e.g. `google_org_policy_policy`; empty means all
+    #[serde(default)]
+    pub only: Vec<String>,
+    /// Write the verified ids into the estate as `"import-id"` — needs 'write'
+    #[serde(default)]
+    pub execute: bool,
+}
+
+/// What `satz_adopt` found, and with `execute` what it wrote.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct AdoptReport {
+    pub estate: String,
+    pub declared: usize,
+    pub rows: Vec<crate::adopt::AdoptRow>,
+    /// The counts line: to import, to move, already managed, …
+    pub summary: String,
+    /// Rows that did not answer — failed, unresolvable, ambiguous, no rule.
+    /// `execute` is refused while any exist.
+    pub unanswered: usize,
+    /// Live objects the estate declares under two addresses. `execute` is
+    /// refused while any exist.
+    pub move_conflicts: Vec<MoveConflict>,
+    /// The state could not be read, so no row says "already managed".
+    pub state_note: Option<String>,
+    /// With `execute`: the `"import-id"` lines written into the estate.
+    pub written: Vec<String>,
+    pub hints: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MoveConflict {
+    pub address: String,
+    /// the address the estate still declares for the same live object
+    pub also_declared: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct GetPresetsArgs {
+    /// Overwrite packs the estate uses when upstream changed them; without it
+    /// they are refused and left alone
+    #[serde(default)]
+    pub force: bool,
+    /// A pristine library under the server's root to copy from instead of downloading
+    #[serde(default)]
+    pub pristine_dir: Option<String>,
+}
+
 /// What a compile produced. The addresses are the estate's emitted resources —
 /// the same set the compliance plane witnesses against.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
@@ -1132,6 +1184,116 @@ impl SatzMcp {
     }
 
     #[tool(
+        name = "satz_adopt",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<AdoptReport>(),
+        description = "Resolve every resource the estate declares against the LIVE organisation — natural-key \
+                       lookups and the import-config rules — and say per resource whether it would be imported, \
+                       moved in the state, is already managed, or cannot be resolved. With `execute` (needs \
+                       'write') it writes the verified ids into the estate as \"import-id\". Running `tofu \
+                       import`, a state move or activating a managed constraint stays on the command line \
+                       (`satz adopt --execute --import`). Runs as the estate's service account.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn adopt(
+        &self,
+        Parameters(args): Parameters<AdoptArgs>,
+    ) -> Result<Result<Json<AdoptReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(if args.execute { Group::Write } else { Group::Read }) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        // The lookups read the live organisation as THIS estate's service account,
+        // for the duration of this call only.
+        let plan = match crate::gcp::with_identity(
+            Self::identity_of(&open),
+            crate::adopt_plan(&estate, args.only, false, &open.tool, &open.runtime),
+        )
+        .await
+        {
+            Ok(p) => p,
+            Err(e) => return Ok(Err(refused(format!("adopt: {}", e)))),
+        };
+        let in_state = plan.state.clone().unwrap_or_default();
+        let unanswered = crate::adopt::unanswered(&plan.resolutions, &in_state);
+        let conflicts = crate::adopt::move_conflicts(&plan.resolutions, &in_state);
+        let mut report = AdoptReport {
+            estate: estate.display().to_string(),
+            declared: plan.out.manifest.resources.len(),
+            rows: crate::adopt::rows(&plan.resolutions, &in_state, &plan.out.manifest),
+            summary: crate::adopt::summary(&plan.resolutions, &in_state),
+            unanswered,
+            move_conflicts: conflicts
+                .iter()
+                .map(|(address, also)| MoveConflict { address: address.clone(), also_declared: also.clone() })
+                .collect(),
+            state_note: plan.state.as_ref().err().map(|e| {
+                format!(
+                    "the state could not be read ({}), so nothing is marked as already managed",
+                    e.lines().next().unwrap_or("(no output)")
+                )
+            }),
+            written: Vec::new(),
+            hints: Vec::new(),
+        };
+        if args.execute {
+            if unanswered > 0 || !conflicts.is_empty() {
+                return Ok(Err(refused(format!(
+                    "adopt: {} row(s) did not answer and {} live object(s) are declared twice — nothing was written; \
+                     run without `execute` to see the rows",
+                    unanswered,
+                    conflicts.len()
+                ))));
+            }
+            match crate::adopt::write_import_ids(&plan.resolutions, Some(std::path::Path::new(&open.runtime.presets_dir))) {
+                Ok((written, hints)) => {
+                    report.written = written;
+                    report.hints = hints;
+                }
+                Err(e) => return Ok(Err(refused(format!("adopt: {}", e)))),
+            }
+        }
+        Ok(Ok(Json(report)))
+    }
+
+    #[tool(
+        name = "satz_get_presets",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::presets::GetPresetsReport>(),
+        description = "Fetch the upstream preset library into the open estate's presets_dir: missing files \
+                       installed, identical ones left, changed ones the estate does not use refreshed. A pack \
+                       the estate USES that upstream changed is refused — merge-presets forks or adopts it — \
+                       unless `force`. Needs the 'write' capability.",
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn get_presets(
+        &self,
+        Parameters(args): Parameters<GetPresetsArgs>,
+    ) -> Result<Result<Json<crate::presets::GetPresetsReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let (open, _estate) = match self.target(None) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let presets = PathBuf::from(&open.runtime.presets_dir);
+        let existing = presets.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| presets.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let pristine = match args.pristine_dir.as_deref().map(|p| self.file(p)).transpose() {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::presets::get_presets(&open.runtime.presets_dir, &open.runtime, args.force, pristine).await {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("get-presets: {}", e)))),
+        }
+    }
+
+    #[tool(
         name = "satz_scan_checkov",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ScanReport>(),
         description = "Run Checkov over the estate's emitted HCL (the hcl_dir satz_transpile writes) and return \
@@ -1545,6 +1707,17 @@ mod tests {
             .and_then(|at| presets[at..].find("\n}\n").map(|e| at + e))
             .expect("check_presets_report moved — re-point this gate");
         regions.push(("src/presets.rs (the check-presets path)", &presets[start..end]));
+
+        // `satz_get_presets` and `satz_adopt` reach these in full.
+        let start = presets.find("pub(crate) async fn get_presets").expect("get_presets moved — re-point this gate");
+        let end = presets.find("/// What `get-presets` did to the library.").expect("GetPresetsReport moved — re-point this gate");
+        regions.push(("src/presets.rs (get_presets)", &presets[start..end]));
+        let adopt = include_str!("adopt.rs");
+        regions.push(("src/adopt.rs", adopt.split("#[cfg(test)]").next().unwrap_or(adopt)));
+        let main = include_str!("main.rs");
+        let start = main.find("pub(crate) async fn adopt_plan").expect("adopt_plan moved — re-point this gate");
+        let end = main[start..].find("\n}\n").map(|e| start + e).expect("adopt_plan has no end");
+        regions.push(("src/main.rs (adopt_plan)", &main[start..end]));
 
         for (what, src) in regions {
             for line in src.lines() {
