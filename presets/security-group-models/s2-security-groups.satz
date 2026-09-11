@@ -17,7 +17,7 @@
 //
 // Required from the estate: customer_domain, svc_iac_account, infra_project_name
 
-pack s2_security_groups version "1.1"
+pack s2_security_groups version "1.2"
 
 params {
   gcp_organization_admins_name = "gcp-organization-admins"
@@ -100,7 +100,7 @@ google_cloud_identity_group {
   "{gcp_security_admins_name}" {
     lifecycle { ignore_changes = ["initial_group_config"] }
     display_name = "GCP-Security Admins"
-    description  = "Permissions for use with Security Admin role. Use of setting IAM on most Resources.\nOrganizational, Folder  and Project IAM Admin roles.\nSCC PowerUser.\n"
+    description  = "Security administration: organisation policies, folder IAM, Security Command Center.\nLog sinks and metrics, monitoring, private logs.\nRead access to IAM, compute, containers and the asset inventory.\n"
     owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
   }
 

@@ -71,10 +71,10 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`s1_group_definitions`](s1-group-definitions.md) | 1.3 | The five S1 admin groups, defined but not populated. | 5 | — |
+| [`s1_group_definitions`](s1-group-definitions.md) | 1.4 | The five S1 admin groups, defined but not populated. | 5 | — |
 | [`s1_group_permissions`](s1-group-permissions.md) | 1.1 | Organization-level role grants for the five S1 admin groups. | 6 | — |
-| [`s1_security_groups`](s1-security-groups.md) | 1.1 | The S1 security group model in ONE file: the five admin groups and their organization-level role grants. | 11 | — |
-| [`s2_security_groups`](s2-security-groups.md) | 1.1 | The S2 security group model: S1's five admin groups plus a distinct NETWORK ADMINS group, and the org-level grants split accordingly. | 13 | — |
+| [`s1_security_groups`](s1-security-groups.md) | 1.2 | The S1 security group model in ONE file: the five admin groups and their organization-level role grants. | 11 | — |
+| [`s2_security_groups`](s2-security-groups.md) | 1.2 | The S2 security group model: S1's five admin groups plus a distinct NETWORK ADMINS group, and the org-level grants split accordingly. | 13 | — |
 
 ## Framework coverage
 
