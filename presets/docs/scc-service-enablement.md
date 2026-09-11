@@ -43,7 +43,7 @@ policy refuses any agent the baseline does not list. That is what
 "won't stay activated / asks to activate on every console visit" looks
 like from the console. The CIS pack's subject list already carries the
 five agents SCC activation mints; enabling more services does not add
-to them (measured on a live organisation, 2026-09-04).
+to them (measured on a live organisation).
 
 NOTHING RUNS AT TRANSPILE TIME. An action is inert until `run-actions` is
 invoked, it emits nothing, and no claim can cover it — satz records that

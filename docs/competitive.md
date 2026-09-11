@@ -23,14 +23,14 @@ and its raw findings stay in the repo.
    cannot be replayed or certified. LLM assistance belongs *on top of* a
    deterministic core, not in place of one (see roadmap: post-stabilization
    targeted exploration).
-2. **Multi-customer maintenance is the moat** (owner, 2026-08-22). Running N
+2. **Multi-customer maintenance is the moat.** Running N
    customers on FAST means N diverged copies of the FAST repo; diffing preset
    drift across them is a nightmare — there is no upstream/fork/ledger
    machinery, no `merge-presets`, no transpile-identity proof that an upgrade
    is behavior-preserving. Our provenance model (`X.satz` pristine /
    `X.local.satz` fork / `X.diff.satz` ledger, versions in-file) exists
    precisely for fleet-wide customer-driven individual configs.
-3. **Escape hatches are designed, not improvised** (owner, 2026-08-22). If you
+3. **Escape hatches are designed, not improvised.** If you
    need an exception FAST does not ship (a policy carve-out, a per-customer
    deviation), you are editing a stage in your private copy — unmergeable mess.
    We have graded channels: params (80%), `suppress`, `.local` forks with

@@ -116,15 +116,14 @@ the item with the least safety net: a benchmark revision simply does not exist h
 until someone adds it, and every report keeps answering the older question without
 saying so.
 
-Two lessons already paid for, both worth re-reading before transcribing anything:
+Two rules for transcribing:
 
 - **Renumbering is the failure mode, not new controls.** CIS 5.0 renumbered
   1.1→1.2, 1.4→1.5, 1.5→1.6, 1.16→1.17, 3.8→3.10 while the content stayed put. A
   claim pointing at the old number is not a compile error, it is a wrong report.
 - **Prefer a machine-readable third party over the PDF.** Prowler ships its CIS
-  mappings as data, and checking against them corrected two numbers this project had
-  already written down wrong (Cloud SQL public IP is 6.6 in 4.0 and 6.7 in 5.0, not
-  6.5/6.7; the API-key constraint is 1.14/1.15, not 1.13).
+  mappings as data; check the numbers against them (Cloud SQL public IP is 6.6 in 4.0
+  and 6.7 in 5.0; the API-key constraint is 1.14/1.15).
 
 An unclaimed control is visible as *unmet* rather than absent, so adding ids ahead of
 the packs that implement them is safe and is the right order.
@@ -162,7 +161,7 @@ the packs that implement them is safe and is the right order.
 - **Competitive re-audit** — quarterly or at a phase gate, appended as a dated entry
   to `docs/competitive.md`. Keeps the framework inputs, never replaces them.
 - **Fleet re-transpile after every satz release** — the estates live outside this
-  repository, but the check no longer does: [`fleet-v1.sh`](#fleet-v1sh--every-estate-on-the-current-binary).
+  repository; the check is in it: [`fleet-v1.sh`](#fleet-v1sh--every-estate-on-the-current-binary).
   An estate whose emitted HCL no longer matches what the current binary produces is a
   release blocker, not a nuisance — and the longer between runs, the harder the finding
   is to attribute to the release that caused it.
@@ -175,7 +174,7 @@ in Terraform can express them, so they stay `gcloud`), and **build-time helpers*
 that maintain the repo's own data files.
 
 A cloud step still cannot be **authored** in Satz — that is what makes it a
-script. It can, since v0.46.69, be **declared and invoked** by an estate: an
+script. It can be **declared and invoked** by an estate: an
 [`action`](language.md#613-action--a-step-with-no-provider-resource) names
 the step, binds it to a script, and builds its arguments from the estate's own
 params, so `satz run-actions` runs it with the organisation id the estate
@@ -245,9 +244,8 @@ git config core.hooksPath .githooks
 
 ## `smoke.sh` — the command matrix
 
-The unit tests cover the engines; nothing exercised the *commands* end to end, and
-two regressions shipped with a green suite before this existed. `scripts/smoke.sh`
-runs, offline, against the fixture estate in `tests/smoke/` (the shipped CIS,
+The unit tests cover the engines; `scripts/smoke.sh` covers the *commands*, end to
+end. It runs, offline, against the fixture estate in `tests/smoke/` (the shipped CIS,
 contacts and monitoring packs, a group with a member, org grants, a project with
 services and a bucket): `transpile` (then `tofu validate` when `tofu` is on PATH —
 provider download only, no state, no cloud), `require`, `check-presets` against the
@@ -337,8 +335,8 @@ the reader.
 `hcl/` and never below it, so a `modules/` or `landing-zones/` tree an estate keeps
 there is its own, and the `main.tf` inside is not the emitted `main.tf` that shares the
 name. The walk is flat: a subdirectory is listed with `!` and nothing in it is
-compared. Walked, one such tree read as a hundred and thirty deletions on an estate
-whose emission had not changed at all.
+compared. Walked, such a tree would read as deletions on an estate whose emission
+has not changed at all.
 
 **Why the address set is the severe half.** A body delta says an attribute is
 rendered differently — the same resources, described differently. A moved
@@ -347,11 +345,8 @@ housekeeping; the second is a plan you have not seen.
 
 ### When the delta is the state backend
 
-A `terraform` block whose backend gained `impersonate_service_account` is the
-expected delta on every estate in `deployment_mode = "cloud"` since v0.46.87 —
-the state bucket now authenticates as the estate's IaC service account rather
-than as the human. Changing backend configuration means `tofu` refuses the next
-command until it is re-initialised, once per estate:
+A delta in the `terraform` block's backend is a changed state backend, and `tofu`
+refuses the next command until it is re-initialised, once per estate:
 
 ```bash
 cd hcl/ && tofu init -reconfigure
@@ -382,20 +377,18 @@ carries two lists and **fails naming any `docs/*.md` that is in neither**:
 - `SITE_DOCS` — published.
 - `SITE_DOCS_EXCLUDED` — deliberately not published, each with its reason.
 
-A glob used to decide this, which meant a page appeared on the public site
-because a file existed. The gate replaces "someone will notice" with a build
-error, in both directions: a new doc cannot slip onto the site unreviewed, and
-cannot be silently left off it either. The smoke matrix runs the site build, so
-the check is enforced in CI.
+The gate is a build error in both directions: a new doc cannot slip onto the site
+unreviewed, and cannot be silently left off it either. The smoke matrix runs the
+site build, so the check is enforced in CI.
 
 **The menu is a third list, gated the same way.** `NAV_ORDER` names every page in
 reading order — `satz`, `language`, `library`, `workflows`, `interview`, `mcp`,
 `examples`, `housekeeping`, `competitive`, `llms` — and the build fails on a page
-it does not name, or on a name that is not a page. It used to append an unlisted
-page alphabetically, which is how a menu meant as a table of contents drifted
-into a directory listing. A page's title is its menu word after `satz` (`# satz
-language`, `# satz library`), with no trailing explanation: what the page IS goes
-in its opening line, where a reader who opened it will actually see it. The
+it does not name, or on a name that is not a page, so the menu stays a table of
+contents rather than a directory listing. A page's title is its menu word after
+`satz` (`# satz language`, `# satz library`), with no trailing explanation:
+what the page IS goes in its opening line, where a reader who opened it will
+actually see it. The
 browser tab shows that title as plain text, taken from the rendered heading, and
 a page without a `# ` title fails the build.
 
@@ -630,25 +623,22 @@ The SDK knows **13** of the **17** services the API exposes. `ARTIFACT_GUARD`,
 `ARTIFACT_ANALYSIS`, `AGENT_ENGINE_VULN_ASSESSMENT` and `EXTERNAL_EXPOSURE` have
 no gcloud name at all — the CLI answers "is not a valid service name" — while the
 API sets them without complaint. Four services silently out of reach is reason
-enough on its own; going straight to the API also deletes a translation step that
-had been a bug (the API says `SECURITY_HEALTH_ANALYTICS`, the CLI wanted
-`security-health-analytics`, and discovery fed one to the other, so *every*
-discovered run failed completely). gcloud still supplies the credentials and
-walks the hierarchy.
+enough on its own; the API also needs no translation between its names and the
+CLI's (`SECURITY_HEALTH_ANALYTICS` against `security-health-analytics`), which
+discovery returns in the API's form. gcloud supplies the credentials and walks
+the hierarchy.
 
 The API needs a quota project — `--quota-project`, defaulting to the active
 gcloud project — and refuses the call without one. `--apply` is the difference
 between `validateOnly` and a write.
 
-### What the live runs found (2026-09-04)
+### What a live organization answers
 
-Until that day this script had only ever run against a gcloud test double, and
-the double accepted everything. Against a real organization, on the gcloud path,
-7 of 33 calls failed; on the API path 38 of 41 succeed, and the three that fail
-are the organization's own state. What the runs turned up:
+Against a real organization, 38 of 41 calls succeed; the three that fail are the
+organization's own state:
 
-- **Four services were unreachable through the CLI** — the reason for the move
-  above. All four now enable, verified end to end.
+- **The four services the CLI cannot name enable through the API**, verified end
+  to end.
 - **VM Manager cannot be enabled at all here.** The API answers `Invalid
   intended_enablement_state. ENABLED is not a valid enablement state`: SCC mirrors
   whether GCE's VM Manager is running. It is skipped in the org pass with a note
@@ -657,9 +647,8 @@ are the organization's own state. What the runs turned up:
   org where it is disabled and the subscription does not carry it. That is not a
   script bug and is left to surface with the API's own message rather than a
   guess at the cause.
-- **`external-exposure` sat in the built-in fallback list** in a spelling nothing
-  accepted, so the fallback path had been broken too, and silently. The list is
-  now in the API's own names, which is what discovery returns.
+- **The built-in fallback list is in the API's own names**, which is what discovery
+  returns; a CLI spelling there would break the fallback path silently.
 
 ### What it does
 

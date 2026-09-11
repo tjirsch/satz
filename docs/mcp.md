@@ -159,22 +159,20 @@ what is *possible*, the annotation decides what is *unremarkable*.
 
 ## Why the SDK and not a hand-rolled shim
 
-The plan for this said hand-roll ~300 lines: satz needs four methods and would never
-touch the parts of the spec that move. Reading the spec before writing the first line
-refuted it. The current revision (**2026-07-28**) negotiates the protocol version *per
-request* through a `_meta` key, adds a mandatory `server/discover` RPC, and keeps a
-separate compatibility path for the initialize-based revisions clients still speak.
-That is three moving parts to own, in a spec that has revised five times.
-[`rmcp`](https://crates.io/crates/rmcp) implements all five, so the churn is not ours —
-which was the deciding question, rather than which option was less code.
+satz needs four methods, but the protocol under them moves. The current revision
+(**2026-07-28**) negotiates the protocol version *per request* through a `_meta` key,
+adds a mandatory `server/discover` RPC, and keeps a separate compatibility path for
+the initialize-based revisions clients still speak. That is three moving parts to own,
+in a spec that has revised five times. [`rmcp`](https://crates.io/crates/rmcp)
+implements all five, so the churn is not satz's to carry — which decides it, more than
+which option is less code.
 
 ## stdout is the protocol
 
 Everything satz says to a human — the version banner, schema-loader progress, emitter
-warnings, the `credentials:` line — goes to **stderr**, and has since the reporting
-commands learned `--format json`. Under MCP that is not a convenience: a stray line on
-stdout is a corrupt stream, and the client reports nothing useful rather than reporting
-an error. The smoke matrix asserts that every line the server emits parses as JSON-RPC.
+warnings, the `credentials:` line — goes to **stderr**. Under MCP that is not a
+convenience: a stray line on stdout is a corrupt stream, and the client reports nothing
+useful rather than reporting an error. The smoke matrix asserts that every line the server emits parses as JSON-RPC.
 
 That check has a blind spot worth knowing about. The matrix runs without credentials, so
 it never reaches a **live** tool call — and the first real bug here was exactly there:
