@@ -929,7 +929,7 @@ tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 assert {"satz_require", "satz_check_presets", "satz_questions", "satz_interview", "satz_triage",
         "satz_transpile_check", "satz_transpile", "satz_report_compliance",
         "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
-        "satz_remediation_items", "satz_remediation_annotate"} <= set(tools), sorted(tools)
+        "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets"} <= set(tools), sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -947,7 +947,8 @@ assert opened["runs_as"] is None, opened
 # permitted, readOnlyHint says what an agent may run without stopping to ask.
 for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
-             "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate"):
+             "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
+             "satz_adopt", "satz_get_presets"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
@@ -1143,6 +1144,56 @@ PYEOF
 grep -q 'security_model_s2 = true' tmp/iv/agent.satz || fail "the oneof answer was not written"
 grep -q 'security_model_s1 = false' tmp/iv/agent.satz || fail "the oneof siblings were not set false"
 "$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
+
+step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_adopt","arguments":{"only":["google_folder"]}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_get_presets","arguments":{}}}'
+} > tmp/mcp-adopt-in.jsonl
+GOOGLE_APPLICATION_CREDENTIALS=/nonexistent python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-adopt-in.jsonl > tmp/mcp-adopt.jsonl 2>/dev/null || true
+rm -rf tmp/gp && mkdir -p tmp/gp/yaml && cp -R "$root/presets" tmp/gp/pristine
+cat > tmp/gp/config.toml <<'EOF'
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+include_dirs = [".", "yaml"]
+presets_dir = "presets"
+tf_tool = "tofu"
+EOF
+printf '%s\n' 'estate gp' '' 'params {' '  customer_organization_id = "123456789012"' '}' '' 'terraform {' '  backend {' '    local { path = "terraform.tfstate" }' '  }' '}' > tmp/gp/yaml/gp.satz
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"gp.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_get_presets","arguments":{"pristine_dir":"pristine"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_get_presets","arguments":{"pristine_dir":"pristine"}}}'
+} > tmp/mcp-gp-in.jsonl
+(cd tmp/gp && python3 ../mcp-drive.py "$satz" mcp --root . --allow read,write < ../mcp-gp-in.jsonl > ../mcp-gp.jsonl 2>/dev/null) || true
+python3 - <<'PYEOF' || fail "satz_adopt / satz_get_presets did not behave"
+import json
+def read(path):
+    out = {}
+    for l in open(path):
+        if l.strip():
+            d = json.loads(l)          # every line must parse: stdout is the protocol
+            if "id" in d:
+                out[d["id"]] = d
+    return out
+a = read("tmp/mcp-adopt.jsonl")
+adopt = a[3]["result"]
+assert adopt["isError"] is True, adopt
+assert any(w in adopt["content"][0]["text"].lower() for w in ("credential", "token", "adc", "auth")), adopt
+gp_outside = a[4]["result"]
+assert gp_outside["isError"] is True and "outside the server's root" in gp_outside["content"][0]["text"], gp_outside
+g = read("tmp/mcp-gp.jsonl")
+first = g[3]["result"]["structuredContent"]
+assert first["installed"] and not first["refused"], first
+second = g[4]["result"]["structuredContent"]
+assert not second["installed"] and not second["refreshed"] and second["current"] == len(first["installed"]), second
+PYEOF
+[ -s tmp/gp/presets/CIS-GCP-Foundation-4.0.satz ] || fail "satz_get_presets did not install the library"
 
 step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"
 # V1 is the only check that catches an estate which quietly stopped compiling or

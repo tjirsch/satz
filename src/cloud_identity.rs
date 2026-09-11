@@ -36,7 +36,7 @@ enum LookupError {
     /// The API refused the caller. Ambiguous: some tenants return this for a group that
     /// does not exist (anti-enumeration) as well as for a genuine permission problem.
     Forbidden(String),
-    Other(BoxErr),
+    Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub(crate) struct CloudIdentityClient {

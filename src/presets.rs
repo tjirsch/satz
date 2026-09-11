@@ -672,12 +672,13 @@ pub(crate) async fn check_presets_report(
 ///   actually appropriate; `--force` overrides, after listing what it will change
 ///
 /// `X.local.*` files have no upstream counterpart, so nothing here can touch them.
-pub(crate) async fn run_get_presets(
+pub(crate) async fn get_presets(
     presets_dir: &str,
     runtime_config: &crate::ToolConfig,
     force: bool,
     pristine_dir: Option<PathBuf>,
-) -> Result<(), BoxErr> {
+) -> Result<GetPresetsReport, BoxErr> {
+    let mut report = GetPresetsReport::default();
     let local_base = PathBuf::from(presets_dir);
     crate::fsx::create_dir_all(&local_base)?;
 
@@ -698,7 +699,7 @@ pub(crate) async fn run_get_presets(
                 }
             }
         }
-        None => println!("note: no estate found in '{}' — nothing to protect, refreshing everything", runtime_config.yaml_dir),
+        None => report.no_estate = true,
     }
 
     let mut files = Vec::new();
@@ -722,38 +723,94 @@ pub(crate) async fn run_get_presets(
     files.sort();
     files.dedup();
 
-    let (mut installed, mut current, mut refreshed, mut refused) = (0usize, 0usize, 0usize, 0usize);
     for rel in &files {
         let up = crate::fsx::read_to_string(tmp.join(rel))?;
         let lo_path = local_base.join(rel);
         if !lo_path.exists() {
             if let Some(parent) = lo_path.parent() { crate::fsx::create_dir_all(parent)?; }
             crate::fsx::write(&lo_path, up.as_bytes())?;
-            installed += 1;
+            report.installed.push(rel.display().to_string());
             continue;
         }
         let lo = crate::fsx::read_to_string(&lo_path)?;
-        if lo == up { current += 1; continue; }
+        if lo == up { report.current += 1; continue; }
 
         let stem = pack_stem(rel).unwrap_or_else(|| rel.clone());
+        let changed = InUsePreset {
+            file: rel.display().to_string(),
+            stem: stem.file_name().unwrap_or_default().to_string_lossy().to_string(),
+            local_version: pack_version(&lo),
+            upstream_version: pack_version(&up),
+        };
         let in_use = used_stems.contains(&stem);
         if in_use && !force {
-            let (v_lo, v_up) = (pack_version(&lo), pack_version(&up));
-            println!("  REFUSED {}: the estate uses it and upstream moved {}", rel.display(), version_arrow(&v_lo, &v_up));
-            println!("    `merge-presets` (forks it, keeps your content) or");
-            println!("    `merge-presets --adopt {}` (upgrades it in place), or --force to overwrite anyway.", stem.file_name().unwrap_or_default().to_string_lossy());
-            refused += 1;
+            report.refused.push(changed);
             continue;
         }
         if in_use {
-            let (v_lo, v_up) = (pack_version(&lo), pack_version(&up));
-            println!("  --force overwrote IN-USE {} ({}) — re-transpile and read the plan", rel.display(), version_arrow(&v_lo, &v_up));
+            report.forced.push(changed);
         }
         crate::fsx::write(&lo_path, up.as_bytes())?;
-        refreshed += 1;
+        report.refreshed.push(rel.display().to_string());
     }
-    println!("\nget-presets: {installed} installed, {current} already current, {refreshed} refreshed, {refused} refused.");
-    if refused > 0 {
+    Ok(report)
+}
+
+/// What `get-presets` did to the library.
+#[derive(Debug, Default, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct GetPresetsReport {
+    /// No estate was found beside the config: nothing to protect, everything refreshed.
+    pub no_estate: bool,
+    /// Files that were missing locally.
+    pub installed: Vec<String>,
+    /// Files identical to upstream.
+    pub current: usize,
+    /// Files that differed and the estate does not use (or `force`), overwritten.
+    pub refreshed: Vec<String>,
+    /// Packs the estate uses that upstream changed: left alone. `merge-presets`
+    /// forks them, `merge-presets --adopt <stem>` upgrades them in place.
+    pub refused: Vec<InUsePreset>,
+    /// Packs the estate uses, overwritten because `force` was given: re-transpile
+    /// and read the plan.
+    pub forced: Vec<InUsePreset>,
+}
+
+/// A pack the estate uses that upstream changed.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct InUsePreset {
+    pub file: String,
+    pub stem: String,
+    pub local_version: Option<String>,
+    pub upstream_version: Option<String>,
+}
+
+/// `get-presets`: fetch the upstream library and say what changed.
+pub(crate) async fn run_get_presets(
+    presets_dir: &str,
+    runtime_config: &crate::ToolConfig,
+    force: bool,
+    pristine_dir: Option<PathBuf>,
+) -> Result<(), BoxErr> {
+    let r = get_presets(presets_dir, runtime_config, force, pristine_dir).await?;
+    if r.no_estate {
+        println!("note: no estate found in '{}' — nothing to protect, refreshing everything", runtime_config.yaml_dir);
+    }
+    for p in &r.refused {
+        println!("  REFUSED {}: the estate uses it and upstream moved {}", p.file, version_arrow(&p.local_version, &p.upstream_version));
+        println!("    `merge-presets` (forks it, keeps your content) or");
+        println!("    `merge-presets --adopt {}` (upgrades it in place), or --force to overwrite anyway.", p.stem);
+    }
+    for p in &r.forced {
+        println!("  --force overwrote IN-USE {} ({}) — re-transpile and read the plan", p.file, version_arrow(&p.local_version, &p.upstream_version));
+    }
+    println!(
+        "\nget-presets: {} installed, {} already current, {} refreshed, {} refused.",
+        r.installed.len(),
+        r.current,
+        r.refreshed.len(),
+        r.refused.len()
+    );
+    if !r.refused.is_empty() {
         println!("Refused files are packs this estate deploys — changing them changes the org.");
     }
     Ok(())
