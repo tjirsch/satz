@@ -131,9 +131,12 @@ TOC_CSS = """
   /* Long pages are the point — the reference is meant to be read straight
      through — so the answer to navigating them is a contents column beside the
      text, not shorter pages. */
-  .page { display: grid; grid-template-columns: 15.5rem minmax(0, 74ch); gap: 0 3rem;
+  /* The text column is 74ch plus half of the page's width beyond the contents
+     column, the gap and 74ch, so the empty space on each side is half what a fixed
+     74ch left (9.25rem is half of the contents column and the gap). */
+  .page { display: grid; grid-template-columns: 15.5rem minmax(0, calc(50% + 37ch - 9.25rem)); gap: 0 3rem;
     justify-content: center; align-items: start; }
-  .page > main { margin: 0; }
+  .page > main { margin: 0; max-width: none; }
   details.toc { position: sticky; top: 4.4rem; margin: 84px 0 0; font-size: .9rem;
     max-height: calc(100vh - 6rem); overflow-y: auto; overscroll-behavior: contain; }
   details.toc summary { font-weight: 600; color: var(--ink-2); cursor: pointer; margin-bottom: .6rem;
@@ -151,7 +154,7 @@ TOC_CSS = """
   /* Narrow: the contents become a collapsed block above the text (the script
      closes it on load), so a long list never buries the page it describes. */
   @media (max-width: 1180px) {
-    .page { grid-template-columns: minmax(0, 74ch); }
+    .page { grid-template-columns: minmax(0, calc(50% + 37ch)); }
     details.toc { position: static; max-height: none; overflow: visible; margin: 28px 0 0; }
   }
   @media print { details.toc { display: none; } }
