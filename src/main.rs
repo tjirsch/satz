@@ -926,8 +926,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .into());
             }
             candidate
-        } else {
+        } else if path.is_file() || matches!(cmd_choice, Commands::Init { .. }) {
+            // `init` writes the file --config names; every other command reads it
             path.clone()
+        } else {
+            return Err(format!("--config {}: no such file or directory", path.display()).into());
         }
     } else {
         let default_config = PathBuf::from("config.toml");
