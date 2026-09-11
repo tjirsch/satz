@@ -813,7 +813,8 @@ def main() -> None:
         print(f"asset_type filled: {filled}; no CAI shape: {len(no_shape)}; unresolved: {len(missing)}")
         for t, r in missing:
             print(f"  {t}: {r}")
-        changed |= filled > 0
+        # a no-shape row lost its TODO placeholder: that is a change to write too
+        changed |= filled > 0 or bool(no_shape)
 
     if changed:
         with args.config_file.open("w") as f:

@@ -213,7 +213,8 @@ It knows no customer, no company and no person: the allowlists are the example
 values and the vendor defaults every customer shares, and everything else of that
 shape is refused. **It judges tokens, not lines** — an allowed address never
 shields a private one beside it — and an unusable commit range or a missing file
-is a failure, never a pass.
+is a failure, never a pass. It runs under bash 3.2 (`/bin/bash` on macOS) as well
+as bash 5; the smoke matrix runs its identifier check under both.
 
 What it **cannot** see is a NAME. A display name or a company in prose has no
 shape, and "Log Admins" and a real customer's project name are the same kind of
@@ -429,8 +430,9 @@ existing rows are never rewritten and comments survive (`ruamel.yaml`):
   table for the services whose provider name is not their API host) and kept
   ONLY when it is in Google's published list — `cai-asset-types.txt` is that
   list, dated in its header. Rows that are not Cloud Asset resources at all
-  (IAM members/bindings, org-policy v1 shapes, provider constructs) lose the
-  `asset_type` key: known, not unknown. What stays `TODO/UNKNOWN` is printed
+  (IAM members/bindings, org-policy v1 shapes, provider constructs, and
+  `google_billing_budget`, which `adopt` resolves through the Billing API) lose
+  the `asset_type` key: known, not unknown. What stays `TODO/UNKNOWN` is printed
   with what was tried. The smoke matrix runs this pass and fails when the
   table is behind the list.
 

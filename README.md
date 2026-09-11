@@ -62,7 +62,7 @@ Two forms that do not work:
 These options can be placed anywhere in the command (e.g., before or after subcommands):
 
 - `--config <FILE>`: Path to the **project** config file (`config.toml`, TOML — not the estate file). Mandatory for most commands if `config.toml` is not in the current directory. Every relative path inside it resolves from its own directory.
-- `--validation <LEVEL>`: Validation level for mandatory parameters (`warn`, `error`, `none`). Default from project config or `warn`.
+- `--validation <LEVEL>`: what a missing required argument does (`warn`, `error`, `none`; see [Schema Validation](#schema-validation)). Default from project config or `warn`.
 - `--html-help`: open the documentation site in the browser at the invoked command's section (`satz transpile --html-help`); alone (`satz --html-help`) the front page. Commands without a section of their own open the command table.
 - `--verbose`: Enable verbose output. When invoked without a subcommand (e.g. `satz --verbose`), prints full recursive help listing all subcommands and their options.
 - `--no-actions`: never execute a declared [`action`](#run-actions-run-actions), whatever `run-actions` was asked to do.
@@ -650,7 +650,11 @@ the schema filter. Review the rows it marks `renamed`; re-run after a provider
 bump; an ambiguous schema name is pinned with `api_schema:` on the row. What the
 schema still does not know is **dropped and reported** (names with `--verbose`)
 rather than written into HCL that would not plan. A fetch that fails aborts the
-import — nothing is written from a partial sweep.
+import — nothing is written from a partial sweep. A nested value the API does not
+return while it holds the provider's default — a subnet's `log_config.filter_expr`,
+default `"true"` — is read back into state as empty, so the first plan after the
+import shows a one-time in-place update to the default; the first apply writes it and
+the subnet's flow logs do not change.
 
 **Under the Hood:**
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
@@ -865,9 +869,12 @@ exists, so org-policy witnesses are compared by VALUE. The estate's declared
 DRIFTED: a missing resource is absent from the inventory, while a switched-off
 policy is listed like an enforced one.
 
-A policy with several rules, with none, or a list constraint with no boolean yields
-no verdict; a policy whose live enforcement cannot be read reports *unverifiable*,
-never *verified*.
+The verdict is the policy's one unconditional rule. Its conditional rules — a
+tag-conditional `enforce: false` that exempts tagged resources, for one — are listed
+beside the verdict on the row and in the evidence (`conditional`). A policy with no
+unconditional rule or more than one, or a list constraint with no boolean, yields no
+verdict; a policy whose live enforcement cannot be read reports *unverifiable*, never
+*verified*.
 
 ### Deviations: declining a control
 
@@ -901,8 +908,8 @@ The goal view joined with the **live estate**: every witness of a satisfied/part
 control is verified against Cloud Asset Inventory (org sinks, log metrics, alert
 policies, notification channels, buckets — matched by name/display name extracted from
 the generated HCL). Manual duties merge with `attestations.yaml` beside config.toml
-(`duty-id: {by, date, note}`), and a Prowler native-JSON export can be ingested as
-corroboration (`--prowler findings.json` — Prowler's OCSF output or its legacy JSON; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it).
+(`duty-id: {by, date, note}`), and a Prowler export can be ingested as
+corroboration (`--prowler findings.json` — the OCSF export of Prowler 5, `prowler gcp --output-formats json-ocsf`; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it). The report names the Prowler version that wrote the export; an export from an older Prowler, or with no version in `metadata.product`, is refused with the version it carries.
 
 The exit code is 0 whatever the verdicts — the report is the deliverable;
 `--fail-on not-enforced,drifted` (any status word; `any` = everything that is
@@ -1128,12 +1135,16 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 
 ## Schema Validation
 
-The tool automatically checks your estate against the provider schemas to ensure all mandatory parameters and blocks are present.
+Every compile checks each emitted resource against the provider schema: the
+arguments the schema marks `required` (a custom role's `role_id`) and the blocks
+with `min_items > 0` (a VM's `boot_disk`) must be present. The check reads what is
+emitted, so an argument satz derives — a project from its position, a group's
+`parent` — counts. A resource type the loaded schemas do not know is not checked.
 
-- **Attributes**: Checks for `required` fields (e.g., `project_id`).
-- **Blocks**: Checks for mandatory blocks with `min_items > 0` (e.g., `boot_disk` for a VM).
-
-You can control the strictness via CLI `--validation` or `config.toml`.
+`validation_level` in `config.toml`, or `--validation`, sets what a missing one does:
+`warn` (the default) prints one warning per resource with the file and line that
+declares it, `error` refuses the compile, `none` skips the check. Any other value
+is refused. `tofu plan` refuses such a resource either way.
 
 ## Satz
 
@@ -1474,9 +1485,11 @@ estate that declares its own
 > backend is re-initialised: run `tofu init -reconfigure` once in `hcl/`.
 > `satz migrate --mode cloud` re-initialises by itself.
 
-One thing this does **not** cover: **`roles/iam.serviceAccountTokenCreator` is granted at
-organization scope** to the `svc-iac-users` group, so a member can impersonate every
-service account in the organization, not only the IaC one.
+**Who may become the IaC service account.** The estate `satz init` writes grants the
+`svc-iac-users` group `roles/iam.serviceAccountTokenCreator` and
+`roles/iam.serviceAccountUser` on the IaC service account itself
+(`google_service_account_iam_member`), so a member can act as that account and no other
+service account in the organization. Membership of the group is the operator's grant.
 
 ## License
 

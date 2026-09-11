@@ -1032,11 +1032,11 @@ controls:
                 "spec":{"rules":[{"enforce":true}],"etag":"x"}}"#,
         )
         .unwrap();
-        assert_eq!(live_enforcement(&on), Some(true));
+        assert_eq!(live_enforcement(&on).map(|e| e.enforce), Some(true));
 
         let off: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":false}]}}"#).unwrap();
-        assert_eq!(live_enforcement(&off), Some(false));
+        assert_eq!(live_enforcement(&off).map(|e| e.enforce), Some(false));
 
         // legacy list constraint — no enforce field at all
         let listy: serde_json::Value = serde_json::from_str(
@@ -1045,10 +1045,29 @@ controls:
         .unwrap();
         assert_eq!(live_enforcement(&listy), None);
 
-        // several rules: ambiguous, so no verdict rather than a wrong one
+        // two unconditional rules: ambiguous, so no verdict rather than a wrong one
         let many: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":true},{"enforce":false}]}}"#).unwrap();
         assert_eq!(live_enforcement(&many), None);
+
+        // a tag-conditional exemption ahead of the unconditional rule: the
+        // unconditional rule is the verdict, the exemption is reported beside it
+        let lifted: serde_json::Value = serde_json::from_str(
+            r#"{"spec":{"rules":[
+                {"enforce":false,"condition":{"expression":"resource.matchTagId('tagKeys/1', 'tagValues/2')","title":"key-exempt service accounts"}},
+                {"enforce":true}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            live_enforcement(&lifted),
+            Some(LiveEnforcement { enforce: true, conditional: vec!["enforce OFF where key-exempt service accounts".into()] })
+        );
+        // a condition with no title is named by its expression
+        let untitled: serde_json::Value = serde_json::from_str(
+            r#"{"spec":{"rules":[{"enforce":true},{"enforce":false,"condition":{"expression":"resource.matchTag('1/k', 'v')"}}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(live_enforcement(&untitled).unwrap().conditional, vec!["enforce OFF where resource.matchTag('1/k', 'v')".to_string()]);
 
         assert_eq!(live_enforcement(&serde_json::Value::Null), None);
     }
@@ -1073,7 +1092,7 @@ resource "google_org_policy_policy" "os_login" {
         let live: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":false}]}}"#).unwrap();
         let want = declared.get("google_org_policy_policy.os_login").copied();
-        let got = live_enforcement(&live);
+        let got = live_enforcement(&live).map(|e| e.enforce);
         assert_eq!(want, Some(true));
         assert_eq!(got, Some(false));
         assert_ne!(want, got, "this divergence is what the report must surface");
@@ -1260,12 +1279,12 @@ fn witness_facts(
     goal_witnesses(goal)
         .iter()
         .map(|w| {
-            let (state, live_id, detail) = match live.get(w) {
-                Some(LiveState::Verified(id)) => ("verified", Some(id.clone()), None),
-                Some(LiveState::Missing) => ("missing", None, None),
-                Some(LiveState::Diverged(d)) => ("diverged", None, Some(d.clone())),
-                Some(LiveState::Unverifiable(why)) => ("unverifiable", None, Some(why.clone())),
-                None => ("not-checked", None, None),
+            let (state, live_id, detail, conditional) = match live.get(w) {
+                Some(LiveState::Verified { id, conditional }) => ("verified", Some(id.clone()), None, conditional.clone()),
+                Some(LiveState::Missing) => ("missing", None, None, Vec::new()),
+                Some(LiveState::Diverged(d)) => ("diverged", None, Some(d.clone()), Vec::new()),
+                Some(LiveState::Unverifiable(why)) => ("unverifiable", None, Some(why.clone()), Vec::new()),
+                None => ("not-checked", None, None, Vec::new()),
             };
             let declared_at = manifest
                 .resources
@@ -1277,6 +1296,7 @@ fn witness_facts(
                 "state": state,
                 "live_id": live_id,
                 "detail": detail,
+                "conditional": conditional,
                 "declared_at": declared_at,
             })
         })
@@ -1307,8 +1327,10 @@ fn estate_commit(estate: &Path) -> Option<serde_json::Value> {
 /// Live verification result for one witness address.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) enum LiveState {
-    /// Found in the live estate (the live identifier that matched).
-    Verified(String),
+    /// Found in the live estate: the live identifier that matched, and — for an
+    /// org policy — its conditional rules, each an exemption or a tightening for
+    /// a tagged part of the hierarchy that the unconditional verdict does not show.
+    Verified { id: String, conditional: Vec<String> },
     /// The declared estate emits it, but the live estate does not contain it.
     Missing,
     /// Present live, but not doing what the estate declares — an org policy that
@@ -1614,14 +1636,41 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
     Ok(out)
 }
 
-/// The single `enforce` value the LIVE policy carries, if it carries exactly one.
+/// What a LIVE boolean policy enforces: the verdict of its one unconditional
+/// rule, and its conditional rules — a tag-conditional `enforce: false` exempts
+/// the tagged resources while the unconditional rule stays the policy's verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiveEnforcement {
+    pub enforce: bool,
+    /// one line per conditional rule: what it sets, and where (its condition's
+    /// title, else its expression)
+    pub conditional: Vec<String>,
+}
+
 /// Shape (verified against the Org Policy API): `spec.rules[].enforce` as a JSON
-/// bool — note the live form is a boolean while HCL spells it "TRUE"/"FALSE".
-pub(crate) fn live_enforcement(data: &serde_json::Value) -> Option<bool> {
+/// bool — the live form is a boolean while HCL spells it "TRUE"/"FALSE" — and
+/// `spec.rules[].condition` on a conditional rule. No verdict unless exactly one
+/// rule is unconditional.
+pub(crate) fn live_enforcement(data: &serde_json::Value) -> Option<LiveEnforcement> {
     let rules = data.get("spec")?.get("rules")?.as_array()?;
-    let mut found: Vec<bool> = rules.iter().filter_map(|r| r.get("enforce")?.as_bool()).collect();
-    match found.len() {
-        1 => found.pop(),
+    let mut unconditional = Vec::new();
+    let mut conditional = Vec::new();
+    for r in rules {
+        let Some(enforce) = r.get("enforce").and_then(|e| e.as_bool()) else { continue };
+        match r.get("condition").filter(|c| !c.is_null()) {
+            None => unconditional.push(enforce),
+            Some(c) => {
+                let text = |k: &str| c.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty());
+                conditional.push(format!(
+                    "enforce {} where {}",
+                    if enforce { "ON" } else { "OFF" },
+                    text("title").or_else(|| text("expression")).unwrap_or("a condition")
+                ));
+            }
+        }
+    }
+    match unconditional.as_slice() {
+        [enforce] => Some(LiveEnforcement { enforce: *enforce, conditional }),
         _ => None,
     }
 }
@@ -1662,72 +1711,126 @@ pub(crate) struct ProwlerFinding {
     pub risk: String,
 }
 
-/// Prowler ingest, OCSF (Prowler ≥ 4) and the legacy native JSON: per
-/// catalog control, the findings whose compliance mapping references this
-/// framework. Unknown shapes are skipped — corroboration must never fail
-/// the report.
+/// A Prowler export, read: the Prowler version that wrote it, the compliance
+/// frameworks its findings are mapped to, and — per catalog control — the
+/// findings whose mapping references the requested framework.
+#[derive(Debug, Default)]
+pub(crate) struct ProwlerExport {
+    /// `metadata.product.version`, the distinct values joined — one scan
+    /// writes one; an export merged from several runs may carry more.
+    pub version: String,
+    /// every framework key seen in `unmapped.compliance` (`CIS-4.0`, …)
+    pub frameworks: BTreeSet<String>,
+    pub by_control: BTreeMap<String, Vec<ProwlerFinding>>,
+}
+
+impl ProwlerExport {
+    /// The export has to say something about the framework it is joined with;
+    /// an empty join means the wrong framework or the wrong file.
+    fn require_mapping(&self, path: &Path, catalog: &Catalog) -> Result<(), BoxErr> {
+        if self.by_control.is_empty() {
+            return Err(format!(
+                "no finding in {} (Prowler {}) maps to {} {} — the export's compliance keys are: {}",
+                path.display(),
+                self.version,
+                catalog.catalog,
+                catalog.version,
+                self.frameworks.iter().cloned().collect::<Vec<_>>().join(", ")
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+/// Read a Prowler export from disk — `prowler gcp --output-formats json-ocsf`.
+pub(crate) fn read_prowler(path: &Path, catalog_name: &str, catalog_version: &str) -> Result<ProwlerExport, BoxErr> {
+    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(path)?)
+        .map_err(|e| format!("{}: prowler json does not parse: {}", path.display(), e))?;
+    ingest_prowler(&raw, catalog_name, catalog_version).map_err(|e| format!("{}: {}", path.display(), e).into())
+}
+
+/// Prowler ingest: the OCSF export of Prowler 5, the only shape read. Every
+/// finding must name Prowler ≥ 5 in `metadata.product`; any other file is
+/// refused, because the older shapes keep the check id and the project in other
+/// fields and every join on them comes out wrong.
 ///
-/// OCSF: `status_code`, `severity`, `unmapped.compliance`,
-/// `unmapped.check_id`, `resources[0].uid`, `cloud.project.uid`.
-/// Legacy: `status` / `Status`, `compliance` / `Compliance`, `check_id`.
+/// Read per finding: `metadata.event_code` (the check id),
+/// `metadata.product.version`, `status_code`, `severity`,
+/// `unmapped.compliance` (`{"CIS-5.0": ["2.13"], …}`), `resources[0].uid`,
+/// `cloud.account.uid` (the project id on GCP), `finding_info.title`,
+/// `remediation.desc`, `risk_details`.
 pub(crate) fn ingest_prowler(
     raw: &serde_json::Value,
     catalog_name: &str,
     catalog_version: &str,
-) -> BTreeMap<String, Vec<ProwlerFinding>> {
-    let mut out: BTreeMap<String, Vec<ProwlerFinding>> = BTreeMap::new();
-    let Some(findings) = raw.as_array() else { return out };
-    let fw_needle = format!(
-        "{}_{}",
-        catalog_name.replace("-gcp", ""),
-        catalog_version
-    ); // "cis_4.0" matches prowler's "cis_4.0_gcp"
+) -> Result<ProwlerExport, String> {
+    const RERUN: &str = "satz reads the OCSF export of Prowler 5 (`prowler gcp --output-formats json-ocsf`)";
+    let findings = raw
+        .as_array()
+        .ok_or_else(|| format!("not a Prowler OCSF export — expected a JSON array of findings; {}", RERUN))?;
+    if findings.is_empty() {
+        return Err(format!("contains no findings; {}", RERUN));
+    }
+    // `CIS-4.0`, `cis_4.0_gcp` and `CIS-4.0-GCP` are one framework
+    let norm = |x: &str| x.to_lowercase().replace(['-', '_'], ".");
+    let needle = norm(&format!("{}-{}", catalog_name.replace("-gcp", ""), catalog_version));
     let text = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).unwrap_or("").to_string();
-    for f in findings {
-        let unmapped = f.get("unmapped");
-        let status = text(f.get("status_code").or_else(|| f.get("status")).or_else(|| f.get("Status")));
-        let compliance = unmapped
-            .and_then(|u| u.get("compliance"))
-            .or_else(|| f.get("compliance"))
-            .or_else(|| f.get("Compliance"));
-        let Some(map) = compliance.and_then(|c| c.as_object()) else { continue };
+    let mut export = ProwlerExport::default();
+    let mut versions = BTreeSet::new();
+    for (i, f) in findings.iter().enumerate() {
+        let n = i + 1;
+        let metadata = f.get("metadata");
+        let product = metadata.and_then(|m| m.get("product"));
+        let version = text(product.and_then(|p| p.get("version")));
+        if !text(product.and_then(|p| p.get("name"))).eq_ignore_ascii_case("prowler") || version.is_empty() {
+            return Err(format!(
+                "finding {} names no Prowler version in metadata.product — not an OCSF export of Prowler 5; {}",
+                n, RERUN
+            ));
+        }
+        if !version.split('.').next().and_then(|m| m.parse::<u32>().ok()).is_some_and(|major| major >= 5) {
+            return Err(format!(
+                "written by Prowler {} (finding {}); {} — upgrade Prowler and re-run the scan",
+                version, n, RERUN
+            ));
+        }
+        let check = text(metadata.and_then(|m| m.get("event_code")));
+        if check.is_empty() {
+            return Err(format!("finding {} has no metadata.event_code, the check id Prowler 5 writes; {}", n, RERUN));
+        }
+        versions.insert(version);
+        let Some(map) = f.get("unmapped").and_then(|u| u.get("compliance")).and_then(|c| c.as_object()) else {
+            continue;
+        };
         let finding = ProwlerFinding {
-            check: text(unmapped.and_then(|u| u.get("check_id")).or_else(|| f.get("check_id")).or_else(|| f.get("CheckID"))),
-            status: status.clone(),
-            severity: text(f.get("severity").or_else(|| f.get("Severity"))),
+            check,
+            status: text(f.get("status_code")),
+            severity: text(f.get("severity")),
             resource: text(
                 f.get("resources")
                     .and_then(|r| r.as_array())
                     .and_then(|a| a.first())
-                    .and_then(|r| r.get("uid").or_else(|| r.get("name")))
-                    .or_else(|| f.get("resource_id"))
-                    .or_else(|| f.get("ResourceId")),
+                    .and_then(|r| r.get("uid").or_else(|| r.get("name"))),
             ),
-            project: text(f.get("cloud").and_then(|c| c.get("project")).and_then(|p| p.get("uid")).or_else(|| f.get("project_id"))),
-            // OCSF: finding_info.title, remediation.desc, risk_details;
-            // legacy: CheckTitle, Remediation.Recommendation.Text, Risk
-            title: text(f.get("finding_info").and_then(|i| i.get("title")).or_else(|| f.get("CheckTitle"))),
-            remediation: text(
-                f.get("remediation")
-                    .and_then(|r| r.get("desc"))
-                    .or_else(|| f.get("Remediation").and_then(|r| r.get("Recommendation")).and_then(|r| r.get("Text"))),
-            ),
-            risk: text(f.get("risk_details").or_else(|| f.get("Risk"))),
+            project: text(f.get("cloud").and_then(|c| c.get("account")).and_then(|a| a.get("uid"))),
+            title: text(f.get("finding_info").and_then(|i| i.get("title"))),
+            remediation: text(f.get("remediation").and_then(|r| r.get("desc"))),
+            risk: text(f.get("risk_details")),
         };
         for (fw, controls) in map {
-            // legacy `cis_4.0_gcp`, OCSF `CIS-4.0-GCP`: same framework, two spellings
-            let norm = |x: &str| x.to_lowercase().replace(['-', '_'], ".");
-            if !norm(fw).contains(&norm(&fw_needle)) {
+            export.frameworks.insert(fw.clone());
+            let key = norm(fw);
+            if key != needle && !key.starts_with(&format!("{}.", needle)) {
                 continue;
             }
-            if let Some(list) = controls.as_array() {
-                for c in list.iter().filter_map(|c| c.as_str()) {
-                    out.entry(c.to_string()).or_default().push(finding.clone());
-                }
+            for c in controls.as_array().into_iter().flatten().filter_map(|c| c.as_str()) {
+                export.by_control.entry(c.to_string()).or_default().push(finding.clone());
             }
         }
     }
-    out
+    export.version = versions.into_iter().collect::<Vec<_>>().join(", ");
+    Ok(export)
 }
 
 /// The combined verdict of a control's row and Prowler's findings on it
@@ -1907,27 +2010,27 @@ pub(crate) async fn report_compliance_evidence(
                                     // policy, compare what the estate DECLARES
                                     // against what the live policy actually does.
                                     match (declared.get(w).copied(), live_enforcement(data)) {
-                                        (Some(want), Some(got)) if want != got => {
+                                        (Some(want), Some(got)) if want != got.enforce => {
                                             LiveState::Diverged(format!(
                                                 "declared enforce = {}, live policy has enforcement {}",
                                                 if want { "TRUE" } else { "FALSE" },
-                                                if got { "ON" } else { "OFF" }
+                                                if got.enforce { "ON" } else { "OFF" }
                                             ))
                                         }
-                                        (Some(_), Some(_)) => LiveState::Verified(id.clone()),
+                                        (Some(_), Some(got)) => LiveState::Verified { id: id.clone(), conditional: got.conditional },
                                         // We declare an enforcement value but could
                                         // not read the live one. Reporting "verified"
                                         // here would be the exact dishonesty this
                                         // check exists to remove — existence is not
                                         // the control. Say we could not check.
                                         (Some(_), None) => LiveState::Unverifiable(
-                                            "policy exists, but its live enforcement could not be read"
+                                            "policy exists, but its live enforcement could not be read: it has no single unconditional rule"
                                                 .into(),
                                         ),
                                         // Nothing enforcement-shaped was declared
                                         // (list constraints, non-policy types):
                                         // existence IS the whole claim.
-                                        (None, _) => LiveState::Verified(id.clone()),
+                                        (None, _) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
                                     }
                                 }
                             },
@@ -1952,19 +2055,21 @@ pub(crate) async fn report_compliance_evidence(
             Attestations::default()
         }
     };
-    let prowler: BTreeMap<String, Vec<ProwlerFinding>> = match prowler_path {
+    let prowler_export = match &prowler_path {
         Some(p) => {
-            let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(&p)?)
-                .map_err(|e| format!("prowler json does not parse: {}", e))?;
-            ingest_prowler(&raw, &catalog.catalog, &catalog.version)
+            let export = read_prowler(p, &catalog.catalog, &catalog.version)?;
+            export.require_mapping(p, &catalog)?;
+            Some(export)
         }
-        None => BTreeMap::new(),
+        None => None,
     };
+    let prowler_version = prowler_export.as_ref().map(|e| e.version.clone());
+    let prowler: BTreeMap<String, Vec<ProwlerFinding>> = prowler_export.map(|e| e.by_control).unwrap_or_default();
 
     // ---- render ----
     let mut md = String::new();
     md.push_str(&format!(
-        "# Evidence report — {} {}\n\nEstate: `{}` · run: {} · live verification: {}\n\n\
+        "# Evidence report — {} {}\n\nEstate: `{}` · run: {} · live verification: {}{}\n\n\
          > This report states **check semantics** (\"a resource with these properties was \
          verified at this time\"), never legal conformity. Satisfaction = claims ∧ manual \
          duties ∧ attestations.\n\n\
@@ -1975,6 +2080,7 @@ pub(crate) async fn report_compliance_evidence(
         input.display(),
         verified_at,
         outcome.describe(),
+        prowler_version.as_deref().map(|v| format!(" · Prowler {}", v)).unwrap_or_default(),
     ));
 
     let mut json_rows = Vec::new();
@@ -2030,7 +2136,11 @@ pub(crate) async fn report_compliance_evidence(
                 let mut first_unver = String::new();
                 for w in witnesses {
                     match live.get(w) {
-                        Some(LiveState::Verified(idn)) => { n_verified += 1; wcells.push(format!("`{}` → ✓ `{}`", w, idn)) }
+                        Some(LiveState::Verified { id: idn, conditional }) => {
+                            n_verified += 1;
+                            let rules = if conditional.is_empty() { String::new() } else { format!(" · conditional rules: {}", conditional.join("; ")) };
+                            wcells.push(format!("`{}` → ✓ `{}`{}", w, idn, rules))
+                        }
                         Some(LiveState::Missing) => { any_missing = true; wcells.push(format!("`{}` → **✗ not live**", w)); }
                         Some(LiveState::Diverged(d)) => { any_diverged = true; wcells.push(format!("`{}` → **✗ {}**", w, d)); }
                         Some(LiveState::Unverifiable(r)) => { any_unver = true; if first_unver.is_empty() { first_unver = r.clone(); } wcells.push(format!("`{}` → – ({})", w, r)); }
@@ -2090,7 +2200,7 @@ pub(crate) async fn report_compliance_evidence(
             Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. } => witnesses
                 .iter()
                 .filter_map(|w| match live.get(w) {
-                    Some(LiveState::Verified(idn)) => Some(idn.clone()),
+                    Some(LiveState::Verified { id: idn, .. }) => Some(idn.clone()),
                     _ => None,
                 })
                 .collect(),
@@ -2160,6 +2270,7 @@ pub(crate) async fn report_compliance_evidence(
         "estate": input.display().to_string(), "verified_at": verified_at,
         "live": outcome.verified(), "live_status": outcome.id(),
         "warnings": warnings, "estate_commit": estate_commit(input),
+        "prowler_version": prowler_version,
         "rows": json_rows,
     });
 
@@ -2265,46 +2376,70 @@ pub(crate) fn chrono_free_timestamp() -> String {
 
 #[cfg(test)]
 mod prowler_ocsf_tests {
-    //! Prowler ≥ 4 emits OCSF; the parser used to read the legacy shape only
-    //! and, by its own "never fail the report" contract, silently yielded
-    //! `–` in every row (integration proposal I2).
+    //! Prowler 5 writes the check id to `metadata.event_code`, its own version to
+    //! `metadata.product.version` and the project to `cloud.account.uid`. That is
+    //! the one shape read; every other one is refused by name.
     use super::*;
 
-    const OCSF: &str = r#"[
-      {"status_code":"FAIL","severity":"High","finding_info":{"uid":"1","title":"Bucket is public"},
-       "unmapped":{"check_id":"storage_bucket_public_access","compliance":{"CIS-4.0-GCP":["5.1"]}},
-       "resources":[{"uid":"//storage.googleapis.com/corp-audit-logs","name":"corp-audit-logs","type":"bucket"}],
-       "cloud":{"project":{"uid":"corp-log-infra-001"}}},
-      {"status_code":"PASS","severity":"Medium","finding_info":{"uid":"2","title":"UBLA on"},
-       "unmapped":{"check_id":"storage_bucket_uniform_access","compliance":{"CIS-4.0-GCP":["5.2"]}},
-       "resources":[{"uid":"//storage.googleapis.com/corp-audit-logs"}],
-       "cloud":{"project":{"uid":"corp-log-infra-001"}}},
-      {"status_code":"MANUAL","severity":"Low","unmapped":{"check_id":"iam_manual","compliance":{"CIS-4.0-GCP":["1.1"]}}}
-    ]"#;
+    fn finding(version: &str, check: &str, status: &str, compliance: &str, resource: &str) -> String {
+        format!(
+            r#"{{"status_code":"{status}","severity":"High",
+               "metadata":{{"event_code":"{check}","product":{{"name":"Prowler","uid":"prowler","vendor_name":"Prowler","version":"{version}"}}}},
+               "finding_info":{{"uid":"u-{check}","title":"title of {check}"}},
+               "remediation":{{"desc":"fix {check}"}},
+               "risk_details":"risk of {check}",
+               "unmapped":{{"compliance":{compliance}}},
+               "resources":[{{"uid":"{resource}","name":"n"}}],
+               "cloud":{{"account":{{"uid":"corp-infra-001"}}}}}}"#
+        )
+    }
 
-    #[test]
-    fn ocsf_findings_map_to_controls_with_their_resource() {
-        let raw: serde_json::Value = serde_json::from_str(OCSF).unwrap();
-        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
-        assert_eq!(by["5.1"].len(), 1);
-        assert_eq!(by["5.1"][0].status, "FAIL");
-        assert_eq!(by["5.1"][0].check, "storage_bucket_public_access");
-        assert_eq!(by["5.1"][0].resource, "//storage.googleapis.com/corp-audit-logs");
-        assert_eq!(by["5.1"][0].project, "corp-log-infra-001");
-        assert_eq!(by["1.1"][0].status, "MANUAL");
+    fn export(version: &str) -> String {
+        format!(
+            "[{},{},{}]",
+            finding(version, "storage_bucket_public_access", "FAIL", r#"{"CIS-4.0":["5.1"],"CIS-5.0":["5.1"]}"#, "//storage.googleapis.com/corp-audit-logs"),
+            finding(version, "storage_bucket_uniform_access", "PASS", r#"{"CIS-4.0":["5.2"]}"#, "//storage.googleapis.com/corp-audit-logs"),
+            finding(version, "iam_manual", "MANUAL", r#"{"CIS-4.0":["1.1"]}"#, ""),
+        )
+    }
+
+    fn read(json: &str, version: &str) -> Result<ProwlerExport, String> {
+        ingest_prowler(&serde_json::from_str(json).unwrap(), "cis-gcp", version)
     }
 
     #[test]
-    fn legacy_shape_still_reads() {
-        let raw: serde_json::Value = serde_json::from_str(r#"[{"status":"PASS","compliance":{"cis_4.0_gcp":["3.1"]},"check_id":"x"}]"#).unwrap();
-        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
-        assert_eq!(by["3.1"][0].status, "PASS");
+    fn prowler5_findings_map_to_controls_with_check_project_and_version() {
+        let e = read(&export("5.42.0"), "4.0").unwrap();
+        assert_eq!(e.version, "5.42.0");
+        assert_eq!(e.frameworks, ["CIS-4.0", "CIS-5.0"].into_iter().map(String::from).collect::<BTreeSet<String>>());
+        let f = &e.by_control["5.1"][0];
+        assert_eq!(f.check, "storage_bucket_public_access");
+        assert_eq!(f.status, "FAIL");
+        assert_eq!(f.project, "corp-infra-001");
+        assert_eq!(f.resource, "//storage.googleapis.com/corp-audit-logs");
+        assert_eq!((f.title.as_str(), f.remediation.as_str(), f.risk.as_str()),
+            ("title of storage_bucket_public_access", "fix storage_bucket_public_access", "risk of storage_bucket_public_access"));
+        assert_eq!(e.by_control.keys().cloned().collect::<Vec<_>>(), ["1.1", "5.1", "5.2"]);
+        // the same export joined with 5.0 sees only what Prowler mapped to 5.0
+        let five = read(&export("5.42.0"), "5.0").unwrap();
+        assert_eq!(five.by_control.keys().cloned().collect::<Vec<_>>(), ["5.1"]);
     }
 
     #[test]
-    fn a_fail_on_a_verified_witness_is_contested_elsewhere_it_is_unmanaged() {
-        let raw: serde_json::Value = serde_json::from_str(OCSF).unwrap();
-        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
+    fn older_prowler_and_other_shapes_are_refused_by_name() {
+        let four = read(&export("4.6.1"), "4.0").unwrap_err();
+        assert!(four.contains("written by Prowler 4.6.1") && four.contains("upgrade Prowler"), "{four}");
+        let legacy = read(r#"[{"status":"PASS","compliance":{"cis_4.0_gcp":["3.1"]},"check_id":"x"}]"#, "4.0").unwrap_err();
+        assert!(legacy.contains("names no Prowler version"), "{legacy}");
+        let no_check = read(&export("5.42.0").replace(r#""event_code":"iam_manual","#, ""), "4.0").unwrap_err();
+        assert!(no_check.contains("finding 3 has no metadata.event_code"), "{no_check}");
+        assert!(read("[]", "4.0").unwrap_err().contains("contains no findings"));
+        assert!(read(r#"{"findings":[]}"#, "4.0").unwrap_err().contains("expected a JSON array"));
+    }
+
+    #[test]
+    fn a_fail_on_a_verified_witness_contests_the_row() {
+        let by = read(&export("5.42.0"), "4.0").unwrap().by_control;
         let on_witness = prowler_verdict(&by["5.1"], &["storage.googleapis.com/corp-audit-logs".to_string()], true);
         assert!(on_witness.contains("CONTESTED"), "{}", on_witness);
         let elsewhere = prowler_verdict(&by["5.1"], &["storage.googleapis.com/other-bucket".to_string()], true);
@@ -2598,13 +2733,9 @@ pub(crate) fn triage_rows(
     let emitted = manifest.addresses();
     let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
     let attrs = manifest.witness_attrs();
-    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
-        .map_err(|e| format!("prowler json does not parse: {}", e))?;
-    let findings = ingest_prowler(&raw, &catalog.catalog, &catalog.version);
-    if findings.is_empty() {
-        return Err(format!("no finding in {} maps to {} {} — is this the right framework and a Prowler export (OCSF or legacy JSON)?", prowler_path.display(), catalog.catalog, catalog.version).into());
-    }
-    let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
+    let export = read_prowler(prowler_path, &catalog.catalog, &catalog.version)?;
+    export.require_mapping(prowler_path, &catalog)?;
+    let rows = triage(&catalog, &goals, &export.by_control, &attrs, manifest);
     Ok((catalog, rows))
 }
 
@@ -2673,13 +2804,10 @@ pub(crate) fn run_remediation_dossier(
     let emitted = manifest.addresses();
     let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
     let attrs = manifest.witness_attrs();
-    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
-        .map_err(|e| format!("prowler json does not parse: {}", e))?;
-    let findings = ingest_prowler(&raw, &catalog.catalog, &catalog.version);
-    if findings.is_empty() {
-        return Err(format!("no finding in {} maps to {} {} — is this the right framework and a Prowler export (OCSF or legacy JSON)?", prowler_path.display(), catalog.catalog, catalog.version).into());
-    }
-    let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
+    let export = read_prowler(prowler_path, &catalog.catalog, &catalog.version)?;
+    export.require_mapping(prowler_path, &catalog)?;
+    let findings = &export.by_control;
+    let rows = triage(&catalog, &goals, findings, &attrs, manifest);
     // Prowler's own title / remediation / risk per check id — the dossier
     // carries them beside satz's paraphrase and plan.
     let mut prowler_text: BTreeMap<String, (String, String, String)> = BTreeMap::new();
@@ -2716,6 +2844,7 @@ pub(crate) fn run_remediation_dossier(
         ("framework".to_string(), framework.to_string()),
         ("estate".to_string(), estate.clone()),
         ("prowler export".to_string(), prowler_path.display().to_string()),
+        ("prowler".to_string(), export.version.clone()),
         ("checkov".to_string(), checkov.map(|r| format!("v{} — {} findings", r.version, r.findings.len())).unwrap_or_else(|| "not run".to_string())),
         ("dossier sha256".to_string(), hash.clone()),
         ("generated".to_string(), chrono_free_timestamp()),
@@ -3023,7 +3152,10 @@ mod evidence_facts_tests {
     #[test]
     fn a_witness_carries_its_live_state_and_the_line_that_declares_it() {
         let mut live = BTreeMap::new();
-        live.insert("google_org_policy_policy.a".to_string(), LiveState::Verified("organizations/1/policies/x".into()));
+        live.insert(
+            "google_org_policy_policy.a".to_string(),
+            LiveState::Verified { id: "organizations/1/policies/x".into(), conditional: Vec::new() },
+        );
         live.insert("google_org_policy_policy.b".to_string(), LiveState::Unverifiable("no live check".into()));
 
         let mut manifest = Manifest::default();

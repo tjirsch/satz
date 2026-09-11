@@ -347,7 +347,16 @@ fn truthy(v: Option<&serde_yaml::Value>) -> bool {
 pub(crate) fn render_questions(r: &QuestionsReport) -> String {
     let mut out = format!("\nquestions — {}\n\n", r.estate);
     if r.questions.is_empty() {
-        out.push_str("  none: no pack this estate uses declares a question yet.\n");
+        // `--unanswered` filters the rows and keeps the summary: an empty list
+        // after the filter means everything is answered, not that nothing asks.
+        if r.summary.total + r.summary.not_applicable > 0 {
+            out.push_str(&format!(
+                "  0 unanswered of {} ({} answered, {} not applicable).\n",
+                r.summary.total, r.summary.answered, r.summary.not_applicable
+            ));
+        } else {
+            out.push_str("  none: no pack this estate uses declares a question.\n");
+        }
         return out;
     }
     for q in &r.questions {
@@ -467,4 +476,27 @@ pub(crate) fn short(v: &serde_yaml::Value) -> String {
         other => serde_yaml::to_string(other).unwrap_or_default().trim().trim_start_matches("- ").to_string(),
     };
     if s.chars().count() > 60 { format!("{}…", s.chars().take(57).collect::<String>()) } else { s }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+
+    fn report(summary: QuestionsSummary) -> QuestionsReport {
+        QuestionsReport { estate: "e.satz".into(), questions: Vec::new(), summary }
+    }
+
+    #[test]
+    fn an_empty_filtered_list_says_all_answered_not_that_nothing_asks() {
+        let all_answered = render_questions(&report(QuestionsSummary {
+            total: 5,
+            answered: 5,
+            not_applicable: 1,
+            complete: true,
+            ..Default::default()
+        }));
+        assert!(all_answered.contains("0 unanswered of 5 (5 answered, 1 not applicable)"), "{all_answered}");
+        let nothing_asks = render_questions(&report(QuestionsSummary::default()));
+        assert!(nothing_asks.contains("no pack this estate uses declares a question"), "{nothing_asks}");
+    }
 }

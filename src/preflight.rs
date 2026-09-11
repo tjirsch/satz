@@ -268,20 +268,7 @@ pub(crate) async fn run(
     let can_set_policy = granted.iter().any(|g| g == scope.set_iam_policy_permission());
 
     // And one on the billing account.
-    let billing_granted =
-        crate::gcp::billing::test_billing_permissions(client, token, billing_account, &[BILLING_PERMISSION])
-            .await
-            .map_err(|e| preflight_probe_error(&format!("billingAccounts/{}", billing_account), e))?
-            .iter()
-            .any(|g| g == BILLING_PERMISSION);
-    if billing_granted {
-        println!("  ok       {} on billingAccounts/{}", BILLING_PERMISSION, billing_account);
-    } else {
-        println!(
-            "  MISSING  {} on billingAccounts/{} ({})",
-            BILLING_PERMISSION, billing_account, BILLING_ROLE
-        );
-    }
+    let billing_granted = billing_probe(client, token, billing_account).await?;
 
     match decide(&missing, !billing_granted, can_set_policy, &scope, billing_account, principal) {
         Decision::Proceed => {
@@ -321,6 +308,51 @@ pub(crate) async fn run(
 
 /// A pre-flight probe that itself failed — the caller cannot even ask. A
 /// quota-class 403 gets its own explanation instead of reading as a denial.
+/// Whether the caller holds [`BILLING_PERMISSION`] on the billing account,
+/// printed as a pre-flight line.
+async fn billing_probe(
+    client: &reqwest::Client,
+    token: &str,
+    billing_account: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let granted = crate::gcp::billing::test_billing_permissions(client, token, billing_account, &[BILLING_PERMISSION])
+        .await
+        .map_err(|e| preflight_probe_error(&format!("billingAccounts/{}", billing_account), e))?
+        .iter()
+        .any(|g| g == BILLING_PERMISSION);
+    if granted {
+        println!("  ok       {} on billingAccounts/{}", BILLING_PERMISSION, billing_account);
+    } else {
+        println!(
+            "  MISSING  {} on billingAccounts/{} ({})",
+            BILLING_PERMISSION, billing_account, BILLING_ROLE
+        );
+    }
+    Ok(granted)
+}
+
+/// The billing half of the pre-flight, on its own, for greenfield: the scope
+/// root the rest is tested on does not exist until the parentless project
+/// creation materializes it, and that project is a real resource. What can be
+/// tested before it — the billing account the project will be linked to — is
+/// tested before it. Read-only; bootstrap cannot self-grant on a billing account.
+pub(crate) async fn billing(
+    client: &reqwest::Client,
+    token: &str,
+    billing_account: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("--- Pre-flight (greenfield, before anything is created): the billing account ---");
+    if billing_probe(client, token, billing_account).await? {
+        return Ok(());
+    }
+    Err(format!(
+        "pre-flight: {} is missing on billingAccounts/{} — a billing account administrator grants {} \
+         to the caller, then re-run; nothing was created",
+        BILLING_PERMISSION, billing_account, BILLING_ROLE
+    )
+    .into())
+}
+
 fn preflight_probe_error(resource: &str, e: ApiError) -> String {
     match e.class() {
         ErrorClass::QuotaProject => format!(

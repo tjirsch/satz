@@ -109,6 +109,47 @@ pub(crate) struct EmitOut {
     /// The emitted resources as structure — built from the same blocks
     /// `main_tf` renders, so consumers never parse the text back.
     pub manifest: crate::manifest::Manifest,
+    /// Per emitted resource that lacks one: the arguments and blocks its schema
+    /// requires and the emitted block does not carry. Checked on what is
+    /// emitted, after every derived attribute is in.
+    pub missing_required: Vec<MissingRequired>,
+}
+
+/// A resource the provider will refuse: required arguments or blocks absent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MissingRequired {
+    pub address: String,
+    pub missing: Vec<String>,
+    /// where the declaring block starts, when it was declared rather than derived
+    pub origin: Option<(String, u32)>,
+}
+
+/// The required top-level arguments and blocks (`min_items` ≥ 1) of `block`'s
+/// resource type that `block` does not carry. Empty when the type is unknown to
+/// the registry: no schema, no verdict.
+pub(crate) fn missing_required(block: &hcl::Block, registry: &crate::schema::ResourceRegistry) -> Vec<String> {
+    let labels: Vec<&str> = block.labels().iter().map(|l| l.as_str()).collect();
+    let [tf_type, _] = labels.as_slice() else { return Vec::new() };
+    let Some((_, schema)) = registry.resources.get(*tf_type) else { return Vec::new() };
+    let have_attrs: std::collections::BTreeSet<&str> = block.body().attributes().map(|a| a.key()).collect();
+    let have_blocks: std::collections::BTreeSet<&str> = block.body().blocks().map(|b| b.identifier()).collect();
+    let mut missing: Vec<String> = schema
+        .block
+        .attributes
+        .iter()
+        .filter(|(k, a)| a.required && !have_attrs.contains(k.as_str()))
+        .map(|(k, _)| k.clone())
+        .chain(
+            schema
+                .block
+                .block_types
+                .iter()
+                .filter(|(k, b)| b.min_items.unwrap_or(0) >= 1 && !have_blocks.contains(k.as_str()))
+                .map(|(k, _)| format!("{} {{ … }}", k)),
+        )
+        .collect();
+    missing.sort();
+    missing
 }
 
 /// A conditional grant edge carries its condition as canonical YAML text. Parse
@@ -457,6 +498,22 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     for (a, f, l) in &origins {
         manifest.set_origin(a, f, *l);
     }
+    let missing_required: Vec<MissingRequired> = match ctx.registry {
+        Some(registry) => blocks
+            .iter()
+            .filter(|b| b.identifier() == "resource")
+            .filter_map(|b| {
+                let missing = missing_required(b, registry);
+                let address = block_address(b)?;
+                (!missing.is_empty()).then(|| MissingRequired {
+                    origin: manifest.resources.get(&address).and_then(|r| r.origin.clone()),
+                    address,
+                    missing,
+                })
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     let mut body = hcl::Body::builder();
     for b in blocks {
         body = body.add_block(b);
@@ -472,7 +529,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
     let imports_tf = hcl::to_string(&import_body.build()).map_err(|e| e.to_string())?;
-    Ok(EmitOut { main_tf, imports_tf, manifest })
+    Ok(EmitOut { main_tf, imports_tf, manifest, missing_required })
 }
 
 /// google_project + its google_project_service children — mirrors the walk's
@@ -898,5 +955,45 @@ mod backend_identity_tests {
         let out = providers_tf(&config_with_both_backends(), &env);
         assert!(out.contains(r#"backend "gcs""#), "{}", out);
         assert!(!out.contains("impersonate_service_account"), "{}", out);
+    }
+}
+
+#[cfg(test)]
+mod required_argument_tests {
+    //! A converted estate carried a custom role with no `role_id`: the provider
+    //! requires it, nothing in the compile said so, and `tofu plan` was the first
+    //! to refuse. The check reads what is emitted, so derived arguments count.
+    use super::*;
+
+    fn registry() -> crate::schema::ResourceRegistry {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schemas");
+        crate::schema::ResourceRegistry::load_all(&dir.to_string_lossy()).expect("schema fixture")
+    }
+
+    #[test]
+    fn a_resource_missing_a_required_argument_is_named_and_a_complete_one_is_not() {
+        let body = hcl::parse(
+            r#"
+resource "google_organization_iam_custom_role" "no_id" {
+  org_id      = "123456789012"
+  title       = "Application owner"
+  permissions = ["resourcemanager.projects.get"]
+}
+resource "google_organization_iam_custom_role" "complete" {
+  org_id      = "123456789012"
+  role_id     = "ApplicationOwner"
+  title       = "Application owner"
+  permissions = ["resourcemanager.projects.get"]
+}
+resource "not_a_type_the_registry_knows" "x" {}
+"#,
+        )
+        .unwrap();
+        let reg = registry();
+        let blocks: Vec<&hcl::Block> = body.blocks().collect();
+        assert_eq!(missing_required(blocks[0], &reg), vec!["role_id".to_string()]);
+        assert!(missing_required(blocks[1], &reg).is_empty());
+        // no schema, no verdict
+        assert!(missing_required(blocks[2], &reg).is_empty());
     }
 }

@@ -1496,8 +1496,10 @@ witnesses are then *missing*, and the row reads DRIFTED.)
 
 Plus **deviation (accepted)**, **deviation is STALE** (declared as a deviation,
 but the live policy enforces — the fork no longer matches the organisation),
-**BROKEN CLAIM**, **unmet**, and organizational. A policy with several rules,
-with none, or a list constraint yields no verdict, and a policy whose live state
+**BROKEN CLAIM**, **unmet**, and organizational. The verdict of an org policy is
+its one unconditional rule; its conditional rules (a tag-conditional exemption,
+for one) are listed beside the verdict. A policy with no unconditional rule or more
+than one, or a list constraint, yields no verdict, and a policy whose live state
 cannot be read reports *unverifiable*, never *verified*.
 
 **Attestations** discharge manual duties. `attestations.yaml` beside
@@ -1520,7 +1522,8 @@ beside the config — `estate`, `framework`, `version`, `live`, `live_status`,
 control with `control`, `title`, `status`, `responsibility`, `duties`,
 `paraphrase`, `interpretation`, `prowler`, `checkov` and `witnesses`, each of
 those an OBJECT: `address`, `state` (`verified` · `missing` · `diverged` ·
-`unverifiable` · `not-checked`), `live_id`, `detail` and `declared_at`
+`unverifiable` · `not-checked`), `live_id`, `detail`, `conditional` (an org
+policy's conditional rules, one line each) and `declared_at`
 (`file` + `line`). The report's witness column is markdown; the data carries
 none, so an agent can build an audit list from it. `responsibility` is `inherited`, `customer`,
 `shared`, `satz-managed` or `unassigned` — the shared-responsibility split as a
@@ -1528,7 +1531,9 @@ derived fact, not a written-up matrix; `unassigned` means nobody has taken the
 control yet, which is not the same as `customer`. Each run also writes
 the report (`evidence/<framework>-latest.md`, or `--format pdf`; `--format
 json` writes only the history entry, no markdown). `--prowler findings.json`
-ingests a Prowler export (OCSF or legacy JSON) as corroboration; `--checkov`
+ingests the OCSF export of Prowler 5 (`prowler gcp --output-formats json-ocsf`) as
+corroboration and records the Prowler version in `prowler_version`; an export from an
+older Prowler is refused with the version it carries. `--checkov`
 adds a column from a Checkov run over `hcl_dir`. `--no-live` produces a
 declared-only report (statuses read *declared*) but still appends to the
 history. `live` records whether the inventory was READ, not whether it was
@@ -1686,7 +1691,10 @@ across files it is the fold's conflict above.
 exists. The shape is read off the source; the check is always the same —
 `satz transpile`, then `tofu plan` against the real state must show no
 destroy for what was already managed. Import ids for the live shape are the
-asset path; for the others, `satz adopt` resolves them afterwards.
+asset path; for the others, `satz adopt` resolves them afterwards. A nested value
+the API does not return while it holds the provider's default (a subnet's
+`log_config.filter_expr`, default `"true"`) plans once as an in-place update to
+that default; the first apply writes it and nothing about the resource changes.
 
 | shape | when | what you get | limitations |
 |---|---|---|---|

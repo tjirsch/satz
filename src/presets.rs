@@ -25,8 +25,14 @@ type BoxErr = Box<dyn std::error::Error>;
 /// the fetch is cached for the life of the process, so a second caller inside
 /// one run costs no API quota. That quota is 60 requests/hour unauthenticated
 /// and shared with `self-update`, which is why every request is worth counting.
+///
+/// A source that holds no pack is an error, never an empty comparison: against
+/// nothing, every command would report "nothing to do" and exit 0.
 async fn pristine_source(pristine_dir: Option<PathBuf>) -> Result<PathBuf, BoxErr> {
     if let Some(dir) = pristine_dir {
+        if !holds_a_pack(&dir) {
+            return Err(format!("--pristine-dir {}: holds no .satz pack — pass the presets/ directory of a satz checkout", dir.display()).into());
+        }
         return Ok(dir);
     }
     if let Some(cached) = DOWNLOADED.get() {
@@ -35,12 +41,55 @@ async fn pristine_source(pristine_dir: Option<PathBuf>) -> Result<PathBuf, BoxEr
     let tmp = std::env::temp_dir().join(format!("satz-pristine-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let n = crate::github::download_presets(&tmp).await?;
+    if !holds_a_pack(&tmp) {
+        return Err(format!(
+            "fetched {n} upstream file(s) from {} and not one .satz pack — nothing to compare against{}",
+            crate::github::REPO,
+            crate::github::PRISTINE_HINT
+        )
+        .into());
+    }
     println!("Fetched {n} upstream preset file(s).");
     let _ = DOWNLOADED.set(tmp.clone());
     Ok(tmp)
 }
 
+/// Whether a directory tree holds at least one `.satz` file.
+fn holds_a_pack(dir: &Path) -> bool {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "satz") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 static DOWNLOADED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+mod pristine_source_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_pristine_dir_without_a_pack_is_refused() {
+        let dir = std::env::temp_dir().join(format!("satz-empty-pristine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/README.md"), "no packs here").unwrap();
+        let err = pristine_source(Some(dir.clone())).await.unwrap_err().to_string();
+        assert!(err.contains("holds no .satz pack"), "{err}");
+        std::fs::write(dir.join("x.satz"), "pack x version \"1.0\"\n").unwrap();
+        assert_eq!(pristine_source(Some(dir.clone())).await.unwrap(), dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Pure layer

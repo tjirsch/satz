@@ -803,6 +803,96 @@ pub fn retarget_uses(satz: &str, exists: &dyn Fn(&str) -> bool) -> String {
     out
 }
 
+/// Inline every `!include` whose target is a YAML sequence, before conversion.
+///
+/// The dialect includes a file wherever it is written, including in a value
+/// position — `group:x@example.com:` followed by an indented `!include roles.yaml`
+/// gives the member its list of roles. A list is a value, not a fragment, so it
+/// cannot become a `use` of a pack: it is inlined here, at the include's
+/// indentation, and the target's own includes are inlined the same way. A target
+/// that is a mapping stays an include and becomes a `use`. A conditional include
+/// of a list has no Satz form and is refused.
+///
+/// Returns the text and, per inlined include, `path (line n)`.
+pub fn inline_sequence_includes(
+    src: &str,
+    load: &dyn Fn(&str) -> Option<String>,
+) -> Result<(String, Vec<String>), MigrateError> {
+    let mut inlined = Vec::new();
+    let mut text = inline_walk(src, load, 0, &mut inlined)?;
+    if src.ends_with('\n') && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok((text, inlined))
+}
+
+fn is_sequence(text: &str) -> bool {
+    text.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#') && *l != "---")
+        .is_some_and(|l| l == "-" || l.starts_with("- "))
+}
+
+fn inline_walk(
+    src: &str,
+    load: &dyn Fn(&str) -> Option<String>,
+    depth: usize,
+    inlined: &mut Vec<String>,
+) -> Result<String, MigrateError> {
+    if depth > 16 {
+        return err("`!include` nested more than 16 deep — the includes form a cycle");
+    }
+    let path_of = |rest: &str| rest.split(" #").next().unwrap_or("").trim().to_string();
+    let mut out: Vec<String> = Vec::new();
+    for (n, line) in src.lines().enumerate() {
+        let t = line.trim_start();
+        let indent = line.len() - t.len();
+        if t.starts_with('#') {
+            out.push(line.to_string());
+            continue;
+        }
+        let conditional = t.strip_prefix("!include-if ").or_else(|| t.find(": !include-if ").map(|c| &t[c + ": !include-if ".len()..]));
+        if let Some(rest) = conditional {
+            let path = path_of(rest.trim().split_once(' ').map_or("", |(_, p)| p));
+            if load(&path).is_some_and(|x| is_sequence(&x)) {
+                return err(format!(
+                    "line {}: `!include-if` of {} — a list — has no Satz form: `use … when` includes a pack, not a value. Write the list in place, or bind it to a param the condition selects",
+                    n + 1,
+                    path
+                ));
+            }
+            out.push(line.to_string());
+            continue;
+        }
+        // Form A: `!include path` alone on its line; Form B: `key: !include path`
+        let (key, path, child_indent) = if let Some(rest) = t.strip_prefix("!include ") {
+            (None, path_of(rest), indent)
+        } else if let Some(c) = t.find(": !include ") {
+            (Some(&t[..c]), path_of(&t[c + ": !include ".len()..]), indent + 2)
+        } else {
+            out.push(line.to_string());
+            continue;
+        };
+        let Some(target) = load(&path).filter(|x| is_sequence(x)) else {
+            out.push(line.to_string());
+            continue;
+        };
+        let inner = inline_walk(&target, load, depth + 1, inlined)?;
+        if let Some(k) = key {
+            out.push(format!("{}{}:", " ".repeat(indent), k));
+        }
+        for l in inner.lines() {
+            let lt = l.trim();
+            if lt.is_empty() || lt.starts_with('#') || lt == "---" {
+                continue;
+            }
+            out.push(format!("{}{}", " ".repeat(child_indent), l));
+        }
+        inlined.push(format!("{} (line {})", path, n + 1));
+    }
+    Ok(out.join("\n"))
+}
+
 pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, MigrateError> {
     let pre = pre_pass(src)?;
     let doc: serde_yaml::Value = serde_yaml::from_str(&pre.yaml)
@@ -1127,6 +1217,44 @@ mod tests {
         let s = convert(y, "pack", "t").unwrap();
         assert!(s.contains("\"{g}\" {"), "{s}");
         assert!(s.contains("\"group:{g}\" = ["), "{s}");
+    }
+
+    #[test]
+    fn a_value_include_of_a_list_is_inlined_and_a_mapping_stays_a_use() {
+        let load = |p: &str| match p {
+            "roles.yaml" => Some("# the roles\n- roles/viewer\n- roles/browser\n".to_string()),
+            "nested.yaml" => Some("- roles/a\n".to_string()),
+            "deep.yaml" => Some("- roles/deep\n".to_string()),
+            "policies.yaml" => Some("p1:\n  name: x\n".to_string()),
+            _ => None,
+        };
+        // Form A under a key, Form B on the key's line, a mapping target, and an
+        // unknown target left for the converter to report
+        let src = "google_organization_iam_member:\n  group:a@example.com:\n    !include roles.yaml\n  group:b@example.com: !include nested.yaml\n!include policies.yaml\n!include missing.yaml\n";
+        let (text, inlined) = inline_sequence_includes(src, &load).unwrap();
+        assert_eq!(
+            text,
+            "google_organization_iam_member:\n  group:a@example.com:\n    - roles/viewer\n    - roles/browser\n  group:b@example.com:\n    - roles/a\n!include policies.yaml\n!include missing.yaml\n"
+        );
+        assert_eq!(inlined, vec!["roles.yaml (line 3)".to_string(), "nested.yaml (line 4)".to_string()]);
+
+        // the inlined text converts to the member's role list, not a `use`
+        let (text, _) = inline_sequence_includes("google_organization_iam_member:\n  group:a@example.com:\n    !include roles.yaml\n", &load).unwrap();
+        let s = convert(&text, "estate", "t").unwrap();
+        assert!(s.contains("roles/viewer") && s.contains("roles/browser"), "{s}");
+        assert!(!s.contains("use \""), "{s}");
+
+        // an include inside an included list is inlined too
+        let load2 = |p: &str| match p {
+            "outer.yaml" => Some("- roles/outer\n!include deep.yaml\n".to_string()),
+            other => load(other),
+        };
+        let (text, _) = inline_sequence_includes("k:\n  !include outer.yaml\n", &load2).unwrap();
+        assert_eq!(text, "k:\n  - roles/outer\n  - roles/deep\n");
+
+        // a conditional include of a list has no Satz form
+        let e = inline_sequence_includes("k:\n  !include-if want roles.yaml\n", &load).unwrap_err();
+        assert!(e.msg.contains("`!include-if` of roles.yaml"), "{}", e.msg);
     }
 
     #[test]

@@ -284,7 +284,7 @@ pub(crate) struct TriageArgs {
     pub estate: Option<String>,
     /// Catalog id, e.g. `cis-gcp-4.0`
     pub framework: String,
-    /// Prowler export (OCSF or legacy JSON), a path under the server's root
+    /// Prowler 5 OCSF export (`--output-formats json-ocsf`), a path under the server's root
     pub prowler: String,
 }
 

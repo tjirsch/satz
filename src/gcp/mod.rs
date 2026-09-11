@@ -116,7 +116,7 @@ pub(crate) async fn access_token() -> Result<String, String> {
     ensure_quota_project(&base).await?;
     let token = match plan_impersonation(adc_impersonation_target().as_deref(), impersonation_target().as_deref())? {
         Exchange::UseBase => base,
-        Exchange::Mint(sa) => impersonated_token(&base, &sa).await?,
+        Exchange::Mint(sa) => cached_impersonated_token(&base, &sa).await?,
     };
     identity::announce(&token).await;
     Ok(token)
@@ -128,13 +128,96 @@ pub(crate) async fn access_token() -> Result<String, String> {
 /// about the base credential, and the impersonation check has to be made AS that
 /// credential — asking the estate's account whether it may impersonate itself
 /// answers a different question.
+///
+/// One credentials object per process: google-cloud-auth caches the token inside
+/// it and refreshes it before it expires, so a command that builds five clients
+/// mints once instead of five times. A failed request drops the object: a failed
+/// refresh latches inside it, and the next call has to read the ADC file again —
+/// which is what a `gcloud auth application-default login` during a long-lived
+/// `satz mcp` replaced.
 pub(crate) async fn base_access_token() -> Result<String, String> {
-    use google_cloud_auth::credentials::Builder;
-    let credentials = Builder::default()
+    match base_credentials()?.access_token().await {
+        Ok(t) => Ok(t.token),
+        Err(e) => {
+            if let Ok(mut cached) = BASE_CREDENTIALS.lock() {
+                *cached = None;
+            }
+            Err(e.to_string())
+        }
+    }
+}
+
+static BASE_CREDENTIALS: std::sync::Mutex<Option<google_cloud_auth::credentials::AccessTokenCredentials>> =
+    std::sync::Mutex::new(None);
+
+fn base_credentials() -> Result<google_cloud_auth::credentials::AccessTokenCredentials, String> {
+    let mut cached = BASE_CREDENTIALS.lock().map_err(|_| "the credentials cache lock is poisoned".to_string())?;
+    if let Some(c) = cached.as_ref() {
+        return Ok(c.clone());
+    }
+    let c = google_cloud_auth::credentials::Builder::default()
         .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
         .build_access_token_credentials()
         .map_err(|e| e.to_string())?;
-    Ok(credentials.access_token().await.map_err(|e| e.to_string())?.token)
+    *cached = Some(c.clone());
+    Ok(c)
+}
+
+/// Impersonated tokens by service account, with the Unix second they expire.
+/// A token is reused until five minutes before its `expireTime`, so a report
+/// that builds five clients mints once per account instead of five times.
+static IMPERSONATED: std::sync::Mutex<Option<std::collections::HashMap<String, (String, u64)>>> =
+    std::sync::Mutex::new(None);
+
+/// Seconds before `expireTime` a cached token is replaced.
+const TOKEN_MARGIN_SECS: u64 = 300;
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+async fn cached_impersonated_token(base: &str, sa: &str) -> Result<String, String> {
+    let now = unix_now();
+    if let Some((token, expires)) = IMPERSONATED
+        .lock()
+        .ok()
+        .and_then(|m| m.as_ref().and_then(|m| m.get(sa).cloned()))
+    {
+        if now + TOKEN_MARGIN_SECS < expires {
+            return Ok(token);
+        }
+    }
+    let (token, expires) = mint_impersonated(base, sa).await?;
+    if let Ok(mut m) = IMPERSONATED.lock() {
+        m.get_or_insert_with(Default::default).insert(sa.to_string(), (token.clone(), expires));
+    }
+    Ok(token)
+}
+
+/// `expireTime` of a `generateAccessToken` reply — RFC 3339 in UTC,
+/// `2026-09-11T13:45:07Z` or with fractional seconds — as Unix seconds.
+pub(crate) fn parse_expire_time(t: &str) -> Option<u64> {
+    let t = t.strip_suffix('Z')?;
+    let (date, time) = t.split_once('T')?;
+    let mut d = date.splitn(3, '-').map(|x| x.parse::<i64>().ok());
+    let (y, mo, da) = (d.next()??, d.next()??, d.next()??);
+    let time = time.split('.').next()?;
+    let mut h = time.splitn(3, ':').map(|x| x.parse::<i64>().ok());
+    let (hh, mm, ss) = (h.next()??, h.next()??, h.next()??);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&da) || hh > 23 || mm > 59 || ss > 60 {
+        return None;
+    }
+    // days from 1970-01-01 to y-mo-da (Howard Hinnant's days_from_civil)
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + da - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(days * 86_400 + hh * 3_600 + mm * 60 + ss).ok()
 }
 
 /// A quota project nothing can reach fails EVERY api call, later and less
@@ -234,6 +317,11 @@ pub(crate) fn plan_impersonation(
 /// iamcredentials `generateAccessToken`, the same call an impersonating ADC
 /// makes. A denial names the missing TokenCreator grant and the opt-out.
 async fn impersonated_token(base: &str, sa: &str) -> Result<String, String> {
+    mint_impersonated(base, sa).await.map(|(token, _)| token)
+}
+
+/// One `generateAccessToken`: the token and the Unix second it expires.
+async fn mint_impersonated(base: &str, sa: &str) -> Result<(String, u64), String> {
     let client = reqwest::Client::new();
     let res = client
         .post(format!(
@@ -257,10 +345,17 @@ async fn impersonated_token(base: &str, sa: &str) -> Result<String, String> {
         return Err(format!("cannot impersonate {}: {}", sa, e));
     }
     let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    v.get("accessToken")
+    let token = v
+        .get("accessToken")
         .and_then(|t| t.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "generateAccessToken returned no accessToken".to_string())
+        .ok_or_else(|| "generateAccessToken returned no accessToken".to_string())?;
+    let expires = v
+        .get("expireTime")
+        .and_then(|t| t.as_str())
+        .and_then(parse_expire_time)
+        .ok_or_else(|| "generateAccessToken returned no readable expireTime".to_string())?;
+    Ok((token, expires))
 }
 
 /// A Cloud Asset client honoring the configured impersonation: with a target
@@ -732,5 +827,20 @@ mod tests {
         let mut policy = serde_json::json!({ "etag": "BwX1234=" });
         assert!(add_binding(&mut policy, "roles/viewer", "user:a@example.com"));
         assert_eq!(policy["bindings"][0]["members"][0], "user:a@example.com");
+    }
+}
+
+#[cfg(test)]
+mod expire_time_tests {
+    use super::parse_expire_time;
+
+    #[test]
+    fn rfc3339_utc_reads_as_unix_seconds() {
+        assert_eq!(parse_expire_time("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_expire_time("2000-03-01T00:00:00Z"), Some(951_868_800));
+        assert_eq!(parse_expire_time("2026-09-11T13:45:07Z"), Some(1_789_134_307));
+        assert_eq!(parse_expire_time("2026-09-11T13:45:07.123456Z"), Some(1_789_134_307));
+        assert_eq!(parse_expire_time("2026-09-11T13:45:07+02:00"), None);
+        assert_eq!(parse_expire_time("not a time"), None);
     }
 }
