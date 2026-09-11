@@ -131,23 +131,36 @@ pub(crate) async fn access_token() -> Result<String, String> {
 ///
 /// One credentials object per process: google-cloud-auth caches the token inside
 /// it and refreshes it before it expires, so a command that builds five clients
-/// mints once instead of five times.
+/// mints once instead of five times. A failed request drops the object: a failed
+/// refresh latches inside it, and the next call has to read the ADC file again —
+/// which is what a `gcloud auth application-default login` during a long-lived
+/// `satz mcp` replaced.
 pub(crate) async fn base_access_token() -> Result<String, String> {
-    Ok(base_credentials()?.access_token().await.map_err(|e| e.to_string())?.token)
+    match base_credentials()?.access_token().await {
+        Ok(t) => Ok(t.token),
+        Err(e) => {
+            if let Ok(mut cached) = BASE_CREDENTIALS.lock() {
+                *cached = None;
+            }
+            Err(e.to_string())
+        }
+    }
 }
 
-static BASE_CREDENTIALS: std::sync::OnceLock<google_cloud_auth::credentials::AccessTokenCredentials> =
-    std::sync::OnceLock::new();
+static BASE_CREDENTIALS: std::sync::Mutex<Option<google_cloud_auth::credentials::AccessTokenCredentials>> =
+    std::sync::Mutex::new(None);
 
 fn base_credentials() -> Result<google_cloud_auth::credentials::AccessTokenCredentials, String> {
-    if let Some(c) = BASE_CREDENTIALS.get() {
+    let mut cached = BASE_CREDENTIALS.lock().map_err(|_| "the credentials cache lock is poisoned".to_string())?;
+    if let Some(c) = cached.as_ref() {
         return Ok(c.clone());
     }
     let c = google_cloud_auth::credentials::Builder::default()
         .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
         .build_access_token_credentials()
         .map_err(|e| e.to_string())?;
-    Ok(BASE_CREDENTIALS.get_or_init(|| c).clone())
+    *cached = Some(c.clone());
+    Ok(c)
 }
 
 /// Impersonated tokens by service account, with the Unix second they expire.

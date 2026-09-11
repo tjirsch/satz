@@ -853,7 +853,7 @@ fn inline_walk(
         }
         let conditional = t.strip_prefix("!include-if ").or_else(|| t.find(": !include-if ").map(|c| &t[c + ": !include-if ".len()..]));
         if let Some(rest) = conditional {
-            let path = path_of(rest.trim().splitn(2, ' ').nth(1).unwrap_or(""));
+            let path = path_of(rest.trim().split_once(' ').map_or("", |(_, p)| p));
             if load(&path).is_some_and(|x| is_sequence(&x)) {
                 return err(format!(
                     "line {}: `!include-if` of {} — a list — has no Satz form: `use … when` includes a pack, not a value. Write the list in place, or bind it to a param the condition selects",
