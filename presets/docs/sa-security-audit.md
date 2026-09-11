@@ -23,7 +23,7 @@ What this pack does NOT do:
 - no API enablement in the seed project (impersonation needs
 iamcredentials.googleapis.com — enable it separately)
 - no service-account keys: access is by token-creator impersonation only
-- no remediation rights: the role set is deliberately read-only throughout
+- no remediation rights: every role in the set is read-only
 
 ## Use it
 

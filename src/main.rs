@@ -506,7 +506,7 @@ enum Commands {
         /// Do not open the documentation site after installing
         #[arg(long)]
         no_open_readme: bool,
-        /// Only check if an update is available; do not install or download README
+        /// Only check if an update is available; do not install
         #[arg(long)]
         check_only: bool,
         /// Skip SHA-256 checksum verification (use only if the release predates sidecar support)

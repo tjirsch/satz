@@ -8,16 +8,15 @@ Source: `presets/estate-core.satz`
 The questions every estate has to answer on day 0, with the params they answer.
 
 `satz init` writes these seventeen params from its flags; an INTERVIEW asks for
-them one at a time, and this pack is where the asking lives. Every param below
-has a question, and every question says what changing the answer later costs —
-so an agent can offer a default with a clear conscience where one exists, and
-insist on a value where none is possible.
+them one at a time, from the questions in this pack. Every param below has a
+question, and every question says what changing the answer later costs, so a
+default is offered where one exists and a value is required where none is
+possible.
 
 Two kinds of param, and the interview treats them differently. Seven have NO
 POSSIBLE DEFAULT — the directory customer id, the organisation id, the domain,
 the short name, the display name, the first admin, the billing account: the
-pack can name the question, it cannot guess the answer, and these block until
-typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
+pack cannot know the answer, so these block until a value is typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
 names built from the short name, the folder name, the service account names,
 the region — and accepting one is an answer, recorded by writing it. A derived
 default is offered only once what it derives from is answered.

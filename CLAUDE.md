@@ -160,7 +160,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
   versions, dates, "used to", "since vX", "no longer", how a rule came about;
   that belongs to the changelogs, the ADRs and git. No interpretation and no
   warnings or disclaimers around the facts. A reason stays when it is a present
-  fact ("so one apply authenticates as one principal"), not a story.
+  fact ("so one apply authenticates as one principal"), not a story. A pitfall
+  is stated as what to do to make it work and what does not work, with the
+  reason — never under a label ("the quota-project trap"), and without
+  rhetoric ("on purpose", "deliberately", "silently fails", "the point").
 - **`Satz` is the language; `satz` is everything else** — the binary, the
   project, the repository. "written in Satz", "a Satz estate", "a Satz
   abstraction"; "satz compiles", "a satz command", "the satz repository". Page

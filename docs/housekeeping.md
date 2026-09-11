@@ -1,15 +1,13 @@
 # satz housekeeping
 
-Most of this repository is code, and code tells you when it is wrong. A handful of
-files are **derived from something outside the repository** — Google's provider
-schema, Google's constraint catalogue, Google's asset-type list, a CIS benchmark
-release — and those go stale in silence. Nothing breaks. The tests stay green. The
-answers just quietly describe last month's Google.
+A handful of files are **derived from something outside the repository** — Google's
+provider schema, Google's constraint catalogue, Google's asset-type list, a CIS
+benchmark release. When the source changes, these files go stale without any test
+failing.
 
-The first half of this page lists every one of them: what it is, what refreshes it,
-what makes it stale, and what catches it if nobody remembers. The second half is
-`scripts/` — one section per script, because a refresh that can be a script is one,
-and the rest of what lives there are the gates that keep this page honest.
+The first half of this page lists each of them: what refreshes it, what makes it
+stale, and what detects it. The second half describes `scripts/`, one section per
+script: the refreshes and the gates.
 
 ## At a glance
 
@@ -27,18 +25,17 @@ and the rest of what lives there are the gates that keep this page honest.
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
 
-Three of those say **nothing**. That is the honest state, and it is why this page
-exists rather than a promise that CI has it covered.
+Three have **no** automatic check: refresh them on their trigger.
 
 ## The provider schema fixture
 
 `tests/schemas/google.json` — 28 resource types, cut from the real provider.
 
 The corpus and the smoke estate classify types through this fixture exactly the way
-production classifies them through a real schema. It is not a stub: a type missing
-from it silently loses schema-derived detail (it once lost every alert policy's
-`notification_channels`), and a type whose real schema has moved on means the
-snapshots pin yesterday's provider while claiming to pin today's.
+production classifies them through a real schema. A type missing from it loses
+schema-derived detail without an error (an alert policy's `notification_channels`,
+for example), and a type whose real schema has changed makes the snapshots pin an
+older provider than the pin says.
 
 ```
 uv run scripts/update_schema_fixture.py --check
@@ -47,16 +44,16 @@ uv run scripts/update_schema_fixture.py --add google_compute_firewall_policy_rul
 
 `--check` downloads the pinned provider and reports, per fixture type, whether it is
 gone or whether its attribute and block surface has drifted. **Run it when the
-provider pin moves.** Nothing else will tell you.
+provider pin moves**; no other check reports it.
 
-The script never deletes, and the reason is worth keeping: a scan of the sources
-gets this wrong in both directions. Three fixture types appear in no `.satz` file at
-all because the *emitter* produces them from structural nodes —
+The script never deletes types, because a scan of the sources misjudges usage in both
+directions. Three fixture types appear in no `.satz` file because the *emitter*
+produces them from structural nodes —
 `google_folder_iam_member` from a grant map inside a folder,
 `google_cloud_identity_group_membership` from members, `google_logging_project_sink`
 from a sink. And `google_compute_address` *is* referenced, inside a raw `hcl { }`
-block, where no schema is needed. Trimming by what looks unused would delete three
-live types and add one dead one.
+block, where no schema is needed. Trimming by apparent use would remove three types
+that are used.
 
 ## The Cloud Asset Inventory type list
 
@@ -65,15 +62,12 @@ live types and add one dead one.
 `satz import` can only discover a resource type that carries a CAI asset type, so
 this list is the ceiling on discovery coverage. `scripts/update_import_config.py
 --cai-types` fills the `asset_type` column of `presets/import-config.yaml` from it
-(599 rows carry one today) — the column is never filled by hand.
+(599 rows carry one) — the column is never filled by hand.
 
-**Refreshing it is manual, and the obvious shortcut does not work.** The source is
-Google's asset-types documentation page, which paginates: a plain fetch and a regex
-over the HTML yields about 85 of the 584 entries, so a scraper would appear to work
-and silently truncate the list to a seventh of it. That is why there is no
-`update_cai_asset_types.py` — copy the full list from the page (all sections
-expanded), keep the three header comment lines, and re-run
-`update_import_config.py --cai-types`.
+**Refreshing it is manual.** Copy the full list from Google's asset-types
+documentation page (all sections expanded), keep the three header comment lines,
+and re-run `update_import_config.py --cai-types`. Scraping the page does not work:
+it paginates, and a plain fetch returns about 85 of the 584 entries.
 
 Staleness shows up indirectly: rows in `import-config.yaml` whose `asset_type` stays
 `TODO`/`UNKNOWN` when the type demonstrably has one. The smoke step *"import-config:
@@ -82,12 +76,13 @@ does **not** notice when the list itself is behind Google.
 
 ## The managed/legacy constraint pairing
 
-`presets/managed-constraint-equivalents.txt` — 15 pairs Google declares, 1 we assert.
+`presets/managed-constraint-equivalents.txt` — 15 pairs Google declares, 1 this
+repository adds.
 
 Where Google replaces a legacy org-policy constraint with a managed one, the packs
 run the replacement alone and declare the twin off; see *Superseded legacy
-constraints* in the [presets guide](../presets/README.md). The pairing is data
-because a rule re-audited by hand is a rule enforced when someone remembers.
+constraints* in the [presets guide](../presets/README.md). The pairing is data,
+generated from a live organisation, so a test checks the rule.
 
 ```
 uv run scripts/update_constraint_equivalents.py
@@ -95,38 +90,34 @@ uv run scripts/update_constraint_equivalents.py
 
 Needs ADC and a quota project. Nothing about the organisation reaches the file — the
 constraint catalogue is Google's and identical for every customer. The section below
-the `CURATED` marker is preserved: it holds pairs Google does not declare at all, and
-there is exactly one, the pair that matters most.
+the `CURATED` marker is preserved: it holds the one pair Google does not declare.
 
 The rule is gated offline by
 `constraint_equivalents::no_pack_runs_a_superseded_constraint`, which fails when a
 pack enforces a superseded constraint or enables a replacement without declaring its
-twin off. Note what that does *not* cover: a twin Google added since the last
-refresh is simply absent from the table, so the gate cannot know to look for it.
-**Refresh the table when adding a constraint to a pack**, which is the moment the
-question actually arises.
+twin off. A twin Google added after the last refresh is not in the table, so the gate
+cannot check it: **refresh the table when adding a constraint to a pack**.
 
 ## The catalogs
 
 `presets/catalogs/` — `cis-gcp-4.0.yaml`, `cis-gcp-5.0.yaml`, `iso27001-2022.yaml`.
 
 Control ids, titles and paraphrases, transcribed from the published benchmark. There
-is no machine-readable source to generate them from, so this is hand work, and it is
-the item with the least safety net: a benchmark revision simply does not exist here
-until someone adds it, and every report keeps answering the older question without
-saying so.
+is no machine-readable source to generate them from, so this is hand work with no
+check: a benchmark revision is absent until someone adds it, and reports keep using
+the older one without saying so.
 
 Two rules for transcribing:
 
-- **Renumbering is the failure mode, not new controls.** CIS 5.0 renumbered
-  1.1→1.2, 1.4→1.5, 1.5→1.6, 1.16→1.17, 3.8→3.10 while the content stayed put. A
-  claim pointing at the old number is not a compile error, it is a wrong report.
+- **Check renumbered controls, not only new ones.** CIS 5.0 renumbered 1.1→1.2,
+  1.4→1.5, 1.5→1.6, 1.16→1.17, 3.8→3.10 while the content stayed the same. A claim
+  on the old number compiles and reports the wrong control.
 - **Prefer a machine-readable third party over the PDF.** Prowler ships its CIS
   mappings as data; check the numbers against them (Cloud SQL public IP is 6.6 in 4.0
   and 6.7 in 5.0; the API-key constraint is 1.14/1.15).
 
-An unclaimed control is visible as *unmet* rather than absent, so adding ids ahead of
-the packs that implement them is safe and is the right order.
+An unclaimed control reads *unmet*, not absent, so catalog ids can be added before
+the packs that implement them.
 
 ## The pack surface
 
@@ -136,10 +127,10 @@ the packs that implement them is safe and is the right order.
   change too: each page carries its pack's history, so editing the table below makes
   a page stale.
 - `presets/README.md` `## Changelog` — one row per pack version, by hand.
-  `doc-packs` parses it, so three things fail loudly rather than quietly: a pack
+  `doc-packs` parses it and fails on three things: a pack
   version with no row, a row naming a pack that does not exist, and a table whose
   header or cell count has been reflowed.
-- **Pack headers are an input, not decoration.** The index prints the first sentence
+- **Pack headers are input to the index.** The index prints the first sentence
   of each header comment, so `doc-packs` refuses one that is empty, a bare URL, a
   leftover `Include …` instruction, or too long for a table cell. A pack whose shape
   does not decide how it is used — a bare list of labels with no claims — must state
@@ -149,12 +140,10 @@ the packs that implement them is safe and is the right order.
 
 - **Provider pin** (`provider_version`, currently 7.14.1, in each estate's
   `config.toml` and in `tests/smoke/config.toml`). A provider release is the trigger.
-  Bumping it is cheap; the thing to remember afterwards is
-  `update_schema_fixture.py --check`, because the fixture is the only place the tests
-  see a schema at all.
-- **Crates.** `cargo update` routinely; the tests are the safety net. The project's
-  rule is the current version of everything, so a dependency held back needs a reason
-  written next to it.
+  After bumping it, run `update_schema_fixture.py --check`: the fixture is the only
+  schema the tests see.
+- **Crates.** `cargo update` routinely, then `cargo test`. Every dependency is on its
+  current version; one held back carries its reason next to it.
 
 ## Recurring reviews
 
@@ -162,9 +151,8 @@ the packs that implement them is safe and is the right order.
   to `docs/competitive.md`. Keeps the framework inputs, never replaces them.
 - **Fleet re-transpile after every satz release** — the estates live outside this
   repository; the check is in it: [`fleet-v1.sh`](#fleet-v1sh--every-estate-on-the-current-binary).
-  An estate whose emitted HCL no longer matches what the current binary produces is a
-  release blocker, not a nuisance — and the longer between runs, the harder the finding
-  is to attribute to the release that caused it.
+  An estate whose emitted HCL differs from what the current binary produces blocks the
+  release. Run it after each release, so a difference points at that release.
 
 ## The scripts
 
@@ -173,17 +161,16 @@ preset. Two kinds live here: **cloud steps with no provider resource** (nothing
 in Terraform can express them, so they stay `gcloud`), and **build-time helpers**
 that maintain the repo's own data files.
 
-A cloud step still cannot be **authored** in Satz — that is what makes it a
-script. It can be **declared and invoked** by an estate: an
+A cloud step cannot be **written** in Satz, so it is a script. An estate can
+**declare and invoke** it: an
 [`action`](language.md#613-action--a-step-with-no-provider-resource) names
 the step, binds it to a script, and builds its arguments from the estate's own
 params, so `satz run-actions` runs it with the organisation id the estate
-already knows instead of a human retyping it. Nothing runs at transpile time and
-an action carries no claim; the script stays exactly as opaque to the compliance
-plane as it is today.
+already has. Nothing runs at transpile time, and an action carries no claim: the
+compliance plane cannot see into the script.
 
-**One of these files does not live in `scripts/`, and the reason is worth
-stating.** `get-presets` downloads `presets/**` and nothing else, so a pack that
+**One of these files lives under `presets/`.** `get-presets` downloads
+`presets/**` and nothing else, so a pack that
 declares an action must carry its script inside `presets/` or ship an action
 that cannot find what it runs. `scc-enable-all.sh` is therefore
 `presets/scc/scc-enable-all.sh`, beside the pack that binds it. The rule that
@@ -204,7 +191,7 @@ second kind.
 
 ## `check-names.sh` — the privacy gate
 
-This repository is public and the fleet it serves is not. The gate refuses any
+This repository is public; the estates it serves are private. The gate refuses any
 identifier **shaped** like private data that is not one of the documented example
 values in [`docs/examples.md`](examples.md) — directory ids, org/project/folder
 numbers, billing accounts, GUIDs and their dashless 32-hex form, project ids,
@@ -250,13 +237,14 @@ contacts and monitoring packs, a group with a member, org grants, a project with
 services and a bucket): `transpile` (then `tofu validate` when `tofu` is on PATH —
 provider download only, no state, no cloud), `require`, `check-presets` against the
 repository's own presets (must be clean), `import` in its state shape (with the
-skipped report and import blocks), hcl shape (`--wrap-all`, then `tofu validate`) and yaml shape (including the refusal that names
-a pack still in YAML), `adopt` (a table with ADC, a credentials error without —
-never a guess), `scan` when `checkov` or `uvx` is on PATH, then `cargo test`.
+skipped report and import blocks), hcl shape (`--wrap-all`, then `tofu validate`)
+and yaml shape (including the refusal that names a pack still in YAML), `adopt` (a
+table with ADC, a credentials error without), `scan` when `checkov` or `uvx` is on
+PATH, then `cargo test`.
 
 ```bash
-scripts/smoke.sh                 # builds target/release/satz if missing
-SATZ=~/.cargo/bin/satz scripts/smoke.sh
+scripts/smoke.sh                 # builds target/release/satz first
+SATZ=~/.cargo/bin/satz scripts/smoke.sh   # uses that binary, never rebuilt
 ```
 
 `.github/workflows/smoke.yml` runs it on every push and pull request with OpenTofu
@@ -264,16 +252,11 @@ installed. A new command that reads an estate gets a step here in the same PR.
 
 ## `fleet-v1.sh` — every estate on the current binary
 
-Releases are small and frequent. An estate is transpiled when someone happens to
-touch it. Between those two facts sits the question this script answers: **does
-every estate you operate still compile, and does it still emit the same
-infrastructure?**
-
-Nothing else asks it. The corpus proves the compiler against fixtures; the smoke
-matrix proves the commands against one estate; `tofu plan` proves an estate
-against its own cloud, one at a time, and only for someone who has that
-credential. An estate that quietly stopped compiling under a language tightening
-is visible in none of them until the day someone needs it.
+The script answers: **does every estate you operate still compile on the current
+binary, and does it emit the same infrastructure?** The corpus tests the compiler
+against fixtures, the smoke matrix tests the commands against one estate, and
+`tofu plan` tests one estate against its own organisation with that estate's
+credentials; none of them re-transpiles the fleet.
 
 ```bash
 scripts/fleet-v1.sh ~/estates/acme            # one estate
@@ -283,8 +266,8 @@ scripts/fleet-v1.sh --roster ~/fleet.tsv -v   # ... with the diffs
 
 ### The roster
 
-Which estates exist, and where, is **not in this repository** — it is operator
-state, and for most operators it is confidential. The script takes it as an
+Which estates exist, and where, is **not in this repository**; it is operator
+state. The script takes it as an
 argument (or `$FLEET_ROSTER`) in either of two shapes:
 
 ```
@@ -301,11 +284,9 @@ path, which may carry a note after it:
 | E01 | Customer A | `~/estates/acme` (also elsewhere) | … |
 ```
 
-A row without both is prose in a table, and is skipped. **The parser is strict
-on purpose.** A forgiving one finds "estates" in ordinary prose and in unrelated
-tables, reports every one of them UNAVAILABLE, and buries the estates that
-really were not checked — which is the one finding this script exists to make
-loud.
+A row without both is skipped as prose. The parser is strict: a lenient one would
+read ordinary prose and unrelated tables as estates, report each as UNAVAILABLE,
+and hide the estates that really were not checked.
 
 Bare paths on the command line need no roster at all.
 
@@ -315,21 +296,19 @@ Bare paths on the command line need no roster at all.
 |---|---|---|
 | **clean** | the address set is identical and no block body moved | nothing |
 | **delta** | same address set, some block body differs | not a release blocker. Carry it into the estate's next pickup and commit the re-transpiled `hcl/` |
-| **BLOCKER** | the estate does not transpile, or its **address set moved** — a resource appeared or disappeared | stop. Nothing ships on top of an estate whose emitted resource set changed by surprise |
+| **BLOCKER** | the estate does not transpile, or its **address set moved** — a resource appeared or disappeared | stop the release until the change is explained |
 | **UNAVAILABLE** | no checkout, no `config.toml`, no `hcl/` to compare against — or no provider schema, which estate repos gitignore as a derived cache, so a fresh clone has none | run it where the checkouts are, or `satz update-schema` in that one. `--require-all` turns this into a failure |
 
 Exit codes follow: `0` clean, `1` blocker (or `--require-all` with an unchecked
 estate), `2` delta only.
 
-**A hand-written `.tf` in `hcl/` is context, not a deletion.** The comparison set is
-what satz *emits*; a file this emission did not produce is listed with `!` and its blocks
-are left out of the count. Estates do keep one occasionally — a write-only secret cannot
-come from the estate, so the `variable` block declaring it has to live in `hcl/` beside
-the generated files. Compared against an emission that never contained it, its blocks
-would otherwise read as deletions, and a deletion is the finding that stops a release. If
-a named file is one satz *used* to emit rather than a hand-written one, that is worth
-chasing — the script cannot tell them apart, so it names it and leaves the judgment to
-the reader.
+**A hand-written `.tf` in `hcl/` is listed, not compared.** The comparison set is what
+satz *emits*; a file this emission did not produce is listed with `!` and its blocks
+are left out of the count. An estate may keep one: a write-only secret cannot come
+from the estate, so the `variable` block declaring it lives in `hcl/` beside the
+generated files. Compared, its blocks would read as deletions. The script cannot tell
+a hand-written file from one an older satz emitted, so it names the file; check a
+named file that is not hand-written.
 
 **A subdirectory in `hcl/` is the same thing one level up.** satz emits flat files into
 `hcl/` and never below it, so a `modules/` or `landing-zones/` tree an estate keeps
@@ -338,10 +317,8 @@ name. The walk is flat: a subdirectory is listed with `!` and nothing in it is
 compared. Walked, such a tree would read as deletions on an estate whose emission
 has not changed at all.
 
-**Why the address set is the severe half.** A body delta says an attribute is
-rendered differently — the same resources, described differently. A moved
-address says satz would now create or destroy something. The first is
-housekeeping; the second is a plan you have not seen.
+**Why a moved address blocks.** A body delta renders the same resources differently.
+A moved address means the next plan creates or destroys a resource.
 
 ### When the delta is the state backend
 
@@ -355,24 +332,21 @@ cd hcl/ && tofu init -reconfigure
 Local-mode estates need nothing, and `satz migrate --mode cloud` re-initialises
 on its own.
 
-### What it deliberately does not do
+### What it does not do
 
 - **It never writes into a checkout.** Every estate is copied to a scratch
-  directory and transpiled there. Estate repositories carry work in progress; a
-  verification pass that writes into one costs more than it proves. Pass
-  `--scratch DIR` to keep the emitted trees.
-- **It does not diff text.** `git diff hcl/` reports a block that merely moved,
-  and after enough releases that buries the finding that matters. Blocks are
-  matched by **address**, so only content counts and order never does.
-- **It does not treat a missing checkout as a pass.** Silence about an estate
-  nobody looked at is how a fleet report starts lying.
-- **It reads no cloud.** V1 is about what satz *emits*. What the organisation
-  actually has is `report-compliance`, and it needs that estate's credentials.
+  directory and transpiled there, because estate repositories carry work in
+  progress. Pass `--scratch DIR` to keep the emitted trees.
+- **It does not diff text.** `git diff hcl/` also reports a block that only moved.
+  Blocks are matched by **address**, so content counts and order does not.
+- **It does not treat a missing checkout as a pass**; it reports it as UNAVAILABLE.
+- **It reads no cloud.** It compares what satz *emits*. What the organisation has is
+  `report-compliance`, with that estate's credentials.
 
 ## `build-site.py` — which docs become pages
 
-Publishing a doc is a decision, and so is not publishing one. `build-site.py`
-carries two lists and **fails naming any `docs/*.md` that is in neither**:
+`build-site.py` publishes the docs it names in one list and skips those in another,
+and **fails naming any `docs/*.md` that is in neither**:
 
 - `SITE_DOCS` — published.
 - `SITE_DOCS_EXCLUDED` — deliberately not published, each with its reason.
@@ -386,11 +360,9 @@ reading order — `satz`, `language`, `library`, `workflows`, `interview`, `mcp`
 `examples`, `housekeeping`, `competitive`, `llms` — and the build fails on a page
 it does not name, or on a name that is not a page, so the menu stays a table of
 contents rather than a directory listing. A page's title is its menu word after
-`satz` (`# satz language`, `# satz library`), with no trailing explanation:
-what the page IS goes in its opening line, where a reader who opened it will
-actually see it. The
-browser tab shows that title as plain text, taken from the rendered heading, and
-a page without a `# ` title fails the build.
+`satz` (`# satz language`, `# satz library`), with no trailing explanation; what the
+page is goes in its opening line. The browser tab shows that title as plain text,
+taken from the rendered heading, and a page without a `# ` title fails the build.
 
 The 24 per-pack pages under `presets/docs/` are rendered and linked from the
 preset library, but carry no menu entry of their own — someone looking for a pack
@@ -402,34 +374,36 @@ href that 404s. So is a link to any other repository file the site does not
 publish, an ADR under `docs/adr/` for one; a link to a file that does not exist
 fails the build, naming the page and the link.
 
-Currently excluded, and why:
+Excluded, and why:
 
 | doc | why not published |
 |---|---|
-| `security-toolset-integration.md` | a proposal under rework; it describes an audit loop that is not what satz does today |
+| `security-toolset-integration.md` | a proposal under rework; it describes an audit loop satz does not implement |
 | `fast-delta.md` | source material for the competitive matrix, which carries the conclusions |
 | `stage-b.md` | how the pipeline was built. The language reference is how it is used, and the migration commands are in the README |
 
 ### One page at a time
 
-`build-satz-doc.py` is the renderer `build-site.py` imports. It parses with
-cmark-gfm, GitHub's own parser ([ADR 0008](adr/0008-the-site-renders-markdown-with-githubs-parser.md)),
-so a page shows what GitHub shows, and gives every heading the anchor GitHub
-gives it; both scripts declare that dependency themselves, so a bare `uv run`
-runs them. A link to an anchor its target page does not carry fails the site
-build. It turns one
-`docs/*.md` into a self-contained, theme-aware HTML page, inlining any SVG that
-sits beside the markdown and recolouring it through CSS tokens so it follows the
-viewer's theme. Inline code never pushes a page or a column wide. In a table
-cell it breaks between its words and never inside one, so a long command cannot
-claim its column's whole width; in running text a word of up to 27 characters is
-kept whole as well, so `--help` never ends a line as `--`. A word too long to
-share a table row with two others, in a cell or in running text, may also break
-before a `/`, `.` or `_`, and a piece of it that is still that long where a
-lowercase letter meets a capital. In a heading every word may break before a `/`, `.` or `_`, because
-heading type outruns a phone with a pack's name alone. Whatever still cannot fit
-a line breaks where it must; a code block scrolls inside itself instead. Run on
-its own it renders the language reference:
+`build-satz-doc.py` is the renderer `build-site.py` imports. It turns one
+`docs/*.md` into a self-contained, theme-aware HTML page, inlining any SVG that sits
+beside the markdown and recolouring it through CSS tokens so it follows the viewer's
+theme. It parses with cmark-gfm, GitHub's own parser
+([ADR 0008](adr/0008-the-site-renders-markdown-with-githubs-parser.md)), so a page
+shows what GitHub shows and every heading carries the anchor GitHub gives it. Both
+scripts declare that dependency themselves, so a bare `uv run` runs them. A link to an
+anchor its target page does not carry fails the site build.
+
+Inline code never pushes a page or a column wide. In a table cell it breaks between
+its words and never inside one, so a long command cannot claim its column's whole
+width; in running text a word of up to 27 characters is kept whole as well, so
+`--help` never ends a line as `--`. A word too long to share a table row with two
+others, in a cell or in running text, may also break before a `/`, `.` or `_`, and a
+piece of it that is still that long where a lowercase letter meets a capital. In a
+heading every word may break before a `/`, `.` or `_`, because a pack's name at
+heading size does not fit a phone line. Whatever still cannot fit a line breaks where
+it must; a code block scrolls inside itself instead.
+
+Run on its own, it renders the language reference:
 
 ```bash
 uv run scripts/build-satz-doc.py [MD] [OUT.html] [TITLE]
@@ -437,11 +411,9 @@ uv run scripts/build-satz-doc.py [MD] [OUT.html] [TITLE]
 
 ### Navigating a long page
 
-The reference pages are long on purpose — the language reference is meant to be
-read straight through — so each page carries a **contents column** built from its
-own `h2`/`h3` headings, sticky beside the text, marking the section you are in.
-Below 1180px it becomes a collapsed block above the content. It is derived from
-the rendered headings, so it cannot drift from the page it describes.
+Each page carries a **contents column** built from its own `h2`/`h3` headings, sticky
+beside the text, marking the section in view. Below 1180px it becomes a collapsed
+block above the content. It is built from the rendered headings.
 
 ## `update_import_config.py` — keep the type table current
 
@@ -494,30 +466,30 @@ Writes `presets/managed-constraint-equivalents.txt`. Needs ADC **and** a quota p
 the OrgPolicy API refuses bare ADC. Nothing about the organisation reaches the file: the
 constraint catalogue is Google's and identical for every customer.
 
-Two things the script does that a one-liner would not:
+The script:
 
 - **Reads the equivalence in both directions.** The declaration is asymmetric — far more
   managed constraints name their legacy twin than the reverse — so reading one side finds
   a fraction of the pairs.
 - **Preserves the curated section.** Below the `CURATED` marker sit pairs Google does not
-  declare at all, with a note each saying why we assert them. Today that is
+  declare, each with a note saying why it is asserted. The one such pair is
   `iam.allowedPolicyMemberDomains` ↔ `iam.managed.allowedPolicyMembers`: different names,
-  no declared equivalence in either direction, same control. The generated section above
-  the marker is rewritten wholesale and must never be hand-edited.
+  no declared equivalence in either direction, the same control. The generated section
+  above the marker is rewritten wholesale; do not edit it by hand.
 
 The table is enforced offline by `constraint_equivalents::no_pack_runs_a_superseded_constraint`
 (`src/main.rs`), which compiles every corpus case and fails when a pack enforces a legacy
 constraint that has a replacement, or enables a replacement without declaring its twin off.
-So refreshing the table is a deliberate act needing credentials, while the rule it encodes
-is checked on every `cargo test` with none.
+Refreshing the table needs credentials; the rule is checked on every `cargo test`
+without any.
 
-## `update_schema_fixture.py` — keep the test schema honest
+## `update_schema_fixture.py` — keep the test schema current
 
 `tests/schemas/google.json` is a real provider schema trimmed to the types the
-fixtures use, and the corpus classifies types through it the way production classifies
-them through the real thing. A type missing from it silently loses schema-derived
-detail; a type whose real schema has moved on means the snapshots pin yesterday's
-provider.
+fixtures use, and the corpus classifies types through it as production does through
+the full schema. A type missing from it loses schema-derived detail without an error;
+a type whose real schema has changed makes the snapshots pin an older provider than
+the pin says.
 
 ```
 uv run scripts/update_schema_fixture.py --check
@@ -527,13 +499,13 @@ uv run scripts/update_schema_fixture.py --add google_compute_firewall_policy_rul
 `--check` downloads the pinned provider (from `provider_version` in
 `tests/smoke/config.toml`) and reports each fixture type as GONE or DRIFTED, listing
 the attributes and blocks that appeared or vanished. **Run it when the provider pin
-moves** — nothing else notices. `--add` inserts or re-cuts types from the real schema
+moves**; no other check does. `--add` inserts or re-cuts types from the real schema
 and leaves the rest byte for byte; regenerate the corpus afterwards.
 
-It never deletes, deliberately. Three fixture types appear in no `.satz` source
-because the emitter produces them from structural nodes, and one type that is
-referenced needs no schema because it sits in a raw `hcl { }` block — trimming by
-what looks unused would remove three live types and keep a dead one.
+It never deletes: three fixture types appear in no `.satz` source because the
+emitter produces them from structural nodes, and one referenced type needs no schema
+because it sits in a raw `hcl { }` block, so usage in the sources does not show which
+types are needed.
 
 Needs `tofu` on PATH; talks to no organisation.
 
@@ -558,8 +530,8 @@ presets/scc/scc-enable-all.sh --organization 123456789012 --apply    # write
 ```
 
 **Or let the estate supply the organisation id.** `presets/scc/scc-service-enablement.satz`
-is a pack whose entire content is an `action` binding this script — no resources,
-because enablement is precisely the part that has none:
+is a pack whose only content is an `action` binding this script, since service
+enablement has no provider resource:
 
 ```
 use "presets/scc/scc-service-enablement.satz"
@@ -571,32 +543,28 @@ satz run-actions estate.satz --check      # the dry run above
 satz run-actions estate.satz --execute    # adds --apply
 ```
 
-The script's flag shape is what makes that binding clean: `args` carries the form
-that reads, `execute_args` the one flag that writes. The pack declares
+`args` carries the reading form of the command, `execute_args` the one flag that
+writes. The pack declares
 `phase = "before-apply"`, because enablement is a prerequisite for the SCC
 resources a later pack will declare.
 
-### What is on by default, and what you have to ask for
+### Defaults
 
-Everything except three things. A detector for a workload nobody runs costs
-nothing and finds nothing, so enabling Container Threat Detection before the first
-GKE cluster exists is free — and it beats hoping somebody remembers to switch it
-on the day the cluster appears. Being ready is the default.
+Every service is enabled except the ones below. A detector for a workload that does
+not exist yet costs nothing, so Container Threat Detection is on before the first GKE
+cluster exists.
 
-Two services are different in kind, and one group is meaningless without a
-connector:
+These are opt-in:
 
 | flag | what it adds | why it is not the default |
 |---|---|---|
-| `--with-optional` | `WEB_SECURITY_SCANNER` | it actively **crawls** the customer's web applications — a different consent from passive detection, and not one to give on their behalf |
-| `--with-optional` | `ARTIFACT_ANALYSIS` | billed per image scan: a cost decision rather than a security one |
-| `--with-multicloud` | the AWS/Azure connector services | they fail noisily until an AWS or Azure connector exists |
+| `--with-optional` | `WEB_SECURITY_SCANNER` | it actively **crawls** the customer's web applications, which needs the customer's consent |
+| `--with-optional` | `ARTIFACT_ANALYSIS` | billed per image scan |
+| `--with-multicloud` | the AWS/Azure connector services | they fail until an AWS or Azure connector exists |
 
-Without the flag those services are **left alone entirely** — not enabled at the
-org, and not swept to `INHERITED` on descendants either. Sweeping them would mean
-"take the org's value", and the org has no value for something we deliberately did
-not decide, so the sweep would quietly disable a scanner somebody turned on for one
-project on purpose.
+Without the flag those services are **left alone**: not enabled at the org, and not
+swept to `INHERITED` below it. Sweeping them would make descendants take the org's
+value, which is unset, and switch off a scanner enabled on one project.
 
 ### Why it is a script
 
@@ -605,16 +573,16 @@ google/google-beta carry **no binding** for
 Security Health Analytics, Event Threat Detection, Container Threat Detection,
 VM Threat Detection, Web Security Scanner or DSPM on or off therefore cannot be
 written as a resource in any language satz compiles, and neither can tier
-activation. Re-checked against **7.14.1**: the provider ships 35 `google_scc_*` /
-`google_securityposture_*` types and none of them is service enablement or a
-tier — the `google_scc_management_*` ones are custom modules only.
+activation. Provider **7.14.1** ships 35 `google_scc_*` / `google_securityposture_*`
+types and none of them is service enablement or a tier — the
+`google_scc_management_*` ones are custom modules only.
 
 Everything **downstream** of activation is codeable and belongs in a preset:
 custom modules (SHA + ETD), sources and source IAM, notification configs,
 BigQuery exports, mute configs, and
 `google_securityposture_posture(_deployment)`. Use the **v2** notification
 resources: the v1 API answers `This API is no longer available. Please use API
-V2` on a live org, so `google_scc_notification_config` is a dead end and
+V2` on a live org, so `google_scc_notification_config` does not work;
 `google_scc_v2_organization_notification_config` is the one to write.
 
 ### It calls the API, not `gcloud scc manage`
@@ -622,11 +590,10 @@ V2` on a live org, so `google_scc_notification_config` is a dead end and
 The SDK knows **13** of the **17** services the API exposes. `ARTIFACT_GUARD`,
 `ARTIFACT_ANALYSIS`, `AGENT_ENGINE_VULN_ASSESSMENT` and `EXTERNAL_EXPOSURE` have
 no gcloud name at all — the CLI answers "is not a valid service name" — while the
-API sets them without complaint. Four services silently out of reach is reason
-enough on its own; the API also needs no translation between its names and the
-CLI's (`SECURITY_HEALTH_ANALYTICS` against `security-health-analytics`), which
-discovery returns in the API's form. gcloud supplies the credentials and walks
-the hierarchy.
+API sets them. The script therefore calls the API, which also needs no translation
+between its names and the CLI's (`SECURITY_HEALTH_ANALYTICS` against
+`security-health-analytics`); discovery returns the API's form. gcloud supplies the
+credentials and walks the hierarchy.
 
 The API needs a quota project — `--quota-project`, defaulting to the active
 gcloud project — and refuses the call without one. `--apply` is the difference
@@ -644,9 +611,8 @@ organization's own state:
   whether GCE's VM Manager is running. It is skipped in the org pass with a note
   and still swept to `INHERITED`, which the API does accept.
 - **Security Health Analytics answers `FAILED_PRECONDITION`** at every level on an
-  org where it is disabled and the subscription does not carry it. That is not a
-  script bug and is left to surface with the API's own message rather than a
-  guess at the cause.
+  org where it is disabled and the subscription does not carry it. The script passes
+  the API's message through.
 - **The built-in fallback list is in the API's own names**, which is what discovery
   returns; a CLI spelling there would break the fallback path silently.
 
@@ -658,12 +624,10 @@ Two passes:
 2. **descendant sweep** — each service → `INHERITED` at every folder and every
    project under the org.
 
-The second pass is the point of the exercise. A descendant carrying its own
-`ENABLED`/`DISABLED` keeps overriding the organization, so enabling at the org
-alone does not make the org authoritative — it only makes it *first*. Sweeping
-the hierarchy to `INHERITED` leaves exactly one place where the state is decided.
-(`INHERITED` is only a legal state below the org, which is why the two passes set
-different values.)
+The second pass makes the organization the one place the state is set: a descendant
+with its own `ENABLED`/`DISABLED` overrides the organization, so enabling at the org
+alone does not reach it. (`INHERITED` is only a legal state below the org, which is
+why the two passes set different values.)
 
 With `--reset-modules` each service's individual **modules** are set to
 `INHERITED` as well, clearing per-module overrides on top of the per-service ones.
@@ -683,23 +647,22 @@ With `--reset-modules` each service's individual **modules** are set to
 | `--reset-modules` | also set every module to `INHERITED` |
 | `--targets-file FILE` | explicit `folders/<id>` / `projects/<id>` list instead of hierarchy discovery |
 
-### Three things worth knowing before running it
+### Before running it
 
-**It is a dry run by default.** Every call carries `validateOnly` until
-`--apply` is passed. This runs against customer orgs;
-the safe direction is the default one.
+**It is a dry run by default.** Every call carries `validateOnly` until `--apply` is
+passed.
 
 **The service list is read from the org, not hardcoded.** It comes from the API's
 own `securityCenterServices` listing, so a service Google adds later is picked up
 without touching the script. The built-in list of 14 is only a fallback for when
 that call cannot be made, and the AWS/Azure connectors in it are skipped unless
-`--with-multicloud`, because they fail noisily on an org with no such connector.
+`--with-multicloud`, because they fail on an org with no such connector.
 
-**Activate the tier first.** The script cannot do it — there is no scriptable
-surface for tier activation either — and enabling a service on an org without a
-Premium/Enterprise subscription simply fails at the API.
+**Activate the SCC tier first.** Tier activation has no API the script could call,
+and enabling a service on an org without a Premium or Enterprise subscription fails
+at the API.
 
-### Failures it explains rather than echoes
+### Failures it classifies
 
 Three failures are classified in the output instead of being left as a raw API
 error:
@@ -709,11 +672,10 @@ error:
   at the org, or the settings admin role).
 - **service unavailable** — the org's SCC tier does not carry that service, or
   its API is off.
-- **blocked by a constraint** — the CIS §1.1 locks. This is the one this fleet
-  actually hits: each newly enabled service provisions another SCC service agent,
-  and domain-restricted sharing refuses Google's auto-grant to it. The procedure
-  for the lift window is in the SCC section of `presets/README.md`; the pack
-  param is `allowed_policy_member_subjects`.
+- **blocked by a constraint** — the CIS §1.1 lock refused Google's role grant to
+  a service agent that `allowed_policy_member_subjects` does not name. The pack's
+  default names SCC's five agents; the SCC section of `presets/README.md` lists
+  them and says how to allow another.
 
 Exit status is non-zero if any call failed, so it can gate a runbook step.
 
@@ -730,7 +692,5 @@ Anything derived gets, in order of preference:
 2. a **gate** that fails offline when the derived file and its consumers disagree;
 3. failing both, a **line on this page** saying what goes stale and when.
 
-Silence is the thing to avoid. A file that is merely out of date is a small problem;
-a file that is out of date while the tests report success is how a compliance tool
-starts lying.
+A derived file with none of the three can go stale while every test passes.
 

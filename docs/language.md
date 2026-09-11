@@ -17,25 +17,25 @@ value.
 | layer | what it holds | what it proves | command |
 |---|---|---|---|
 | **HCL** | resources, providers, state — the IaC layer's assembly language, run by OpenTofu (preferred) or Terraform, with providers from Google and others | that a resource *exists* as declared | `tofu plan` / `apply` |
-| **Satz** | estate + packs, params, composition, suppressions | that the estate is a consistent, conflict-free fold of named, versioned parts — and that every org policy in it is *declared* on purpose | `transpile` |
-| **Controls** | claims against a catalog | that each declared control has its witnesses *emitted* — a claim with a missing witness is reported, never silently satisfied | `require` |
+| **Satz** | estate + packs, params, composition, suppressions | that the estate is a consistent, conflict-free fold of named, versioned parts — and that every org policy in it is *declared* explicitly | `transpile` |
+| **Controls** | claims against a catalog | that each declared control has its witnesses *emitted* — a claim with a missing witness is reported as broken, never as satisfied | `require` |
 | **Evidence** | the goal view joined with the live estate | that each witness is live and — for org policies — *enforcing*, by value; a policy switched off in the console is **NOT ENFORCED**, which outranks DRIFTED | `report-compliance` |
 
-In the Satz layer, org policies are ordinary resources in versioned packs. A pack
-the estate includes never changes silently: a semantic upstream change forks and
-repoints with proof. Declining a control is a one-line `deviates` claim that
-hard-errors when it goes stale. `hcl { … }` warns on every transpile until someone
-signs it.
+In the Satz layer, org policies are ordinary resources in versioned packs. A
+semantic upstream change to a pack the estate includes forks the pack and repoints
+the estate, checked by transpile identity. Declining a control is a `deviates`
+claim with its reason. `hcl { … }` warns on every transpile until it is marked
+`hcl trust "<reason>"`.
 
 ---
 
-## 2. HCL is the foundation — and you keep all of it
+## 2. HCL is the foundation
 
 HCL is the language of the IaC layer: the assembly code that OpenTofu (the
 preferred tool) or Terraform executes against provider plugins from Google and
 others. Satz compiles to it. It does not wrap it, rename it, or hide it.
 
-**There is no Satz provider documentation, on purpose.** The OpenTofu registry
+**Satz has no provider documentation of its own.** The OpenTofu registry
 and the HashiCorp registry are the documentation. Resource type names are the
 provider's, to the underscore. Attribute names are the provider's, to the
 underscore — across six real resource pairs from fleet estates (bucket, org
@@ -46,8 +46,7 @@ hierarchy) **not one attribute name differs**. What you know about
 ### 2.1 One resource, both ways
 
 The audit-log bucket from the shipped `organization-audit-logsink` pack, as
-written and as emitted for estate 1 (`presets/monitoring/organization-audit-logsink.satz:53`
-→ `hcl/main.tf:2363`):
+written and as emitted:
 
 ```
 google_storage_bucket {
@@ -90,8 +89,7 @@ resource "google_storage_bucket" "org_audit_logs" {
 
 Every attribute — `project`, `name`, `location`, `storage_class`,
 `uniform_bucket_level_access`, `public_access_prevention`, `lifecycle_rule`,
-`action.type`, `condition.age` — is the provider's name. Where the text differs,
-it differs for a reason:
+`action.type`, `condition.age` — is the provider's name. Where the text differs:
 
 | HCL | Satz | why |
 |---|---|---|
@@ -147,7 +145,7 @@ Nine syntactic ones — and, below them, the short list of attributes the emitte
   `import` block in `imports.tf` (§6.7); param names are kebab-cased in
   `variables.tf` / `terraform.tfvars`.
 
-That is the whole tax. Everything else is registry knowledge, unchanged.
+Everything else is the provider's, unchanged.
 
 ---
 
@@ -156,7 +154,7 @@ That is the whole tax. Everything else is registry knowledge, unchanged.
 The layers diagram reads bottom-up; this section reads the same way. Each
 addition is one line or a few, shown against the shipped CIS pack.
 
-**Include a pack** — 23 controls, 18 org policies, one line:
+**Include a pack** — the CIS baseline, one line:
 
 ```
 google_org_policy_policy {
@@ -165,23 +163,24 @@ google_org_policy_policy {
 ```
 
 **Tune it without forking** — the pack declares a default, the estate binds it.
-estate 3 keeps its contact addresses on a different domain than its organisation, so:
+An estate whose contact addresses are on a different domain than its organisation
+binds:
 
 ```
 params {
-  essential_contacts_allowed_domain = "example.net"
+  essential_contacts_allowed_domains = ["@example.net"]
 }
 ```
 
-**Decline one control it provides** — no fork, one line, and it fails loudly the
-day upstream retires the policy:
+**Decline one control it provides** — no fork, one line; if upstream removes the
+policy, the `suppress` matches nothing and the transpile fails:
 
 ```
 suppress google_org_policy_policy "compute-managed-requireOsLogin"
 ```
 
-**Say why, on the record** — so the control reads ⚠ *deviation* in every report
-instead of a false ✓ or an oversight-looking ✗:
+**Record the reason** — the control then reads ⚠ *deviation* in every report,
+not ✓ or ✗:
 
 ```
 claim "cis-gcp" "4.0" "4.4" deviates {
@@ -199,10 +198,6 @@ use "showcase-policies.satz" as google_org_policy_policy
 use "showcase-optional.satz" when want_optional
 ```
 
-Fourteen organisations run that same pristine pack today. The differences
-between them are params and, on three of them, a `.local` fork; everything else
-is byte-identical to upstream and `check-presets` proves it.
-
 ---
 
 ## 4. What makes the layers possible
@@ -213,7 +208,7 @@ Each layer exists because a handful of language features make it expressible.
 customer. Outer beats inner; everything globally unique derives from
 `customer_shortname`, everything org-scoped from `customer_organization_id`.
 
-**Schema-typed resources** are why the fold is safe. Block keys are matched
+**Schema-typed resources** are what the fold relies on. Block keys are matched
 exactly against the loaded provider schemas, so the compiler tells a resource
 map from a nested attribute block without guessing, and an unknown type is a
 parse-time error, not a plan-time one.
@@ -228,10 +223,10 @@ hard error when it matches nothing.
 **`claim` / `deviates`** are why the controls layer is language, not a sidecar:
 read from the same compile, naming emitted addresses.
 
-**`hcl trust`** is why the escape hatch is visible: raw HCL warns on every
-transpile until someone writes down why.
+**`hcl trust`** is why raw HCL is visible: it warns on every transpile until the
+block carries a reason.
 
-**Provenance by suffix** is why updates are safe on a fleet: the filename says
+**Provenance by suffix** is what lets a fleet take pack updates: the filename says
 who owns the file, the tooling enforces it, and the diff file is regenerated on
 every merge.
 
@@ -239,28 +234,26 @@ every merge.
 
 ## 5. How much shorter, measured
 
-Three numbers from the fleet, counting code lines (blank and comment-only lines
+Three numbers — the first two measured across the fleet — counting code lines (blank and comment-only lines
 removed on both sides):
 
 | what is compared | median | range | typical estate |
 |---|---|---|---|
-| **the estate file a customer writes** vs the HCL it becomes | **6.3×** | 2.9× – 10.6× | estate 8: 174 → 1 100 lines, 127 resources |
-| all Satz sources incl. packs vs HCL | 1.8× | 1.4× – 3.7× | estate 8: 618 → 1 100 |
-| the CIS pack alone vs its 18 policies' HCL | 0.66× | — | 298 → 197 |
+| **the estate file a customer writes** vs the HCL it becomes | **6.3×** | 2.9× – 10.6× | 174 → 1 100 lines, 127 resources |
+| all Satz sources incl. packs vs HCL | 1.8× | 1.4× – 3.7× | 618 → 1 100 |
+| the CIS pack alone vs its 25 policies' HCL | 0.48× | — | 523 → 252 |
 
-The first row is the honest form of "much shorter": what you maintain per
-organisation is a sixth of what runs. The high end (estate 1, estate 2 at ~10×) are the
-estates that `use` the most pristine packs; the low end (estate 15, estate 5 at ~3×) are
-estates with forked or inlined packs.
+The first row is what is maintained per organisation: a sixth of what runs. The high end (~10×) are the
+estates that `use` the most pristine packs; the low end (~3×) are estates with forked or
+inlined packs.
 
 The second row explains the first. Packs are *not* short — they carry their
-params' reasoning as comments and their control claims in-file, none of which
-emits HCL — and the third row is the extreme case: the CIS pack is longer than
-the policies it produces, because 66 of its lines are claims and 40 are the
-reasoning behind two lists. That is the trade: the source is where the
-compliance story lives, so the source is bigger than the output would suggest.
+params' reasoning as comments and their control claims and questions in-file,
+none of which emits HCL — and the third row is the extreme case: the CIS pack is
+about twice as long as the policies it produces, because 164 of its code lines
+are claims and 60 are questions.
 
-Where line count is not the point, **what you have to touch** is:
+**What changes** for common tasks:
 
 | to… | HCL / the YAML dialect | Satz |
 |---|---|---|
@@ -348,7 +341,7 @@ parameters = "{{\"allowedDomains\" : [\"@{customer_domain}\"]}}"
 value = "${{google_project.x.project_id}}"   # a literal Terraform reference
 ```
 
-Rule of thumb: **`{x}` is Satz, `{{` is a brace you want to survive.**
+**`{x}` interpolates a param; `{{` is a literal brace.**
 
 **A reference must name something the estate emits.** Every `${{…}}` is checked
 against what was actually emitted — including a project's expanded services and
@@ -362,13 +355,12 @@ references to resources this estate does not emit:
     emitted `google_service_account` labels: onboarding
 ```
 
-Without the check a typo compiles: Terraform catches most of them one cycle
-later, pointing at generated HCL instead of the line someone wrote, and the one
-it cannot catch is a typo that happens to name a different real resource.
-Suppressing a resource something else references is the same error, which is
-the point: the estate does not emit it.
+Without the check, Terraform catches most typos one cycle later, pointing at
+generated HCL instead of the Satz line, and cannot catch a typo that names a
+different real resource. Suppressing a resource that something else references
+is the same error: the estate does not emit it.
 
-**A reference is understood, not just emitted.** When a value is *nothing but*
+**A whole-value reference is recorded as a reference.** When a value is *nothing but*
 one reference — `service_account_id = "${{google_service_account.onb.name}}"` —
 the emission manifest records it as a reference, so `satz adopt` follows it to
 the resource it names and `report-compliance` scopes a witness through it. When
@@ -386,6 +378,7 @@ header  := ("estate" | "pack") IDENT { "content" | "version" STRING }
 item    := "params" "{" { param } "}"
          | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
          | "claim" STRING STRING STRING COVERAGE "{" { claim-entry } "}"
+         | "question" [ "oneof" ] IDENT "{" { question-entry } "}"
          | "suppress" IDENT STRING [ "role" STRING ]
          | "hcl" [ "trust" STRING ] "{" … "}"
          | "action" STRING "{" { action-entry } "}"
@@ -401,11 +394,11 @@ pack   essential_contacts_organization version "1.1" content
 ```
 
 - `estate` — one customer organisation. Usually one per repo.
-- `pack` — a reusable unit. `version` is the pack's own revision, deliberately
-  **in-file, never in the filename** (framework versions live in claims and are
-  orthogonal: several pack revisions may implement the same standard).
-- `content` — marks a pack that is *expected* to be edited per customer; forking
-  it to `<name>.local.satz` is the normal workflow. Reporting tone only.
+- `pack` — a reusable unit. `version` is the pack's own revision, **in-file,
+  never in the filename** (framework versions live in claims and are independent
+  of it: several pack revisions may implement the same standard).
+- `content` — marks a pack that is edited per customer, by forking it to
+  `<name>.local.satz`. It affects reporting only.
 
 The header is optional in fragment files that are only ever `use`d.
 
@@ -432,16 +425,15 @@ Resolution rules:
 2. Params may reference each other **regardless of declaration order**; the
    compiler sorts by dependency.
 3. The namespace is one document-ordered space: packs see every earlier file's
-   params. (True lexical pack scoping is a deliberate future change, not v0.)
+   params; there is no per-pack scope.
    A pack's **default may therefore reference another pack's param**, and that is
    the right way to wire two packs that share a value — the CIS alert pack
    defaults its project to the audit-logsink pack's `logsink_project_name`, so an
    estate using both sets nothing, and renaming the logsink project moves the
-   alerts with it. A repeated literal would not: it would keep pointing at the
-   old name, or at a project that never existed. Used without the pack that
-   declares the name, the reference stops with `unknown param` — which is correct,
-   because the value is then genuinely undecided and the estate has to say it.
-4. Overriding a **list replaces it** — v0 has no concatenation — so an estate
+   alerts with it; a repeated literal would keep pointing at the old name. Used
+   without the pack that declares the name, the reference stops with
+   `unknown param`, and the estate has to bind the value.
+4. Overriding a **list replaces it** — Satz has no list concatenation — so an estate
    that adds to a pack's list repeats the entries it keeps.
 
 What the compiler does with them: every param becomes a typed `variable` in
@@ -471,15 +463,15 @@ A pack's params are its contract, and the comment travels with the default.
 From the shipped CIS pack:
 
 ```
-pack CIS_GCP_Foundation_4_0 version "2.1"
-
 params {
-  // essentialcontacts.managed.allowedContactDomains: the domain whose addresses
-  // may be set as essential contacts. Default = the customer's own domain. Some
-  // customers keep their contact addresses on a DIFFERENT domain than the org
-  // (estate 3: org example.com, contacts @example.net) — set it here rather
-  // than forking the pack.
-  essential_contacts_allowed_domain = customer_domain
+  // essentialcontacts.managed.allowedContactDomains: the DOMAINS whose
+  // addresses may be set as essential contacts (each entry `@domain`).
+  // Default = the customer's own domain. Some customers keep contacts on a
+  // different domain, or on several; the param is a list, so neither case
+  // forks the pack.
+  essential_contacts_allowed_domains = [
+    "@{customer_domain}",
+  ]
 }
 ```
 
@@ -509,7 +501,7 @@ are otherwise indistinguishable from a nested attribute block such as
 `labels { … }` — the schema is what tells the two apart.
 
 The only bare block keywords are Satz's own: `estate`, `pack`, `params`,
-`terraform`, `providers`, `use`, `suppress`, `claim`, `hcl`.
+`terraform`, `providers`, `use`, `suppress`, `claim`, `question`, `action`, `hcl`.
 
 **Simple** — one org policy:
 
@@ -543,8 +535,8 @@ The label has a hyphen, so it is quoted; the address has an underscore, and
 that address — `google_org_policy_policy.compute_managed_requireOsLogin` — is
 what a claim names.
 
-**Proving** — a bucket with a nested block, a single block, and a *repeated*
-block:
+**Nested blocks** — a bucket with a nested block, a single block, and a
+*repeated* block:
 
 ```
 google_storage_bucket {
@@ -707,9 +699,8 @@ emitted label, so the two never collide. One scope per map — repeat the map fo
 the next one. Order inside the map does not matter: the scope is read before the
 members. A misspelt scope attribute is a compile error naming the type's real
 one, and a scope on a type that already has one (`org_id` on an organisation
-grant, `project` on a map inside a project) is refused rather than silently
-ignored. `google_billing_account_iam_member` is the exception that proves the
-rule: its `billing_account_id` is estate-wide, pinned once and defaulting to
+grant, `project` on a map inside a project) is refused.
+`google_billing_account_iam_member` is the exception: its `billing_account_id` is estate-wide, pinned once and defaulting to
 `billing_account_infra`, not per-map.
 
 The same grant as a **labelled resource** is equally valid, and is the form to
@@ -840,12 +831,12 @@ under the resource's own scope on the row's `match_on` attributes (contacts by
 email, alert policies by display name), user-chosen ids from the `import_id`
 templates in `presets/import-config.yaml` — and `--execute` writes them back: an
 `"import-id"` line into a block, the object form into a list entry. Derived
-ids are written too; `tofu plan` verifies each through its import block. Two
-things it will not do: rewrite an entry it cannot find in the source (an
-interpolated member), and edit a **pristine pack** — packs are upstream-owned,
-so their resources come back as hints (`--execute --import`, or fork the pack).
-A resolution with more than one live candidate is reported as ambiguous and
-left for you to pin; nothing is ever guessed.
+ids are written too; `tofu plan` verifies each through its import block. It
+does not rewrite an entry it cannot find in the source (an interpolated member),
+and does not edit a **pristine pack** — packs are upstream-owned, so their
+resources come back as hints (`--execute --import`, or fork the pack). A
+resolution with more than one live candidate is reported as ambiguous and left
+for you to pin.
 
 ### 6.8 Estate configuration blocks
 
@@ -899,13 +890,12 @@ maps, like `showcase-pack.satz`, is `use`d bare.)
 `use` is valid at three places, and all three behave identically with respect
 to params, claims and `hcl` blocks: top level; inside a `google_folder { … }`
 block (where `as` is honoured too — the pack becomes that resource map, scoped
-to the folder); and inside a resource map, **the most common form in real
-estates** (there the map's type IS the key: an `as` naming another type is an
-error). A `use` cycle is an error naming the chain; `when` on a param no file
+to the folder); and inside a resource map, the form most estates use (there the
+map's type IS the key: an `as` naming another type is an error). A `use` cycle is an error naming the chain; `when` on a param no file
 declares is an error, not `false`; a top-level attribute in a file `use`d
 without `as` is an error.
 
-**Proving** — the showcase does exactly this. `showcase-pack.satz` declares
+**In the showcase:** `showcase-pack.satz` declares
 `pack_bucket_location = "EU"` and a bucket that uses it; the estate binds
 `pack_bucket_location = "europe-west3"` and `use`s the pack bare, so the bucket
 emits with `europe-west3` (remove the estate's param and it emits `"EU"`).
@@ -951,11 +941,8 @@ A suppression that matches nothing is a **hard error**:
 suppress google_org_policy_policy "compute-managed-noSuchPolicy" matches nothing — stale suppression (typo or upstream rename)
 ```
 
-A stale suppression silently doing nothing is exactly the failure this channel
-exists to prevent, and it has earned its keep once already: when the CIS pack
-retired the legacy §1.1 constraint in v2.0, every estate still carrying a
-`suppress` for it failed on the next transpile instead of keeping a dead line
-forever.
+When upstream renames or removes a resource, every estate that suppresses it
+fails on the next transpile, so the stale line is removed rather than kept.
 
 ### 6.11 `claim` — the compliance plane
 
@@ -985,7 +972,7 @@ claim-entry := "resources" "=" "[" { STRING } "]"
 - The three header strings are plain — **no interpolation**; control ids are
   static.
 - `resources` are emitted Terraform addresses. A claim whose witnesses are not
-  emitted is a **broken claim** (‼), reported loudly, never silently satisfied.
+  emitted is a **broken claim** (‼), never reported as satisfied.
 - `duty_<name>` records a manual duty; underscores become hyphens in reports
   (`duty_validate_then_lock` → `validate-then-lock`).
 - `implements` discharges the control; `contributes` is a necessary part.
@@ -1008,7 +995,7 @@ claim "cis-gcp" "4.0" "4.4" implements {
 Until that duty is attested (§8), the control reads ◐ *partial (open duty)* —
 witnesses present, human step outstanding.
 
-**`deviates` — declining a control on purpose**
+**`deviates` — declining a control**
 
 ```
 claim "cis-gcp" "4.0" "4.4" deviates {
@@ -1027,10 +1014,9 @@ claim … deviates: reason = "…" is required (a deviation is a disclosed decis
 
 Witnesses are optional here — the resource may be present-but-not-enforcing, or
 absent because the estate suppressed it — but any witness the claim *does*
-declare must still be emitted, so deleting the policy outright resurfaces as a
-broken claim rather than staying silently "deviated". A deviation renders as ⚠
-with its reason, is counted separately, and does **not** fail the `require`
-gate: a disclosed decision, not a gap. It outranks the claims it contradicts
+declare must still be emitted, so deleting the policy outright reports a broken
+claim, not a deviation. A deviation renders as ⚠ with its reason, is counted
+separately, and does **not** fail the `require` gate. It outranks the claims it contradicts
 and can be declared by a pack fork or by the estate itself.
 
 ### 6.12 `hcl` — raw passthrough
@@ -1051,9 +1037,8 @@ hcl trust "reviewed 2026-08-24, provider gap for static IPs" {
 }
 ```
 
-The body is captured verbatim, is **never interpolated**, and bypasses the fold
-entirely — which is what "opaque to the proof layer" means. Every transpile says
-so:
+The body is captured verbatim, is **never interpolated**, and bypasses the fold,
+so the compliance plane cannot see into it. Every transpile says so:
 
 ```
 warning: raw HCL passthrough at yaml/main.satz:14 (4 lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust "<reason>" { … }` once reviewed.
@@ -1072,8 +1057,7 @@ resource "google_compute_address" "legacy_trusted" {
 }
 ```
 
-Escape hatch by design, visible by design. "Opaque" is a property the compiler
-enforces, not a convention: the compliance plane reads the *emission manifest*
+The compiler enforces the opacity: the compliance plane reads the *emission manifest*
 — the resources the compiler itself built — never the rendered `main.tf`, and
 the passthrough is appended to the text after emission. A resource that exists
 only inside `hcl { … }` therefore deploys but is **not a witness**; a claim
@@ -1098,18 +1082,18 @@ hcl trust "SCC enablement has no provider resource (google 7.14.1)" {
 ```
 
 This orders the script against satz-emitted resources through ordinary HCL
-references, which nothing else here can. It also costs more than it looks:
+references, which nothing else here can. It also has costs:
 `tofu plan` cannot show what the script will do, a failure taints state and has
 to be cleaned up by hand, the script runs on whichever machine runs `apply`, and
 the block is invisible to the compliance plane like any other passthrough.
-Reach for it only when a step genuinely has to happen *between* two resources in
-one apply; otherwise declare an `action`, which is legible, selectable, and runs
-where you can watch it.
+Use it only when a step has to happen *between* two resources in one apply;
+otherwise declare an `action`, which `run-actions` prints, selects by name and
+runs in the operator's terminal.
 
 ### 6.13 `action` — a step with no provider resource
 
 Some cloud steps cannot be declared at all. Security Command Center service
-enablement is the standing example: as of provider 7.14.1 there are 35
+enablement is one: provider 7.14.1 has 35
 `google_scc_*` / `google_securityposture_*` types and **none** of them is service
 enablement or tier activation, so no language satz compiles can express it. The
 step is still part of the deployment.
@@ -1127,9 +1111,9 @@ action "scc-services" {
 }
 ```
 
-That exact case ships as a pack, so an estate does not have to write it at all —
-`use "presets/scc/scc-service-enablement.satz"` is the whole binding, and the
-declaration above is that pack's, with its `reason` shortened to fit here.
+The library ships this action as a pack:
+`use "presets/scc/scc-service-enablement.satz"` binds it. The declaration above
+is that pack's, with its `reason` shortened.
 
 | key | required | meaning |
 |---|---|---|
@@ -1137,7 +1121,7 @@ declaration above is that pack's, with its `reason` shortened to fit here.
 | `run` | yes | The executable. Resolved relative to the directory of the file that **declares** it — so a pack that ships a script is self-contained — then against the include dirs, exactly as a `use` path is. Never interpolated. |
 | `args` | no | Always passed. `{param}` interpolates; an unknown param is a hard error. |
 | `execute_args` | no | Appended **only** under `--execute`. This is where a script's `--apply` lives. |
-| `phase` | no | `before-apply` for a prerequisite, `after-apply` for a step that needs what the apply created. Default `after-apply`. Advisory: it orders the run and selects with `--phase`, but nothing chains `satz apply` — see below. |
+| `phase` | no | `before-apply` for a prerequisite, `after-apply` for a step that needs what the apply created. Default `after-apply`. It orders the run and selects with `--phase`; `satz apply` does not run actions — see below. |
 
 #### Which phase, and what `phase` does not do
 
@@ -1145,7 +1129,7 @@ The two values answer one question: does this step have to happen **before** the
 estate exists, or **after**?
 
 **`before-apply` — a prerequisite.** The step has to be true before the apply can
-succeed, so it cannot wait for it. Enablement is the archetype: the SCC pack above
+succeed, so it cannot wait for it. Enablement is one: the SCC pack above
 turns the services on ahead of the resources that depend on them.
 
 **`after-apply` — the step needs what the apply created.** It cannot run earlier,
@@ -1168,11 +1152,10 @@ write it when it helps a reader, and write `before-apply` whenever the step is a
 prerequisite.
 
 **What `phase` does not do:** it does not run anything around `satz apply`.
-`satz apply` neither knows nor mentions actions, so nothing enforces that a
-`before-apply` action actually ran before the apply. The value orders the run
-(`before-apply` first, then declaration order) and selects with
-`--phase before-apply|after-apply`; sequencing the two against the apply is the
-operator's job:
+`satz apply` does not run actions and does not check that a `before-apply`
+action ran. The value orders the run (`before-apply` first, then declaration
+order) and selects with `--phase before-apply|after-apply`; the operator runs
+each phase around the apply:
 
 ```bash
 satz run-actions estate.satz --phase before-apply --execute
@@ -1180,19 +1163,19 @@ satz apply
 satz run-actions estate.satz --phase after-apply --execute
 ```
 
-**Nothing here runs while compiling.** `transpile` is a pure function of its
-sources and stays one: that is what lets the corpus snapshots, `check-presets`
-and the auto-fork transpile-identity proof mean what they say, and it is why
-cloning an estate and compiling it cannot execute anything. An action is inert
+**Nothing here runs while compiling.** The output of `transpile` depends only on
+its sources, so the corpus snapshots, `check-presets` and the auto-fork
+transpile-identity check compare like with like, and compiling a cloned estate
+runs no script. An action is inert
 until [`satz run-actions`](../README.md#run-actions-run-actions) is invoked.
 
 **An action emits nothing and can carry no claim.** It is not in `main.tf`, not
 in the emission manifest, and no `claim` can name it — the same opacity `hcl`
-has, with execution on top. Satz records that the step exists and never says
+has, with execution on top. satz records that the step exists and never says
 what it did; nothing about an action reaches `report-compliance`.
 
 Every compile of an estate that declares one says so, and unlike `hcl trust`, a
-`reason` does not downgrade the warning — HCL only deploys, an action runs:
+`reason` does not downgrade the warning, because an action executes a script:
 
 ```
 warning: action "scc-services" declared in presets/scc/enable.satz:12 (from a pack) — `satz run-actions` will execute enable.sh
@@ -1200,12 +1183,10 @@ warning: action "scc-services" declared in presets/scc/enable.satz:12 (from a pa
 note: --no-pack-actions ignores pack-declared actions, --no-actions disables all execution, --no-action-warnings silences this.
 ```
 
-A pack may declare an action, and the warning says when one did. That is
-deliberate — the pack is where the knowledge that a step is needed lives — and
-it is why the three switches exist: `get-presets` downloads packs from a public
-repository. A downloaded script also arrives without its executable bit, and
-satz will not set it; the error names the `chmod +x` and leaves the decision to
-whoever read the file.
+A pack may declare an action, and the warning says when one did. The three
+switches exist because `get-presets` downloads packs from a public repository. A
+downloaded script arrives without its executable bit, and satz does not set it;
+the error names the `chmod +x` to run once the script has been read.
 
 Names are unique across the estate. Two actions answering to one name is a hard
 error naming both files, the rule the ⊕ fold already applies to a repeated
@@ -1214,50 +1195,46 @@ collected at all.
 
 #### When an action runs, and how
 
-**Never on its own.** `satz run-actions` is the only thing that executes one:
-not `transpile`, not `plan`, not `apply` — `satz apply` does not know actions
-exist. `phase` orders the run and selects with `--phase`; it does not make
+**Only `satz run-actions` executes one** — not `transpile`, not `plan`, not
+`apply`. `phase` orders the run and selects with `--phase`; it does not make
 anything happen around an apply.
 
 When `run-actions` does run, in this order:
 
-1. **The estate is compiled first.** If it does not compile, nothing runs — an
-   estate whose parameters cannot be trusted is not one to build a command line
-   from.
+1. **The estate is compiled first.** If it does not compile, nothing runs: the
+   command lines are built from its params.
 2. **`{param}` resolves** against the finished namespace. An unknown param is a
    hard error, never an empty argument.
 3. **The executable is located** relative to the directory of the file that
    declared it, then against the include dirs — the same search a `use` path
    gets.
-4. **Every action is located and vetted before any one is spawned** (it exists,
-   it is executable). A run must not die half way on the fourth script's missing
-   `+x` when the first three already changed the organisation.
+4. **Every action is located and checked before any one is spawned** (it exists,
+   it is executable), so a missing `+x` on the fourth script stops the run before
+   the first three change the organisation.
 5. **Each is spawned**, in phase order (`before-apply`, then `after-apply`) and
    declaration order within a phase — the estate's own actions first, then
    `use`-visit order.
 6. **A non-zero exit stops the run** and satz exits with that code. The
-   remaining actions do not run: a failed step is not a reason to keep changing
-   the organisation.
+   remaining actions do not run.
 
 #### Writing a script for an action
 
-The contract is small, and satz guarantees all of it:
+What satz provides to a script:
 
 | | |
 |---|---|
-| **interpreter** | Whatever the file's shebang says. Satz executes the file; it does not know or care whether the target is `sh`, `bash`, Python or a compiled binary. A Python script with dependencies can use `#!/usr/bin/env -S uv run --script` and PEP 723 inline metadata. |
-| **executable bit** | Required. Satz never sets it — the error names the `chmod +x`. |
+| **interpreter** | Whatever the file's shebang says. satz executes the file, whether the target is `sh`, `bash`, Python or a compiled binary. A Python script with dependencies can use `#!/usr/bin/env -S uv run --script` and PEP 723 inline metadata. |
+| **executable bit** | Required. satz does not set it; the error names the `chmod +x`. |
 | **working directory** | Always the directory holding `config.toml`, whatever directory the operator invoked satz from. Never assume the caller's cwd. |
 | **arguments** | `args`, plus `execute_args` appended under `--execute`. |
-| **environment** | Exactly five variables, and **nothing else**: `SATZ_ACTION` (the name), `SATZ_PHASE`, `SATZ_MODE` (`check` or `execute`), `SATZ_ESTATE` (the estate file), `SATZ_HCL_DIR`. Params are **not** exported — anything a script needs must be named in `args`, so the declaration is the complete record of what the action was told. |
+| **environment** | Exactly five variables: `SATZ_ACTION` (the name), `SATZ_PHASE`, `SATZ_MODE` (`check` or `execute`), `SATZ_ESTATE` (the estate file), `SATZ_HCL_DIR`. Params are **not** exported — anything a script needs must be named in `args`, so the declaration is the complete record of what the action was told. |
 | **exit code** | `0` is success. Anything else stops the run and becomes satz's exit code. |
-| **stdout / stderr** | Inherited, so the script's output is the operator's output. Satz does not capture, parse or store it. |
+| **stdout / stderr** | Inherited, so the script's output is the operator's output. satz does not capture, parse or store it. |
 
-The two-list split is what makes a script safe to point at: put the form that
-**reads** in `args` and the flag that **writes** in `execute_args`, so
-`run-actions --check` exercises the script's own dry run and only `--execute`
-lets it write. Whether the `args` form really is side-effect-free is the
-script's business — satz cannot know what a script does and does not pretend to.
+Put the form that **reads** in `args` and the flag that **writes** in
+`execute_args`: `run-actions --check` then runs the script's own dry run, and only
+`--execute` lets it write. Whether the `args` form has side effects is up to the
+script; satz cannot see what a script does.
 
 A script written to that contract. `tests/smoke/scripts/showcase-action.sh` is
 this shape with a few extra echoes the smoke matrix asserts on, and CI runs it on
@@ -1289,11 +1266,10 @@ fi
 # … the work. A non-zero exit here stops the whole run.
 ```
 
-`presets/scc/scc-enable-all.sh` in this repository is the real one, and it
-already has that shape — dry run by default, `--apply` to write, non-zero on any
-failed call. It lives under `presets/` rather than `scripts/` because
-`get-presets` ships only `presets/**`, and a pack whose script did not travel
-with it would declare an action that cannot find what it runs. See
+`presets/scc/scc-enable-all.sh` has the same shape — dry run by default,
+`--apply` to write, non-zero on any failed call. It lives under `presets/`
+rather than `scripts/` because `get-presets` downloads only `presets/**`, and the
+action must find its script in the estate's copy of the presets. See
 [`docs/housekeeping.md`](housekeeping.md#presetssccscc-enable-allsh--security-command-center-services).
 
 ### 6.14 `question` — what to ask, and what the answer costs
@@ -1324,10 +1300,10 @@ question default_region {
 }
 ```
 
-**Two costs, and conflating them is the mistake this exists to avoid.**
+**Two costs.**
 `reversal` is what changing the answer does to the *estate* — `edit`,
 `state_surgery` or `recreate`. `blast` is what it does to the *running
-organisation* — `none`, `low` or `high`. They are orthogonal: enforcing OS Login
+organisation* — `none`, `low` or `high`. They are independent: enforcing OS Login
 is one boolean to reverse and cuts every existing SSH path. An answer is only
 safely deferred when both are low.
 
@@ -1336,12 +1312,12 @@ satz refuses or warns it can quote the pack's own sentence rather than a generic
 one — the same rule that makes `reason` mandatory on a `deviates` claim.
 
 `recommend` is what an interview *offers*; the `params` default is what applies
-when nobody was asked. One default, one recommendation, never two channels.
+when nobody was asked.
 
 **A question must be declared in the file that declares its param.** Questions are
 absorbed after the `use … when` guard, exactly like claims — so a question that
 *gates* a pack cannot live in the gated pack, or it would be invisible until the
-answer was already yes. Satz refuses it at parse time rather than documenting it.
+answer was already yes. satz refuses it at parse time.
 
 #### An exclusive choice
 
@@ -1363,13 +1339,11 @@ question oneof group_model {
 ```
 
 The options name **existing boolean params**, so an answer set stays a plain param
-map and a question never becomes a second way to set a value. What it buys, with
-no interview built at all: satz refuses two true branches, naming the choice and
-both params. `required` is checked at compile and only when the choice applies —
+map and a question never becomes a second way to set a value. satz refuses two
+true branches, naming the choice and both params. `required` is checked at compile and only when the choice applies —
 a required choice whose `ask_when` param is false has no missing answer. `satz
 questions` never refuses a required choice with no branch set: it reports it as
-unanswered and blocking, which is what an interview needs in order to ask it. Before this, the same mistake surfaced as an opaque fold conflict on
-whatever address the two branches happened to share.
+unanswered and blocking, which is what an interview needs in order to ask it.
 
 Composition follows from that: a choice between two packs is two booleans plus the
 `use … when` that already exists.
@@ -1389,10 +1363,9 @@ Composition follows from that: a choice between two packs is two booleans plus t
 - A question's `prompt` becomes the `description` of the generated
   `variables.tf` variable — the pack already wrote the one-line sentence.
 - `check-presets` reports a pack whose questions changed as **`questions`**, not as
-  drift: what the pack emits is byte-identical, so forking over a prompt typo would
-  be wrong — but a `recreate → edit` downgrade is a governance fact and must not
-  ship silently. Questions are canonicalised separately from the body for exactly
-  that reason.
+  drift: what the pack emits is byte-identical, so the estate is not forked, and the
+  change — a `recreate → edit` downgrade included — is still listed. Questions are
+  canonicalised separately from the body for that reason.
 
 ### 6.15 Provenance: pristine, fork, ledger
 
@@ -1404,22 +1377,20 @@ Suffix carries meaning; the tooling enforces it.
 | `X.local.satz` | customer fork, never touched by updates |
 | `X.diff.satz` | the current adoption delta (fork vs pristine), rewritten each merge |
 
-- A preset the estate **includes** never changes silently. A semantic upstream
-  change (the canonical form of the parsed pack differs — params or body)
-  auto-forks and repoints the estate. Comment, format and version-line churn
-  upgrades silently.
+- A semantic upstream change to a preset the estate **includes** (the canonical
+  form of the parsed pack differs — params or body) auto-forks it and repoints the
+  estate. Comment, format and version-line changes upgrade in place.
 - Pack versions live **in-file**; filenames carry only framework versions.
   Never `X.local.2.satz`.
-- 80% of customisation should be **params**; the rest a `.local` fork. A fork
-  whose entire diff could have been a param is upstream debt.
+- Most customisation is **params**, the rest a `.local` fork. If a fork's whole
+  diff could be a param, the param belongs in the pack.
 
 ---
 
 ## 7. Proof: `require`
 
-**What you gain:** a gate, before anything touches the cloud, that says which
-controls the estate *as written* discharges — and refuses to be fooled by a
-claim whose witness is not there.
+`require` says, before anything touches the cloud, which controls the estate
+*as written* discharges; a claim whose witness is not emitted reads as broken.
 
 ```
 satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme
@@ -1443,8 +1414,8 @@ require cis-gcp 4.0 — goal view for …/acme/yaml/C0example.satz
 addresses the claim named and the compiler found. Rows are the catalog's
 controls, string-sorted by id.
 
-On an estate that declines two controls (estate 5, a fork with `enforce = "FALSE"`
-and a `deviates` claim for each), the same command reads:
+On an estate that declines two controls (a fork with `enforce = "FALSE"` and a
+`deviates` claim for each), the same command reads:
 
 ```
   ⚠ 4.4   OS Login enabled                              — DEVIATION (CIS_GCP_Foundation_4_0) Deliberate: an operational service in this organisation depends on metadata SSH keys, which enforcing OS Login would break. The constraint is declared and managed here, with enforce = FALSE, so the decision is visible in the estate rather than absent from it. open: identify-service, reassess
@@ -1454,8 +1425,7 @@ and a `deviates` claim for each), the same command reads:
 Deviations are disclosed decisions with a stated reason, not gaps — they do not fail this gate.
 ```
 
-And on an estate with no CIS pack at all (estate 7), every row says what would
-provide it:
+On an estate with no CIS pack, every row says what would provide it:
 
 ```
   ✗ 1.4   Only GCP-managed service account keys         — unmet. Provides: CIS_GCP_Foundation_4_0
@@ -1466,29 +1436,27 @@ provide it:
 |---|---|---|
 | ✓ | satisfied | ≥1 `implements` claim from an included pack, every witness emitted, no open duties |
 | ◐ | partial | witnesses present but duties open, or only `contributes` claims |
-| ⚠ | deviation | a deliberate non-conformance with a stated reason — disclosed, never counted as a gap |
+| ⚠ | deviation | a declared non-conformance with a stated reason; never counted as a gap |
 | ✗ | unmet | no included claim discharges it (none, or only ones that contributed zero witnesses); names the packs in the library that would |
-| ‼ | broken claim | an included claim's declared witnesses are not emitted — worse than unmet. A `deviates` claim whose declared witness vanished reads ‼ too, not ⚠; and ‼ yields to ✓/◐ when another included claim supplied the witnesses |
+| ‼ | broken claim | an included claim's declared witnesses are not emitted — ranks above unmet. A `deviates` claim whose declared witness vanished reads ‼ too, not ⚠; and ‼ yields to ✓/◐ when another included claim supplied the witnesses |
 | ○ | organizational | the catalog marks it as having no IaC witness |
 
-Exit code is **1 when anything is unmet or broken**, 0 otherwise. Deviations do
-not fail it. That is the CI gate: an estate that drops a witness a claim
-depends on fails the build, and an estate that declines a control on the
-record does not.
+Exit code is **1 when anything is unmet or broken**, 0 otherwise; deviations do
+not fail it. In CI, an estate that drops a witness a claim depends on fails the
+build, and an estate that declines a control with a `deviates` claim does not.
 
 ---
 
 ## 8. Evidence: `report-compliance`
 
-**What you gain:** the goal view joined with the cloud. Every witness of a
+The goal view joined with the cloud. Every witness of a
 satisfied or partial control is looked up through Cloud Asset Inventory **in
 its own scope** — a log metric by `projects/<number>/metrics/<name>` from the
 `project` it is emitted with, an organization sink under the organization, a
 bucket by its global name; a same-named resource in another project never
 verifies a witness, and a project-scoped witness emitted without a `project`
 reads *unverifiable* with that reason — and for org policies, compared **by
-value**, because a policy that exists and is switched off looks healthy in
-every inventory.
+value**, because an inventory lists a switched-off policy like an enforced one.
 
 ```
 satz report-compliance cis-gcp-4.0 C0example.satz --config ~/estates/acme
@@ -1498,8 +1466,8 @@ The report has seven columns — `Control | Title | Status | Witnesses (declared
 live) | Duties | Prowler | Checkov`; the title cell carries the catalog's own
 `paraphrase` of the control under it, the witness cell the `interpretation` the
 included claims give of what their resources prove, and an open duty prints
-its text beside its id. Three rows from estate 1's report, one of each shape
-(the two tool columns omitted):
+its text beside its id. Three rows, one of each shape (the two tool columns
+omitted):
 
 | Control | Status | Witnesses (declared → live) | Duties |
 |---|---|---|---|
@@ -1510,28 +1478,27 @@ its text beside its id. Three rows from estate 1's report, one of each shape
 Status precedence, highest first:
 
 1. **NOT ENFORCED** — a witness is live but not doing what the estate declares
-   (an org policy's `enforce` differs). Outranks DRIFTED on purpose: a missing
-   resource is visibly absent; a present-but-off one is invisible.
+   (an org policy's `enforce` differs). Outranks DRIFTED: a missing resource is
+   absent from the inventory, while a switched-off one is listed like an enforced
+   one.
 2. **DRIFTED** — a declared witness is not live.
 3. **partial (open duty)** — unattested duties remain.
 4. **partial (contributes)** — only `contributes` claims.
 5. **unverified (reason)** — no witness of the row could be checked at all
    (no credentials, inventory unavailable, no `project` to scope a witness).
-   Never spelled "verified".
 6. **verified\* (n of m)** — some witnesses matched live, the rest have no
-   live check for their type yet. Stated, never faked.
+   live check for their type.
 7. **declared** — `--no-live`.
 8. **verified** — every witness matched live.
 
-(An inventory that was fetched and is simply empty is not "declared": the
+(An inventory that was fetched and is empty is not "declared": the
 witnesses are then *missing*, and the row reads DRIFTED.)
 
 Plus **deviation (accepted)**, **deviation is STALE** (declared as a deviation,
-but the live policy actually enforces — the fork is behind reality), **BROKEN
-CLAIM**, **unmet**, and organizational. The comparison refuses to guess: a
-policy with several rules, with none, or a list constraint yields no verdict
-rather than a wrong one, and a policy whose live state cannot be read reports
-*unverifiable*, never *verified*.
+but the live policy enforces — the fork no longer matches the organisation),
+**BROKEN CLAIM**, **unmet**, and organizational. A policy with several rules,
+with none, or a list constraint yields no verdict, and a policy whose live state
+cannot be read reports *unverifiable*, never *verified*.
 
 **Attestations** discharge manual duties. `attestations.yaml` beside
 `config.toml`, one entry per duty id:
@@ -1555,11 +1522,10 @@ control with `control`, `title`, `status`, `responsibility`, `duties`,
 those an OBJECT: `address`, `state` (`verified` · `missing` · `diverged` ·
 `unverifiable` · `not-checked`), `live_id`, `detail` and `declared_at`
 (`file` + `line`). The report's witness column is markdown; the data carries
-none — an agent building an audit list is a first-class reader here, and it used
-to be handed the human's copy. `responsibility` is `inherited`, `customer`,
+none, so an agent can build an audit list from it. `responsibility` is `inherited`, `customer`,
 `shared`, `satz-managed` or `unassigned` — the shared-responsibility split as a
 derived fact, not a written-up matrix; `unassigned` means nobody has taken the
-control yet, which is not the same as the customer's. — and writes
+control yet, which is not the same as `customer`. Each run also writes
 the report (`evidence/<framework>-latest.md`, or `--format pdf`; `--format
 json` writes only the history entry, no markdown). `--prowler findings.json`
 ingests a Prowler export (OCSF or legacy JSON) as corroboration; `--checkov`
@@ -1602,7 +1568,7 @@ these properties was verified at this time".
 | drop one grant edge | `suppress google_organization_iam_member "member" role "roles/x"` |
 | claim a control | `claim "cis-gcp" "4.0" "1.4" implements { resources = [...] }` |
 | record a manual duty | `duty_lock_bucket = "…"` inside a claim |
-| decline a control on purpose | `claim … deviates { resources = [...] reason = "…" }` |
+| decline a control | `claim … deviates { resources = [...] reason = "…" }` |
 | escape into raw HCL | `hcl { … }` — warns unless `hcl trust "…" { … }` |
 | declare a step no resource can express | `action "scc" { reason = "…" run = "../scripts/x.sh" args = ["--org", "{customer_organization_id}"] }` |
 | run a script inside the apply instead | `hcl trust "…" { resource "terraform_data" … provisioner "local-exec" { … } }` |
@@ -1683,22 +1649,22 @@ across files it is the fold's conflict above.
 | `action "x": reason = "…" is required` | An action must say why the step is not a resource; it is what the warning quotes. |
 | `action "x": run = "…" is required` | Nothing to run. |
 | `action "x": phase = "…" — expected "before-apply" or "after-apply"` | Those are the two phases. |
-| `action: unexpected entry … (keys are reason, run, args, execute_args, phase)` | An unknown key is refused, never ignored. |
+| `action: unexpected entry … (keys are reason, run, args, execute_args, phase)` | An unknown key is refused. |
 | `action "x": no interpolation allowed` | The name and `run` are literal; only `args` and `execute_args` interpolate. |
 | `action "x": declared twice — a.satz:3 and b.satz:9` | Names are unique across the estate. |
 | `run = "x.sh" not found. Looked in: …` | Every place that was tried, in order: the declaring file's directory, then the include dirs. |
-| `… is not executable. chmod +x …` | Satz never sets the bit — a script that arrived via `get-presets` becomes executable when a human decides it should. |
+| `… is not executable. chmod +x …` | satz does not set the bit; a script that arrived via `get-presets` becomes executable when someone runs the `chmod +x`. |
 
-## 11. Known v0 limits
+## 11. Known limits
 
 - **Param scoping is document-ordered, not lexical.** Packs see every earlier
-  file's params. True lexical scoping is a future semantics change.
+  file's params.
 - **No list concatenation.** Overriding a list param replaces it.
 - **`use … when` is followed unconditionally when computing which presets an
   estate uses** (`check-presets`), so a conditionally-disabled pack may be
-  reported as included. Over-reporting drift is the safe direction.
+  reported as included, so drift is over-reported rather than missed.
 - **No `force` / priority channel.** "Keep my version of one pack resource" is
-  a fork today; `suppress` + redeclare cannot express it because the
+  a fork; `suppress` + redeclare cannot express it because the
   redeclaration lands at the same address and folds to a conflict.
 - **An estate with no resources emits no `main.tf`** — only `providers.tf`,
   `variables.tf` and `terraform.tfvars`.
@@ -1707,9 +1673,8 @@ across files it is the fold's conflict above.
   action ran before the apply. Coupling the two would change what `plan` means,
   which is the same reason `plan` does not transpile.
 - **An action produces no evidence.** Nothing is recorded when one runs, and no
-  claim can rest on it: satz still cannot tell you whether a given step was ever
-  run against an organisation. Where that matters the pattern to copy is
-  `--prowler <FILE>` — satz ingests a file, it never trusts a process.
+  claim can rest on it: satz cannot tell whether a given step ran against an
+  organisation.
 - **`suppress` cannot remove an action.** `--no-pack-actions` drops every
   pack-declared one; there is no per-action subtraction.
 
@@ -1734,15 +1699,14 @@ asset path; for the others, `satz adopt` resolves them afterwards.
 ### 12.1 From existing Terraform (`./hcl/`)
 
 Three tiers. A `variable` with a literal `default`, and a `locals` entry with a
-literal value, become **params** — params *are* Satz's variables, so this is the
-language's own model rather than a rewrite, and the result stays
-re-parameterisable. A `resource` block of a schema-known type becomes a **Satz
+literal value, become **params** — params are Satz's variables, so the result
+stays re-parameterisable. A `resource` block of a schema-known type becomes a **Satz
 resource** when every value is a literal, a promoted param, or a reference to a
 managed resource; the folder/project it references (`parent`, `folder_id`,
 `project`) decides where it is placed. Every other block is carried **verbatim**
 inside `hcl trust "imported from <file>:<line>" { … }` — it deploys exactly as
 written, but the fold cannot compose it and the compliance plane cannot see into
-it. Every block is accounted for; nothing vanishes.
+it. The report accounts for every block.
 
 A promoted declaration that a wrapped block still reads is **carried verbatim as
 well**, so the wrapped block's `var.x` keeps resolving. A `${…}` reference is
@@ -1829,8 +1793,8 @@ resource's `name`. The dialect-only `type:` marker is dropped: the provider has
 no such attribute, and carrying it over would produce an estate the schema
 rejects.
 The same list may appear nested inside a project, and converts the same way.
-A duplicate constraint in one list is refused rather than silently folded, since
-the two entries would land on one address.
+A duplicate constraint in one list is refused, since the two entries would land
+on one address.
 
 **How a conversion is checked.** `satz import <file>.yaml` converts a file and
 compiles the result through the fragment pipeline — the pipeline that will
@@ -1838,7 +1802,7 @@ actually read it — and prints the emitted resource set (`CONVERTED: … N
 resources emitted`). An estate is gated on itself; a pack is gated on the
 `.satz` estate you pass with `--gate`, or only parsed when there is none. A
 result that does not compile is deleted and reported; a conversion that cannot
-be checked in context says `NEEDS-REVIEW`; the last word is `satz transpile`
+be checked in context says `NEEDS-REVIEW`; the final check is `satz transpile`
 and a `tofu plan` that shows no destroy for what the YAML estate managed. An
 estate that used the dialect's `!import-include` converts to a plain `use`
 with a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
@@ -1847,6 +1811,6 @@ with a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
 the converter and by the compiler alike (`use "x.yaml": packs are Satz —
 convert it first: satz import x.yaml --kind pack`).
 
-**Why the dialect parses at all:** to be migrated. That is the whole of its
-support: YAML is never transpiled or generated, and no other command reads it.
-A migrated estate may need a manual edit or two.
+**The dialect is parsed only to be migrated.** YAML is never transpiled or
+generated, and no other command reads it. A migrated estate may need manual
+edits.

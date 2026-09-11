@@ -7,8 +7,8 @@ Source: `presets/security-group-models/s1-group-permissions.satz`
 
 Organization-level role grants for the five S1 admin groups.
 
-The groups themselves are `s1_group_definitions`; memberships are deliberately
-not here — presets define groups, humans grant membership.
+The groups themselves are `s1_group_definitions`; memberships are not here —
+presets define groups, humans grant membership.
 
 ## Use it
 

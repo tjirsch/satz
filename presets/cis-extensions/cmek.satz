@@ -2,8 +2,8 @@
 //
 //   use "presets/cis-extensions/cmek.satz" when cis_cmek_required
 //
-// Opt-in because it is the most disruptive control in this set: once a service
-// is listed, every NEW resource of that service must be created with a CMEK, so
+// Opt-in because once a service is listed, every NEW resource of that service
+// must be created with a CMEK, so
 // the key rings, the keys and the grants have to exist first. It also needs a
 // decision the pack cannot make — which projects may supply keys.
 //

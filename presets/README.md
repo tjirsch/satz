@@ -12,8 +12,8 @@ resource map for content packs. Pack `params` are overridable defaults; define
 the same name in the estate `params` block to override (the using document
 always wins). When a needed customization is not expressible as a param, fork:
 copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains the
-`.diff.satz` adoption ledger. **Rule of thumb: a fork whose whole diff could be a
-param is upstream debt — lift the param into the pack instead**.
+`.diff.satz` adoption ledger. **If a fork's whole diff could be a param, add the
+param to the pack instead.**
 
 Optional packs are gated on a single param: `use "presets/x.satz" when
 logsink_project_name` — a falsy value skips the pack entirely (no resources, no
@@ -72,15 +72,16 @@ globally unique without overrides):
 | `logsink_name` | `"{customer_shortname}-organization-audit-gcs"` | display name of the sink |
 | `logsink_filter` | the four Cloud Audit log streams | sink filter — extend to archive more (e.g. VPC flow logs), never narrow below the audit streams |
 
-**Questions (v1.3).** The project, the bucket, its location and the retention are asked;
+**Questions.** The project, the bucket, its location and the retention are asked;
 each is a recreate or an irreversible deletion if changed later. The sink name and the
 filter are technical defaults. `satz interview <estate> --accept-defaults` binds all
 four once `customer_shortname` and `default_region` are answered — the names derive
 from them, and a derived default is offered only when its inputs are in.
 
 **Notes:**
-Retention lock (`retention_policy.is_locked`) is deliberately not set; see the preset
-header. DATA_READ org-wide can be voluminous — measure a week before pruning.
+Retention lock (`retention_policy.is_locked`) is not set: a lock cannot be undone, so
+the claim carries a duty to set it once the pipeline is validated. DATA_READ
+org-wide can be voluminous — measure a week of volume before narrowing it.
 
 ## monitoring/ — CIS 2.5–2.12 (log metrics + alerts)
 
@@ -89,16 +90,15 @@ CIS 4.0** (5.0 inserted a new §2.2; 4.0's §2.12 is DNS logging). Resource labe
 and this document use the 5.0 numbers; each pack claims both versions with the
 right id, and `doc-packs --check` refuses a claim on an id its catalog lacks.
 
-Two variants of the same eight controls. **Prefer the central one**; the per-project file is
-the exception, not the default. Both may coexist — the control passes as soon as either path
-is satisfied.
+Two variants of the same eight controls; **the central one is the default**. Both may
+coexist: a control passes when either path is satisfied.
 
 | | central | per project |
 |---|---|---|
 | File | `organization-cis-log-alerts-central.satz` | `project-cis-log-alerts.satz` |
 | Covers | every project in the org, current and future | one named project |
 | Resources | 1 logging bucket, 1 sink, 8 metrics, 8 policies, 1 channel | 8 metrics, 8 policies, 1 channel — **per project** |
-| New project | covered on creation, no config change | needs its own `use`, or it silently fails 2.5–2.12 |
+| New project | covered on creation, no config change | needs its own `use`; without it the project fails 2.5–2.12 |
 | Recipients | one org-wide channel; per-*control* routing possible | own channel per project |
 | Cost | audit logs stored twice (GCS archive + logging bucket) | none beyond the metrics |
 
@@ -120,16 +120,16 @@ use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_centr
 | `cis_central_bucket_project` | `logsink_project_name` | project hosting bucket, metrics, policies, channel: the audit-logsink pack's own project, **by reference** — an estate using both packs sets nothing |
 | `cis_central_bucket_id` | `"{customer_shortname}-organization-log-alerts"` | Cloud Logging bucket id |
 | `cis_central_bucket_location` | `default_region` | bucket location |
-| `cis_central_bucket_retention_days` | `30` | short on purpose — the archive lives in GCS |
+| `cis_central_bucket_retention_days` | `30` | short, because the archive lives in GCS |
 | `cis_central_sink_name` | `"cis-central-metrics-sink"` | second org sink |
-| `cis_central_email` | `"gcp-security@{customer_domain}"` | recipient — a FULL address since pack v1.2, any domain. The mailbox must exist and receive external mail (Monitoring sends from alerting-noreply@google.com); a group whose members have no mailboxes silently drops everything |
+| `cis_central_email` | `"gcp-security@{customer_domain}"` | recipient — a full address, any domain. The mailbox must exist and receive external mail (Monitoring sends from alerting-noreply@google.com); a group whose members have no mailboxes drops every alert |
 | `cis_central_channel_name` | `"CIS Security Alerts (org)"` | channel display name |
 | `cis_central_alert_window` | `"300s"` | alert alignment period |
 
-**Questions (v1.5).** `cis_central_email` — the mailbox must exist and accept external
-mail, or every alert is dropped without a trace — and `cis_central_bucket_project`,
-which defaults to the logsink pack's project by reference. The rest are technical
-defaults, unasked.
+**Questions.** `cis_central_email` — the mailbox must exist and accept external mail,
+or every alert is dropped — and `cis_central_bucket_project`, which defaults to the
+logsink pack's project by reference. The rest are technical defaults and are not
+asked.
 
 **How the credit works.** Prowler's CIS metric checks are written per-project, but it credits
 a child project when an org sink with `include_children` routes its logs to a Cloud Logging
@@ -156,11 +156,11 @@ Two controls demand different destinations, hence both sinks:
 GCS is the tamper-evident archive, the logging bucket the queryable surface for metrics and
 alerting. Audit logs are therefore stored twice — keep the logging bucket's retention short.
 
-**Check your Prowler version first.** The credit depends on
-`get_projects_covered_by_aggregated_metric` and on org-level sink collection
-(`_get_org_sinks`), both recent additions. Older versions do not see organization sinks in
-these checks: the central setup would not be credited, and CIS 2.3/2.4 return no result even
-though a GCS sink and bucket exist.
+**Prowler version.** The credit needs a Prowler that has
+`get_projects_covered_by_aggregated_metric` and org-level sink collection
+(`_get_org_sinks`). A Prowler without them does not see organization sinks in these
+checks: the central setup is not credited, and CIS 2.3/2.4 return no result although a
+GCS sink and bucket exist. Check both:
 
 ```bash
 prowler --version
@@ -170,23 +170,23 @@ print('org-sinks:', hasattr(m.Logging, '_get_org_sinks'))
 print('central-credit:', hasattr(m, 'get_projects_covered_by_aggregated_metric'))"
 ```
 
-Two `True` → good. Otherwise upgrade, or use the per-project variant until then.
+Both must print `True`; otherwise upgrade Prowler or use the per-project variant.
 
-**Do not narrow the sink filter.** The credit is only granted when the filter provably carries
-the Admin Activity stream: empty, `all`, or OR-combined Cloud Audit selectors. A single `AND`,
-`NOT` or `!=` forfeits it — for *every* project at once.
+**Keep the sink filter wide.** Prowler credits the sink only when the filter provably
+carries the Admin Activity stream: empty, `all`, or OR-combined Cloud Audit selectors. A
+filter with an `AND`, `NOT` or `!=` loses the credit for every project.
 
 **Notes:** enable `logging.googleapis.com` and `monitoring.googleapis.com` in the logging
 project. Verify the credit after apply by running Prowler: 2.5–2.12 must pass for **every**
 scanned project, not only the logging project — if only that one passes, the sink filter or
-destination is wrong. Freshly created logging buckets can 404 the metrics for a minute
-(propagation); a plain re-apply resolves stragglers.
+destination is wrong. A freshly created logging bucket can answer 404 to the metrics for
+about a minute while it propagates; a second apply creates the metrics that failed.
 
 ### Smoke test — prove the pipeline end to end
 
-One alert proves the whole chain (org sink → central logging bucket → bucket-scoped
-metric → policy → email channel), so trigger the *cheapest* control: **§2.7 custom role
-changes**. No VPC, no API enablement, zero infrastructure footprint:
+One alert tests the whole chain (org sink → central logging bucket → bucket-scoped
+metric → policy → email channel). **§2.7, custom role changes,** needs no VPC and no API
+enablement, and leaves nothing behind:
 
 ```bash
 # any project of the org works — the sink is org-wide with include_children
@@ -198,8 +198,8 @@ gcloud iam roles delete smoke_test_2_7 --project=<any-project>
 ```
 
 Org-level `--organization=<org-id>` also works if the caller holds
-`iam.organizationRoleAdmin` (the IaC service account does — impersonating it is an
-equally valid test).
+`iam.organizationRoleAdmin`; the IaC service account holds it, so impersonating it works
+too.
 
 If no email arrives in ~15 minutes, trace the stages:
 
@@ -219,9 +219,9 @@ gcloud logging read 'protoPayload.methodName="google.iam.admin.v1.CreateRole"' \
 The §2.8 (firewall) variant needs a project with the compute API enabled and an
 existing VPC: `gcloud compute firewall-rules create smoke-test-2-8 --project=<p>
 --network=<vpc> --action=deny --rules=tcp:9999 --source-ranges=192.0.2.0/24`, then
-delete it. Do **not** enable the compute API just for the test — with the CIS §1.1
-domain locks live, first-time API enablement can trip on the service-agent
-auto-grant (see the CIS pack notes); §2.7 tests the identical pipeline.
+delete it. Do not enable the compute API for this test: under the CIS §1.1 lock,
+first-time API enablement can fail on the service agent's role grant
+([service agents](#cis-gcp-foundation-40satz)), and §2.7 tests the same pipeline.
 
 ### monitoring/project-cis-log-alerts.satz
 
@@ -244,9 +244,8 @@ use "presets/monitoring/project-cis-log-alerts.satz" when cis_alert_project
 | `cis_alert_channel_name` | `"CIS Security Alerts"` | channel display name |
 | `cis_alert_window` | `"300s"` | alert alignment period |
 
-**Questions (v1.1).** `cis_alert_project` (one project per use) and
-`cis_alert_email_local` (the mailbox rule above). The channel name and window are not
-decisions.
+**Questions.** `cis_alert_project` (one project per use) and `cis_alert_email_local`
+(the mailbox rule above). The channel name and window are not asked.
 
 **One project per use — no parameterisation of labels.** The resource labels are fixed,
 so using the pack twice folds the same addresses with different bodies — a hard error.
@@ -262,14 +261,14 @@ both sources.
 lives in a project and an alert policy can only reference channels from its *own* project —
 there is no org-level channel and no cross-project reference. N projects therefore mean N
 channels pointing at the same mailbox, N×8 metrics and N×8 policies, and every new project
-needs the pack again or it silently fails 2.5–2.12.
+needs the pack again; without it the project fails 2.5–2.12.
 
 **Notes:** enable `monitoring.googleapis.com` (and `logging.googleapis.com`) in the target
 project's `project_service` list. The recipient group must exist in Cloud Identity before
-apply — Google accepts unverified email channels, but they stay silent. Filter strings are
-compared by *substring* against Prowler's expectation: reformatting a filter keeps the
-alert working but silently breaks the compliance check — see the preset header for the
-source of truth and the end-to-end test. Prowler also never checks whether a policy has a
+apply — Google accepts unverified email channels, but sends nothing to them. Filter
+strings are compared by *substring* against Prowler's expectation: a reformatted filter
+keeps the alert working and fails the compliance check — the preset header has the
+expected strings and the end-to-end test. Prowler does not check whether a policy has a
 recipient; `notification_channels = []` passes CIS and notifies nobody.
 
 ## estate-core.satz
@@ -283,11 +282,10 @@ pack, `estate-map.satz`; this one is the day-0 params and nothing else.
 use "presets/estate-core.satz"
 ```
 
-The pack **emits nothing**. It exists so an interview has something to ask before
-anything else exists: `satz interview <estate> --create` and the MCP tool
-`satz_interview` write an estate that uses it, with every question open. An estate
-written by `init` does not need it — `init` was given every answer and binds every
-param, which is what "answered" means.
+The pack **emits nothing**; it holds the day-0 questions. `satz interview <estate>
+--create` and the MCP tool `satz_interview` write an estate that uses it, with every
+question open. An estate written by `init` does not need it: `init` binds every param
+from its flags, and a bound param is an answered question.
 
 Two kinds of param, and the interview treats them differently:
 
@@ -297,9 +295,9 @@ Two kinds of param, and the interview treats them differently:
 | **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `svc_iac_users_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, the security model | `default` offered — accepting it is an answer, recorded by writing it |
 
 A derived default is offered only once what it derives from is answered:
-`infra_project_name` is `"{customer_shortname}-infra-001"`, and with the short name
-still open that is `-infra-001`, a string and not a default — so it blocks until the
-short name is typed, then offers `acme-infra-001`. See [satz interview](../docs/interview.md).
+`infra_project_name` is `"{customer_shortname}-infra-001"`, which with the short name
+still open would be `-infra-001`, so it blocks until the short name is typed, then
+offers `acme-infra-001`. See [satz interview](../docs/interview.md).
 
 ## estate-map.satz
 
@@ -347,8 +345,7 @@ Two spellings of S1 exist — an estate takes ONE of them, never both:
   distinct ids, so the pack's `google_cloud_identity_group { … }` sits beside
   the estate's own.
 - **s1-group-definitions.satz** + **s1-group-permissions.satz** — the same S1
-  as two content packs `use`d UNDER a resource type (the original spelling,
-  kept for the estates on it).
+  as two content packs `use`d UNDER a resource type.
 - **s2-security-groups.satz** — S2: S1 plus a distinct **`gcp-network-admins`**
   group. The network authority moves out of project-admins (which lose
   `compute.networkAdmin` and `compute.xpnAdmin`) into a team that owns VPCs,
@@ -378,7 +375,7 @@ compliance evidence), `gcp-billing-admins` (billing, budgets, procurement)
 IAM) — each with the IaC service account as owner; lifecycle
 ignores `initial_group_config` (imported groups always diff on it). **No pack
 ships human memberships** — presets define groups, humans grant membership
-(console or gcloud, deliberately unmanaged). Estates that must manage a
+(in the console or with gcloud, outside satz). Estates that must manage a
 membership declare it on their own estate-level groups. Every group name is a
 param.
 
@@ -403,12 +400,12 @@ estate stay unmanaged.
 (`gcp_organization_admins_name`, `gcp_project_admins_name`, `gcp_security_admins_name`,
 `gcp_security_viewers_name`, `gcp_billing_admins_name`).
 
-**Questions (s1-group-definitions 1.3, s1-security-groups 1.1, s2-security-groups 1.1).**
-Every group name is asked, because a group's address is its identity: renaming one later
-is a new group, members moved by hand and roles re-granted. Each has its conventional
-default, so `satz interview <estate> --accept-defaults` settles a model in one pass. Which
-model — S1 or S2 — is the `security_model` choice in `estate-core.satz`, not a question
-in either model pack: a question that gates a pack cannot live in the pack it gates.
+**Questions.** Every group name is asked, because a group's address is its identity:
+renaming one later is a new group, members moved by hand and roles re-granted. Each has
+its conventional default, so `satz interview <estate> --accept-defaults` settles a model
+in one pass. Which model — S1 or S2 — is the `security_model` choice in
+`estate-map.satz`, not a question in either model pack: a question that gates a pack
+cannot live in the pack it gates.
 
 ## security-audit/sa-security-audit.satz
 
@@ -436,112 +433,84 @@ use "presets/security-audit/sa-security-audit.satz"
 **Notes:** enable `iamcredentials.googleapis.com` in the SA's project manually after
 apply — impersonation fails without it.
 
-**Questions (v1.1).** The hosting project (no default — it blocks), the account id and the auditors group are asked; each is a recreate. The display name is not a decision.
+**Questions.** The hosting project (no default — it blocks), the account id and the auditors group are asked; each is a recreate. The display name is not asked.
 
 ## CIS-GCP-Foundation-4.0.satz
 
 The CIS GCP Foundation 4.0 organization-policy set as `google_org_policy_policy`
-resources — managed constraints included. Since pack v1.1–v1.3 the §1.1
-Domain Restricted Sharing pair is **parameterized with compliant defaults**: every
-estate is locked to its own directory/org out of the box, and cross-org needs are
-visible one-line overrides — never forks.
+resources, managed constraints included, with the superseded legacy twins declared
+off ([below](#superseded-legacy-constraints)). §1.1 Domain Restricted Sharing is the
+managed `iam.managed.allowedPolicyMembers` alone, **parameterized with compliant
+defaults**: every estate is locked to its own organization, and a cross-org need is a
+one-line param override in the estate.
 
-**§1.1 params (v1.3):**
+**Params:**
 
 | Param | Default | Meaning |
 |---|---|---|
-| `allowed_policy_member_customers` | `[customer_id]` | `iam.allowedPolicyMemberDomains`: DIRECTORY customer ids (`C0…`) whose identities may be granted IAM roles. **Never DNS domain names.** |
-| `allowed_policy_member_principal_sets` | own org (`//cloudresourcemanager.googleapis.com/organizations/<org-id>`) | `iam.managed.allowedPolicyMembers`: principal sets allowed past the managed lock |
-| `allowed_policy_member_subjects` | `[]` | individual principals past both locks — typically Google SYSTEM service accounts that org-level products grant roles to (Firebase Hosting `firebase-hosting@system…`, SCC premium agents `service-org-<id>@gcp-sa-*-hpsa…` / `@security-center-api…`) |
-| `essential_contacts_allowed_domains` | `[customer_domain]` | domains the Essential Contacts constraint allows — a list |
+| `allowed_policy_member_principal_sets` | own org (`//cloudresourcemanager.googleapis.com/organizations/<org-id>`) | §1.1: principal sets whose members may be granted IAM roles |
+| `allowed_policy_member_subjects` | Security Command Center's five organization-level service agents | §1.1: individual principals allowed past the lock — Google service accounts that org-level products grant roles to (SCC's `service-org-<id>@gcp-sa-*-hpsa…` / `@security-center-api…`, Firebase Hosting `firebase-hosting@system…`). An override replaces the list: keep the five when adding |
+| `essential_contacts_allowed_domains` | `["@{customer_domain}"]` | domains the Essential Contacts constraint allows, each entry `@domain` |
 | `allowed_resource_locations` | `["in:eu-locations", "in:us-locations"]` | `gcp.resourceLocations` (§2): where resources may be created. Narrow it here instead of forking |
 
-**Questions (v2.7).** Ten of these are asked, not defaulted in silence: the seven opt-in
-controls (each can break a workload that was legitimate the day before) and the three
-lists that say where and who — `allowed_resource_locations`,
+**Questions.** Ten are asked: the seven opt-in controls (each can break a running
+workload) and the three lists that say where and who — `allowed_resource_locations`,
 `allowed_policy_member_principal_sets`, `allowed_policy_member_subjects`. An estate
 using the pack has to bind all ten before `bootstrap` or `transpile --apply` run;
-`satz interview <estate> --accept-defaults` binds every default in one pass, since none
-of the ten needs a typed value. The technical defaults (protocol-forwarding schemes,
-the contacts domain) are not decisions and are not asked. See [satz interview](../docs/interview.md).
+`satz interview <estate> --accept-defaults` binds every default in one pass, since
+none of the ten needs a typed value. The technical defaults (protocol-forwarding
+schemes, the contacts domain) are not asked. See [satz interview](../docs/interview.md).
 
-**The two lists must stay consistent**: a directory allowed by
-`allowed_policy_member_customers` needs its org in
-`allowed_policy_member_principal_sets` too, or grants to its members pass the first
-policy and are blocked by the second. Example (a lab org administered by the parent
-org's staff):
+**Cross-org grants** need the other organization in
+`allowed_policy_member_principal_sets`, beside the estate's own. Example (a lab org
+administered by the parent org's staff):
 
 ```
-allowed_policy_member_customers      = [customer_id, "C0bolt002"]
 allowed_policy_member_principal_sets = [
   "//cloudresourcemanager.googleapis.com/organizations/{customer_organization_id}",
   "//cloudresourcemanager.googleapis.com/organizations/123456789012",
 ]
 ```
 
-**Operational caveat — service-agent auto-grants.** With the legacy domains lock
-enforced, enabling a NEW Google API can fail when Google auto-grants the service
-agent (P4SA) its role: the managed constraint exempts service agents, the legacy one
-does not. If it bites: add the agent to `allowed_policy_member_subjects`, or lift
-the domains policy for the enablement and re-apply.
+**Service agents.** Google grants roles to its service agents when a product is
+activated or an API is enabled for the first time. An agent that lives outside the
+estate's organization is not in its principal set, so the §1.1 lock refuses the grant
+unless `allowed_policy_member_subjects` names it. To allow another agent, add it to
+the param — keeping the five SCC agents — and apply. The legacy
+`iam.allowedPolicyMemberDomains` cannot name a principal as an exception; Google's
+remedy there is to disable the constraint, grant, and re-enable it, so the pack
+declares it off.
 
-### SCC activation under the §1.1 locks (optional documented step)
+### SCC activation under the §1.1 lock
 
-Activating Security Command Center (premium/enterprise) grants org-level roles to
-**four Google service accounts**:
+Activating Security Command Center (Premium or Enterprise) grants organization-level
+roles to five Google service agents, which `allowed_policy_member_subjects` names by
+default:
 
 ```
 service-org-<org-id>@security-center-api.iam.gserviceaccount.com
 service-org-<org-id>@gcp-sa-csc-hpsa.iam.gserviceaccount.com
 service-org-<org-id>@gcp-sa-dspm-hpsa.iam.gserviceaccount.com
 service-org-<org-id>@gcp-sa-ee-hpsa.iam.gserviceaccount.com
+service-org-<org-id>@gcp-sa-ktd-hpsa.iam.gserviceaccount.com
 ```
 
-With the CIS §1.1 locks enforced these grants are blocked. The canonical exceptions
-on the **managed** constraint are expressed via the pack param:
+They live in Google tenant projects, not in the customer's organization. Each address
+derives from the org id inside a Google-owned domain, so no one else can create an
+identity that matches.
 
-```
-allowed_policy_member_subjects = [
-  "serviceAccount:service-org-<org-id>@security-center-api.iam.gserviceaccount.com",
-  "serviceAccount:service-org-<org-id>@gcp-sa-csc-hpsa.iam.gserviceaccount.com",
-  "serviceAccount:service-org-<org-id>@gcp-sa-dspm-hpsa.iam.gserviceaccount.com",
-  "serviceAccount:service-org-<org-id>@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
-]
-```
-
-**Known limitation: this is NOT sufficient.** The legacy
-`iam.allowedPolicyMemberDomains` constraint accepts only directory customer ids —
-individual subjects cannot be whitelisted there, and the Google service accounts do
-not belong to the customer's directory. Activation attempts fail with the subjects in
-place. Working procedure until this is resolved upstream:
-
-1. Set the subjects param (above) and apply — covers the managed constraint.
-2. **Temporarily lift the domains lock:** override
-   `allowed_policy_member_customers` with a rule allowing all (or
-   `gcloud org-policies delete iam.allowedPolicyMemberDomains --organization=<id>`),
-   apply.
-3. Activate SCC; verify the four grants exist
-   (`gcloud organizations get-iam-policy <id> | grep -A1 hpsa`).
-4. Re-tighten: restore the customers param, apply. Existing grants persist —
-   the constraint gates new bindings, not existing ones.
-
-CONFIRMED (2026-08, estate 1): temporarily disabling the **legacy domains policy is
-required** — no exception shape exists on that constraint. AND the subjects
-exceptions alone do not unblock activation even so: either their member format is
-wrong (note the two spellings in the wild — `serviceAccount:<email>` vs
-`principal://iam.googleapis.com/projects/-/serviceAccounts/<email>`; the managed
-constraint may require one specific form) **or a third policy needs tuning**
-(candidates: `iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts`,
-`iam.automaticIamGrantsForDefaultServiceAccounts`). OPEN: reproduce with the exact
-activation error, fix the exception format or identify the third constraint, then
-harden the pack/docs so the lift window is the only manual part.
+An organization where the legacy `iam.allowedPolicyMemberDomains` is still set refuses
+these grants whatever the param says, because that constraint has no exception for a
+principal. Apply the pack before activating: it resets the legacy policy. Where that
+policy already exists, `satz adopt --only google_org_policy_policy --execute --import`
+imports it first ([Superseded legacy constraints](#superseded-legacy-constraints)).
 
 ### Turning the SCC services on — `presets/scc/scc-enable-all.sh`
 
-Service (module) enablement has **no provider resource**, so it cannot be
-expressed in a preset at all; neither can tier activation. What IS codeable —
-custom modules, sources + source IAM, notification configs, BigQuery exports,
-mute configs, Security Posture — is everything DOWNSTREAM of this step.
+Service (module) enablement has **no provider resource**, so no preset can express
+it; neither can tier activation. Everything downstream of this step has provider
+resources: custom modules, sources and source IAM, v2 notification configs, BigQuery
+exports, mute configs, Security Posture.
 
 `presets/scc/scc-enable-all.sh` is that step: every service `ENABLED` at the org,
 every folder and project below it `INHERITED`. Dry run by default.
@@ -564,46 +533,41 @@ satz run-actions estate.satz --check      # the dry run above
 satz run-actions estate.satz --execute    # adds --apply
 ```
 
-The pack has **no resources**, which is the point: enablement is precisely the
-part with no provider binding, and everything downstream of it (custom modules,
-sources and source IAM, v2 notification configs, BigQuery exports, mute configs,
-Security Posture) is codeable and belongs in a preset of its own. The script sits
-beside the pack rather than in `scripts/` because `get-presets` ships `presets/**`
-and nothing else — a pack whose script did not travel with it would declare an
-action that cannot find what it runs.
+The pack has **no resources**; the downstream resources above belong in a preset of
+their own. The script sits beside the pack rather than in `scripts/` because
+`get-presets` downloads `presets/**` and nothing else, and the action must find its
+script in the estate's copy of the presets.
 
 A **pack** may declare an action too, and `satz doc-packs` puts it on the pack's
-page — but it stays a step satz merely runs, never a witness: no claim can cover
-what a script did, and nothing about it reaches `report-compliance`. Because
+page. An action is a step satz runs, never a witness: no claim covers what a script
+did, and nothing about it reaches `report-compliance`. Because
 `get-presets` downloads packs from this public repository, every compile warns
 when one declares an action, `--no-pack-actions` ignores pack-declared ones, and
-a downloaded script arrives without its executable bit, which satz refuses to set
-for you.
+a downloaded script arrives without its executable bit, which satz does not set.
 
-Everything is on by default except Web Security Scanner (it actively crawls the
-customer's web apps), Artifact Analysis (billed per image scan) and the AWS/Azure
-connectors — `--with-optional` and `--with-multicloud` respectively. A detector for
-a workload that does not exist yet costs nothing, so the rest are enabled ahead of
-the workload rather than waiting for someone to remember.
+The script enables every service except Web Security Scanner (it actively crawls
+the customer's web apps) and Artifact Analysis (billed per image scan), which
+`--with-optional` adds, and the AWS/Azure connectors, which `--with-multicloud` adds.
+A detector for a workload that does not exist yet costs nothing, so the rest are
+enabled before the workload exists.
 
-Expect the §1.1 interaction above — SCC's service agents are granted their roles
-at the organization, and the domain lock refuses any agent the baseline does not
-list, which is what "won't stay activated / asks to activate on every console
-visit" looks like from the console.
+The §1.1 lock applies here as well: SCC's service agents get their roles at the
+organization, and the lock refuses any agent `allowed_policy_member_subjects` does
+not name. In the console a refused agent shows as SCC not staying activated and
+asking to be activated on every visit.
 
-**How many agents is that? Five, and enabling more services does not add to them.**
-Measured on a live organization, twice: with every service that can be
-enabled at all turned on — all fourteen GCP-side ones, including the four that are
-reachable only through the API — the org IAM policy carried exactly the five the
-baseline already lists
+**Five agents, however many services are enabled.** With every service that can be
+enabled turned on — all fourteen GCP-side ones, including the four reachable only
+through the API — a live organization's IAM policy carried exactly the five the
+baseline lists
 (`securitycenter`, `cloudsecuritycompliance`, `dspm`, `externalexposure`,
 `containerthreatdetection` service agents). They come with SCC activation, not
 per service. A **notification config** adds
 `service-org-<ORG_ID>@gcp-sa-scc-notification.iam.gserviceaccount.com` with
-`roles/securitycenter.notificationServiceAgent` — but on the **Pub/Sub topic**,
-not at the organization, and creating one succeeded with the domain lock enforced
-and that agent absent from the list. Unproven on this org: Security Health
-Analytics (a failed precondition there) and the AWS/Azure connectors.
+`roles/securitycenter.notificationServiceAgent` on the **Pub/Sub topic**, not at the
+organization; creating one succeeded with the §1.1 lock enforced and that agent not
+in the list. Not measured: Security Health Analytics (it failed a precondition on
+that organization) and the AWS/Azure connectors.
 
 Flags, failure modes and the rest: [`docs/housekeeping.md`](../docs/housekeeping.md),
 under "The scripts, one by one".
@@ -630,7 +594,7 @@ the IaC service account keeps `billing.admin`. Declares its own
 
 **Use** (root level): `use "presets/billing-account-permissions.satz"`
 
-**Question (v1.2).** `billing_admins_group` is asked: the group can move projects between billing accounts and see every cost.
+**Question.** `billing_admins_group` is asked: the group can move projects between billing accounts and see every cost.
 
 ## organization-budget.satz
 
@@ -640,9 +604,9 @@ billing account (declares its own `google_billing_budget` map).
 **Use** (root level): `use "presets/organization-budget.satz"`
 
 **Notes:** contains a placeholder `"import-id"` for adopting an existing budget — remove
-it for a fresh budget, or replace it with the real budget id (`satz adopt` cannot resolve
-budgets yet: they are matched by display name and need the Budgets API). Not yet migrated
-to param-driven defaults.
+it for a fresh budget, or replace it with the real budget id (`satz adopt` does not
+resolve budgets: they are matched by display name, which needs the Budgets API). The
+amount and the thresholds are literals, not params.
 
 ## essential-contacts-organization.satz
 
@@ -661,7 +625,7 @@ google_essential_contacts_contact { use "presets/essential-contacts-organization
 |---|---|---|
 | `essential_contacts_email` | `"essential-contacts-all@{customer_domain}"` | the contact address |
 
-**Splitting by category (v1.2):** the pack carries COMMENTED contacts for
+**Splitting by category:** the pack carries COMMENTED contacts for
 each category — `BILLING`, `SUSPENSION`, `SECURITY`, `TECHNICAL`, `LEGAL`,
 `PRODUCT_UPDATES`, and a multi-category `oncall` example — each with its own
 `essential_contacts_<category>_email` param. Uncomment what you split out
@@ -669,7 +633,7 @@ each category — `BILLING`, `SUSPENSION`, `SECURITY`, `TECHNICAL`, `LEGAL`,
 distinct address, and narrow or delete the `all` contact: one address may
 appear once per parent, and an address on ALL already receives everything.
 
-**Question (v1.3).** `essential_contacts_email` is asked: the mailbox must exist and accept external mail, or Google's suspension, security and legal notices are read by nobody.
+**Question.** `essential_contacts_email` is asked: the mailbox must exist and accept external mail; otherwise Google's suspension, security and legal notices reach nobody.
 
 ## integrations/microsoft-defender-for-cloud*.satz
 
@@ -692,8 +656,8 @@ use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" w
 what Microsoft's wizard uses as the pool id), `mdc_mgmt_project_id`, `mdc_plan_cspm`, and
 the access-mode pair `mdc_cspm_default_access` / `mdc_cspm_least_privilege`. Everything
 Microsoft-side — their tenant as the OIDC issuer, the per-plan `api://` audiences, the
-provider ids, the custom role ids, the API list — is an inlined constant: identical for
-every customer, and not a knob.
+provider ids, the custom role ids, the API list — is an inlined constant, identical for
+every customer and not a param.
 
 **No claim.** Defender for Cloud is an external CSPM that reads the estate. It implements
 no CIS control and contributes to none, so the pack asserts nothing.
@@ -705,17 +669,18 @@ refuses the grant. And a deny-all on `iam.workloadIdentityPoolProviders` blocks 
 providers: the estate must allow the `sts.windows.net/<microsoft tenant>` issuer or
 document the exception.
 
-**Coverage.** Only the two plans a real generated script has been read from are here:
-auto-provisioner (always created, in the foundation) and CSPM. The other plan ids Microsoft
-issues — `ciem-discovery`, `containers`, `containers-streams`,
-`data-security-posture-storage`, `defender-for-databases-arc-ap`, `defender-for-servers` —
-each need their own `api://` audience, service account and role set from that customer's
-script. They cannot be guessed, so they are not shipped.
+**Coverage.** The pack ships the two plans whose resources were read from a
+Microsoft-generated onboarding script: auto-provisioner (always created, in the
+foundation) and CSPM. The other plan ids Microsoft issues — `ciem-discovery`,
+`containers`, `containers-streams`, `data-security-posture-storage`,
+`defender-for-databases-arc-ap`, `defender-for-servers` — each need their own `api://`
+audience, service account and role set, which only that customer's script contains,
+so they are not shipped.
 
 **Questions.** `mdc_workload_pool_id` and `mdc_mgmt_project_id` block until typed —
 only Microsoft's generated script knows them; `mdc_plan_cspm` asks whether the plan is
 licensed; and the access mode is a `question oneof` with `ask_when = mdc_plan_cspm`, so
-it is asked only once CSPM is on. The first gated choice in the library.
+it is asked only once CSPM is on.
 
 ## Questions
 
@@ -731,8 +696,8 @@ question customer_shortname {
 }
 ```
 
-The two costs are orthogonal, and conflating them is the mistake the design exists to
-avoid: enforcing OS Login is one boolean to reverse and cuts every existing SSH path.
+The two costs are independent: enforcing OS Login is one boolean to reverse and cuts
+every existing SSH path.
 `why` is required wherever satz will refuse or warn, so it can quote the pack's own
 sentence. An exclusive choice is `question oneof`, whose options name existing boolean
 params — so an answer set stays a plain param map and satz can refuse two true branches
@@ -753,10 +718,10 @@ to be typed. `ask_when` names a boolean param; when it is false the question is
 `satz questions <estate>` lists them with their state (`--unanswered` for the open ones,
 `--format markdown` for the decisions sheet a customer signs off); `satz interview` asks
 them and writes the answers; `satz doc-packs` gives each pack a Questions section; and
-the prompt becomes the generated `variables.tf` description. A pack whose questions changed is reported by
-`check-presets` as `questions` rather than drift — it emits identical HCL, so forking
-over a prompt typo would be wrong, but a `recreate → edit` downgrade must not ship
-silently.
+the prompt becomes the generated `variables.tf` description. `check-presets` reports a
+pack whose questions changed as `questions`, not as drift: its HCL is identical, so the
+estate is not forked, and the change — a `recreate → edit` downgrade included — is
+still listed.
 
 ## Superseded legacy constraints
 
@@ -773,45 +738,42 @@ Where Google replaces a legacy org-policy constraint with a managed one, a pack 
 }
 ```
 
-The `-superseded` address suffix is load-bearing: switching a policy from rules to `reset`
+The `-superseded` address suffix is required: switching a policy from rules to `reset`
 cannot be an in-place update — the provider PATCHes the rules it still holds together with
 `reset`, and the API refuses the pair — so the reset policy has its own address and the
 plan is a destroy + create by construction. The policy NAME
 is unchanged; it is one policy being reset, not two. [ADR 0002](../docs/adr/0002-superseded-org-policies-replace-by-construction.md).
 
-Both forms in force is a defect, not extra safety. Org-policy constraints AND together, so
-an exemption has to lift **two** policies — and for several legacy constraints Google's only
-documented exemption path is to disable the constraint org-wide, grant, and re-enable it,
-which is a window with the control switched off. That is the argument of the CIS pack's
-`duty_legacy_superseded`, applied to every pair it enables.
+Both forms in force is a defect. Org-policy constraints AND together, so an exemption
+has to lift **two** policies, and for several legacy constraints Google's only
+documented exemption path is to disable the constraint org-wide, grant, and re-enable
+it, which leaves the control off in between. The CIS pack's `duty_legacy_superseded`
+records this for every pair it enables.
 
-**Absence is not enough**, which is why these blocks exist rather than simply not being
-written. A legacy policy already set on an organisation is invisible to an apply that does
-not declare it: it keeps enforcing, and someone has to delete it by hand on every estate.
-`reset = true` restores the constraint's default — ALLOW for every constraint paired this
-way, verified against a live organisation — so the estate states it, the apply does it, and
-a later re-enabling reverts on the next apply. On an organisation where the legacy policy
+**Leaving the legacy policy out does not remove it.** A legacy policy already set on an
+organisation is invisible to an apply that does not declare it: it keeps enforcing until
+someone deletes it by hand. `reset = true` restores the constraint's default — ALLOW for
+every constraint paired this way, verified against a live organisation — so the apply
+resets it, and the next apply reverts a later re-enabling. On an organisation where the legacy policy
 already exists, run `satz adopt --only google_org_policy_policy --execute --import` first so
 it is imported rather than created twice.
 
-Do not `suppress` one of these blocks. Suppressing it does not re-enable anything — it stops
-the estate from saying the legacy constraint is off, so a policy already set on the
-organisation goes back to enforcing beside its managed twin, which is the situation the
-block exists to prevent.
+Do not `suppress` one of these blocks: suppressing it removes the declaration that the
+legacy constraint is off, so a legacy policy already set on the organisation keeps
+enforcing beside its managed twin.
 
 **The pairing is data, and the rule is a gate.** Which managed constraint replaces which
 lives in `presets/managed-constraint-equivalents.txt`, generated from a live organisation by
 `scripts/update_constraint_equivalents.py` and never hand-edited above its `CURATED` marker.
 `cargo test` compiles every corpus case against that table and fails when a pack enforces a
 legacy constraint that has a replacement, or enables a replacement without declaring its twin
-off. Google keeps adding managed twins, so a rule re-audited by hand is a rule enforced when
-someone remembers.
+off.
 
 Only pairs need this. Of the 60 managed constraints a live organisation offers, **45 have no
 legacy form at all** — nothing to switch off. Google declares the pairing in
 `equivalentConstraint`, asymmetrically (15 managed name a legacy twin; only 6 legacy name a
 managed one), and not at all for `iam.allowedPolicyMemberDomains` ↔
-`iam.managed.allowedPolicyMembers` — that pairing is ours.
+`iam.managed.allowedPolicyMembers` — that pair is in the file's `CURATED` section.
 
 ## cis-extensions/
 
@@ -824,8 +786,7 @@ cis_require_shielded_vm = true
 use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
 ```
 
-Opt-in rather than baseline because each one can break a workload that was legitimate
-the day before — Confidential Computing is limited to particular machine families,
+Each is opt-in because it can break a running workload: Confidential Computing is limited to particular machine families,
 Shielded VM needs image support, CMEK needs the keys and grants to exist first, Cloud SQL
 hardening cuts public-IP connectivity, and the bucket-retention constraint applies to
 every bucket in the organisation, not only the log sink's. The comment at the top of each
@@ -842,15 +803,14 @@ fragment says what specifically breaks.
 | `bucket-retention` | 4.0 2.3 / 5.0 2.4 | constrains every bucket's retention duration |
 
 **Constraint names and shapes come from a live organisation's OrgPolicy
-`ListConstraints`**, not from documentation — which matters, because the three
-shapes differ and getting one wrong yields a policy that either does nothing or refuses
-everything: a plain managed boolean takes `enforce`; a managed boolean with a parameter
+`ListConstraints`**, not from documentation. The three shapes differ, and a policy in
+the wrong shape either does nothing or refuses everything: a plain managed boolean takes `enforce`; a managed boolean with a parameter
 takes `enforce` plus `parameters`; a list constraint takes allow/deny values.
 
-**Questions (api-key-services 1.1, bucket-retention 1.2, cmek 1.1).** The three fragments
-with a list to fill ask for it: the API services a key may target (empty blocks on
-purpose — a legitimate answer, but the customer's), the allowed retention durations, the
-CMEK services and key projects. Whether a fragment is on at all is the CIS pack's
+**Questions.** The three fragments with a list to fill ask for it: the API services a
+key may target (the empty default blocks: an empty list is a valid answer, but the
+customer gives it), the allowed retention durations, the CMEK services and key
+projects. Whether a fragment is on at all is the CIS pack's
 question, not the fragment's — a question that gates a pack cannot live in the gated pack.
 
 ## A big resource is a pack
@@ -876,12 +836,12 @@ and the estate says `use "presets/roles/application-owner-connected.satz"`.
 The resource gains a name, a version and a ledger entry, `merge-presets` can
 track it, and any estate can share it. A params-only pack
 (`permissions = <param>`) is the shape when the LIST itself is the shared thing.
-There is no value-position include in Satz on purpose: `use` is a language
-construct (params, provenance, claims), not a preprocessor splice.
+Satz has no value-position include: `use` is a language construct (params,
+provenance, claims), not a preprocessor splice.
 
 ## ci/ — continuous verification
 
-Two packs that turn the fleet sweep into something that runs on its own:
+Two packs that run satz's checks in Cloud Build, on every push and nightly:
 `ci/verification-runner.satz` (a Cloud Build trigger `satz-check` on every push running
 `transpile --check`, a nightly `satz-compliance` via Cloud Scheduler running
 `report-compliance --fail-on`, the runner service account and its two project roles)
@@ -895,7 +855,7 @@ Params and the `use` blocks: [docs/verification-runner.md](docs/verification-run
 the hosted shape: [docs/workflows.md](../docs/workflows.md#continuous-verification);
 the reasoning: [ADR 0004](../docs/adr/0004-the-verification-runner-is-a-pack-and-its-pipeline-is-inline.md).
 
-**Questions (runner 1.1, grant 1.1).** The runner asks where it lives (`ci_runner_project`),
+**Questions.** The runner asks where it lives (`ci_runner_project`),
 whose project it reads as (`ci_target_infra_project`), which repository and which file
 it watches (`ci_repo_name`, `ci_estate_file`); the grant asks which runner account may
 become the estate's (`ci_runner_service_account`). All five default to the customer-hosted
@@ -912,15 +872,14 @@ packs.
 management-system standard: Annex A names no cloud resource, so a control that the
 estate can evidence points at the CIS controls that stand as its evidence
 (`evidence: { "cis-gcp/4.0": ["3.1", …] }`) and `require` folds their verdicts. Packs
-keep claiming CIS only — one set of witnesses, nothing to drift. Two fields exist for
+claim CIS only, so there is one set of witnesses. Two fields exist for
 it: `evidence`, and `duties` named on the CONTROL (the human half a config cannot
 discharge, which caps the verdict at partial). `automatability: inherited` marks the
 provider's own controls under shared responsibility — all of Annex A 7.x — reported so
 the Statement of Applicability is complete, never counted as a gap.
 
-The view is exactly as good as the CIS coverage beneath it, deliberately: an estate
-claiming few CIS controls shows few ISO controls satisfied, which is what an auditor
-sees too.
+The ISO view follows the CIS coverage beneath it: an estate claiming few CIS controls
+shows few ISO controls satisfied.
 
 ## import-config.yaml
 

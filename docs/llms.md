@@ -1,8 +1,8 @@
 # satz for llms
 
-You are reading this because you are driving satz — probably through its MCP server —
-and you need to write Satz, not just call tools. This is the working subset, with the
-rules that stop you producing something that compiles and is wrong.
+This page is for an agent that drives satz, usually through its MCP server, and
+writes Satz. It is the working subset of the language and the rules that keep what
+compiles also correct.
 
 [`docs/language.md`](language.md) is the full reference. This page is what to
 keep in your head.
@@ -100,12 +100,9 @@ google_folder {
 ```
 
 A repeated *block* is a **list of objects** (`lifecycle_rule = [ { … }, { … } ]`).
-A repeated *key* inside one body is an error naming both lines — silent last-wins is
-not a thing here.
+A repeated *key* inside one body is an error naming both lines.
 
 ## Grants: three forms, and how to choose
-
-This is where most mistakes happen, so it is worth reading twice.
 
 **1. Member map, scope from position.** For `google_organization_iam_member`,
 `google_folder_iam_member`, `google_project_iam_member` — the scope is wherever the
@@ -117,10 +114,9 @@ google_project_iam_member {
 }
 ```
 
-Every key is a member; the value is its list of roles. This is the idiom the packs are
-written in, it reads as a grant rather than as a resource, and it is the only form that
-**merges across fragments** — two packs granting different roles to the same member at
-the same scope fold into one grant.
+Every key is a member; the value is its list of roles. The packs use this form, and it
+is the only form that **merges across fragments**: two packs granting different roles
+to the same member at the same scope fold into one grant.
 
 **2. Member map with its scope pinned.** For a type whose scope is neither the
 organisation nor the node it sits in — a bucket, a service account, a KMS key — write
@@ -185,9 +181,8 @@ pack declares a `question oneof` over them, satz refuses two true branches by na
 | `X.local.satz` | a deliberate fork, never touched by updates |
 | `X.diff.satz` | the current adoption delta, rewritten on every merge |
 
-If you find yourself wanting to edit a pristine pack: **use a param instead**. A fork
-whose whole diff could have been a param is debt. If no param exists for what you need,
-say so — do not fork silently.
+To change what a pristine pack does, **use a param**. If no param exists for what you
+need, say so instead of forking.
 
 ## Removing something a pack contributes
 
@@ -196,8 +191,8 @@ suppress google_org_policy_policy "compute-skipDefaultNetworkCreation"
 suppress google_organization_iam_member "group:x@example.com" role "roles/viewer"
 ```
 
-A `suppress` that matches **nothing is a hard error**. That is deliberate: stale
-subtractive config must surface rather than silently deploy.
+A `suppress` that matches **nothing is a hard error**, so a stale suppression is
+reported instead of deployed.
 
 ## Claims — the compliance plane
 
@@ -214,10 +209,10 @@ claim "cis-gcp" "4.0" "1.4" implements {
 - `implements` discharges the control; `contributes` helps; `deviates` declines it and
   **requires `reason`**.
 - A positive claim must ship its witnesses — `resources = [...]` is mandatory.
-- `duty_<id> = "…"` records the human half. A control with an open duty reads *partial*,
-  never satisfied, and that is correct.
-- Claim what the resources actually do. An overclaim is worse than a gap: it is a
-  compliance tool telling a customer they are covered when they are not.
+- `duty_<id> = "…"` records the human half. A control with an open duty reads
+  *partial*, not satisfied.
+- Claim only what the resources do: an overclaim reports a control as covered when it
+  is not.
 
 ## Questions — what to ask before a param can be filled
 
@@ -273,7 +268,7 @@ is inert until `satz run-actions`. Both are last resorts; prefer a real resource
 
 ## Working through the MCP server
 
-The loop, and the order matters:
+The loop, in order:
 
 0. **`satz_estates`, then `satz_open`.** The server holds no estate until you open
    one — it is started with a root directory, not a config. `satz_estates` lists every
@@ -287,11 +282,11 @@ The loop, and the order matters:
    as `answers` until `summary.complete`.
 2. **Write or edit the `.satz`.**
 3. **`satz_transpile_check`** — compiles in memory, writes nothing. Run it after every
-   edit; it is the cheapest feedback there is.
+   edit.
 4. **`satz_require <framework>`** — does the estate still discharge what it claims? Run
    it after touching packs, claims or org policies.
 5. **`satz_transpile`** (needs the `write` capability) — writes `hcl/`.
-6. **`tofu plan` / `apply` — a human does this.** No tool exposes it, deliberately.
+6. **`tofu plan` / `apply` — a human runs these.** No tool exposes them.
 7. **`satz_report_compliance`** — the live evidence view, afterwards.
 
 Also available: `satz_check_presets` (is the pack library current, or forked?),
@@ -304,9 +299,9 @@ check this first when a live call is refused).
 trusting the rows: `verified` means the inventory was read; `unavailable` means it was
 not, and `warnings` says why. Each row carries `responsibility` (`inherited` · `customer`
 · `shared` · `satz-managed` · `unassigned`) and each witness is an object — `address`,
-`state`, `live_id`, and `declared_at`, the `file:line` of the Satz that declares it. That
-is enough to write an audit list, a spreadsheet or the remediation commands in whatever
-shape is asked for; satz does not render those, you do.
+`state`, `live_id`, and `declared_at`, the `file:line` of the Satz that declares it.
+Render the audit list, spreadsheet or remediation commands from these fields; satz does
+not render them.
 
 A tool your capability level does not permit comes back as an ordinary result marked
 `isError`, with a sentence naming the level and what would be needed. That is
@@ -333,5 +328,4 @@ recoverable: say what you would need and why, rather than retrying the same call
 4. Never claim a control the resources do not actually discharge.
 5. Never answer a one-way-door question on the customer's behalf.
 6. Run `satz_transpile_check` after every edit, before saying you are done.
-7. If satz refuses, read the message — it names the file and the line, and it is
-   usually right.
+7. If satz refuses, read the message: it names the file and the line.

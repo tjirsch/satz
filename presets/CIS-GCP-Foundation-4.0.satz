@@ -110,8 +110,8 @@ params {
   // essentialcontacts.managed.allowedContactDomains: the DOMAINS whose
   // addresses may be set as essential contacts (each entry `@domain`).
   // Default = the customer's own domain. Some customers keep contacts on a
-  // different domain, or on several — a LIST param since v2.2, so neither
-  // case forks the pack.
+  // different domain, or on several; the param is a list, so neither case
+  // forks the pack.
   essential_contacts_allowed_domains = [
     "@{customer_domain}",
   ]
