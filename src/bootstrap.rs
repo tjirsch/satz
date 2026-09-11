@@ -658,6 +658,10 @@ pub async fn bootstrap(
             .into());
         }
         let customer_id = lookup_str(&["customer-id"]);
+        // The org-scope pre-flight needs the organization, which the parentless
+        // create below brings into being; the billing half does not, so it runs
+        // before anything exists.
+        crate::preflight::billing(&client, &token, &bid).await?;
         resolve_greenfield_parent(&client, &token, &config_file, &project_id, customer_id.as_deref(), dry_run).await?
     } else {
         parent

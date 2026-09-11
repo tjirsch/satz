@@ -142,12 +142,15 @@ report "GUID that is neither an example value nor a documented vendor default (a
      | tokens '\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b' "^($ALLOW_GUID)$")"
 report "32 hex characters — an Entra tenant id without dashes is the workload identity pool id" \
   "$(g '\b[0-9a-fA-F]{32}\b' | tokens '\b[0-9a-fA-F]{32}\b' "^($ALLOW_GUID32)$")"
-report "project id that is not an example value (projects/…, project = …, --project)" \
-  "$(g '(projects/[a-z][a-z0-9-]{3,28}[a-z0-9]|project(_id)?[[:space:]]*=[[:space:]]*"[^"]*"|--project[= ][a-z][a-z0-9-]{3,28}[a-z0-9])' \
-     | tokens 'projects/[a-z][a-z0-9-]{3,28}[a-z0-9]' "^projects/($ALLOW_PROJECT)$")"
-report "project id in an assignment that is not an example value" \
-  "$(g 'project(_id)?[[:space:]]*=[[:space:]]*"[a-z][a-z0-9-]{4,28}[a-z0-9]"' \
-     | tokens 'project(_id)?[[:space:]]*=[[:space:]]*"[a-z][a-z0-9-]{4,28}[a-z0-9]"' "=[[:space:]]*\"($ALLOW_PROJECT)\"$")"
+# These two patterns carry double quotes inside single quotes. Written inside
+# "$( … )", bash 3.2 — /bin/bash on macOS — misparses that nesting and both
+# rules matched nothing; a plain assignment has no enclosing double quotes.
+hits=$(g '(projects/[a-z][a-z0-9-]{3,28}[a-z0-9]|project(_id)?[[:space:]]*=[[:space:]]*"[^"]*"|--project[= ][a-z][a-z0-9-]{3,28}[a-z0-9])' \
+     | tokens 'projects/[a-z][a-z0-9-]{3,28}[a-z0-9]' "^projects/($ALLOW_PROJECT)$")
+report "project id that is not an example value (projects/…, project = …, --project)" "$hits"
+hits=$(g 'project(_id)?[[:space:]]*=[[:space:]]*"[a-z][a-z0-9-]{4,28}[a-z0-9]"' \
+     | tokens 'project(_id)?[[:space:]]*=[[:space:]]*"[a-z][a-z0-9-]{4,28}[a-z0-9]"' "=[[:space:]]*\"($ALLOW_PROJECT)\"$")
+report "project id in an assignment that is not an example value" "$hits"
 report "customer repository URL or checkout path" \
   "$(g 'source\.developers\.google\.com|~/projects/(organizations|[a-z]+/[a-z]+-C0)')"
 

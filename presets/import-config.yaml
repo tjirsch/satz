@@ -1706,7 +1706,6 @@ resource_types:
     match_on: [display_name]
     description: Auto-generated entry for google_billing_budget
     import: false
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_billing_project_info:

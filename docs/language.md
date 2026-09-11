@@ -1691,7 +1691,10 @@ across files it is the fold's conflict above.
 exists. The shape is read off the source; the check is always the same —
 `satz transpile`, then `tofu plan` against the real state must show no
 destroy for what was already managed. Import ids for the live shape are the
-asset path; for the others, `satz adopt` resolves them afterwards.
+asset path; for the others, `satz adopt` resolves them afterwards. A nested value
+the API does not return while it holds the provider's default (a subnet's
+`log_config.filter_expr`, default `"true"`) plans once as an in-place update to
+that default; the first apply writes it and nothing about the resource changes.
 
 | shape | when | what you get | limitations |
 |---|---|---|---|

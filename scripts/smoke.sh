@@ -693,9 +693,13 @@ pid="$(printf '%s-prod-infra-01' "kunde")"
   printf 'project = "%s"\n' "$pid"
   printf 'path: projects/%s\n' "$pid"
 } > tmp/ids.txt
-if bash "$root/scripts/check-names.sh" tmp/ids.txt >tmp/ids-out.txt 2>&1; then fail "customer identifiers passed the gate:\n$(cat tmp/ids-out.txt)"; fi
-for want in 'GUID' '32 hex' "projects/$pid" "project = \"$pid\""; do
-  grep -q -- "$want" tmp/ids-out.txt || fail "the gate did not report $want:\n$(cat tmp/ids-out.txt)"
+# Under the bash on PATH and under /bin/bash: on macOS the latter is 3.2, whose
+# parser once dropped both project-id rules while every other rule still fired.
+for sh in bash /bin/bash; do
+  if "$sh" "$root/scripts/check-names.sh" tmp/ids.txt >tmp/ids-out.txt 2>&1; then fail "customer identifiers passed the gate ($sh):\n$(cat tmp/ids-out.txt)"; fi
+  for want in 'GUID' '32 hex' "projects/$pid" "project = \"$pid\""; do
+    grep -q -- "$want" tmp/ids-out.txt || fail "the gate ($sh) did not report $want:\n$(cat tmp/ids-out.txt)"
+  done
 done
 # and the values that must NOT be rejected: a vendor default, an example customer's
 # project, and a value too short to be a project id at all

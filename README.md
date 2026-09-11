@@ -650,7 +650,11 @@ the schema filter. Review the rows it marks `renamed`; re-run after a provider
 bump; an ambiguous schema name is pinned with `api_schema:` on the row. What the
 schema still does not know is **dropped and reported** (names with `--verbose`)
 rather than written into HCL that would not plan. A fetch that fails aborts the
-import — nothing is written from a partial sweep.
+import — nothing is written from a partial sweep. A nested value the API does not
+return while it holds the provider's default — a subnet's `log_config.filter_expr`,
+default `"true"` — is read back into state as empty, so the first plan after the
+import shows a one-time in-place update to the default; the first apply writes it and
+the subnet's flow logs do not change.
 
 **Under the Hood:**
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
