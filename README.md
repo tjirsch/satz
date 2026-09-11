@@ -865,9 +865,12 @@ exists, so org-policy witnesses are compared by VALUE. The estate's declared
 DRIFTED: a missing resource is absent from the inventory, while a switched-off
 policy is listed like an enforced one.
 
-A policy with several rules, with none, or a list constraint with no boolean yields
-no verdict; a policy whose live enforcement cannot be read reports *unverifiable*,
-never *verified*.
+The verdict is the policy's one unconditional rule. Its conditional rules — a
+tag-conditional `enforce: false` that exempts tagged resources, for one — are listed
+beside the verdict on the row and in the evidence (`conditional`). A policy with no
+unconditional rule or more than one, or a list constraint with no boolean, yields no
+verdict; a policy whose live enforcement cannot be read reports *unverifiable*, never
+*verified*.
 
 ### Deviations: declining a control
 

@@ -1496,8 +1496,10 @@ witnesses are then *missing*, and the row reads DRIFTED.)
 
 Plus **deviation (accepted)**, **deviation is STALE** (declared as a deviation,
 but the live policy enforces — the fork no longer matches the organisation),
-**BROKEN CLAIM**, **unmet**, and organizational. A policy with several rules,
-with none, or a list constraint yields no verdict, and a policy whose live state
+**BROKEN CLAIM**, **unmet**, and organizational. The verdict of an org policy is
+its one unconditional rule; its conditional rules (a tag-conditional exemption,
+for one) are listed beside the verdict. A policy with no unconditional rule or more
+than one, or a list constraint, yields no verdict, and a policy whose live state
 cannot be read reports *unverifiable*, never *verified*.
 
 **Attestations** discharge manual duties. `attestations.yaml` beside
@@ -1520,7 +1522,8 @@ beside the config — `estate`, `framework`, `version`, `live`, `live_status`,
 control with `control`, `title`, `status`, `responsibility`, `duties`,
 `paraphrase`, `interpretation`, `prowler`, `checkov` and `witnesses`, each of
 those an OBJECT: `address`, `state` (`verified` · `missing` · `diverged` ·
-`unverifiable` · `not-checked`), `live_id`, `detail` and `declared_at`
+`unverifiable` · `not-checked`), `live_id`, `detail`, `conditional` (an org
+policy's conditional rules, one line each) and `declared_at`
 (`file` + `line`). The report's witness column is markdown; the data carries
 none, so an agent can build an audit list from it. `responsibility` is `inherited`, `customer`,
 `shared`, `satz-managed` or `unassigned` — the shared-responsibility split as a

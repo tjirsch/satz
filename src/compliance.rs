@@ -1032,11 +1032,11 @@ controls:
                 "spec":{"rules":[{"enforce":true}],"etag":"x"}}"#,
         )
         .unwrap();
-        assert_eq!(live_enforcement(&on), Some(true));
+        assert_eq!(live_enforcement(&on).map(|e| e.enforce), Some(true));
 
         let off: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":false}]}}"#).unwrap();
-        assert_eq!(live_enforcement(&off), Some(false));
+        assert_eq!(live_enforcement(&off).map(|e| e.enforce), Some(false));
 
         // legacy list constraint — no enforce field at all
         let listy: serde_json::Value = serde_json::from_str(
@@ -1045,10 +1045,29 @@ controls:
         .unwrap();
         assert_eq!(live_enforcement(&listy), None);
 
-        // several rules: ambiguous, so no verdict rather than a wrong one
+        // two unconditional rules: ambiguous, so no verdict rather than a wrong one
         let many: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":true},{"enforce":false}]}}"#).unwrap();
         assert_eq!(live_enforcement(&many), None);
+
+        // a tag-conditional exemption ahead of the unconditional rule: the
+        // unconditional rule is the verdict, the exemption is reported beside it
+        let lifted: serde_json::Value = serde_json::from_str(
+            r#"{"spec":{"rules":[
+                {"enforce":false,"condition":{"expression":"resource.matchTagId('tagKeys/1', 'tagValues/2')","title":"key-exempt service accounts"}},
+                {"enforce":true}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            live_enforcement(&lifted),
+            Some(LiveEnforcement { enforce: true, conditional: vec!["enforce OFF where key-exempt service accounts".into()] })
+        );
+        // a condition with no title is named by its expression
+        let untitled: serde_json::Value = serde_json::from_str(
+            r#"{"spec":{"rules":[{"enforce":true},{"enforce":false,"condition":{"expression":"resource.matchTag('1/k', 'v')"}}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(live_enforcement(&untitled).unwrap().conditional, vec!["enforce OFF where resource.matchTag('1/k', 'v')".to_string()]);
 
         assert_eq!(live_enforcement(&serde_json::Value::Null), None);
     }
@@ -1073,7 +1092,7 @@ resource "google_org_policy_policy" "os_login" {
         let live: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":false}]}}"#).unwrap();
         let want = declared.get("google_org_policy_policy.os_login").copied();
-        let got = live_enforcement(&live);
+        let got = live_enforcement(&live).map(|e| e.enforce);
         assert_eq!(want, Some(true));
         assert_eq!(got, Some(false));
         assert_ne!(want, got, "this divergence is what the report must surface");
@@ -1260,12 +1279,12 @@ fn witness_facts(
     goal_witnesses(goal)
         .iter()
         .map(|w| {
-            let (state, live_id, detail) = match live.get(w) {
-                Some(LiveState::Verified(id)) => ("verified", Some(id.clone()), None),
-                Some(LiveState::Missing) => ("missing", None, None),
-                Some(LiveState::Diverged(d)) => ("diverged", None, Some(d.clone())),
-                Some(LiveState::Unverifiable(why)) => ("unverifiable", None, Some(why.clone())),
-                None => ("not-checked", None, None),
+            let (state, live_id, detail, conditional) = match live.get(w) {
+                Some(LiveState::Verified { id, conditional }) => ("verified", Some(id.clone()), None, conditional.clone()),
+                Some(LiveState::Missing) => ("missing", None, None, Vec::new()),
+                Some(LiveState::Diverged(d)) => ("diverged", None, Some(d.clone()), Vec::new()),
+                Some(LiveState::Unverifiable(why)) => ("unverifiable", None, Some(why.clone()), Vec::new()),
+                None => ("not-checked", None, None, Vec::new()),
             };
             let declared_at = manifest
                 .resources
@@ -1277,6 +1296,7 @@ fn witness_facts(
                 "state": state,
                 "live_id": live_id,
                 "detail": detail,
+                "conditional": conditional,
                 "declared_at": declared_at,
             })
         })
@@ -1307,8 +1327,10 @@ fn estate_commit(estate: &Path) -> Option<serde_json::Value> {
 /// Live verification result for one witness address.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) enum LiveState {
-    /// Found in the live estate (the live identifier that matched).
-    Verified(String),
+    /// Found in the live estate: the live identifier that matched, and — for an
+    /// org policy — its conditional rules, each an exemption or a tightening for
+    /// a tagged part of the hierarchy that the unconditional verdict does not show.
+    Verified { id: String, conditional: Vec<String> },
     /// The declared estate emits it, but the live estate does not contain it.
     Missing,
     /// Present live, but not doing what the estate declares — an org policy that
@@ -1614,14 +1636,41 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
     Ok(out)
 }
 
-/// The single `enforce` value the LIVE policy carries, if it carries exactly one.
+/// What a LIVE boolean policy enforces: the verdict of its one unconditional
+/// rule, and its conditional rules — a tag-conditional `enforce: false` exempts
+/// the tagged resources while the unconditional rule stays the policy's verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiveEnforcement {
+    pub enforce: bool,
+    /// one line per conditional rule: what it sets, and where (its condition's
+    /// title, else its expression)
+    pub conditional: Vec<String>,
+}
+
 /// Shape (verified against the Org Policy API): `spec.rules[].enforce` as a JSON
-/// bool — note the live form is a boolean while HCL spells it "TRUE"/"FALSE".
-pub(crate) fn live_enforcement(data: &serde_json::Value) -> Option<bool> {
+/// bool — the live form is a boolean while HCL spells it "TRUE"/"FALSE" — and
+/// `spec.rules[].condition` on a conditional rule. No verdict unless exactly one
+/// rule is unconditional.
+pub(crate) fn live_enforcement(data: &serde_json::Value) -> Option<LiveEnforcement> {
     let rules = data.get("spec")?.get("rules")?.as_array()?;
-    let mut found: Vec<bool> = rules.iter().filter_map(|r| r.get("enforce")?.as_bool()).collect();
-    match found.len() {
-        1 => found.pop(),
+    let mut unconditional = Vec::new();
+    let mut conditional = Vec::new();
+    for r in rules {
+        let Some(enforce) = r.get("enforce").and_then(|e| e.as_bool()) else { continue };
+        match r.get("condition").filter(|c| !c.is_null()) {
+            None => unconditional.push(enforce),
+            Some(c) => {
+                let text = |k: &str| c.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty());
+                conditional.push(format!(
+                    "enforce {} where {}",
+                    if enforce { "ON" } else { "OFF" },
+                    text("title").or_else(|| text("expression")).unwrap_or("a condition")
+                ));
+            }
+        }
+    }
+    match unconditional.as_slice() {
+        [enforce] => Some(LiveEnforcement { enforce: *enforce, conditional }),
         _ => None,
     }
 }
@@ -1961,27 +2010,27 @@ pub(crate) async fn report_compliance_evidence(
                                     // policy, compare what the estate DECLARES
                                     // against what the live policy actually does.
                                     match (declared.get(w).copied(), live_enforcement(data)) {
-                                        (Some(want), Some(got)) if want != got => {
+                                        (Some(want), Some(got)) if want != got.enforce => {
                                             LiveState::Diverged(format!(
                                                 "declared enforce = {}, live policy has enforcement {}",
                                                 if want { "TRUE" } else { "FALSE" },
-                                                if got { "ON" } else { "OFF" }
+                                                if got.enforce { "ON" } else { "OFF" }
                                             ))
                                         }
-                                        (Some(_), Some(_)) => LiveState::Verified(id.clone()),
+                                        (Some(_), Some(got)) => LiveState::Verified { id: id.clone(), conditional: got.conditional },
                                         // We declare an enforcement value but could
                                         // not read the live one. Reporting "verified"
                                         // here would be the exact dishonesty this
                                         // check exists to remove — existence is not
                                         // the control. Say we could not check.
                                         (Some(_), None) => LiveState::Unverifiable(
-                                            "policy exists, but its live enforcement could not be read"
+                                            "policy exists, but its live enforcement could not be read: it has no single unconditional rule"
                                                 .into(),
                                         ),
                                         // Nothing enforcement-shaped was declared
                                         // (list constraints, non-policy types):
                                         // existence IS the whole claim.
-                                        (None, _) => LiveState::Verified(id.clone()),
+                                        (None, _) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
                                     }
                                 }
                             },
@@ -2087,7 +2136,11 @@ pub(crate) async fn report_compliance_evidence(
                 let mut first_unver = String::new();
                 for w in witnesses {
                     match live.get(w) {
-                        Some(LiveState::Verified(idn)) => { n_verified += 1; wcells.push(format!("`{}` → ✓ `{}`", w, idn)) }
+                        Some(LiveState::Verified { id: idn, conditional }) => {
+                            n_verified += 1;
+                            let rules = if conditional.is_empty() { String::new() } else { format!(" · conditional rules: {}", conditional.join("; ")) };
+                            wcells.push(format!("`{}` → ✓ `{}`{}", w, idn, rules))
+                        }
                         Some(LiveState::Missing) => { any_missing = true; wcells.push(format!("`{}` → **✗ not live**", w)); }
                         Some(LiveState::Diverged(d)) => { any_diverged = true; wcells.push(format!("`{}` → **✗ {}**", w, d)); }
                         Some(LiveState::Unverifiable(r)) => { any_unver = true; if first_unver.is_empty() { first_unver = r.clone(); } wcells.push(format!("`{}` → – ({})", w, r)); }
@@ -2147,7 +2200,7 @@ pub(crate) async fn report_compliance_evidence(
             Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. } => witnesses
                 .iter()
                 .filter_map(|w| match live.get(w) {
-                    Some(LiveState::Verified(idn)) => Some(idn.clone()),
+                    Some(LiveState::Verified { id: idn, .. }) => Some(idn.clone()),
                     _ => None,
                 })
                 .collect(),
@@ -3099,7 +3152,10 @@ mod evidence_facts_tests {
     #[test]
     fn a_witness_carries_its_live_state_and_the_line_that_declares_it() {
         let mut live = BTreeMap::new();
-        live.insert("google_org_policy_policy.a".to_string(), LiveState::Verified("organizations/1/policies/x".into()));
+        live.insert(
+            "google_org_policy_policy.a".to_string(),
+            LiveState::Verified { id: "organizations/1/policies/x".into(), conditional: Vec::new() },
+        );
         live.insert("google_org_policy_policy.b".to_string(), LiveState::Unverifiable("no live check".into()));
 
         let mut manifest = Manifest::default();
