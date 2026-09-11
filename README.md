@@ -1418,6 +1418,12 @@ Releases are built by GitHub Actions (cargo-dist) when a **version tag** is push
 cargo release patch --execute --no-confirm    # or: minor
 ```
 
+A release is `minor` when the same estate or input, run through the new binary,
+needs an edit, is refused, or plans differently: a language change, a removed or
+renamed command or flag, an input format no longer read, an emission change that
+moves a plan. Every other release is `patch`. An upgrade across a minor version
+brings estate work; an upgrade across patches does not.
+
 `cargo-release` (config in `release.toml`) bumps `Cargo.toml`, commits `version bump`, tags `vX.Y.Z` and pushes commit and tag. The tag runs `.github/workflows/release.yml`: build the four targets, create the GitHub release with archives, `sha256.sum` and `satz-installer.sh`, then the `attach-checksum` post-announce job (`dist-workspace.toml`, `.github/workflows/attach-checksum.yml`) uploads `satz-installer.sh.sha256` — the sidecar `self-update` verifies against. `prune-releases.yml` afterwards keeps the five newest releases. Re-run `dist generate` after editing `dist-workspace.toml`; the `plan` job runs `dist generate --check` and fails on a hand-edited `release.yml`.
 
 The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that exact `version` in `Cargo.toml`. A release does not run when only `main` was pushed, when the tag predates the bump commit, or when the tag and `Cargo.toml` versions differ.
