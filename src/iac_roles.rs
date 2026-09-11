@@ -87,6 +87,12 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
     ("google_cloudbuild_trigger", &[project("cloudbuild.builds.create", &["roles/cloudbuild.builds.editor"])]),
     ("google_compute_address", &[project("compute.addresses.create", &["roles/compute.networkAdmin"])]),
     ("google_compute_firewall", &[project("compute.firewalls.create", &["roles/compute.securityAdmin"])]),
+    ("google_compute_firewall_policy", &[org("compute.firewallPolicies.create", &["roles/compute.orgFirewallPolicyAdmin"])]),
+    (
+        "google_compute_firewall_policy_association",
+        &[org("compute.organizations.setFirewallPolicy", &["roles/compute.orgSecurityResourceAdmin"])],
+    ),
+    ("google_compute_firewall_policy_rule", &[org("compute.firewallPolicies.update", &["roles/compute.orgFirewallPolicyAdmin"])]),
     ("google_compute_global_address", &[project("compute.globalAddresses.create", &["roles/compute.networkAdmin"])]),
     ("google_compute_network", &[project("compute.networks.create", &["roles/compute.networkAdmin"])]),
     ("google_compute_router", &[project("compute.routers.create", &["roles/compute.networkAdmin"])]),
@@ -117,7 +123,12 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
         "google_monitoring_notification_channel",
         &[project("monitoring.notificationChannels.create", &["roles/monitoring.notificationChannelEditor"])],
     ),
+    ("google_org_policy_custom_constraint", &[org("orgpolicy.customConstraints.create", &["roles/orgpolicy.policyAdmin"])]),
     ("google_org_policy_policy", &[org("orgpolicy.policies.create", &["roles/orgpolicy.policyAdmin"])]),
+    (
+        "google_organization_access_approval_settings",
+        &[org("accessapproval.settings.update", &["roles/accessapproval.configEditor"])],
+    ),
     (
         "google_organization_iam_audit_config",
         &[org("resourcemanager.organizations.setIamPolicy", &["roles/resourcemanager.organizationAdmin"])],

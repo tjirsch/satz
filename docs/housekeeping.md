@@ -31,7 +31,7 @@ role: refresh them on their trigger.
 
 ## The provider schema fixture
 
-`tests/schemas/google.json` — 28 resource types, cut from the real provider.
+`tests/schemas/google.json` — 33 resource types, cut from the real provider.
 
 The corpus and the smoke estate classify types through this fixture exactly the way
 production classifies them through a real schema. A type missing from it loses

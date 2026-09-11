@@ -3,13 +3,13 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's conventions and its per-family prose are [`presets/README.md`](../README.md); its version history is [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under **History** on each page here.
 
-**28 packs · 145 resources · 73 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**31 packs · 155 resources · 81 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Root — `presets/*.satz`
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.7 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 29 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.8 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 29 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.2 | Billing-account IAM, split by audience. | 4 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.3 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
 | [`estate_core`](estate-core.md) | 2.0 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
@@ -27,12 +27,15 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
+| [`cis_extensions.access_approval`](access-approval.md) | 1.0 | CIS 4.0 §2.15 / 5.0 §2.16 — Access Approval: Google personnel reach the organisation's content only after someone approves the request. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.api_key_services`](api-key-services.md) | 1.1 | CIS 4.0 §1.14 / 5.0 §1.15 — API keys restricted to the APIs an application needs. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.block_project_ssh_keys`](block-project-ssh-keys.md) | 1.0 | CIS 4.3 — block project-wide SSH keys. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.bucket_retention`](bucket-retention.md) | 1.2 | CIS 4.0 §2.3 / 5.0 §2.4 — retention on the log-export bucket. | 2 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`cis_extensions.cloud_sql_iam_and_deletion_protection`](cloud-sql-iam-and-deletion-protection.md) | 1.0 | CIS 5.0 §6.6 / §6.9 — Cloud SQL instances sign database users in through IAM, and cannot be deleted while deletion protection is on. | 4 | 2 — cis-gcp 5.0 |
 | [`cis_extensions.cloud_sql`](cloud-sql.md) | 1.1 | CIS 6.5 and 6.6/6.7 — Cloud SQL network exposure. | 4 | 4 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.cmek`](cmek.md) | 1.1 | CIS 7.2, 7.3 and 8.1 — customer-managed encryption keys. | 2 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.confidential_computing`](confidential-computing.md) | 1.0 | CIS 4.11 — Confidential Computing. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`cis_extensions.internet_ssh_rdp`](internet-ssh-rdp.md) | 1.0 | CIS 3.6 / 3.7 — SSH and RDP closed to the internet, for every network in the organisation at once. | 5 | 4 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`cis_extensions.shielded_vm`](shielded-vm.md) | 1.0 | CIS 4.8 — Shielded VM. | 1 | 2 — cis-gcp 4.0, cis-gcp 5.0 |
 
 ## `integrations/`
@@ -79,6 +82,6 @@ What some pack in this library CLAIMS — never a verdict on an estate. A claim 
 
 | framework | controls in the catalog | claimed by a pack | claimed by none |
 |---|---|---|---|
-| cis-gcp 4.0 | 34 | 32 | 2.12, 2.13 |
-| cis-gcp 5.0 | 39 | 33 | 1.1.1, 1.1.2, 1.1.3, 2.2, 2.13, 2.14 |
+| cis-gcp 4.0 | 37 | 35 | 2.12, 2.13 |
+| cis-gcp 5.0 | 44 | 38 | 1.1.1, 1.1.2, 1.1.3, 2.2, 2.13, 2.14 |
 

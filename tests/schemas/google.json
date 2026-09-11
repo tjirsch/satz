@@ -2247,6 +2247,467 @@
             "description_kind": "plain"
           }
         },
+        "google_compute_firewall_policy": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description of this resource. Provide this property when you create the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "fingerprint": {
+                "type": "string",
+                "description": "Fingerprint of the resource. This field is used internally during updates of this resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "firewall_policy_id": {
+                "type": "string",
+                "description": "The unique identifier for the resource. This identifier is defined by the server.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the resource. It is a numeric ID allocated by GCP which uniquely identifies the Firewall Policy.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "The parent of the firewall policy.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "rule_tuple_count": {
+                "type": "number",
+                "description": "Total count of all firewall policy rule tuples. A firewall policy can not exceed a set number of tuples.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link": {
+                "type": "string",
+                "description": "Server-defined URL for the resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link_with_id": {
+                "type": "string",
+                "description": "Server-defined URL for this resource with the resource id.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "User-provided name of the Organization firewall policy. The name should be unique in the organization in which the firewall policy is created.\nThis field is not applicable to network firewall policies. This name must be set on creation and cannot be changed. The name must be 1-63 characters long, and comply with RFC1035.\nSpecifically, the name must be 1-63 characters long and match the regular expression [a-z]([-a-z0-9]*[a-z0-9])? which means the first character must be a lowercase letter, and all following characters must be a dash, lowercase letter, or digit, except the last character, which cannot be a dash.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_firewall_policy_association": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "attachment_target": {
+                "type": "string",
+                "description": "The target that the firewall policy is attached to.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "firewall_policy": {
+                "type": "string",
+                "description": "The firewall policy of the resource.\n\nThis field can be updated to refer to a different Firewall Policy, which will create a new association from that new\nfirewall policy with the flag to override the existing attachmentTarget's policy association.\n\n**Note** Due to potential risks with this operation it is *highly* recommended to use the 'create_before_destroy' life cycle option\non your exisiting firewall policy so as to prevent a situation where your attachment target has no associated policy.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name for an association.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "The short name of the firewall policy of the association.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_firewall_policy_rule": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "action": {
+                "type": "string",
+                "description": "The Action to perform when the client connection triggers the rule. Valid actions are \"allow\", \"deny\", \"goto_next\" and \"apply_security_profile_group\".",
+                "description_kind": "plain",
+                "required": true
+              },
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description for this resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "direction": {
+                "type": "string",
+                "description": "The direction in which this rule applies. Possible values: [\"INGRESS\", \"EGRESS\"]",
+                "description_kind": "plain",
+                "required": true
+              },
+              "disabled": {
+                "type": "bool",
+                "description": "Denotes whether the firewall policy rule is disabled.\nWhen set to true, the firewall policy rule is not enforced and traffic behaves as if it did not exist.\nIf this is unspecified, the firewall policy rule will be enabled.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "enable_logging": {
+                "type": "bool",
+                "description": "Denotes whether to enable logging for a particular rule.\nIf logging is enabled, logs will be exported to the configured export destination in Stackdriver.\nLogs may be exported to BigQuery or Pub/Sub.\nNote: you cannot enable logging on \"goto_next\" rules.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "firewall_policy": {
+                "type": "string",
+                "description": "The firewall policy of the resource.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "kind": {
+                "type": "string",
+                "description": "Type of the resource. Always 'compute#firewallPolicyRule' for firewall policy rules",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "priority": {
+                "type": "number",
+                "description": "An integer indicating the priority of a rule in the list.\nThe priority must be a positive value between 0 and 2147483647.\nRules are evaluated from highest to lowest priority where 0 is the highest priority and 2147483647 is the lowest prority.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "rule_tuple_count": {
+                "type": "number",
+                "description": "Calculation of the complexity of a single firewall policy rule.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "security_profile_group": {
+                "type": "string",
+                "description": "A fully-qualified URL of a SecurityProfile resource instance.\nExample: https://networksecurity.googleapis.com/v1/projects/{project}/locations/{location}/securityProfileGroups/my-security-profile-group\nMust be specified if action = 'apply_security_profile_group' and cannot be specified for other actions.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "target_resources": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of network resource URLs to which this rule applies.\nThis field allows you to control which network's VMs get this rule.\nIf this field is left blank, all VMs within the organization will receive the rule.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "target_service_accounts": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of service accounts indicating the sets of instances that are applied with this rule.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "tls_inspect": {
+                "type": "bool",
+                "description": "Boolean flag indicating if the traffic should be TLS decrypted.\nCan be set only if action = 'apply_security_profile_group' and cannot be set for other actions.",
+                "description_kind": "plain",
+                "optional": true
+              }
+            },
+            "block_types": {
+              "match": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "dest_address_groups": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Address groups which should be matched against the traffic destination. Maximum number of destination address groups is 10.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_fqdns": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Fully Qualified Domain Name (FQDN) which should be matched against traffic destination. Maximum number of destination fqdn allowed is 100.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_ip_ranges": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "CIDR IP address range. Maximum number of destination CIDR IP ranges allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_region_codes": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Region codes whose IP addresses will be used to match for destination of traffic. Should be specified as 2 letter country code defined as per ISO 3166 alpha-2 country codes. ex.\"US\" Maximum number of dest region codes allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_threat_intelligences": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Names of Network Threat Intelligence lists. The IPs in these lists will be matched against traffic destination.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_address_groups": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Address groups which should be matched against the traffic source. Maximum number of source address groups is 10.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_fqdns": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Fully Qualified Domain Name (FQDN) which should be matched against traffic source. Maximum number of source fqdn allowed is 100.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_ip_ranges": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "CIDR IP address range. Maximum number of source CIDR IP ranges allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_region_codes": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Region codes whose IP addresses will be used to match for source of traffic. Should be specified as 2 letter country code defined as per ISO 3166 alpha-2 country codes. ex.\"US\" Maximum number of source region codes allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_threat_intelligences": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Names of Network Threat Intelligence lists. The IPs in these lists will be matched against traffic source.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "layer4_configs": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "ip_protocol": {
+                            "type": "string",
+                            "description": "The IP protocol to which this rule applies. The protocol type is required when creating a firewall rule.\nThis value can either be one of the following well known protocol strings (tcp, udp, icmp, esp, ah, ipip, sctp), or the IP protocol number.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "ports": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description": "An optional list of ports to which this rule applies. This field is only applicable for UDP or TCP protocol. Each entry must be either an integer or a range. If not specified, this rule applies to connections through any port.\nExample inputs include: [\"22\"], [\"80\",\"443\"], and [\"12345-12349\"].",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Pairs of IP protocols and ports that the rule should match.",
+                        "description_kind": "plain"
+                      },
+                      "min_items": 1
+                    },
+                    "src_secure_tags": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "name": {
+                            "type": "string",
+                            "description": "Name of the secure tag, created with TagManager's TagValue API.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "State of the secure tag, either EFFECTIVE or INEFFECTIVE. A secure tag is INEFFECTIVE when it is deleted or its network is deleted.",
+                            "description_kind": "plain",
+                            "computed": true
+                          }
+                        },
+                        "description": "List of secure tag values, which should be matched at the source of the traffic. For INGRESS rule, if all the srcSecureTag are INEFFECTIVE, and there is no srcIpRange, this rule will be ignored. Maximum number of source tag values allowed is 256.",
+                        "description_kind": "plain"
+                      }
+                    }
+                  },
+                  "description": "A match condition that incoming traffic is evaluated against. If it evaluates to true, the corresponding 'action' is enforced.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1,
+                "max_items": 1
+              },
+              "target_secure_tags": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "name": {
+                      "type": "string",
+                      "description": "Name of the secure tag, created with TagManager's TagValue API.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "state": {
+                      "type": "string",
+                      "description": "State of the secure tag, either EFFECTIVE or INEFFECTIVE. A secure tag is INEFFECTIVE when it is deleted or its network is deleted.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "A list of secure tags that controls which instances the firewall rule applies to.\nIf targetSecureTag are specified, then the firewall rule applies only to instances in the VPC network that have one of those EFFECTIVE secure tags, if all the targetSecureTag are in INEFFECTIVE state, then this rule will be ignored.\ntargetSecureTag may not be set at the same time as targetServiceAccounts. If neither targetServiceAccounts nor targetSecureTag are specified, the firewall rule applies to all instances on the specified network. Maximum number of target secure tags allowed is 256.",
+                  "description_kind": "plain"
+                }
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_essential_contacts_contact": {
           "version": 0,
           "block": {
@@ -4295,6 +4756,105 @@
             "description_kind": "plain"
           }
         },
+        "google_org_policy_custom_constraint": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "action_type": {
+                "type": "string",
+                "description": "The action to take if the condition is met. Possible values: [\"ALLOW\", \"DENY\"]",
+                "description_kind": "plain",
+                "required": true
+              },
+              "condition": {
+                "type": "string",
+                "description": "A CEL condition that refers to a supported service resource, for example 'resource.management.autoUpgrade == false'. For details about CEL usage, see [Common Expression Language](https://cloud.google.com/resource-manager/docs/organization-policy/creating-managing-custom-constraints#common_expression_language).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "description": {
+                "type": "string",
+                "description": "A human-friendly description of the constraint to display as an error message when the policy is violated.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "display_name": {
+                "type": "string",
+                "description": "A human-friendly name for the constraint.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "method_types": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of RESTful methods for which to enforce the constraint. Can be 'CREATE', 'UPDATE', or both. Not all Google Cloud services support both methods. To see supported methods for each service, find the service in [Supported services](https://cloud.google.com/resource-manager/docs/organization-policy/custom-constraint-supported-services).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Immutable. The name of the custom constraint. This is unique within the organization.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "The parent of the resource, an organization. Format should be 'organizations/{organization_id}'.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "resource_types": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "Immutable. The fully qualified name of the Google Cloud REST resource containing the object and field you want to restrict. For example, 'container.googleapis.com/NodePool'.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "Output only. The timestamp representing when the constraint was last updated.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_org_policy_policy": {
           "version": 0,
           "block": {
@@ -4590,6 +5150,113 @@
                   "description_kind": "plain"
                 },
                 "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_organization_access_approval_settings": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "active_key_version": {
+                "type": "string",
+                "description": "The asymmetric crypto key version to use for signing approval requests.\nEmpty active_key_version indicates that a Google-managed key should be used for signing.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "ancestor_has_active_key_version": {
+                "type": "bool",
+                "description": "This field will always be unset for the organization since organizations do not have ancestors.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "enrolled_ancestor": {
+                "type": "bool",
+                "description": "This field will always be unset for the organization since organizations do not have ancestors.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "invalid_key_version": {
+                "type": "bool",
+                "description": "If the field is true, that indicates that there is some configuration issue with the active_key_version\nconfigured on this Organization (e.g. it doesn't exist or the Access Approval service account doesn't have the\ncorrect permissions on it, etc.).",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The resource name of the settings. Format is \"organizations/{organization_id}/accessApprovalSettings\"",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "notification_emails": {
+                "type": [
+                  "set",
+                  "string"
+                ],
+                "description": "A list of email addresses to which notifications relating to approval requests should be sent.\nNotifications relating to a resource will be sent to all emails in the settings of ancestor\nresources of that resource. A maximum of 50 email addresses are allowed.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "organization_id": {
+                "type": "string",
+                "description": "ID of the organization of the access approval settings.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "enrolled_services": {
+                "nesting_mode": "set",
+                "block": {
+                  "attributes": {
+                    "cloud_product": {
+                      "type": "string",
+                      "description": "The product for which Access Approval will be enrolled. Allowed values are listed (case-sensitive):\n  all\n  appengine.googleapis.com\n  bigquery.googleapis.com\n  bigtable.googleapis.com\n  cloudkms.googleapis.com\n  compute.googleapis.com\n  dataflow.googleapis.com\n  iam.googleapis.com\n  pubsub.googleapis.com\n  storage.googleapis.com",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "enrollment_level": {
+                      "type": "string",
+                      "description": "The enrollment level of the service. Default value: \"BLOCK_ALL\" Possible values: [\"BLOCK_ALL\"]",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "A list of Google Cloud Services for which the given resource has Access Approval enrolled.\nAccess requests for the resource given by name against any of these services contained here will be required\nto have explicit approval. Enrollment can be done for individual services.\n\nA maximum of 10 enrolled services will be enforced, to be expanded as the set of supported services is expanded.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1
               },
               "timeouts": {
                 "nesting_mode": "single",

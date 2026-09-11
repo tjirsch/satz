@@ -785,7 +785,7 @@ each command accepting the subset it can produce and **refusing the rest by name
 
 ```bash
 satz require cis-gcp-4.0 C0example.satz --format json | jq '.summary'
-#   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 11, "broken": 0, … }
+#   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 14, "broken": 0, … }
 ```
 
 **stdout carries the answer and nothing else.** The version banner, the schema-loader

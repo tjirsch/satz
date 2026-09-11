@@ -1,0 +1,131 @@
+// CIS 3.6 / 3.7 — SSH and RDP closed to the internet, for every network in the
+// organisation at once.
+//
+//   use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
+//
+// A hierarchical firewall policy attached to the organisation is read before any
+// VPC firewall rule. It passes TCP 22 and 3389 from `admin_port_source_ranges` on
+// to the VPC rules, which still decide, and denies them from every other address,
+// IPv4 and IPv6 — so a VPC rule that opens them to 0.0.0.0/0 opens nothing.
+//
+// Opt-in because every SSH and RDP session that reaches an instance straight from
+// the internet ends the moment the policy is attached. Move that access to IAP
+// TCP forwarding, or list the bastion's range, first.
+//
+// Prowler's checks for these controls read VPC firewall rules, not this policy: a
+// VPC rule allowing 0.0.0.0/0 on port 22 still fails there, and report-compliance
+// shows the row CONTESTED. Such a rule has no effect while the policy is attached;
+// deleting it settles the row.
+
+pack cis_extensions.internet_ssh_rdp version "1.0"
+
+params {
+  // IPv4 ranges whose SSH and RDP traffic passes to the VPC firewall rules.
+  // Google's IAP TCP-forwarding range by default. At least one range.
+  admin_port_source_ranges = ["35.235.240.0/20"]
+}
+
+question admin_port_source_ranges {
+  prompt   = "Which IPv4 ranges may still reach SSH and RDP (the VPC firewall rules decide for them)?"
+  why      = "Every other internet address is denied on ports 22 and 3389 before any VPC rule is read. A bastion or partner range left out loses access the moment the policy is attached. Google's IAP range is the default because IAP TCP forwarding reaches instances without open admin ports."
+  reversal = edit
+  blast    = high
+}
+
+google_compute_firewall_policy {
+  cis_admin_ports {
+    parent = "organizations/{customer_organization_id}"
+    short_name = "cis-internet-admin-ports"
+    description = "CIS 3.6/3.7: SSH and RDP from the internet denied, listed ranges passed to the VPC rules"
+  }
+}
+
+google_compute_firewall_policy_rule {
+  cis_admin_ports_listed {
+    firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
+    description = "SSH and RDP from the listed ranges: the VPC firewall rules decide"
+    priority = 1000
+    direction = "INGRESS"
+    action = "goto_next"
+    match {
+      src_ip_ranges = admin_port_source_ranges
+      layer4_configs {
+        ip_protocol = "tcp"
+        ports = ["22", "3389"]
+      }
+    }
+  }
+  cis_admin_ports_internet_ipv4 {
+    firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
+    description = "SSH and RDP from the IPv4 internet: denied"
+    priority = 1001
+    direction = "INGRESS"
+    action = "deny"
+    match {
+      src_ip_ranges = ["0.0.0.0/0"]
+      layer4_configs {
+        ip_protocol = "tcp"
+        ports = ["22", "3389"]
+      }
+    }
+  }
+  cis_admin_ports_internet_ipv6 {
+    firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
+    description = "SSH and RDP from the IPv6 internet: denied"
+    priority = 1002
+    direction = "INGRESS"
+    action = "deny"
+    match {
+      src_ip_ranges = ["::/0"]
+      layer4_configs {
+        ip_protocol = "tcp"
+        ports = ["22", "3389"]
+      }
+    }
+  }
+}
+
+google_compute_firewall_policy_association {
+  cis_admin_ports {
+    name = "cis-internet-admin-ports"
+    attachment_target = "organizations/{customer_organization_id}"
+    firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.id}}"
+  }
+}
+
+claim "cis-gcp" "4.0" "3.6" implements {
+  resources = [
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4",
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
+    "google_compute_firewall_policy_association.cis_admin_ports",
+  ]
+  interpretation = "A firewall policy attached to the organisation denies TCP 22 from the internet before any VPC rule is read; only the listed ranges pass to the VPC rules."
+  duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+}
+claim "cis-gcp" "4.0" "3.7" implements {
+  resources = [
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4",
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
+    "google_compute_firewall_policy_association.cis_admin_ports",
+  ]
+  interpretation = "As for §3.6, for TCP 3389."
+  duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+}
+claim "cis-gcp" "5.0" "3.6" implements {
+  resources = [
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4",
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
+    "google_compute_firewall_policy_association.cis_admin_ports",
+  ]
+  interpretation = "As for 4.0 §3.6 (5.0 §3.6, unchanged)."
+  duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+}
+claim "cis-gcp" "5.0" "3.7" implements {
+  resources = [
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4",
+    "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
+    "google_compute_firewall_policy_association.cis_admin_ports",
+  ]
+  interpretation = "As for 4.0 §3.7 (5.0 §3.7, unchanged)."
+  duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+}

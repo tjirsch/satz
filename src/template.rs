@@ -214,6 +214,9 @@ use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
 use "presets/cis-extensions/cmek.satz" when cis_cmek_required
 use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
 use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
+use "presets/cis-extensions/access-approval.satz" when cis_access_approval
+use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
+use "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz" when cis_cloud_sql_iam_and_deletion_protection
 
 // The map's choices, one line each. The audit archive and the central alerts are
 // in the infrastructure folder below, beside the infrastructure project.
