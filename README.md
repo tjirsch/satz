@@ -62,7 +62,7 @@ Two forms that do not work:
 These options can be placed anywhere in the command (e.g., before or after subcommands):
 
 - `--config <FILE>`: Path to the **project** config file (`config.toml`, TOML — not the estate file). Mandatory for most commands if `config.toml` is not in the current directory. Every relative path inside it resolves from its own directory.
-- `--validation <LEVEL>`: Validation level for mandatory parameters (`warn`, `error`, `none`). Default from project config or `warn`.
+- `--validation <LEVEL>`: what a missing required argument does (`warn`, `error`, `none`; see [Schema Validation](#schema-validation)). Default from project config or `warn`.
 - `--html-help`: open the documentation site in the browser at the invoked command's section (`satz transpile --html-help`); alone (`satz --html-help`) the front page. Commands without a section of their own open the command table.
 - `--verbose`: Enable verbose output. When invoked without a subcommand (e.g. `satz --verbose`), prints full recursive help listing all subcommands and their options.
 - `--no-actions`: never execute a declared [`action`](#run-actions-run-actions), whatever `run-actions` was asked to do.
@@ -1131,12 +1131,16 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 
 ## Schema Validation
 
-The tool automatically checks your estate against the provider schemas to ensure all mandatory parameters and blocks are present.
+Every compile checks each emitted resource against the provider schema: the
+arguments the schema marks `required` (a custom role's `role_id`) and the blocks
+with `min_items > 0` (a VM's `boot_disk`) must be present. The check reads what is
+emitted, so an argument satz derives — a project from its position, a group's
+`parent` — counts. A resource type the loaded schemas do not know is not checked.
 
-- **Attributes**: Checks for `required` fields (e.g., `project_id`).
-- **Blocks**: Checks for mandatory blocks with `min_items > 0` (e.g., `boot_disk` for a VM).
-
-You can control the strictness via CLI `--validation` or `config.toml`.
+`validation_level` in `config.toml`, or `--validation`, sets what a missing one does:
+`warn` (the default) prints one warning per resource with the file and line that
+declares it, `error` refuses the compile, `none` skips the check. Any other value
+is refused. `tofu plan` refuses such a resource either way.
 
 ## Satz
 

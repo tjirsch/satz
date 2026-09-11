@@ -985,6 +985,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let mut runtime_config = resolved_config(&tool_config, &config_dir);
+    if let Some(level) = &cli.validation {
+        runtime_config.validation_level = level.clone();
+    }
+    if !["warn", "error", "none"].contains(&runtime_config.validation_level.as_str()) {
+        return Err(format!(
+            "validation level `{}`: expected warn, error or none",
+            runtime_config.validation_level
+        )
+        .into());
+    }
 
 
     match cmd_choice {
@@ -2025,6 +2035,7 @@ fn pipeline_b_generate(
     ctx.registry = Some(&registry);
     let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
     check_written_references(&folded, &out.manifest)?;
+    report_missing_required(&out.missing_required, &runtime_config.validation_level)?;
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     let providers_tf = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
         .map_err(|e| format!("emit_providers: {}", e))?;
@@ -2049,6 +2060,32 @@ fn pipeline_b_generate(
         // reports "no customer-organization-id" instead of querying org "".
         org_id: Some(ctx.org_id.clone()).filter(|s| !s.is_empty()),
     })
+}
+
+/// Resources the provider will refuse for a missing required argument or block,
+/// reported at the validation level: `error` refuses the compile, `warn` (the
+/// default) prints one warning per resource, `none` says nothing.
+fn report_missing_required(
+    missing: &[crate::emitter::MissingRequired],
+    level: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if missing.is_empty() || level == "none" {
+        return Ok(());
+    }
+    let lines: Vec<String> = missing
+        .iter()
+        .map(|m| {
+            let at = m.origin.as_ref().map(|(f, l)| format!(" ({}:{})", f, l)).unwrap_or_default();
+            format!("{}{}: the provider requires {}", m.address, at, m.missing.join(", "))
+        })
+        .collect();
+    if level == "error" {
+        return Err(format!("required arguments missing:\n  {}", lines.join("\n  ")).into());
+    }
+    for l in &lines {
+        eprintln!("warning: {} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", l);
+    }
+    Ok(())
 }
 
 /// `plan -x --config <dir>` puts `--config` inside the pass-through args, where
@@ -2185,6 +2222,22 @@ fn convert_yaml_to_satz(
         .and_then(|s| s.to_str())
         .unwrap_or("converted")
         .replace(['-', '.'], "_");
+    // An include of a LIST is a value, not a pack: inline it before converting.
+    // Targets resolve the way a use-path does — beside the file, then the
+    // include dirs.
+    let include_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let include_dirs = runtime_config.include_dirs.clone();
+    let load = |p: &str| -> Option<String> {
+        std::iter::once(include_base.join(p))
+            .chain(include_dirs.iter().map(|d| Path::new(d).join(p)))
+            .find(|c| c.is_file())
+            .and_then(|c| std::fs::read_to_string(c).ok())
+    };
+    let (src, inlined) = satz_core::migrate::inline_sequence_includes(&src, &load)
+        .map_err(|e| format!("{} ({})", e, src_path.display()))?;
+    for i in &inlined {
+        println!("inlined: {} — an include of a list is a value, not a pack", i);
+    }
     let satz = satz_core::migrate::convert(&src, &kind, &name)
         .map_err(|e| format!("{} ({})", e, src_path.display()))?;
     // The dialect's implicit `google_` prefix is not Satz, so a verbatim
