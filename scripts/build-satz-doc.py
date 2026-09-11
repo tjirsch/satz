@@ -50,8 +50,10 @@ CSS = """
   /* The last resort, after code_breaks(): a word that still cannot fit a line (a URL,
      two code spans joined by a slash) breaks where it must rather than push the page
      sideways. break-word, not anywhere: it leaves min-content alone, so a table still
-     sizes its columns by whole words and scrolls inside its wrapper instead. */
-  main { max-width: 74ch; margin: 0 auto; overflow-wrap: break-word; }
+     sizes its columns by whole words and scrolls inside its wrapper instead.
+     The measure is 74ch plus half of whatever the page has beyond it, so the empty
+     space on each side is half what a fixed 74ch left, and wide tables get the room. */
+  main { max-width: calc(50% + 37ch); margin: 0 auto; overflow-wrap: break-word; }
   h1 { font-family: "Newsreader", Georgia, "Times New Roman", serif; font-style: italic; font-weight: 400;
        font-size: clamp(40px, 7vw, 64px); line-height: 1.02; letter-spacing: -0.01em; margin: 72px 0 24px; text-wrap: balance; }
   /* A title that is a pack's name wraps at its punctuation (code_breaks); at 1.02 each
