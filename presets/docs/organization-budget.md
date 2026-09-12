@@ -51,6 +51,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The `"import-id"` in the pack is a placeholder for adopting a budget that already exists — `satz adopt` does not resolve budgets, so the id is filled by hand. Delete the line for a fresh budget, or the apply tries to import something that is not there.
+
+The thresholds alert; they do not cap spend.
 
 <!-- notes:end -->

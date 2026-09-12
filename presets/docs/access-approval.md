@@ -90,6 +90,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Access Transparency has no provider resource: an organisation administrator switches it on in the Cloud console, and this apply fails until they have. The notification address list has no default on purpose — an approval request nobody receives is worse than none.
 
 <!-- notes:end -->

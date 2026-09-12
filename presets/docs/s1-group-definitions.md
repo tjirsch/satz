@@ -98,6 +98,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Half of the split spelling of S1: pair it with [`s1_group_permissions`](s1-group-permissions.md) under their own resource types. The one-file alternative is [`s1_security_groups`](s1-security-groups.md), and an estate takes one spelling or the other, never both.
+
+Groups that already exist in the tenant are adopted, not recreated: `satz adopt --only google_cloud_identity_group`. Memberships stay out — presets define groups, humans grant membership.
 
 <!-- notes:end -->

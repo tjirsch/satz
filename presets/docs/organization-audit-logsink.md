@@ -117,6 +117,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The project lands in the scope this pack is `use`d in: at the top level it belongs to the organisation, inside a `google_folder` block to that folder. Moving it afterwards is a project move, so decide the scope before the first apply.
+
+[`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) takes this pack's project by reference, so an estate using both wires nothing. The bucket, its location and the project id cannot change once created, and shortening the retention deletes everything already past the new age at the next lifecycle run.
 
 <!-- notes:end -->

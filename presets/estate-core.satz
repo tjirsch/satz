@@ -2,7 +2,8 @@
 //
 //   use "presets/estate-core.satz"
 //
-// `satz init` writes these seventeen params from its flags; an INTERVIEW asks for
+// `satz init` writes these sixteen params — from its flags where it has one, from
+// its defaults otherwise; an INTERVIEW asks for
 // them one at a time, from the questions in this pack. Every param below has a
 // question, and every question says what changing the answer later costs, so a
 // default is offered where one exists and a value is required where none is

@@ -94,6 +94,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+It constrains EVERY bucket in the organisation, not only the log sink's, so an estate with buckets on other durations loses the ability to update them. The retention LOCK is a human step — the duty on the claim, shared with [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) — and it cannot be undone: validate the pipeline before locking.
 
 <!-- notes:end -->

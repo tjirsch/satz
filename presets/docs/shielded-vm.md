@@ -66,6 +66,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The one constraint in this set with no managed form and no dry-run support: it cannot be rehearsed before it is enforced. Check that every image in use supports Shielded VM first — an older or custom image fails instance creation from the moment it is on.
 
 <!-- notes:end -->

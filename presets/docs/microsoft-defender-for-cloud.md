@@ -122,6 +122,10 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The scanning service account belongs to a Microsoft-owned project, so it must be in the CIS pack's `allowed_policy_member_subjects` BEFORE any grant to it is applied — otherwise the domain-restriction policy refuses the grant and the connector never finishes.
+
+This is the foundation: the project, the workload identity pool and the CSPM plan's `oneof`. The plan fragments themselves are added to the estate by hand — [`…cspm`](microsoft-defender-for-cloud-cspm.md) with one of the two role fragments.
+
+Defender reads the estate; it makes no claims, and nothing here is a compliance witness.
 
 <!-- notes:end -->

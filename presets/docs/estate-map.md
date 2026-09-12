@@ -132,6 +132,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The map declares the choices and their questions; the `use … when` lines that realise them are written into the estate by `satz init` (and by `satz interview --create`), so switching a choice on later means adding its `use` line too.
+
+Turning a choice off after an apply is not a no-op: the pack's resources leave the estate, and the next apply destroys what they created. Suppress or migrate first.
 
 <!-- notes:end -->

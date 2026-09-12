@@ -54,6 +54,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Use this OR [the least-privilege role](microsoft-defender-for-cloud-cspm-role-least-privilege.md), never both: both define the same custom-role address, so an estate with both is a fold conflict naming the two files.
+
+Five permissions beside `roles/viewer`, which is what Microsoft's own script grants.
 
 <!-- notes:end -->

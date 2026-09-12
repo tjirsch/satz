@@ -34,7 +34,7 @@ satz init \
 
 **Without the flags**, `satz interview yaml/<name>.satz --create` writes the estate and
 asks for the
-same seventeen values one question at a time, offering the derived ones as defaults; an
+same sixteen values one question at a time, offering the derived ones as defaults; an
 agent does the same over MCP. Both end at the file `init` would have written, and
 [satz interview](interview.md) describes the rules they share: an answer is a param the
 estate binds, and nothing below runs while one is missing.
@@ -205,7 +205,7 @@ tofu plan
 
 ### The params `init` writes
 
-The same seventeen, each with its question, are `presets/estate-core.satz` — what
+The same sixteen, each with its question, are `presets/estate-core.satz` — what
 `satz interview` asks when there are no flags. An estate `init` wrote binds all of
 them and is complete; one the interview wrote is complete when it says so.
 

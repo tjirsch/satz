@@ -65,6 +65,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Confidential VMs run on particular machine families and cost more. Enforced organisation-wide this stops most ordinary workloads from starting, so it belongs on an organisation whose machine shapes are already confidential-capable.
 
 <!-- notes:end -->

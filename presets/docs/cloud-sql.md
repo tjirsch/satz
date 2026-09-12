@@ -73,6 +73,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+An instance reached over a public IP loses connectivity the moment this is enforced. The private path — the VPC peering or Private Service Connect the clients will use — has to exist and work first.
 
 <!-- notes:end -->

@@ -274,7 +274,7 @@ recipient; `notification_channels = []` passes CIS and notifies nobody.
 ## estate-core.satz
 
 The questions every estate has to answer on day 0, with the params they answer — the
-seventeen `satz init` writes from its flags, each with a `question`: what to ask, why,
+sixteen `satz init` writes, each with a `question`: what to ask, why,
 and what changing the answer later costs. Which packs make up the estate is the next
 pack, `estate-map.satz`; this one is the day-0 params and nothing else.
 
