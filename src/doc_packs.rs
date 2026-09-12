@@ -1074,6 +1074,22 @@ pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(),
         });
     }
     pages.push((out_dir.join("README.md"), index(&rows, &cats)));
+
+    // A page whose pack no longer exists is never regenerated, so comparing only what we
+    // generate would leave it on disk and on the site for ever. Anything in the directory
+    // that this run did not produce is an orphan.
+    let mut orphans: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(out_dir) {
+        let ours: std::collections::BTreeSet<PathBuf> = pages.iter().map(|(o, _)| o.clone()).collect();
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().is_some_and(|x| x == "md") && !ours.contains(&path) {
+                orphans.push(path);
+            }
+        }
+        orphans.sort();
+    }
+
     for (out, text) in pages {
         let current = std::fs::read_to_string(&out).ok();
         if current.as_deref() == Some(text.as_str()) {
@@ -1088,6 +1104,14 @@ pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(),
         }
     }
     if check {
+        if !orphans.is_empty() {
+            return Err(format!(
+                "doc-packs: {} page(s) belong to no pack — the pack was deleted and the page was not; run `satz doc-packs` and commit: {}",
+                orphans.len(),
+                orphans.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            )
+            .into());
+        }
         if !stale.is_empty() {
             return Err(format!(
                 "doc-packs: {} page(s) behind the packs — run `satz doc-packs` and commit: {}",
@@ -1098,6 +1122,10 @@ pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(),
         }
         println!("doc-packs: {} page(s) current", all.len() + 1);
     } else {
+        for o in &orphans {
+            std::fs::remove_file(o).map_err(|e| format!("{}: {}", o.display(), e))?;
+            println!("doc-packs: removed {} — no pack declares it", o.display());
+        }
         println!("doc-packs: {} pack(s), {} page(s) written to {}", all.len(), written, out_dir.display());
     }
     Ok(())
@@ -1219,6 +1247,38 @@ mod tests {
 
         std::fs::write(dir.join("README.md"), "# satz library\n\nno section\n").unwrap();
         assert!(changelog(&dir, &all).unwrap_err().to_string().contains("no `## Changelog` section"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_page_whose_pack_was_deleted_fails_the_check_and_is_removed() {
+        // The hole this closes: the run compared only the pages it GENERATES, so a page
+        // left behind by a deleted pack was never looked at — it stayed in presets/docs
+        // and the site published it. `presets/docs/vpc-flow-logs.md` shipped that way.
+        let dir = std::env::temp_dir().join(format!("satz-orphan-{}", std::process::id()));
+        let docs = dir.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(dir.join("p.satz"), "// A pack.\n\npack p version \"1.0\"\n").unwrap();
+        std::fs::write(
+            dir.join("README.md"),
+            "# satz library\n\nprose\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n| `p` | 1.0 | 2026-09-04 | first |\n",
+        )
+        .unwrap();
+
+        run(&dir, &docs, false).unwrap();
+        assert!(docs.join("p.md").exists(), "the pack's own page is written");
+
+        // a page nothing declares
+        let ghost = docs.join("deleted-pack.md");
+        std::fs::write(&ghost, "# a pack that is gone\n").unwrap();
+        let e = run(&dir, &docs, true).unwrap_err().to_string();
+        assert!(e.contains("belong to no pack"), "--check must name the orphan: {}", e);
+        assert!(e.contains("deleted-pack.md"), "{}", e);
+
+        run(&dir, &docs, false).unwrap();
+        assert!(!ghost.exists(), "a write removes the orphan");
+        assert!(docs.join("p.md").exists(), "and leaves the real pages alone");
+        run(&dir, &docs, true).expect("clean again");
         std::fs::remove_dir_all(&dir).ok();
     }
 

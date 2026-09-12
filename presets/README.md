@@ -995,14 +995,26 @@ managed one), and not at all for `iam.allowedPolicyMemberDomains` ↔
 
 ## cis-extensions/
 
-**One of these is ON by default: `cis_dns_logging`.** Every other fragment here is off
-until a customer asks for it, because each one restricts what an organisation may
-create. DNS logging is different in kind: it does not restrict anything, it makes a
-RECORD — of name resolution, which is how a compromised host asking for its
-command-and-control domain becomes visible, and which nothing reconstructs afterwards.
-Switching it off is a decision to be blind to that, so the estate that makes it writes a
-`deviates` claim, whose `reason` is mandatory and which an auditor reads in the
-compliance report. The library does not argue; it records who decided and why.
+**Two of these are ON by default: `cis_dns_logging` and `cis_block_internet_ssh_rdp`.**
+Every other fragment here is off until a customer asks for it, because each one restricts
+what an organisation may create. These two are what an organisation is expected to have
+already.
+
+DNS logging does not restrict anything: it makes a RECORD — of name resolution, which is
+how a compromised host asking for its command-and-control domain becomes visible, and
+which nothing reconstructs afterwards.
+
+The admin-port policy closes TCP 22 and 3389 to the INTERNET, which is what CIS 3.6 and
+3.7 ask for. It does not close them internally: its pass list carries the private blocks
+beside Google's IAP ranges, because the deny matches `0.0.0.0/0` — every address, private
+ones included — and a hierarchical policy is read before the VPC rules that would
+otherwise allow internal traffic. What breaks is a bastion reachable on a PUBLIC address;
+that access belongs on IAP TCP forwarding, which reaches an instance without an open
+admin port.
+
+Switching either off is a decision, so the estate that makes it writes a `deviates`
+claim, whose `reason` is mandatory and which an auditor reads in the compliance report.
+The library does not argue; it records who decided and why.
 
 **VPC flow logs are not in this directory**, and do not need to be: the baseline pack
 enforces `compute.requireVpcFlowLogs` and claims CIS 4.0 §3.8 / 5.0 §3.10 with it. That
@@ -1050,11 +1062,36 @@ comment at the top of each fragment says what specifically breaks.
 Three fragments are not org-policy constraints. `access-approval` is an organisation
 setting (`google_organization_access_approval_settings`); Access Transparency, which it
 needs, has no provider resource and is switched on in the console first.
-`internet-ssh-rdp` is a hierarchical firewall policy attached to the organisation: TCP 22
-and 3389 from `admin_port_source_ranges` (Google's IAP range by default) pass to the VPC
-firewall rules, every other internet address is denied before any VPC rule is read.
+`internet-ssh-rdp` is a hierarchical firewall policy attached to the organisation, and
+one of the two fragments here that are ON by default. Four rules: SSH and RDP from
+`admin_port_source_ranges` (1000) and `admin_port_source_ranges_ipv6` (1001) pass to the
+VPC firewall rules, which still decide; every other address is denied (1002 for IPv4,
+1003 for IPv6) before any VPC rule is read. The families are separate rules because a
+rule's sources may not mix IPv4 with IPv6.
+
+The default pass lists are Google's IAP TCP-forwarding ranges — `35.235.240.0/20`, and
+`2600:2d00:1:7::/64` for IPv6 VMs — plus the private blocks. Those are there because the
+deny matches `0.0.0.0/0`, which is *any* IPv4 address, private ones included, and a
+hierarchical policy is read before the VPC rules that would otherwise allow internal
+traffic: without them, SSH between two instances in one subnet is denied. An estate that
+wants internal SSH denied as well removes them.
+
+Each rule carries the control's full protocol set — SSH on TCP 22 **and SCTP 22**, RDP on
+TCP 3389 **and UDP 3389** — because Google's own detectors check all four and a TCP-only
+deny leaves UDP 3389 open.
+
+Only the two deny rules log, and that is Google's rule rather than a choice: logging
+cannot be enabled on a `goto_next` rule. So the firewall record is of what was REFUSED;
+an accepted IAP session leaves no firewall log. That is the stream
+`integrations/microsoft-sentinel-network-logs.satz` carries, and it is empty while this
+fragment is off.
+
 Prowler's checks read the VPC rules, so a VPC rule allowing 0.0.0.0/0 still fails there
-and the row reads CONTESTED until the rule is deleted. `cloud-sql-iam-and-deletion-protection`
+and the row reads CONTESTED until the rule is deleted. The same is true of Security
+Command Center's `OPEN_SSH_PORT`, whose supported asset is the VPC firewall rule: a
+hierarchical deny shadows such a rule without clearing the finding, so delete
+`default-allow-ssh` and `default-allow-rdp` rather than relying on this policy to hide
+them. `cloud-sql-iam-and-deletion-protection`
 declares two custom constraints (`google_org_policy_custom_constraint`) and a policy
 enforcing each; the emitter makes each policy wait for its constraint. A custom
 constraint is checked when an instance is created or updated, never against one that
@@ -1179,7 +1216,9 @@ the private history recorded them.
 | `monitoring.organization_audit_logsink` | 1.4 | 2026-09-12 | `logsink_project_name` becomes **`logsink_project_id`**, because that is what it is — it feeds `project_id`, and a project id is immutable while a name is not. The project's display name is its own optional param, `logsink_project_display_name`, defaulting to the id exactly as Google does, so nothing changes in the emitted HCL. An estate still binding the old name is REFUSED by name with the new one: nothing refuses a param no pack reads, so leaving it would have silently taken this pack's default project instead — a second logging project and an orphaned archive |
 | `monitoring.organization_cis_log_alerts_central` | 1.6 | 2026-09-12 | follows the rename: the alert project defaults to `logsink_project_id` |
 | `integrations.microsoft_sentinel` | 1.1 | 2026-09-12 | follows the rename: the Sentinel project defaults to `logsink_project_id` |
+| `cis_extensions.internet_ssh_rdp` | 1.1 | 2026-09-12 | ON by default (CIS pack 2.10), with the corrections a default-on pack needs. The pass list gains the three RFC1918 blocks beside the IAP range, because the deny matches `0.0.0.0/0` — every address, private ones included — and a hierarchical policy is read before the VPC rules: with IAP alone, SSH between two instances in one subnet was denied. IPv6 gets its own pass rule (IAP's `2600:2d00:1:7::/64` and `fc00::/7`), since a rule's sources may not mix families. Every rule now carries the control's whole protocol set — SSH on TCP 22 and SCTP 22, RDP on TCP 3389 and UDP 3389 — a TCP-only deny left UDP 3389 open. And the two DENY rules log: Google forbids logging on `goto_next`, so an accepted IAP session leaves no firewall record and only refusals do |
 | `cis_extensions.dns_logging` | 1.0 | 2026-09-12 | first version: CIS 5.0 §2.13, the half an org policy can carry — a custom constraint on `dns.googleapis.com/Policy` requiring `enableLogging`. ON by default. `contributes`, not `implements`: no org policy can require that a network HAS a DNS policy, only that a policy which exists logs, so the missing half is named as a duty and verified live |
+| `CIS_GCP_Foundation_4_0` | 2.10 | 2026-09-12 | `cis_block_internet_ssh_rdp` defaults to TRUE, the second flag to do so. An estate taking this version emits an organisation firewall policy it did not have: ports 22 and 3389 are denied from public addresses, the private ranges and IAP pass to the VPC rules, and the denies log. Answering no is a deviation whose reason the compliance report carries (ADR 0012) |
 | `CIS_GCP_Foundation_4_0` | 2.9 | 2026-09-12 | one new flag, and the first that defaults to TRUE: `cis_dns_logging`, for the new `cis-extensions/dns-logging.satz`. It asks what the control covers and what it breaks; answering no is a deviation whose reason the compliance report carries |
 | `s2_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
