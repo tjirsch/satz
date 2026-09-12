@@ -211,7 +211,7 @@ rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 36 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-six usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 37 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-seven usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
@@ -224,7 +224,7 @@ grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 52 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 53 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -235,7 +235,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 52 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 53 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
@@ -358,6 +358,32 @@ grep -q '0 broken claim' tmp/ext-require.txt || fail "an extension claims a witn
 grep -qE '✓ 4.8 ' tmp/ext-require.txt || fail "4.8 did not become satisfied with its fragment on"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/ext-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the extensions do not validate"
+fi
+
+step "sentinel: federation without a key, and an audit path whose every grant is there"
+sed -e 's/^params {/params {\n  sentinel_project_id = infra_project_name\n  sentinel_workload_pool_id = "22222222222222222222222222222222"\n  sentinel_project_number = "123456789012"/' yaml/smoke.satz > tmp/sent.satz
+cat >> tmp/sent.satz <<'SATZ'
+use "presets/integrations/microsoft-sentinel.satz"
+use "presets/integrations/microsoft-sentinel-auditlogs.satz"
+SATZ
+"$satz" --config . transpile tmp/sent.satz --output "$PWD/tmp/sent-hcl" > tmp/sent.txt 2>&1 || fail "the sentinel packs do not transpile:\n$(cat tmp/sent.txt)"
+# the audience is api://<application id>, which is the form Microsoft's own script writes
+grep -q '"api://2041288c-b303-4ca0-9076-9612db3beeb2"' tmp/sent-hcl/main.tf \
+  || fail "the provider does not carry Sentinel's audience in the api:// form:\n$(grep -A6 sentinel_identity_provider tmp/sent-hcl/main.tf | head -10)"
+grep -q 'issuer_uri = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"' tmp/sent-hcl/main.tf || fail "the provider does not trust Microsoft's commercial tenant"
+# the principal set carries the project NUMBER: a pool id alone grants nothing
+grep -q 'principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/22222222222222222222222222222222/\*' tmp/sent-hcl/main.tf \
+  || fail "the workloadIdentityUser binding does not name the pool's principal set"
+grep -q 'include_children = true' tmp/sent-hcl/main.tf || fail "the sink must cover every project under the organisation"
+# without the publisher grant the sink exists and delivers nothing
+grep -q 'role = "roles/pubsub.publisher"' tmp/sent-hcl/main.tf || fail "the sink's writer identity may not publish"
+grep -q 'member = "${google_logging_organization_sink.sentinel_auditlogs.writer_identity}"' tmp/sent-hcl/main.tf \
+  || fail "the publisher grant does not follow the sink's own writer identity"
+# and Sentinel reads ONE subscription, not every subscription in the project
+grep -q 'resource "google_pubsub_subscription_iam_member" "sentinel_auditlogs_reader"' tmp/sent-hcl/main.tf || fail "the connector is granted nothing to read"
+grep -q 'role = "roles/pubsub.subscriber"' tmp/sent-hcl/main.tf || fail "the connector's read grant is not the subscriber role"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/sent-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the sentinel chain does not validate"
 fi
 
 step "scc notifications: the chain is topic + grant + config, and the agent is the organisation's"
@@ -1252,8 +1278,8 @@ assert a["created"] is True, a
 # the whole path: 16 day-0, 10 map choices (the three SCC follow-ups are not asked
 # while SCC itself is off — `ask_when`), 13 CIS, the default packs' own (S1 names,
 # archive, alerts, billing group, contact) — 16 of them need a value until their inputs land
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (52, 16), a["summary"]
-assert len(a["questions"]) == 52 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (53, 16), a["summary"]
+assert len(a["questions"]) == 53 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "a follow-up behind a false ask_when is not asked"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
@@ -1261,8 +1287,8 @@ assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every default; the S2 model's six names replace S1's five, so 53 in all
-assert b["written"] == 53 and b["summary"]["complete"] is True, b["summary"]
+# 8 answers, then every default; the S2 model's six names replace S1's five, so 54 in all
+assert b["written"] == 54 and b["summary"]["complete"] is True, b["summary"]
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]

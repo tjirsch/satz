@@ -21,7 +21,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.4"
+pack estate_map version "1.5"
 
 params {
   // ---- the security-group model: exactly one ------------------------------
@@ -43,6 +43,8 @@ params {
   use_scc_export           = false
   use_security_audit_sa    = false
   use_defender             = false
+  use_sentinel             = false
+  use_sentinel_auditlogs   = false
   use_verification_runner  = false
 }
 
@@ -143,6 +145,21 @@ question use_defender {
   why      = "Only for a customer who runs Defender. It needs the two ids from Microsoft's onboarding script and creates a workload identity pool; turning it off later removes the pool and Defender loses its connector. The plan fragments are added by hand per that pack's header."
   reversal = recreate
   blast    = high
+}
+
+question use_sentinel {
+  prompt   = "Connect Microsoft Sentinel to this organisation?"
+  why      = "Sentinel reads Google Cloud logs by pulling them from Pub/Sub, federated through workload identity — no service-account key leaves the organisation. This creates the federation half: the pool named after the customer's Entra tenant, the provider that trusts Microsoft, and the account Sentinel acts as. Onboarding is two-sided: the connector in Azure is configured with what this creates, and nothing flows until both halves are done. Turning it off later leaves the connector authenticated against a pool that no longer exists."
+  reversal = recreate
+  blast    = low
+}
+
+question use_sentinel_auditlogs {
+  prompt   = "Send the organisation's audit logs to Sentinel?"
+  why      = "The first log source, and the one every customer starts with: an organisation sink with `include_children`, its topic, the subscription Sentinel pulls from, and the two grants that make the path work. Other sources — VPC flow, firewall, DNS, GKE — are their own copies of this fragment, wired by hand. Sentinel charges by the gigabyte ingested, so which streams travel is asked."
+  reversal = recreate
+  blast    = low
+  ask_when = use_sentinel
 }
 
 question use_verification_runner {
