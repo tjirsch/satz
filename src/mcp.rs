@@ -155,6 +155,93 @@ struct Ctx {
     open: Mutex<Option<Open>>,
 }
 
+/// How each CLI command reaches an agent: the MCP tool(s) that serve it, or the
+/// reason it is not served. Exposing a command over MCP is a decision, and so is
+/// not exposing one — `mcp_parity_is_decided` fails on a command this table does
+/// not name, the way `IDENTITIES` fails on a command that declares no identity.
+pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
+    // --- served -------------------------------------------------------------
+    ("transpile", Parity::Tools(&["satz_transpile", "satz_transpile_check"])),
+    ("require", Parity::Tools(&["satz_require"])),
+    ("report-compliance", Parity::Tools(&["satz_report_compliance"])),
+    ("questions", Parity::Tools(&["satz_questions"])),
+    ("interview", Parity::Tools(&["satz_interview"])),
+    ("triage", Parity::Tools(&["satz_triage"])),
+    ("remediation-plan", Parity::Tools(&["satz_remediation_items", "satz_remediation_annotate"])),
+    ("scan", Parity::Tools(&["satz_scan_checkov"])),
+    ("check-presets", Parity::Tools(&["satz_check_presets"])),
+    ("get-presets", Parity::Tools(&["satz_get_presets"])),
+    ("adopt", Parity::Tools(&["satz_adopt"])),
+    ("iac-roles", Parity::Tools(&["satz_iac_roles"])),
+    ("whoami", Parity::Tools(&["satz_whoami"])),
+    // --- not served ---------------------------------------------------------
+    ("merge-presets", Parity::Off("its walk prints as it installs, forks and adopts; the outcomes are not a value yet")),
+    ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; `--from-live` runs as the human, before there is an estate")),
+    ("bootstrap", Parity::Off("day 0: it creates the folder, project and state bucket as the human, after an interactive pre-flight")),
+    ("plan", Parity::Off("it hands stdio to the tool; an agent runs tofu itself")),
+    ("apply", Parity::Off("it hands stdio to the tool, approval prompt included")),
+    ("hcl-init", Parity::Off("it hands stdio to the tool")),
+    ("import", Parity::Off("the live sweep runs for minutes and rewrites the estate; there is no report to return yet")),
+    ("adopt-org-policies", Parity::Off("the alias also imports and activates; `satz_adopt` serves the resolution, the writing half stays with the human")),
+    ("run-actions", Parity::Off("it runs the estate's deployment steps against the organisation")),
+    ("export-organizational-policies", Parity::Off("it writes a preset from a live organisation; `satz_report_compliance` answers what an agent asks of live policy")),
+    ("diff-organizational-policies", Parity::Off("the compliance plane compares policies by value over MCP; the specialist diff is a console report")),
+    ("report-organizational-policies", Parity::Off("a rendered human report (markdown, PDF)")),
+    ("migrate", Parity::Off("a one-off switch of deployment_mode — an estate edit")),
+    ("update-schema", Parity::Off("it refreshes the provider schema cache: environment setup, not estate work")),
+    ("map-types", Parity::Off("it derives type-map.yaml from the Discovery Documents — a maintainer refresh of shipped data")),
+    ("scan-plan", Parity::Off("plan-JSON plumbing for a tofu workflow MCP does not drive")),
+    ("generate-migration", Parity::Off("it writes a state-mv script for a human to read and run")),
+    ("doc-packs", Parity::Off("it regenerates the pack pages in the repository; `--check` is a repository gate")),
+    ("self-update", Parity::Off("it replaces the binary")),
+    ("completion", Parity::Off("a shell affordance")),
+    ("open-readme", Parity::Off("it opens a browser")),
+    ("help", Parity::Off("clap prints it")),
+    ("mcp", Parity::Off("this is the server")),
+];
+
+/// The satz command each tool stands for, so an agent that knows the CLI can
+/// find the tool for what it wants: `transpile -> satz_transpile,
+/// satz_transpile_check; require -> satz_require; …`.
+fn served_by() -> String {
+    let mut rows: Vec<String> = MCP_PARITY
+        .iter()
+        .filter_map(|(c, p)| match p {
+            Parity::Tools(ts) => Some(format!("{} -> {}", c, ts.join(", "))),
+            Parity::Off(_) => None,
+        })
+        .collect();
+    rows.sort();
+    rows.join("; ")
+}
+
+/// The commands an agent cannot run here, each with the reason: an agent that
+/// knows what is missing asks for it instead of improvising a way around it
+/// (writing HCL by hand because `apply` is absent, say). The terminal's own
+/// affordances are left out — nothing an agent would reach for.
+fn not_served() -> String {
+    let mut rows: Vec<String> = MCP_PARITY
+        .iter()
+        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp"))
+        .filter_map(|(c, p)| match p {
+            Parity::Off(why) => Some(format!("{} ({})", c, why)),
+            Parity::Tools(_) => None,
+        })
+        .collect();
+    rows.sort();
+    rows.join("; ")
+}
+
+/// A command's MCP exposure: the tools that serve it, or why none does.
+pub(crate) enum Parity {
+    Tools(&'static [&'static str]),
+    Off(&'static str),
+}
+
+/// Tools with no CLI command behind them: the session and capability plumbing
+/// MCP needs and a terminal does not.
+pub(crate) const MCP_ONLY: &[&str] = &["satz_open", "satz_estates", "satz_restrict"];
+
 #[derive(Clone)]
 pub(crate) struct SatzMcp {
     ctx: Arc<Ctx>,
@@ -394,6 +481,26 @@ pub(crate) struct GetPresetsArgs {
     /// A pristine library under the server's root to copy from instead of downloading
     #[serde(default)]
     pub pristine_dir: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct IacRolesArgs {
+    /// The estate to check; the open estate when omitted
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Write the missing roles into the estate file and re-check
+    #[serde(default)]
+    pub execute: bool,
+}
+
+/// The roles an estate's IaC service account needs against the ones it grants,
+/// and — with `execute` — the grants written into the estate.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct IacRolesResult {
+    pub report: crate::IacRolesReport,
+    /// the grant lines `execute` wrote; empty without it, and empty when
+    /// nothing was missing
+    pub written: Vec<String>,
 }
 
 /// What a compile produced. The addresses are the estate's emitted resources —
@@ -1294,6 +1401,46 @@ impl SatzMcp {
     }
 
     #[tool(
+        name = "satz_iac_roles",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<IacRolesResult>(),
+        description = "The roles the estate's IaC service account needs for the resource types the estate \
+                       emits, against the roles the estate grants it: `missing` is the gap, `write` the fewest \
+                       roles that close it, `unknown_types` the emitted types the role table has no row for. \
+                       Offline. With `execute` the missing roles are written into the estate file and the \
+                       estate is re-checked — a gap that survives the write restores the file. Reading needs \
+                       'read', `execute` needs 'write'.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn iac_roles(
+        &self,
+        Parameters(args): Parameters<IacRolesArgs>,
+    ) -> Result<Result<Json<IacRolesResult>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        if args.execute {
+            if let Err(r) = self.permits(Group::Write) {
+                return Ok(Err(r));
+            }
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let report = match crate::iac_roles_report(&estate, &open.tool, &open.runtime) {
+            Ok(r) => r,
+            Err(e) => return Ok(Err(refused(format!("iac-roles: {}", e)))),
+        };
+        if !args.execute || report.missing.is_empty() {
+            return Ok(Ok(Json(IacRolesResult { report, written: Vec::new() })));
+        }
+        match crate::iac_roles_write(&estate, &report, &open.tool, &open.runtime) {
+            Ok((written, after)) => Ok(Ok(Json(IacRolesResult { report: after, written }))),
+            Err(e) => Ok(Err(refused(format!("iac-roles --execute: {}", e)))),
+        }
+    }
+
+    #[tool(
         name = "satz_scan_checkov",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ScanReport>(),
         description = "Run Checkov over the estate's emitted HCL (the hcl_dir satz_transpile writes) and return \
@@ -1558,7 +1705,14 @@ impl ServerHandler for SatzMcp {
              language reference and `satz://presets` describes the shipped packs.\n\n\
              After every edit, call satz_transpile_check before saying you are done. Never edit \
              the generated hcl/ directory, and never invent an id — resolve it with adopt or ask.\n\n\
+             The satz command behind each tool: {}. These have no command behind them — they are \
+             this session's own plumbing: {}.\n\n\
+             These satz commands are NOT available here, by decision — ask the human to run one \
+             rather than working around it: {}.\n\n\
              Capability level in force: '{}'.",
+            served_by(),
+            MCP_ONLY.join(", "),
+            not_served(),
             self.ceiling.describe()
         ));
         info
@@ -1760,5 +1914,101 @@ mod tests {
             );
             assert!(d.body().len() < d.text.len(), "{}: the trim removed nothing", d.uri);
         }
+    }
+}
+
+#[cfg(test)]
+mod parity_tests {
+    //! An agent's reach over satz is a decision per command, and the three
+    //! places that record it — this table, the registered tools, and the
+    //! documented tool list — must agree.
+    use super::*;
+    use clap::CommandFactory;
+    use std::collections::BTreeSet;
+
+    fn table_tools() -> BTreeSet<&'static str> {
+        MCP_PARITY
+            .iter()
+            .flat_map(|(_, p)| match p {
+                Parity::Tools(ts) => ts.to_vec(),
+                Parity::Off(_) => Vec::new(),
+            })
+            .chain(MCP_ONLY.iter().copied())
+            .collect()
+    }
+
+    fn registered() -> BTreeSet<String> {
+        SatzMcp::tool_router().list_all().into_iter().map(|t| t.name.to_string()).collect()
+    }
+
+    #[test]
+    fn mcp_parity_is_decided() {
+        let mut cmd = crate::Cli::command();
+        cmd.build(); // `help` is generated here
+        let cli: BTreeSet<&str> = cmd.get_subcommands().filter(|c| !c.is_hide_set()).map(|c| c.get_name()).collect();
+        let table: BTreeSet<&str> = MCP_PARITY.iter().map(|(c, _)| *c).collect();
+        let undecided: Vec<_> = cli.difference(&table).collect();
+        let unknown: Vec<_> = table.difference(&cli).collect();
+        assert!(
+            undecided.is_empty(),
+            "these commands are in no MCP_PARITY row, so whether an agent can run them is undecided: \
+             {undecided:?} — give each one a tool or the reason it has none (src/mcp.rs)"
+        );
+        assert!(unknown.is_empty(), "MCP_PARITY names commands the CLI does not have: {unknown:?}");
+        assert_eq!(MCP_PARITY.len(), table.len(), "a command has two MCP_PARITY rows");
+    }
+
+    #[test]
+    fn every_tool_is_named_by_the_table() {
+        let registered = registered();
+        let table = table_tools();
+        let missing: Vec<_> = registered.iter().filter(|t| !table.contains(t.as_str())).collect();
+        let stale: Vec<_> = table.iter().filter(|t| !registered.contains(**t)).collect();
+        assert!(
+            missing.is_empty(),
+            "these tools are served but no MCP_PARITY row (or MCP_ONLY) names them: {missing:?} — \
+             a tool an agent can call must say which command it serves"
+        );
+        assert!(stale.is_empty(), "MCP_PARITY names tools that are not registered: {stale:?}");
+    }
+
+    /// The instructions are where an agent learns what it cannot do here; a
+    /// table nothing renders would drift from the server it describes.
+    #[test]
+    fn the_instructions_name_the_tools_and_what_is_missing() {
+        let served = served_by();
+        assert!(served.contains("transpile -> satz_transpile, satz_transpile_check"), "{served}");
+        assert!(served.contains("iac-roles -> satz_iac_roles"), "{served}");
+        let off = not_served();
+        assert!(off.contains("apply (it hands stdio to the tool"), "{off}");
+        assert!(off.contains("bootstrap (day 0"), "{off}");
+        assert!(!off.contains("completion"), "the shell affordances are noise here: {off}");
+        for (c, p) in MCP_PARITY {
+            if let Parity::Off(why) = p {
+                assert!(!why.is_empty(), "{c} is not served and says no reason");
+                assert!(why.starts_with(|ch: char| ch.is_lowercase() || ch == '`'), "{c}: {why}");
+            }
+        }
+    }
+
+    /// docs/mcp.md is the tool list a client's author reads. Nothing compared it
+    /// to the server, so a tool could ship undocumented, or a removed one could
+    /// stay on the page.
+    #[test]
+    fn the_docs_name_every_tool() {
+        let doc = include_str!("../docs/mcp.md");
+        let documented: BTreeSet<String> = doc
+            .lines()
+            .filter(|l| l.trim_start().starts_with("| `satz_"))
+            .filter_map(|l| l.split('`').nth(1).map(str::to_string))
+            .collect();
+        let registered = registered();
+        let undocumented: Vec<_> = registered.difference(&documented).collect();
+        let gone: Vec<_> = documented.difference(&registered).collect();
+        assert!(
+            undocumented.is_empty(),
+            "these tools are served and docs/mcp.md's table does not list them: {undocumented:?}"
+        );
+        assert!(gone.is_empty(), "docs/mcp.md lists tools the server does not serve: {gone:?}");
     }
 }
