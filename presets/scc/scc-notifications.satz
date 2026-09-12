@@ -13,10 +13,16 @@
 //   3. the notification config, which names the organisation, the topic and the
 //      filter that decides which findings travel.
 //
-// The agent is `service-org-<organisation id>@security-center-api.iam.gserviceaccount.com`,
-// the same identity the CIS pack lists in `allowed_policy_member_subjects` —
-// so a domain-restricted organisation already permits this grant, and nothing
-// has to be added to that list for it.
+// The publisher is `service-org-<organisation id>@gcp-sa-scc-notification.iam.gserviceaccount.com`
+// — the identity the config reports in its own `serviceAccount` field, not the
+// `security-center-api` agent SCC activation creates. Security Command Center
+// adds this binding itself when the config is created; the estate declares it
+// anyway, because an access the estate depends on belongs in the estate, and
+// `_iam_member` is not authoritative, so both writing it converge.
+//
+// A domain-restricted organisation permits it: `iam.managed.allowedPolicyMembers`
+// does not apply to Google-managed service agents (verified on a live
+// organisation with that policy enforcing and this agent in no subject list).
 //
 // The **v2** resource is deliberate: the v1 notification API answers "This API
 // is no longer available" on a live organisation.
@@ -29,7 +35,7 @@
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing and `report-compliance` says nothing about it.
 
-pack scc_notifications version "1.0"
+pack scc_notifications version "1.1"
 
 params {
   // The subscriber a customer attaches is theirs; the topic is the contract.
@@ -76,7 +82,7 @@ google_pubsub_topic_iam_member {
     topic   = "${{google_pubsub_topic.scc_findings.name}}"
     project = scc_notification_project
     role    = "roles/securitycenter.notificationServiceAgent"
-    member  = "serviceAccount:service-org-{customer_organization_id}@security-center-api.iam.gserviceaccount.com"
+    member  = "serviceAccount:service-org-{customer_organization_id}@gcp-sa-scc-notification.iam.gserviceaccount.com"
   }
 }
 
