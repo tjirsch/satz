@@ -73,7 +73,7 @@ fn str_text(parts: &[StrPart]) -> String {
 }
 
 /// A value as the reader would write it.
-fn value_text(v: &Value) -> String {
+pub(crate) fn value_text(v: &Value) -> String {
     match v {
         Value::Str(parts) => format!("\"{}\"", str_text(parts)),
         Value::Num(n) => n.clone(),

@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's conventions and its per-family prose are [`presets/README.md`](../README.md); its version history is [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under **History** on each page here.
 
-**33 packs · 162 resources · 81 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**34 packs · 165 resources · 81 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Root — `presets/*.satz`
 
@@ -13,7 +13,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.2 | Billing-account IAM, split by audience. | 4 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.3 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
 | [`estate_core`](estate-core.md) | 2.0 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
-| [`estate_map`](estate-map.md) | 1.2 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
+| [`estate_map`](estate-map.md) | 1.3 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`organization_budget`](organization-budget.md) | 1.0 | An organization-wide budget on the infrastructure billing account, with alert thresholds at 50, 80 and 100 % of current spend. | 1 | — |
 
 ## `ci/`
@@ -60,8 +60,9 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
 | [`scc_export`](scc-export.md) | 1.1 | Security Command Center findings, exported to BigQuery as they are raised — where findings are KEPT, as opposed to where they are sent. | 4 | — |
-| [`scc_notifications`](scc-notifications.md) | 1.1 | Security Command Center findings, published to a Pub/Sub topic as they are raised — the piece downstream of enablement that every customer needs. | 3 | — |
-| [`scc_service_enablement`](scc-service-enablement.md) | 1.1 | Turns every Security Command Center service on at the organization, through the one step that has no provider resource. | 0 | — |
+| [`scc_findings_mail`](scc-findings-mail.md) | 1.0 | Security Command Center findings, delivered to a mailbox — the answer to "who gets told", for a customer who has no SIEM reading the topic. | 3 | — |
+| [`scc_notifications`](scc-notifications.md) | 1.2 | Security Command Center findings, published to a Pub/Sub topic as they are raised — the piece downstream of enablement that every customer needs. | 3 | — |
+| [`scc_service_enablement`](scc-service-enablement.md) | 1.2 | Turns every Security Command Center service on at the organization, through the one step that has no provider resource. | 0 | — |
 
 ## `security-audit/`
 

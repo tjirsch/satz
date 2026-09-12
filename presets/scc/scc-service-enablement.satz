@@ -25,7 +25,7 @@
 // `google_securityposture_posture(_deployment)`.
 //
 // TIER ACTIVATION IS NOT HERE EITHER. Enabling a service on an organisation
-// with no Premium/Enterprise subscription fails at the API, and no flag
+// on the Standard tier fails at the API, and no flag
 // changes that. Activate the tier first — a console action — then run this.
 //
 // PREREQUISITES; the script reports each one that is missing:
@@ -45,7 +45,7 @@
 // report whether SCC is on; Cloud Asset Inventory does not carry it.
 //
 
-pack scc_service_enablement version "1.1"
+pack scc_service_enablement version "1.2"
 
 params {
   // The two detectors outside the baseline: WEB_SECURITY_SCANNER, which actively
@@ -59,8 +59,8 @@ params {
 }
 
 question scc_optional_services {
-  prompt   = "Which detectors outside the baseline does this organisation want: leave, all, none, or the ones you name?"
-  why      = "Neither is in the baseline: Web Security Scanner actively crawls the customer's web applications, and Artifact Analysis is billed per image scan. `leave` keeps whatever the organisation already has — which is also how one somebody switched on in the console survives. Naming them makes the estate the source of truth: the ones named are on and the rest go off."
+  prompt   = "Two detectors are not switched on with the rest — which of them does this organisation want? (leave · none · all · the ones you name)"
+  why      = "Web Security Scanner crawls the customer's own web applications with real requests against whatever is listening, and Artifact Analysis is billed per container image scanned. Everything else Security Command Center offers is switched on with the baseline. `leave`, the default, touches neither — which is how one somebody switched on in the console survives. `none` switches both off, `all` switches both on, and naming them makes the estate the source of truth: the ones named are on and the rest go off."
   reversal = edit
   blast    = low
 }

@@ -356,6 +356,16 @@ fn present(q: &QuestionRow) -> String {
     }
     let door = if q.reversal == "recreate" || q.blast == "high" { "  ⚠ one-way" } else { "" };
     s.push_str(&format!("  changing it later: {} · blast {}{}\n", q.reversal.replace('_', " "), q.blast, door));
+    // What the pack would answer. It is not what Enter accepts — that stays the
+    // param default, so a bulk `--accept-defaults` never binds a recommendation
+    // nobody read — so it is only worth a line where the two differ.
+    if let Some(r) = &q.recommend {
+        let r = r.trim_matches('"');
+        let offered = q.current.as_ref().or(q.default.as_ref()).map(short);
+        if offered.as_deref() != Some(r) {
+            s.push_str(&format!("  the pack recommends: {}\n", r));
+        }
+    }
     if q.kind == "oneof" {
         let picked = q.current.as_ref().or(q.default.as_ref()).and_then(|v| v.as_str().map(str::to_string));
         let mut default_no = None;
@@ -501,6 +511,7 @@ params {
   model_b     = false
   want_extra  = false
   extra_level = 3
+  paid        = false
 }
 
 question shortname { prompt = "Short name" why = "Ids derive from it." reversal = recreate blast = high }
@@ -513,6 +524,7 @@ question oneof model {
   option model_b { label = "B" }
 }
 question extra_level { prompt = "Extra level" reversal = edit blast = none ask_when = want_extra }
+question paid { prompt = "Switch the paid service on?" why = "It is billed per hour." reversal = edit blast = low recommend = true }
 "#,
         )
         .unwrap();
@@ -538,7 +550,7 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
         assert_eq!(by("model").default, Some(yaml("model_a")), "the pack's true option is the offer");
         assert_eq!(by("extra_level").state, "not-applicable");
         assert!(!r.summary.complete);
-        assert_eq!((r.summary.total, r.summary.unanswered, r.summary.blocking, r.summary.not_applicable), (5, 5, 2, 1));
+        assert_eq!((r.summary.total, r.summary.unanswered, r.summary.blocking, r.summary.not_applicable), (6, 6, 2, 1));
 
         // answer the short name: the derived project id becomes an offer
         apply(&estate, &cfg, &BTreeMap::from([("shortname".to_string(), yaml("acme"))]), false).unwrap();
@@ -550,7 +562,7 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
 
         // accept every default: complete, and the oneof was written as two booleans
         let n = apply(&estate, &cfg, &BTreeMap::new(), true).unwrap();
-        assert_eq!(n, 4, "region, project, zone, model");
+        assert_eq!(n, 5, "region, project, zone, model, paid — the recommendation is not what a bulk run binds");
         let r = questions_report(&estate, &cfg).unwrap();
         assert!(r.summary.complete, "{:?}", r.summary);
         let src = std::fs::read_to_string(&estate).unwrap();
@@ -578,8 +590,9 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
     fn a_piped_run_answers_skips_and_stops() {
         let (estate, cfg) = fixture("piped");
         // decline the offer, type the short name, accept region by Enter, skip the
-        // project, accept zone, choose model 2, then the input ends
-        let mut input = std::io::Cursor::new("n\nacme\n\nskip\n\n2\n");
+        // project, accept zone, choose model 2, accept the paid question's default,
+        // then the input ends
+        let mut input = std::io::Cursor::new("n\nacme\n\nskip\n\n2\n\n");
         let mut out = Vec::new();
         run(&estate, &cfg, false, false, &mut input, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
@@ -587,6 +600,12 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
         assert!(text.contains("Asks three things and derives a fourth."), "the pack's description opens its section: {}", text);
         assert!(text.contains("✓ shortname = \"acme\""), "{}", text);
         assert!(text.contains("✓ region = \"europe-west3\""), "Enter accepts the default: {}", text);
+        // a recommendation is shown where it differs from the offer, and Enter still
+        // takes the offer: a pack can recommend a service that costs money without a
+        // run binding it by itself
+        assert!(text.contains("the pack recommends: true"), "the recommendation is visible: {}", text);
+        assert!(!text.contains("recommends: europe-west3"), "a recommendation equal to the offer is noise: {}", text);
+        assert!(text.contains("✓ paid = false"), "Enter accepts the default, not the recommendation: {}", text);
         assert!(text.contains("✓ model = \"model_b\""), "{}", text);
         assert!(text.contains("NOT complete") && text.contains("still open: project"), "{}", text);
         let src = std::fs::read_to_string(&estate).unwrap();

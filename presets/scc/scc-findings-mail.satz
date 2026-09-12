@@ -1,0 +1,107 @@
+// Security Command Center findings, delivered to a mailbox — the answer to "who
+// gets told", for a customer who has no SIEM reading the topic.
+//
+//   use "presets/scc/scc-findings-mail.satz"
+//
+// NEEDS `presets/scc/scc-notifications.satz`: this fragment attaches to the topic
+// that pack creates and takes the same project. Used without it, the compile stops
+// with `unknown param 'scc_notification_project'`.
+//
+// WHAT THE MAIL SAYS. "Security Command Center published findings", with the count
+// and a link to the alert — not the finding itself. Cloud Monitoring alerts on a
+// metric, and the metric here is how many messages reached the topic; the finding's
+// text lives in the topic, in the console and in the BigQuery export. A customer who
+// wants the finding in the body of the mail needs code — a subscriber that formats
+// it — and code is not a resource, so it is not in this library.
+//
+// THREE RESOURCES.
+//
+//   1. a subscription on the topic, because a topic with no subscription drops every
+//      message it receives: the findings would be published to nothing. It keeps
+//      seven days, so a Friday finding survives the weekend;
+//   2. an e-mail notification channel;
+//   3. an alert policy that fires when messages reach the topic at all.
+//
+// The mailbox must exist and accept mail from `alerting-noreply@google.com`. A group
+// whose members have no mailboxes drops every alert and nothing in the estate can
+// see that happening — a group, never a person, because people leave.
+//
+// NO CLAIM. No catalog control covers Security Command Center, so this pack
+// witnesses nothing.
+
+pack scc_findings_mail version "1.0"
+
+params {
+  // The organisation's security mailbox, BY REFERENCE from the central alert pack —
+  // one address for the CIS alerts and for the findings, so a change lands in both.
+  // Without that pack the compile stops with `unknown param 'cis_central_email'`,
+  // which is the right failure: the recipient is then genuinely undecided, and a
+  // literal default is how an estate ends up mailing an address nobody reads.
+  scc_findings_email = cis_central_email
+  // Retention long enough to survive a weekend. The subscriber is the customer's if
+  // they have one; this subscription exists so nothing is dropped before the mail.
+  scc_findings_subscription_name = "{customer_shortname}-scc-findings-retain"
+  scc_findings_retention         = "604800s"
+  scc_findings_channel_name      = "SCC findings"
+  // The shortest sensible period for a DELTA metric, as in the alert packs.
+  scc_findings_alert_window = "300s"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question scc_findings_email {
+  prompt   = "Where should Security Command Center findings be delivered — the mailbox that is told a finding arrived"
+  why      = "The mail says findings were published and links to them; the finding itself stays in the topic, the console and the export. The mailbox must exist and accept mail from alerting-noreply@google.com — a group whose members have no mailbox drops every alert silently. A group, never a person. The default is the address the organisation's CIS alerts already go to."
+  reversal = edit
+  blast    = high
+}
+
+// 1) The subscription. A topic without one drops every message: the findings would
+//    be published into nothing.
+google_pubsub_subscription {
+  scc_findings {
+    name                       = scc_findings_subscription_name
+    topic                      = "${{google_pubsub_topic.scc_findings.name}}"
+    project                    = scc_notification_project
+    ack_deadline_seconds       = 60
+    message_retention_duration = scc_findings_retention
+    retain_acked_messages      = false
+  }
+}
+
+// 2) The mailbox.
+google_monitoring_notification_channel {
+  scc_findings_mail {
+    project      = scc_notification_project
+    display_name = scc_findings_channel_name
+    type         = "email"
+    labels = {
+      email_address = scc_findings_email
+    }
+  }
+}
+
+// 3) What fires: messages reaching the topic. The alert is the signal that findings
+//    are arriving, and where to read them.
+google_monitoring_alert_policy {
+  scc_findings_published {
+    project      = scc_notification_project
+    display_name = "Security Command Center published a finding"
+    combiner     = "OR"
+    notification_channels = ["${{google_monitoring_notification_channel.scc_findings_mail.id}}"]
+    conditions = [
+      { display_name = "A finding reached the SCC topic"
+        condition_threshold {
+          filter = "metric.type=\"pubsub.googleapis.com/topic/send_message_operation_count\" AND resource.type=\"pubsub_topic\" AND resource.label.\"topic_id\"=\"${{google_pubsub_topic.scc_findings.name}}\""
+          comparison      = "COMPARISON_GT"
+          threshold_value = 0
+          duration        = "0s"
+          aggregations = [
+            { alignment_period     = scc_findings_alert_window
+              per_series_aligner   = "ALIGN_SUM"
+              cross_series_reducer = "REDUCE_SUM" },
+          ]
+        } },
+    ]
+  }
+}

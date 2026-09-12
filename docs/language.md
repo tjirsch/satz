@@ -1326,8 +1326,10 @@ safely deferred when both are low.
 satz refuses or warns it can quote the pack's own sentence rather than a generic
 one — the same rule that makes `reason` mandatory on a `deviates` claim.
 
-`recommend` is what an interview *offers*; the `params` default is what applies
-when nobody was asked.
+`recommend` is the answer the pack would give. The interview prints it where it
+differs from what is on offer; what Enter accepts, and what `--accept-defaults`
+binds, stays the `params` default — so a pack can recommend switching on a service
+that costs money without any bulk run switching it on.
 
 **A question must be declared in the file that declares its param.** Questions are
 absorbed after the `use … when` guard, exactly like claims — so a question that
