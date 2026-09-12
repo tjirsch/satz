@@ -31,6 +31,11 @@ pub(crate) struct EmittedResource {
     /// `preferred_member_key.id`); first occurrence wins. Adoption's natural
     /// keys for groups and memberships live one level down.
     pub nested: BTreeMap<String, String>,
+    /// Every value a repeated nested attribute carries, in emission order
+    /// (`audit_log_config.log_type` → ADMIN_READ, DATA_READ, DATA_WRITE).
+    /// `nested` keeps the first for natural keys; a live check that compares a
+    /// declared SET against the live one needs them all.
+    pub nested_all: BTreeMap<String, Vec<String>>,
     /// The single `enforce` the block declares anywhere in its body, when it
     /// declares exactly one. Several, none, or a list constraint yield `None`:
     /// no verdict is better than a wrong one.
@@ -172,10 +177,13 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         }
     }
     let mut nested = BTreeMap::new();
+    let mut nested_all: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for nb in b.body().blocks() {
         for a in nb.body().attributes() {
             if let Some(v) = string_value(a.expr()) {
-                nested.entry(format!("{}.{}", nb.identifier(), a.key())).or_insert(v);
+                let key = format!("{}.{}", nb.identifier(), a.key());
+                nested_all.entry(key.clone()).or_default().push(v.clone());
+                nested.entry(key).or_insert(v);
             }
         }
     }
@@ -194,6 +202,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         attrs,
         refs,
         nested,
+        nested_all,
         enforce,
         reset,
         import_id: None,

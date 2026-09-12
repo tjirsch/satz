@@ -1487,7 +1487,7 @@ omitted):
 | Control | Status | Witnesses (declared → live) | Duties |
 |---|---|---|---|
 | 1.4 | **verified** | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation` → ✓ `organizations/123456789012/policies/iam.managed.disableServiceAccountKeyCreation` · `…KeyUpload` → ✓ `…KeyUpload` | – |
-| 2.1 | verified* (2 of 3) | two org policies → ✓ · `google_organization_iam_audit_config.org_all_services` → – (no live check for this type yet) | – |
+| 2.1 | **verified** | two org policies → ✓ · `google_organization_iam_audit_config.org_all_services` → ✓ `organizations/123456789012` (the live policy audits `allServices` for every declared log type) | – |
 | 2.3 | partial (open duty) | `google_storage_bucket.org_audit_logs` → ✓ `acme-organization-audit-bucket` | open: validate-then-lock — apply the bucket lock after the 30-day validation |
 
 Status precedence, highest first:
@@ -1502,7 +1502,7 @@ Status precedence, highest first:
 5. **unverified (reason)** — no witness of the row could be checked at all
    (no credentials, inventory unavailable, no `project` to scope a witness).
 6. **verified\* (n of m)** — some witnesses matched live, the rest have no
-   live check for their type.
+   live check for their type (Cloud Asset Inventory serves no witness for it).
 7. **declared** — `--no-live`.
 8. **verified** — every witness matched live.
 
