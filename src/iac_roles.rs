@@ -79,6 +79,8 @@ pub(crate) const READ: &[Entry] = &[
 pub(crate) const TYPES: &[(&str, &[Entry])] = &[
     ("google_artifact_registry_repository", &[project("artifactregistry.repositories.create", &["roles/artifactregistry.admin"])]),
     ("google_bigquery_dataset", &[project("bigquery.datasets.create", &["roles/bigquery.dataEditor"])]),
+    // dataEditor can create a dataset; handing out access on one needs admin
+    ("google_bigquery_dataset_iam_member", &[project("bigquery.datasets.setIamPolicy", &["roles/bigquery.admin"])]),
     ("google_billing_account_iam_member", &[billing("billing.accounts.setIamPolicy", &["roles/billing.admin"])]),
     ("google_billing_budget", &[billing("billing.budgets.create", &["roles/billing.admin", "roles/billing.costsManager"])]),
     ("google_cloud_identity_group", &[GROUPS_ADMIN]),
@@ -164,6 +166,13 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
         "google_scc_v2_organization_notification_config",
         &[org(
             "securitycenter.notificationconfig.create",
+            &["roles/securitycenter.settingsEditor", "roles/securitycenter.admin"],
+        )],
+    ),
+    (
+        "google_scc_v2_organization_scc_big_query_export",
+        &[org(
+            "securitycenter.bigqueryexports.create",
             &["roles/securitycenter.settingsEditor", "roles/securitycenter.admin"],
         )],
     ),

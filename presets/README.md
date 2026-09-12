@@ -327,6 +327,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_budget` | off | `organization-budget` |
 | `use_scc_enablement` | off | `scc/scc-service-enablement` |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
+| `use_scc_export` | off | `scc/scc-export` — the BigQuery dataset findings are kept in |
 | `use_security_audit_sa` | off | `security-audit/sa-security-audit` |
 | `use_defender` | off | `integrations/microsoft-defender-for-cloud` — its plan fragments by hand |
 | `use_verification_runner` | off | `ci/verification-runner` and its grant, the customer-hosted shape |
@@ -567,10 +568,36 @@ decide who reads every finding in the organisation. No catalog control covers SC
 so the pack claims nothing. It needs the detectors switched on to have anything to
 publish — use it with `scc/scc-service-enablement.satz`.
 
-Still missing downstream, each needing a decision first: BigQuery exports (a dataset
-and a region the CIS pack's `gcp.resourceLocations` policy may refuse), mute configs
-(what to mute is a customer's noise decision), custom modules (which rules the
-library ships) and Security Posture.
+### `scc/scc-export.satz` — findings kept and queryable
+
+The other half: a notification tells somebody now, an export answers what the
+organisation looked like months ago.
+
+```
+use "presets/scc/scc-export.satz"
+```
+
+Four resources, and their order matters: `bigquery.googleapis.com` in the dataset's
+project, the dataset (which takes its project THROUGH that service resource, so the
+API is enabled before the dataset is made), `roles/bigquery.dataEditor` for the
+exporting agent — the same `gcp-sa-scc-notification` identity that publishes
+notifications, and the `principal` the export reports — and the v2 export itself.
+Even with the ordering, a first apply can fail with *"The project … has not enabled
+BigQuery"*: the API is on and BigQuery's control plane is a minute behind. Run it
+again.
+
+`delete_contents_on_destroy` stays false, so removing the pack from an estate never
+deletes the finding history. The dataset's location is asked and cannot be changed
+afterwards; where the CIS pack enforces `gcp.resourceLocations`, a location outside
+that list is refused at apply.
+
+Not in the library, and why: **mute configs** (which findings to silence is a
+customer's noise decision, and a wrong mute hides a real finding — write them in the
+estate), **custom modules** for Security Health Analytics and Event Threat Detection
+(the rules are content a customer's security team owns; on a 2026 organisation SHA's
+modules cannot be set at all, see below), **sources and source IAM** (only for a
+customer pushing third-party findings into SCC), and **Security Posture**, which is
+a framework of its own rather than part of this preset.
 
 A **pack** may declare an action too, and `satz doc-packs` puts it on the pack's
 page. An action is a step satz runs, never a witness: no claim covers what a script
@@ -975,6 +1002,7 @@ the private history recorded them.
 | `cis_extensions.access_approval` | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
 | `cis_extensions.internet_ssh_rdp` | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
 | `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.0 | 2026-09-11 | CIS 5.0 6.6 and 6.9, opt-in: two custom constraints on Cloud SQL instances — IAM database authentication on (SQL Server exempt), deletion protection on — each enforced by a policy on the organisation |
+| `estate_map` | 1.2 | 2026-09-12 | one more choice: `use_scc_export`, the BigQuery dataset findings are kept and queried in |
 | `estate_map` | 1.1 | 2026-09-12 | one more choice: `use_scc_notifications`, the Pub/Sub chain that carries Security Command Center findings out of the console. Off by default like the enablement choice beside it — it needs SCC switched on to have findings to publish |
 | `estate_map` | 1.0 | 2026-09-10 | first version: which packs make up the estate, as questions — the S1/S2 model as a `oneof` (moved here from estate-core) and one boolean per optional pack, four on by default (audit archive, central alerts, billing permissions, essential contact), five off (budget, SCC enablement, security-audit account, Defender, verification runner). Declares the choices only; the estate carries the `use … when` lines, which the interview skeleton writes and a test keeps in step (ADR 0006) |
 | `estate_core` | 2.0 | 2026-09-10 | the security-model choice moves to `estate_map`; this pack is the seventeen day-0 params and their questions, nothing else. A major bump because two params left — no estate in the fleet uses the pack, it exists for interview skeletons |
@@ -999,6 +1027,7 @@ the private history recorded them.
 | `ci.verification_runner_grant` | 1.0 | 2026-09-09 | first version: the one binding a verification runner needs — `roles/iam.serviceAccountTokenCreator` on the estate's IaC service account, and nothing on the organisation. Separate from the runner pack because in the MSP-hosted shape the two resources belong to two parties: the runner in the MSP's project, this grant on the customer's account, applied by the customer. Default names the runner pack's own account, so a customer-hosted estate using both wires nothing |
 | `CIS_GCP_Foundation_4_0` | 2.6 | 2026-09-08 | `gcp.resourceLocations` becomes the `allowed_resource_locations` param (default = the two multi-region groups it always emitted, so no estate changes on upgrade) — a hard-coded value silently widened a policy an operator had narrowed by hand. And the six superseded legacy blocks take a `-superseded` address suffix, which makes the switch to `spec { reset = true }` a REPLACE by construction: the provider PATCHes the rules it holds together with `reset` and the API refuses the pair (`400 Cannot set PolicyRules if reset is true`), so the in-place form v2.5 assumed never worked. Estates upgrading from 2.4 or 2.5 see one destroy + create per legacy policy, in the plan, instead of needing `tofu apply -replace=` by hand |
 | `monitoring.organization_cis_log_alerts_central` | 1.4 | 2026-09-08 | the alert project defaults to `logsink_project_name` — the audit-logsink pack's own param, BY REFERENCE — so an estate using both packs wires nothing. The old default was the literal `{customer_shortname}-organization-log-alerts`, a project nothing creates, so an estate that did not override it pointed eight alert policies at a project that was never there. Used without the logsink pack the name is undeclared and the pack stops with `unknown param`, which is the honest failure: the alert project is then genuinely undecided |
+| `scc_export` | 1.0 | 2026-09-12 | first version: findings exported to BigQuery — the API in the dataset's project, the dataset (`delete_contents_on_destroy` false, so removing the pack does not delete the history), the exporting agent's `dataEditor` on it, and the v2 export. The dataset takes its project through the service resource, so the API is enabled first; even then a first apply can fail while BigQuery's control plane catches up, and the second succeeds. Asks the project and the location; no claim |
 | `scc_notifications` | 1.1 | 2026-09-12 | the grant follows the publisher: `gcp-sa-scc-notification`, the identity the notification config reports, not the `security-center-api` agent. Measured on a live organisation — with the wrong agent the config publishes nothing and says nothing |
 | `scc_notifications` | 1.0 | 2026-09-12 | first version: the notification chain downstream of enablement — a Pub/Sub topic, `google_scc_v2_organization_notification_config` (v2: the v1 API answers "This API is no longer available" on a live organisation) and `roles/securitycenter.notificationServiceAgent` for `service-org-<org>@security-center-api.iam.gserviceaccount.com` on that topic, without which the config publishes nothing. Asks the topic's project and the finding filter; sends active HIGH and CRITICAL findings by default. No claim — no catalog control covers SCC |
 | `scc_service_enablement` | 1.1 | 2026-09-12 | `scc_optional_services` (asked): `leave`, `all`, `none`, or the ones it names, for the two detectors outside the baseline — Web Security Scanner, which crawls the customer's web applications, and Artifact Analysis, billed per image scan. The script could only ever switch services ON, so an opt-in enabled by hand in the console stayed on for ever; `disable` is how an estate takes them back |
