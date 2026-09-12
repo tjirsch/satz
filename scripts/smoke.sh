@@ -394,6 +394,10 @@ grep -q 'delete_contents_on_destroy = false' tmp/scce-hcl/main.tf || fail "remov
 grep -q 'member = "serviceAccount:service-org-123456789012@gcp-sa-scc-notification.iam.gserviceaccount.com"' tmp/scce-hcl/main.tf \
   || fail "the exporting agent is not granted on the dataset"
 grep -q 'resource "google_scc_v2_organization_scc_big_query_export"' tmp/scce-hcl/main.tf || fail "the export itself is missing"
+# pinned, because the server assigns it: without it in the config every plan wants to
+# null the field and the API refuses the update
+grep -q 'name = "organizations/123456789012/locations/global/bigQueryExports/satz-findings"' tmp/scce-hcl/main.tf \
+  || fail "the export does not pin the name the server assigns:\n$(grep -A8 'scc_v2_organization_scc_big_query_export' tmp/scce-hcl/main.tf | head -10)"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/scce-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the scc export does not validate"
 fi
