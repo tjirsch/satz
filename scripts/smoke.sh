@@ -401,6 +401,23 @@ if command -v tofu >/dev/null 2>&1; then
   (cd tmp/sccm-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the scc findings mail chain does not validate"
 fi
 
+step "scc findings siem: the connector's own subscription, and the grant without which it reads nothing"
+sed -e 's/^params {/params {\n  scc_notification_project = infra_project_name\n  scc_siem_subscriber = "serviceAccount:sentinel-service-account@acme-infra-001.iam.gserviceaccount.com"/' yaml/smoke.satz > tmp/sccs.satz
+cat >> tmp/sccs.satz <<'SATZ'
+use "presets/scc/scc-notifications.satz"
+use "presets/scc/scc-findings-siem.satz"
+SATZ
+"$satz" --config . transpile tmp/sccs.satz --output "$PWD/tmp/sccs-hcl" > tmp/sccs.txt 2>&1 || fail "the scc findings-siem pack does not transpile:\n$(cat tmp/sccs.txt)"
+grep -q 'resource "google_pubsub_subscription" "scc_findings_siem"' tmp/sccs-hcl/main.tf || fail "the connector has no subscription of its own"
+# two readers on ONE subscription split the findings, so the mail pack's is not reused
+grep -q 'resource "google_pubsub_subscription_iam_member" "scc_findings_siem_reader"' tmp/sccs-hcl/main.tf || fail "nothing grants the connector's identity"
+grep -q 'role = "roles/pubsub.subscriber"' tmp/sccs-hcl/main.tf || fail "the connector is granted the wrong role"
+grep -q 'member = "serviceAccount:sentinel-service-account@acme-infra-001.iam.gserviceaccount.com"' tmp/sccs-hcl/main.tf \
+  || fail "the grant does not name the identity the estate answered with:\n$(grep -A4 scc_findings_siem_reader tmp/sccs-hcl/main.tf | head -8)"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/sccs-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the scc siem chain does not validate"
+fi
+
 step "scc export: the API comes first, the dataset keeps its contents, the agent can write"
 sed -e 's/^params {/params {\n  scc_export_project = infra_project_name/' yaml/smoke.satz > tmp/scce.satz
 cat >> tmp/scce.satz <<'SATZ'
