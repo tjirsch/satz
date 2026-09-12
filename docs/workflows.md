@@ -29,6 +29,15 @@ Five steps, in this order. Each one is a section below.
    creates anything on top of it. [Keeping presets current](#keeping-presets-current)
    is that loop.
 
+   An estate the interview wrote already lists every pack, each as a commented `use` line
+   under the phase it can be adopted in — the map first, then the security-group model,
+   then what depends on the groups, and so on. Uncomment a line to add its pack, or answer
+   that pack's question and `satz interview` uncomments it. `satz merge-presets` writes the
+   line for a pack the library has gained since the estate was written, so the list stays
+   the library's rather than one person's memory of it. A question answered `true` whose
+   line is still commented — or missing — is reported at every compile, because otherwise
+   the answer is bound and nothing emits it.
+
 ### Prerequisites
 
 The executing user needs:

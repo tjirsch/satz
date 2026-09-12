@@ -203,20 +203,26 @@ grep -q 'All 3 questions are answered' tmp/decisions.md || fail "the decisions s
 
 step "interview: a skeleton, piped answers, derived defaults, the gate, and the decisions sheet"
 # The third way to start an estate. `init` takes every answer as a flag; this asks.
-# Piped input: accept the opening offer, type the seven values nobody can default,
-# then Enter for each name that became an offer once its inputs landed — the two
-# infra names, the two logging names, the alert project, the three addresses and the
-# CIS principal lists that derive from the org id.
+# A DAY-0 file: the scaffold and nothing else, so the questions are the estate's own
+# sixteen. Piped input: accept the opening offer, type the values nobody can default,
+# then Enter for each name that became an offer once its inputs landed.
 rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 40 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the forty usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 7 default(s)' tmp/iv/run.txt || fail "a day-0 file offers seven defaults, not the whole library's:\n$(cat tmp/iv/run.txt)"
+# every pack is commented out, and estate-core is the only `use` that is not
+[ "$(grep -c '^use \"presets' tmp/iv/new.satz)" = 1 ] \
+  || fail "a day-0 estate uses exactly one pack (estate-core):\n$(grep '^use \"presets' tmp/iv/new.satz)"
+grep -q '^// use \"presets/estate-map.satz\"' tmp/iv/new.satz \
+  || fail "the map must be written commented — it is what asks which packs the estate has"
+grep -q '^// use \"presets/scc/scc-export.satz\" when use_scc_export' tmp/iv/new.satz \
+  || fail "every optional pack must be written commented, under its phase"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
 grep -q 'customer_shortname = "acme"' tmp/iv/new.satz || fail "the answer was not written into params"
-grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof default must write the option"
+grep -q 'security_model_s1 = true' tmp/iv/new.satz && fail "a day-0 file does not answer the map's choices — the map is not in it yet"
 "$satz" --config . transpile "$PWD/tmp/iv/new.satz" --check > tmp/iv/check.txt 2>&1 || fail "the interviewed estate does not compile:\n$(cat tmp/iv/check.txt)"
 # THE GATE. An estate with an open question is refused by apply and by bootstrap;
 # a dry run warns — looking is how you find out.
@@ -224,7 +230,7 @@ grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 56 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 16 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -235,9 +241,31 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 56 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 16 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
+
+# THE SECOND PHASE. Uncommenting the map is what turns a day-0 file into one that asks
+# which packs the estate has — and answering a pack's question yes is what uncomments its
+# line. Without that, the answer binds and nothing emits it, which is the whole point of
+# the check below.
+sed 's|^// use "presets/estate-map.satz"|use "presets/estate-map.satz"|' tmp/iv/new.satz > tmp/iv/mapped.satz
+"$satz" --config . questions "$PWD/tmp/iv/mapped.satz" > tmp/iv/mapped.txt 2>&1 || true
+grep -q 'use_scc_enablement' tmp/iv/mapped.txt \
+  || fail "with the map in, the pack choices must be asked:\n$(cat tmp/iv/mapped.txt)"
+printf '%s\n' y | "$satz" --config . interview "$PWD/tmp/iv/mapped.satz" > tmp/iv/mapped2.txt 2>&1 \
+  || fail "the second interview round failed:\n$(cat tmp/iv/mapped2.txt)"
+# the four recommended-on choices are now answered true, so their lines are uncommented
+grep -q '^use "presets/billing-account-permissions.satz" when use_billing_permissions' tmp/iv/mapped.satz \
+  || fail "answering a choice yes must uncomment that pack's line:\n$(grep 'billing-account-permissions' tmp/iv/mapped.satz)"
+grep -q '^// use "presets/scc/scc-export.satz"' tmp/iv/mapped.satz \
+  || fail "a choice left false must leave its line commented"
+# and a question answered true whose line is gone is reported, never silently ignored
+grep -v 'organization-budget' tmp/iv/mapped.satz > tmp/iv/gone.satz
+sed -i.bak 's/^  use_budget = false/  use_budget = true/' tmp/iv/gone.satz
+"$satz" --config . transpile "$PWD/tmp/iv/gone.satz" --check > tmp/iv/gone.txt 2>&1 || true
+grep -q 'asks for but does not use' tmp/iv/gone.txt \
+  || fail "a pack answered for with no line must be reported:\n$(cat tmp/iv/gone.txt)"
 
 # a question is metadata: it must reach variables.tf as a description and NOTHING else
 grep -q 'description = "Short name identifying this customer"' tmp/showcase-hcl/variables.tf \
@@ -1351,7 +1379,7 @@ rm -f tmp/iv/agent.satz
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
   printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"create\":true}}}"
-  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"customer_id\":\"C0example\",\"customer_organization_id\":\"123456789012\",\"customer_domain\":\"example.com\",\"customer_shortname\":\"acme\",\"customer_longname\":\"Acme\",\"first_admin\":\"first.admin\",\"billing_account_infra\":\"012345-6789AB-CDEF01\",\"security_model\":\"security_model_s2\"},\"accept_defaults\":true}}}"
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"customer_id\":\"C0example\",\"customer_organization_id\":\"123456789012\",\"customer_domain\":\"example.com\",\"customer_shortname\":\"acme\",\"customer_longname\":\"Acme\",\"first_admin\":\"first.admin\",\"billing_account_infra\":\"012345-6789AB-CDEF01\"},\"accept_defaults\":true}}}"
   printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"nobody\":\"x\"}}}}"
 } > tmp/mcp-iv-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-iv-in.jsonl > tmp/mcp-iv.jsonl 2>/dev/null || true
@@ -1365,26 +1393,44 @@ for l in open("tmp/mcp-iv.jsonl"):
             msgs[d["id"]] = d
 a = msgs[3]["result"]["structuredContent"]
 assert a["created"] is True, a
-# the whole path: 16 day-0, 10 map choices (the three SCC follow-ups are not asked
-# while SCC itself is off — `ask_when`), 13 CIS, the default packs' own (S1 names,
-# archive, alerts, billing group, contact) — 16 of them need a value until their inputs land
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (56, 16), a["summary"]
-assert len(a["questions"]) == 56 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
-assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "a follow-up behind a false ask_when is not asked"
+# `create` over MCP writes the same DAY-0 file the CLI does: the estate's own sixteen, and
+# every pack commented out under its phase. Nine of the sixteen need a typed value until
+# their inputs land; the map's choices are not asked at all, because the map is not in yet.
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (16, 9), a["summary"]
+assert len(a["questions"]) == 16 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "no pack choice is asked on a day-0 file"
+assert "security_model" not in {q["subject"] for q in a["questions"]}, "the map is commented out, so its choices are not asked"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
 assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
-assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every default; the S2 model's six names replace S1's five, so 57 in all
-assert b["written"] == 57 and b["summary"]["complete"] is True, b["summary"]
+# 8 answers, then every remaining default: the estate's own sixteen params
+assert b["written"] == 16 and b["summary"]["complete"] is True, b["summary"]
+assert "security_model" not in str(b), "a day-0 file has no map, so no choice is answered here"
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]
 assert r["isError"] is True and "no pack this estate uses asks that" in r["content"][0]["text"], r
 PYEOF
-grep -q 'security_model_s2 = true' tmp/iv/agent.satz || fail "the oneof answer was not written"
+grep -qE '^  security_model_s[12] = ' tmp/iv/agent.satz && fail "a day-0 file has no map, so no choice is bound in it"
+# A SECOND ROUND, once the map is in: an agent answers the exclusive choice, and the tool
+# writes it as two booleans AND uncomments that model's pack line. Same code as the CLI —
+# `satz_interview` calls `interview::apply` — so this is the parity the table promises.
+sed -i.bak 's|^// use "presets/estate-map.satz"|use "presets/estate-map.satz"|' tmp/iv/agent.satz
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"security_model\":\"security_model_s2\"},\"accept_defaults\":true}}}" \
+  > tmp/mcp-iv2-in.jsonl
+python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-iv2-in.jsonl > tmp/mcp-iv2.jsonl 2>/dev/null || true
+grep -q 'security_model_s2 = true' tmp/iv/agent.satz || fail "the oneof answer was not written by the MCP tool"
+grep -q 'security_model_s1 = false' tmp/iv/agent.satz || fail "the oneof must set the siblings false"
+grep -q '^use "presets/security-group-models/s2-security-groups.satz" when security_model_s2' tmp/iv/agent.satz \
+  || fail "answering the choice must uncomment that model's pack line:\n$(grep 'security-group-models' tmp/iv/agent.satz)"
+grep -q '^// use "presets/security-group-models/s1-security-groups.satz"' tmp/iv/agent.satz \
+  || fail "the model that was not chosen keeps its line commented"
 grep -q 'security_model_s1 = false' tmp/iv/agent.satz || fail "the oneof siblings were not set false"
 "$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
 

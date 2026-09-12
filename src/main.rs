@@ -2071,6 +2071,7 @@ fn pipeline_b_generate(
     check_written_references(&folded, &out.manifest)?;
     report_missing_required(&out.missing_required, &runtime_config.validation_level)?;
     report_iac_roles(&out.manifest, &fe.env, input_path, &runtime_config.validation_level)?;
+    report_unadopted_packs(input_path, &fe.env, &runtime_config.validation_level)?;
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     let providers_tf = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
         .map_err(|e| format!("emit_providers: {}", e))?;
@@ -2100,6 +2101,73 @@ fn pipeline_b_generate(
 /// Set by `iac-roles`, which reports the same finding itself and would otherwise
 /// print it twice.
 static IAC_ROLES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A pack whose question is answered YES while its `use` line is still commented out —
+/// or missing from the estate altogether.
+///
+/// This is the failure the commented menu makes possible, and it is silent without this
+/// check: the param is bound, `satz questions` reports the estate complete, and the pack
+/// emits nothing because no line uses it. It is also how the library's own additions used
+/// to disappear — a pack shipped after an estate was written had no line in that estate, so
+/// answering its question did nothing at all. `satz merge-presets` writes the line;
+/// `satz interview` uncomments it; this says so when neither has happened.
+fn report_unadopted_packs(
+    estate: &Path,
+    env: &satz_core::pipeline::Env,
+    level: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if level == "none" {
+        return Ok(());
+    }
+    let Ok(src) = crate::fsx::read_to_string(estate) else {
+        return Ok(());
+    };
+    let mut commented: Vec<(&str, &str)> = Vec::new();
+    let mut absent: Vec<(&str, &str)> = Vec::new();
+    for (path, gate, _) in crate::template::PACK_LINES {
+        if gate.is_empty() || env.get(*gate).and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        let needle = format!("use \"{}\"", path);
+        let active = src
+            .lines()
+            .map(str::trim)
+            .any(|l| l.starts_with("use ") && l.contains(&needle));
+        if active {
+            continue;
+        }
+        if src.contains(&needle) {
+            commented.push((path, gate));
+        } else {
+            absent.push((path, gate));
+        }
+    }
+    if commented.is_empty() && absent.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::new();
+    for (path, gate) in &commented {
+        msg.push_str(&format!(
+            "  `{}` is true and `{}` is still commented out — uncomment it, or `satz interview` will\n",
+            gate, path
+        ));
+    }
+    for (path, gate) in &absent {
+        msg.push_str(&format!(
+            "  `{}` is true and this estate has no line for `{}` — run `satz merge-presets` to write it\n",
+            gate, path
+        ));
+    }
+    let head = format!(
+        "{} pack(s) this estate asks for but does not use — the answer is bound and nothing emits it:",
+        commented.len() + absent.len()
+    );
+    if level == "error" {
+        return Err(format!("{}\n{}", head, msg).into());
+    }
+    eprintln!("warning: {}\n{}", head, msg);
+    Ok(())
+}
 
 /// The roles the estate's resource types need that it does not grant its IaC
 /// service account, at the validation level: `warn` names them and the command
