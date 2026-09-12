@@ -236,6 +236,7 @@ use "presets/ci/verification-runner-grant.satz" when use_verification_runner
 use "presets/integrations/microsoft-defender-for-cloud.satz" when use_defender
 use "presets/integrations/microsoft-sentinel.satz" when use_sentinel
 use "presets/integrations/microsoft-sentinel-auditlogs.satz" when use_sentinel_auditlogs
+use "presets/integrations/microsoft-sentinel-network-logs.satz" when use_sentinel_network_logs
 
 google_essential_contacts_contact {{
   use "presets/essential-contacts-organization.satz" when use_essential_contacts

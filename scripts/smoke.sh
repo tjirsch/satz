@@ -394,6 +394,33 @@ fi
 grep -q 'logsink_project_id' tmp/oldparam.txt || fail "the refusal does not name the param to use instead:\n$(cat tmp/oldparam.txt)"
 grep -q 'logsink_project_display_name' tmp/oldparam.txt || fail "the refusal does not say where the display name went:\n$(cat tmp/oldparam.txt)"
 
+step "sentinel network streams: four sinks, four subscriptions, and no authoritative grant"
+sed -e 's/^params {/params {\n  sentinel_project_id = infra_project_name\n  sentinel_workload_pool_id = "22222222222222222222222222222222"\n  sentinel_project_number = "123456789012"/' yaml/smoke.satz > tmp/sentnet.satz
+cat >> tmp/sentnet.satz <<'SATZ'
+use "presets/integrations/microsoft-sentinel.satz"
+use "presets/integrations/microsoft-sentinel-network-logs.satz"
+SATZ
+"$satz" --config . transpile tmp/sentnet.satz --output "$PWD/tmp/sentnet-hcl" > tmp/sentnet.txt 2>&1 || fail "the sentinel network pack does not transpile:\n$(cat tmp/sentnet.txt)"
+# one stream per sink, selected by its own log id — never mixed with the same service's
+# audit records, which the audit fragment already carries
+for f in 'log_id(\"compute.googleapis.com/vpc_flows\")' 'log_id(\"compute.googleapis.com/firewall\")' 'resource.type=\"dns_query\"' 'log_id(\"compute.googleapis.com/nat_flows\")'; do
+  grep -qF "$f" tmp/sentnet-hcl/main.tf || fail "a network stream's filter is missing: $f"
+done
+for sink in vpc-flow firewall dns nat; do
+  grep -q "\"${sink}-logs-organization-sentinel-sink\"" tmp/sentnet-hcl/main.tf || fail "no organisation sink for the ${sink} stream"
+done
+for sub in vpcflowlogs firewalllogs DNSlogs natlogs; do
+  grep -q "\"sentinel-subscription-${sub}\"" tmp/sentnet-hcl/main.tf || fail "no subscription for ${sub} — a stream sharing another's subscription splits its messages"
+done
+# upstream grants publisher with google_project_iam_binding, which is authoritative:
+# the second stream applied would remove the first sink's grant and stop delivery
+grep -q 'google_project_iam_binding' tmp/sentnet-hcl/main.tf && fail "an authoritative binding would remove another sink's publisher grant"
+[ "$(grep -c 'role = "roles/pubsub.publisher"' tmp/sentnet-hcl/main.tf)" = 4 ] || fail "every sink's writer identity must be able to publish"
+[ "$(grep -c 'role = "roles/pubsub.subscriber"' tmp/sentnet-hcl/main.tf)" = 4 ] || fail "the connector must be able to read every stream"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/sentnet-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the sentinel network chain does not validate"
+fi
+
 step "scc notifications: the chain is topic + grant + config, and the agent is the organisation's"
 sed -e 's/^params {/params {\n  scc_notification_project = infra_project_name/' yaml/smoke.satz > tmp/scc.satz
 cat >> tmp/scc.satz <<'SATZ'
