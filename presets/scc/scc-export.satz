@@ -27,10 +27,16 @@
 // outside the allowed list is refused at apply — the default follows the estate's
 // own default region, which that list already permits.
 //
+// CHANGING ONE AFTERWARDS. The export's own fields do not update in place: the
+// provider sends `name` with the update and the API refuses it. A new description,
+// dataset or filter is applied by replacing the export —
+// `satz apply -replace=google_scc_v2_organization_scc_big_query_export.<label>` —
+// which keeps the dataset and everything already in it.
+//
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing.
 
-pack scc_export version "1.0"
+pack scc_export version "1.1"
 
 params {
   scc_export_project    = infra_project_name
@@ -96,6 +102,10 @@ google_scc_v2_organization_scc_big_query_export {
     big_query_export_id = scc_export_id
     organization        = customer_organization_id
     location            = "global"
+    // The server assigns this and the provider reads it back. Left out of the
+    // config, every plan proposes to null it and the API refuses the update with
+    // "Field name is immutable" — a diff that never applies and never goes away.
+    name                = "organizations/{customer_organization_id}/locations/global/bigQueryExports/{scc_export_id}"
     dataset             = "projects/${{google_bigquery_dataset.scc_findings.project}}/datasets/${{google_bigquery_dataset.scc_findings.dataset_id}}"
     description         = scc_export_description
     filter              = scc_export_filter
