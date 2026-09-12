@@ -18,7 +18,7 @@ use satz_core::pipeline::{estate_questions, Env};
 use crate::ToolConfig;
 
 /// One question, joined with the answer the estate currently carries.
-#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct QuestionRow {
     /// the param it answers, or the group name for a choice
     pub subject: String,
@@ -406,12 +406,109 @@ pub(crate) fn render_questions(r: &QuestionsReport) -> String {
     out
 }
 
-/// The decisions sheet — "these are your decisions, shall we start?" — for a
-/// human to read before an organisation is touched. Grouped by pack, each pack
-/// introduced by its own description, each question with the answer the estate
-/// carries or the default it would accept. Markdown, because it is handed over.
+/// The catalog as a workbook — the format a customer can fill in and send back.
+///
+/// One row per question, grouped by pack in the order the interview asks them. The
+/// "your answer" column is the customer's to edit; "needs an answer" says which rows are
+/// still waiting. `why` and the cost of a later change travel with each row, because a
+/// decision read six months later without its reason is not a decision anybody can defend.
+pub(crate) fn xlsx(r: &QuestionsReport) -> Result<Vec<u8>, String> {
+    use rust_xlsxwriter::{Format, FormatAlign, Workbook};
+
+    const COLUMNS: [&str; 8] =
+        ["pack", "decision", "your answer", "needs an answer", "how it was set", "why it is asked", "changing it later", "param"];
+
+    let mut wb = Workbook::new();
+    let header = Format::new().set_bold().set_background_color("#D9D9D9").set_align(FormatAlign::Center);
+    let theirs = Format::new().set_background_color("#FFF7E6");
+    let wrap = Format::new().set_text_wrap();
+
+    let ws = wb.add_worksheet().set_name("Decisions").map_err(|e| e.to_string())?;
+    for (c, name) in COLUMNS.iter().enumerate() {
+        ws.write_string_with_format(0, c as u16, *name, &header).map_err(|e| e.to_string())?;
+    }
+    for (i, q) in r.questions.iter().enumerate() {
+        let row = i as u32 + 1;
+        let answer = match (&q.current, &q.default) {
+            (Some(v), _) => short(v),
+            (None, Some(d)) => short(d),
+            _ => String::new(),
+        };
+        let cells = [
+            q.pack.clone(),
+            q.prompt.clone(),
+            answer,
+            if q.state == "answered" { "no".into() } else if q.blocking { "yes — and it has no default".into() } else { "yes".into() },
+            how_answered(q).to_string(),
+            q.why.clone().unwrap_or_default(),
+            cost_in_words(q),
+            q.subject.clone(),
+        ];
+        for (c, cell) in cells.iter().enumerate() {
+            let f = match c {
+                2 => Some(&theirs),
+                1 | 5 | 6 => Some(&wrap),
+                _ => None,
+            };
+            match f {
+                Some(f) => ws.write_string_with_format(row, c as u16, cell, f).map_err(|e| e.to_string())?,
+                None => ws.write_string(row, c as u16, cell).map_err(|e| e.to_string())?,
+            };
+        }
+    }
+    let n = r.questions.len() as u32;
+    if n > 0 {
+        ws.autofilter(0, 0, n, (COLUMNS.len() - 1) as u16).map_err(|e| e.to_string())?;
+    }
+    ws.set_freeze_panes(1, 0).map_err(|e| e.to_string())?;
+    for (c, w) in [(0u16, 28.0), (1, 52.0), (2, 28.0), (3, 22.0), (4, 24.0), (5, 64.0), (6, 44.0), (7, 30.0)] {
+        ws.set_column_width(c, w).map_err(|e| e.to_string())?;
+    }
+    wb.save_to_buffer().map_err(|e| e.to_string())
+}
+
+/// Whether a bound answer was CHOSEN or merely took what the pack offered.
+///
+/// satz cannot read intent — a customer may pick the default deliberately — so this says
+/// what it can prove: the value differs from the pack's default, or it does not. That is
+/// the useful half anyway. It is where a customer decided something for themselves.
+pub(crate) fn how_answered(q: &QuestionRow) -> &'static str {
+    match (q.state, &q.current, &q.default) {
+        ("answered", Some(c), Some(d)) if c == d => "same as the pack's default",
+        ("answered", Some(_), _) => "chosen for this estate",
+        ("answered", None, _) => "answered",
+        ("not-applicable", _, _) => "not applicable here",
+        _ => "still open",
+    }
+}
+
+/// What changing this answer later costs, as a sentence rather than two enum names.
+pub(crate) fn cost_in_words(q: &QuestionRow) -> String {
+    let what = match q.reversal {
+        "recreate" => "the resource is destroyed and made again",
+        "state_surgery" => "the estate's state has to be edited by hand",
+        _ => "an edit to the estate",
+    };
+    let who = match q.blast {
+        "high" => "and the running organisation feels it",
+        "low" => "with little effect on what is running",
+        _ => "and nothing running notices",
+    };
+    format!("{} {}", what, who)
+}
+
+/// The decisions sheet — "these are your decisions, shall we start?" — and the catalog a
+/// customer keeps afterwards. Grouped by pack, each pack introduced by its own
+/// description, each question with the answer the estate carries or the default it would
+/// accept, WHY it is asked at all, and what changing it later costs. Markdown, because it
+/// is handed over.
 pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
-    let mut out = format!("# Decisions — {}\n\n", r.estate);
+    let mut out = format!(
+        "# Decisions — {}\n\nEvery decision this estate rests on: what was asked, what it is set to, \
+         whether that was chosen or taken as offered, and what changing it later costs. The italic \
+         line under each is why the question exists at all.\n\n",
+        r.estate
+    );
     let s = &r.summary;
     if s.complete {
         out.push_str(&format!(
@@ -433,7 +530,7 @@ pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
         if let Some(d) = rows.first().map(|q| q.pack_description.as_str()).filter(|d| !d.is_empty()) {
             out.push_str(&format!("{}\n\n", d));
         }
-        out.push_str("| | decision | your answer | changing it later |\n|---|---|---|---|\n");
+        out.push_str("| | decision | your answer | how | changing it later |\n|---|---|---|---|---|\n");
         for q in rows {
             let mark = match q.state {
                 "answered" => "✓",
@@ -460,8 +557,11 @@ pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
                 }
                 _ => "**needs a value**".to_string(),
             };
-            let cost = format!("{} · blast {}", q.reversal.replace('_', " "), q.blast);
-            out.push_str(&format!("| {} | {} | {} | {} |\n", mark, q.prompt, answer, cost));
+            let cost = cost_in_words(q);
+            out.push_str(&format!("| {} | {} | {} | {} | {} |\n", mark, q.prompt, answer, how_answered(q), cost));
+            if let Some(why) = q.why.as_deref().filter(|w| !w.is_empty()) {
+                out.push_str(&format!("| | *{}* | | | |\n", why.replace('|', "\\|")));
+            }
         }
         out.push('\n');
     }
@@ -481,6 +581,61 @@ pub(crate) fn short(v: &serde_yaml::Value) -> String {
 #[cfg(test)]
 mod render_tests {
     use super::*;
+
+    #[test]
+    fn the_catalog_workbook_carries_the_reason_and_marks_what_is_open() {
+        let mut r = report(QuestionsSummary { total: 2, answered: 1, unanswered: 1, blocking: 1, ..Default::default() });
+        r.questions = vec![
+            QuestionRow {
+                subject: "chosen_one".into(),
+                kind: "param",
+                prompt: "Which region?".into(),
+                why: Some("Regional resources cannot move.".into()),
+                reversal: "recreate",
+                blast: "high",
+                state: "answered",
+                current: Some(serde_yaml::Value::String("europe-west4".into())),
+                default: Some(serde_yaml::Value::String("europe-west3".into())),
+                blocking: false,
+                pack: "estate_core".into(),
+                pack_description: "day 0".into(),
+                ..Default::default()
+            },
+            QuestionRow {
+                subject: "still_open".into(),
+                kind: "param",
+                prompt: "Which mailbox?".into(),
+                why: Some("Nobody reads a wrong address.".into()),
+                reversal: "edit",
+                blast: "low",
+                state: "unanswered",
+                current: None,
+                default: None,
+                blocking: true,
+                pack: "alerts".into(),
+                pack_description: "alerting".into(),
+                ..Default::default()
+            },
+        ];
+
+        // an answer that differs from the pack's default is where a customer decided something
+        assert_eq!(how_answered(&r.questions[0]), "chosen for this estate");
+        assert_eq!(how_answered(&r.questions[1]), "still open");
+        assert!(cost_in_words(&r.questions[0]).contains("destroyed and made again"));
+
+        let bytes = xlsx(&r).expect("the workbook builds");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("xlsx is a zip");
+        let mut strings = String::new();
+        {
+            use std::io::Read;
+            let mut f = zip.by_name("xl/sharedStrings.xml").expect("shared strings");
+            f.read_to_string(&mut strings).unwrap();
+        }
+        assert!(strings.contains("why it is asked"), "the reason is a column, not a footnote");
+        assert!(strings.contains("Regional resources cannot move."), "each row carries its own why");
+        assert!(strings.contains("yes — and it has no default"), "a question with no default is marked as needing one");
+        assert!(strings.contains("chosen for this estate"));
+    }
 
     fn report(summary: QuestionsSummary) -> QuestionsReport {
         QuestionsReport { estate: "e.satz".into(), questions: Vec::new(), summary }

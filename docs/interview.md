@@ -227,7 +227,23 @@ satz questions C0example.satz --format markdown > decisions.md
 
 One table per pack, opened by the pack's description: the question, the answer the
 estate carries (or the default it would accept, or **needs a value**), and what
-changing it later costs. `satz questions <estate> --unanswered` is the same report,
+changing it later costs. ### The catalog a customer keeps
+
+`satz questions <estate> --format markdown` is the decisions sheet, and it is also the
+document handed over afterwards: every question grouped by pack, with the answer the estate
+carries, whether that answer was **chosen for this estate** or is the **same as the pack's
+default**, WHY the question is asked at all — the pack's own sentence — and what changing it
+later costs in words rather than two enum names.
+
+`--xlsx <file>` writes the same catalog as a workbook, which is the one format a customer can
+fill in and send back: the `your answer` column is theirs, and `needs an answer` says which
+rows are still waiting. Both can be produced at once; the workbook is always a file, because
+a spreadsheet down a pipe is a corrupt spreadsheet.
+
+Over MCP, `satz_questions` returns the same data as JSON and an agent renders its own — the
+two file formats are for the human on the other end.
+
+`satz questions <estate> --unanswered` is the same report,
 reduced to the open questions.
 
 ## Writing a pack that can be interviewed

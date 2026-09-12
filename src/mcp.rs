@@ -954,8 +954,10 @@ impl SatzMcp {
         name = "satz_questions",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::questions::QuestionsReport>(),
         description = "What this estate can be asked: every question its packs declare, joined with the \
-                       answers its params already carry, and what changing each answer would cost. \
-                       Offline and schema-free.",
+                       answers its params already carry, why each is asked, and what changing each answer \
+                       would cost. This is the catalog's data — an agent renders its own; the CLI's \
+                       `--format markdown` and `--xlsx` write the two a human is handed. Offline and \
+                       schema-free.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn questions(

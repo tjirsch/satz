@@ -242,6 +242,25 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
 grep -q '1 of 16 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+# the catalog is what the customer keeps: every question carries WHY it is asked, whether
+# the answer was chosen or taken as offered, and the cost of changing it in words
+grep -q 'why the question exists at all' tmp/iv/decisions.md || fail "the sheet does not say what it is for"
+grep -q 'how | changing it later' tmp/iv/decisions.md || fail "the catalog columns are missing"
+grep -qE '\| \*[A-Z]' tmp/iv/decisions.md || fail "no question carries its `why` line"
+grep -q 'the estate and the running organisation feels it\|destroyed and made again' tmp/iv/decisions.md \
+  || fail "the cost of a later change must be words, not two enum names"
+# and the workbook a customer fills in and sends back
+"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --xlsx "$PWD/tmp/iv/decisions.xlsx" > /dev/null 2>tmp/iv/xlsx.txt \
+  || fail "the catalog workbook was not written:\n$(cat tmp/iv/xlsx.txt)"
+grep -q 'the `your answer` column is the customer' tmp/iv/xlsx.txt || fail "the workbook must say whose column that is"
+python3 - "$PWD/tmp/iv/decisions.xlsx" <<'PYX' || fail "the workbook is not a readable xlsx with the catalog columns"
+import re, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+s = z.read("xl/sharedStrings.xml").decode("utf-8", "replace")
+vals = re.findall(r"<t[^>]*>(.*?)</t>", s)
+for want in ("pack", "decision", "your answer", "needs an answer", "why it is asked", "changing it later"):
+    assert want in vals, f"column {want!r} missing from {vals[:10]}"
+PYX
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
