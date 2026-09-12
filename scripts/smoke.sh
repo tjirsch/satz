@@ -167,6 +167,13 @@ case "$(cd "$root" && git ls-files presets/scc/scc-enable-all.sh)" in
   presets/scc/scc-enable-all.sh) ;;
   *) fail "the SCC script is not tracked under presets/ — get-presets would not ship it" ;;
 esac
+# the estate decides the two opt-in detectors, and the choice reaches the command line
+grep -q -- '--optional leave' tmp/scc-actions.txt \
+  || fail "the opt-in choice did not reach the resolved command line:\n$(cat tmp/scc-actions.txt)"
+bash "$root/presets/scc/scc-enable-all.sh" --organization 123456789012 --optional nonsense > tmp/scc-bad.txt 2>&1 \
+  && fail "an unknown --optional state was accepted"
+grep -q "is not an opt-in service" tmp/scc-bad.txt \
+  || fail "the refusal does not say what --optional takes:\n$(cat tmp/scc-bad.txt)"
 
 step "questions: what the estate can be asked, and what the answers cost"
 "$satz" --config . questions showcase.satz > tmp/questions.txt 2>/dev/null || fail "satz questions failed"

@@ -45,7 +45,25 @@
 // report whether SCC is on; Cloud Asset Inventory does not carry it.
 //
 
-pack scc_service_enablement version "1.0"
+pack scc_service_enablement version "1.1"
+
+params {
+  // The two detectors outside the baseline: WEB_SECURITY_SCANNER, which actively
+  // crawls the customer's web applications, and ARTIFACT_ANALYSIS, which is billed
+  // per image scan. This says which of them the organisation wants:
+  //   leave                     do not touch either — whatever the console says stands
+  //   all                       both on
+  //   none                      both off
+  //   ARTIFACT_ANALYSIS         the ones named are on, the rest off
+  scc_optional_services = "leave"
+}
+
+question scc_optional_services {
+  prompt   = "Which detectors outside the baseline does this organisation want: leave, all, none, or the ones you name?"
+  why      = "Neither is in the baseline: Web Security Scanner actively crawls the customer's web applications, and Artifact Analysis is billed per image scan. `leave` keeps whatever the organisation already has — which is also how one somebody switched on in the console survives. Naming them makes the estate the source of truth: the ones named are on and the rest go off."
+  reversal = edit
+  blast    = low
+}
 
 action "scc-services" {
   reason = "SCC service enablement has no provider resource — google 7.14.1 ships 35 google_scc_*/google_securityposture_* types and none of them is enablement or tier activation"
@@ -53,7 +71,7 @@ action "scc-services" {
   run = "scc-enable-all.sh"
 
   // The organisation comes from the estate, never from this pack.
-  args = ["--organization", "{customer_organization_id}"]
+  args = ["--organization", "{customer_organization_id}", "--optional", "{scc_optional_services}"]
 
   // Dry run until this is added. The script validates every call against the
   // API without writing when it is absent.
