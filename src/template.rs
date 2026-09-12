@@ -234,6 +234,8 @@ use "presets/ci/verification-runner.satz" when use_verification_runner
 use "presets/ci/verification-runner-grant.satz" when use_verification_runner
 // Defender's plan fragments are added by hand once this is true — see that pack's header.
 use "presets/integrations/microsoft-defender-for-cloud.satz" when use_defender
+use "presets/integrations/microsoft-sentinel.satz" when use_sentinel
+use "presets/integrations/microsoft-sentinel-auditlogs.satz" when use_sentinel_auditlogs
 
 google_essential_contacts_contact {{
   use "presets/essential-contacts-organization.satz" when use_essential_contacts

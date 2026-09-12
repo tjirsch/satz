@@ -332,6 +332,8 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_scc_export` | off | `scc/scc-export` — the BigQuery dataset findings are kept in |
 | `use_security_audit_sa` | off | `security-audit/sa-security-audit` |
 | `use_defender` | off | `integrations/microsoft-defender-for-cloud` — its plan fragments by hand |
+| `use_sentinel` | off | `integrations/microsoft-sentinel` — the federation half |
+| `use_sentinel_auditlogs` | off | `integrations/microsoft-sentinel-auditlogs`, asked only when Sentinel is on — its other log sources by hand |
 | `use_verification_runner` | off | `ci/verification-runner` and its grant, the customer-hosted shape |
 
 **Not a choice:** the CIS baseline — the skeleton always uses it, and its opt-in
@@ -804,6 +806,70 @@ only Microsoft's generated script knows them; `mdc_plan_cspm` asks whether the p
 licensed; and the access mode is a `question oneof` with `ask_when = mdc_plan_cspm`, so
 it is asked only once CSPM is on.
 
+## integrations/microsoft-sentinel*.satz
+
+Microsoft Sentinel's GCP connector: Sentinel PULLS logs from a Pub/Sub subscription,
+authenticating through workload identity federation, so no service-account key leaves
+the organisation. Two files, because federation is set up once and log sources are
+added one at a time.
+
+**Use** (root level):
+
+```
+use "presets/integrations/microsoft-sentinel.satz"
+use "presets/integrations/microsoft-sentinel-auditlogs.satz" when use_sentinel_auditlogs
+```
+
+`microsoft-sentinel.satz` is the federation half: the two APIs, a pool named after the
+customer's Entra tenant, the `sentinel-identity-provider` that trusts Microsoft's
+commercial tenant as issuer with `api://<Sentinel application id>` as the audience, the
+`sentinel-service-account`, and `roles/iam.workloadIdentityUser` for the pool's whole
+principal set on that account. It grants nothing else — each log source grants what it
+needs, where it needs it.
+
+`microsoft-sentinel-auditlogs.satz` is the first log source: an organisation sink with
+`include_children` exporting the four audit streams, the topic it writes to, the
+subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's own writer
+identity (without which the sink exists and delivers nothing), and
+`roles/pubsub.subscriber` for the Sentinel account on that one subscription. Microsoft's
+published configuration grants a project-level custom role carrying
+`pubsub.subscriptions.consume` and `.get` instead, which reaches every subscription in
+the project; this is the same access confined to the one that exists for it.
+
+**Params:** `sentinel_workload_pool_id` (the Entra tenant id without dashes) and
+`sentinel_project_number` block until typed — the project number cannot be derived from
+the id and the principal set is built from it. `sentinel_project_id` defaults to the
+audit archive's project by reference. `sentinel_auditlogs_filter` is asked: Data Access
+logs are most of the volume and Sentinel charges by the gigabyte ingested.
+
+**Transcribed, not imported.** The shape is Microsoft's own Terraform in
+`Azure/Azure-Sentinel` (`DataConnectors/GCP/Terraform/sentinel_resources_creation/`),
+which pins the Google provider at 3.73.0 and uses authoritative
+`google_project_iam_binding` — run beside an estate it removes grants the estate made.
+Everything here is non-authoritative `_iam_member` against the pinned provider.
+
+**More log sources.** Microsoft publishes one configuration per source — VPC flow,
+firewall, DNS, GKE, Cloud SQL, Compute, IAM, Resource Manager and the rest. Each is a
+copy of the audit-log fragment with its own names and filter, wired by hand; widening
+the existing sink instead replaces it, and a replaced sink drops what was in flight.
+
+**Two organisation policies can refuse the first apply**, neither of them set by this
+library: a deny-all on `iam.workloadIdentityPoolProviders` blocks the provider unless
+the `sts.windows.net/<microsoft tenant>` issuer is allowed, and where
+`iam.managed.allowedPolicyMembers` is enforced the principal set must be allowed before
+the binding is applied.
+
+**Running Defender too?** They share nothing — separate pools, accounts and topics. If
+both are pointed at one project, give them different pool ids: a pool id is unique per
+project.
+
+**No claim.** Exporting logs to a SIEM does not satisfy a retention control — the audit
+archive pack claims those — and Sentinel is in no catalog.
+
+**Onboarding is two-sided.** This is the Google half; the Sentinel connector in Azure is
+configured with the pool, provider and service account it creates, and nothing flows
+until both sides are done.
+
 ## Questions
 
 A pack declares its params, its claims — and what a human must be asked before those
@@ -1056,6 +1122,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `integrations.microsoft_sentinel` | 1.0 | 2026-09-12 | first version: Sentinel's GCP federation — pool, the provider trusting Microsoft's commercial tenant with the `api://` audience, the connector's service account and `roles/iam.workloadIdentityUser` for the pool's principal set. Transcribed from Microsoft's own Terraform against the pinned provider: upstream pins google 3.73.0 and uses authoritative `google_project_iam_binding`, which removes grants an estate made |
+| `integrations.microsoft_sentinel_auditlogs` | 1.0 | 2026-09-12 | first version: the first log source — an organisation sink with `include_children` for the four audit streams, its topic, the subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's writer identity and `roles/pubsub.subscriber` for the connector on that one subscription. Tighter than upstream, which grants a project-level custom role over every subscription in the project. The filter is asked: Data Access logs are most of the volume and Sentinel bills by the gigabyte |
 | `s2_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_group_definitions` | 1.4 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
@@ -1063,6 +1131,7 @@ the private history recorded them.
 | `cis_extensions.access_approval` | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
 | `cis_extensions.internet_ssh_rdp` | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
 | `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.0 | 2026-09-11 | CIS 5.0 6.6 and 6.9, opt-in: two custom constraints on Cloud SQL instances — IAM database authentication on (SQL Server exempt), deletion protection on — each enforced by a policy on the organisation |
+| `estate_map` | 1.5 | 2026-09-12 | `use_sentinel` and, behind it, `use_sentinel_auditlogs`: a customer's SIEM is a choice the interview makes, not a fragment somebody remembers to wire |
 | `estate_map` | 1.4 | 2026-09-12 | `use_scc_findings_siem` beside the mailbox choice, asked with it when the topic is on: a customer with a SIEM answers where findings go without being asked for an address nobody reads |
 | `estate_map` | 1.3 | 2026-09-12 | Security Command Center is one decision with follow-ups: `use_scc_enablement` carries what the Premium tier costs (per covered resource-hour, not a share of the bill) and that the 30-day trial becomes pay-as-you-go by itself, and `recommend = true` offers it — the param default stays off, so `--accept-defaults` never switches a paid service on. `use_scc_notifications` and `use_scc_export` are asked only when enablement is on (`ask_when`), and `use_scc_findings_mail` only when the topic is |
 | `estate_map` | 1.2 | 2026-09-12 | one more choice: `use_scc_export`, the BigQuery dataset findings are kept and queried in |

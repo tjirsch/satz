@@ -30,6 +30,8 @@ params {
   security_audit_sa_project = "acme-infra-001"
   mdc_workload_pool_id = "11111111111111111111111111111111"
   mdc_mgmt_project_id = "acme-mdc-001"
+  sentinel_workload_pool_id = "22222222222222222222222222222222"
+  sentinel_project_number = "123456789012"
   scc_siem_subscriber = "serviceAccount:sentinel-service-account@acme-infra-001.iam.gserviceaccount.com"
   access_approval_notification_emails = ["security@example.com"]
 }
@@ -80,6 +82,8 @@ use "presets/scc/scc-findings-siem.satz"
 use "presets/scc/scc-export.satz"
 
 use "presets/integrations/microsoft-defender-for-cloud.satz"
+use "presets/integrations/microsoft-sentinel.satz"
+use "presets/integrations/microsoft-sentinel-auditlogs.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz"
 
