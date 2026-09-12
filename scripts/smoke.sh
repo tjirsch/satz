@@ -955,7 +955,7 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_transpile_check", "satz_transpile", "satz_report_compliance",
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
-                      "satz_iac_roles", "satz_restrict"}, sorted(tools)
+                      "satz_iac_roles", "satz_merge_presets", "satz_restrict"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -974,7 +974,7 @@ assert opened["runs_as"] is None, opened
 for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
-             "satz_adopt", "satz_get_presets", "satz_iac_roles"):
+             "satz_adopt", "satz_get_presets", "satz_iac_roles", "satz_merge_presets"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
@@ -1203,6 +1203,7 @@ printf '%s\n' 'estate gp' '' 'params {' '  customer_organization_id = "123456789
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"gp.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_get_presets","arguments":{"pristine_dir":"pristine"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_get_presets","arguments":{"pristine_dir":"pristine"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_merge_presets","arguments":{"pristine_dir":"pristine","report_only":true}}}'
 } > tmp/mcp-gp-in.jsonl
 (cd tmp/gp && python3 ../mcp-drive.py "$satz" mcp --root . --allow read,write < ../mcp-gp-in.jsonl > ../mcp-gp.jsonl 2>/dev/null) || true
 python3 - <<'PYEOF' || fail "satz_adopt / satz_get_presets did not behave"
@@ -1226,6 +1227,13 @@ first = g[3]["result"]["structuredContent"]
 assert first["installed"] and not first["refused"], first
 second = g[4]["result"]["structuredContent"]
 assert not second["installed"] and not second["refreshed"] and second["current"] == len(first["installed"]), second
+# the same library through merge-presets: everything current, nothing to do, and the
+# report is the walk as events — not a string a client would have to parse
+merged = g[5]["result"]["structuredContent"]
+assert merged["report_only"] is True, merged
+assert merged["counts"]["current"] == second["current"], merged["counts"]
+assert merged["attention"] is False, merged
+assert all(e["kind"] == "pack" for e in merged["events"]), [e["kind"] for e in merged["events"]][:5]
 PYEOF
 [ -s tmp/gp/presets/CIS-GCP-Foundation-4.0.satz ] || fail "satz_get_presets did not install the library"
 
