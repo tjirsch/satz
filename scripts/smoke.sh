@@ -211,7 +211,7 @@ rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 37 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-seven usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 38 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-eight usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
@@ -224,7 +224,7 @@ grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 53 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 54 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -235,7 +235,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 53 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 54 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
@@ -359,6 +359,30 @@ grep -qE '✓ 4.8 ' tmp/ext-require.txt || fail "4.8 did not become satisfied wi
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/ext-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the extensions do not validate"
 fi
+
+step "dns logging: the one extension that is on by default, and what it claims"
+# The baseline already enforces flow logs (compute.requireVpcFlowLogs, claimed for
+# 4.0 3.8 / 5.0 3.10), so the smoke estate carries it without asking for anything.
+grep -q 'name = "organizations/123456789012/policies/compute.requireVpcFlowLogs"' hcl/main.tf || fail "the baseline lost its flow-log constraint"
+# The flag defaults TRUE — the only extension that does — but a flag alone emits
+# nothing: the estate carries the `use … when` line (ADR 0007), and the skeleton writes it.
+grep -q 'cis_dns_logging            = true' ../../presets/CIS-GCP-Foundation-4.0.satz \
+  || fail "cis_dns_logging no longer defaults to true"
+cp yaml/smoke.satz tmp/dns.satz
+cat >> tmp/dns.satz <<'SATZ'
+use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
+SATZ
+"$satz" --config . transpile tmp/dns.satz --output "$PWD/tmp/dns-hcl" > tmp/dns.txt 2>&1 || fail "the dns-logging fragment does not transpile:\n$(cat tmp/dns.txt)"
+# a CUSTOM constraint, because Google publishes no predefined one for DNS logging
+grep -q 'resource "google_org_policy_custom_constraint" "cis_dns_logging"' tmp/dns-hcl/main.tf \
+  || fail "the DNS custom constraint is missing"
+grep -q 'condition = "resource.enableLogging == true"' tmp/dns-hcl/main.tf \
+  || fail "the DNS constraint's condition is not the one measured against the live API"
+grep -q '"dns.googleapis.com/Policy"' tmp/dns-hcl/main.tf || fail "the DNS constraint names the wrong resource type"
+# it CONTRIBUTES, never implements: no org policy can require that a network HAS a policy
+grep -q 'contributes' ../../presets/cis-extensions/dns-logging.satz || fail "the DNS claim must not be an implements"
+"$satz" --config . require cis-gcp-5.0 tmp/dns.satz > tmp/dnsreq.txt 2>&1 || true
+grep -q '0 broken claim' tmp/dnsreq.txt || fail "the DNS claim names a witness the estate does not emit:\n$(grep -i broken tmp/dnsreq.txt)"
 
 step "sentinel: federation without a key, and an audit path whose every grant is there"
 sed -e 's/^params {/params {\n  sentinel_project_id = infra_project_name\n  sentinel_workload_pool_id = "22222222222222222222222222222222"\n  sentinel_project_number = "123456789012"/' yaml/smoke.satz > tmp/sent.satz
@@ -1313,8 +1337,8 @@ assert a["created"] is True, a
 # the whole path: 16 day-0, 10 map choices (the three SCC follow-ups are not asked
 # while SCC itself is off — `ask_when`), 13 CIS, the default packs' own (S1 names,
 # archive, alerts, billing group, contact) — 16 of them need a value until their inputs land
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (53, 16), a["summary"]
-assert len(a["questions"]) == 53 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (54, 16), a["summary"]
+assert len(a["questions"]) == 54 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "a follow-up behind a false ask_when is not asked"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
@@ -1322,8 +1346,8 @@ assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every default; the S2 model's six names replace S1's five, so 54 in all
-assert b["written"] == 54 and b["summary"]["complete"] is True, b["summary"]
+# 8 answers, then every default; the S2 model's six names replace S1's five, so 55 in all
+assert b["written"] == 55 and b["summary"]["complete"] is True, b["summary"]
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]

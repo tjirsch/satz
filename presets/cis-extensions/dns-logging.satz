@@ -1,0 +1,70 @@
+// CIS 5.0 §2.13 — DNS query logging, as far as an org policy can carry it.
+//
+//   use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
+//
+// WHAT THE CONTROL ASKS. Every VPC network has a Cloud DNS policy with logging enabled,
+// so name resolution is auditable — which is how a compromised host asking for its
+// command-and-control domain becomes visible. New in CIS 5.0; the 4.0 catalog has no
+// such control.
+//
+// WHAT A CONSTRAINT CAN AND CANNOT DO, stated plainly because the difference decides
+// the claim. An org-policy constraint judges a resource being CREATED or UPDATED. It
+// can therefore refuse a DNS policy that has logging off, which is what this pack
+// enforces. It cannot require that a resource EXIST: nothing in an org policy can say
+// "every network must have a DNS policy attached", because the network is not the
+// resource being changed and carries no reference to one. So this is a `contributes`
+// claim, not an `implements` — no org policy discharges §2.13 on its own, and the
+// missing half is a network that simply has no policy at all.
+//
+// THE MISSING HALF IS THE ESTATE'S. A network the estate declares gets its policy from
+// the estate (`google_dns_policy` with `enable_logging = true`, naming that network);
+// a network a customer's workload team made in their own project is where
+// `report-compliance` earns its keep — it reads the live state and names the networks
+// without logging. That list is the worklist; this constraint is what keeps it from
+// growing.
+//
+// WHAT IT COSTS. DNS query logs are charged as logging volume and are small beside flow
+// logs — one entry per query, no payload. There is no sampling knob: logging is on or
+// off per policy.
+//
+// ON BY DEFAULT, like flow logs, and for the same reason: a customer switching it off
+// is deciding not to see name resolution, and that decision belongs in a `deviates`
+// claim whose `reason` the compliance report carries.
+
+pack cis_extensions.dns_logging version "1.0"
+
+google_org_policy_custom_constraint {
+  cis_dns_logging {
+    name           = "custom.cisDnsPolicyLogging"
+    parent         = "organizations/{customer_organization_id}"
+    display_name   = "Cloud DNS: a policy that exists logs queries"
+    description    = "CIS 5.0 2.13, the enforceable half. A Cloud DNS policy carries enableLogging = true. It cannot require that a network HAS a policy — that half is verified live."
+    resource_types = ["dns.googleapis.com/Policy"]
+    method_types   = ["CREATE", "UPDATE"]
+    action_type    = "ALLOW"
+    condition      = "resource.enableLogging == true"
+  }
+}
+
+google_org_policy_policy {
+  "custom-cisDnsPolicyLogging" {
+    name   = "custom.cisDnsPolicyLogging"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+        enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}
+
+claim "cis-gcp" "5.0" "2.13" contributes {
+  resources = [
+    "google_org_policy_custom_constraint.cis_dns_logging",
+    "google_org_policy_policy.custom_cisDnsPolicyLogging",
+  ]
+  interpretation  = "A Cloud DNS policy cannot be created or updated with query logging off."
+  duty_attach_policy = "The control also asks that every VPC network HAS such a policy, which no org policy can require: the estate declares one per network it owns, and report-compliance names the networks that have none."
+}

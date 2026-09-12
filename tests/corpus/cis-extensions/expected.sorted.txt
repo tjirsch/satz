@@ -52,6 +52,7 @@
       enforce = "TRUE"
       enforce = "TRUE"
       enforce = "TRUE"
+      enforce = "TRUE"
       ip_protocol = "tcp"
       ip_protocol = "tcp"
       ip_protocol = "tcp"
@@ -73,8 +74,11 @@
       }
     "CREATE",
     "CREATE",
+    "CREATE",
     "UPDATE"
     "UPDATE"
+    "UPDATE"
+    "dns.googleapis.com/Policy"
     "security@example.com"
     "sqladmin.googleapis.com/Instance"
     "sqladmin.googleapis.com/Instance"
@@ -83,6 +87,7 @@
     ]
     cloud_product = "all"
     enrollment_level = "BLOCK_ALL"
+    google_org_policy_custom_constraint.cis_dns_logging
     google_org_policy_custom_constraint.cis_sql_deletion_protection
     google_org_policy_custom_constraint.cis_sql_iam_authentication
     layer4_configs {
@@ -127,6 +132,7 @@
     rules {
     rules {
     rules {
+    rules {
     src_ip_ranges = [
     src_ip_ranges = [
     src_ip_ranges = [
@@ -163,6 +169,10 @@
     }
     }
     }
+    }
+  ]
+  ]
+  ]
   ]
   ]
   ]
@@ -175,12 +185,16 @@
   action = "goto_next"
   action_type = "ALLOW"
   action_type = "ALLOW"
+  action_type = "ALLOW"
   attachment_target = "organizations/123456789"
   condition = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
+  condition = "resource.enableLogging == true"
   condition = "resource.settings.deletionProtectionEnabled == true"
   depends_on = [
   depends_on = [
+  depends_on = [
   description = "CIS 3.6/3.7: SSH and RDP from the internet denied, listed ranges passed to the VPC rules"
+  description = "CIS 5.0 2.13, the enforceable half. A Cloud DNS policy carries enableLogging = true. It cannot require that a network HAS a policy — that half is verified live."
   description = "CIS 5.0 6.6. PostgreSQL and MySQL instances carry the IAM authentication flag set to on; SQL Server instances pass."
   description = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
   description = "SSH and RDP from the IPv4 internet: denied"
@@ -189,6 +203,7 @@
   direction = "INGRESS"
   direction = "INGRESS"
   direction = "INGRESS"
+  display_name = "Cloud DNS: a policy that exists logs queries"
   display_name = "Cloud SQL: IAM database authentication on"
   display_name = "Cloud SQL: deletion protection on"
   enrolled_services {
@@ -201,9 +216,11 @@
   match {
   method_types = [
   method_types = [
+  method_types = [
   name = "cis-internet-admin-ports"
   name = "custom.cisCloudSqlDeletionProtection"
   name = "custom.cisCloudSqlIamAuthentication"
+  name = "custom.cisDnsPolicyLogging"
   name = "organizations/123456789/policies/compute.managed.blockProjectSshKeys"
   name = "organizations/123456789/policies/compute.managed.disableSerialPortAccess"
   name = "organizations/123456789/policies/compute.managed.requireOsLogin"
@@ -219,6 +236,7 @@
   name = "organizations/123456789/policies/compute.skipDefaultNetworkCreation"
   name = "organizations/123456789/policies/custom.cisCloudSqlDeletionProtection"
   name = "organizations/123456789/policies/custom.cisCloudSqlIamAuthentication"
+  name = "organizations/123456789/policies/custom.cisDnsPolicyLogging"
   name = "organizations/123456789/policies/essentialcontacts.allowedContactDomains"
   name = "organizations/123456789/policies/essentialcontacts.managed.allowedContactDomains"
   name = "organizations/123456789/policies/gcp.detailedAuditLoggingMode"
@@ -245,6 +263,8 @@
   name = "organizations/123456789/policies/storage.uniformBucketLevelAccess"
   notification_emails = [
   organization_id = "123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
   parent = "organizations/123456789"
   parent = "organizations/123456789"
   parent = "organizations/123456789"
@@ -337,6 +357,9 @@
   provider = google.google
   provider = google.google
   provider = google.google
+  provider = google.google
+  provider = google.google
+  resource_types = [
   resource_types = [
   resource_types = [
   short_name = "cis-internet-admin-ports"
@@ -379,6 +402,8 @@
   spec {
   spec {
   spec {
+  spec {
+  }
   }
   }
   }
@@ -427,6 +452,7 @@ resource "google_compute_firewall_policy_association" "cis_admin_ports" {
 resource "google_compute_firewall_policy_rule" "cis_admin_ports_internet_ipv4" {
 resource "google_compute_firewall_policy_rule" "cis_admin_ports_internet_ipv6" {
 resource "google_compute_firewall_policy_rule" "cis_admin_ports_listed" {
+resource "google_org_policy_custom_constraint" "cis_dns_logging" {
 resource "google_org_policy_custom_constraint" "cis_sql_deletion_protection" {
 resource "google_org_policy_custom_constraint" "cis_sql_iam_authentication" {
 resource "google_org_policy_policy" "compute_managed_blockProjectSshKeys" {
@@ -444,6 +470,7 @@ resource "google_org_policy_policy" "compute_setNewProjectDefaultToZonalDNSOnly"
 resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
 resource "google_org_policy_policy" "custom_cisCloudSqlDeletionProtection" {
 resource "google_org_policy_policy" "custom_cisCloudSqlIamAuthentication" {
+resource "google_org_policy_policy" "custom_cisDnsPolicyLogging" {
 resource "google_org_policy_policy" "essentialcontacts_allowedContactDomains_superseded" {
 resource "google_org_policy_policy" "essentialcontacts_managed_allowedContactDomains" {
 resource "google_org_policy_policy" "gcp_detailedAuditLoggingMode" {
@@ -469,6 +496,8 @@ resource "google_org_policy_policy" "storage_publicAccessPrevention" {
 resource "google_org_policy_policy" "storage_retentionPolicySeconds" {
 resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
 resource "google_organization_access_approval_settings" "access_approval" {
+}
+}
 }
 }
 }
@@ -563,6 +592,7 @@ cis-cloud-sql-hardening = true
 cis-cloud-sql-iam-and-deletion-protection = true
 cis-cmek-required = true
 cis-confidential-computing = true
+cis-dns-logging = true
 cis-require-shielded-vm = true
 cmek-allowed-key-projects = [
 cmek-required-services = [

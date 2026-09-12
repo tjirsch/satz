@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.8"
+pack CIS_GCP_Foundation_4_0 version "2.9"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -30,6 +30,16 @@ params {
   cis_access_approval        = false
   cis_block_internet_ssh_rdp = false
   cis_cloud_sql_iam_and_deletion_protection = false
+
+  // The only extension that is ON by default. Everything else in this list
+  // restricts what a customer may create; this one makes a RECORD — of DNS
+  // resolution, which nothing reconstructs afterwards — and switching it off is a
+  // decision to be blind to it. An estate that does switch it off writes a
+  // `deviates` claim, whose `reason` is mandatory and reaches the compliance
+  // report. (VPC flow logs need no flag: the baseline already enforces
+  // `compute.requireVpcFlowLogs`, which applies a minimum logging level to every
+  // subnet rather than refusing it.)
+  cis_dns_logging            = true
 
   // CIS §2 resource locations (gcp.resourceLocations): where resources may be
   // created. The default is the two multi-region groups this baseline has always
@@ -195,6 +205,13 @@ question cis_cloud_sql_iam_and_deletion_protection {
   why      = "Every Cloud SQL create and update in the organisation must then carry both settings; tooling that creates instances without them fails, and an existing instance that lacks one is refused its next update until that update adds it."
   reversal = edit
   blast    = high
+}
+
+question cis_dns_logging {
+  prompt   = "Require Cloud DNS policies to log queries (CIS 5.0 §2.13)?"
+  why      = "On by default: DNS query logs are how a compromised host asking for its command-and-control domain becomes visible, and they are small beside flow logs — one entry per query, no sampling knob. What it enforces is only half the control: a DNS policy that exists must have logging on, because no org policy can require that a network HAS a policy at all. The other half is verified live — report-compliance names the networks without one. What it breaks: creating or updating a DNS policy with logging off is refused. Answering no is a deviation and needs a reason."
+  reversal = edit
+  blast    = low
 }
 
 question allowed_resource_locations {
