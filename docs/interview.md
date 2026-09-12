@@ -128,10 +128,10 @@ folder, the project, the state bucket, the IaC group and service account. Then t
 interview:
 
 ```
-52 open question(s): 36 have a default, 16 need a value.
+53 open question(s): 37 have a default, 16 need a value.
 Accept all defaults now and answer only those 16? [Y/n] — n goes through every question
 > y
-  accepted 36 default(s).
+  accepted 37 default(s).
 
 ── estate_core ──
 The questions every estate has to answer on day 0, with the params they answer.

@@ -1,0 +1,97 @@
+// Security Command Center findings, published to a Pub/Sub topic as they are
+// raised — the piece downstream of enablement that every customer needs.
+//
+//   use "presets/scc/scc-notifications.satz"
+//
+// A NOTIFICATION IS A CHAIN, NOT A RESOURCE. Three things have to line up, and
+// two of them are outside the notification config itself:
+//
+//   1. a Pub/Sub topic findings are published to;
+//   2. SCC's notification service agent holding
+//      `roles/securitycenter.notificationServiceAgent` on THAT topic — without
+//      the grant the config is created and never publishes;
+//   3. the notification config, which names the organisation, the topic and the
+//      filter that decides which findings travel.
+//
+// The agent is `service-org-<organisation id>@security-center-api.iam.gserviceaccount.com`,
+// the same identity the CIS pack lists in `allowed_policy_member_subjects` —
+// so a domain-restricted organisation already permits this grant, and nothing
+// has to be added to that list for it.
+//
+// The **v2** resource is deliberate: the v1 notification API answers "This API
+// is no longer available" on a live organisation.
+//
+// WHAT THIS DOES NOT COVER. Enabling the detectors, which has no provider
+// resource at all: `presets/scc/scc-service-enablement.satz`, an action. Use
+// both — findings nobody raises are findings nobody publishes. Nor mute
+// configs, BigQuery exports, custom modules or Security Posture.
+//
+// NO CLAIM. No catalog control covers Security Command Center, so this pack
+// witnesses nothing and `report-compliance` says nothing about it.
+
+pack scc_notifications version "1.0"
+
+params {
+  // The subscriber a customer attaches is theirs; the topic is the contract.
+  scc_notification_topic_name = "{customer_shortname}-scc-findings"
+  scc_notification_project    = infra_project_name
+  scc_notification_config_id  = "satz-findings"
+  scc_notification_description = "Active findings at HIGH and CRITICAL, published by Security Command Center"
+  // SCC's own filter language, not Cloud Logging's. `state="ACTIVE"` excludes
+  // findings someone has already resolved; the severity pair is what a duty
+  // roster can answer without drowning.
+  scc_notification_filter = "state=\"ACTIVE\" AND (severity=\"HIGH\" OR severity=\"CRITICAL\")"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question scc_notification_project {
+  prompt   = "The project that holds the Pub/Sub topic SCC publishes findings to"
+  why      = "Whoever can read the topic reads every finding in the organisation, including the ones that name a misconfiguration nobody has fixed yet. Putting it in the infrastructure project keeps it with the other operational plumbing; a separate security project keeps it away from anyone who administers workloads."
+  reversal = recreate
+  blast    = high
+}
+
+question scc_notification_filter {
+  prompt   = "Which findings are published (Security Command Center's filter language)"
+  why      = "Too wide and the topic becomes noise nobody reads; too narrow and a real finding never leaves the console. The default sends active HIGH and CRITICAL findings. Widening it later is an edit — the findings already raised are not re-sent."
+  reversal = edit
+  blast    = low
+}
+
+// 1) The topic. It lands in the project the estate names, and the subscriber
+//    stays the customer's own — a pack that also created a subscription would
+//    decide who reads the findings.
+google_pubsub_topic {
+  scc_findings {
+    name    = scc_notification_topic_name
+    project = scc_notification_project
+  }
+}
+
+// 2) The grant that makes the chain work. Without it the notification config
+//    exists, reports no error, and publishes nothing.
+google_pubsub_topic_iam_member {
+  scc_findings_publisher {
+    topic   = "${{google_pubsub_topic.scc_findings.name}}"
+    project = scc_notification_project
+    role    = "roles/securitycenter.notificationServiceAgent"
+    member  = "serviceAccount:service-org-{customer_organization_id}@security-center-api.iam.gserviceaccount.com"
+  }
+}
+
+// 3) The config itself. `location` is global: SCC's v2 API keeps organisation
+//    notification configs there, and a regional value is refused.
+google_scc_v2_organization_notification_config {
+  scc_findings {
+    config_id    = scc_notification_config_id
+    organization = customer_organization_id
+    location     = "global"
+    description  = scc_notification_description
+    pubsub_topic = "${{google_pubsub_topic.scc_findings.id}}"
+
+    streaming_config {
+      filter = scc_notification_filter
+    }
+  }
+}

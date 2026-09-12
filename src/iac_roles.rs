@@ -157,6 +157,16 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
     ("google_project_service", &[project("serviceusage.services.enable", &["roles/serviceusage.serviceUsageAdmin"])]),
     ("google_pubsub_subscription", &[project("pubsub.subscriptions.create", &["roles/pubsub.editor"])]),
     ("google_pubsub_topic", &[project("pubsub.topics.create", &["roles/pubsub.editor"])]),
+    // the SCC notification chain: the grant on the topic, and the config at the
+    // organisation. `roles/pubsub.editor` does not carry setIamPolicy — admin does.
+    ("google_pubsub_topic_iam_member", &[project("pubsub.topics.setIamPolicy", &["roles/pubsub.admin"])]),
+    (
+        "google_scc_v2_organization_notification_config",
+        &[org(
+            "securitycenter.notificationconfig.create",
+            &["roles/securitycenter.settingsEditor", "roles/securitycenter.admin"],
+        )],
+    ),
     ("google_secret_manager_secret", &[project("secretmanager.secrets.create", &["roles/secretmanager.admin"])]),
     ("google_service_account", &[project("iam.serviceAccounts.create", &["roles/iam.serviceAccountAdmin"])]),
     ("google_service_account_iam_member", &[project("iam.serviceAccounts.setIamPolicy", &["roles/iam.serviceAccountAdmin"])]),

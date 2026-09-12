@@ -93,4 +93,6 @@ No resources: this pack is an `action`, and it runs only under `satz run-actions
 
 Security Command Center's five service agents must be in the CIS pack's `allowed_policy_member_subjects` before activation, or the domain-restriction policy refuses their grants.
 
+This pack decides whether findings are raised; [`scc_notifications`](scc-notifications.md) decides where they go. Enablement on its own means findings only someone opening the console will see.
+
 <!-- notes:end -->

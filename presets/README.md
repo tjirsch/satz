@@ -326,6 +326,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_essential_contacts` | on | `essential-contacts-organization` |
 | `use_budget` | off | `organization-budget` |
 | `use_scc_enablement` | off | `scc/scc-service-enablement` |
+| `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
 | `use_security_audit_sa` | off | `security-audit/sa-security-audit` |
 | `use_defender` | off | `integrations/microsoft-defender-for-cloud` — its plan fragments by hand |
 | `use_verification_runner` | off | `ci/verification-runner` and its grant, the customer-hosted shape |
@@ -533,10 +534,41 @@ satz run-actions estate.satz --check      # the dry run above
 satz run-actions estate.satz --execute    # adds --apply
 ```
 
-The pack has **no resources**; the downstream resources above belong in a preset of
-their own. The script sits beside the pack rather than in `scripts/` because
-`get-presets` downloads `presets/**` and nothing else, and the action must find its
-script in the estate's copy of the presets.
+The pack has **no resources**. The script sits beside the pack rather than in
+`scripts/` because `get-presets` downloads `presets/**` and nothing else, and the
+action must find its script in the estate's copy of the presets.
+
+### `scc/scc-notifications.satz` — findings out of the console
+
+The first of the downstream resources: where findings GO. A notification is a chain
+of three, and two of them sit outside the notification config:
+
+```
+use "presets/scc/scc-notifications.satz"
+```
+
+- a `google_pubsub_topic` in the project the estate names
+  (`scc_notification_project`, asked; the infrastructure project by default);
+- `roles/securitycenter.notificationServiceAgent` for
+  `service-org-<organisation>@security-center-api.iam.gserviceaccount.com` on that
+  topic — without it the config is created, reports no error, and publishes
+  nothing. That agent is already in the CIS pack's
+  `allowed_policy_member_subjects`, so a domain-restricted organisation permits the
+  grant as it stands;
+- `google_scc_v2_organization_notification_config` at `location = "global"`, with
+  the filter the customer decides (`scc_notification_filter`, asked; active HIGH and
+  CRITICAL findings by default). The **v2** resource is deliberate: the v1
+  notification API answers "This API is no longer available" on a live organisation.
+
+The subscriber stays the customer's: a pack that also created a subscription would
+decide who reads every finding in the organisation. No catalog control covers SCC,
+so the pack claims nothing. It needs the detectors switched on to have anything to
+publish — use it with `scc/scc-service-enablement.satz`.
+
+Still missing downstream, each needing a decision first: BigQuery exports (a dataset
+and a region the CIS pack's `gcp.resourceLocations` policy may refuse), mute configs
+(what to mute is a customer's noise decision), custom modules (which rules the
+library ships) and Security Posture.
 
 A **pack** may declare an action too, and `satz doc-packs` puts it on the pack's
 page. An action is a step satz runs, never a witness: no claim covers what a script
@@ -941,6 +973,7 @@ the private history recorded them.
 | `cis_extensions.access_approval` | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
 | `cis_extensions.internet_ssh_rdp` | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
 | `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.0 | 2026-09-11 | CIS 5.0 6.6 and 6.9, opt-in: two custom constraints on Cloud SQL instances — IAM database authentication on (SQL Server exempt), deletion protection on — each enforced by a policy on the organisation |
+| `estate_map` | 1.1 | 2026-09-12 | one more choice: `use_scc_notifications`, the Pub/Sub chain that carries Security Command Center findings out of the console. Off by default like the enablement choice beside it — it needs SCC switched on to have findings to publish |
 | `estate_map` | 1.0 | 2026-09-10 | first version: which packs make up the estate, as questions — the S1/S2 model as a `oneof` (moved here from estate-core) and one boolean per optional pack, four on by default (audit archive, central alerts, billing permissions, essential contact), five off (budget, SCC enablement, security-audit account, Defender, verification runner). Declares the choices only; the estate carries the `use … when` lines, which the interview skeleton writes and a test keeps in step (ADR 0006) |
 | `estate_core` | 2.0 | 2026-09-10 | the security-model choice moves to `estate_map`; this pack is the seventeen day-0 params and their questions, nothing else. A major bump because two params left — no estate in the fleet uses the pack, it exists for interview skeletons |
 | `cis_extensions.cmek` | 1.1 | 2026-09-10 | two `question` blocks: the services that must use a CMEK and the projects that may supply keys — both refuse resource creation when wrong. Nothing emitted changes |
@@ -964,6 +997,7 @@ the private history recorded them.
 | `ci.verification_runner_grant` | 1.0 | 2026-09-09 | first version: the one binding a verification runner needs — `roles/iam.serviceAccountTokenCreator` on the estate's IaC service account, and nothing on the organisation. Separate from the runner pack because in the MSP-hosted shape the two resources belong to two parties: the runner in the MSP's project, this grant on the customer's account, applied by the customer. Default names the runner pack's own account, so a customer-hosted estate using both wires nothing |
 | `CIS_GCP_Foundation_4_0` | 2.6 | 2026-09-08 | `gcp.resourceLocations` becomes the `allowed_resource_locations` param (default = the two multi-region groups it always emitted, so no estate changes on upgrade) — a hard-coded value silently widened a policy an operator had narrowed by hand. And the six superseded legacy blocks take a `-superseded` address suffix, which makes the switch to `spec { reset = true }` a REPLACE by construction: the provider PATCHes the rules it holds together with `reset` and the API refuses the pair (`400 Cannot set PolicyRules if reset is true`), so the in-place form v2.5 assumed never worked. Estates upgrading from 2.4 or 2.5 see one destroy + create per legacy policy, in the plan, instead of needing `tofu apply -replace=` by hand |
 | `monitoring.organization_cis_log_alerts_central` | 1.4 | 2026-09-08 | the alert project defaults to `logsink_project_name` — the audit-logsink pack's own param, BY REFERENCE — so an estate using both packs wires nothing. The old default was the literal `{customer_shortname}-organization-log-alerts`, a project nothing creates, so an estate that did not override it pointed eight alert policies at a project that was never there. Used without the logsink pack the name is undeclared and the pack stops with `unknown param`, which is the honest failure: the alert project is then genuinely undecided |
+| `scc_notifications` | 1.0 | 2026-09-12 | first version: the notification chain downstream of enablement — a Pub/Sub topic, `google_scc_v2_organization_notification_config` (v2: the v1 API answers "This API is no longer available" on a live organisation) and `roles/securitycenter.notificationServiceAgent` for `service-org-<org>@security-center-api.iam.gserviceaccount.com` on that topic, without which the config publishes nothing. Asks the topic's project and the finding filter; sends active HIGH and CRITICAL findings by default. No claim — no catalog control covers SCC |
 | `scc_service_enablement` | 1.0 | 2026-09-04 | first version: no resources, one `action` binding `scc/scc-enable-all.sh`. SCC service enablement and tier activation have no provider resource (7.14.1 ships 35 `google_scc_*`/`google_securityposture_*` types and none of them is enablement), so the estate declares the step and `satz run-actions` runs it with the org id the estate already carries. `phase = "before-apply"`; everything downstream of enablement stays for a later pack |
 | `CIS_GCP_Foundation_4_0` | 2.5 | 2026-09-04 | runs the MANAGED protocol-forwarding constraint (`parameters.allowedSchemes`, param `allowed_protocol_forwarding_schemes`) and declares all six superseded legacy twins OFF with `reset = true`, so no estate ends up with both forms enforcing |
 | `cis_extensions.cloud_sql` | 1.1 | 2026-09-04 | declares its two superseded legacy twins (`sql.restrictAuthorizedNetworks`, `sql.restrictPublicIp`) off |

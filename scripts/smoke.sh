@@ -204,7 +204,7 @@ rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 36 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-six usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 37 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-seven usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
@@ -217,7 +217,7 @@ grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 52 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 53 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -228,7 +228,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 52 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 53 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
@@ -351,6 +351,24 @@ grep -q '0 broken claim' tmp/ext-require.txt || fail "an extension claims a witn
 grep -qE '✓ 4.8 ' tmp/ext-require.txt || fail "4.8 did not become satisfied with its fragment on"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/ext-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the extensions do not validate"
+fi
+
+step "scc notifications: the chain is topic + grant + config, and the agent is the organisation's"
+sed -e 's/^params {/params {\n  scc_notification_project = infra_project_name/' yaml/smoke.satz > tmp/scc.satz
+cat >> tmp/scc.satz <<'SATZ'
+use "presets/scc/scc-notifications.satz"
+SATZ
+"$satz" --config . transpile tmp/scc.satz --output "$PWD/tmp/scc-hcl" > tmp/scc.txt 2>&1 || fail "the scc notification pack does not transpile:\n$(cat tmp/scc.txt)"
+grep -q 'resource "google_pubsub_topic" "scc_findings"' tmp/scc-hcl/main.tf || fail "no topic for the findings"
+grep -q 'role = "roles/securitycenter.notificationServiceAgent"' tmp/scc-hcl/main.tf || fail "the notification service agent was not granted on the topic"
+# the agent is derived from the estate's own organisation id — a hard-coded one
+# would publish another organisation's findings nowhere
+grep -q 'member = "serviceAccount:service-org-123456789012@security-center-api.iam.gserviceaccount.com"' tmp/scc-hcl/main.tf || fail "the agent address does not carry the estate's organisation id:\n$(grep -A2 notificationServiceAgent tmp/scc-hcl/main.tf)"
+grep -q 'resource "google_scc_v2_organization_notification_config"' tmp/scc-hcl/main.tf || fail "the v2 notification config is missing"
+grep -q 'location = "global"' tmp/scc-hcl/main.tf || fail "the config must sit at the global location"
+grep -q 'pubsub_topic = "${google_pubsub_topic.scc_findings.id}"' tmp/scc-hcl/main.tf || fail "the config does not point at the topic this pack creates"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/scc-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the scc notification chain does not validate"
 fi
 
 step "require iso27001-2022 (cross-walk: ISO verdicts folded from the CIS ones)"
@@ -1162,18 +1180,18 @@ for l in open("tmp/mcp-iv.jsonl"):
             msgs[d["id"]] = d
 a = msgs[3]["result"]["structuredContent"]
 assert a["created"] is True, a
-# the whole path: 17 day-0, 10 map choices, 13 CIS, the default packs' own (S1 names,
+# the whole path: 16 day-0, 11 map choices, 13 CIS, the default packs' own (S1 names,
 # archive, alerts, billing group, contact) — 16 of them need a value until their inputs land
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (52, 16), a["summary"]
-assert len(a["questions"]) == 52 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (53, 16), a["summary"]
+assert len(a["questions"]) == 53 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
 assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every default; the S2 model's six names replace S1's five, so 53 in all
-assert b["written"] == 53 and b["summary"]["complete"] is True, b["summary"]
+# 8 answers, then every default; the S2 model's six names replace S1's five, so 54 in all
+assert b["written"] == 54 and b["summary"]["complete"] is True, b["summary"]
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]
