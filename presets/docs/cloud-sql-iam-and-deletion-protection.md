@@ -83,6 +83,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Custom constraints are checked when an instance is created or updated, never against one that already exists: an estate's current instances keep running and fail their next update instead. Prowler has no check for either control, so `report-compliance` is the only thing that reports them. CIS 5.0 only — 4.0 has no equivalent control.
 
 <!-- notes:end -->

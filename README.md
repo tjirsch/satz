@@ -68,6 +68,7 @@ These options can be placed anywhere in the command (e.g., before or after subco
 - `--no-actions`: never execute a declared [`action`](#run-actions-run-actions), whatever `run-actions` was asked to do.
 - `--no-pack-actions`: consider only the estate's own actions; ignore any a `use`d pack declares.
 - `--no-action-warnings`: silence the warning every declared action raises on a compile.
+- `--no-impersonate`: run as the Application Default Credentials themselves, without becoming the estate's IaC service account — for a check that must answer as the human.
 
 ### User settings (~/.config/satz/satz.toml)
 
@@ -156,9 +157,9 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `export-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--output` |
-| `diff-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--report`, `--format` (`text`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
-| `report-organizational-policies <CONFIG_FILE>` | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
+| `export-organizational-policies <CONFIG_FILE>` (alias `export-org-policies`) | `--customer-organization-id`, `--output` |
+| `diff-organizational-policies <CONFIG_FILE>` (alias `diff-org-policies`) | `--customer-organization-id`, `--report`, `--format` (`text`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
+| `report-organizational-policies <CONFIG_FILE>` (alias `report-org-policies`) | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
 | `adopt-org-policies <INPUT>` | `--dry-run` — alias of `adopt --only google_org_policy_policy --activate --execute --import` |
 
 **Compliance and audit**
@@ -182,7 +183,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
-| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated` — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Nineteen tools, each returning structured content with a published output schema and annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
+| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Nineteen tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
 | `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and (with an estate) the service account that estate's live commands run as, checked — may this credential become it, is the quota project reachable, and does it hold the permissions the estate's resource types need |
 
 Details for each command are below.
@@ -220,7 +221,7 @@ satz init \
 - Fetches the latest provider schemas for the configured providers.
 
 **Without the flags:** `satz interview yaml/<name>.satz --create` writes an estate that
-asks for the same seventeen values one at a time and offers the derived ones as defaults;
+asks for the same sixteen values one at a time and offers the derived ones as defaults;
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
 

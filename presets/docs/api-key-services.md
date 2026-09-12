@@ -89,6 +89,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Narrow the API targets of every key in use BEFORE this is enforced: a key that today calls anything stops working the moment it is. The allowed-services param has no default for the same reason — the pack cannot know which services a customer's keys call.
 
 <!-- notes:end -->

@@ -59,6 +59,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Use this OR [the default role](microsoft-defender-for-cloud-cspm-role-default.md), never both — both define the same custom-role address.
+
+`roles/viewer` already covers all 82 permissions, so dropping viewer is the point: the estate suppresses that grant. The pack keeps it because Microsoft's script makes it, and a `suppress` in the estate is what removes it.
 
 <!-- notes:end -->

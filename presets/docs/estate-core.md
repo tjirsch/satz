@@ -7,7 +7,8 @@ Source: `presets/estate-core.satz`
 
 The questions every estate has to answer on day 0, with the params they answer.
 
-`satz init` writes these seventeen params from its flags; an INTERVIEW asks for
+`satz init` writes these sixteen params — from its flags where it has one, from
+its defaults otherwise; an INTERVIEW asks for
 them one at a time, from the questions in this pack. Every param below has a
 question, and every question says what changing the answer later costs, so a
 default is offered where one exists and a value is required where none is
@@ -154,6 +155,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The skeleton always uses this pack, ahead of [`estate_map`](estate-map.md): these are the values every later question assumes. Seven of the sixteen have no possible default and block until typed; the rest offer one, and a derived default appears only once what it derives from is answered — which is why an interview asks them in this order rather than all at once.
+
+It emits nothing. `satz init` writes the params from its flags where it has one and from its defaults otherwise; `satz interview --create` and the MCP tool ask for them instead.
 
 <!-- notes:end -->

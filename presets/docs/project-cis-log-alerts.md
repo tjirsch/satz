@@ -153,6 +153,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The central pack, [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md), covers every project in the organisation through one org-level sink — this one is for a single project outside that sweep. Using it twice in one estate collides on the fold: for a second project, fork it and prefix every label and metric `name`.
+
+It makes no claims: a per-project pipeline does not discharge an organisation-wide control.
 
 <!-- notes:end -->

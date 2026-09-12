@@ -89,6 +89,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+No resources: this pack is an `action`, and it runs only under `satz run-actions --execute`. Tier activation is NOT here — enabling a service on an organisation with no Premium or Enterprise subscription fails at the API, so the tier is activated in the console first.
+
+Security Command Center's five service agents must be in the CIS pack's `allowed_policy_member_subjects` before activation, or the domain-restriction policy refuses their grants.
 
 <!-- notes:end -->

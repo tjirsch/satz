@@ -57,7 +57,7 @@ pub struct ToolConfig {
     pub presets_dir: String,
     #[serde(default = "default_tf_tool")]
     pub tf_tool: String,
-    #[serde(default)]
+    #[serde(default = "default_google_providers")]
     google_providers: Vec<String>,
     #[serde(default)]
     aws_providers: Vec<String>,
@@ -702,9 +702,9 @@ enum Commands {
     /// Every Prowler FAIL/MANUAL (and Checkov finding) triaged against the
     /// estate's claims, joined per resource, counted, and written under the
     /// estate's evidence/ directory as JSON, CSV and XLSX. The mechanical
-    /// columns are filled; the `[AI]` columns and the Review column are the
-    /// consultant's (or a later model pass's). Offline, deterministic: the
-    /// dossier hash names the run
+    /// columns are filled; the `[Authored]` columns and the Review column are the
+    /// consultant's — written back with `--merge`, or over MCP. Offline and
+    /// deterministic: the dossier hash names the run
     RemediationPlan {
         /// Catalog id, e.g. cis-gcp-4.0
         framework: String,
@@ -762,8 +762,8 @@ enum Commands {
     },
     /// What this estate can be asked: the questions its packs declare, joined with the answers its params already carry
     ///
-    /// Read-only. Each question is `answered`, `defaulted`, or `unasked`, with what
-    /// changing the answer would cost.
+    /// Read-only. Each question is `answered`, `unanswered` or `not-applicable`, and
+    /// `blocking` while no default is possible, with what changing the answer would cost.
     Questions {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,

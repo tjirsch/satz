@@ -138,6 +138,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Pairs with [`monitoring.organization_audit_logsink`](organization-audit-logsink.md): one logging project holds both the archive and this alerting bucket, and `cis_central_bucket_project` defaults to that pack's project by reference. Without that pack the estate must set it — the pack stops rather than guess a project nothing creates.
+
+The metrics are bucket-scoped, so every alert filter pins `resource.type="logging_bucket"`. For a project outside the organisation sweep there is [`project_cis_log_alerts`](project-cis-log-alerts.md); the two cover the same controls, so an estate uses one of them per project.
 
 <!-- notes:end -->

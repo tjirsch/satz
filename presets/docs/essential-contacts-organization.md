@@ -73,6 +73,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+One address may appear only ONCE per parent, which is why the shipped shape is a single contact on ALL categories. Splitting by audience needs a distinct address per category — the six per-category contacts are shipped commented out for exactly that.
+
+The CIS pack's contact-domain policy must allow the address's domain, or the apply is refused by the policy this estate itself set.
 
 <!-- notes:end -->

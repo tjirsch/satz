@@ -105,6 +105,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The key rings, the keys and the grants to the services' agents have to exist before a service is listed here: from then on every NEW resource of that service must be created with a CMEK, and one that cannot reach its key does not start.
 
 <!-- notes:end -->

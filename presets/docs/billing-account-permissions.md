@@ -72,6 +72,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The IaC service account keeps `billing.admin` here because it links projects and manages budgets on every apply — narrowing it breaks `bootstrap` and any project creation.
+
+A reseller billing account lives in another organisation: the grant is applied by whoever administers that account, not by this estate's service account.
 
 <!-- notes:end -->

@@ -91,12 +91,16 @@ Each returns the same value the corresponding `--format json` command prints.
 **Which commands an agent can run is a decision per command.** `MCP_PARITY`
 (`src/mcp.rs`) names every CLI command with the tool that serves it or the reason
 none does, and a command in neither column fails `cargo test` — the same way every
-command must declare an identity. What is deliberately not served: the commands
+command must declare an identity. What is deliberately not served, by class: the commands
 that hand stdio to `tofu` (`plan`, `apply`, `hcl-init`), the day-0 ones that run as
-the human (`init`, `bootstrap`), the live sweep that rewrites an estate (`import`),
-the maintainer refreshes of shipped data (`map-types`, `update-schema`,
-`doc-packs`), the rendered human reports (`report-organizational-policies`), and
-the terminal affordances (`completion`, `open-readme`, `self-update`). The tools
+the human (`init`, `bootstrap`), the ones that write to an organisation
+(`run-actions`, `adopt-org-policies`), the live sweep that rewrites an estate
+(`import`), the specialist org-policy tools the compliance plane answers for
+(`export-`, `diff-` and `report-organizational-policies`), the maintainer refreshes
+of shipped data (`map-types`, `update-schema`, `doc-packs`), the `tofu`-workflow
+plumbing (`scan-plan`, `generate-migration`, `migrate`), and the terminal
+affordances (`completion`, `open-readme`, `self-update`). The table in `src/mcp.rs`
+is the full list, with a reason per command. The tools
 the table has no command for — `satz_open`, `satz_estates`, `satz_restrict` — are
 the session and capability plumbing a terminal does not need.
 
@@ -137,8 +141,8 @@ it may run without asking:
 
 | annotation | on |
 |---|---|
-| `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_remediation_items` |
-| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_iac_roles` — reading is free, `execute` writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write` |
+| `readOnlyHint: true` | `satz_open`, `satz_estates`, `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_remediation_items` |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_iac_roles` — reading is free, `execute` writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_restrict` — it lowers this session's level and nothing else |
 | `destructiveHint: true` | `satz_get_presets` — with `force` it overwrites packs the estate uses |
 | `openWorldHint: true` (also) | `satz_merge_presets` — without `pristine_dir` it fetches the upstream library |
 | `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_adopt`, `satz_get_presets`, `satz_merge_presets` — the ones that can reach the network (`uvx checkov` fetches Checkov) |
@@ -218,10 +222,8 @@ estate. `--no-impersonate` outranks the scope: every tool then runs as the plain
 
 - **No `tofu` tool.** `satz plan` and `satz apply` inherit stdio — apply's approval prompt
   is interactive — and under MCP stdin and stdout are the protocol; a human runs them.
-- **`merge-presets` is not exposed.** It prints from inside a walk that writes, journals
-  and rolls back, which under MCP would write to stdout, the protocol stream; it needs
-  its outcomes collected and rendered afterwards first. `satz adopt --execute --import`
-  (the `tofu import`, the state moves, activating managed constraints) is not exposed
-  either: `satz_adopt` writes the ids, a human imports.
+- **`satz adopt --execute --import` is not exposed** — the `tofu import`, the state
+  moves and activating a managed constraint stay with a human; `satz_adopt` writes the
+  ids.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.

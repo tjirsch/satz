@@ -232,6 +232,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Six of the twenty-six policies are the legacy twins of a managed constraint, declared off at `-superseded` addresses. An estate coming from an earlier version of this pack holds them at their old addresses, so `satz adopt --only google_org_policy_policy --execute --import` moves them before the first apply; a plan that proposes to DESTROY one of them is the sign that step is still owed. `satz plan`/`apply` add the `-replace` such a twin needs (the API refuses rules and `reset = true` in one update).
+
+The ten `cis_*` params here are the gates of [`presets/cis-extensions/`](README.md#cis-extensions) — one page each, each with the cost of switching it on. `allowed_policy_member_subjects` is where an external identity goes before any grant to it applies: Security Command Center's agents and Defender's scanning account among them.
 
 <!-- notes:end -->

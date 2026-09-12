@@ -101,6 +101,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Prowler's checks for these two controls read VPC firewall rules, not the hierarchical firewall policy this pack writes, so `report-compliance --prowler` shows the rows CONTESTED while a permissive VPC rule still exists. Deleting that `0.0.0.0/0` rule settles it — the policy here denies the traffic either way.
 
 <!-- notes:end -->

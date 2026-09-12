@@ -78,6 +78,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The customer's half of the hosted runner: the runner itself lives in [`ci.verification_runner`](verification-runner.md), possibly in another organisation's project, and this grant lets its service account become this estate's IaC service account.
+
+Apply it as the customer. Without it the runner authenticates as itself and every live read is refused.
 
 <!-- notes:end -->

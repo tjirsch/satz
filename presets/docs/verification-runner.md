@@ -143,6 +143,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The build steps are inline in the trigger, not in a `cloudbuild.yaml` in the repository — whoever can edit the trigger controls what runs as the runner's identity. A Cloud Source Repositories trigger only watches a repository in its own project, so the runner lives in the project that holds the repository.
+
+The customer-hosted shape uses this pack together with [`ci.verification_runner_grant`](verification-runner-grant.md) in the same estate; in the MSP-hosted shape the runner is in the MSP's project and only the grant is in the customer's estate.
 
 <!-- notes:end -->
