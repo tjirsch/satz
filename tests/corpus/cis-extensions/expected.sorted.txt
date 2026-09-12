@@ -6,9 +6,19 @@
           "in:eu-locations",
           "in:us-locations"
           "under:organizations/123456789"
+        "22"
+        "22"
+        "22"
+        "22"
         "22",
         "22",
         "22",
+        "22",
+        "3389"
+        "3389"
+        "3389"
+        "3389"
+        "3389"
         "3389"
         "3389"
         "3389"
@@ -21,8 +31,22 @@
         allowed_values = [
         denied_values = [
       "0.0.0.0/0"
-      "35.235.240.0/20"
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16"
+      "2600:2d00:1:7::/64",
+      "35.235.240.0/20",
       "::/0"
+      "fc00::/7"
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
       ]
       ]
       ]
@@ -53,14 +77,32 @@
       enforce = "TRUE"
       enforce = "TRUE"
       enforce = "TRUE"
+      ip_protocol = "sctp"
+      ip_protocol = "sctp"
+      ip_protocol = "sctp"
+      ip_protocol = "sctp"
       ip_protocol = "tcp"
       ip_protocol = "tcp"
       ip_protocol = "tcp"
+      ip_protocol = "tcp"
+      ip_protocol = "udp"
+      ip_protocol = "udp"
+      ip_protocol = "udp"
+      ip_protocol = "udp"
       parameters = "{\"allowedDomains\":[\"@example.com\"]}"
       parameters = "{\"allowedPrincipalSets\":[\"//cloudresourcemanager.googleapis.com/organizations/123456789\"],\"allowedMemberSubjects\":[\"serviceAccount:service-org-123456789@security-center-api.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-csc-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-dspm-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-ee-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-ktd-hpsa.iam.gserviceaccount.com\"]}"
       parameters = "{\"allowedRetentionPeriods\":[\"34560000\"]}"
       parameters = "{\"allowedSchemes\":[\"INTERNAL\"]}"
       parameters = "{\"allowedServices\":[\"storage.googleapis.com\"]}"
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
       ports = [
       ports = [
       ports = [
@@ -85,6 +127,7 @@
     ]
     ]
     ]
+    ]
     cloud_product = "all"
     enrollment_level = "BLOCK_ALL"
     google_org_policy_custom_constraint.cis_dns_logging
@@ -93,6 +136,15 @@
     layer4_configs {
     layer4_configs {
     layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
     reset = true
     reset = true
     reset = true
@@ -136,6 +188,16 @@
     src_ip_ranges = [
     src_ip_ranges = [
     src_ip_ranges = [
+    src_ip_ranges = [
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
     }
     }
     }
@@ -183,6 +245,7 @@
   action = "deny"
   action = "deny"
   action = "goto_next"
+  action = "goto_next"
   action_type = "ALLOW"
   action_type = "ALLOW"
   action_type = "ALLOW"
@@ -199,18 +262,24 @@
   description = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
   description = "SSH and RDP from the IPv4 internet: denied"
   description = "SSH and RDP from the IPv6 internet: denied"
-  description = "SSH and RDP from the listed ranges: the VPC firewall rules decide"
+  description = "SSH and RDP from the listed IPv4 ranges: the VPC firewall rules decide"
+  description = "SSH and RDP from the listed IPv6 ranges: the VPC firewall rules decide"
+  direction = "INGRESS"
   direction = "INGRESS"
   direction = "INGRESS"
   direction = "INGRESS"
   display_name = "Cloud DNS: a policy that exists logs queries"
   display_name = "Cloud SQL: IAM database authentication on"
   display_name = "Cloud SQL: deletion protection on"
+  enable_logging = true
+  enable_logging = true
   enrolled_services {
   firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.id}"
   firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
   firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
   firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
+  firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
+  match {
   match {
   match {
   match {
@@ -310,6 +379,8 @@
   priority = 1000
   priority = 1001
   priority = 1002
+  priority = 1003
+  provider = google.google
   provider = google.google
   provider = google.google
   provider = google.google
@@ -447,11 +518,13 @@
   }
   }
   }
+  }
 resource "google_compute_firewall_policy" "cis_admin_ports" {
 resource "google_compute_firewall_policy_association" "cis_admin_ports" {
 resource "google_compute_firewall_policy_rule" "cis_admin_ports_internet_ipv4" {
 resource "google_compute_firewall_policy_rule" "cis_admin_ports_internet_ipv6" {
 resource "google_compute_firewall_policy_rule" "cis_admin_ports_listed" {
+resource "google_compute_firewall_policy_rule" "cis_admin_ports_listed_ipv6" {
 resource "google_org_policy_custom_constraint" "cis_dns_logging" {
 resource "google_org_policy_custom_constraint" "cis_sql_deletion_protection" {
 resource "google_org_policy_custom_constraint" "cis_sql_iam_authentication" {
@@ -545,14 +618,20 @@ resource "google_organization_access_approval_settings" "access_approval" {
 }
 }
 }
+}
 ---tfvars---
   "//cloudresourcemanager.googleapis.com/organizations/123456789"
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16"
+  "2600:2d00:1:7::/64",
   "34560000"
-  "35.235.240.0/20"
+  "35.235.240.0/20",
   "@example.com"
   "INTERNAL"
   "bigquery.googleapis.com",
   "dataproc.googleapis.com"
+  "fc00::/7"
   "in:eu-locations",
   "in:us-locations"
   "security@example.com"
@@ -574,8 +653,10 @@ resource "google_organization_access_approval_settings" "access_approval" {
 ]
 ]
 ]
+]
 access-approval-notification-emails = [
 admin-port-source-ranges = [
+admin-port-source-ranges-ipv6 = [
 allowed-api-key-services = [
 allowed-bucket-retention-seconds = [
 allowed-policy-member-principal-sets = [

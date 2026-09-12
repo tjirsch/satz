@@ -3,31 +3,88 @@
 //
 //   use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
 //
-// A hierarchical firewall policy attached to the organisation is read before any
-// VPC firewall rule. It passes TCP 22 and 3389 from `admin_port_source_ranges` on
-// to the VPC rules, which still decide, and denies them from every other address,
-// IPv4 and IPv6 — so a VPC rule that opens them to 0.0.0.0/0 opens nothing.
+// HOW IT WORKS. A hierarchical firewall policy attached to the organisation is read
+// before any VPC firewall rule. It passes TCP 22 and 3389 from
+// `admin_port_source_ranges` on to the VPC rules, which still decide, and denies them
+// from every other address, IPv4 and IPv6 — so a VPC rule that opens them to 0.0.0.0/0
+// opens nothing.
 //
-// Opt-in because every SSH and RDP session that reaches an instance straight from
-// the internet ends the moment the policy is attached. Move that access to IAP
-// TCP forwarding, or list the bastion's range, first.
+// ON BY DEFAULT, one of two fragments here that are. An organisation that has not closed
+// 22 and 3389 to the internet is one scan away from the finding it will be asked about,
+// and the two controls this satisfies are about internet exposure, not about internal
+// administration. An estate that switches it off writes a `deviates` claim, whose
+// `reason` is mandatory and which an auditor reads.
 //
-// Prowler's checks for these controls read VPC firewall rules, not this policy: a
-// VPC rule allowing 0.0.0.0/0 on port 22 still fails there, and report-compliance
-// shows the row CONTESTED. Such a rule has no effect while the policy is attached;
-// deleting it settles the row.
+// WHAT THE DEFAULT RANGES MEAN, and why there are four. The deny matches `0.0.0.0/0`,
+// which is every IPv4 address — private ones included — and a hierarchical policy is
+// read before the VPC rules that would otherwise allow internal traffic. A pass list of
+// only the IAP range would therefore deny SSH between two instances in one subnet. So
+// the three RFC1918 blocks are in the list beside IAP: what is denied is the internet,
+// and internal administration is handed to the VPC rules, which is where it belongs.
+// An estate that wants internal SSH denied as well removes those three entries — a
+// deliberate narrowing of its own policy, not a fork of this pack.
+//
+// WHAT IT BREAKS. A session that reaches an instance from a PUBLIC address on 22 or
+// 3389 ends the moment the policy is attached. A bastion with an external IP needs its
+// range listed here, or its access moved to IAP TCP forwarding, which reaches instances
+// without an open admin port at all. Google says the same in its own SSH guidance: do
+// not expose SSH directly over the public internet, and reach a bastion through IAP.
+// Google's published example attaches such a policy to FOLDERS and allows only selected
+// VMs; this one is organisation-wide and allows the listed ranges everywhere, which is
+// the stricter reading and the one an estate can narrow per folder if it needs to.
+//
+// WHAT IS DENIED, IN FULL. SSH is TCP 22 and SCTP 22; RDP is TCP 3389 and UDP 3389 —
+// Google's own detectors check all four, so a deny written for TCP alone leaves UDP 3389
+// open and the finding standing. Each rule here carries the whole set.
+//
+// THE TWO PASS RULES DO NOT LOG, AND CANNOT. Google allows logging on `allow` and `deny`
+// rules only: "logging cannot be enabled for goto_next rules". So the record is of what
+// was REFUSED — each denied admin-port connection writes one entry, charged as logging
+// volume — and an accepted IAP session leaves no firewall log at all. That asymmetry is
+// Google's, not a choice made here, and it is worth knowing before someone goes looking
+// for proof that IAP access works.
+// `presets/integrations/microsoft-sentinel-network-logs.satz` carries these to a SIEM,
+// and its firewall sink is empty until this pack is on.
+//
+// IPv4 AND IPv6 ARE SEPARATE RULES because a rule's sources may not mix the two. Each
+// family gets a pass rule and a deny: 1000/1002 for IPv4, 1001/1003 for IPv6. IAP has
+// its own IPv6 range for IPv6 VMs, which is why the pass list is in two params.
+//
+// PROWLER READS THE VPC RULES, NOT THIS POLICY: a VPC rule allowing 0.0.0.0/0 on port
+// 22 still fails there, and report-compliance shows the row CONTESTED. Such a rule has
+// no effect while the policy is attached; deleting it settles the row.
 
-pack cis_extensions.internet_ssh_rdp version "1.0"
+pack cis_extensions.internet_ssh_rdp version "1.1"
 
 params {
-  // IPv4 ranges whose SSH and RDP traffic passes to the VPC firewall rules.
-  // Google's IAP TCP-forwarding range by default. At least one range.
-  admin_port_source_ranges = ["35.235.240.0/20"]
+  // Ranges whose SSH and RDP traffic passes to the VPC firewall rules, which then
+  // decide. Google's IAP TCP-forwarding range, and the three private blocks — without
+  // those, the `0.0.0.0/0` deny below would also cut SSH between two instances in one
+  // subnet, because it matches every address and is read before any VPC rule.
+  admin_port_source_ranges = [
+    "35.235.240.0/20",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+  ]
+  // The IPv6 half, separately: a rule's sources are IPv4 or IPv6, never both. Google's
+  // IAP range for IPv6 VMs, and the unique-local block that is IPv6's RFC1918.
+  admin_port_source_ranges_ipv6 = [
+    "2600:2d00:1:7::/64",
+    "fc00::/7",
+  ]
+}
+
+question admin_port_source_ranges_ipv6 {
+  prompt   = "Which IPv6 ranges may still reach SSH and RDP?"
+  why      = "The IPv6 half of the same decision, separate because a firewall rule's sources are IPv4 or IPv6 and never both. The default is Google's IAP range for IPv6 VMs and the unique-local block that plays RFC1918's part. An organisation with no IPv6 VMs can leave it as it is: the rule matches nothing and costs nothing."
+  reversal = edit
+  blast    = low
 }
 
 question admin_port_source_ranges {
   prompt   = "Which IPv4 ranges may still reach SSH and RDP (the VPC firewall rules decide for them)?"
-  why      = "Every other internet address is denied on ports 22 and 3389 before any VPC rule is read. A bastion or partner range left out loses access the moment the policy is attached. Google's IAP range is the default because IAP TCP forwarding reaches instances without open admin ports."
+  why      = "Every address outside this list is denied on ports 22 and 3389 before any VPC rule is read. The default lists Google's IAP TCP-forwarding range — IAP reaches an instance without an open admin port — and the three private blocks, because the deny matches 0.0.0.0/0 and would otherwise cut SSH between two instances in one subnet. A bastion with a PUBLIC address needs its range here or it loses access the moment the policy attaches. Removing the private blocks denies internal SSH too, which is a narrowing some estates want."
   reversal = edit
   blast    = high
 }
@@ -43,44 +100,64 @@ google_compute_firewall_policy {
 google_compute_firewall_policy_rule {
   cis_admin_ports_listed {
     firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
-    description = "SSH and RDP from the listed ranges: the VPC firewall rules decide"
+    description = "SSH and RDP from the listed IPv4 ranges: the VPC firewall rules decide"
     priority = 1000
     direction = "INGRESS"
     action = "goto_next"
     match {
       src_ip_ranges = admin_port_source_ranges
-      layer4_configs {
-        ip_protocol = "tcp"
-        ports = ["22", "3389"]
-      }
+      layer4_configs = [
+        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "sctp" ports = ["22"] },
+        { ip_protocol = "udp"  ports = ["3389"] },
+      ]
+    }
+  }
+  cis_admin_ports_listed_ipv6 {
+    firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
+    description = "SSH and RDP from the listed IPv6 ranges: the VPC firewall rules decide"
+    priority = 1001
+    direction = "INGRESS"
+    action = "goto_next"
+    match {
+      src_ip_ranges = admin_port_source_ranges_ipv6
+      layer4_configs = [
+        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "sctp" ports = ["22"] },
+        { ip_protocol = "udp"  ports = ["3389"] },
+      ]
     }
   }
   cis_admin_ports_internet_ipv4 {
     firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
     description = "SSH and RDP from the IPv4 internet: denied"
-    priority = 1001
+    priority = 1002
     direction = "INGRESS"
+    enable_logging = true
     action = "deny"
     match {
       src_ip_ranges = ["0.0.0.0/0"]
-      layer4_configs {
-        ip_protocol = "tcp"
-        ports = ["22", "3389"]
-      }
+      layer4_configs = [
+        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "sctp" ports = ["22"] },
+        { ip_protocol = "udp"  ports = ["3389"] },
+      ]
     }
   }
   cis_admin_ports_internet_ipv6 {
     firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
     description = "SSH and RDP from the IPv6 internet: denied"
-    priority = 1002
+    priority = 1003
     direction = "INGRESS"
+    enable_logging = true
     action = "deny"
     match {
       src_ip_ranges = ["::/0"]
-      layer4_configs {
-        ip_protocol = "tcp"
-        ports = ["22", "3389"]
-      }
+      layer4_configs = [
+        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "sctp" ports = ["22"] },
+        { ip_protocol = "udp"  ports = ["3389"] },
+      ]
     }
   }
 }

@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.9"
+pack CIS_GCP_Foundation_4_0 version "2.10"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -28,18 +28,20 @@ params {
   cis_api_key_services       = false
   cis_bucket_retention       = false
   cis_access_approval        = false
-  cis_block_internet_ssh_rdp = false
   cis_cloud_sql_iam_and_deletion_protection = false
 
-  // The only extension that is ON by default. Everything else in this list
-  // restricts what a customer may create; this one makes a RECORD — of DNS
-  // resolution, which nothing reconstructs afterwards — and switching it off is a
-  // decision to be blind to it. An estate that does switch it off writes a
-  // `deviates` claim, whose `reason` is mandatory and reaches the compliance
-  // report. (VPC flow logs need no flag: the baseline already enforces
-  // `compute.requireVpcFlowLogs`, which applies a minimum logging level to every
-  // subnet rather than refusing it.)
+  // The two extensions that are ON by default. The rest of the list restricts what a
+  // customer may create and waits to be asked for; these two are what an organisation
+  // is expected to have already. `cis_dns_logging` makes a RECORD of name resolution,
+  // which nothing reconstructs afterwards. `cis_block_internet_ssh_rdp` closes the two
+  // administrative ports to the INTERNET — not to the private ranges, which its own
+  // pass list carries — and CIS 3.6 and 3.7 ask for exactly that. Switching either off
+  // is a decision, so the estate that does it writes a `deviates` claim, whose `reason`
+  // is mandatory and reaches the compliance report. (VPC flow logs need no flag: the
+  // baseline already enforces `compute.requireVpcFlowLogs`, which applies a minimum
+  // logging level to every subnet rather than refusing it.)
   cis_dns_logging            = true
+  cis_block_internet_ssh_rdp = true
 
   // CIS §2 resource locations (gcp.resourceLocations): where resources may be
   // created. The default is the two multi-region groups this baseline has always
@@ -195,7 +197,7 @@ question cis_access_approval {
 
 question cis_block_internet_ssh_rdp {
   prompt   = "Deny SSH and RDP from the internet across the whole organisation (CIS 3.6, 3.7)?"
-  why      = "A firewall policy on the organisation is read before every VPC rule: each session that reaches an instance straight from the internet on port 22 or 3389 ends the moment it is attached, unless its source is in the listed ranges. Move such access to IAP first."
+  why      = "On by default, because an organisation that has not closed ports 22 and 3389 to the internet is one scan away from the finding it will be asked about. A hierarchical firewall policy on the organisation is read before every VPC rule: a session reaching an instance from a PUBLIC address on either port ends the moment the policy attaches. Internal administration is not touched — the pass list carries the three private blocks as well as Google's IAP range — so what breaks is a bastion with an external IP, which needs its range listed or its access moved to IAP. Every rule logs, which is what fills the firewall half of a SIEM. Answering no is a deviation and needs a reason an auditor will read."
   reversal = edit
   blast    = high
 }

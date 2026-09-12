@@ -211,7 +211,7 @@ rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 38 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the thirty-eight usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 40 default(s)' tmp/iv/run.txt || fail "the opening offer must accept the forty usable defaults across the whole path:\n$(cat tmp/iv/run.txt)"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
@@ -224,7 +224,7 @@ grep -q 'security_model_s1 = true' tmp/iv/new.satz || fail "accepting the oneof 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 54 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 56 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -235,7 +235,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 54 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 56 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
 grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
 
@@ -358,6 +358,37 @@ grep -q '0 broken claim' tmp/ext-require.txt || fail "an extension claims a witn
 grep -qE '✓ 4.8 ' tmp/ext-require.txt || fail "4.8 did not become satisfied with its fragment on"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/ext-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the extensions do not validate"
+fi
+
+step "org firewall: the admin ports are closed to the internet and open to the inside"
+grep -q 'cis_block_internet_ssh_rdp = true' ../../presets/CIS-GCP-Foundation-4.0.satz \
+  || fail "cis_block_internet_ssh_rdp no longer defaults to true"
+cp yaml/smoke.satz tmp/fw.satz
+cat >> tmp/fw.satz <<'SATZ'
+use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
+SATZ
+"$satz" --config . transpile tmp/fw.satz --output "$PWD/tmp/fw-hcl" > tmp/fw.txt 2>&1 || fail "the admin-port pack does not transpile:\n$(cat tmp/fw.txt)"
+grep -q 'resource "google_compute_firewall_policy" "cis_admin_ports"' tmp/fw-hcl/main.tf || fail "no firewall policy"
+grep -q 'resource "google_compute_firewall_policy_association" "cis_admin_ports"' tmp/fw-hcl/main.tf \
+  || fail "the policy is not attached — a policy that is not associated enforces nothing"
+# four rules: a pass and a deny per address family, passes first
+for r in cis_admin_ports_listed cis_admin_ports_listed_ipv6 cis_admin_ports_internet_ipv4 cis_admin_ports_internet_ipv6; do
+  grep -q "resource \"google_compute_firewall_policy_rule\" \"$r\"" tmp/fw-hcl/main.tf || fail "rule $r is missing"
+done
+# the private ranges pass, or SSH between two instances in one subnet dies
+grep -q '"10.0.0.0/8"' tmp/fw-hcl/main.tf || fail "the private ranges are not passed: internal SSH would be denied by the 0.0.0.0/0 rule"
+grep -q '"35.235.240.0/20"' tmp/fw-hcl/main.tf || fail "IAP's range is not passed"
+grep -q '"2600:2d00:1:7::/64"' tmp/fw-hcl/main.tf || fail "IAP's IPv6 range is not passed"
+# the control is not TCP-only: SSH is also SCTP 22, RDP is also UDP 3389
+grep -q 'ip_protocol = "sctp"' tmp/fw-hcl/main.tf || fail "SCTP 22 is not denied, so the SSH control is half-enforced"
+grep -q 'ip_protocol = "udp"' tmp/fw-hcl/main.tf || fail "UDP 3389 is not denied, so the RDP control is half-enforced"
+# Google forbids logging on goto_next, so exactly the two denies log
+[ "$(grep -c 'enable_logging = true' tmp/fw-hcl/main.tf)" = 2 ] \
+  || fail "expected logging on the two deny rules only — Google refuses it on goto_next:\n$(grep -c 'enable_logging' tmp/fw-hcl/main.tf)"
+"$satz" --config . require cis-gcp-4.0 tmp/fw.satz > tmp/fwreq.txt 2>&1 || true
+grep -q '0 broken claim' tmp/fwreq.txt || fail "the 3.6/3.7 claims name a witness the estate does not emit:\n$(grep -i broken tmp/fwreq.txt)"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/fw-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the admin-port policy does not validate"
 fi
 
 step "dns logging: the one extension that is on by default, and what it claims"
@@ -1337,8 +1368,8 @@ assert a["created"] is True, a
 # the whole path: 16 day-0, 10 map choices (the three SCC follow-ups are not asked
 # while SCC itself is off — `ask_when`), 13 CIS, the default packs' own (S1 names,
 # archive, alerts, billing group, contact) — 16 of them need a value until their inputs land
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (54, 16), a["summary"]
-assert len(a["questions"]) == 54 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (56, 16), a["summary"]
+assert len(a["questions"]) == 56 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "a follow-up behind a false ask_when is not asked"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
@@ -1346,8 +1377,8 @@ assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert by["security_model"]["default"] == "security_model_s1", by["security_model"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every default; the S2 model's six names replace S1's five, so 55 in all
-assert b["written"] == 55 and b["summary"]["complete"] is True, b["summary"]
+# 8 answers, then every default; the S2 model's six names replace S1's five, so 57 in all
+assert b["written"] == 57 and b["summary"]["complete"] is True, b["summary"]
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]

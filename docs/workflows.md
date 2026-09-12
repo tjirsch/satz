@@ -9,6 +9,26 @@ preset library current afterwards. Every command has its own reference section i
 
 ## From nothing to applied
 
+Five steps, in this order. Each one is a section below.
+
+1. **Write the estate** — `satz init` with the day-0 values, or `satz interview
+   … --create` to be asked for them one at a time.
+2. **Bootstrap the organisation** — `satz bootstrap`, which creates the folder, the
+   management project, the billing link, the foundation APIs and the state bucket, then
+   transpiles and imports what it made.
+3. **Apply as yourself** — `satz transpile`, then `plan` and `apply`. This is still
+   `deployment_mode = "local"`: the run authenticates as the logged-in user's
+   Application Default Credentials, and it creates the identity layer — the groups, the
+   IaC service account and its roles.
+4. **Switch to the service account** — `satz migrate … --mode cloud`, which moves the
+   state into the bucket and makes every later command impersonate the IaC service
+   account. From here nothing runs as a human.
+5. **Then add packs** — the CIS baseline and whatever else the estate needs, one at a
+   time, each with its own plan and apply. Presets come *after* step 4 on purpose: the
+   day-0 scaffold has to exist and the state has to be in the bucket before a pack
+   creates anything on top of it. [Keeping presets current](#keeping-presets-current)
+   is that loop.
+
 ### Prerequisites
 
 The executing user needs:
@@ -178,7 +198,10 @@ in one pass; a resource that meets a permission error on the role just granted i
 created by running the apply again once the grant has taken effect, which takes up to a
 few minutes.
 
-### Verify
+### Switch to the service account, and deploy as it
+
+Steps 1–3 ran as the logged-in user. This is where that ends: the state moves into the
+GCS bucket and every later command impersonates the estate's IaC service account.
 
 Switch the state to the GCS bucket and the identity to impersonation:
 
@@ -196,12 +219,19 @@ account rather than as the logged-in user.
 > re-initialised: run `tofu init -reconfigure` once in `hcl/`. `migrate` re-initialises
 > by itself.
 
-Then check that the service account can run the plan:
+Then check that the service account can run the plan — this is the first deploy that
+authenticates as the service account rather than as a person, and the point of the whole
+sequence:
 
 ```bash
 cd hcl/
 tofu plan
 ```
+
+A plan that reads *No changes* here means the estate, the state and the organisation
+agree, and the estate is ready for its first pack. `satz whoami C0example.satz` prints
+the identity the run used, which from now on is the service account and never the human
+who typed the command.
 
 ### The params `init` writes
 
