@@ -1,6 +1,6 @@
 // Corpus case: the CIS alert pack WITHOUT the audit-logsink pack beside it.
 //
-// Since v1.4 the alert project defaults to `logsink_project_name` — the logsink
+// Since v1.4 the alert project defaults to `logsink_project_id` — the logsink
 // pack's param, by reference. With that pack absent the name is undeclared, so
 // an estate using this pack alone MUST say where the alerting bucket lives.
 // This case pins that it can: the override is read, and nothing reaches for the

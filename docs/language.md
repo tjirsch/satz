@@ -428,7 +428,7 @@ Resolution rules:
    params; there is no per-pack scope.
    A pack's **default may therefore reference another pack's param**, and that is
    the right way to wire two packs that share a value — the CIS alert pack
-   defaults its project to the audit-logsink pack's `logsink_project_name`, so an
+   defaults its project to the audit-logsink pack's `logsink_project_id`, so an
    estate using both sets nothing, and renaming the logsink project moves the
    alerts with it; a repeated literal would keep pointing at the old name. Used
    without the pack that declares the name, the reference stops with
@@ -1772,7 +1772,7 @@ through the same printer.)
 | `!include x.yaml` / `!include-if anchor x.yaml` | `use "x.satz"` / `use "x.satz" when param` |
 | `!expr google_x.y.z` | `"${{google_x.y.z}}"` — doubled braces |
 | `<pack>.claims.yaml` sidecar | `claim … { … }` in the pack |
-| `kebab-case` anchors | `snake_case` identifiers (the emitter maps `logsink_project_name` ↔ `logsink-project-name`) |
+| `kebab-case` anchors | `snake_case` identifiers (the emitter maps `logsink_bucket_name` ↔ `logsink-bucket-name`) |
 
 Side by side, one org policy:
 

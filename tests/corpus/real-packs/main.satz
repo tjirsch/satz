@@ -14,7 +14,7 @@ params {
   customer_shortname = "corp"
   default_region = "europe-west3"
   billing_account_infra = "01AA-BB-CC"
-  logsink_project_name = "corp-log-infra-001"
+  logsink_project_id = "corp-log-infra-001"
 }
 
 terraform {

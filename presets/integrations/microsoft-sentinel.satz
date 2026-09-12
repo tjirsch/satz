@@ -47,15 +47,15 @@
 // satisfy a retention control — `monitoring/organization-audit-logsink.satz` is what
 // claims those — and Sentinel is itself in no catalog.
 
-pack integrations.microsoft_sentinel version "1.0"
+pack integrations.microsoft_sentinel version "1.1"
 
 params {
   // The project that holds the federation and, with the log fragments, the topics
   // and subscriptions. The audit-log archive's project by reference: sinks, topics
   // and log plumbing belong together, and an estate using the logsink pack wires
   // nothing. Without that pack the compile stops with `unknown param
-  // 'logsink_project_name'`, which is the right failure — the project is undecided.
-  sentinel_project_id = logsink_project_name
+  // 'logsink_project_id'`, which is the right failure — the project is undecided.
+  sentinel_project_id = logsink_project_id
 
   // Google assigns the project NUMBER at creation and the principal set is built
   // from it, so it cannot be derived from the id:

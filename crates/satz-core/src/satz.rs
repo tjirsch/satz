@@ -37,7 +37,7 @@
 //! ```
 //!
 //! Identifiers use snake_case; the emitter maps param identifiers to the YAML
-//! dialect's kebab-case anchors (`logsink_project_name` <-> `logsink-project-name`),
+//! dialect's kebab-case anchors (`logsink_bucket_name` <-> `logsink-bucket-name`),
 //! which keeps migrated names identical to the original YAML packs' anchors. Resource
 //! attribute names are 1:1 the Terraform provider names — the registry docs are the
 //! docs.

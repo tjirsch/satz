@@ -18,7 +18,7 @@ params {
   svc_iac_users_group = "svc-iac-001-users"
   first_admin = "admin@example.com"
   billing_account_infra = "01AA-BB-CC"
-  logsink_project_name = "corp-log-infra-001"
+  logsink_project_id = "corp-log-infra-001"
   deployment_engine = "tofu"
   deployment_mode = "local"
   default_region = "europe-west3"
