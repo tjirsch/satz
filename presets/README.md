@@ -333,7 +333,8 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_security_audit_sa` | off | `security-audit/sa-security-audit` |
 | `use_defender` | off | `integrations/microsoft-defender-for-cloud` — its plan fragments by hand |
 | `use_sentinel` | off | `integrations/microsoft-sentinel` — the federation half |
-| `use_sentinel_auditlogs` | off | `integrations/microsoft-sentinel-auditlogs`, asked only when Sentinel is on — its other log sources by hand |
+| `use_sentinel_auditlogs` | follows `use_sentinel` | `integrations/microsoft-sentinel-auditlogs`, asked only when Sentinel is on |
+| `use_sentinel_network_logs` | follows `use_sentinel` | `integrations/microsoft-sentinel-network-logs` — flow logs, firewall, DNS, NAT: free until the feature is enabled |
 | `use_verification_runner` | off | `ci/verification-runner` and its grant, the customer-hosted shape |
 
 **Not a choice:** the CIS baseline — the skeleton always uses it, and its opt-in
@@ -848,10 +849,39 @@ which pins the Google provider at 3.73.0 and uses authoritative
 `google_project_iam_binding` — run beside an estate it removes grants the estate made.
 Everything here is non-authoritative `_iam_member` against the pinned provider.
 
-**More log sources.** Microsoft publishes one configuration per source — VPC flow,
-firewall, DNS, GKE, Cloud SQL, Compute, IAM, Resource Manager and the rest. Each is a
-copy of the audit-log fragment with its own names and filter, wired by hand; widening
-the existing sink instead replaces it, and a replaced sink drops what was in flight.
+`microsoft-sentinel-network-logs.satz` is the four network streams — VPC flow logs,
+firewall rules logging, DNS queries and Cloud NAT — each with its own sink, topic,
+subscription and pair of grants. **On by default with Sentinel**, because every one of
+them is empty until somebody enables that feature on a subnet, a rule, a DNS policy or a
+NAT gateway, and Google charges nothing to route log entries: a sink for a feature nobody
+enabled costs nothing, while switching them off costs the day somebody enables flow logs
+and finds Sentinel was not watching. The volume once a feature is on lands on Sentinel's
+ingestion bill; an estate that wants one stream out `suppress`es that sink, topic and
+subscription.
+
+Each filter selects exactly one stream — `log_id` where Google publishes the log name
+(flow logs, firewall, NAT) and the documented `dns_query` resource type for DNS, whose
+log name Google does not publish. Microsoft's own per-source configurations mix each
+stream with the audit records of the same service, which already leave through the
+audit fragment: carrying them again exports and bills the same entries twice.
+
+**The nine sources this library does not ship.** Of Microsoft's fourteen
+configurations, nine — Apigee, Cloud SQL, Compute, IAM, Resource Manager, and the audit
+halves of CDN, NAT, DNS and Cloud IDS — are only `protoPayload.serviceName=…` filters
+over the same audit stream the audit fragment exports organisation-wide. As separate
+sinks they duplicate entries and pay for them twice. Service-scoped audit routing, if a
+customer wants it, is ONE sink with a union filter. Three more are unbounded and stay a
+decision rather than a default: Microsoft's audit setup carries NO filter at all (the
+entire log estate), its GKE filter matches `.*stdout$`/`.*stderr$` with no resource-type
+guard (every application log in scope, not only GKE's), and its Cloud Run filter matches
+`cloud_run_revision` (the same for Cloud Run).
+
+**Why the rest cannot be transcribed as published.** Every upstream setup grants
+publisher with authoritative `google_project_iam_binding`: the second source applied
+REMOVES the first sink's writer identity from the role, and delivery stops without an
+error. Its firewall setup names its topic `sentinel-topic` — the same name its audit
+setup creates — and its IAM setup subscribes to that topic without creating it. Its NAT
+filter's `logName=` is unquoted, so that half of the filter matches nothing.
 
 **Two organisation policies can refuse the first apply**, neither of them set by this
 library: a deny-all on `iam.workloadIdentityPoolProviders` blocks the provider unless
@@ -1123,6 +1153,7 @@ the private history recorded them.
 | pack | version | date | change |
 |---|---|---|---|
 | `integrations.microsoft_sentinel` | 1.0 | 2026-09-12 | first version: Sentinel's GCP federation — pool, the provider trusting Microsoft's commercial tenant with the `api://` audience, the connector's service account and `roles/iam.workloadIdentityUser` for the pool's principal set. Transcribed from Microsoft's own Terraform against the pinned provider: upstream pins google 3.73.0 and uses authoritative `google_project_iam_binding`, which removes grants an estate made |
+| `integrations.microsoft_sentinel_network_logs` | 1.0 | 2026-09-12 | first version: the four network streams — VPC flow logs, firewall rules logging, DNS queries, Cloud NAT — each with its own organisation sink, topic, subscription, publisher grant for the sink's writer identity and subscriber grant for the connector. On by default with Sentinel: each stream is empty until the feature is enabled per subnet, rule, policy or gateway, and routing costs nothing, so switching them off saves nothing and risks the day somebody enables flow logs. Filters select one stream each (`log_id` where Google publishes the log name, the documented `dns_query` resource type for DNS) rather than Microsoft's mix of stream plus the same service's audit records, which the audit fragment already carries. Grants are non-authoritative: upstream's `google_project_iam_binding` would have had the second stream applied remove the first's publisher grant, stopping delivery silently |
 | `integrations.microsoft_sentinel_auditlogs` | 1.0 | 2026-09-12 | first version: the first log source — an organisation sink with `include_children` for the four audit streams, its topic, the subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's writer identity and `roles/pubsub.subscriber` for the connector on that one subscription. Tighter than upstream, which grants a project-level custom role over every subscription in the project. The filter is asked: Data Access logs are most of the volume and Sentinel bills by the gigabyte |
 | `monitoring.organization_audit_logsink` | 1.4 | 2026-09-12 | `logsink_project_name` becomes **`logsink_project_id`**, because that is what it is — it feeds `project_id`, and a project id is immutable while a name is not. The project's display name is its own optional param, `logsink_project_display_name`, defaulting to the id exactly as Google does, so nothing changes in the emitted HCL. An estate still binding the old name is REFUSED by name with the new one: nothing refuses a param no pack reads, so leaving it would have silently taken this pack's default project instead — a second logging project and an orphaned archive |
 | `monitoring.organization_cis_log_alerts_central` | 1.6 | 2026-09-12 | follows the rename: the alert project defaults to `logsink_project_id` |
@@ -1134,6 +1165,7 @@ the private history recorded them.
 | `cis_extensions.access_approval` | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
 | `cis_extensions.internet_ssh_rdp` | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
 | `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.0 | 2026-09-11 | CIS 5.0 6.6 and 6.9, opt-in: two custom constraints on Cloud SQL instances — IAM database authentication on (SQL Server exempt), deletion protection on — each enforced by a policy on the organisation |
+| `estate_map` | 1.6 | 2026-09-12 | the two Sentinel log paths default to `use_sentinel` BY REFERENCE, so a customer who connects Sentinel and accepts the defaults gets the logs it exists to read; `use_sentinel_network_logs` is the new one, and either can be answered `false` to leave that path out |
 | `estate_map` | 1.5 | 2026-09-12 | `use_sentinel` and, behind it, `use_sentinel_auditlogs`: a customer's SIEM is a choice the interview makes, not a fragment somebody remembers to wire |
 | `estate_map` | 1.4 | 2026-09-12 | `use_scc_findings_siem` beside the mailbox choice, asked with it when the topic is on: a customer with a SIEM answers where findings go without being asked for an address nobody reads |
 | `estate_map` | 1.3 | 2026-09-12 | Security Command Center is one decision with follow-ups: `use_scc_enablement` carries what the Premium tier costs (per covered resource-hour, not a share of the bill) and that the 30-day trial becomes pay-as-you-go by itself, and `recommend = true` offers it — the param default stays off, so `--accept-defaults` never switches a paid service on. `use_scc_notifications` and `use_scc_export` are asked only when enablement is on (`ask_when`), and `use_scc_findings_mail` only when the topic is |

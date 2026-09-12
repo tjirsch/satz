@@ -84,6 +84,7 @@ use "presets/scc/scc-export.satz"
 use "presets/integrations/microsoft-defender-for-cloud.satz"
 use "presets/integrations/microsoft-sentinel.satz"
 use "presets/integrations/microsoft-sentinel-auditlogs.satz"
+use "presets/integrations/microsoft-sentinel-network-logs.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz"
 

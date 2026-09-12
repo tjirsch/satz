@@ -21,7 +21,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.5"
+pack estate_map version "1.6"
 
 params {
   // ---- the security-group model: exactly one ------------------------------
@@ -44,7 +44,11 @@ params {
   use_security_audit_sa    = false
   use_defender             = false
   use_sentinel             = false
-  use_sentinel_auditlogs   = false
+  // Both log paths follow the Sentinel choice BY REFERENCE: a customer who
+  // connects Sentinel and accepts the defaults gets the logs Sentinel exists to
+  // read. Answer either one `false` to leave that path out.
+  use_sentinel_auditlogs   = use_sentinel
+  use_sentinel_network_logs = use_sentinel
   use_verification_runner  = false
 }
 
@@ -156,7 +160,15 @@ question use_sentinel {
 
 question use_sentinel_auditlogs {
   prompt   = "Send the organisation's audit logs to Sentinel?"
-  why      = "The first log source, and the one every customer starts with: an organisation sink with `include_children`, its topic, the subscription Sentinel pulls from, and the two grants that make the path work. Other sources — VPC flow, firewall, DNS, GKE — are their own copies of this fragment, wired by hand. Sentinel charges by the gigabyte ingested, so which streams travel is asked."
+  why      = "What a SIEM is for: who did what, organisation-wide, with `include_children` so a project created tomorrow is covered. On with Sentinel, because a connector with no audit logs answers no question anybody asks it. The one cost decision inside it is asked separately — Data Access logs are most of the volume and Sentinel bills by the gigabyte ingested."
+  reversal = recreate
+  blast    = low
+  ask_when = use_sentinel
+}
+
+question use_sentinel_network_logs {
+  prompt   = "Send the network streams too — VPC flow logs, firewall, DNS queries, Cloud NAT?"
+  why      = "Each of these is EMPTY until somebody enables that feature on a subnet, a firewall rule, a DNS policy or a NAT gateway, and Google charges nothing to route logs, so a sink for a feature nobody enabled costs nothing. Switching them off therefore saves nothing; what it costs is the day somebody enables flow logs and finds Sentinel was not watching. On with Sentinel. The volume once a feature IS on is real and lands on Sentinel's ingestion bill — an estate can leave one stream out with a `suppress`."
   reversal = recreate
   blast    = low
   ask_when = use_sentinel
