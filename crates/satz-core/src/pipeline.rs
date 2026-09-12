@@ -137,6 +137,11 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
     // Params may reference each other regardless of declaration order — the same
     // dependency-ordered resolution the YAML emitter uses.
     for (name, v, line) in satz::sort_params_by_deps(&file.params) {
+        // Before anything else: a param a release renamed stops the compile here,
+        // whether it is the estate's own binding or a fork's default.
+        if let Some(e) = renamed_param(name, file_name, *line) {
+            return Err(e);
+        }
         if env.contains_key(name) {
             continue; // the using document's binding wins (Default < Set)
         }
@@ -443,6 +448,32 @@ pub fn apply_suppressions(
         }
     }
     Ok(())
+}
+
+/// Params a release renamed, and what they are called now. A renamed param is a
+/// HARD ERROR wherever it is declared, because the failure it prevents is silent:
+/// nothing refuses a param no pack reads, so an estate left on the old name keeps
+/// compiling and the pack quietly uses its own default — a different project, a
+/// different bucket, an orphaned archive. Every entry stays for one release line and
+/// is removed when the fleet is past it; the rule that everyone is on the current
+/// version is what makes removal safe.
+pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[(
+    "logsink_project_name",
+    "logsink_project_id",
+    "it is the project id, and the project's display name is now `logsink_project_display_name`",
+)];
+
+/// `Some(error)` if this param name was renamed. Declared anywhere — an estate, a
+/// `.local` fork, a pack — it stops the compile and names the replacement.
+pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<PipelineError> {
+    RENAMED_PARAMS.iter().find(|(from, _, _)| *from == name).map(|(_, to, why)| PipelineError {
+        file: file.to_string(),
+        line,
+        msg: format!(
+            "param `{}` was renamed to `{}` — {}. Rename it here; a param no pack reads is not an error, so leaving it would silently take the new param's default instead.",
+            name, to, why
+        ),
+    })
 }
 
 /// Compile an estate source to per-file fragments plus the estate environment.
@@ -940,6 +971,9 @@ impl Walk<'_> {
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
         for (name, v, line) in satz::sort_params_by_deps(&file.params) {
+            if let Some(e) = renamed_param(name, file_name, *line) {
+                return Err(e);
+            }
             if self.genv.contains_key(name) {
                 continue;
             }
@@ -1647,6 +1681,20 @@ pub fn fold_fragments(table: &dyn TypeTable, frags: &[Fragment]) -> Folded {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_renamed_param_is_refused_by_name_wherever_it_is_declared() {
+        // The failure this prevents is silent: nothing refuses a param no pack reads,
+        // so an estate left on the old name would compile and quietly take the new
+        // param's default — a different project, and an archive nobody writes to.
+        let err = renamed_param("logsink_project_name", "e.satz", 3).expect("the old name is refused");
+        assert!(err.msg.contains("logsink_project_id"), "the error names the new param: {}", err.msg);
+        assert!(err.msg.contains("logsink_project_display_name"), "and where the display name went: {}", err.msg);
+        assert!(err.msg.contains("silently"), "and why it is an error at all: {}", err.msg);
+        assert_eq!((err.file.as_str(), err.line), ("e.satz", 3), "with the line to edit");
+        assert!(renamed_param("logsink_project_id", "e.satz", 3).is_none(), "the new name is fine");
+        assert!(renamed_param("customer_shortname", "e.satz", 3).is_none(), "and so is every other param");
+    }
 
     #[test]
     fn a_required_choice_nobody_is_asked_is_not_a_missing_answer() {

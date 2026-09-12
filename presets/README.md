@@ -16,7 +16,7 @@ copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains the
 param to the pack instead.**
 
 Optional packs are gated on a single param: `use "presets/x.satz" when
-logsink_project_name` — a falsy value skips the pack entirely (no resources, no
+logsink_project_id` — a falsy value skips the pack entirely (no resources, no
 params, no claims). The param must be DECLARED somewhere (`params { … }` of the
 estate or a pack): a `when` on a param nobody declares is an error, not `false`.
 
@@ -55,7 +55,7 @@ org-level sink (project owners cannot bypass it). Self-contained — multi-resou
 google_folder {
   shared_services {
     display_name = "Shared Services"
-    use "presets/monitoring/organization-audit-logsink.satz" when logsink_project_name
+    use "presets/monitoring/organization-audit-logsink.satz" when logsink_project_id
   }
 }
 ```
@@ -65,7 +65,7 @@ globally unique without overrides):
 
 | Param | Default | Meaning |
 |---|---|---|
-| `logsink_project_name` | `"{customer_shortname}-log-infra-001"` | project_id of the destination project |
+| `logsink_project_id` | `"{customer_shortname}-log-infra-001"` | project_id of the destination project |
 | `logsink_bucket_name` | `"{customer_shortname}-organization-audit-logs"` | GCS archive bucket |
 | `logsink_bucket_location` | `default_region` | bucket region |
 | `logsink_retention_days` | `400` | lifecycle delete age |
@@ -117,7 +117,7 @@ use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_centr
 
 | Param | Default | Meaning |
 |---|---|---|
-| `cis_central_bucket_project` | `logsink_project_name` | project hosting bucket, metrics, policies, channel: the audit-logsink pack's own project, **by reference** — an estate using both packs sets nothing |
+| `cis_central_bucket_project` | `logsink_project_id` | project hosting bucket, metrics, policies, channel: the audit-logsink pack's own project, **by reference** — an estate using both packs sets nothing |
 | `cis_central_bucket_id` | `"{customer_shortname}-organization-log-alerts"` | Cloud Logging bucket id |
 | `cis_central_bucket_location` | `default_region` | bucket location |
 | `cis_central_bucket_retention_days` | `30` | short, because the archive lives in GCS |
@@ -1124,6 +1124,9 @@ the private history recorded them.
 |---|---|---|---|
 | `integrations.microsoft_sentinel` | 1.0 | 2026-09-12 | first version: Sentinel's GCP federation — pool, the provider trusting Microsoft's commercial tenant with the `api://` audience, the connector's service account and `roles/iam.workloadIdentityUser` for the pool's principal set. Transcribed from Microsoft's own Terraform against the pinned provider: upstream pins google 3.73.0 and uses authoritative `google_project_iam_binding`, which removes grants an estate made |
 | `integrations.microsoft_sentinel_auditlogs` | 1.0 | 2026-09-12 | first version: the first log source — an organisation sink with `include_children` for the four audit streams, its topic, the subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's writer identity and `roles/pubsub.subscriber` for the connector on that one subscription. Tighter than upstream, which grants a project-level custom role over every subscription in the project. The filter is asked: Data Access logs are most of the volume and Sentinel bills by the gigabyte |
+| `monitoring.organization_audit_logsink` | 1.4 | 2026-09-12 | `logsink_project_name` becomes **`logsink_project_id`**, because that is what it is — it feeds `project_id`, and a project id is immutable while a name is not. The project's display name is its own optional param, `logsink_project_display_name`, defaulting to the id exactly as Google does, so nothing changes in the emitted HCL. An estate still binding the old name is REFUSED by name with the new one: nothing refuses a param no pack reads, so leaving it would have silently taken this pack's default project instead — a second logging project and an orphaned archive |
+| `monitoring.organization_cis_log_alerts_central` | 1.6 | 2026-09-12 | follows the rename: the alert project defaults to `logsink_project_id` |
+| `integrations.microsoft_sentinel` | 1.1 | 2026-09-12 | follows the rename: the Sentinel project defaults to `logsink_project_id` |
 | `s2_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_group_definitions` | 1.4 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |

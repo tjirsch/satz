@@ -12,7 +12,7 @@
 // filters reference metric names (dependency edge) and pin resource.type=
 // "logging_bucket" (bucket-scoped metrics report against it — verified live).
 
-pack monitoring.organization_cis_log_alerts_central version "1.5"
+pack monitoring.organization_cis_log_alerts_central version "1.6"
 
 params {
   // The logsink pack's project, BY REFERENCE — not a repeated literal. One
@@ -24,10 +24,10 @@ params {
   // pointed eight alert policies at a project that was never there.
   //
   // With the logsink pack absent and no override, this stops inside the pack
-  // with `unknown param 'logsink_project_name'` — which is the right failure:
+  // with `unknown param 'logsink_project_id'` — which is the right failure:
   // the alert project is then genuinely undecided, and guessing a name is how
   // the old default went unnoticed.
-  cis_central_bucket_project        = logsink_project_name
+  cis_central_bucket_project        = logsink_project_id
   cis_central_bucket_id             = "{customer_shortname}-organization-log-alerts"
   cis_central_bucket_location       = default_region
   // Short on purpose: this bucket feeds alerting, the GCS sink holds the archive.

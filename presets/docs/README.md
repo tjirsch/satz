@@ -47,14 +47,14 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`integrations.microsoft_defender_for_cloud_cspm`](microsoft-defender-for-cloud-cspm.md) | 0.1 | Microsoft Defender for Cloud — the CSPM plan. | 5 | — |
 | [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.2 | Microsoft Defender for Cloud — GCP onboarding, the foundation. | 6 | — |
 | [`integrations.microsoft_sentinel_auditlogs`](microsoft-sentinel-auditlogs.md) | 1.0 | The organisation's audit logs, on their way to Microsoft Sentinel. | 5 | — |
-| [`integrations.microsoft_sentinel`](microsoft-sentinel.md) | 1.0 | Microsoft Sentinel's GCP connector — the federation half, once per customer. | 7 | — |
+| [`integrations.microsoft_sentinel`](microsoft-sentinel.md) | 1.1 | Microsoft Sentinel's GCP connector — the federation half, once per customer. | 7 | — |
 
 ## `monitoring/`
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.3 | Organization-wide audit log sink into a GCS bucket — the compliance archive. | 5 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
-| [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.5 | Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in 4.0. | 20 | 18 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.4 | Organization-wide audit log sink into a GCS bucket — the compliance archive. | 5 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.6 | Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in 4.0. | 20 | 18 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`project_cis_log_alerts`](project-cis-log-alerts.md) | 1.1 | CIS log metric filters and alert policies, per project. | 17 | — |
 
 ## `scc/`

@@ -386,6 +386,14 @@ if command -v tofu >/dev/null 2>&1; then
   (cd tmp/sent-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the sentinel chain does not validate"
 fi
 
+step "a renamed param is refused by name — the silent version of this is a second logging project"
+sed -e 's/logsink_project_id/logsink_project_name/' yaml/smoke.satz > tmp/oldparam.satz
+if "$satz" --config . transpile tmp/oldparam.satz --output "$PWD/tmp/oldparam-hcl" > tmp/oldparam.txt 2>&1; then
+  fail "an estate on the old param name compiled — it would have taken the pack's default project:\n$(cat tmp/oldparam.txt)"
+fi
+grep -q 'logsink_project_id' tmp/oldparam.txt || fail "the refusal does not name the param to use instead:\n$(cat tmp/oldparam.txt)"
+grep -q 'logsink_project_display_name' tmp/oldparam.txt || fail "the refusal does not say where the display name went:\n$(cat tmp/oldparam.txt)"
+
 step "scc notifications: the chain is topic + grant + config, and the agent is the organisation's"
 sed -e 's/^params {/params {\n  scc_notification_project = infra_project_name/' yaml/smoke.satz > tmp/scc.satz
 cat >> tmp/scc.satz <<'SATZ'
