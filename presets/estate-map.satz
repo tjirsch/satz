@@ -21,7 +21,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.3"
+pack estate_map version "1.4"
 
 params {
   // ---- the security-group model: exactly one ------------------------------
@@ -39,6 +39,7 @@ params {
   use_scc_enablement       = false
   use_scc_notifications    = false
   use_scc_findings_mail    = false
+  use_scc_findings_siem    = false
   use_scc_export           = false
   use_security_audit_sa    = false
   use_defender             = false
@@ -109,6 +110,14 @@ question use_scc_notifications {
 question use_scc_findings_mail {
   prompt   = "Mail a security address when findings arrive?"
   why      = "For an organisation with nothing subscribed to the topic — and a topic nobody subscribes to drops every message it receives. This adds a subscription that keeps seven days, an e-mail channel and an alert that fires when findings reach the topic. The mail says findings arrived and links to them; the finding itself stays in the topic, the console and the export. Off when a SIEM already reads the topic."
+  reversal = edit
+  blast    = low
+  ask_when = use_scc_notifications
+}
+
+question use_scc_findings_siem {
+  prompt   = "Let an external SIEM pull findings off the topic?"
+  why      = "For a customer whose security team works in Sentinel, Defender for Cloud, Splunk or QRadar rather than in a mailbox. It adds the connector's own pull subscription and `roles/pubsub.subscriber` for the identity it reads as, which is asked — without that grant a connector authenticates and reads nothing. This and the mailbox are not exclusive: the SIEM ingests every finding, the mailbox is told they are arriving."
   reversal = edit
   blast    = low
   ask_when = use_scc_notifications

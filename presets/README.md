@@ -328,6 +328,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the three below are asked only when it is on |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
 | `use_scc_findings_mail` | off | `scc/scc-findings-mail` — asked only when the topic is on: the subscription, mailbox and alert that tell somebody |
+| `use_scc_findings_siem` | off | `scc/scc-findings-siem` — asked with it: the connector's own subscription and the grant it reads with. Both may be on |
 | `use_scc_export` | off | `scc/scc-export` — the BigQuery dataset findings are kept in |
 | `use_security_audit_sa` | off | `security-audit/sa-security-audit` |
 | `use_defender` | off | `integrations/microsoft-defender-for-cloud` — its plan fragments by hand |
@@ -596,6 +597,32 @@ and code is not a resource.
 The mailbox must exist and accept mail from `alerting-noreply@google.com`. A group
 whose members have no mailboxes drops every alert and nothing in the estate can see
 it happen — a group, never a person.
+
+### `scc/scc-findings-siem.satz` — the SIEM pulls them
+
+The other destination, for a customer whose security team works in Microsoft Sentinel,
+Defender for Cloud, Splunk or QRadar rather than in a mailbox.
+
+```
+use "presets/scc/scc-findings-siem.satz"
+```
+
+Two resources on the notification pack's topic: a PULL subscription of its own — every
+connector in this class pulls, and a push endpoint needs a URL the estate cannot know —
+and `roles/pubsub.subscriber` for the identity the connector reads as. The grant is the
+half that is forgotten: without it a connector authenticates, finds the subscription and
+reads nothing.
+
+The identity is asked (`scc_siem_subscriber`, a full IAM member) and has **no default**.
+For Microsoft Sentinel it is the service account
+`integrations/microsoft-sentinel.satz` creates; for Defender for Cloud the one its
+onboarding script names; for another SIEM whatever its connector authenticates as.
+A default would tie Security Command Center to one vendor's pack, and a wrong one is a
+subscription nobody can read.
+
+This and the mailbox are not exclusive — each makes its own subscription, so the SIEM
+ingests every finding while the mailbox is told they are arriving. Two readers on ONE
+subscription would split the findings between them, which is why they do not share.
 
 ### `scc/scc-export.satz` — findings kept and queryable
 
@@ -1036,6 +1063,7 @@ the private history recorded them.
 | `cis_extensions.access_approval` | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
 | `cis_extensions.internet_ssh_rdp` | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
 | `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.0 | 2026-09-11 | CIS 5.0 6.6 and 6.9, opt-in: two custom constraints on Cloud SQL instances — IAM database authentication on (SQL Server exempt), deletion protection on — each enforced by a policy on the organisation |
+| `estate_map` | 1.4 | 2026-09-12 | `use_scc_findings_siem` beside the mailbox choice, asked with it when the topic is on: a customer with a SIEM answers where findings go without being asked for an address nobody reads |
 | `estate_map` | 1.3 | 2026-09-12 | Security Command Center is one decision with follow-ups: `use_scc_enablement` carries what the Premium tier costs (per covered resource-hour, not a share of the bill) and that the 30-day trial becomes pay-as-you-go by itself, and `recommend = true` offers it — the param default stays off, so `--accept-defaults` never switches a paid service on. `use_scc_notifications` and `use_scc_export` are asked only when enablement is on (`ask_when`), and `use_scc_findings_mail` only when the topic is |
 | `estate_map` | 1.2 | 2026-09-12 | one more choice: `use_scc_export`, the BigQuery dataset findings are kept and queried in |
 | `estate_map` | 1.1 | 2026-09-12 | one more choice: `use_scc_notifications`, the Pub/Sub chain that carries Security Command Center findings out of the console. Off by default like the enablement choice beside it — it needs SCC switched on to have findings to publish |
@@ -1062,6 +1090,7 @@ the private history recorded them.
 | `ci.verification_runner_grant` | 1.0 | 2026-09-09 | first version: the one binding a verification runner needs — `roles/iam.serviceAccountTokenCreator` on the estate's IaC service account, and nothing on the organisation. Separate from the runner pack because in the MSP-hosted shape the two resources belong to two parties: the runner in the MSP's project, this grant on the customer's account, applied by the customer. Default names the runner pack's own account, so a customer-hosted estate using both wires nothing |
 | `CIS_GCP_Foundation_4_0` | 2.6 | 2026-09-08 | `gcp.resourceLocations` becomes the `allowed_resource_locations` param (default = the two multi-region groups it always emitted, so no estate changes on upgrade) — a hard-coded value silently widened a policy an operator had narrowed by hand. And the six superseded legacy blocks take a `-superseded` address suffix, which makes the switch to `spec { reset = true }` a REPLACE by construction: the provider PATCHes the rules it holds together with `reset` and the API refuses the pair (`400 Cannot set PolicyRules if reset is true`), so the in-place form v2.5 assumed never worked. Estates upgrading from 2.4 or 2.5 see one destroy + create per legacy policy, in the plan, instead of needing `tofu apply -replace=` by hand |
 | `monitoring.organization_cis_log_alerts_central` | 1.4 | 2026-09-08 | the alert project defaults to `logsink_project_name` — the audit-logsink pack's own param, BY REFERENCE — so an estate using both packs wires nothing. The old default was the literal `{customer_shortname}-organization-log-alerts`, a project nothing creates, so an estate that did not override it pointed eight alert policies at a project that was never there. Used without the logsink pack the name is undeclared and the pack stops with `unknown param`, which is the honest failure: the alert project is then genuinely undecided |
+| `scc_findings_siem` | 1.0 | 2026-09-12 | first version: the SIEM's own pull subscription on the findings topic and `roles/pubsub.subscriber` for the identity it reads as — without that grant a connector authenticates and reads nothing. The identity is asked and has no default: defaulting it would tie SCC to one vendor's pack. Runs alongside the mailbox, each with its own subscription |
 | `scc_findings_mail` | 1.0 | 2026-09-12 | first version: who gets told, for an organisation with no SIEM on the topic — a subscription (a topic without one drops every message), an e-mail channel and an alert policy that fires when findings reach the topic. Asks the address; its default is the central alert pack's `cis_central_email` by reference, and without that pack the compile stops rather than mailing a guessed address. The mail says findings arrived and links to them: the finding's text stays in the topic, the console and the export |
 | `scc_export` | 1.1 | 2026-09-12 | the export pins its own `name`. The server assigns it and the provider reads it back, so without it in the config every plan proposed to null it and the API refused the update ("Field name is immutable") — a permanent diff. Measured on a live organisation |
 | `scc_export` | 1.0 | 2026-09-12 | first version: findings exported to BigQuery — the API in the dataset's project, the dataset (`delete_contents_on_destroy` false, so removing the pack does not delete the history), the exporting agent's `dataEditor` on it, and the v2 export. The dataset takes its project through the service resource, so the API is enabled first; even then a first apply can fail while BigQuery's control plane catches up, and the second succeeds. Asks the project and the location; no claim |

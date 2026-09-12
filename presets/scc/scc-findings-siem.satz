@@ -1,0 +1,75 @@
+// Security Command Center findings, pulled off the topic by an external SIEM.
+//
+// The other answer to "who gets told", for a customer whose security team works in
+// Microsoft Sentinel, Defender for Cloud, Splunk or QRadar rather than in a mailbox.
+//
+//   use "presets/scc/scc-findings-siem.satz"
+//
+// NEEDS `presets/scc/scc-notifications.satz`: this fragment attaches to the topic
+// that pack creates and takes the same project. Used without it, the compile stops
+// with `unknown param 'scc_notification_project'`.
+//
+// TWO RESOURCES, AND THE SECOND IS THE ONE THAT IS FORGOTTEN. A pull subscription
+// on the findings topic, and `roles/pubsub.subscriber` for the identity the SIEM
+// reads as — without the grant the connector authenticates, finds the subscription,
+// and reads nothing. The subscription is a PULL subscription: every SIEM connector
+// in this class pulls, and a push endpoint would need a URL the estate cannot know.
+//
+// THE IDENTITY IS ASKED, AND HAS NO DEFAULT. It is a full IAM member string, which
+// for Microsoft Sentinel is the service account
+// `presets/integrations/microsoft-sentinel.satz` creates and for Defender for Cloud
+// the one its onboarding script names. Defaulting it to either would tie Security
+// Command Center to one vendor's pack, and a wrong default here is a subscription
+// nobody can read.
+//
+// ALONGSIDE A MAILBOX, NOT INSTEAD OF IT. `scc-findings-mail.satz` makes its own
+// subscription under its own address, so an estate can run both: the SIEM ingests
+// every finding and the mailbox is told that findings are arriving.
+//
+// NO CLAIM. No catalog control covers Security Command Center, so this pack
+// witnesses nothing.
+
+pack scc_findings_siem version "1.0"
+
+params {
+  // No default: whose identity this is depends on which SIEM the customer runs.
+  scc_siem_subscriber           = ""
+  scc_siem_subscription_name    = "{customer_shortname}-scc-findings-siem"
+  // A week, so a connector that is down over a weekend still gets the findings.
+  scc_siem_retention            = "604800s"
+  // The connector acknowledges what it has ingested; 60s is what Microsoft's own
+  // GCP connector uses and is long enough for a batch to be written.
+  scc_siem_ack_deadline_seconds = 60
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question scc_siem_subscriber {
+  prompt   = "Which identity does the SIEM read findings as (a full IAM member, e.g. serviceAccount:sentinel-service-account@PROJECT.iam.gserviceaccount.com)?"
+  why      = "Whoever holds this reads every finding in the organisation. For Microsoft Sentinel it is the service account the Sentinel pack creates; for Defender for Cloud the one its onboarding script names; for another SIEM whatever its connector authenticates as. There is no default, because a wrong one is a subscription the connector cannot read and findings that pile up until they expire."
+  reversal = edit
+  blast    = high
+}
+
+// 1) The subscription the connector pulls from. Its own, not the mailbox's: two
+//    readers on one subscription split the findings between them.
+google_pubsub_subscription {
+  scc_findings_siem {
+    name                       = scc_siem_subscription_name
+    topic                      = "${{google_pubsub_topic.scc_findings.name}}"
+    project                    = scc_notification_project
+    ack_deadline_seconds       = scc_siem_ack_deadline_seconds
+    message_retention_duration = scc_siem_retention
+    retain_acked_messages      = false
+  }
+}
+
+// 2) The grant. Without it the connector authenticates and reads nothing.
+google_pubsub_subscription_iam_member {
+  scc_findings_siem_reader {
+    subscription = "${{google_pubsub_subscription.scc_findings_siem.name}}"
+    project      = scc_notification_project
+    role         = "roles/pubsub.subscriber"
+    member       = scc_siem_subscriber
+  }
+}
