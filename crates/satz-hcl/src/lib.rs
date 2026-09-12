@@ -64,6 +64,8 @@ pub struct Row {
 pub enum Action {
     /// a Satz resource now
     Translated,
+    /// `count` over a promoted list: one Satz resource per entry
+    Expanded(usize),
     /// consumed into `params` — neither wrapped nor dropped
     Promoted(String),
     /// verbatim inside `hcl trust`, and why
@@ -134,6 +136,9 @@ struct Res {
     /// a `google_project`'s `project_id` resolved to a literal, for matching a
     /// dropped provider's default project against the projects in this import
     project_id: Option<String>,
+    /// one copy of an expanded `count`: the block already has its own row, so
+    /// this resource does not add a second
+    expanded: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -344,13 +349,62 @@ fn one_pass(
                     continue;
                 }
             };
-            let mut cx = Cx { consts: &consts, schema, uses: Uses::default() };
-            let classified = classify(&tf_type, &label, block, &mut cx, &mut org_ids);
             let project_id = if tf_type == "google_project" {
                 attr_string(block, "project_id", &consts)
             } else {
                 None
             };
+            // `count = length(<promoted list>)` is one resource per entry, which
+            // is what Satz writes; expand it rather than carrying the block.
+            let expansion = count_expansion(block, &consts).and_then(|(list, elements)| {
+                // the copy is classified from the block WITHOUT its `count`: the
+                // meta-argument is what expanded, and every gate downstream is
+                // right to refuse one it still sees
+                let mut without_count = block.clone();
+                without_count.body.remove_attribute("count");
+                let mut copies = Vec::new();
+                for (i, element) in elements.iter().enumerate() {
+                    let mut cx = Cx {
+                        consts: &consts,
+                        schema,
+                        uses: Uses::default(),
+                        index: Some((list.clone(), element.clone())),
+                    };
+                    let c = classify(&tf_type, &label, &without_count, &mut cx, &mut org_ids);
+                    // one copy that cannot be written leaves the whole block
+                    // wrapped: half an expansion is worse than none
+                    c.body.as_ref()?;
+                    copies.push((expanded_label(&label, element, i), c, cx.uses));
+                }
+                Some(copies)
+            });
+            if let Some(copies) = expansion {
+                rows.push(Row {
+                    file: input.path.clone(),
+                    line,
+                    what: what.clone(),
+                    action: Action::Expanded(copies.len()),
+                });
+                for (copy_label, classified, uses) in copies {
+                    resources.push(Res {
+                        tf_type: tf_type.clone(),
+                        label: copy_label,
+                        file: input.path.clone(),
+                        line,
+                        what: what.clone(),
+                        text: text.clone(),
+                        body: classified.body,
+                        place: classified.place,
+                        reason: classified.reason,
+                        uses,
+                        project_id: project_id.clone(),
+                        expanded: true,
+                    });
+                }
+                continue;
+            }
+            let mut cx = Cx { consts: &consts, schema, uses: Uses::default(), index: None };
+            let classified = classify(&tf_type, &label, block, &mut cx, &mut org_ids);
             resources.push(Res {
                 tf_type,
                 label,
@@ -363,6 +417,7 @@ fn one_pass(
                 reason: classified.reason,
                 uses: cx.uses,
                 project_id,
+                expanded: false,
             });
         }
     }
@@ -491,7 +546,7 @@ fn one_pass(
                 what: r.what.clone(),
                 action: Action::Wrapped(why),
             });
-        } else {
+        } else if !r.expanded {
             rows.push(Row { file: r.file.clone(), line: r.line, what: r.what.clone(), action: Action::Translated });
         }
     }
@@ -853,7 +908,7 @@ fn collect_consts(
             decls[p.decl].unresolved.push(p.name.clone());
             continue;
         }
-        let mut cx = Cx { consts: &names_only, schema: &all, uses: Uses::default() };
+        let mut cx = Cx { consts: &names_only, schema: &all, uses: Uses::default(), index: None };
         match cx.literal(expr) {
             Ok(v) => {
                 if let Some(c) = consts.by_name.get_mut(&p.name) {
@@ -1124,6 +1179,78 @@ struct Classified {
     body: Option<serde_yaml::Mapping>,
     place: Place,
     reason: Option<String>,
+}
+
+/// `count = length(var.admins)` over a list this import promoted: the list's
+/// name and its elements. Terraform's own idiom for "one of these per entry",
+/// and in Satz it IS one resource per entry — so the block expands instead of
+/// being carried verbatim. Only this shape: the count must be the length of one
+/// promoted list of scalars, and every `count.index` in the block must index
+/// THAT list (`expand_block` checks the uses; a count.index anywhere else leaves
+/// the block wrapped rather than half-translated).
+fn count_expansion(block: &Block, consts: &Consts) -> Option<(String, Vec<serde_yaml::Value>)> {
+    let count = block.body.iter().find_map(|st| match st {
+        Structure::Attribute(a) if a.key.to_string() == "count" => Some(a.value.clone()),
+        _ => None,
+    })?;
+    let Expression::FuncCall(call) = &count else { return None };
+    // `length(...)`, not a namespaced function of the same name
+    if !call.name.namespace.is_empty() || call.name.name.as_str() != "length" {
+        return None;
+    }
+    let [arg] = call.args.iter().collect::<Vec<_>>()[..] else { return None };
+    let Expression::Traversal(t) = arg else { return None };
+    let Expression::Variable(root) = &t.expr else { return None };
+    if !matches!(root.as_str(), "var" | "local") {
+        return None;
+    }
+    let mut segs = Vec::new();
+    for op in t.operators.iter() {
+        match op.value() {
+            TraversalOperator::GetAttr(k) => segs.push(k.as_str().to_string()),
+            _ => return None,
+        }
+    }
+    let [name] = segs.as_slice() else { return None };
+    let c = consts.by_name.get(name)?;
+    if c.conflict.is_some() {
+        return None;
+    }
+    match c.value.as_ref()? {
+        serde_yaml::Value::Sequence(items) if !items.is_empty() => {
+            // a list of scalars: an element that is itself a list or a map has no
+            // single value to substitute into an attribute
+            if items.iter().all(|i| i.is_string() || i.is_number() || i.is_bool()) {
+                Some((name.clone(), items.clone()))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The label one expanded copy takes: the element when it can be a Satz
+/// identifier (`roles/viewer` -> `viewer`, `europe-west3` -> `europe_west3`),
+/// else the index — a label is a name in the estate, and a reader should
+/// recognise which entry it is.
+fn expanded_label(base: &str, element: &serde_yaml::Value, i: usize) -> String {
+    let raw = match element {
+        serde_yaml::Value::String(s) => s.rsplit('/').next().unwrap_or(s).to_string(),
+        other => serde_yaml::to_string(other).unwrap_or_default().trim().to_string(),
+    };
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+    let suffix = if cleaned.is_empty() || cleaned.starts_with(|c: char| c.is_ascii_digit()) {
+        i.to_string()
+    } else {
+        cleaned
+    };
+    format!("{}_{}", base, suffix)
 }
 
 fn wrapped(reason: String) -> Classified {
@@ -1438,6 +1565,9 @@ struct Cx<'a> {
     consts: &'a Consts,
     schema: &'a dyn Schema,
     uses: Uses,
+    /// while a `count` is being expanded: the list and the element this copy
+    /// stands for, so `var.<list>[count.index]` resolves to it
+    index: Option<(String, serde_yaml::Value)>,
 }
 
 impl Cx<'_> {
@@ -1501,9 +1631,21 @@ impl Cx<'_> {
         for op in t.operators.iter() {
             match op.value() {
                 TraversalOperator::GetAttr(k) => segs.push(k.as_str().to_string()),
-                TraversalOperator::Index(_) | TraversalOperator::LegacyIndex(_) => {
-                    return Err(format!("an indexed lookup into `{}`", root))
+                TraversalOperator::Index(ix) => {
+                    // `var.admins[count.index]` inside an expanded copy IS that
+                    // copy's element; any other index is still unresolvable
+                    match (&self.index, segs.as_slice()) {
+                        (Some((list, element)), [name]) if name == list && is_count_index(ix) => {
+                            let v = match element {
+                                serde_yaml::Value::String(s) => s.clone(),
+                                other => serde_yaml::to_string(other).unwrap_or_default().trim().to_string(),
+                            };
+                            return Ok(vec![Part::Text(v)]);
+                        }
+                        _ => return Err(format!("an indexed lookup into `{}`", root)),
+                    }
                 }
+                TraversalOperator::LegacyIndex(_) => return Err(format!("an indexed lookup into `{}`", root)),
                 _ => return Err(format!("a splat over `{}`", root)),
             }
         }
@@ -1635,6 +1777,24 @@ impl Cx<'_> {
 /// expressed: hcl-edit decodes the source's `$${` to `${`, and Satz's only
 /// spelling for a literal brace pair is the one that means an interpolation.
 /// Carrying it would silently turn escaped text into a live reference.
+/// Is this index expression Terraform's `count.index`?
+fn is_count_index(e: &Expression) -> bool {
+    let Expression::Traversal(t) = e else { return false };
+    let Expression::Variable(v) = &t.expr else { return false };
+    if v.as_str() != "count" {
+        return false;
+    }
+    let ops: Vec<String> = t
+        .operators
+        .iter()
+        .filter_map(|op| match op.value() {
+            TraversalOperator::GetAttr(k) => Some(k.as_str().to_string()),
+            _ => None,
+        })
+        .collect();
+    ops == ["index"]
+}
+
 fn guard_literal(s: &str) -> Result<(), String> {
     if s.contains("${") || s.contains("%{") {
         return Err(
@@ -1691,7 +1851,10 @@ pub fn summary(rows: &[Row]) -> String {
     let count = |f: &dyn Fn(&Action) -> bool| rows.iter().filter(|r| f(&r.action)).count();
     format!(
         "import: {} block(s) translated to Satz, {} promoted to params, {} wrapped verbatim, {} dropped (terraform/provider)",
-        count(&|a| *a == Action::Translated),
+        count(&|a| *a == Action::Translated) + rows.iter().filter_map(|r| match r.action {
+            Action::Expanded(n) => Some(n),
+            _ => None,
+        }).sum::<usize>(),
         count(&|a| matches!(a, Action::Promoted(_))),
         count(&|a| matches!(a, Action::Wrapped(_))),
         count(&|a| matches!(a, Action::Dropped(_))),
@@ -1931,6 +2094,108 @@ resource "google_project_iam_member" "no_member" {
         );
         let row = imported.rows.iter().find(|r| r.what.contains("no_member")).unwrap();
         assert!(matches!(&row.action, Action::Wrapped(r) if r.contains("`member`")), "{:?}", row.action);
+    }
+
+    /// Terraform's own "one of these per entry" is `count = length(var.list)`
+    /// with `var.list[count.index]`. Satz writes one resource per entry, so the
+    /// block expands instead of being carried verbatim inside `hcl trust`.
+    #[test]
+    fn a_count_over_a_promoted_list_becomes_one_resource_per_entry() {
+        let tf = r#"
+variable "viewers" {
+  type    = list(string)
+  default = ["group:auditors@example.com", "group:security@example.com"]
+}
+
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "acme-infra-001"
+  org_id     = "123456789012"
+}
+
+resource "google_project_iam_member" "viewers" {
+  count   = length(var.viewers)
+  project = google_project.p.project_id
+  role    = "roles/viewer"
+  member  = var.viewers[count.index]
+}
+"#;
+        let imported = import(&one(tf), "e", false, &Known).unwrap();
+        let expanded: Vec<&Row> = imported.rows.iter().filter(|r| matches!(r.action, Action::Expanded(_))).collect();
+        assert_eq!(expanded.len(), 1, "{:?}", imported.rows);
+        assert_eq!(expanded[0].action, Action::Expanded(2), "one resource per list entry");
+        assert!(
+            !imported.rows.iter().any(|r| matches!(&r.action, Action::Wrapped(_))),
+            "something was carried verbatim: {:?}",
+            imported.rows
+        );
+        // a grant map keyed by member: both entries, each with the role
+        assert!(imported.satz.contains("group:auditors@example.com"), "{}", imported.satz);
+        assert!(imported.satz.contains("group:security@example.com"), "{}", imported.satz);
+        assert_eq!(imported.satz.matches("roles/viewer").count(), 2, "{}", imported.satz);
+    }
+
+    /// A labelled type takes the entry into its label, so a reader can tell the
+    /// copies apart — and the resource is referenceable.
+    #[test]
+    fn an_expanded_label_names_the_entry() {
+        let tf = r#"
+variable "regions" {
+  type    = list(string)
+  default = ["europe-west3", "europe-west4"]
+}
+
+resource "google_storage_bucket" "state" {
+  count    = length(var.regions)
+  name     = "acme-state-${var.regions[count.index]}"
+  location = var.regions[count.index]
+}
+"#;
+        let imported = import(&one(tf), "e", false, &Known).unwrap();
+        assert!(imported.satz.contains("state_europe_west3"), "{}", imported.satz);
+        assert!(imported.satz.contains("state_europe_west4"), "{}", imported.satz);
+        assert!(imported.satz.contains("acme-state-europe-west3"), "the template took the entry:\n{}", imported.satz);
+        assert!(!imported.satz.contains("count.index"), "{}", imported.satz);
+    }
+
+    /// Only that shape. A `count` over something this import cannot resolve, or a
+    /// `count.index` used anywhere else, leaves the block wrapped — half an
+    /// expansion would be a guess about what the source meant.
+    #[test]
+    fn a_count_the_import_cannot_resolve_still_wraps() {
+        let unknown = r#"
+variable "names" { type = list(string) }
+
+resource "google_storage_bucket" "b" {
+  count    = length(var.names)
+  name     = var.names[count.index]
+  location = "EU"
+}
+"#;
+        let imported = import(&one(unknown), "e", false, &Known).unwrap();
+        assert!(
+            imported.rows.iter().any(|r| matches!(&r.action, Action::Wrapped(w) if w.contains("count"))),
+            "{:?}",
+            imported.rows
+        );
+
+        // the index used for something else: not this list
+        let other = r#"
+variable "names" { default = ["a", "b"] }
+variable "others" { default = ["x", "y"] }
+
+resource "google_storage_bucket" "b" {
+  count    = length(var.names)
+  name     = var.others[count.index]
+  location = "EU"
+}
+"#;
+        let imported = import(&one(other), "e", false, &Known).unwrap();
+        assert!(
+            imported.rows.iter().any(|r| matches!(&r.action, Action::Wrapped(_))),
+            "an index into another list is not this expansion: {:?}",
+            imported.rows
+        );
     }
 
     #[test]

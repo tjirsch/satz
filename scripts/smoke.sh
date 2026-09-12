@@ -535,8 +535,12 @@ fi
 
 step "import, hcl shape (translate): literal resources become Satz, positional ones wrap"
 "$satz" --config . import tf -o imported-hcl2.satz --verbose | tee tmp/import-hcl2.txt
-grep -q '7 block(s) translated' tmp/import-hcl2.txt || fail "folder, project, service, grants and buckets should translate:\n$(cat tmp/import-hcl2.txt)"
-grep -q '2 promoted to params' tmp/import-hcl2.txt || fail "the variable and the locals block should be promoted, not wrapped:\n$(cat tmp/import-hcl2.txt)"
+grep -q '9 block(s) translated' tmp/import-hcl2.txt || fail "folder, project, service, grants and buckets should translate, the count over a list as two:\n$(cat tmp/import-hcl2.txt)"
+grep -q '3 promoted to params' tmp/import-hcl2.txt || fail "both variables and the locals block should be promoted, not wrapped:\n$(cat tmp/import-hcl2.txt)"
+# `count = length(var.log_viewers)` is one grant per entry, each taking its own
+grep -q 'expanded .*`count` over a promoted list: 2 resource(s)' tmp/import-hcl2.txt || fail "the count block was not expanded:\n$(cat tmp/import-hcl2.txt)"
+grep -q 'roles/logging.viewer' yaml/imported-hcl2.satz || fail "the expanded grant is missing from the estate"
+grep -vq 'count.index' yaml/imported-hcl2.satz || fail "count.index reached the estate"
 grep -q 'promoted .*locals' tmp/import-hcl2.txt || fail "the locals block was not reported as promoted"
 grep -q '^google_folder {' yaml/imported-hcl2.satz || fail "no translated folder in the estate"
 grep -q 'customer_organization_id = "123456789012"' yaml/imported-hcl2.satz || fail "the organisation id was not inferred"

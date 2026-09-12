@@ -75,3 +75,17 @@ resource "google_organization_iam_member" "admins" {
   role   = "roles/resourcemanager.organizationViewer"
   member = "group:gcp-organization-admins@example.com"
 }
+
+# Terraform's "one of these per entry": in Satz that IS one resource per entry,
+# so the import expands it rather than carrying it verbatim.
+variable "log_viewers" {
+  type    = list(string)
+  default = ["group:gcp-auditors@example.com", "group:gcp-organization-admins@example.com"]
+}
+
+resource "google_project_iam_member" "log_viewers" {
+  count   = length(var.log_viewers)
+  project = google_project.infra.project_id
+  role    = "roles/logging.viewer"
+  member  = var.log_viewers[count.index]
+}

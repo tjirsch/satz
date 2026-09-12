@@ -3096,6 +3096,9 @@ fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime
     for r in &imported.rows {
         match &r.action {
             satz_hcl::Action::Dropped(why) => println!("  dropped    {}:{} {} — {}", r.file, r.line, r.what, why),
+            satz_hcl::Action::Expanded(n) => {
+                println!("  expanded   {}:{} {} — `count` over a promoted list: {} resource(s)", r.file, r.line, r.what, n)
+            }
             satz_hcl::Action::Wrapped(why) if !wrap_all || verbose => println!("  wrapped    {}:{} {} — {}", r.file, r.line, r.what, why),
             satz_hcl::Action::Promoted(what) => println!("  promoted   {}:{} {} — {}", r.file, r.line, r.what, what),
             satz_hcl::Action::Translated if verbose => println!("  translated {}:{} {}", r.file, r.line, r.what),
