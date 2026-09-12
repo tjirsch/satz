@@ -175,7 +175,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("iac-roles", Parity::Tools(&["satz_iac_roles"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
     // --- not served ---------------------------------------------------------
-    ("merge-presets", Parity::Off("its walk prints as it installs, forks and adopts; the outcomes are not a value yet")),
+    ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
     ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; `--from-live` runs as the human, before there is an estate")),
     ("bootstrap", Parity::Off("day 0: it creates the folder, project and state bucket as the human, after an interactive pre-flight")),
     ("plan", Parity::Off("it hands stdio to the tool; an agent runs tofu itself")),
@@ -481,6 +481,25 @@ pub(crate) struct GetPresetsArgs {
     /// A pristine library under the server's root to copy from instead of downloading
     #[serde(default)]
     pub pristine_dir: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct MergePresetsArgs {
+    /// A pristine library under the server's root to compare against instead of
+    /// downloading upstream
+    #[serde(default)]
+    pub pristine_dir: Option<String>,
+    /// The estate whose `use` graph decides which packs are protected; the open
+    /// estate when omitted
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Report what would happen and write nothing
+    #[serde(default)]
+    pub report_only: bool,
+    /// Take upstream in place for these pack stems instead of forking them —
+    /// `all` for every pack that is merely behind
+    #[serde(default)]
+    pub adopt: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1363,6 +1382,55 @@ impl SatzMcp {
             }
         }
         Ok(Ok(Json(report)))
+    }
+
+    #[tool(
+        name = "satz_merge_presets",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::presets::MergeReport>(),
+        description = "Reconcile the estate's preset library with upstream: install what is missing, take doc \
+                       and format changes silently, and for a pack the estate USES that changed semantically \
+                       fork it to `X.local.satz` and repoint the estate — proving the repoint by transpile \
+                       identity. `adopt` takes upstream in place for the packs named (`all` for every pack \
+                       merely behind) and reports the emission delta instead. `report_only` writes nothing. \
+                       The answer is the run as events in walk order, plus the counts and `attention`, which \
+                       is what the command exits non-zero on. Needs the 'write' capability; `report_only` \
+                       still needs it, because the walk fetches upstream.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn merge_presets(
+        &self,
+        Parameters(args): Parameters<MergePresetsArgs>,
+    ) -> Result<Result<Json<crate::presets::MergeReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let presets = PathBuf::from(&open.runtime.presets_dir);
+        let existing = presets.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| presets.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let pristine = match args.pristine_dir.as_deref().map(|p| self.file(p)).transpose() {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::presets::run_merge_presets(
+            &open.runtime.presets_dir,
+            pristine,
+            Some(estate),
+            &open.tool,
+            &open.runtime,
+            args.report_only,
+            &args.adopt,
+        )
+        .await
+        {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("merge-presets: {}", e)))),
+        }
     }
 
     #[tool(

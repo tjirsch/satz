@@ -820,6 +820,211 @@ pub(crate) async fn run_get_presets(
 // merge-presets: the reconciling update flow (fork + ledger, base-aware)
 // ---------------------------------------------------------------------------
 
+/// What a merge run did to one pack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum MergeAction {
+    /// the library did not have it
+    Installed,
+    /// byte-identical to upstream
+    Current,
+    /// docs and data upstream owns — nothing to fork
+    ArtifactUpdated,
+    /// same canonical form: comments or formatting only
+    DocOnly,
+    /// changed, and the estate does not use it
+    UnusedOverwritten,
+    /// `--adopt`: upstream taken in place, the estate keeps the pristine name
+    AdoptedInPlace,
+    /// changed and used: forked to `X.local.satz`, the estate repointed
+    ForkedAndRepointed,
+    /// a fork was already there: pristine re-tracked, the delta refreshed
+    ForkDiffRefreshed,
+    /// needs a fork+repoint, which cannot share a run with `--adopt`
+    Deferred,
+    /// left untouched, with a reason
+    Refused,
+    /// `--adopt all` met a local EDIT at the same version, not staleness
+    SkippedEdited,
+}
+
+/// One line of a merge run, in the walk's own order. The CLI renders these; the
+/// MCP tool returns them. One source, so what an agent reads and what a human
+/// reads cannot drift apart.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub(crate) enum MergeEvent {
+    Pack {
+        /// path under presets_dir
+        file: String,
+        action: MergeAction,
+        /// the fork this outcome names, where it names one
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fork: Option<String>,
+        /// the adoption delta this outcome names, where it names one
+        #[serde(skip_serializing_if = "Option::is_none")]
+        diff: Option<String>,
+        /// `2.7 -> 2.8`, where both versions are known
+        #[serde(skip_serializing_if = "Option::is_none")]
+        versions: Option<String>,
+        /// why, for a refusal
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// upstream changed a pack's content without moving its version
+    Warning { file: String, text: String },
+    /// something the run had to say that is not about one pack
+    Note { text: String },
+    /// what an adoption changes in the emission
+    EmissionDelta { lines: Vec<String> },
+}
+
+/// How many packs each outcome took, in both modes: a `--report-only` run counts
+/// what it WOULD do, so its summary matches the lines above it.
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MergeCounts {
+    pub installed: usize,
+    pub current: usize,
+    pub artifacts_updated: usize,
+    pub doc_only: usize,
+    pub unused_overwritten: usize,
+    pub adopted_in_place: usize,
+    pub forked_and_repointed: usize,
+    pub fork_diffs_refreshed: usize,
+    pub deferred: usize,
+    pub refused: usize,
+    pub skipped_edited: usize,
+}
+
+/// A merge run as a value.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MergeReport {
+    /// nothing was written
+    pub report_only: bool,
+    pub events: Vec<MergeEvent>,
+    pub counts: MergeCounts,
+    /// something here needs a human: `merge-presets` exits non-zero
+    pub attention: bool,
+}
+
+impl MergeReport {
+    fn counted(events: Vec<MergeEvent>, report_only: bool, attention: bool) -> Self {
+        let mut counts = MergeCounts::default();
+        for e in &events {
+            if let MergeEvent::Pack { action, .. } = e {
+                let n = match action {
+                    MergeAction::Installed => &mut counts.installed,
+                    MergeAction::Current => &mut counts.current,
+                    MergeAction::ArtifactUpdated => &mut counts.artifacts_updated,
+                    MergeAction::DocOnly => &mut counts.doc_only,
+                    MergeAction::UnusedOverwritten => &mut counts.unused_overwritten,
+                    MergeAction::AdoptedInPlace => &mut counts.adopted_in_place,
+                    MergeAction::ForkedAndRepointed => &mut counts.forked_and_repointed,
+                    MergeAction::ForkDiffRefreshed => &mut counts.fork_diffs_refreshed,
+                    MergeAction::Deferred => &mut counts.deferred,
+                    MergeAction::Refused => &mut counts.refused,
+                    MergeAction::SkippedEdited => &mut counts.skipped_edited,
+                };
+                *n += 1;
+            }
+        }
+        Self { report_only, events, counts, attention }
+    }
+}
+
+/// The run as a human reads it — what the walk used to print as it went.
+pub(crate) fn render_merge(r: &MergeReport) -> String {
+    let mut out = String::new();
+    let dry = r.report_only;
+    for e in &r.events {
+        match e {
+            MergeEvent::Note { text } => out.push_str(&format!("{}\n", text)),
+            MergeEvent::Warning { file, text } => out.push_str(&format!("  WARNING {}: {}\n", file, text)),
+            MergeEvent::EmissionDelta { lines } => {
+                out.push_str("\n  emission delta after adoption:\n");
+                for l in lines {
+                    out.push_str(&format!("{}\n", l));
+                }
+                out.push_str("  hcl/ on disk is NOT regenerated by this command — run `satz transpile`,\n");
+                out.push_str("  read `git diff hcl/main.tf`, then `tofu plan` before applying.\n");
+            }
+            MergeEvent::Pack { file, action, fork, diff, versions, reason } => {
+                let arrow = versions.clone().unwrap_or_default();
+                let line = match (action, dry) {
+                    (MergeAction::Installed, true) => Some(format!("  would install {}", file)),
+                    (MergeAction::ArtifactUpdated, true) => Some(format!("  would update artifact {}", file)),
+                    (MergeAction::DocOnly, true) => Some(format!("  would update {} (doc/format only)", file)),
+                    (MergeAction::Installed | MergeAction::ArtifactUpdated | MergeAction::DocOnly | MergeAction::Current, _) => None,
+                    (MergeAction::UnusedOverwritten, true) => {
+                        Some(format!("  would overwrite unused {} (differs; git history keeps it if tracked)", file))
+                    }
+                    (MergeAction::UnusedOverwritten, false) => {
+                        Some(format!("  overwrote unused {} (differed; git history keeps it if tracked)", file))
+                    }
+                    (MergeAction::ForkDiffRefreshed, true) => {
+                        Some(format!("  would update {} (fork {} present)", file, fork.clone().unwrap_or_default()))
+                    }
+                    (MergeAction::ForkDiffRefreshed, false) => Some(format!(
+                        "  fork {}: upstream moved {} — review {}",
+                        pack_stem(std::path::Path::new(file)).unwrap_or_else(|| PathBuf::from(file)).display(),
+                        arrow,
+                        diff.clone().unwrap_or_default()
+                    )),
+                    (MergeAction::AdoptedInPlace, true) => Some(format!("  would adopt {} in place ({})", file, arrow)),
+                    (MergeAction::AdoptedInPlace, false) => {
+                        Some(format!("  adopted {} in place ({}) — the estate keeps using the pristine name", file, arrow))
+                    }
+                    (MergeAction::ForkedAndRepointed, true) => Some(format!(
+                        "  would fork {} -> {} and repoint the estate (upstream {})",
+                        file,
+                        fork.clone().unwrap_or_default(),
+                        arrow
+                    )),
+                    (MergeAction::ForkedAndRepointed, false) => Some(format!(
+                        "  forked {} -> {} (upstream {}); estate repointed — adoption delta in {}",
+                        file,
+                        fork.clone().unwrap_or_default(),
+                        arrow,
+                        diff.clone().unwrap_or_default()
+                    )),
+                    (MergeAction::Deferred, _) => Some(format!(
+                        "  DEFERRED {}: needs a fork+repoint, which cannot share a run with --adopt (the repoint proves itself by transpile identity). Re-run `merge-presets` without --adopt.",
+                        file
+                    )),
+                    (MergeAction::SkippedEdited, _) => Some(format!(
+                        "  --adopt all SKIPPED {}: same version as upstream but different content — that is a local EDIT, not staleness. Name it explicitly to overwrite it.",
+                        file
+                    )),
+                    (MergeAction::Refused, _) => {
+                        Some(format!("  REFUSED {}: {}", file, reason.clone().unwrap_or_default()))
+                    }
+                };
+                if let Some(l) = line {
+                    out.push_str(&l);
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    let c = &r.counts;
+    out.push_str(&format!(
+        "\nmerge-presets: {} installed, {} current, {} artifacts updated, {} doc-only, {} unused overwritten, \
+         {} adopted in place, {} forked+repointed, {} fork diffs refreshed, {} deferred, {} refused, {} skipped (local edits).\n",
+        c.installed,
+        c.current,
+        c.artifacts_updated,
+        c.doc_only,
+        c.unused_overwritten,
+        c.adopted_in_place,
+        c.forked_and_repointed,
+        c.fork_diffs_refreshed,
+        c.deferred,
+        c.refused,
+        c.skipped_edited
+    ));
+    out
+}
+
 /// The reconciling update — provenance by suffix, no snapshots:
 ///
 /// Pristine names belong to upstream and are always overwritable. A preset that
@@ -842,7 +1047,8 @@ pub(crate) async fn run_merge_presets(
     runtime_config: &crate::ToolConfig,
     report_only: bool,
     adopt: &[String],
-) -> Result<bool, BoxErr> {
+) -> Result<MergeReport, BoxErr> {
+    let mut events: Vec<MergeEvent> = Vec::new();
     let local_base = PathBuf::from(presets_dir);
     crate::fsx::create_dir_all(&local_base)?;
     // Adoption and auto-forking cannot share a run. The fork+repoint proves
@@ -857,7 +1063,9 @@ pub(crate) async fn run_merge_presets(
     let old_base = local_base.join(".base");
     if old_base.exists() && !report_only {
         std::fs::remove_dir_all(&old_base)?;
-        println!("note: removed obsolete {} (snapshots retired — pristine names are upstream-owned)", old_base.display());
+        events.push(MergeEvent::Note {
+            text: format!("note: removed obsolete {} (snapshots retired — pristine names are upstream-owned)", old_base.display()),
+        });
     }
 
     // ---- estate context: which pack stems are actually included -------------
@@ -875,7 +1083,12 @@ pub(crate) async fn run_merge_presets(
             }
         }
     } else {
-        println!("note: no estate found in '{}' — used-preset protection inactive; changed presets are reported, not forked", runtime_config.yaml_dir);
+        events.push(MergeEvent::Note {
+            text: format!(
+                "note: no estate found in '{}' — used-preset protection inactive; changed presets are reported, not forked",
+                runtime_config.yaml_dir
+            ),
+        });
     }
 
     // baseline for the self-verifying estate edit
@@ -909,11 +1122,18 @@ pub(crate) async fn run_merge_presets(
     }
     upstream_files.sort();
     upstream_files.dedup();
-    let (mut installed, mut current, mut doc_only, mut artifacts, mut unused_over, mut forked, mut refreshed, mut refused) =
-        (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut adopted = 0usize;
-    let mut deferred = 0usize;
     let mut needs_attention = false;
+    // one place builds a pack's event, so an outcome cannot be recorded with one
+    // spelling here and another there
+    let pack = |action: MergeAction, rel: &Path| MergeEvent::Pack {
+        file: rel.display().to_string(),
+        action,
+        fork: None,
+        diff: None,
+        versions: None,
+        reason: None,
+    };
     // rollback journal for the estate edit: (path, previous content) + created files
     let mut journal: Vec<(PathBuf, String)> = Vec::new();
     let mut created: Vec<PathBuf> = Vec::new();
@@ -926,23 +1146,26 @@ pub(crate) async fn run_merge_presets(
         let up = crate::fsx::read_to_string(&up_path)?;
 
         if !lo_path.exists() {
-            if report_only { println!("  would install {}", rel.display()); continue; }
+            events.push(pack(MergeAction::Installed, rel));
+            if report_only { continue; }
             if let Some(parent) = lo_path.parent() { crate::fsx::create_dir_all(parent)?; }
             crate::fsx::write(&lo_path, up.as_bytes())?;
-            installed += 1;
             continue;
         }
         let lo = crate::fsx::read_to_string(&lo_path)?;
-        if lo == up { current += 1; continue; }
+        if lo == up {
+            events.push(pack(MergeAction::Current, rel));
+            continue;
+        }
 
         let fname = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
         // docs and data (catalogs, import-config) are artifacts: upstream
         // owns them, nothing to fork
         let is_artifact = fname.ends_with(".md") || fname.ends_with(".yaml");
         if is_artifact {
-            if report_only { println!("  would update artifact {}", rel.display()); continue; }
+            events.push(pack(MergeAction::ArtifactUpdated, rel));
+            if report_only { continue; }
             crate::fsx::write(&lo_path, up.as_bytes())?;
-            artifacts += 1;
             continue;
         }
 
@@ -953,16 +1176,19 @@ pub(crate) async fn run_merge_presets(
             _ => false,
         };
         if sem_equal {
-            if report_only { println!("  would update {} (doc/format only)", rel.display()); continue; }
+            events.push(pack(MergeAction::DocOnly, rel));
+            if report_only { continue; }
             crate::fsx::write(&lo_path, up.as_bytes())?;
-            doc_only += 1;
             continue;
         }
 
         // version hygiene cross-check (packs carry in-file versions)
         let (v_lo, v_up) = (satz_version(&lo), satz_version(&up));
         if v_lo.is_some() && v_lo == v_up {
-            println!("  WARNING {}: content changed semantically but the pack version did not — upstream release-hygiene bug", rel.display());
+            events.push(MergeEvent::Warning {
+                file: rel.display().to_string(),
+                text: "content changed semantically but the pack version did not — upstream release-hygiene bug".to_string(),
+            });
             needs_attention = true;
         }
 
@@ -974,20 +1200,24 @@ pub(crate) async fn run_merge_presets(
 
         if fork_path.exists() {
             // existing fork: pristine tracks upstream, diff refreshed below
-            if report_only { println!("  would update {} (fork {} present)", rel.display(), fork_rel.display()); continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
-            refreshed += 1;
-            println!("  fork {}: upstream moved {} — review {}", stem.display(),
-                version_arrow(&v_lo, &v_up), diff_path.display());
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::ForkDiffRefreshed,
+                fork: Some(fork_rel.display().to_string()),
+                diff: Some(diff_path.display().to_string()),
+                versions: Some(version_arrow(&v_lo, &v_up)),
+                reason: None,
+            });
             needs_attention = true;
+            if report_only { continue; }
+            crate::fsx::write(&lo_path, up.as_bytes())?;
             continue;
         }
 
         if !used {
-            if report_only { println!("  would overwrite unused {} (differs; git history keeps it if tracked)", rel.display()); continue; }
+            events.push(pack(MergeAction::UnusedOverwritten, rel));
+            if report_only { continue; }
             crate::fsx::write(&lo_path, up.as_bytes())?;
-            unused_over += 1;
-            println!("  overwrote unused {} (differed; git history keeps it if tracked)", rel.display());
             continue;
         }
 
@@ -999,40 +1229,56 @@ pub(crate) async fn run_merge_presets(
         let behind = v_lo.is_some() && v_up.is_some() && v_lo != v_up;
         let choice = adopt_choice(adopt, &stem_name, &stem, behind);
         if choice == AdoptChoice::SkipEdited {
-            println!("  --adopt all SKIPPED {}: same version as upstream but different content — that is a local EDIT, not staleness. Name it explicitly to overwrite it.", rel.display());
+            events.push(pack(MergeAction::SkippedEdited, rel));
             needs_attention = true;
             continue;
         }
         if choice == AdoptChoice::Adopt {
-            if report_only {
-                println!("  would adopt {} in place ({})", rel.display(), version_arrow(&v_lo, &v_up));
-                adopted += 1;
-                needs_attention = true;
-                continue;
-            }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::AdoptedInPlace,
+                fork: None,
+                diff: None,
+                versions: Some(version_arrow(&v_lo, &v_up)),
+                reason: None,
+            });
             adopted += 1;
             needs_attention = true;
-            println!("  adopted {} in place ({}) — the estate keeps using the pristine name", rel.display(), version_arrow(&v_lo, &v_up));
+            if report_only { continue; }
+            crate::fsx::write(&lo_path, up.as_bytes())?;
             continue;
         }
         if adopting {
-            println!("  DEFERRED {}: needs a fork+repoint, which cannot share a run with --adopt (the repoint proves itself by transpile identity). Re-run `merge-presets` without --adopt.", rel.display());
-            deferred += 1;
+            events.push(pack(MergeAction::Deferred, rel));
             needs_attention = true;
             continue;
         }
 
         // USED + semantically changed + no fork -> auto-fork + repoint
         if report_only {
-            println!("  would fork {} -> {} and repoint the estate (upstream {})",
-                rel.display(), fork_rel.display(), version_arrow(&v_lo, &v_up));
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::ForkedAndRepointed,
+                fork: Some(fork_rel.display().to_string()),
+                diff: Some(diff_path.display().to_string()),
+                versions: Some(version_arrow(&v_lo, &v_up)),
+                reason: None,
+            });
             needs_attention = true;
             continue;
         }
         if estate_dirty {
-            println!("  REFUSED {}: estate file has uncommitted changes — commit/stash it so the repoint stays an isolated edit (pack left untouched)", rel.display());
-            refused += 1;
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::Refused,
+                fork: None,
+                diff: None,
+                versions: None,
+                reason: Some(
+                    "estate file has uncommitted changes — commit/stash it so the repoint stays an isolated edit (pack left untouched)"
+                        .to_string(),
+                ),
+            });
             needs_attention = true;
             continue; // pristine NOT updated either: the estate still deploys the old content
         }
@@ -1049,14 +1295,27 @@ pub(crate) async fn run_merge_presets(
                 crate::fsx::write(&lo_path, up.as_bytes())?;
                 crate::fsx::write(&est, new_text.as_bytes())?;
                 estate_edited = true;
-                forked += 1;
-                println!("  forked {} -> {} (upstream {}); estate repointed — adoption delta in {}",
-                    rel.display(), fork_rel.display(), version_arrow(&v_lo, &v_up), diff_path.display());
+                events.push(MergeEvent::Pack {
+                    file: rel.display().to_string(),
+                    action: MergeAction::ForkedAndRepointed,
+                    fork: Some(fork_rel.display().to_string()),
+                    diff: Some(diff_path.display().to_string()),
+                    versions: Some(version_arrow(&v_lo, &v_up)),
+                    reason: None,
+                });
                 needs_attention = true;
             }
             None => {
-                println!("  REFUSED {}: could not locate the estate `use` for this pack (used via another pack?) — fork it by hand", rel.display());
-                refused += 1;
+                events.push(MergeEvent::Pack {
+                    file: rel.display().to_string(),
+                    action: MergeAction::Refused,
+                    fork: None,
+                    diff: None,
+                    versions: None,
+                    reason: Some(
+                        "could not locate the estate `use` for this pack (used via another pack?) — fork it by hand".to_string(),
+                    ),
+                });
                 needs_attention = true;
             }
         }
@@ -1064,7 +1323,9 @@ pub(crate) async fn run_merge_presets(
 
     // refresh every fork's adoption delta (idempotent)
     if !report_only {
-        refresh_adoption_diffs(&local_base)?;
+        for removed in refresh_adoption_diffs(&local_base)? {
+            events.push(MergeEvent::Note { text: format!("  removed orphaned {} (fork adopted)", removed.display()) });
+        }
     }
 
     // Adoption changes what the estate emits — that is the point, so there is no
@@ -1072,10 +1333,9 @@ pub(crate) async fn run_merge_presets(
     if adopted > 0 && !report_only {
         if let (Some(est), Some(before)) = (estate.clone(), baseline.clone()) {
             let after = crate::transpile_sorted_b(&est, tool_config, runtime_config)?;
-            println!("\n  emission delta after adoption:");
-            print!("{}", emission_delta(&before, &after));
-            println!("  hcl/ on disk is NOT regenerated by this command — run `satz transpile`,");
-            println!("  read `git diff hcl/main.tf`, then `tofu plan` before applying.");
+            events.push(MergeEvent::EmissionDelta {
+                lines: emission_delta(&before, &after).lines().map(str::to_string).collect(),
+            });
         }
     }
 
@@ -1100,13 +1360,10 @@ pub(crate) async fn run_merge_presets(
             rollback(&journal, &created)?;
             return Err("merge-presets: estate repoint changed the transpiled output — rolled back everything (this should be impossible; please report)".into());
         }
-        println!("  estate repoint verified: transpiled output identical.");
+        events.push(MergeEvent::Note { text: "  estate repoint verified: transpiled output identical.".to_string() });
     }
 
-    println!(
-        "\nmerge-presets: {installed} installed, {current} current, {artifacts} artifacts updated, {doc_only} doc-only, {unused_over} unused overwritten, {adopted} adopted in place, {forked} forked+repointed, {refreshed} fork diffs refreshed, {deferred} deferred, {refused} refused."
-    );
-    Ok(needs_attention)
+    Ok(MergeReport::counted(events, report_only, needs_attention))
 }
 
 /// What `--adopt` says about one pack.
@@ -1274,7 +1531,8 @@ fn rewrite_estate_uses(
 
 /// Every `X.local.*` gets `X.diff.satz` = the CURRENT adoption delta against the
 /// pristine file. Idempotent; rewritten (not appended) on every run.
-fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
+fn refresh_adoption_diffs(local_base: &Path) -> Result<Vec<PathBuf>, BoxErr> {
+    let mut removed = Vec::new();
     let mut stack = vec![local_base.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -1291,7 +1549,7 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
                 let has_fork = p.with_file_name(format!("{}.local.satz", stem_name)).exists();
                 if !has_fork {
                     let _ = std::fs::remove_file(&p);
-                    println!("  removed orphaned {} (fork adopted)", p.display());
+                    removed.push(p.clone());
                 }
                 continue;
             }
@@ -1313,7 +1571,7 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
             }
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
 /// Unified diff via git (battle-tested); falls back to a full old/new dump.
@@ -1572,4 +1830,81 @@ params {
         assert_eq!(classify_source(&commented, PACK), Drift::Clean);
     }
 
+}
+
+#[cfg(test)]
+mod merge_report_tests {
+    //! The run is a value now: the CLI renders it and the MCP tool returns it.
+    //! These hold the rendering to what the walk used to print, and the counts to
+    //! the events — a `--report-only` run used to summarise zeros beside its own
+    //! "would …" lines, and an `--adopt all` skip was counted nowhere at all.
+    use super::*;
+
+    fn pack(file: &str, action: MergeAction) -> MergeEvent {
+        MergeEvent::Pack { file: file.into(), action, fork: None, diff: None, versions: None, reason: None }
+    }
+
+    #[test]
+    fn a_report_only_run_counts_what_it_would_do() {
+        let events = vec![
+            pack("a.satz", MergeAction::Installed),
+            pack("b.md", MergeAction::ArtifactUpdated),
+            pack("c.satz", MergeAction::DocOnly),
+            pack("d.satz", MergeAction::SkippedEdited),
+        ];
+        let r = MergeReport::counted(events, true, true);
+        assert_eq!((r.counts.installed, r.counts.artifacts_updated, r.counts.doc_only), (1, 1, 1));
+        assert_eq!(r.counts.skipped_edited, 1, "a skipped local edit is in the summary");
+        let out = render_merge(&r);
+        assert!(out.contains("  would install a.satz\n"), "{out}");
+        assert!(out.contains("  would update artifact b.md\n"), "{out}");
+        assert!(out.contains("  would update c.satz (doc/format only)\n"), "{out}");
+        assert!(out.contains("1 installed, 0 current, 1 artifacts updated, 1 doc-only"), "{out}");
+        assert!(out.contains("1 skipped (local edits)."), "{out}");
+    }
+
+    #[test]
+    fn a_real_run_says_what_it_did_and_stays_quiet_about_the_rest() {
+        let events = vec![
+            pack("a.satz", MergeAction::Installed),
+            pack("b.satz", MergeAction::Current),
+            MergeEvent::Pack {
+                file: "c.satz".into(),
+                action: MergeAction::ForkedAndRepointed,
+                fork: Some("c.local.satz".into()),
+                diff: Some("c.diff.satz".into()),
+                versions: Some("1.0 -> 2.0".into()),
+                reason: None,
+            },
+            MergeEvent::Pack {
+                file: "d.satz".into(),
+                action: MergeAction::Refused,
+                fork: None,
+                diff: None,
+                versions: None,
+                reason: Some("estate file has uncommitted changes".into()),
+            },
+        ];
+        let out = render_merge(&MergeReport::counted(events, false, true));
+        // an install and a current pack print nothing on the real path, as before
+        assert!(!out.contains("a.satz"), "{out}");
+        assert!(!out.contains("b.satz"), "{out}");
+        assert!(out.contains("  forked c.satz -> c.local.satz (upstream 1.0 -> 2.0); estate repointed — adoption delta in c.diff.satz\n"), "{out}");
+        assert!(out.contains("  REFUSED d.satz: estate file has uncommitted changes\n"), "{out}");
+        assert!(out.contains("1 installed, 1 current"), "{out}");
+    }
+
+    #[test]
+    fn the_notes_and_the_delta_keep_their_place() {
+        let events = vec![
+            MergeEvent::Note { text: "note: no estate found in 'yaml'".into() },
+            MergeEvent::Warning { file: "p.satz".into(), text: "content changed semantically but the pack version did not".into() },
+            MergeEvent::EmissionDelta { lines: vec!["    + google_x.y  (added)".into()] },
+        ];
+        let out = render_merge(&MergeReport::counted(events, false, true));
+        assert!(out.starts_with("note: no estate found in 'yaml'\n"), "{out}");
+        assert!(out.contains("  WARNING p.satz: content changed semantically but the pack version did not\n"), "{out}");
+        assert!(out.contains("\n  emission delta after adoption:\n    + google_x.y  (added)\n"), "{out}");
+        assert!(out.contains("  hcl/ on disk is NOT regenerated by this command"), "{out}");
+    }
 }

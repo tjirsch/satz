@@ -304,6 +304,9 @@ resource against the live organisation and says per row what it matched on; with
 itself (`satz adopt --execute --import`) is a human's.
 
 Also available: `satz_check_presets` (is the pack library current, or forked?),
+`satz_merge_presets` (bring it up to date: forks a used pack that changed and repoints
+the estate, or adopts upstream in place with `adopt`), `satz_iac_roles` (the roles the
+estate's service account is missing for what it emits, and `execute` writes them),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
 (both halves of the identity — the ADC account and the estate's service account — with
 live checks that the one may become the other and that the quota project is reachable;

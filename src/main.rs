@@ -1605,10 +1605,11 @@ Thumbs.db
             crate::presets::run_get_presets(&runtime_config.presets_dir, &runtime_config, force, pristine_dir).await
         }
         Commands::MergePresets { pristine_dir, estate, report_only, adopt } => {
-            let attention = crate::presets::run_merge_presets(
+            let report = crate::presets::run_merge_presets(
                 &runtime_config.presets_dir, pristine_dir, estate, &tool_config, &runtime_config, report_only, &adopt,
             ).await?;
-            if attention {
+            print!("{}", crate::presets::render_merge(&report));
+            if report.attention {
                 std::process::exit(1);
             }
             Ok(())
