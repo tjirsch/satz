@@ -128,10 +128,10 @@ folder, the project, the state bucket, the IaC group and service account. Then t
 interview:
 
 ```
-54 open question(s): 38 have a default, 16 need a value.
+52 open question(s): 36 have a default, 16 need a value.
 Accept all defaults now and answer only those 16? [Y/n] — n goes through every question
 > y
-  accepted 38 default(s).
+  accepted 36 default(s).
 
 ── estate_core ──
 The questions every estate has to answer on day 0, with the params they answer.
@@ -158,6 +158,10 @@ infra_project_name — The infrastructure project id
   `why`, and the cost of changing the answer later. A one-way door is marked.
 - **Enter** accepts the default in brackets. A `oneof` lists its options numbered,
   the default marked; answer with the number.
+- Where a pack recommends a different answer from the one on offer, it says so —
+  `the pack recommends: true`. Enter still takes the offer, and `--accept-defaults`
+  binds the offer, so a pack can recommend a service that costs money without a bulk
+  run switching it on.
 - `skip` leaves a question open and moves on; `q` stops. Every answer is written
   when it is given, and the next run asks what is still open.
 - `--accept-defaults` skips the opening offer and accepts them; `--all` re-asks

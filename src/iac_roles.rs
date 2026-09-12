@@ -172,7 +172,7 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
     (
         "google_scc_v2_organization_scc_big_query_export",
         &[org(
-            "securitycenter.bigqueryexports.create",
+            "securitycenter.bigQueryExports.create",
             &["roles/securitycenter.settingsEditor", "roles/securitycenter.admin"],
         )],
     ),

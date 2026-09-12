@@ -740,7 +740,7 @@ that call cannot be made, and the AWS/Azure connectors in it are skipped unless
 `--with-multicloud`, because they fail on an org with no such connector.
 
 **Activate the SCC tier first.** Tier activation has no API the script could call,
-and enabling a service on an org without a Premium or Enterprise subscription fails
+and enabling a service on an org on the Standard tier fails
 at the API.
 
 ### Failures it classifies

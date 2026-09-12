@@ -209,7 +209,7 @@ pub(crate) fn questions_report(
                 default,
                 blocking,
                 pack_description: declared.map(|f| f.description.clone()).unwrap_or_default(),
-                recommend: q.recommend.as_ref().map(|v| format!("{:?}", v)),
+                recommend: q.recommend.as_ref().map(crate::doc_packs::value_text),
                 options: q
                     .options
                     .iter()

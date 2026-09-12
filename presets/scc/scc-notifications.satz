@@ -29,13 +29,16 @@
 //
 // WHAT THIS DOES NOT COVER. Enabling the detectors, which has no provider
 // resource at all: `presets/scc/scc-service-enablement.satz`, an action. Use
-// both — findings nobody raises are findings nobody publishes. Nor mute
-// configs, BigQuery exports, custom modules or Security Posture.
+// both — findings nobody raises are findings nobody publishes. Who reads the
+// topic is the customer's: `presets/scc/scc-findings-mail.satz` subscribes to it
+// and mails an address for an organisation that has no SIEM, and
+// `presets/scc/scc-export.satz` keeps the findings in BigQuery. Not covered at
+// all: mute configs, custom modules and Security Posture.
 //
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing and `report-compliance` says nothing about it.
 
-pack scc_notifications version "1.1"
+pack scc_notifications version "1.2"
 
 params {
   // The subscriber a customer attaches is theirs; the topic is the contract.
@@ -52,22 +55,22 @@ params {
 // ---- what a customer decides, asked -------------------------------------------
 
 question scc_notification_project {
-  prompt   = "The project that holds the Pub/Sub topic SCC publishes findings to"
-  why      = "Whoever can read the topic reads every finding in the organisation, including the ones that name a misconfiguration nobody has fixed yet. Putting it in the infrastructure project keeps it with the other operational plumbing; a separate security project keeps it away from anyone who administers workloads."
+  prompt   = "Which project holds the topic the findings are published to?"
+  why      = "Whoever can read the topic reads every finding in the organisation, including the ones that name a misconfiguration nobody has fixed yet. The infrastructure project keeps it with the other operational plumbing; a separate security project keeps it away from whoever administers workloads. Moving it later is a new topic, and a subscriber has to be repointed."
   reversal = recreate
   blast    = high
 }
 
 question scc_notification_filter {
-  prompt   = "Which findings are published (Security Command Center's filter language)"
-  why      = "Too wide and the topic becomes noise nobody reads; too narrow and a real finding never leaves the console. The default sends active HIGH and CRITICAL findings. Widening it later is an edit — the findings already raised are not re-sent."
+  prompt   = "Which findings travel — everything, or only what somebody would act on tonight?"
+  why      = "Written in Security Command Center's filter language, not Cloud Logging's. Too wide and the topic is noise nobody reads; too narrow and a real finding never leaves the console. The default is active findings at HIGH and CRITICAL, which is what a duty roster can answer. Widening it later is an edit, and the findings already raised are not re-sent."
   reversal = edit
   blast    = low
 }
 
-// 1) The topic. It lands in the project the estate names, and the subscriber
-//    stays the customer's own — a pack that also created a subscription would
-//    decide who reads the findings.
+// 1) The topic. It lands in the project the estate names. Nothing here subscribes
+//    to it: an estate whose customer has no SIEM adds `scc-findings-mail.satz`,
+//    which does subscribe and mails an address.
 google_pubsub_topic {
   scc_findings {
     name    = scc_notification_topic_name
