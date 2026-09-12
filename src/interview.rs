@@ -135,7 +135,9 @@ pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) ->
         }
         let mut out = src.to_string();
         for o in &row.options {
-            out = bind(&out, &o.param, &serde_yaml::Value::Bool(o.param == chosen))?;
+            let picked = serde_yaml::Value::Bool(o.param == chosen);
+            out = bind(&out, &o.param, &picked)?;
+            out = uncomment_pack(&out, &o.param, &picked);
         }
         return Ok(out);
     }
@@ -147,7 +149,37 @@ pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) ->
             ));
         }
     }
-    bind(src, &row.subject, value)
+    let out = bind(src, &row.subject, value)?;
+    Ok(uncomment_pack(&out, &row.subject, value))
+}
+
+/// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
+/// exists. Answering its question YES is what puts the pack in the estate — this is where
+/// that happens, for the interview and for `satz_interview` alike, since both land here.
+///
+/// Only ever uncomments. Answering a question `false` leaves the line where it is: `use …
+/// when <param>` already emits nothing while the param is false, and silently deleting a
+/// pack line from someone's estate is not a thing an answer should do.
+pub(crate) fn uncomment_pack(src: &str, gate: &str, value: &serde_yaml::Value) -> String {
+    if value.as_bool() != Some(true) {
+        return src.to_string();
+    }
+    let suffix = format!(" when {}", gate);
+    let mut out = String::with_capacity(src.len());
+    for line in src.split_inclusive('\n') {
+        let end = line.trim_end_matches('\n');
+        let body = end.trim_start();
+        if body.starts_with("// use \"") && end.ends_with(&suffix) {
+            out.push_str(&end[..end.len() - body.len()]);
+            out.push_str(body.trim_start_matches("// "));
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Read a typed answer in the shape of the value it replaces: a boolean stays a
@@ -464,6 +496,53 @@ mod tests {
         let out = bind(src, "b", &yaml("v")).unwrap();
         assert_eq!(out, "params {\n  a = \"}\" // } not the end\n  // } nor this\n  b = \"v\"\n}\nother { }\n");
         assert!(bind("estate x\n", "a", &yaml("v")).unwrap_err().contains("no `params { }` block"));
+    }
+
+    #[test]
+    fn answering_yes_uncomments_that_pack_and_nothing_else() {
+        let src = "\
+estate e
+
+params {
+}
+
+// once the audit archive exists
+// use \"presets/integrations/microsoft-sentinel.satz\" when use_sentinel
+// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\" when use_sentinel_auditlogs
+// use \"presets/organization-budget.satz\" when use_budget
+
+google_folder {
+  infra {
+    // use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink
+  }
+}
+";
+        let yes = serde_yaml::Value::Bool(true);
+        let no = serde_yaml::Value::Bool(false);
+
+        // the gate is matched exactly: `use_sentinel` must not drag in `use_sentinel_auditlogs`
+        let out = uncomment_pack(src, "use_sentinel", &yes);
+        assert!(out.contains("\nuse \"presets/integrations/microsoft-sentinel.satz\" when use_sentinel\n"));
+        assert!(
+            out.contains("// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\""),
+            "a longer param that starts with the same text stays commented:\n{}",
+            out
+        );
+
+        // answering no changes nothing — a `use … when` already emits nothing, and deleting
+        // somebody's pack line is not what an answer does
+        assert_eq!(uncomment_pack(src, "use_budget", &no), src);
+
+        // indentation is kept, so a pack inside a block stays inside it
+        let out = uncomment_pack(src, "use_audit_logsink", &yes);
+        assert!(
+            out.contains("    use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink"),
+            "the line keeps its four spaces:\n{}",
+            out
+        );
+
+        // and a value that is not a boolean true leaves the file alone
+        assert_eq!(uncomment_pack(src, "use_budget", &serde_yaml::Value::String("yes".into())), src);
     }
 
     #[test]

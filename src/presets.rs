@@ -1337,6 +1337,29 @@ pub(crate) async fn run_merge_presets(
         }
     }
 
+    // The line for a pack the library has and this estate does not. A pack shipped after an
+    // estate was written has no `use` line there, so its question is inert — this is what
+    // closes that, and it writes every line the same way, which a person does not.
+    if !report_only {
+        match estate.as_deref().map(adopt_pack_lines).unwrap_or_else(|| Ok(Vec::new())) {
+            Ok(added) if !added.is_empty() => {
+                for (path, phase) in &added {
+                    events.push(MergeEvent::Note {
+                        text: format!("  wrote a commented `use` line for {} ({})", path, phase),
+                    });
+                }
+                events.push(MergeEvent::Note {
+                    text: format!(
+                        "  {} pack line(s) added, commented — uncomment one, or answer its question, to use it",
+                        added.len()
+                    ),
+                });
+            }
+            Ok(_) => {}
+            Err(e) => events.push(MergeEvent::Note { text: format!("  could not write the new pack lines: {}", e) }),
+        }
+    }
+
     // refresh every fork's adoption delta (idempotent)
     if !report_only {
         for removed in refresh_adoption_diffs(&local_base)? {
@@ -1508,6 +1531,46 @@ fn is_git_dirty(path: &Path) -> Result<bool, String> {
 
 /// Repoint every estate `use "..."` that resolves to `target` at `fork_rel`
 /// (written with the same path prefix style the estate already uses).
+/// Append a commented `use` line for every pack in `PACK_LINES` the estate has no line for,
+/// each under the phase comment the skeleton would have written. Returns what was added.
+///
+/// Appends rather than inserts: a `use` at root level is valid anywhere in the file, and
+/// appending cannot damage a structure somebody has since rearranged. The phase is what says
+/// where it belongs in the sequence, which is the part that matters.
+fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
+    let src = crate::fsx::read_to_string(estate)?;
+    let mut added: Vec<(String, String)> = Vec::new();
+    let mut block = String::new();
+    for (path, gate, phase) in crate::template::PACK_LINES {
+        if src.contains(&format!("use \"{}\"", path)) {
+            continue;
+        }
+        // the phase text carries its own `//` continuations; the first line is the summary
+        let summary = phase.lines().next().unwrap_or("").trim().to_string();
+        if !phase.is_empty() {
+            block.push_str(&format!("\n// {}\n", phase));
+        }
+        block.push_str(&crate::template::pack_line(path, gate));
+        block.push('\n');
+        added.push((path.to_string(), if summary.is_empty() { "with the group above".into() } else { summary }));
+    }
+    if added.is_empty() {
+        return Ok(added);
+    }
+    let mut out = src;
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(
+        "\n// ---- packs the library gained since this estate was written -------------------\n\
+         // Written by `satz merge-presets`, commented like every other pack line. Uncomment one\n\
+         // to use it, or answer its question and `satz interview` will.\n",
+    );
+    out.push_str(&block);
+    crate::fsx::write(estate, out.as_bytes())?;
+    Ok(added)
+}
+
 fn rewrite_estate_uses(
     text: &str,
     estate: &Path,

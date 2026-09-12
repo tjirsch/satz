@@ -122,10 +122,19 @@ A test keeps the map's params and the skeleton's lines equal.
 satz interview yaml/new-customer.satz --create
 ```
 
-`--create` writes the estate first when it does not exist: an empty `params {}`, the
-`use` lines of the path above, and the same day-0 resources `init` writes — the
-folder, the project, the state bucket, the IaC group and service account. Then the
-interview:
+`--create` writes the estate first when it does not exist: an empty `params {}`, the same
+day-0 resources `init` writes — the folder, the project, the state bucket, the IaC group and
+service account — and every pack's `use` line **commented out**, under the phase that has to
+be finished before that pack can go in.
+
+That is why a fresh estate asks sixteen questions and not fifty-six: day 0 is the scaffold
+alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
+move to the service account, and only then does a pack go in — one at a time, each with its
+own plan. Answering a pack's question `true` uncomments its line; `satz merge-presets` writes
+the line for a pack the library has gained since; and the compile reports a question answered
+`true` whose line is still commented or missing, so the three never drift apart.
+
+Then the interview:
 
 ```
 56 open question(s): 40 have a default, 16 need a value.
