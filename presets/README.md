@@ -995,6 +995,26 @@ managed one), and not at all for `iam.allowedPolicyMemberDomains` ↔
 
 ## cis-extensions/
 
+**One of these is ON by default: `cis_dns_logging`.** Every other fragment here is off
+until a customer asks for it, because each one restricts what an organisation may
+create. DNS logging is different in kind: it does not restrict anything, it makes a
+RECORD — of name resolution, which is how a compromised host asking for its
+command-and-control domain becomes visible, and which nothing reconstructs afterwards.
+Switching it off is a decision to be blind to that, so the estate that makes it writes a
+`deviates` claim, whose `reason` is mandatory and which an auditor reads in the
+compliance report. The library does not argue; it records who decided and why.
+
+**VPC flow logs are not in this directory**, and do not need to be: the baseline pack
+enforces `compute.requireVpcFlowLogs` and claims CIS 4.0 §3.8 / 5.0 §3.10 with it. That
+constraint does not refuse a subnet without flow logs — it applies a minimum logging
+level to it, which is why it is safe in the baseline. Measured on a live organisation: a
+subnet created with no flow-log flags at all came back with `enable: true` and 0.1
+sampling. What it DOES refuse is a subnet whose flow-log settings are hand-tuned to
+something outside Google's three named levels (ESSENTIAL, LIGHT, COMPREHENSIVE) — so a
+customer who wants a custom sampling rate must pick one of the three or widen the policy
+deliberately.
+
+
 CIS coverage beyond the baseline, one fragment per control, all **opt-in**. The base
 pack declares the flags (`cis_require_shielded_vm` and friends, all `false`); an estate
 turns one on and `use`s its fragment:
@@ -1002,6 +1022,7 @@ turns one on and `use`s its fragment:
 ```
 cis_require_shielded_vm = true
 use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
 ```
 
 Each is opt-in because it can break a running workload: Confidential Computing is limited to particular machine families,
@@ -1158,6 +1179,8 @@ the private history recorded them.
 | `monitoring.organization_audit_logsink` | 1.4 | 2026-09-12 | `logsink_project_name` becomes **`logsink_project_id`**, because that is what it is — it feeds `project_id`, and a project id is immutable while a name is not. The project's display name is its own optional param, `logsink_project_display_name`, defaulting to the id exactly as Google does, so nothing changes in the emitted HCL. An estate still binding the old name is REFUSED by name with the new one: nothing refuses a param no pack reads, so leaving it would have silently taken this pack's default project instead — a second logging project and an orphaned archive |
 | `monitoring.organization_cis_log_alerts_central` | 1.6 | 2026-09-12 | follows the rename: the alert project defaults to `logsink_project_id` |
 | `integrations.microsoft_sentinel` | 1.1 | 2026-09-12 | follows the rename: the Sentinel project defaults to `logsink_project_id` |
+| `cis_extensions.dns_logging` | 1.0 | 2026-09-12 | first version: CIS 5.0 §2.13, the half an org policy can carry — a custom constraint on `dns.googleapis.com/Policy` requiring `enableLogging`. ON by default. `contributes`, not `implements`: no org policy can require that a network HAS a DNS policy, only that a policy which exists logs, so the missing half is named as a duty and verified live |
+| `CIS_GCP_Foundation_4_0` | 2.9 | 2026-09-12 | one new flag, and the first that defaults to TRUE: `cis_dns_logging`, for the new `cis-extensions/dns-logging.satz`. It asks what the control covers and what it breaks; answering no is a deviation whose reason the compliance report carries |
 | `s2_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_group_definitions` | 1.4 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |

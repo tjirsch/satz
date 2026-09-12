@@ -54,6 +54,7 @@ google_org_policy_policy {
 }
 use "presets/cis-extensions/block-project-ssh-keys.satz"
 use "presets/cis-extensions/shielded-vm.satz"
+use "presets/cis-extensions/dns-logging.satz"
 use "presets/cis-extensions/confidential-computing.satz"
 use "presets/cis-extensions/cloud-sql.satz"
 use "presets/cis-extensions/cmek.satz"

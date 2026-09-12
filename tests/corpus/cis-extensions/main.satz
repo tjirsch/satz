@@ -48,6 +48,7 @@ google_org_policy_policy {
 
 use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
 use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
 use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
 use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
 use "presets/cis-extensions/cmek.satz" when cis_cmek_required
