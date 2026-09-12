@@ -774,6 +774,9 @@ enum Commands {
         /// Only the questions the estate has not answered yet — the interview's worklist
         #[arg(long)]
         unanswered: bool,
+        /// Also write the catalog as a workbook here — the format a customer fills in and returns
+        #[arg(long, value_name = "FILE")]
+        xlsx: Option<PathBuf>,
     },
     /// Answer what the estate's packs ask, one question at a time, writing each answer
     /// into the estate's params. The third way to start an estate: `init` takes every
@@ -1832,13 +1835,24 @@ Thumbs.db
             crate::interview::run(&input_path, &runtime_config, all, accept_defaults, &mut input, &mut out)?;
             Ok(())
         }
-        Commands::Questions { input, format, unanswered } => {
+        Commands::Questions { input, format, unanswered, xlsx } => {
             let format = format.require_one_of("questions", &[OutFormat::Text, OutFormat::Json, OutFormat::Markdown])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let mut report = crate::questions::questions_report(&input_path, &runtime_config)?;
             if unanswered {
                 // The summary stays whole: it describes the estate, not the filter.
                 report.questions.retain(|q| q.state == "unanswered");
+            }
+            // The workbook is a file, never stdout — a spreadsheet down a pipe is a corrupt
+            // spreadsheet. It is written beside whatever the chosen format prints.
+            if let Some(path) = xlsx {
+                let bytes = crate::questions::xlsx(&report)?;
+                crate::fsx::write(&path, &bytes)?;
+                eprintln!(
+                    "wrote {} — {} decision(s); the `your answer` column is the customer's",
+                    path.display(),
+                    report.questions.len()
+                );
             }
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
