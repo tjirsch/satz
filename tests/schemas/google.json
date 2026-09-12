@@ -3,6 +3,490 @@
   "provider_schemas": {
     "registry.opentofu.org/hashicorp/google": {
       "resource_schemas": {
+        "google_bigquery_dataset": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "creation_time": {
+                "type": "number",
+                "description": "The time when this dataset was created, in milliseconds since the\nepoch.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "dataset_id": {
+                "type": "string",
+                "description": "A unique ID for this dataset, without the project name. The ID\nmust contain only letters (a-z, A-Z), numbers (0-9), or\nunderscores (_). The maximum length is 1,024 characters.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "default_collation": {
+                "type": "string",
+                "description": "Defines the default collation specification of future tables created\nin the dataset. If a table is created in this dataset without table-level\ndefault collation, then the table inherits the dataset default collation,\nwhich is applied to the string fields that do not have explicit collation\nspecified. A change to this field affects only tables created afterwards,\nand does not alter the existing tables.\n\nThe following values are supported:\n- 'und:ci': undetermined locale, case insensitive.\n- '': empty string. Default to case-sensitive behavior.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "default_partition_expiration_ms": {
+                "type": "number",
+                "description": "The default partition expiration for all partitioned tables in\nthe dataset, in milliseconds.\nOnce this property is set, all newly-created partitioned tables in\nthe dataset will have an 'expirationMs' property in the 'timePartitioning'\nsettings set to this value, and changing the value will only\naffect new tables, not existing ones. The storage in a partition will\nhave an expiration time of its partition time plus this value.\nSetting this property overrides the use of 'defaultTableExpirationMs'\nfor partitioned tables: only one of 'defaultTableExpirationMs' and\n'defaultPartitionExpirationMs' will be used for any new partitioned\ntable. If you provide an explicit 'timePartitioning.expirationMs' when\ncreating or updating a partitioned table, that value takes precedence\nover the default partition expiration time indicated by this property.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "default_table_expiration_ms": {
+                "type": "number",
+                "description": "The default lifetime of all tables in the dataset, in milliseconds.\nThe minimum value is 3600000 milliseconds (one hour).\nOnce this property is set, all newly-created tables in the dataset\nwill have an 'expirationTime' property set to the creation time plus\nthe value in this property, and changing the value will only affect\nnew tables, not existing ones. When the 'expirationTime' for a given\ntable is reached, that table will be deleted automatically.\nIf a table's 'expirationTime' is modified or removed before the\ntable expires, or if you provide an explicit 'expirationTime' when\ncreating a table, that value takes precedence over the default\nexpiration time indicated by this property.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "delete_contents_on_destroy": {
+                "type": "bool",
+                "description": "If set to 'true', delete all the tables in the\ndataset when destroying the resource; otherwise,\ndestroying the resource will fail if tables are present.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "description": {
+                "type": "string",
+                "description": "A user-friendly description of the dataset",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "effective_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "All of labels (key/value pairs) present on the resource in GCP, including the labels configured through Terraform, other clients and services.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "etag": {
+                "type": "string",
+                "description": "A hash of the resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "friendly_name": {
+                "type": "string",
+                "description": "A descriptive name for the dataset",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "is_case_insensitive": {
+                "type": "bool",
+                "description": "TRUE if the dataset and its table names are case-insensitive, otherwise FALSE.\nBy default, this is FALSE, which means the dataset and its table names are\ncase-sensitive. This field does not affect routine references.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The labels associated with this dataset. You can use these to\norganize and group your datasets.\n\n\n**Note**: This field is non-authoritative, and will only manage the labels present in your configuration.\nPlease refer to the field 'effective_labels' for all of the labels present on the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "last_modified_time": {
+                "type": "number",
+                "description": "The date when this dataset or any of its tables was last modified, in\nmilliseconds since the epoch.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "location": {
+                "type": "string",
+                "description": "The geographic location where the dataset should reside.\nSee [official docs](https://cloud.google.com/bigquery/docs/dataset-locations).\nThere are two types of locations, regional or multi-regional. A regional\nlocation is a specific geographic place, such as Tokyo, and a multi-regional\nlocation is a large geographic area, such as the United States, that\ncontains at least two geographic places.\nThe default value is multi-regional location 'US'.\nChanging this forces a new resource to be created.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "max_time_travel_hours": {
+                "type": "string",
+                "description": "Defines the time travel window in hours. The value can be from 48 to 168 hours (2 to 7 days).",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "resource_tags": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The tags attached to this table. Tag keys are globally unique. Tag key is expected to be\nin the namespaced format, for example \"123456789012/environment\" where 123456789012 is the\nID of the parent organization or project resource for this tag key. Tag value is expected\nto be the short name, for example \"Production\". See [Tag definitions](https://cloud.google.com/iam/docs/tags-access-control#definitions)\nfor more details.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "self_link": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "storage_billing_model": {
+                "type": "string",
+                "description": "Specifies the storage billing model for the dataset.\nSet this flag value to LOGICAL to use logical bytes for storage billing,\nor to PHYSICAL to use physical bytes instead.\n\nLOGICAL is the default if this flag isn't specified.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "terraform_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The combination of labels configured directly on the resource\n and default labels configured on the provider.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "access": {
+                "nesting_mode": "set",
+                "block": {
+                  "attributes": {
+                    "domain": {
+                      "type": "string",
+                      "description": "A domain to grant access to. Any users signed in with the\ndomain specified will be granted the specified access",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "group_by_email": {
+                      "type": "string",
+                      "description": "An email address of a Google Group to grant access to.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "iam_member": {
+                      "type": "string",
+                      "description": "Some other type of member that appears in the IAM Policy but isn't a user,\ngroup, domain, or special group. For example: 'allUsers'",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "role": {
+                      "type": "string",
+                      "description": "Describes the rights granted to the user specified by the other\nmember of the access object. Basic, predefined, and custom roles\nare supported. Predefined roles that have equivalent basic roles\nare swapped by the API to their basic counterparts. See\n[official docs](https://cloud.google.com/bigquery/docs/access-control).",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "special_group": {
+                      "type": "string",
+                      "description": "A special group to grant access to. Possible values include:\n* 'projectOwners': Owners of the enclosing project.\n* 'projectReaders': Readers of the enclosing project.\n* 'projectWriters': Writers of the enclosing project.\n* 'allAuthenticatedUsers': All authenticated BigQuery users.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "user_by_email": {
+                      "type": "string",
+                      "description": "An email address of a user to grant access to. For example:\nfred@example.com",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "condition": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "description": {
+                            "type": "string",
+                            "description": "Description of the expression. This is a longer text which describes the expression,\ne.g. when hovered over it in a UI.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "expression": {
+                            "type": "string",
+                            "description": "Textual representation of an expression in Common Expression Language syntax.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "location": {
+                            "type": "string",
+                            "description": "String indicating the location of the expression for error reporting, e.g. a file\nname and a position in the file.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "title": {
+                            "type": "string",
+                            "description": "Title for the expression, i.e. a short string describing its purpose.\nThis can be used e.g. in UIs which allow to enter the expression.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Condition for the binding. If CEL expression in this field is true, this\naccess binding will be considered.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "dataset": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "target_types": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description": "Which resources in the dataset this entry applies to. Currently, only views are supported,\nbut additional target types may be added in the future. Possible values: VIEWS",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "block_types": {
+                          "dataset": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "dataset_id": {
+                                  "type": "string",
+                                  "description": "The ID of the dataset containing this table.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "project_id": {
+                                  "type": "string",
+                                  "description": "The ID of the project containing this table.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                }
+                              },
+                              "description": "The dataset this entry applies to",
+                              "description_kind": "plain"
+                            },
+                            "min_items": 1,
+                            "max_items": 1
+                          }
+                        },
+                        "description": "Grants all resources of particular types in a particular dataset read access to the current dataset.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "routine": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "dataset_id": {
+                            "type": "string",
+                            "description": "The ID of the dataset containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "project_id": {
+                            "type": "string",
+                            "description": "The ID of the project containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "routine_id": {
+                            "type": "string",
+                            "description": "The ID of the routine. The ID must contain only letters (a-z,\nA-Z), numbers (0-9), or underscores (_). The maximum length\nis 256 characters.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "A routine from a different dataset to grant access to. Queries\nexecuted against that routine will have read access to tables in\nthis dataset. The role field is not required when this field is\nset. If that routine is updated by any user, access to the routine\nneeds to be granted again via an update operation.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "view": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "dataset_id": {
+                            "type": "string",
+                            "description": "The ID of the dataset containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "project_id": {
+                            "type": "string",
+                            "description": "The ID of the project containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "table_id": {
+                            "type": "string",
+                            "description": "The ID of the table. The ID must contain only letters (a-z,\nA-Z), numbers (0-9), or underscores (_). The maximum length\nis 1,024 characters.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "A view from a different dataset to grant access to. Queries\nexecuted against that view will have read access to tables in\nthis dataset. The role field is not required when this field is\nset. If that view is updated by any user, access to the view\nneeds to be granted again via an update operation.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "An array of objects that define dataset access for one or more entities.",
+                  "description_kind": "plain"
+                }
+              },
+              "default_encryption_configuration": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "kms_key_name": {
+                      "type": "string",
+                      "description": "Describes the Cloud KMS encryption key that will be used to protect destination\nBigQuery table. The BigQuery Service Account associated with your project requires\naccess to this encryption key.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "The default encryption key for all tables in the dataset. Once this property is set,\nall newly-created partitioned tables in the dataset will have encryption key set to\nthis value, unless table creation request (or query) overrides the key.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "external_catalog_dataset_options": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "default_storage_location_uri": {
+                      "type": "string",
+                      "description": "The storage location URI for all tables in the dataset. Equivalent to hive metastore's\ndatabase locationUri. Maximum length of 1024 characters.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "parameters": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "A map of key value pairs defining the parameters and properties of the open source schema.\nMaximum size of 2Mib.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Options defining open source compatible datasets living in the BigQuery catalog. Contains\nmetadata of open source database, schema or namespace represented by the current dataset.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "external_dataset_reference": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "connection": {
+                      "type": "string",
+                      "description": "The connection id that is used to access the externalSource.\nFormat: projects/{projectId}/locations/{locationId}/connections/{connectionId}",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "external_source": {
+                      "type": "string",
+                      "description": "External source that backs this dataset.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "Information about the external metadata storage where the dataset is defined.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_bigquery_dataset_iam_member": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "dataset_id": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "etag": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "member": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "role": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "condition": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "description": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "expression": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "title": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_billing_account_iam_member": {
           "version": 0,
           "block": {
@@ -6293,6 +6777,111 @@
                 "min_items": 1,
                 "max_items": 1
               },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_scc_v2_organization_scc_big_query_export": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "big_query_export_id": {
+                "type": "string",
+                "description": "This must be unique within the organization.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "create_time": {
+                "type": "string",
+                "description": "The time at which the BigQuery export was created. This field is set by the server and will be ignored if provided on export on creation.\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits.\nExamples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "dataset": {
+                "type": "string",
+                "description": "The dataset to write findings' updates to.\nIts format is \"projects/[projectId]/datasets/[bigquery_dataset_id]\".\nBigQuery Dataset unique ID must contain only letters (a-z, A-Z), numbers (0-9), or underscores (_).",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "description": {
+                "type": "string",
+                "description": "The description of the notification config (max of 1024 characters).",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "filter": {
+                "type": "string",
+                "description": "Expression that defines the filter to apply across create/update\nevents of findings. The\nexpression is a list of zero or more restrictions combined via\nlogical operators AND and OR. Parentheses are supported, and OR\nhas higher precedence than AND.\n\nRestrictions have the form <field> <operator> <value> and may have\na - character in front of them to indicate negation. The fields\nmap to those defined in the corresponding resource.\n\nThe supported operators are:\n\n* = for all value types.\n* >, <, >=, <= for integer values.\n* :, meaning substring matching, for strings.\n\nThe supported value types are:\n\n* string literals in quotes.\n* integer literals without quotes.\n* boolean literals true and false without quotes.\n\nSee\n[Filtering notifications](https://cloud.google.com/security-command-center/docs/how-to-api-filter-notifications)\nfor information on how to write a filter.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "location": {
+                "type": "string",
+                "description": "location Id is provided by organization. If not provided, Use global as default.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "most_recent_editor": {
+                "type": "string",
+                "description": "Email address of the user who last edited the BigQuery export.\nThis field is set by the server and will be ignored if provided on export creation or update.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The resource name of this export, in the format\n'organizations/{{organization}}/locations/{{location}}/bigQueryExports/{{big_query_export_id}}'.\nThis field is provided in responses, and is ignored when provided in create requests.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "organization": {
+                "type": "string",
+                "description": "The organization whose Cloud Security Command Center the Big Query Export\nConfig lives in.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "principal": {
+                "type": "string",
+                "description": "The service account that needs permission to create table and upload data to the BigQuery dataset.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "The most recent time at which the BigQuery export was updated. This field is set by the server and will be ignored if provided on export creation or update.\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits.\nExamples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
               "timeouts": {
                 "nesting_mode": "single",
                 "block": {

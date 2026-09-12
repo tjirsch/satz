@@ -226,6 +226,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 use "presets/organization-budget.satz" when use_budget
 use "presets/scc/scc-service-enablement.satz" when use_scc_enablement
 use "presets/scc/scc-notifications.satz" when use_scc_notifications
+use "presets/scc/scc-export.satz" when use_scc_export
 use "presets/security-audit/sa-security-audit.satz" when use_security_audit_sa
 use "presets/ci/verification-runner.satz" when use_verification_runner
 use "presets/ci/verification-runner-grant.satz" when use_verification_runner

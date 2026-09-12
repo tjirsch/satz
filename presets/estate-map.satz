@@ -21,7 +21,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.1"
+pack estate_map version "1.2"
 
 params {
   // ---- the security-group model: exactly one ------------------------------
@@ -38,6 +38,7 @@ params {
   use_budget               = false
   use_scc_enablement       = false
   use_scc_notifications    = false
+  use_scc_export           = false
   use_security_audit_sa    = false
   use_defender             = false
   use_verification_runner  = false
@@ -98,6 +99,13 @@ question use_scc_enablement {
 question use_scc_notifications {
   prompt   = "Publish Security Command Center findings to a Pub/Sub topic the customer subscribes to?"
   why      = "Findings that stay in the console are read when someone remembers to look. A topic is where a ticket system, a SIEM or a mail relay picks them up. It needs SCC switched on to have findings to publish, and whoever can read the topic reads every finding in the organisation."
+  reversal = edit
+  blast    = low
+}
+
+question use_scc_export {
+  prompt   = "Export Security Command Center findings to BigQuery, so they can be queried and kept?"
+  why      = "A notification tells somebody now; the export answers what the organisation looked like months ago. It needs SCC switched on to have findings to export, and the dataset's location cannot be changed afterwards."
   reversal = edit
   blast    = low
 }
