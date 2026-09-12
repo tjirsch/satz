@@ -59,7 +59,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`scc_notifications`](scc-notifications.md) | 1.0 | Security Command Center findings, published to a Pub/Sub topic as they are raised — the piece downstream of enablement that every customer needs. | 3 | — |
+| [`scc_notifications`](scc-notifications.md) | 1.1 | Security Command Center findings, published to a Pub/Sub topic as they are raised — the piece downstream of enablement that every customer needs. | 3 | — |
 | [`scc_service_enablement`](scc-service-enablement.md) | 1.0 | Turns every Security Command Center service on at the organization, through the one step that has no provider resource. | 0 | — |
 
 ## `security-audit/`

@@ -43,6 +43,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------- defaults --
+SKIPPED_MANAGED=()
 ORG=""
 APPLY=0
 DO_ORG=1
@@ -241,6 +242,18 @@ diagnose() {
   esac
 }
 
+# Does this error say the service is Google's to manage rather than ours? The
+# securitycentermanagement API answers a bare "failed precondition"; the older
+# per-service surface names the reason ("the greenfield GCSB resource"), and both
+# shapes mean the same thing: the state cannot be set and is not wrong.
+google_managed() {
+  case "$1" in
+    *"greenfield GCSB"*|*"cannot update service settings"*) return 0 ;;
+    *FAILED_PRECONDITION*|*"failed precondition"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # set_state <parent> <service> <ENABLED|INHERITED>
 set_state() {
   local parent="$1" service="$2" state="$3" err q
@@ -250,6 +263,14 @@ set_state() {
              "$q" "{\"intendedEnablementState\":\"$state\"}"); then
     say "    ok    $service -> $state"
     OK=$((OK+1))
+  elif google_managed "$err"; then
+    # Google runs this detector for this organisation itself: the service is not
+    # ours to switch, and saying FAIL would make an estate's `run-actions` stop on
+    # a state that is already correct. Measured on a 2026 organisation, where
+    # SECURITY_HEALTH_ANALYTICS answers
+    # "cannot update service settings … for the greenfield GCSB resource".
+    say "    skip  $service (managed by Google for this organisation, not settable here)"
+    SKIPPED_MANAGED+=("$parent $service")
   else
     say "    FAIL  $service -> $state"
     say "        ${err//$'\n'/$'\n'        }"
@@ -418,7 +439,11 @@ if (( DO_DESCENDANTS )); then
 fi
 
 step "summary"
-say "  ok: $OK   failed: $FAILED"
+say "  ok: $OK   skipped (Google-managed): ${#SKIPPED_MANAGED[@]}   failed: $FAILED"
+if (( ${#SKIPPED_MANAGED[@]} )); then
+  say "  managed by Google for this organisation, nothing to set:"
+  printf '    %s\n' "${SKIPPED_MANAGED[@]}"
+fi
 if (( FAILED )); then
   say "  failed calls:"
   printf '    %s\n' "${FAILURES[@]}"

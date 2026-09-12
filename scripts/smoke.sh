@@ -363,7 +363,9 @@ grep -q 'resource "google_pubsub_topic" "scc_findings"' tmp/scc-hcl/main.tf || f
 grep -q 'role = "roles/securitycenter.notificationServiceAgent"' tmp/scc-hcl/main.tf || fail "the notification service agent was not granted on the topic"
 # the agent is derived from the estate's own organisation id — a hard-coded one
 # would publish another organisation's findings nowhere
-grep -q 'member = "serviceAccount:service-org-123456789012@security-center-api.iam.gserviceaccount.com"' tmp/scc-hcl/main.tf || fail "the agent address does not carry the estate's organisation id:\n$(grep -A2 notificationServiceAgent tmp/scc-hcl/main.tf)"
+# the PUBLISHER, which is not the agent SCC activation creates — measured live:
+# with `security-center-api` here the config publishes nothing and says nothing
+grep -q 'member = "serviceAccount:service-org-123456789012@gcp-sa-scc-notification.iam.gserviceaccount.com"' tmp/scc-hcl/main.tf || fail "the grant does not name the publishing agent with the estate's organisation id:\n$(grep -A2 notificationServiceAgent tmp/scc-hcl/main.tf)"
 grep -q 'resource "google_scc_v2_organization_notification_config"' tmp/scc-hcl/main.tf || fail "the v2 notification config is missing"
 grep -q 'location = "global"' tmp/scc-hcl/main.tf || fail "the config must sit at the global location"
 grep -q 'pubsub_topic = "${google_pubsub_topic.scc_findings.id}"' tmp/scc-hcl/main.tf || fail "the config does not point at the topic this pack creates"
@@ -1246,6 +1248,13 @@ gp_outside = a[4]["result"]
 assert gp_outside["isError"] is True and "outside the server's root" in gp_outside["content"][0]["text"], gp_outside
 g = read("tmp/mcp-gp.jsonl")
 first = g[3]["result"]["structuredContent"]
+# a pack that binds a script is an action that cannot run without it: the install
+# must carry the .sh, executable. Checking the repo's own copy proves nothing —
+# that is how the SCC action shipped unusable to every estate.
+import os
+script = "tmp/gp/presets/scc/scc-enable-all.sh"
+assert os.path.exists(script), f"get-presets did not install the pack's script: {sorted(os.listdir('tmp/gp/presets/scc'))}"
+assert os.access(script, os.X_OK), "the installed script is not executable — the action would refuse to run it"
 assert first["installed"] and not first["refused"], first
 second = g[4]["result"]["structuredContent"]
 assert not second["installed"] and not second["refreshed"] and second["current"] == len(first["installed"]), second

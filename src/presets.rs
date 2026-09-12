@@ -658,6 +658,20 @@ pub(crate) async fn check_presets_report(
 // get-presets: populate and refresh, without ever changing a live org by accident
 // ---------------------------------------------------------------------------
 
+/// Write an upstream file into the local library. A `.sh` that a pack binds as an
+/// `action` is executed directly (`Command::new`), so it has to arrive executable
+/// — installed without the bit, the action fails with a permission error naming a
+/// file that is right there.
+fn install(path: &Path, contents: &str) -> Result<(), BoxErr> {
+    crate::fsx::write(path, contents.as_bytes())?;
+    #[cfg(unix)]
+    if path.extension().is_some_and(|e| e == "sh") {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
 /// Fetch the upstream library into `presets_dir`.
 ///
 /// This used to overwrite every pristine-named file unconditionally, with no
@@ -713,8 +727,10 @@ pub(crate) async fn get_presets(
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
             // the library is more than packs: docs, the import config and
-            // catalogs (.yaml), the CAI asset-type list (.txt)
-            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") {
+            // catalogs (.yaml), the CAI asset-type list (.txt) — and the script a
+            // pack binds as an `action`, without which that pack is an action that
+            // cannot find what it runs
+            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") || name.ends_with(".sh") {
                 extra.push(p.strip_prefix(&tmp)?.to_path_buf());
             }
         }
@@ -728,7 +744,7 @@ pub(crate) async fn get_presets(
         let lo_path = local_base.join(rel);
         if !lo_path.exists() {
             if let Some(parent) = lo_path.parent() { crate::fsx::create_dir_all(parent)?; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            install(&lo_path, &up)?;
             report.installed.push(rel.display().to_string());
             continue;
         }
@@ -750,7 +766,7 @@ pub(crate) async fn get_presets(
         if in_use {
             report.forced.push(changed);
         }
-        crate::fsx::write(&lo_path, up.as_bytes())?;
+        install(&lo_path, &up)?;
         report.refreshed.push(rel.display().to_string());
     }
     Ok(report)
@@ -1115,7 +1131,7 @@ pub(crate) async fn run_merge_presets(
             if name.ends_with(".local.satz") || name.ends_with(".diff.satz") {
                 return Err(format!("merge-presets: {} is a local fork/delta inside the pristine dir — upstream carries pristine packs only", p.display()).into());
             }
-            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") {
+            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") || name.ends_with(".sh") {
                 upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
             }
         }
@@ -1149,7 +1165,7 @@ pub(crate) async fn run_merge_presets(
             events.push(pack(MergeAction::Installed, rel));
             if report_only { continue; }
             if let Some(parent) = lo_path.parent() { crate::fsx::create_dir_all(parent)?; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            install(&lo_path, &up)?;
             continue;
         }
         let lo = crate::fsx::read_to_string(&lo_path)?;
@@ -1165,7 +1181,7 @@ pub(crate) async fn run_merge_presets(
         if is_artifact {
             events.push(pack(MergeAction::ArtifactUpdated, rel));
             if report_only { continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            install(&lo_path, &up)?;
             continue;
         }
 
@@ -1178,7 +1194,7 @@ pub(crate) async fn run_merge_presets(
         if sem_equal {
             events.push(pack(MergeAction::DocOnly, rel));
             if report_only { continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            install(&lo_path, &up)?;
             continue;
         }
 
@@ -1210,14 +1226,14 @@ pub(crate) async fn run_merge_presets(
             });
             needs_attention = true;
             if report_only { continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            install(&lo_path, &up)?;
             continue;
         }
 
         if !used {
             events.push(pack(MergeAction::UnusedOverwritten, rel));
             if report_only { continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            install(&lo_path, &up)?;
             continue;
         }
 
@@ -1245,7 +1261,7 @@ pub(crate) async fn run_merge_presets(
             adopted += 1;
             needs_attention = true;
             if report_only { continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            install(&lo_path, &up)?;
             continue;
         }
         if adopting {
@@ -1292,7 +1308,7 @@ pub(crate) async fn run_merge_presets(
                 crate::fsx::write(&fork_path, lo.as_bytes())?;
                 created.push(fork_path.clone());
                 journal.push((lo_path.clone(), lo.clone()));
-                crate::fsx::write(&lo_path, up.as_bytes())?;
+                install(&lo_path, &up)?;
                 crate::fsx::write(&est, new_text.as_bytes())?;
                 estate_edited = true;
                 events.push(MergeEvent::Pack {
