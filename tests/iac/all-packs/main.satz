@@ -73,6 +73,7 @@ google_folder {
 }
 use "presets/monitoring/organization-cis-log-alerts-central.satz"
 use "presets/monitoring/project-cis-log-alerts.satz"
+use "presets/scc/scc-notifications.satz"
 
 use "presets/integrations/microsoft-defender-for-cloud.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm.satz"
