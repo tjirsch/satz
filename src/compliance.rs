@@ -1477,21 +1477,144 @@ enum WitnessScope {
     Path,
 }
 
-fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessScope)> {
+fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessScope, LiveContent)> {
+    use LiveContent::{IamPolicy, Resource};
     match tf_type {
-        "google_logging_organization_sink" => Some(("logging.googleapis.com/LogSink", "name", WitnessScope::Organization)),
-        "google_logging_metric" => Some(("logging.googleapis.com/LogMetric", "name", WitnessScope::Project)),
-        "google_storage_bucket" => Some(("storage.googleapis.com/Bucket", "name", WitnessScope::Global)),
-        "google_monitoring_alert_policy" => Some(("monitoring.googleapis.com/AlertPolicy", "display_name", WitnessScope::Project)),
+        "google_logging_organization_sink" => {
+            Some(("logging.googleapis.com/LogSink", "name", WitnessScope::Organization, Resource))
+        }
+        "google_logging_metric" => Some(("logging.googleapis.com/LogMetric", "name", WitnessScope::Project, Resource)),
+        "google_storage_bucket" => Some(("storage.googleapis.com/Bucket", "name", WitnessScope::Global, Resource)),
+        "google_monitoring_alert_policy" => {
+            Some(("monitoring.googleapis.com/AlertPolicy", "display_name", WitnessScope::Project, Resource))
+        }
         "google_monitoring_notification_channel" => {
-            Some(("monitoring.googleapis.com/NotificationChannel", "display_name", WitnessScope::Project))
+            Some(("monitoring.googleapis.com/NotificationChannel", "display_name", WitnessScope::Project, Resource))
         }
         // The emitted `name` is `organizations/<org>/policies/<constraint>`, which
         // is exactly the CAI asset name minus its `//service/` prefix.
-        "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name", WitnessScope::Path)),
+        "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name", WitnessScope::Path, Resource)),
+        // These two live in an IAM policy, not in resource data: the audit config
+        // is the organisation's own policy, the member is a binding on the bucket.
+        "google_organization_iam_audit_config" => Some((
+            "cloudresourcemanager.googleapis.com/Organization",
+            "org_id",
+            WitnessScope::Organization,
+            IamPolicy,
+        )),
+        "google_storage_bucket_iam_member" => {
+            Some(("storage.googleapis.com/Bucket", "bucket", WitnessScope::Global, IamPolicy))
+        }
         _ => None,
     }
 }
+
+/// What a witness is compared against live: the asset's resource data, or the
+/// IAM policy set on it. Cloud Asset Inventory serves them as two content
+/// types, so a type needing both is fetched twice.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum LiveContent {
+    Resource,
+    IamPolicy,
+}
+
+/// The audit log type as the estate spells it. The asset client renders the
+/// proto enum as its NUMBER (`google.iam.v1.AuditLogConfig.LogType`), so a live
+/// policy says `2` where the estate says `DATA_WRITE`.
+fn log_type_name(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    match v.as_i64()? {
+        1 => Some("ADMIN_READ".into()),
+        2 => Some("DATA_WRITE".into()),
+        3 => Some("DATA_READ".into()),
+        _ => None,
+    }
+}
+
+/// Does the live organisation audit the declared service with every declared
+/// log type? `Ok(())` when it does; `Err` says what is missing, for the row.
+fn audit_config_state(policy: &serde_json::Value, service: &str, want: &[String]) -> Result<(), String> {
+    let configs = policy.get("auditConfigs").and_then(|c| c.as_array()).map(|a| a.as_slice()).unwrap_or(&[]);
+    let Some(mine) = configs.iter().find(|c| c.get("service").and_then(|s| s.as_str()) == Some(service)) else {
+        return Err(format!("no audit config for service `{}` in the live organization policy", service));
+    };
+    let live: Vec<String> = mine
+        .get("auditLogConfigs")
+        .and_then(|c| c.as_array())
+        .map(|a| a.iter().filter_map(|c| c.get("logType").and_then(log_type_name)).collect())
+        .unwrap_or_default();
+    let missing: Vec<&str> = want.iter().map(String::as_str).filter(|t| !live.iter().any(|l| l == t)).collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "service `{}` is audited for {} live, and the estate declares {} — missing {}",
+            service,
+            if live.is_empty() { "nothing".to_string() } else { live.join(", ") },
+            want.join(", "),
+            missing.join(", ")
+        ))
+    }
+}
+
+/// Does the live bucket policy bind `member` to `role`? `Ok(())` when it does.
+fn bucket_binding_state(policy: &serde_json::Value, role: &str, member: &str) -> Result<(), String> {
+    let bindings = policy.get("bindings").and_then(|b| b.as_array()).map(|a| a.as_slice()).unwrap_or(&[]);
+    let Some(mine) = bindings.iter().find(|b| b.get("role").and_then(|r| r.as_str()) == Some(role)) else {
+        return Err(format!("the live bucket policy has no binding for {}", role));
+    };
+    let members: Vec<&str> =
+        mine.get("members").and_then(|m| m.as_array()).map(|a| a.iter().filter_map(|m| m.as_str()).collect()).unwrap_or_default();
+    if members.contains(&member) {
+        Ok(())
+    } else {
+        let bound = if members.is_empty() { "nobody".to_string() } else { members.join(", ") };
+        Err(format!("{} is bound to {} live, not to {}", role, bound, member))
+    }
+}
+
+/// The member a bucket binding grants to, as a live value. A literal `member`
+/// answers itself; an interpolated one is a reference to another witness, and
+/// the value is read from THAT witness's live asset — a sink's writer identity
+/// is issued by Google and exists nowhere in the estate.
+#[allow(clippy::too_many_arguments)]
+fn declared_member(
+    w: &str,
+    manifest: &Manifest,
+    inventory: &Inventory,
+    attrs: &BTreeMap<String, BTreeMap<String, String>>,
+    org_id: &str,
+    numbers: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let r = manifest.resources.get(w).ok_or_else(|| format!("{} is not in the emission manifest", w))?;
+    if let Some(m) = r.attrs.get("member") {
+        if !crate::manifest::has_interpolation(m) {
+            return Ok(m.clone());
+        }
+    }
+    let traversal = r.refs.get("member").ok_or_else(|| "no `member` attribute to check the binding against".to_string())?;
+    let (target, field) =
+        traversal.rsplit_once('.').ok_or_else(|| format!("`member` reference `{}` names no attribute", traversal))?;
+    if field != "writer_identity" {
+        return Err(format!("`member` follows {} — only a sink's writer identity is read live", traversal));
+    }
+    let target_type = target.split('.').next().unwrap_or("");
+    let (at, attr, scope, content) =
+        live_matcher(target_type).ok_or_else(|| format!("no live check for {}, which `member` follows", target_type))?;
+    let key = expected_key(target, attr, scope, attrs, manifest, org_id, numbers)?;
+    let asset = inventory
+        .get(&(at.to_string(), content))
+        .and_then(|ids| ids.get(&key))
+        .ok_or_else(|| format!("{} is not live, so its writer identity cannot be read", target))?;
+    asset
+        .get("writerIdentity")
+        .and_then(|i| i.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("the live {} carries no writerIdentity", target))
+}
+
 
 /// The inventory key a live asset is filed under, per scope: its CAI path
 /// (`projects/<number>/metrics/<name>`, `organizations/<org>/sinks/<name>`,
@@ -1530,6 +1653,9 @@ fn expected_key(
             let org = a.get("org_id").map(|o| o.trim_start_matches("organizations/").to_string()).unwrap_or_else(|| org_id.to_string());
             let collection = match tf_type {
                 "google_logging_organization_sink" => "sinks",
+                // the audit config IS the organisation's policy, not a resource
+                // filed under the organisation
+                "google_organization_iam_audit_config" => return Ok(format!("organizations/{}", org)),
                 other => return Err(format!("no organization-scoped path rule for {}", other)),
             };
             Ok(format!("organizations/{}/{}/{}", org, collection, id))
@@ -1591,9 +1717,9 @@ async fn project_numbers(ids: &BTreeSet<String>) -> Result<BTreeMap<String, Stri
 /// The data used to be discarded, which capped live verification at "does a
 /// resource with this identifier exist". For an org policy that is not the
 /// control: a policy with enforcement OFF exists just as much as one with it on.
-type Inventory = BTreeMap<String, BTreeMap<String, serde_json::Value>>;
+type Inventory = BTreeMap<(String, LiveContent), BTreeMap<String, serde_json::Value>>;
 
-async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<Inventory, BoxErr> {
+async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String, LiveContent)>) -> Result<Inventory, BoxErr> {
     use google_cloud_asset_v1::model::ContentType;
     use google_cloud_gax::options::RequestOptionsBuilder;
     let client = crate::gcp::asset_service().await?;
@@ -1603,14 +1729,17 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
     // answered `report-organizational-policies` and refused `report-compliance`.
     let quota_project = crate::org_policy::resolve_quota_project();
     let mut out: Inventory = BTreeMap::new();
-    for at in asset_types {
+    for (at, content) in asset_types {
         let mut ids: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         use google_cloud_gax::paginator::ItemPaginator as _;
         let mut builder = client
             .list_assets()
             .set_parent(format!("organizations/{}", org_id))
             .set_asset_types(vec![at.clone()])
-            .set_content_type(ContentType::Resource)
+            .set_content_type(match content {
+                LiveContent::Resource => ContentType::Resource,
+                LiveContent::IamPolicy => ContentType::IamPolicy,
+            })
             .set_page_size(1000);
         if let Some(qp) = &quota_project {
             builder = builder.with_quota_project(qp);
@@ -1618,12 +1747,19 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
         let mut stream = builder.by_item();
         while let Some(asset) = stream.next().await {
             let asset: google_cloud_asset_v1::model::Asset = asset?;
-            let data = asset
-                .resource
-                .as_ref()
-                .and_then(|r| r.data.as_ref())
-                .and_then(|d| serde_json::to_value(d).ok())
-                .unwrap_or(serde_json::Value::Null);
+            let data = match content {
+                LiveContent::Resource => asset
+                    .resource
+                    .as_ref()
+                    .and_then(|r| r.data.as_ref())
+                    .and_then(|d| serde_json::to_value(d).ok())
+                    .unwrap_or(serde_json::Value::Null),
+                // the policy set ON the asset: the organisation's audit configs,
+                // a bucket's bindings
+                LiveContent::IamPolicy => {
+                    asset.iam_policy.as_ref().and_then(|p| serde_json::to_value(p).ok()).unwrap_or(serde_json::Value::Null)
+                }
+            };
             // scoped keys only: the bare terminal segment and the bare
             // displayName used to be keys too, and a same-named resource in
             // another project verified the witness
@@ -1631,7 +1767,7 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
                 ids.insert(k, data.clone());
             }
         }
-        out.insert(at.clone(), ids);
+        out.insert((at.clone(), *content), ids);
     }
     Ok(out)
 }
@@ -1923,7 +2059,7 @@ pub(crate) async fn report_compliance_evidence(
     let mut outcome = LiveOutcome::Skipped;
     if !no_live {
         // Which asset types do the satisfied/partial witnesses need?
-        let mut needed: BTreeSet<String> = BTreeSet::new();
+        let mut needed: BTreeSet<(String, LiveContent)> = BTreeSet::new();
         let mut needed_projects: BTreeSet<String> = BTreeSet::new();
         for goal in goals.values() {
             let ws = match goal {
@@ -1937,8 +2073,8 @@ pub(crate) async fn report_compliance_evidence(
             };
             for w in ws {
                 if let Some(tf_type) = w.split('.').next() {
-                    if let Some((at, _, scope)) = live_matcher(tf_type) {
-                        needed.insert(at.to_string());
+                    if let Some((at, _, scope, content)) = live_matcher(tf_type) {
+                        needed.insert((at.to_string(), content));
                         if scope == WitnessScope::Project {
                             if let Some(p) = witness_project(w, manifest) {
                                 needed_projects.insert(p);
@@ -2005,10 +2141,10 @@ pub(crate) async fn report_compliance_evidence(
                 let tf_type = w.split('.').next().unwrap_or("");
                 let state = match live_matcher(tf_type) {
                     None => LiveState::Unverifiable(format!(
-                        "no live check for {} yet (org IAM auditConfig etc. — roadmap)",
+                        "no live check for {} yet — Cloud Asset Inventory serves no witness for it",
                         tf_type
                     )),
-                    Some((at, attr, scope)) => {
+                    Some((at, attr, scope, content)) => {
                         let key = expected_key(w, attr, scope, &attrs, manifest, org_id.unwrap_or(""), &numbers);
                         match (&inventory, key) {
                             (None, _) => LiveState::Unverifiable(
@@ -2016,8 +2152,41 @@ pub(crate) async fn report_compliance_evidence(
                                 else { "live inventory unavailable".into() },
                             ),
                             (Some(_), Err(why)) => LiveState::Unverifiable(why),
-                            (Some(inv), Ok(id)) => match inv.get(at).and_then(|ids| ids.get(&id)) {
+                            (Some(inv), Ok(id)) => match inv.get(&(at.to_string(), content)).and_then(|ids| ids.get(&id)) {
                                 None => LiveState::Missing,
+                                Some(data) if content == LiveContent::IamPolicy => {
+                                    let r = manifest.resources.get(w);
+                                    match tf_type {
+                                        "google_organization_iam_audit_config" => {
+                                            let service = r.and_then(|r| r.attrs.get("service")).cloned().unwrap_or_default();
+                                            let want = r
+                                                .and_then(|r| r.nested_all.get("audit_log_config.log_type"))
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            if want.is_empty() {
+                                                LiveState::Unverifiable(
+                                                    "no audit_log_config log types are declared, so there is nothing to compare".into(),
+                                                )
+                                            } else {
+                                                match audit_config_state(data, &service, &want) {
+                                                    Ok(()) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
+                                                    Err(why) => LiveState::Diverged(why),
+                                                }
+                                            }
+                                        }
+                                        "google_storage_bucket_iam_member" => {
+                                            let role = r.and_then(|r| r.attrs.get("role")).cloned().unwrap_or_default();
+                                            match declared_member(w, manifest, inv, &attrs, org_id.unwrap_or(""), &numbers) {
+                                                Err(why) => LiveState::Unverifiable(why),
+                                                Ok(member) => match bucket_binding_state(data, &role, &member) {
+                                                    Ok(()) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
+                                                    Err(why) => LiveState::Diverged(why),
+                                                },
+                                            }
+                                        }
+                                        other => LiveState::Unverifiable(format!("no IAM-policy check for {}", other)),
+                                    }
+                                }
                                 Some(data) => {
                                     // Existence is not the control. For an org
                                     // policy, compare what the estate DECLARES
@@ -2680,7 +2849,7 @@ fn declared_address(resource: &str, attrs: &BTreeMap<String, BTreeMap<String, St
         .iter()
         .filter(|(addr, a)| {
             let tf_type = addr.split('.').next().unwrap_or("");
-            let key = live_matcher(tf_type).map(|(_, attr, _)| attr).unwrap_or("name");
+            let key = live_matcher(tf_type).map(|(_, attr, _, _)| attr).unwrap_or("name");
             a.get(key).is_some_and(|v| segment_match(v))
         })
         .map(|(addr, _)| addr)
@@ -3280,6 +3449,161 @@ mod fix_plan_tests {
 }
 
 #[cfg(test)]
+mod iam_witness_tests {
+    //! The audit config and the bucket binding are not resources: they live in
+    //! an IAM policy, and existence is not the control there either.
+    use super::*;
+
+    fn org_policy(service: &str, types: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "auditConfigs": [{
+                "service": service,
+                "auditLogConfigs": types.iter().map(|t| serde_json::json!({"logType": t})).collect::<Vec<_>>(),
+            }]
+        })
+    }
+
+    #[test]
+    fn every_declared_log_type_must_be_audited_live() {
+        let want = ["ADMIN_READ".to_string(), "DATA_READ".to_string(), "DATA_WRITE".to_string()];
+        let full = org_policy("allServices", &["DATA_WRITE", "ADMIN_READ", "DATA_READ"]);
+        assert!(audit_config_state(&full, "allServices", &want).is_ok(), "order does not matter");
+
+        let partial = org_policy("allServices", &["ADMIN_READ"]);
+        let why = audit_config_state(&partial, "allServices", &want).unwrap_err();
+        assert!(why.contains("missing DATA_READ, DATA_WRITE"), "{}", why);
+
+        let other = org_policy("storage.googleapis.com", &["ADMIN_READ", "DATA_READ", "DATA_WRITE"]);
+        let why = audit_config_state(&other, "allServices", &want).unwrap_err();
+        assert!(why.contains("no audit config for service `allServices`"), "{}", why);
+    }
+
+    /// The asset client renders the proto enum as its number, so a live policy
+    /// that audits everything reads `1, 2, 3`. Read as names, that org audits
+    /// nothing and the row would say the estate's three types are missing.
+    #[test]
+    fn a_log_type_arrives_as_the_proto_enums_number() {
+        let want = ["ADMIN_READ".to_string(), "DATA_READ".to_string(), "DATA_WRITE".to_string()];
+        let live = serde_json::json!({
+            "auditConfigs": [{"service": "allServices", "auditLogConfigs": [{"logType": 2}, {"logType": 3}, {"logType": 1}]}]
+        });
+        assert!(audit_config_state(&live, "allServices", &want).is_ok());
+        let partial = serde_json::json!({
+            "auditConfigs": [{"service": "allServices", "auditLogConfigs": [{"logType": 1}]}]
+        });
+        let why = audit_config_state(&partial, "allServices", &want).unwrap_err();
+        assert!(why.contains("audited for ADMIN_READ live"), "{}", why);
+    }
+
+    #[test]
+    fn the_binding_must_name_the_declared_member() {
+        let policy = serde_json::json!({
+            "bindings": [
+                {"role": "roles/storage.legacyBucketReader", "members": ["projectViewer:p"]},
+                {"role": "roles/storage.objectCreator", "members": ["serviceAccount:sink@example.iam.gserviceaccount.com"]},
+            ]
+        });
+        assert!(bucket_binding_state(&policy, "roles/storage.objectCreator", "serviceAccount:sink@example.iam.gserviceaccount.com").is_ok());
+
+        let why = bucket_binding_state(&policy, "roles/storage.objectCreator", "serviceAccount:other@example.iam.gserviceaccount.com")
+            .unwrap_err();
+        assert!(why.contains("not to serviceAccount:other@"), "{}", why);
+
+        let why = bucket_binding_state(&policy, "roles/storage.admin", "serviceAccount:sink@example.iam.gserviceaccount.com").unwrap_err();
+        assert!(why.contains("no binding for roles/storage.admin"), "{}", why);
+    }
+
+    /// The member is the sink's writer identity, which Google issues: it is in
+    /// no estate file, so it is read from the live sink the reference names.
+    #[test]
+    fn an_interpolated_member_is_read_from_the_witness_it_follows() {
+        let mut manifest = Manifest::default();
+        manifest.resources.insert(
+            "google_storage_bucket_iam_member.w".to_string(),
+            crate::manifest::EmittedResource {
+                tf_type: "google_storage_bucket_iam_member".into(),
+                label: "w".into(),
+                attrs: BTreeMap::from([
+                    ("bucket".to_string(), "audit-logs".to_string()),
+                    ("role".to_string(), "roles/storage.objectCreator".to_string()),
+                ]),
+                refs: BTreeMap::from([(
+                    "member".to_string(),
+                    "google_logging_organization_sink.s.writer_identity".to_string(),
+                )]),
+                nested: BTreeMap::new(),
+                nested_all: BTreeMap::new(),
+                enforce: None,
+                reset: false,
+                import_id: None,
+                origin: None,
+            },
+        );
+        manifest.resources.insert(
+            "google_logging_organization_sink.s".to_string(),
+            crate::manifest::EmittedResource {
+                tf_type: "google_logging_organization_sink".into(),
+                label: "s".into(),
+                attrs: BTreeMap::from([
+                    ("name".to_string(), "org-audit".to_string()),
+                    ("org_id".to_string(), "1".to_string()),
+                ]),
+                refs: BTreeMap::new(),
+                nested: BTreeMap::new(),
+                nested_all: BTreeMap::new(),
+                enforce: None,
+                reset: false,
+                import_id: None,
+                origin: None,
+            },
+        );
+        let attrs = manifest.witness_attrs();
+        let mut inventory: Inventory = BTreeMap::new();
+        inventory.insert(
+            ("logging.googleapis.com/LogSink".to_string(), LiveContent::Resource),
+            BTreeMap::from([(
+                "organizations/1/sinks/org-audit".to_string(),
+                serde_json::json!({"writerIdentity": "serviceAccount:sink@example.iam.gserviceaccount.com"}),
+            )]),
+        );
+        let member = declared_member(
+            "google_storage_bucket_iam_member.w",
+            &manifest,
+            &inventory,
+            &attrs,
+            "1",
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(member, "serviceAccount:sink@example.iam.gserviceaccount.com");
+
+        // and without the live sink there is no verdict, not a guess
+        let why = declared_member(
+            "google_storage_bucket_iam_member.w",
+            &manifest,
+            &BTreeMap::new(),
+            &attrs,
+            "1",
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+        assert!(why.contains("is not live"), "{}", why);
+    }
+
+    /// Both types are checked against the organisation's or the bucket's IAM
+    /// policy, which Cloud Asset serves as its own content type.
+    #[test]
+    fn the_two_iam_witnesses_ask_for_policy_content() {
+        for t in ["google_organization_iam_audit_config", "google_storage_bucket_iam_member"] {
+            let (_, _, _, content) = live_matcher(t).expect(t);
+            assert_eq!(content, LiveContent::IamPolicy, "{}", t);
+        }
+        let (_, _, _, content) = live_matcher("google_storage_bucket").unwrap();
+        assert_eq!(content, LiveContent::Resource, "the bucket itself is resource data");
+    }
+}
+
+#[cfg(test)]
 mod evidence_facts_tests {
     //! The evidence report is read by an agent building an audit list, not only
     //! by a human reading a table. It used to hand that agent the human's copy:
@@ -3345,6 +3669,7 @@ mod evidence_facts_tests {
                 attrs: BTreeMap::new(),
                 refs: BTreeMap::new(),
                 nested: BTreeMap::new(),
+                nested_all: BTreeMap::new(),
                 enforce: None,
                 reset: false,
                 import_id: None,

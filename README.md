@@ -994,7 +994,12 @@ only IDs and paraphrases.
 The goal view joined with the **live estate**: every witness of a satisfied/partial
 control is verified against Cloud Asset Inventory (org sinks, log metrics, alert
 policies, notification channels, buckets — matched by name/display name extracted from
-the generated HCL). Manual duties merge with `attestations.yaml` beside config.toml
+the generated HCL). Two witnesses live in an IAM policy rather than in resource data
+and are read from it: the organization's audit config is verified when the live policy
+audits the declared service with every declared log type (a missing one is named), and a
+bucket IAM member when the live bucket policy binds the declared role to that member —
+where the member is a sink's `writer_identity`, the value comes from the live sink,
+since Google issues it and no estate file holds it. Manual duties merge with `attestations.yaml` beside config.toml
 (`duty-id: {by, date, note}`), and a Prowler export can be ingested as
 corroboration (`--prowler findings.json` — the OCSF export of Prowler 5, `prowler gcp --output-formats json-ocsf`; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it). The report names the Prowler version that wrote the export; an export from an older Prowler, or with no version in `metadata.product`, is refused with the version it carries. FAIL findings whose check Prowler maps to no control of the framework are in no row; the report counts them per check in a section after the table and under `prowler_unmapped` in the JSON, and `triage` and `remediation-plan` (`meta.json`, the Provenance sheet) do the same.
 
