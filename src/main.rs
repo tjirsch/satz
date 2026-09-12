@@ -29,6 +29,8 @@ mod github;
 mod policy_tree;
 
 use clap::{Parser, Subcommand, CommandFactory};
+// the MCP output schema of `IacRolesReport`; schemars reaches the crate through rmcp
+use rmcp::schemars;
 use clap_complete::Shell as CompletionShell;
 use std::collections::HashMap;
 use std::fs;
@@ -178,7 +180,7 @@ impl OutFormat {
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, max_term_width = 110)]
-struct Cli {
+pub(crate) struct Cli {
     /// Project config.toml, or the estate directory containing it
     ///
     /// Every path in the config resolves against the config's own directory,
@@ -2162,17 +2164,17 @@ pub(crate) fn iac_probe(
 }
 
 /// What `iac-roles <estate>` reports.
-#[derive(Debug, serde::Serialize)]
-struct IacRolesReport {
-    estate: String,
-    service_account: String,
-    granted: crate::iac_roles::Granted,
-    needs: Vec<crate::iac_roles::Need>,
-    missing: Vec<crate::iac_roles::Need>,
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct IacRolesReport {
+    pub estate: String,
+    pub service_account: String,
+    pub granted: crate::iac_roles::Granted,
+    pub needs: Vec<crate::iac_roles::Need>,
+    pub missing: Vec<crate::iac_roles::Need>,
     /// the roles `--execute` writes for `missing`
-    write: Vec<crate::iac_roles::Pick>,
+    pub write: Vec<crate::iac_roles::Pick>,
     /// emitted types the table has no entry for
-    unknown_types: Vec<String>,
+    pub unknown_types: Vec<String>,
 }
 
 /// The estate's params as strings, snake_case — what `{param}` interpolation reads.
@@ -2183,7 +2185,7 @@ fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<Hash
         .collect())
 }
 
-fn iac_roles_report(
+pub(crate) fn iac_roles_report(
     path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -2279,6 +2281,23 @@ fn run_iac_roles(
         }
         return Ok(());
     }
+    let (written, after) = iac_roles_write(path, &report, tool_config, runtime_config)?;
+    for w in &written {
+        println!("wrote {} → {}", w, path.display());
+    }
+    emit(&after)
+}
+
+/// Write the missing roles into the estate and re-check: the grants written, and
+/// the report the edited estate yields. A gap that survives the write, or an
+/// estate that no longer compiles, restores the file and is an error — the
+/// estate is never left half-edited. Prints nothing, so the MCP tool shares it.
+pub(crate) fn iac_roles_write(
+    path: &Path,
+    report: &IacRolesReport,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(Vec<String>, IacRolesReport), Box<dyn std::error::Error>> {
     let (org, bill) = crate::iac_roles::to_write(&report.write);
     let params = estate_param_strings(path, runtime_config)?;
     let before = fsx::read_to_string(path)?;
@@ -2290,12 +2309,7 @@ fn run_iac_roles(
         }
     };
     match iac_roles_report(path, tool_config, runtime_config) {
-        Ok(after) if after.missing.is_empty() => {
-            for w in &written {
-                println!("wrote {} → {}", w, path.display());
-            }
-            emit(&after)
-        }
+        Ok(after) if after.missing.is_empty() => Ok((written, after)),
         Ok(after) => Err(restore(format!(
             "the grants were written and {} permission(s) are still missing",
             after.missing.len()

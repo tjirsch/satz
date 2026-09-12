@@ -911,6 +911,7 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_transpile","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"../../../README.md","framework":"cis-gcp-4.0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"satz_scan_checkov","arguments":{"estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_iac_roles","arguments":{"estate":"smoke.satz"}}}'
 } > tmp/mcp-in.jsonl
 # Being ASKED for state is not a report run: satz_report_compliance must not append
 # to the evidence history. Compare the directory across the call rather than testing
@@ -937,16 +938,24 @@ assert msgs[1]["result"]["serverInfo"]["name"] == "satz", msgs[1]
 # agent knows how to CALL satz and not how to write the language the calls are about.
 assert "resources" in msgs[1]["result"]["capabilities"], msgs[1]["result"]["capabilities"]
 assert "satz://guide" in msgs[1]["result"].get("instructions", ""), "the instructions do not send the agent to the guide"
+# An agent must also learn what it CANNOT do here, or it improvises around it —
+# writing HCL by hand because `apply` is absent. MCP_PARITY renders both halves.
+instructions = msgs[1]["result"]["instructions"]
+assert "transpile -> satz_transpile" in instructions, instructions
+assert "apply (it hands stdio to the tool" in instructions, instructions
 uris = {r["uri"] for r in msgs[9]["result"]["resources"]}
 assert {"satz://guide", "satz://reference", "satz://presets"} <= uris, uris
 guide = msgs[10]["result"]["contents"][0]["text"]
 assert guide.startswith("# satz for llms"), guide[:80]
 assert "Never edit `hcl/`" in guide, "the guide lost its hard rules"
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
-assert {"satz_require", "satz_check_presets", "satz_questions", "satz_interview", "satz_triage",
-        "satz_transpile_check", "satz_transpile", "satz_report_compliance",
-        "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
-        "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets"} <= set(tools), sorted(tools)
+# EXACTLY these: a tool that ships without a step in this matrix is exercised by
+# nothing, and `cargo test` only holds the list against MCP_PARITY and the docs
+assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "satz_interview", "satz_triage",
+                      "satz_transpile_check", "satz_transpile", "satz_report_compliance",
+                      "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
+                      "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
+                      "satz_iac_roles", "satz_restrict"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -965,12 +974,20 @@ assert opened["runs_as"] is None, opened
 for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
-             "satz_adopt", "satz_get_presets"):
+             "satz_adopt", "satz_get_presets", "satz_iac_roles"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
 assert tools["satz_require"]["annotations"]["readOnlyHint"] is True
 assert tools["satz_transpile"]["annotations"]["readOnlyHint"] is False
+
+# the role gap an agent asks about: the smoke estate grants what it emits, and the
+# answer names the service account it judged
+roles = msgs[16]["result"]["structuredContent"]["report"]
+assert roles["service_account"].startswith("serviceAccount:") or "@" in roles["service_account"], roles
+assert roles["missing"] == [], f"the smoke estate lacks roles it emits types for: {roles['missing']}"
+assert roles["needs"], "no role need was derived at all"
+assert msgs[16]["result"]["structuredContent"]["written"] == [], "a read-level call wrote grants"
 
 # a granted tool returns the report as STRUCTURED content, not a string to parse
 rep = msgs[3]["result"]["structuredContent"]

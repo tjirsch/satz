@@ -74,6 +74,14 @@ and in the maintainer's notes. Nothing in this file names a customer.
   mutable global because the server dispatches concurrently, and a target that
   changed under a call in flight is how one customer's tools run as another's
   service account.
+- **What an agent may run is decided per command.** `MCP_PARITY` (`src/mcp.rs`)
+  names every CLI command with the MCP tool that serves it or the reason none
+  does; `cargo test` fails on a command in neither column, on a registered tool
+  the table does not name, and on a tool `docs/mcp.md` does not list. The server
+  sends both halves to the client at initialize — the command behind each tool,
+  and what it will not run with the reason — so an agent asks for `apply` instead
+  of writing HCL by hand. A new tool gets a step in the smoke matrix in the same
+  PR: its `tools/list` assertion is an exact set.
 - **Presets, provenance by suffix:** `X.satz` pristine, upstream-owned, always
   overwritable / `X.local.satz` the user's fork, never touched by updates /
   `X.diff.satz` the current adoption delta, rewritten on every merge. A preset

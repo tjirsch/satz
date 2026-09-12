@@ -78,6 +78,7 @@ every `satz` block in the guide.
 | `satz_whoami` | `read` | both halves of the identity — the ADC account and the open estate's service account — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable, does it hold the permissions the estate's resource types need (`permissions`, each missing one named with its role). The first thing to check when a live call is refused |
 | `satz_transpile` | `write` | compiles the estate and writes its OpenTofu HCL into `hcl_dir`, as `satz transpile` does; `written` lists the files |
 | `satz_adopt` | `read` / `write` | every declared resource resolved against the **live** organisation, as the estate's service account: per row whether it would be imported, moved in the state, is already managed, or cannot be resolved, what it matched on, and the Satz line that declared it. With `execute` (`write`) the verified ids are written into the estate as `"import-id"`, refused while any row is unanswered or a live object is declared twice. `tofu import`, a state move and activating a managed constraint stay on the command line |
+| `satz_iac_roles` | `read` / `write` | the roles the estate's IaC service account needs for the resource types it emits against the roles it grants: the gap, the fewest roles that close it, and the emitted types the role table has no row for. Offline. With `execute` (`write`) the missing roles are written into the estate file and the estate is re-checked — a gap that survives the write restores the file |
 | `satz_get_presets` | `write` | the upstream library into the open estate's `presets_dir`: missing files installed, identical ones left, changed ones the estate does not use refreshed; a pack the estate uses that upstream changed is refused unless `force`. `pristine_dir` copies from a library under the root instead of downloading. `presets_dir` must be inside the root |
 | `satz_remediation_items` | `read` | the remediation dossier's items for an estate and a Prowler export — triaged, deduplicated, joined per (control, resource) — with the `dossier_sha256` authored values must name. The worklist for the `[Authored]` columns; `checkov: true` joins a Checkov run and needs `exec` |
 | `satz_remediation_annotate` | `write` | writes authored values (`what_why`, `recommended_fix`, `owner`, `effort`, `phase`, `quick_win`, `risk_acceptance`, and the mandatory `authored_by` and `authored_at`) per item id into `<out>/authored.json`, merged with what is on file, and renders the run there with the `[Authored]` columns filled. Refused when the hash is not the current dossier's, an id is unknown, or an entry names no author |
@@ -85,6 +86,18 @@ every `satz` block in the guide.
 | `satz_restrict` | — | lowers this session's level; only with `--self-gated` |
 
 Each returns the same value the corresponding `--format json` command prints.
+
+**Which commands an agent can run is a decision per command.** `MCP_PARITY`
+(`src/mcp.rs`) names every CLI command with the tool that serves it or the reason
+none does, and a command in neither column fails `cargo test` — the same way every
+command must declare an identity. What is deliberately not served: the commands
+that hand stdio to `tofu` (`plan`, `apply`, `hcl-init`), the day-0 ones that run as
+the human (`init`, `bootstrap`), the live sweep that rewrites an estate (`import`),
+the maintainer refreshes of shipped data (`map-types`, `update-schema`,
+`doc-packs`), the rendered human reports (`report-organizational-policies`), and
+the terminal affordances (`completion`, `open-readme`, `self-update`). The tools
+the table has no command for — `satz_open`, `satz_estates`, `satz_restrict` — are
+the session and capability plumbing a terminal does not need.
 
 A tool the level does not permit returns a tool **result** with `isError`, not a
 protocol error, so the agent can continue.
@@ -124,7 +137,7 @@ it may run without asking:
 | annotation | on |
 |---|---|
 | `readOnlyHint: true` | `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_remediation_items` |
-| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write` |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_iac_roles` — reading is free, `execute` writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write` |
 | `destructiveHint: true` | `satz_get_presets` — with `force` it overwrites packs the estate uses |
 | `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_adopt`, `satz_get_presets` — the ones that can reach the network (`uvx checkov` fetches Checkov) |
 
