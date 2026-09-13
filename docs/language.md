@@ -988,6 +988,13 @@ claim-entry := "resources" "=" "[" { STRING } "]"
   static.
 - `resources` are emitted Terraform addresses. A claim whose witnesses are not
   emitted is a **broken claim** (‼), never reported as satisfied.
+- A claim asserts what its witnesses DO. An `implements` claim naming an org
+  policy that carries `enforce = "FALSE"` or `spec { reset = true }` is a
+  **contradicted claim** (‼): the witness exists and discharges nothing. A
+  `deviates` claim naming a policy that enforces is contradicted the same way —
+  it discloses a non-conformance the estate does not have. `contributes` asserts
+  nothing about the value, and a policy whose effect has no single answer — a
+  list constraint, several rules — is never contradicted.
 - `duty_<name>` records a manual duty; underscores become hyphens in reports
   (`duty_validate_then_lock` → `validate-then-lock`).
 - `implements` discharges the control; `contributes` is a necessary part.
@@ -1424,7 +1431,7 @@ require cis-gcp 4.0 — goal view for …/acme/yaml/C0example.satz
   ◐ 4.4   OS Login enabled                              — open duties: existing-vms
   ✓ 5.2   Uniform bucket-level access enabled           — google_org_policy_policy.storage_uniformBucketLevelAccess
 
-18 satisfied, 5 partial, 0 deviation(s), 0 unmet, 0 broken claim(s). Goal view judges the DECLARED estate; live verification is the evidence report.
+18 satisfied, 5 partial, 0 deviation(s), 0 unmet, 0 broken claim(s), 0 contradicted claim(s). Goal view judges the DECLARED estate; live verification is the evidence report.
 ```
 
 (Trimmed to seven of 23 rows.) Every ✓ carries its witnesses — the emitted
@@ -1438,7 +1445,7 @@ On an estate that declines two controls (a fork with `enforce = "FALSE"` and a
   ⚠ 4.4   OS Login enabled                              — DEVIATION (CIS_GCP_Foundation_4_0) Deliberate: an operational service in this organisation depends on metadata SSH keys, which enforcing OS Login would break. The constraint is declared and managed here, with enforce = FALSE, so the decision is visible in the estate rather than absent from it. open: identify-service, reassess
   ⚠ 4.6   IP forwarding not enabled on instances        — DEVIATION (CIS_GCP_Foundation_4_0) Deliberate: workloads in this organisation require IP forwarding, so the constraint is declared and managed with enforce = FALSE rather than left undeclared. open: identify-workloads, reassess
 
-7 satisfied, 3 partial, 2 deviation(s), 11 unmet, 0 broken claim(s). …
+7 satisfied, 3 partial, 2 deviation(s), 11 unmet, 0 broken claim(s), 0 contradicted claim(s). …
 Deviations are disclosed decisions with a stated reason, not gaps — they do not fail this gate.
 ```
 
@@ -1456,10 +1463,11 @@ On an estate with no CIS pack, every row says what would provide it:
 | ⚠ | deviation | a declared non-conformance with a stated reason; never counted as a gap |
 | ✗ | unmet | no included claim discharges it (none, or only ones that contributed zero witnesses); names the packs in the library that would |
 | ‼ | broken claim | an included claim's declared witnesses are not emitted — ranks above unmet. A `deviates` claim whose declared witness vanished reads ‼ too, not ⚠; and ‼ yields to ✓/◐ when another included claim supplied the witnesses |
+| ‼ | contradicted claim | the witnesses are all emitted and one of them does the opposite of what the claim says: an `implements` over a policy declared `enforce = "FALSE"` or `reset = true`, or a `deviates` over one that enforces. It outranks every other verdict on that control, including another claim's witnesses |
 | ○ | organizational | the catalog marks it as having no IaC witness |
 
-Exit code is **1 when anything is unmet or broken**, 0 otherwise; deviations do
-not fail it. In CI, an estate that drops a witness a claim depends on fails the
+Exit code is **1 when anything is unmet, broken or contradicted**, 0 otherwise;
+deviations do not fail it. In CI, an estate that drops a witness a claim depends on fails the
 build, and an estate that declines a control with a `deviates` claim does not.
 
 ---
@@ -1513,7 +1521,7 @@ witnesses are then *missing*, and the row reads DRIFTED.)
 
 Plus **deviation (accepted)**, **deviation is STALE** (declared as a deviation,
 but the live policy enforces — the fork no longer matches the organisation),
-**BROKEN CLAIM**, **unmet**, and organizational. The verdict of an org policy is
+**BROKEN CLAIM**, **CONTRADICTED CLAIM**, **unmet**, and organizational. The verdict of an org policy is
 its one unconditional rule; its conditional rules (a tag-conditional exemption,
 for one) are listed beside the verdict. A policy with no unconditional rule or more
 than one, or a list constraint, yields no verdict, and a policy whose live state

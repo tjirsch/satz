@@ -89,6 +89,15 @@ grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form 
 [ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should emit one resource each"
 "$satz" --config . require cis-gcp-4.0 showcase.satz > tmp/showcase-require.txt 2>&1 || true
 grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not read as a deviation"
+grep -q '0 contradicted claim(s)' tmp/showcase-require.txt || fail "a claim contradicts its own witness in the showcase estate"
+# R7: the coverage word is an assertion about what the witness DOES. Switch the
+# policy the deviation names to enforcing, and the deviation must read as
+# contradicted rather than as a disclosed non-conformance (ADR 0013).
+sed 's/enforce = "FALSE"/enforce = "TRUE"/' yaml/showcase-policies.satz > tmp/showcase-policies-enforcing.satz
+sed 's|use "showcase-policies.satz"|use "../tmp/showcase-policies-enforcing.satz"|' yaml/showcase.satz > tmp/showcase-contradicted.satz
+"$satz" --config . require cis-gcp-4.0 ../tmp/showcase-contradicted.satz > tmp/showcase-contradicted.txt 2>&1 || true
+grep -q 'declares a deviation and its witnesses enforce the control' tmp/showcase-contradicted.txt || fail "a deviation over an enforcing policy must read as a contradicted claim"
+grep -q '1 contradicted claim(s)' tmp/showcase-contradicted.txt || fail "the contradicted claim is not counted in the summary"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi

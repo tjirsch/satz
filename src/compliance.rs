@@ -114,6 +114,12 @@ pub(crate) enum Goal {
     /// A pack was included and claims this control, but declared witnesses are not
     /// in the emitted estate — a broken lemma, worse than unmet.
     ClaimBroken { missing: Vec<String>, pack: String },
+    /// The witnesses are all emitted, and they do not do what the claim says. An
+    /// `implements` whose policy carries `enforce = "FALSE"` or `reset = true` discharges
+    /// nothing; a `deviates` whose policy is fully enforcing discloses a non-conformance
+    /// that is not there. Worse than a missing witness, because the estate reads as
+    /// compliant and is not — and nothing but a live report would have said so.
+    ClaimContradicted { inert: Vec<(String, String)>, pack: String, coverage: String },
     /// An included pack or the estate declares a DELIBERATE non-conformance with
     /// a stated reason. Disclosed as a finding, never counted as a gap: a `.local`
     /// fork exists precisely so a customer can decline a control on purpose, and
@@ -135,6 +141,75 @@ pub(crate) enum Goal {
 // Pure layer: goal resolution
 // ---------------------------------------------------------------------------
 
+/// What an org policy in the estate actually does, for the claims that name it.
+///
+/// `Enforcing` and `Inert` are only ever decided where the manifest is sure: a block
+/// declaring exactly one `enforce`, or declaring `reset = true`. A list constraint
+/// (`allowed_values` / `denied_values`) and a multi-rule policy both yield `Unknown`,
+/// and an unknown witness is never contradicted — the manifest's own rule, that no
+/// verdict beats a wrong one, is the rule here too.
+/// One claim caught contradicting itself: its inert witnesses with the reason each
+/// is inert, the pack that made the claim, and the coverage word it used — which
+/// decides which way round the contradiction reads.
+type Contradiction = (Vec<(String, String)>, String, String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PolicyEffect {
+    Enforcing,
+    Inert,
+    Unknown,
+}
+
+/// Read the effect of every org policy the estate emits, by address.
+///
+/// Only `google_org_policy_policy` is judged. Every other witness type — a sink, a
+/// bucket, a custom constraint — is `Unknown`: their existence IS their effect, which is
+/// what the witness check already tests.
+pub(crate) fn policy_effects(manifest: &Manifest) -> BTreeMap<String, (PolicyEffect, String)> {
+    let mut out = BTreeMap::new();
+    for (addr, r) in &manifest.resources {
+        if r.tf_type != "google_org_policy_policy" {
+            continue;
+        }
+        let v = if r.reset {
+            (PolicyEffect::Inert, "declared off with `reset = true`".to_string())
+        } else {
+            match r.enforce {
+                Some(true) => (PolicyEffect::Enforcing, "enforced".to_string()),
+                Some(false) => (PolicyEffect::Inert, "declared with `enforce = \"FALSE\"`".to_string()),
+                None => (PolicyEffect::Unknown, "a list constraint or several rules — no single verdict".to_string()),
+            }
+        };
+        out.insert(addr.clone(), v);
+    }
+    out
+}
+
+/// The witnesses of one claim that contradict what it says, with why.
+///
+/// `implements` is contradicted by an inert policy: the control is not discharged.
+/// `deviates` is contradicted by an enforcing one: the estate discloses a
+/// non-conformance it does not have, which misleads an auditor in the other direction.
+/// `contributes` asserts nothing about the value — it says "a necessary part", and a part
+/// may well be a policy some other claim switches on.
+fn contradictions(
+    c: &Claim,
+    effects: &BTreeMap<String, (PolicyEffect, String)>,
+) -> Vec<(String, String)> {
+    let want = match c.coverage.as_str() {
+        "implements" => PolicyEffect::Inert,
+        "deviates" => PolicyEffect::Enforcing,
+        _ => return Vec::new(),
+    };
+    c.resources
+        .iter()
+        .filter_map(|r| match effects.get(r) {
+            Some((e, why)) if *e == want => Some((r.clone(), why.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Resolve every catalog control against the claims of included packs and the
 /// emitted resource addresses. `library_claims` = claims of ALL packs in the
 /// preset library (for remediation suggestions only); `included_claims` = the
@@ -146,6 +221,7 @@ pub(crate) fn resolve_goals(
     library_claims: &[(String, Claim)], // (pack, claim)
     included_claims: &[(String, Claim)], // (pack, claim) — actually included
     emitted: &BTreeSet<String>,
+    effects: &BTreeMap<String, (PolicyEffect, String)>, // what each policy actually does
 ) -> BTreeMap<String, Goal> {
     let mut goals = BTreeMap::new();
 
@@ -228,6 +304,25 @@ pub(crate) fn resolve_goals(
                 goals.insert(id.clone(), Goal::ClaimBroken { missing, pack });
                 continue;
             }
+            // A disclosed non-conformance whose policy is in fact enforcing discloses
+            // something that is not there — as misleading as a false `implements`, in
+            // the other direction, and the reader has no way to notice.
+            let mut against: Vec<(String, String)> = Vec::new();
+            let mut by = String::new();
+            for (pack, c) in &deviations {
+                let x = contradictions(c, effects);
+                if !x.is_empty() && by.is_empty() {
+                    by = (*pack).clone();
+                }
+                against.extend(x);
+            }
+            if !against.is_empty() {
+                goals.insert(
+                    id.clone(),
+                    Goal::ClaimContradicted { inert: against, pack: by, coverage: "deviates".into() },
+                );
+                continue;
+            }
             let mut open_duties: Vec<String> = deviations
                 .iter()
                 .flat_map(|(_, c)| c.manual_duties.iter().map(|d| d.id.clone()))
@@ -247,6 +342,7 @@ pub(crate) fn resolve_goals(
         let mut open_duties = control.duties.clone();
         let mut has_implements = false;
         let mut broken: Option<(Vec<String>, String)> = None;
+        let mut contradicted: Option<Contradiction> = None;
 
         for (pack, claim) in &included {
             let missing: Vec<String> = claim
@@ -259,6 +355,11 @@ pub(crate) fn resolve_goals(
                 broken = Some((missing, pack.clone()));
                 continue;
             }
+            let inert = contradictions(claim, effects);
+            if !inert.is_empty() {
+                contradicted = Some((inert, pack.clone(), claim.coverage.clone()));
+                continue;
+            }
             witnesses.extend(claim.resources.iter().cloned());
             open_duties.extend(claim.manual_duties.iter().map(|d| d.id.clone()));
             if claim.coverage == "implements" {
@@ -266,7 +367,9 @@ pub(crate) fn resolve_goals(
             }
         }
 
-        let goal = if witnesses.is_empty() && open_duties.is_empty() {
+        let goal = if let Some((inert, pack, coverage)) = contradicted {
+            Goal::ClaimContradicted { inert, pack, coverage }
+        } else if witnesses.is_empty() && open_duties.is_empty() {
             match broken {
                 Some((missing, pack)) => Goal::ClaimBroken { missing, pack },
                 None => Goal::Unmet { providers: Vec::new() },
@@ -334,6 +437,7 @@ pub(crate) fn fold_cross_walk(
         let mut open_duties: Vec<String> = control.duties.clone();
         let mut reasons: Vec<(String, String)> = Vec::new();
         let mut broken: Option<(Vec<String>, String)> = None;
+        let mut contradicted: Option<Contradiction> = None;
         let mut seen = 0usize;
         let mut satisfied = 0usize;
         let mut evidenced = 0usize;
@@ -362,6 +466,10 @@ pub(crate) fn fold_cross_walk(
                     Goal::ClaimBroken { missing, pack } => {
                         broken.get_or_insert_with(|| (missing.clone(), pack.clone()));
                     }
+                    Goal::ClaimContradicted { inert, pack, coverage } => {
+                        contradicted
+                            .get_or_insert_with(|| (inert.clone(), pack.clone(), coverage.clone()));
+                    }
                     Goal::Unmet { .. } | Goal::Organizational | Goal::Inherited => {}
                 }
             }
@@ -372,7 +480,9 @@ pub(crate) fn fold_cross_walk(
         open_duties.sort();
         open_duties.dedup();
 
-        let folded = if !reasons.is_empty() {
+        let folded = if let Some((inert, pack, coverage)) = contradicted {
+            Goal::ClaimContradicted { inert, pack, coverage }
+        } else if !reasons.is_empty() {
             Goal::Deviation { reasons, witnesses, open_duties }
         } else if let Some((missing, pack)) = broken {
             Goal::ClaimBroken { missing, pack }
@@ -395,8 +505,9 @@ pub(crate) fn resolve_goals_cross_walked(
     library_claims: &[(String, Claim)],
     included_claims: &[(String, Claim)],
     emitted: &BTreeSet<String>,
+    effects: &BTreeMap<String, (PolicyEffect, String)>,
 ) -> BTreeMap<String, Goal> {
-    let mut goals = resolve_goals(catalog, library_claims, included_claims, emitted);
+    let mut goals = resolve_goals(catalog, library_claims, included_claims, emitted, effects);
     let sources = cross_walk_sources(catalog);
     if sources.is_empty() {
         return goals;
@@ -407,7 +518,7 @@ pub(crate) fn resolve_goals_cross_walked(
         let file = key.replace('/', "-");
         match load_catalog(presets_dir, &file) {
             Ok(src) => {
-                source_goals.insert(key, resolve_goals(&src, library_claims, included_claims, emitted));
+                source_goals.insert(key, resolve_goals(&src, library_claims, included_claims, emitted, effects));
             }
             Err(e) => {
                 eprintln!("warning: cross-walk source `{}` could not be read ({}) — the controls it evidences read as unmet", key, e);
@@ -526,7 +637,8 @@ fn load_library_view(presets_dir: &str) -> Result<Vec<(String, Claim)>, BoxErr> 
 pub(crate) struct ControlRow {
     pub id: String,
     pub title: String,
-    /// satisfied | partial | broken | deviation | unmet | organizational | inherited
+    /// satisfied | partial | broken | contradicted | deviation | unmet | organizational
+    /// | inherited
     pub verdict: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub witnesses: Vec<String>,
@@ -539,6 +651,12 @@ pub(crate) struct ControlRow {
     pub missing: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub pack: Option<String>,
+    /// (address, why) for witnesses that do not do what the claim says
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub inert: Vec<(String, String)>,
+    /// the coverage word the contradicted claim used: `implements` or `deviates`
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub coverage: String,
     /// (pack, reason) for a declared deviation
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub reasons: Vec<(String, String)>,
@@ -553,6 +671,7 @@ pub(crate) struct RequireSummary {
     pub deviations: usize,
     pub unmet: usize,
     pub broken: usize,
+    pub contradicted: usize,
     pub organizational: usize,
     pub inherited: usize,
 }
@@ -570,7 +689,7 @@ impl RequireReport {
     /// The gate: an unmet technical control or a claim whose witnesses vanished.
     /// A deviation is a disclosed decision and does not fail it.
     pub(crate) fn gaps(&self) -> bool {
-        self.summary.unmet > 0 || self.summary.broken > 0
+        self.summary.unmet > 0 || self.summary.broken > 0 || self.summary.contradicted > 0
     }
 }
 
@@ -585,7 +704,9 @@ pub(crate) fn require_report(
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
 
     let mut summary = RequireSummary::default();
     let mut controls = Vec::with_capacity(goals.len());
@@ -602,6 +723,8 @@ pub(crate) fn require_report(
             providers: Vec::new(),
             missing: Vec::new(),
             pack: None,
+            inert: Vec::new(),
+            coverage: String::new(),
             reasons: Vec::new(),
             contributes_only: false,
         };
@@ -622,6 +745,13 @@ pub(crate) fn require_report(
                 row.verdict = "broken";
                 row.missing = missing.clone();
                 row.pack = Some(pack.clone());
+            }
+            Goal::ClaimContradicted { inert, pack, coverage } => {
+                summary.contradicted += 1;
+                row.verdict = "contradicted";
+                row.inert = inert.clone();
+                row.pack = Some(pack.clone());
+                row.coverage = coverage.clone();
             }
             Goal::Deviation { reasons, open_duties, .. } => {
                 summary.deviations += 1;
@@ -683,6 +813,21 @@ pub(crate) fn render_require(r: &RequireReport) -> String {
                 c.pack.as_deref().unwrap_or(""),
                 c.missing.join(", ")
             ),
+            "contradicted" => {
+                let what = if c.coverage == "deviates" {
+                    "declares a deviation and its witnesses enforce the control"
+                } else {
+                    "claims it and its witnesses do nothing"
+                };
+                format!(
+                    "  ‼ {:5} {:45} — pack {} {}: {}",
+                    c.id,
+                    c.title,
+                    c.pack.as_deref().unwrap_or(""),
+                    what,
+                    c.inert.iter().map(|(a, w)| format!("{a} ({w})")).collect::<Vec<_>>().join(", ")
+                )
+            }
             "deviation" => {
                 let why = c
                     .reasons
@@ -714,10 +859,17 @@ pub(crate) fn render_require(r: &RequireReport) -> String {
 
     let s = &r.summary;
     out.push_str(&format!(
-        "\n{} satisfied, {} partial, {} deviation(s), {} unmet, {} broken claim(s). \
+        "\n{} satisfied, {} partial, {} deviation(s), {} unmet, {} broken claim(s), \
+         {} contradicted claim(s). \
          Goal view judges the DECLARED estate; live verification is the evidence report.\n",
-        s.satisfied, s.partial, s.deviations, s.unmet, s.broken
+        s.satisfied, s.partial, s.deviations, s.unmet, s.broken, s.contradicted
     ));
+    if s.contradicted > 0 {
+        out.push_str(
+            "A contradicted claim is the worst verdict here: the witness exists, so the row would \
+             otherwise read as met, and the policy behind it does nothing.\n",
+        );
+    }
     if s.deviations > 0 {
         out.push_str(
             "Deviations are disclosed decisions with a stated reason, not gaps — they do not fail this gate.\n",
@@ -744,6 +896,8 @@ mod tests {
             providers: Vec::new(),
             missing: Vec::new(),
             pack: None,
+            inert: Vec::new(),
+            coverage: String::new(),
             reasons: Vec::new(),
             contributes_only: false,
         }
@@ -776,7 +930,7 @@ mod tests {
             estate: "e.satz".into(),
             controls: vec![sat, part, contributes, cross_walk, broken, dev, unmet, bare,
                            row("1.9", "organizational"), row("2.0", "inherited")],
-            summary: RequireSummary { satisfied: 1, partial: 3, deviations: 1, unmet: 2, broken: 1, organizational: 1, inherited: 1 },
+            summary: RequireSummary { satisfied: 1, partial: 3, deviations: 1, unmet: 2, broken: 1, contradicted: 0, organizational: 1, inherited: 1 },
         };
         let out = render_require(&r);
 
@@ -813,6 +967,68 @@ mod tests {
         r.summary.unmet = 0;
         r.summary.broken = 1;
         assert!(r.gaps());
+        r.summary.broken = 0;
+        r.summary.contradicted = 1;
+        assert!(r.gaps(), "a claim its own policy contradicts must fail the gate");
+    }
+
+    // --- R7: a claim asserts what its witness does, not only that it exists ---------
+
+    #[test]
+    fn an_implements_claim_whose_policy_is_inert_is_contradicted() {
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+
+        // The witness is emitted, so the pre-R7 verdict was "satisfied".
+        let ok = resolve_goals(&catalog(), &lib, &lib, &emitted, &no_effects());
+        assert!(matches!(ok["2.1"], Goal::Satisfied { .. }));
+
+        let off = effects(&[("google_org_policy_policy.p", PolicyEffect::Inert)]);
+        let goals = resolve_goals(&catalog(), &lib, &lib, &emitted, &off);
+        let Goal::ClaimContradicted { inert, pack, coverage } = &goals["2.1"] else {
+            panic!("expected a contradicted claim, got {:?}", goals["2.1"]);
+        };
+        assert_eq!(pack, "baseline");
+        assert_eq!(coverage, "implements", "the verdict says which way round the contradiction runs");
+        assert_eq!(inert.len(), 1);
+        assert_eq!(inert[0].0, "google_org_policy_policy.p");
+    }
+
+    #[test]
+    fn a_deviation_whose_policy_enforces_is_contradicted() {
+        let mut dev = claim("baseline", "2.1", "deviates", &["google_org_policy_policy.p"], &[]);
+        dev.1.reason = "the workload needs it".into();
+        let lib = vec![dev];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+
+        let on = effects(&[("google_org_policy_policy.p", PolicyEffect::Enforcing)]);
+        assert!(
+            matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &on)["2.1"], Goal::ClaimContradicted { .. }),
+            "a disclosed non-conformance whose policy enforces discloses something that is not there"
+        );
+
+        // The other direction is the normal case and stays a deviation.
+        let off = effects(&[("google_org_policy_policy.p", PolicyEffect::Inert)]);
+        assert!(matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &off)["2.1"], Goal::Deviation { .. }));
+    }
+
+    #[test]
+    fn contributes_asserts_nothing_about_the_value() {
+        // A contributing witness is "a necessary part" — the part may well be a policy
+        // another claim switches on, so an inert one is not a contradiction.
+        let lib = vec![claim("ext", "2.3", "contributes", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        let off = effects(&[("google_org_policy_policy.p", PolicyEffect::Inert)]);
+        assert!(matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &off)["2.3"], Goal::Partial { .. }));
+    }
+
+    #[test]
+    fn an_unknown_effect_is_never_a_contradiction() {
+        // A list constraint leaves no single enforce behind. No verdict beats a wrong one.
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        let unknown = effects(&[("google_org_policy_policy.p", PolicyEffect::Unknown)]);
+        assert!(matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &unknown)["2.1"], Goal::Satisfied { .. }));
     }
 
     use super::*;
@@ -830,6 +1046,16 @@ controls:
 "#,
         )
         .unwrap()
+    }
+
+    /// No policy has a readable effect — every witness is judged on existence alone,
+    /// which is what every test written before R7 assumes.
+    fn no_effects() -> BTreeMap<String, (PolicyEffect, String)> {
+        BTreeMap::new()
+    }
+
+    fn effects(pairs: &[(&str, PolicyEffect)]) -> BTreeMap<String, (PolicyEffect, String)> {
+        pairs.iter().map(|(a, e)| (a.to_string(), (*e, "because the test says so".to_string()))).collect()
     }
 
     fn claim(pack: &str, control: &str, coverage: &str, resources: &[&str], duties: &[&str]) -> (String, Claim) {
@@ -863,7 +1089,7 @@ controls:
             lib.iter().filter(|(p, _)| p == "logsink").cloned().collect();
         let emitted: BTreeSet<String> = ["a.b".to_string()].into();
 
-        let goals = resolve_goals(&catalog(), &lib, &included, &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &included, &emitted, &no_effects());
         assert!(matches!(goals["2.1"], Goal::Satisfied { .. }));
         // 2.3: included, witnesses present, but contributes-only with an open duty
         assert!(matches!(goals["2.3"], Goal::Partial { .. }));
@@ -907,7 +1133,7 @@ controls:
     #[test]
     fn a_cross_walk_folds_the_verdicts_of_the_catalog_it_reads_through() {
         let iso = cross_walk_catalog();
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         // 7.x is the provider's, decided without consulting anything
         assert!(matches!(goals["A.7.1"], Goal::Inherited));
         // a duty on the control itself, with no evidence at all, is partial —
@@ -942,7 +1168,7 @@ controls:
         let iso = cross_walk_catalog();
 
         // one source unmet: partial, not satisfied
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         let partial = BTreeMap::from([(
             "cis-gcp/4.0".to_string(),
             BTreeMap::from([
@@ -954,7 +1180,7 @@ controls:
         assert!(matches!(goals["A.8.20"], Goal::Partial { .. }), "{:?}", goals["A.8.20"]);
 
         // a deviation below surfaces as a deviation above, with its reason
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         let deviated = BTreeMap::from([(
             "cis-gcp/4.0".to_string(),
             BTreeMap::from([
@@ -976,7 +1202,7 @@ controls:
         }
 
         // a broken claim below is broken above too
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         let broken = BTreeMap::from([(
             "cis-gcp/4.0".to_string(),
             BTreeMap::from([(
@@ -988,7 +1214,7 @@ controls:
         assert!(matches!(goals["A.8.20"], Goal::ClaimBroken { .. }), "{:?}", goals["A.8.20"]);
 
         // nothing to read through at all: unmet, not silently satisfied
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         fold_cross_walk(&iso, &mut goals, &BTreeMap::new());
         assert!(matches!(goals["A.8.20"], Goal::Unmet { .. }), "{:?}", goals["A.8.20"]);
     }
@@ -1013,7 +1239,7 @@ controls:
                 }],
             },
         );
-        let goals = resolve_goals(&catalog(), std::slice::from_ref(&claim), std::slice::from_ref(&claim), &BTreeSet::new());
+        let goals = resolve_goals(&catalog(), std::slice::from_ref(&claim), std::slice::from_ref(&claim), &BTreeSet::new(), &no_effects());
         match &goals["2.1"] {
             Goal::Partial { witnesses, open_duties, .. } => {
                 assert!(witnesses.is_empty());
@@ -1110,7 +1336,7 @@ resource "google_org_policy_policy" "os_login" {
         let lib = vec![dev.clone()];
         let emitted: BTreeSet<String> = ["audit.policy".to_string()].into();
 
-        let goals = resolve_goals(&catalog(), &lib, &[dev], &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &[dev], &emitted, &no_effects());
         match &goals["2.1"] {
             Goal::Deviation { reasons, witnesses, open_duties } => {
                 assert_eq!(reasons[0].1, "service X needs metadata SSH keys");
@@ -1132,7 +1358,7 @@ resource "google_org_policy_policy" "os_login" {
         let included = vec![packclaim.clone(), dev];
         let emitted: BTreeSet<String> = BTreeSet::new(); // suppressed → not emitted
 
-        let goals = resolve_goals(&catalog(), &[packclaim], &included, &emitted);
+        let goals = resolve_goals(&catalog(), &[packclaim], &included, &emitted, &no_effects());
         assert!(
             matches!(goals["2.1"], Goal::Deviation { .. }),
             "a reasoned deviation must not report as a broken claim, got {:?}",
@@ -1147,7 +1373,7 @@ resource "google_org_policy_policy" "os_login" {
     fn a_deviation_whose_declared_witness_vanished_breaks() {
         let mut dev = claim("cis_fork", "2.1", "deviates", &["audit.policy"], &[]);
         dev.1.reason = "not enforcing on purpose".into();
-        let goals = resolve_goals(&catalog(), &[dev.clone()], &[dev], &BTreeSet::new());
+        let goals = resolve_goals(&catalog(), &[dev.clone()], &[dev], &BTreeSet::new(), &no_effects());
         assert!(matches!(goals["2.1"], Goal::ClaimBroken { .. }), "got {:?}", goals["2.1"]);
     }
 
@@ -1166,7 +1392,7 @@ resource "google_org_policy_policy" "os_login" {
         let included = vec![fork];
         let emitted: BTreeSet<String> = ["audit.fork".to_string()].into();
 
-        let goals = resolve_goals(&catalog(), &lib, &included, &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &included, &emitted, &no_effects());
         match &goals["2.1"] {
             Goal::Satisfied { witnesses } => assert_eq!(witnesses, &vec!["audit.fork".to_string()]),
             g => panic!("expected Satisfied by the fork's own witness, got {:?}", g),
@@ -1180,7 +1406,7 @@ resource "google_org_policy_policy" "os_login" {
         let lib = vec![claim("logsink", "2.1", "implements", &["gone.away"], &[])];
         let included = lib.clone();
         let emitted: BTreeSet<String> = BTreeSet::new();
-        let goals = resolve_goals(&catalog(), &lib, &included, &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &included, &emitted, &no_effects());
         match &goals["2.1"] {
             Goal::ClaimBroken { missing, pack } => {
                 assert_eq!(missing, &vec!["gone.away".to_string()]);
@@ -1243,6 +1469,9 @@ pub(crate) fn responsibility_of(goal: &Goal) -> &'static str {
         Goal::Satisfied { .. } | Goal::Partial { .. } => "satz-managed",
         // satz claims it and its witnesses are missing — satz's problem.
         Goal::ClaimBroken { .. } => "satz-managed",
+        // The witnesses are there and they do nothing. Also satz's problem, and a
+        // worse one: the row would otherwise read as discharged.
+        Goal::ClaimContradicted { .. } => "satz-managed",
         // Nobody has taken it. Not the same as "the customer's": saying so
         // would quietly assign work no one agreed to.
         Goal::Unmet { .. } => "unassigned",
@@ -2044,7 +2273,9 @@ pub(crate) async fn report_compliance_evidence(
         .unwrap_or_default();
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
     let attrs = manifest.witness_attrs();
 
     // ---- live verification (degrades to Unverifiable, never fails the report) ----
@@ -2369,6 +2600,22 @@ pub(crate) async fn report_compliance_evidence(
             Goal::ClaimBroken { missing, pack } => (
                 "**BROKEN CLAIM**".into(),
                 format!("pack `{}` declares missing witnesses: {}", pack, missing.join(", ")),
+                "–".into(),
+            ),
+            // The live column cannot soften this: the estate itself says the
+            // policy does nothing, before anyone asks the organisation.
+            Goal::ClaimContradicted { inert, pack, coverage } => (
+                "**CONTRADICTED CLAIM**".into(),
+                format!(
+                    "pack `{}` {}: {}",
+                    pack,
+                    if coverage == "deviates" {
+                        "declares a deviation and its witnesses enforce the control"
+                    } else {
+                        "claims this control and its witnesses do not do it"
+                    },
+                    inert.iter().map(|(a, w)| format!("`{a}` {w}")).collect::<Vec<_>>().join(", ")
+                ),
                 "–".into(),
             ),
             Goal::Unmet { providers } => (
@@ -2971,7 +3218,9 @@ pub(crate) fn triage_rows(
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
     let attrs = manifest.witness_attrs();
     let export = read_prowler(prowler_path, &catalog.catalog, &catalog.version)?;
     export.require_mapping(prowler_path, &catalog)?;
@@ -3058,7 +3307,9 @@ pub(crate) fn remediation_run(
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
     let attrs = manifest.witness_attrs();
     let export = read_prowler(prowler_path, &catalog.catalog, &catalog.version)?;
     export.require_mapping(prowler_path, &catalog)?;

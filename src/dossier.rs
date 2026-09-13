@@ -285,6 +285,21 @@ fn describe_goal(goal: Option<&Goal>) -> (String, Vec<String>, Vec<String>, Vec<
             open_duties.clone(),
         ),
         Some(Goal::ClaimBroken { missing, pack }) => (format!("CLAIM BROKEN: {} declares witnesses not emitted: {}", pack, missing.join(", ")), vec![], vec![], vec![]),
+        Some(Goal::ClaimContradicted { inert, pack, coverage }) => (
+            format!(
+                "CLAIM CONTRADICTED: {} {}: {}",
+                pack,
+                if coverage == "deviates" {
+                    "declares a deviation and its witnesses enforce the control"
+                } else {
+                    "claims this control and its witnesses do not do it"
+                },
+                inert.iter().map(|(a, w)| format!("{a} ({w})")).collect::<Vec<_>>().join(", ")
+            ),
+            vec![],
+            vec![],
+            vec![],
+        ),
         Some(Goal::Deviation { reasons, open_duties, .. }) => (
             "declared deviation".to_string(),
             vec![],
