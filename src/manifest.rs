@@ -36,13 +36,17 @@ pub(crate) struct EmittedResource {
     /// `nested` keeps the first for natural keys; a live check that compares a
     /// declared SET against the live one needs them all.
     pub nested_all: BTreeMap<String, Vec<String>>,
-    /// The single `enforce` the block declares anywhere in its body, when it
-    /// declares exactly one. Several, none, or a list constraint yield `None`:
-    /// no verdict is better than a wrong one.
+    /// The single `enforce` the block's `spec` declares, when it declares exactly
+    /// one. Several, none, or a list constraint yield `None`: no verdict is better
+    /// than a wrong one. A `dry_run_spec` is not read here — see `dry_run`.
     pub enforce: Option<bool>,
     /// An org policy whose `spec` declares `reset = true`: the constraint is
     /// declared off, back to Google's default.
     pub reset: bool,
+    /// The policy declares a `dry_run_spec`: Google evaluates the rule, writes a
+    /// violation to the audit log for every action it WOULD have blocked, and
+    /// blocks nothing. Never a witness that a control is enforced.
+    pub dry_run: bool,
     /// The `import { to id }` block emitted for this resource, if any — i.e.
     /// the estate already adopted it.
     pub import_id: Option<String>,
@@ -187,8 +191,14 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
             }
         }
     }
+    // `enforce` is read from `spec` ALONE. A `dry_run_spec` carries the same
+    // attribute and means the opposite: Google evaluates the rule, logs what it
+    // would have blocked, and blocks nothing. Reading both reports a dry run as
+    // enforcing, which is the one thing a dry run is not.
     let mut found = Vec::new();
-    collect_enforce(b.body(), &mut found);
+    for spec in b.body().blocks().filter(|nb| nb.identifier() == "spec") {
+        collect_enforce(spec.body(), &mut found);
+    }
     let enforce = match found.as_slice() {
         [only] => Some(*only),
         _ => None,
@@ -196,6 +206,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
     let reset = b.body().blocks().filter(|nb| nb.identifier() == "spec").any(|spec| {
         spec.body().attributes().any(|a| a.key() == "reset" && matches!(a.expr(), hcl::Expression::Bool(true)))
     });
+    let dry_run = b.body().blocks().any(|nb| nb.identifier() == "dry_run_spec");
     Some(EmittedResource {
         tf_type: tf_type.to_string(),
         label: label.to_string(),
@@ -205,6 +216,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         nested_all,
         enforce,
         reset,
+        dry_run,
         import_id: None,
         origin: None,
     })
@@ -273,6 +285,52 @@ fn collect_enforce(body: &hcl::Body, out: &mut Vec<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A body carrying both a `spec` and a `dry_run_spec` used to collapse to no
+    /// verdict at all, because `collect_enforce` walked the whole body and found two
+    /// `enforce` attributes. Worse, a dry-run-ONLY policy read as enforcing. Both are
+    /// how a policy that blocks nothing would satisfy a claim that says it does.
+    #[test]
+    fn enforce_is_read_from_spec_and_never_from_a_dry_run() {
+        let one = |hcl_src: &str| {
+            let body: hcl::Body = hcl::from_str(hcl_src).expect("parses");
+            let b = body.blocks().next().expect("one block").clone();
+            resource_from_block(&b).expect("a resource")
+        };
+
+        let dry = one(r#"
+resource "google_org_policy_policy" "p" {
+  dry_run_spec {
+    rules { enforce = "TRUE" }
+  }
+}
+"#);
+        assert_eq!(dry.enforce, None, "a dry run declares no enforcement");
+        assert!(dry.dry_run);
+
+        let both = one(r#"
+resource "google_org_policy_policy" "p" {
+  spec {
+    rules { enforce = "TRUE" }
+  }
+  dry_run_spec {
+    rules { enforce = "FALSE" }
+  }
+}
+"#);
+        assert_eq!(both.enforce, Some(true), "the spec decides; the dry run is not a second opinion");
+        assert!(both.dry_run);
+
+        let plain = one(r#"
+resource "google_org_policy_policy" "p" {
+  spec {
+    rules { enforce = "FALSE" }
+  }
+}
+"#);
+        assert_eq!(plain.enforce, Some(false));
+        assert!(!plain.dry_run);
+    }
 
     #[test]
     fn addresses_come_from_resource_blocks_only() {

@@ -21,6 +21,7 @@ ships it).
 | `presets/import-config.yaml` (`asset_type`) | `scripts/update_import_config.py --config-file … --cai-types <list>`, then `--probe <parent>` | the CAI list above changes; Google changes what ListAssets serves | smoke: *"every derivable asset_type is filled"*; a type ListAssets refuses: the live import aborts naming it |
 | `presets/managed-constraint-equivalents.txt` | `scripts/update_constraint_equivalents.py` | Google ships a new managed twin | `cargo test` catches the *effect*, not the table |
 | `presets/docs/*.md` | `satz doc-packs` | any pack changes | smoke: `doc-packs --check` |
+| `presets/cis-extensions/*-dry-run.satz` | `scripts/build_dry_run_fragments.py` | the enforcing fragment it is derived from changes | smoke: `--check`, which compares byte for byte |
 | `presets/README.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
 | `presets/catalogs/*.yaml` | by hand, from the benchmark | a benchmark release | **nothing** |
 | `src/iac_roles.rs` (the IaC role table) | by hand, from Google's predefined roles | a pack emits a new resource type; Google changes a role | a new type: `cargo test` (`iac_roles_gate`); a changed role: **nothing** — run `scripts/check_iac_roles.py` |
@@ -212,6 +213,7 @@ second kind.
 | `update_constraint_equivalents.py` | helper | refresh `presets/managed-constraint-equivalents.txt` — which managed constraint replaces which legacy one — from a live organisation's `ListConstraints` |
 | `update_schema_fixture.py` | helper | keep `tests/schemas/google.json` in step with the types the packs emit; `--check` names what is missing |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
+| `build_dry_run_fragments.py` | helper | generate each CIS extension's dry-run twin from the enforcing fragment: `spec` becomes `dry_run_spec`, every claim is dropped. `--check` fails on a stale twin |
 | `check_iac_roles.py` | gate | hold the IaC role table (`src/iac_roles.rs`) against Google's predefined role definitions; needs ADC, not run by CI |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
@@ -556,6 +558,46 @@ because it sits in a raw `hcl { }` block, so usage in the sources does not show 
 types are needed.
 
 Needs `tofu` on PATH; talks to no organisation.
+
+## `build_dry_run_fragments.py` — the dry-run twins
+
+An org policy can carry `dry_run_spec` instead of `spec`. Google evaluates every rule,
+writes a violation to the audit log for each action it WOULD have blocked, and blocks
+nothing — so a breaking control is sized against a live organisation before it is
+enforced.
+
+The twin must measure exactly the policy that is later enforced, or its numbers answer a
+question nobody asked. So it is derived, not written:
+
+```bash
+uv run scripts/build_dry_run_fragments.py            # write the twins
+uv run scripts/build_dry_run_fragments.py --check    # fail if any is stale
+```
+
+`DRY_RUNNABLE` at the top of the script is the list, with the param that gates each
+twin. A fragment reaches it when its constraint supports a dry run; five extensions do
+not, each for a stated reason in that table — the legacy constraints (Shielded VM, both
+CMEK list constraints) have no dry-run form, Access Approval is not an org policy, and
+the two on-by-default extensions have nothing to size.
+
+Three things the derivation does:
+
+- **`spec` becomes `dry_run_spec`** — except a `spec { reset = true }`, which declares a
+  superseded legacy twin OFF. That is not a control being enforced and there is nothing
+  to size about it, so it stays as it is.
+- **Every `claim` is dropped.** A dry run discharges nothing while it measures, so
+  `require` reports the control unmet, which is the truth. A claim over a dry-run policy
+  would be contradicted by its own witness ([ADR 0013](adr/0013-a-claim-asserts-what-its-witness-does.md)).
+- **The pack name gains `_dry_run`** and its version tracks the fragment it came from.
+
+Read the violations in Cloud Logging:
+
+```
+protoPayload.metadata."@type"="type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo"
+```
+
+Promote by switching the dry-run param off and the enforcing param on. Both on at once is
+refused, naming both params and what each choice means.
 
 ## `check_iac_roles.py` — the role table against Google's roles
 

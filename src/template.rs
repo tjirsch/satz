@@ -230,6 +230,31 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str)] = &[
         "",
     ),
     (
+        "presets/cis-extensions/api-key-services-dry-run.satz",
+        "cis_api_key_services_dry_run",
+        "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the
+         // same policy with `dry_run_spec`: Google logs every action it would have blocked and
+         // blocks none, so the violation count sizes the control against this organisation
+         // before it bites. Nothing is enforced while it runs.",
+    ),
+    (
+        "presets/cis-extensions/block-project-ssh-keys-dry-run.satz",
+        "cis_block_project_ssh_keys_dry_run",
+        "",
+    ),
+    ("presets/cis-extensions/bucket-retention-dry-run.satz", "cis_bucket_retention_dry_run", ""),
+    ("presets/cis-extensions/cloud-sql-dry-run.satz", "cis_cloud_sql_hardening_dry_run", ""),
+    (
+        "presets/cis-extensions/cloud-sql-iam-and-deletion-protection-dry-run.satz",
+        "cis_cloud_sql_iam_and_deletion_protection_dry_run",
+        "",
+    ),
+    (
+        "presets/cis-extensions/confidential-computing-dry-run.satz",
+        "cis_confidential_computing_dry_run",
+        "",
+    ),
+    (
         "presets/scc/scc-notifications.satz",
         "use_scc_notifications",
         "once Security Command Center is switched on — findings have to exist before anything\n\
