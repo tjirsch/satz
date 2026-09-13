@@ -85,7 +85,12 @@ check, and the script is the pre-PR check for a language change.
 - A heredoc with unbalanced braces inside an `hcl` body mis-parses the rest of that
   block. The external scanner is the remedy when a real estate carries one.
 - `*.diff.satz` files are unified diffs with a `.satz` suffix; the extension opens them
-  as Satz. A `file_types` setting mapping them to Diff is the per-user answer.
+  as Satz. A `file_types` setting mapping them to Diff is the per-user answer, and the
+  only one: Zed scores a language by its last extension (`satz`) and by the whole file
+  name, so the built-in Diff language never matches, an extension cannot add a suffix
+  to a language it does not own, and a `Satz Diff` language of our own would need its
+  own diff grammar. `"file_types": { "Diff": ["*.diff.satz"] }` outranks the suffix
+  match (verified in Zed's `available_languages.rs`, 2026-09-13).
 - Publishing in Zed's registry needs the grammar repository public, an `https://` pin, a
   license file inside `editors/zed/`, and weeks of review. The extension's `version`
   is bumped for every later update once that happens.

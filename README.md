@@ -1278,6 +1278,12 @@ satz fmt --stdin < in.satz         # one file from stdin to stdout, for an edito
   repository, so every file here is formatted.
 - A reformatted pristine pack is not drift: `merge-presets` compares canonical forms and
   upgrades comment and format churn in place.
+- Every Satz file satz writes is in the canonical layout: what `init`, `import`,
+  `export-organizational-policies` and a skeleton compose whole is formatted as it is
+  written. An in-place edit — an answer from `interview`, an `"import-id"` from
+  `adopt --execute`, a role from `iac-roles --execute`, a `use` line from `merge-presets`
+  — keeps the author's layout, and keeps a formatted file formatted. A pristine pack from
+  upstream and the `.local.satz` fork of an author's file are copied byte for byte.
 - In Zed, until the language server serves formatting, an external formatter does:
   `"languages": { "Satz": { "formatter": { "external": { "command": "satz", "arguments": ["fmt", "--stdin"] } } } }`.
 

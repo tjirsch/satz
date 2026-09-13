@@ -1030,7 +1030,7 @@ impl SatzMcp {
                 return Ok(Err(r));
             }
             let stem = named.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
-            if let Err(e) = crate::fsx::write(&named, crate::template::skeleton(stem)) {
+            if let Err(e) = crate::fsx::write_generated_satz(&named, &crate::template::skeleton(stem)) {
                 return Ok(Err(refused(format!("{}: {}", named.display(), e))));
             }
             created = true;

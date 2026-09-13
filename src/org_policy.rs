@@ -1200,7 +1200,7 @@ pub async fn export_org_policies(
     if let Some(dir) = out_path.parent() {
         crate::fsx::create_dir_all(dir)?;
     }
-    crate::fsx::write(&out_path, text)?;
+    crate::fsx::write_generated_satz(&out_path, &text)?;
     println!("Wrote {} policies to {}", current.len(), out_path.display());
     Ok(())
 }

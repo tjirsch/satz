@@ -663,7 +663,7 @@ pub(crate) async fn check_presets_report(
 /// — installed without the bit, the action fails with a permission error naming a
 /// file that is right there.
 fn install(path: &Path, contents: &str) -> Result<(), BoxErr> {
-    crate::fsx::write(path, contents.as_bytes())?;
+    crate::fsx::write_verbatim(path, contents.as_bytes())?;
     #[cfg(unix)]
     if path.extension().is_some_and(|e| e == "sh") {
         use std::os::unix::fs::PermissionsExt;
@@ -1308,11 +1308,11 @@ pub(crate) async fn run_merge_presets(
                 if journal.iter().all(|(p, _)| p != &est) {
                     journal.push((est.clone(), est_text.clone()));
                 }
-                crate::fsx::write(&fork_path, lo.as_bytes())?;
+                crate::fsx::write_verbatim(&fork_path, lo.as_bytes())?;
                 created.push(fork_path.clone());
                 journal.push((lo_path.clone(), lo.clone()));
                 install(&lo_path, &up)?;
-                crate::fsx::write(&est, new_text.as_bytes())?;
+                crate::fsx::write_edited_satz(&est, &est_text, &new_text)?;
                 estate_edited = true;
                 events.push(MergeEvent::Pack {
                     file: rel.display().to_string(),
@@ -1386,7 +1386,7 @@ pub(crate) async fn run_merge_presets(
         let est = estate.clone().unwrap();
         let rollback = |journal: &Vec<(PathBuf, String)>, created: &Vec<PathBuf>| -> Result<(), BoxErr> {
             for p in created { let _ = std::fs::remove_file(p); }
-            for (p, content) in journal.iter().rev() { crate::fsx::write(p, content.as_bytes())?; }
+            for (p, content) in journal.iter().rev() { crate::fsx::write_verbatim(p, content.as_bytes())?; }
             Ok(())
         };
         // a repoint that does not even transpile is rolled back the same way
@@ -1562,7 +1562,7 @@ fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
     if added.is_empty() {
         return Ok(added);
     }
-    let mut out = src;
+    let mut out = src.clone();
     if !out.ends_with('\n') {
         out.push('\n');
     }
@@ -1572,7 +1572,7 @@ fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
          // to use it, or answer its question and `satz interview` will.\n",
     );
     out.push_str(&block);
-    crate::fsx::write(estate, out.as_bytes())?;
+    crate::fsx::write_edited_satz(estate, &src, &out)?;
     Ok(added)
 }
 
@@ -1665,7 +1665,7 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<Vec<PathBuf>, BoxErr> {
 fn text_diff(old: &str, new: &str) -> String {
     let tmp = std::env::temp_dir();
     let (fo, fn_) = (tmp.join(format!("mp_old_{}", std::process::id())), tmp.join(format!("mp_new_{}", std::process::id())));
-    if std::fs::write(&fo, old).is_ok() && std::fs::write(&fn_, new).is_ok() {
+    if crate::fsx::write(&fo, old).is_ok() && crate::fsx::write(&fn_, new).is_ok() {
         if let Ok(out) = std::process::Command::new("git")
             .args(["diff", "--no-index", "--no-color", "--unified=3"])
             .arg(&fo).arg(&fn_)

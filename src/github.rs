@@ -214,7 +214,7 @@ fn write_blob(dest: &Path, rel: &str, content: &[u8]) -> Result<(), BoxErr> {
     if let Some(p) = dest_file.parent() {
         fsx::create_dir_all(p)?;
     }
-    fsx::write(&dest_file, content)?;
+    fsx::write_verbatim(&dest_file, content)?;
     Ok(())
 }
 
@@ -262,7 +262,7 @@ async fn download_presets_via_contents(
                     if let Some(p) = dest_file.parent() {
                         fsx::create_dir_all(p)?;
                     }
-                    fsx::write(&dest_file, &content)?;
+                    fsx::write_verbatim(&dest_file, &content)?;
                     count += 1;
                 }
             } else if item.typ == "dir" {

@@ -273,7 +273,7 @@ fn write_param_value(estate: &Path, param: &str, value: &str) -> Result<(), Stri
     let text =
         std::fs::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let rewritten = rewrite_param_line(&text, param, value)?;
-    std::fs::write(estate, rewritten).map_err(|e| format!("{}: {}", estate.display(), e))
+    crate::fsx::write_edited_satz(estate, &text, &rewritten).map_err(|e| e.to_string())
 }
 
 /// The pure half of the write-back, pinned by tests. Preserves the line's

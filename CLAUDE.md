@@ -134,7 +134,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   is the layout — two-space indent, `=` aligned over a run, list commas — and both
   `cargo test` (`crates/satz-core/tests/fmt_corpus.rs`) and the smoke matrix fail on a
   file that is not. Run `satz fmt presets tests` before committing a `.satz` change;
-  the formatter never changes meaning, and the same test proves it.
+  the formatter never changes meaning, and the same test proves it. Satz text has
+  three ways to disk, all in `src/fsx.rs`: `write_generated_satz` (composed whole,
+  formatted), `write_edited_satz` (a splice; the author's layout stays, a formatted
+  file stays formatted), `write_verbatim` (bytes satz copies). `fsx::write` refuses a
+  `.satz` path and `clippy.toml` disallows `std::fs::write` outside that module.
 - **Docs ship with the change, in two renderings.** A change to the language,
   a command, a flag or a pack updates `README.md`, `docs/*.md` and
   `presets/README.md` in the same PR (the language reference cites

@@ -51,6 +51,15 @@ grep -q 'unterminated string' tmp/fmt-err.txt || fail "fmt did not name the pars
 step "lsp: the language server answers an editor — diagnostics, completion, hover, definition, formatting"
 python3 "$root/tests/smoke/lsp_client.py" "$satz" yaml/showcase.satz || fail "satz lsp did not answer as an editor expects"
 
+step "init: the estate satz writes is in the canonical layout"
+rm -rf tmp/init && mkdir -p tmp/init
+(cd tmp/init && "$satz" init --customer-id C0example --customer-shortname acme \
+  --billing-account-infra 012345-6789AB-CDEF01 --default-region europe-west3 \
+  --customer-organization-id 123456789012 --customer-domain example.com \
+  --infra-project-name acme-infra-001 --infra-bucket-name acme-infra-state > ../init.txt 2>&1) \
+  || fail "satz init failed:\n$(cat tmp/init.txt)"
+"$satz" fmt --check tmp/init/yaml/C0example.satz || fail "satz init wrote an estate that is not in the canonical layout"
+
 step "transpile"
 "$satz" --config . transpile smoke.satz
 for f in main.tf providers.tf variables.tf terraform.tfvars; do
@@ -244,12 +253,15 @@ grep -q '^// use \"presets/scc/scc-export.satz\" when use_scc_export' tmp/iv/new
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
-grep -q 'customer_shortname = "acme"' tmp/iv/new.satz || fail "the answer was not written into params"
-grep -q 'security_model_s1 = true' tmp/iv/new.satz && fail "a day-0 file does not answer the map's choices — the map is not in it yet"
+# `+=`: the interview keeps a formatted file formatted, so `=` is aligned across the params block
+grep -qE 'customer_shortname += "acme"' tmp/iv/new.satz || fail "the answer was not written into params"
+grep -qE 'security_model_s1 += true' tmp/iv/new.satz && fail "a day-0 file does not answer the map's choices — the map is not in it yet"
 "$satz" --config . transpile "$PWD/tmp/iv/new.satz" --check > tmp/iv/check.txt 2>&1 || fail "the interviewed estate does not compile:\n$(cat tmp/iv/check.txt)"
+"$satz" fmt --check "$PWD/tmp/iv/new.satz" || fail "the interview left the skeleton unformatted — an edit keeps a formatted file formatted"
 # THE GATE. An estate with an open question is refused by apply and by bootstrap;
 # a dry run warns — looking is how you find out.
 "$satz" --config . interview "$PWD/tmp/iv/open.satz" --create < /dev/null > /dev/null 2>&1 || fail "--create with no input must still write the skeleton"
+"$satz" fmt --check "$PWD/tmp/iv/open.satz" || fail "the skeleton is not in the canonical layout"
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
@@ -304,7 +316,7 @@ grep -q '^// use "presets/scc/scc-export.satz"' tmp/iv/mapped.satz \
   || fail "a choice left false must leave its line commented"
 # and a question answered true whose line is gone is reported, never silently ignored
 grep -v 'organization-budget' tmp/iv/mapped.satz > tmp/iv/gone.satz
-sed -i.bak 's/^  use_budget = false/  use_budget = true/' tmp/iv/gone.satz
+sed -i.bak -E 's/^  use_budget( +)= false/  use_budget\1= true/' tmp/iv/gone.satz   # `( +)`: the params block is aligned
 "$satz" --config . transpile "$PWD/tmp/iv/gone.satz" --check > tmp/iv/gone.txt 2>&1 || true
 grep -q 'asks for but does not use' tmp/iv/gone.txt \
   || fail "a pack answered for with no line must be reported:\n$(cat tmp/iv/gone.txt)"
@@ -817,6 +829,7 @@ step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"
 "$satz" --config . transpile imported-state.satz --output "$PWD/tmp/imported-state-hcl"
+"$satz" fmt --check yaml/imported-state.satz || fail "import wrote an estate that is not in the canonical layout"
 grep -q 'import {' tmp/imported-state-hcl/imports.tf || fail "state import produced no import blocks"
 # The table's `import: true` rows are the default set: --all takes every type the
 # source delivers, --exclude leaves types out. A copy of the table with the bucket
@@ -835,12 +848,15 @@ if grep -q google_storage_bucket yaml/imported-lean-default.satz; then fail "the
 grep -q google_storage_bucket yaml/imported-lean-all.satz || fail "--all did not take the type the table has off"
 grep -q 'switched on beside the table' tmp/imp-all.txt || fail "--all does not say what it switched on:\n$(cat tmp/imp-all.txt)"
 if grep -q google_storage_bucket yaml/imported-lean-excl.satz; then fail "--exclude did not leave the type out"; fi
+"$satz" fmt --check yaml/imported-lean-default.satz yaml/imported-lean-all.satz yaml/imported-lean-excl.satz \
+  || fail "import wrote files that are not in the canonical layout"
 
 step "import, yaml shape (the legacy dialect converter)"
 cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pack.yaml" tmp/
 "$satz" --config . import tmp/pack.yaml --kind pack
 "$satz" --config . import tmp/main.yaml --kind estate | tee tmp/import-yaml.txt
 grep -q 'CONVERTED' tmp/import-yaml.txt || fail "yaml import did not report CONVERTED"
+"$satz" fmt --check tmp/pack.satz tmp/main.satz || fail "the converter wrote files that are not in the canonical layout"
 
 step "import, yaml shape — the fix is named when a pack is still YAML"
 mkdir -p tmp/still && cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pack.yaml" tmp/still/
@@ -853,6 +869,7 @@ step "import, hcl shape (--wrap-all): every block verbatim, then transpile"
 "$satz" --config . import tf --wrap-all -o imported-hcl.satz --verbose | tee tmp/import-hcl.txt
 grep -q 'wrapped verbatim' tmp/import-hcl.txt || fail "hcl import printed no summary"
 grep -q 'dropped .*provider' tmp/import-hcl.txt || fail "the provider block was not reported as dropped"
+"$satz" fmt --check yaml/imported-hcl.satz || fail "the hcl import wrote a file that is not in the canonical layout"
 "$satz" --config . transpile imported-hcl.satz --output "$PWD/tmp/imported-hcl-hcl" 2>&1 | tee tmp/transpile-hcl.txt
 grep -q 'resource "google_storage_bucket" "logs"' tmp/imported-hcl-hcl/main.tf || fail "the wrapped bucket did not reach main.tf"
 grep -q 'raw HCL passthrough' tmp/transpile-hcl.txt || fail "passthrough blocks must be announced"
@@ -864,15 +881,16 @@ step "import, hcl shape (translate): literal resources become Satz, positional o
 "$satz" --config . import tf -o imported-hcl2.satz --verbose | tee tmp/import-hcl2.txt
 grep -q '9 block(s) translated' tmp/import-hcl2.txt || fail "folder, project, service, grants and buckets should translate, the count over a list as two:\n$(cat tmp/import-hcl2.txt)"
 grep -q '3 promoted to params' tmp/import-hcl2.txt || fail "both variables and the locals block should be promoted, not wrapped:\n$(cat tmp/import-hcl2.txt)"
+"$satz" fmt --check yaml/imported-hcl2.satz || fail "the hcl import wrote a file that is not in the canonical layout"
 # `count = length(var.log_viewers)` is one grant per entry, each taking its own
 grep -q 'expanded .*`count` over a promoted list: 2 resource(s)' tmp/import-hcl2.txt || fail "the count block was not expanded:\n$(cat tmp/import-hcl2.txt)"
 grep -q 'roles/logging.viewer' yaml/imported-hcl2.satz || fail "the expanded grant is missing from the estate"
 grep -vq 'count.index' yaml/imported-hcl2.satz || fail "count.index reached the estate"
 grep -q 'promoted .*locals' tmp/import-hcl2.txt || fail "the locals block was not reported as promoted"
 grep -q '^google_folder {' yaml/imported-hcl2.satz || fail "no translated folder in the estate"
-grep -q 'customer_organization_id = "123456789012"' yaml/imported-hcl2.satz || fail "the organisation id was not inferred"
-grep -q '^  env = "prod"' yaml/imported-hcl2.satz || fail "the local did not become a param"
-grep -q '^  bucket_suffix = "001"' yaml/imported-hcl2.satz || fail "the variable default did not become a param"
+grep -qE 'customer_organization_id += "123456789012"' yaml/imported-hcl2.satz || fail "the organisation id was not inferred"
+grep -qE '^  env += "prod"' yaml/imported-hcl2.satz || fail "the local did not become a param"
+grep -qE '^  bucket_suffix += "001"' yaml/imported-hcl2.satz || fail "the variable default did not become a param"
 "$satz" --config . transpile imported-hcl2.satz --output "$PWD/tmp/imported-hcl2-hcl" 2>&1 | tee tmp/transpile-hcl2.txt
 grep -q 'lifecycle_rule {' tmp/imported-hcl2-hcl/main.tf || fail "the translated bucket lost its lifecycle_rule"
 grep -q 'name *= *"corp-logs-001"' tmp/imported-hcl2-hcl/main.tf || fail "the promoted param did not resolve back to the source's literal"
@@ -997,6 +1015,7 @@ grep -q '1 role(s) missing' tmp/iac-dry.txt || fail "the dry run does not count 
 "$satz" --config . iac-roles tmp/iac-gap.satz --execute > tmp/iac-exec.txt 2>&1 || fail "iac-roles --execute failed:\n$(cat tmp/iac-exec.txt)"
 grep -q 'wrote roles/storage.admin in google_organization_iam_member' tmp/iac-exec.txt \
   || fail "--execute did not write the role:\n$(cat tmp/iac-exec.txt)"
+"$satz" fmt --check tmp/iac-gap.satz || fail "iac-roles --execute left a formatted estate unformatted"
 # into the account's existing list: no second block, no appended one
 [ "$(grep -c '^google_organization_iam_member {' tmp/iac-gap.satz)" = 1 ] || fail "--execute added a second grant block"
 [ "$(grep -c 'satz iac-roles' tmp/iac-gap.satz)" = "$(grep -c 'satz iac-roles' yaml/smoke.satz)" ] \
@@ -1510,7 +1529,7 @@ assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]
 assert r["isError"] is True and "no pack this estate uses asks that" in r["content"][0]["text"], r
 PYEOF
-grep -qE '^  security_model_s[12] = ' tmp/iv/agent.satz && fail "a day-0 file has no map, so no choice is bound in it"
+grep -qE '^  security_model_s[12] += ' tmp/iv/agent.satz && fail "a day-0 file has no map, so no choice is bound in it"
 # A SECOND ROUND, once the map is in: an agent answers the exclusive choice, and the tool
 # writes it as two booleans AND uncomments that model's pack line. Same code as the CLI —
 # `satz_interview` calls `interview::apply` — so this is the parity the table promises.
@@ -1522,13 +1541,14 @@ printf '%s\n' \
   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"security_model\":\"security_model_s2\"},\"accept_defaults\":true}}}" \
   > tmp/mcp-iv2-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-iv2-in.jsonl > tmp/mcp-iv2.jsonl 2>/dev/null || true
-grep -q 'security_model_s2 = true' tmp/iv/agent.satz || fail "the oneof answer was not written by the MCP tool"
-grep -q 'security_model_s1 = false' tmp/iv/agent.satz || fail "the oneof must set the siblings false"
+"$satz" fmt --check "$PWD/tmp/iv/agent.satz" || fail "the MCP interview left a formatted estate unformatted"
+grep -qE 'security_model_s2 += true' tmp/iv/agent.satz || fail "the oneof answer was not written by the MCP tool"
+grep -qE 'security_model_s1 += false' tmp/iv/agent.satz || fail "the oneof must set the siblings false"
 grep -q '^use "presets/security-group-models/s2-security-groups.satz" when security_model_s2' tmp/iv/agent.satz \
   || fail "answering the choice must uncomment that model's pack line:\n$(grep 'security-group-models' tmp/iv/agent.satz)"
 grep -q '^// use "presets/security-group-models/s1-security-groups.satz"' tmp/iv/agent.satz \
   || fail "the model that was not chosen keeps its line commented"
-grep -q 'security_model_s1 = false' tmp/iv/agent.satz || fail "the oneof siblings were not set false"
+grep -qE 'security_model_s1 += false' tmp/iv/agent.satz || fail "the oneof siblings were not set false"
 "$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
 
 step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"

@@ -72,3 +72,10 @@ A file the parser refuses is not formatted; the error is the parser's.
   parser knowledge the formatter would have to duplicate.
 - Heredocs and everything else inside an `hcl { … }` body are the author's; the body
   is HCL, and `tofu fmt` is its formatter.
+- 2026-09-13, follow-up: every Satz file satz writes is in the canonical layout. Three
+  writers in `src/fsx.rs` — `write_generated_satz` for a file composed whole,
+  `write_edited_satz` for a splice into an author's file (formatted after only if
+  formatted before), `write_verbatim` for bytes copied from upstream or restored — are
+  the only ways Satz text reaches disk; `fsx::write` refuses a `.satz` path and
+  `clippy.toml` disallows `std::fs::write` outside the module. The templates `init` and
+  the interview skeleton write are canonical at the source, held by tests.
