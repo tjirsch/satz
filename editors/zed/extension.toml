@@ -6,12 +6,12 @@ authors = ["tjirsch"]
 description = "Syntax highlighting, outline, brackets and indentation for Satz estates and packs"
 repository = "https://github.com/tjirsch/satz"
 
-# Zed clones this repository at `rev` with the system git (SSH, your GitHub
-# key) and compiles src/parser.c to WebAssembly itself. A language change is a
-# grammar commit first, then a bump here. For grammar work in progress, point
-# `repository` at a local checkout: "file:///…/satz-tree-sitter".
+# Zed clones this repository at `rev` and compiles src/parser.c to WebAssembly
+# itself. A language change is a grammar commit first, then a bump here. For
+# grammar work in progress, point `repository` at a local checkout:
+# "file:///…/satz-tree-sitter".
 [grammars.satz]
-repository = "git@github.com:tjirsch/satz-tree-sitter.git"
+repository = "https://github.com/tjirsch/satz-tree-sitter"
 rev = "ac50645048316e3c46b85a54107e2219b71075f9"
 
 # The language server is the satz binary itself: `satz lsp`, found on the PATH

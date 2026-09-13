@@ -29,7 +29,7 @@ ships it).
 | provider version pin | by hand | a provider release | **nothing** |
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
-| `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh` by hand; the grammar repository's weekly CI. Not this repository's CI: the grammar is private |
+| `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
 Four have **no** automatic check, and the IaC role table has none for a changed
 role: refresh them on their trigger.
@@ -219,7 +219,7 @@ second kind.
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every push (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
-| `check-grammar.sh` | gate | parse every `.satz` under `presets/` and `tests/` with the tree-sitter grammar `editors/zed/extension.toml` pins; any `ERROR` or `MISSING` node fails. Not run by CI (the grammar repository is private) — run it before a PR that changes the language |
+| `check-grammar.sh` | gate | parse every `.satz` under `presets/` and `tests/` with the tree-sitter grammar `editors/zed/extension.toml` pins; any `ERROR` or `MISSING` node fails; CI runs it on every push and PR (`smoke.yml`, job `grammar`) |
 
 ## `check-names.sh` — the privacy gate
 
@@ -635,12 +635,10 @@ parses every `*.satz` under `presets/` and `tests/` with it, failing on any `ERR
 tree-sitter CLI (`brew install tree-sitter-cli`) or `node`, through which it fetches
 the CLI.
 
-CI does not run it: the grammar repository is private and this repository's CI holds
-no credential for it. The grammar repository's own CI parses a fresh clone of this one
-on every push and once a week, which is where a language change the grammar has not
-followed surfaces. Run the script by hand before a PR that changes the language; the
-order is a grammar commit first, then the pin bump here, in the PR that changes the
-parser.
+CI runs it on every push and PR (`.github/workflows/smoke.yml`, job `grammar`), and the
+grammar repository's own CI parses a fresh clone of this one on every push and once a
+week. A language change is a grammar commit first, then the pin bump here, in the PR
+that changes the parser; the job fails on a PR that changes the parser without it.
 
 ## `build-satz-doc.py` — one page, self-contained
 
