@@ -176,7 +176,10 @@ step of it speaks.
 Everything satz says to a human — the version banner, schema-loader progress, emitter
 warnings, the `credentials:` line — goes to **stderr**. Under MCP a stray line on
 stdout corrupts the stream, and the client reports nothing useful. The smoke matrix
-asserts that every line the server emits parses as JSON-RPC.
+asserts that every line the server emits parses as JSON-RPC. The background update
+check does not run under `mcp` or `lsp` at all, and the `Update available` notice
+every other command may print is on stderr, so `--format json` output starts with
+the JSON.
 
 The matrix runs without credentials, so it never reaches a **live** tool call. Two
 unit tests cover that path: one scans `src/mcp.rs`, the other scans the code a tool
