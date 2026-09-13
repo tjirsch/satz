@@ -21,46 +21,46 @@ pack cis_extensions.cloud_sql_iam_and_deletion_protection version "1.0"
 
 google_org_policy_custom_constraint {
   cis_sql_iam_authentication {
-    name = "custom.cisCloudSqlIamAuthentication"
-    parent = "organizations/{customer_organization_id}"
-    display_name = "Cloud SQL: IAM database authentication on"
-    description = "CIS 5.0 6.6. PostgreSQL and MySQL instances carry the IAM authentication flag set to on; SQL Server instances pass."
+    name           = "custom.cisCloudSqlIamAuthentication"
+    parent         = "organizations/{customer_organization_id}"
+    display_name   = "Cloud SQL: IAM database authentication on"
+    description    = "CIS 5.0 6.6. PostgreSQL and MySQL instances carry the IAM authentication flag set to on; SQL Server instances pass."
     resource_types = ["sqladmin.googleapis.com/Instance"]
-    method_types = ["CREATE", "UPDATE"]
-    action_type = "ALLOW"
-    condition = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
+    method_types   = ["CREATE", "UPDATE"]
+    action_type    = "ALLOW"
+    condition      = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
   }
   cis_sql_deletion_protection {
-    name = "custom.cisCloudSqlDeletionProtection"
-    parent = "organizations/{customer_organization_id}"
-    display_name = "Cloud SQL: deletion protection on"
-    description = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
+    name           = "custom.cisCloudSqlDeletionProtection"
+    parent         = "organizations/{customer_organization_id}"
+    display_name   = "Cloud SQL: deletion protection on"
+    description    = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
     resource_types = ["sqladmin.googleapis.com/Instance"]
-    method_types = ["CREATE", "UPDATE"]
-    action_type = "ALLOW"
-    condition = "resource.settings.deletionProtectionEnabled == true"
+    method_types   = ["CREATE", "UPDATE"]
+    action_type    = "ALLOW"
+    condition      = "resource.settings.deletionProtectionEnabled == true"
   }
 }
 
 google_org_policy_policy {
   "custom-cisCloudSqlIamAuthentication" {
-    name = "custom.cisCloudSqlIamAuthentication"
+    name   = "custom.cisCloudSqlIamAuthentication"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }
   }
   "custom-cisCloudSqlDeletionProtection" {
-    name = "custom.cisCloudSqlDeletionProtection"
+    name   = "custom.cisCloudSqlDeletionProtection"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }
@@ -71,13 +71,13 @@ claim "cis-gcp" "5.0" "6.6" implements {
   resources = [
     "google_org_policy_policy.custom_cisCloudSqlIamAuthentication",
   ]
-  interpretation = "A Cloud SQL instance is created or updated only with IAM database authentication on (PostgreSQL and MySQL; SQL Server has no such flag)."
+  interpretation          = "A Cloud SQL instance is created or updated only with IAM database authentication on (PostgreSQL and MySQL; SQL Server has no such flag)."
   duty_existing_instances = "The constraint does not reach instances created before it: set the flag on each existing PostgreSQL and MySQL instance."
 }
 claim "cis-gcp" "5.0" "6.9" implements {
   resources = [
     "google_org_policy_policy.custom_cisCloudSqlDeletionProtection",
   ]
-  interpretation = "A Cloud SQL instance is created or updated only with deletion protection enabled."
+  interpretation          = "A Cloud SQL instance is created or updated only with deletion protection enabled."
   duty_existing_instances = "The constraint does not reach instances created before it: enable deletion protection on each existing instance."
 }

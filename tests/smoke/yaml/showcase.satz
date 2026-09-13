@@ -30,10 +30,10 @@ params {
 // ---------------------------------------------------------------------------
 
 question customer_shortname {
-  prompt    = "Short name identifying this customer"
-  why       = "Project ids, bucket names and group prefixes derive from it, and those ids are globally unique — changing it later recreates them."
-  reversal  = recreate
-  blast     = none
+  prompt   = "Short name identifying this customer"
+  why      = "Project ids, bucket names and group prefixes derive from it, and those ids are globally unique — changing it later recreates them."
+  reversal = recreate
+  blast    = none
 }
 
 question default_region {
@@ -54,10 +54,9 @@ question oneof group_model {
   reversal = state_surgery
   blast    = low
   required = true
-  option group_model_flat  { label = "Flat — network authority sits with project admins" }
+  option group_model_flat { label = "Flat — network authority sits with project admins" }
   option group_model_split { label = "Split — a separate network-admins group" why = "For customers with a distinct network team." }
 }
-
 
 // --- Estate configuration blocks: emitted as providers.tf / the backend. -----
 terraform {
@@ -101,7 +100,7 @@ suppress google_organization_iam_member "group:gcp-auditors@{customer_domain}" r
 // --- A group, its member, and the adoption id of one that already exists. ---
 google_cloud_identity_group {
   "gcp-auditors" {
-    "import-id"  = "groups/01abcdef2ghijk3"   // resolved by `satz adopt`, written back here
+    "import-id"  = "groups/01abcdef2ghijk3" // resolved by `satz adopt`, written back here
     display_name = "GCP Auditors"
     member = [
       "audit.lead@{customer_domain}",
@@ -112,7 +111,7 @@ google_cloud_identity_group {
 // --- IAM grants: member → roles; a role is a string or a conditional object. --
 google_organization_iam_member {
   "group:gcp-auditors@{customer_domain}" = [
-    "roles/browser",                        // suppressed above — never emitted
+    "roles/browser", // suppressed above — never emitted
     "roles/iam.securityReviewer",
     {
       role = "roles/storage.objectViewer"
@@ -212,8 +211,8 @@ action "showcase-step" {
 
 // --- Claims: what this estate proves, and what it declines on purpose. -------
 claim "cis-gcp" "4.0" "5.1" implements {
-  resources      = ["google_storage_bucket.audit_logs"]
-  interpretation = "Uniform bucket-level access on the audit bucket; no ACL-granted public access is possible."
+  resources         = ["google_storage_bucket.audit_logs"]
+  interpretation    = "Uniform bucket-level access on the audit bucket; no ACL-granted public access is possible."
   duty_public_check = "Confirm public_access_prevention is enforced at the org level."
 }
 

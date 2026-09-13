@@ -39,14 +39,14 @@
 pack scc_export version "1.1"
 
 params {
-  scc_export_project    = infra_project_name
-  scc_export_dataset_id = "{customer_shortname}_scc_findings"
-  scc_export_location   = default_region
-  scc_export_id         = "satz-findings"
+  scc_export_project     = infra_project_name
+  scc_export_dataset_id  = "{customer_shortname}_scc_findings"
+  scc_export_location    = default_region
+  scc_export_id          = "satz-findings"
   scc_export_description = "Security Command Center findings, exported continuously"
   // Wider than the notification filter on purpose: an export is the record, and a
   // finding nobody paged about is still one an auditor asks about later.
-  scc_export_filter = "state=\"ACTIVE\""
+  scc_export_filter      = "state=\"ACTIVE\""
 }
 
 // ---- what a customer decides, asked -------------------------------------------

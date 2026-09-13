@@ -20,12 +20,12 @@ pack cis_extensions.confidential_computing_dry_run version "1.0"
 
 google_org_policy_policy {
   "compute-managed-restrictNonConfidentialComputing" {
-    name = "compute.managed.restrictNonConfidentialComputing"
+    name   = "compute.managed.restrictNonConfidentialComputing"
     parent = "organizations/{customer_organization_id}"
     dry_run_spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }

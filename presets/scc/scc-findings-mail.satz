@@ -37,14 +37,14 @@ params {
   // Without that pack the compile stops with `unknown param 'cis_central_email'`,
   // which is the right failure: the recipient is then genuinely undecided, and a
   // literal default is how an estate ends up mailing an address nobody reads.
-  scc_findings_email = cis_central_email
+  scc_findings_email             = cis_central_email
   // Retention long enough to survive a weekend. The subscriber is the customer's if
   // they have one; this subscription exists so nothing is dropped before the mail.
   scc_findings_subscription_name = "{customer_shortname}-scc-findings-retain"
   scc_findings_retention         = "604800s"
   scc_findings_channel_name      = "SCC findings"
   // The shortest sensible period for a DELTA metric, as in the alert packs.
-  scc_findings_alert_window = "300s"
+  scc_findings_alert_window      = "300s"
 }
 
 // ---- what a customer decides, asked -------------------------------------------
@@ -85,23 +85,27 @@ google_monitoring_notification_channel {
 //    are arriving, and where to read them.
 google_monitoring_alert_policy {
   scc_findings_published {
-    project      = scc_notification_project
-    display_name = "Security Command Center published a finding"
-    combiner     = "OR"
+    project               = scc_notification_project
+    display_name          = "Security Command Center published a finding"
+    combiner              = "OR"
     notification_channels = ["${{google_monitoring_notification_channel.scc_findings_mail.id}}"]
     conditions = [
-      { display_name = "A finding reached the SCC topic"
+      {
+        display_name = "A finding reached the SCC topic"
         condition_threshold {
-          filter = "metric.type=\"pubsub.googleapis.com/topic/send_message_operation_count\" AND resource.type=\"pubsub_topic\" AND resource.label.\"topic_id\"=\"${{google_pubsub_topic.scc_findings.name}}\""
+          filter          = "metric.type=\"pubsub.googleapis.com/topic/send_message_operation_count\" AND resource.type=\"pubsub_topic\" AND resource.label.\"topic_id\"=\"${{google_pubsub_topic.scc_findings.name}}\""
           comparison      = "COMPARISON_GT"
           threshold_value = 0
           duration        = "0s"
           aggregations = [
-            { alignment_period     = scc_findings_alert_window
+            {
+              alignment_period     = scc_findings_alert_window
               per_series_aligner   = "ALIGN_SUM"
-              cross_series_reducer = "REDUCE_SUM" },
+              cross_series_reducer = "REDUCE_SUM"
+            },
           ]
-        } },
+        }
+      },
     ]
   }
 }

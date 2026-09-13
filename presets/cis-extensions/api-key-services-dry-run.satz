@@ -33,7 +33,7 @@ question allowed_api_key_services {
 
 google_org_policy_policy {
   "iam-managed-disableServiceAccountApiKeyCreation" {
-    name = "iam.managed.disableServiceAccountApiKeyCreation"
+    name   = "iam.managed.disableServiceAccountApiKeyCreation"
     parent = "organizations/{customer_organization_id}"
     dry_run_spec {
       rules = [

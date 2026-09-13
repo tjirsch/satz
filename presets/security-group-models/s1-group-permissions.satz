@@ -83,4 +83,3 @@ pack s1_group_permissions version "1.1"
   "roles/billing.admin",
   "roles/billing.creator",
 ]
-

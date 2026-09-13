@@ -35,22 +35,22 @@ params {
   use_essential_contacts  = true
 
   // ---- optional: off until the customer asks --------------------------------
-  use_budget               = false
-  use_scc_enablement       = false
-  use_scc_notifications    = false
-  use_scc_findings_mail    = false
-  use_scc_findings_siem    = false
-  use_scc_export           = false
-  use_security_audit_sa    = false
-  use_defender             = false
-  use_sentinel             = false
+  use_budget                = false
+  use_scc_enablement        = false
+  use_scc_notifications     = false
+  use_scc_findings_mail     = false
+  use_scc_findings_siem     = false
+  use_scc_export            = false
+  use_security_audit_sa     = false
+  use_defender              = false
+  use_sentinel              = false
   // Both log paths follow the Sentinel choice BY REFERENCE: a customer who
   // connects Sentinel and accepts the defaults gets the logs Sentinel exists to
   // read. Answer either one `false` to leave that path out.
-  use_sentinel_auditlogs   = use_sentinel
+  use_sentinel_auditlogs    = use_sentinel
   use_sentinel_network_logs = use_sentinel
-  use_verification_runner  = false
-  use_exemption_tag        = false
+  use_verification_runner   = false
+  use_exemption_tag         = false
 }
 
 question oneof security_model {

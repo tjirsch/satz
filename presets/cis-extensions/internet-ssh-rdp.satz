@@ -91,8 +91,8 @@ question admin_port_source_ranges {
 
 google_compute_firewall_policy {
   cis_admin_ports {
-    parent = "organizations/{customer_organization_id}"
-    short_name = "cis-internet-admin-ports"
+    parent      = "organizations/{customer_organization_id}"
+    short_name  = "cis-internet-admin-ports"
     description = "CIS 3.6/3.7: SSH and RDP from the internet denied, listed ranges passed to the VPC rules"
   }
 }
@@ -100,63 +100,63 @@ google_compute_firewall_policy {
 google_compute_firewall_policy_rule {
   cis_admin_ports_listed {
     firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
-    description = "SSH and RDP from the listed IPv4 ranges: the VPC firewall rules decide"
-    priority = 1000
-    direction = "INGRESS"
-    action = "goto_next"
+    description     = "SSH and RDP from the listed IPv4 ranges: the VPC firewall rules decide"
+    priority        = 1000
+    direction       = "INGRESS"
+    action          = "goto_next"
     match {
       src_ip_ranges = admin_port_source_ranges
       layer4_configs = [
-        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "tcp" ports = ["22", "3389"] },
         { ip_protocol = "sctp" ports = ["22"] },
-        { ip_protocol = "udp"  ports = ["3389"] },
+        { ip_protocol = "udp" ports = ["3389"] },
       ]
     }
   }
   cis_admin_ports_listed_ipv6 {
     firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
-    description = "SSH and RDP from the listed IPv6 ranges: the VPC firewall rules decide"
-    priority = 1001
-    direction = "INGRESS"
-    action = "goto_next"
+    description     = "SSH and RDP from the listed IPv6 ranges: the VPC firewall rules decide"
+    priority        = 1001
+    direction       = "INGRESS"
+    action          = "goto_next"
     match {
       src_ip_ranges = admin_port_source_ranges_ipv6
       layer4_configs = [
-        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "tcp" ports = ["22", "3389"] },
         { ip_protocol = "sctp" ports = ["22"] },
-        { ip_protocol = "udp"  ports = ["3389"] },
+        { ip_protocol = "udp" ports = ["3389"] },
       ]
     }
   }
   cis_admin_ports_internet_ipv4 {
     firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
-    description = "SSH and RDP from the IPv4 internet: denied"
-    priority = 1002
-    direction = "INGRESS"
-    enable_logging = true
-    action = "deny"
+    description     = "SSH and RDP from the IPv4 internet: denied"
+    priority        = 1002
+    direction       = "INGRESS"
+    enable_logging  = true
+    action          = "deny"
     match {
       src_ip_ranges = ["0.0.0.0/0"]
       layer4_configs = [
-        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "tcp" ports = ["22", "3389"] },
         { ip_protocol = "sctp" ports = ["22"] },
-        { ip_protocol = "udp"  ports = ["3389"] },
+        { ip_protocol = "udp" ports = ["3389"] },
       ]
     }
   }
   cis_admin_ports_internet_ipv6 {
     firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.name}}"
-    description = "SSH and RDP from the IPv6 internet: denied"
-    priority = 1003
-    direction = "INGRESS"
-    enable_logging = true
-    action = "deny"
+    description     = "SSH and RDP from the IPv6 internet: denied"
+    priority        = 1003
+    direction       = "INGRESS"
+    enable_logging  = true
+    action          = "deny"
     match {
       src_ip_ranges = ["::/0"]
       layer4_configs = [
-        { ip_protocol = "tcp"  ports = ["22", "3389"] },
+        { ip_protocol = "tcp" ports = ["22", "3389"] },
         { ip_protocol = "sctp" ports = ["22"] },
-        { ip_protocol = "udp"  ports = ["3389"] },
+        { ip_protocol = "udp" ports = ["3389"] },
       ]
     }
   }
@@ -164,9 +164,9 @@ google_compute_firewall_policy_rule {
 
 google_compute_firewall_policy_association {
   cis_admin_ports {
-    name = "cis-internet-admin-ports"
+    name              = "cis-internet-admin-ports"
     attachment_target = "organizations/{customer_organization_id}"
-    firewall_policy = "${{google_compute_firewall_policy.cis_admin_ports.id}}"
+    firewall_policy   = "${{google_compute_firewall_policy.cis_admin_ports.id}}"
   }
 }
 
@@ -176,7 +176,7 @@ claim "cis-gcp" "4.0" "3.6" implements {
     "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
     "google_compute_firewall_policy_association.cis_admin_ports",
   ]
-  interpretation = "A firewall policy attached to the organisation denies TCP 22 from the internet before any VPC rule is read; only the listed ranges pass to the VPC rules."
+  interpretation     = "A firewall policy attached to the organisation denies TCP 22 from the internet before any VPC rule is read; only the listed ranges pass to the VPC rules."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
 }
 claim "cis-gcp" "4.0" "3.7" implements {
@@ -185,7 +185,7 @@ claim "cis-gcp" "4.0" "3.7" implements {
     "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
     "google_compute_firewall_policy_association.cis_admin_ports",
   ]
-  interpretation = "As for §3.6, for TCP 3389."
+  interpretation     = "As for §3.6, for TCP 3389."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
 }
 claim "cis-gcp" "5.0" "3.6" implements {
@@ -194,7 +194,7 @@ claim "cis-gcp" "5.0" "3.6" implements {
     "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
     "google_compute_firewall_policy_association.cis_admin_ports",
   ]
-  interpretation = "As for 4.0 §3.6 (5.0 §3.6, unchanged)."
+  interpretation     = "As for 4.0 §3.6 (5.0 §3.6, unchanged)."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
 }
 claim "cis-gcp" "5.0" "3.7" implements {
@@ -203,6 +203,6 @@ claim "cis-gcp" "5.0" "3.7" implements {
     "google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6",
     "google_compute_firewall_policy_association.cis_admin_ports",
   ]
-  interpretation = "As for 4.0 §3.7 (5.0 §3.7, unchanged)."
+  interpretation     = "As for 4.0 §3.7 (5.0 §3.7, unchanged)."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
 }

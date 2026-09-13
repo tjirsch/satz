@@ -282,7 +282,7 @@ pub struct ClaimDecl {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
-enum Tok {
+pub(crate) enum Tok {
     Ident(String),
     /// Raw `hcl { … }` body plus its optional `trust` reason.
     Hcl(String, Option<String>),
@@ -294,6 +294,9 @@ enum Tok {
     RBrack,
     Eq,
     Comma,
+    /// Trivia, lexed only for the formatter: a comment, verbatim, and a line end.
+    Comment(String),
+    Newline,
 }
 
 #[derive(Debug)]
@@ -526,30 +529,57 @@ fn try_lex_hcl(b: &[char], after_kw: usize, line: usize) -> Result<Option<LexedH
     Ok(Some(LexedHcl { body, trust, next, line: end_line }))
 }
 
+/// A token with where it sits in the source: `line` (1-based) and the char range
+/// `start..end` into `src.chars()`. Trivia — comments and newlines — is lexed only
+/// on request (the formatter's), never for the parser.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Token {
+    pub(crate) tok: Tok,
+    pub(crate) line: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
 fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
+    Ok(lex_spanned(src, false)?.into_iter().map(|t| (t.tok, t.line)).collect())
+}
+
+pub(crate) fn lex_spanned(src: &str, trivia: bool) -> Result<Vec<Token>, SatzError> {
     let mut toks = Vec::new();
     let b: Vec<char> = src.chars().collect();
     let mut i = 0;
     let mut line = 1;
     while i < b.len() {
         let c = b[i];
-        match c {
+        let start = i;
+        let start_line = line;
+        let tok = match c {
             '\n' => {
                 line += 1;
                 i += 1;
+                if !trivia {
+                    continue;
+                }
+                Tok::Newline
             }
-            ' ' | '\t' | '\r' => i += 1,
+            ' ' | '\t' | '\r' => {
+                i += 1;
+                continue;
+            }
             '/' if b.get(i + 1) == Some(&'/') => {
                 while i < b.len() && b[i] != '\n' {
                     i += 1;
                 }
+                if !trivia {
+                    continue;
+                }
+                Tok::Comment(b[start..i].iter().collect())
             }
             '/' if b.get(i + 1) == Some(&'*') => {
-                let start = line;
                 i += 2;
                 loop {
                     if i >= b.len() {
-                        return Err(SatzError { line: start, msg: "unterminated block comment".into() });
+                        return Err(SatzError { line: start_line, msg: "unterminated block comment".into() });
                     }
                     if b[i] == '*' && b.get(i + 1) == Some(&'/') {
                         i += 2;
@@ -560,40 +590,47 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                     }
                     i += 1;
                 }
+                if !trivia {
+                    continue;
+                }
+                Tok::Comment(b[start..i].iter().collect())
             }
             '#' => {
                 while i < b.len() && b[i] != '\n' {
                     i += 1;
                 }
+                if !trivia {
+                    continue;
+                }
+                Tok::Comment(b[start..i].iter().collect())
             }
             '{' => {
-                toks.push((Tok::LBrace, line));
                 i += 1;
+                Tok::LBrace
             }
             '}' => {
-                toks.push((Tok::RBrace, line));
                 i += 1;
+                Tok::RBrace
             }
             '[' => {
-                toks.push((Tok::LBrack, line));
                 i += 1;
+                Tok::LBrack
             }
             ']' => {
-                toks.push((Tok::RBrack, line));
                 i += 1;
+                Tok::RBrack
             }
             '=' => {
-                toks.push((Tok::Eq, line));
                 i += 1;
+                Tok::Eq
             }
             ',' => {
-                toks.push((Tok::Comma, line));
                 i += 1;
+                Tok::Comma
             }
             '"' => {
                 // Triple-quoted multi-line or normal string; both interpolate {param}.
                 let triple = b.get(i + 1) == Some(&'"') && b.get(i + 2) == Some(&'"');
-                let start_line = line;
                 i += if triple { 3 } else { 1 };
                 let mut parts = Vec::new();
                 let mut lit = String::new();
@@ -666,7 +703,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                 if !lit.is_empty() || parts.is_empty() {
                     parts.push(StrPart::Lit(lit));
                 }
-                toks.push((Tok::Str(parts), start_line));
+                Tok::Str(parts)
             }
             c if c.is_ascii_digit() || (c == '-' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit())) => {
                 let mut n = String::new();
@@ -680,7 +717,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                 if dots > 1 || n.ends_with('.') {
                     return Err(SatzError { line, msg: format!("malformed number `{}`", n) });
                 }
-                toks.push((Tok::Num(n), line));
+                Tok::Num(n)
             }
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut id = String::new();
@@ -688,19 +725,19 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                     id.push(b[i]);
                     i += 1;
                 }
-                let _ = c;
                 if id == "hcl" {
                     if let Some(h) = try_lex_hcl(&b, i, line)? {
-                        toks.push((Tok::Hcl(h.body, h.trust), line));
                         i = h.next;
                         line = h.line;
+                        toks.push(Token { tok: Tok::Hcl(h.body, h.trust), line: start_line, start, end: i });
                         continue;
                     }
                 }
-                toks.push((Tok::Ident(id), line));
+                Tok::Ident(id)
             }
             other => return err(line, format!("unexpected character '{}'", other)),
-        }
+        };
+        toks.push(Token { tok, line: start_line, start, end: i });
     }
     Ok(toks)
 }

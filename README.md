@@ -181,6 +181,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 |---------|---------------------|
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
 | `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
+| `fmt <PATHS…>` | `--check`, `--stdin` — rewrite Satz files in their canonical layout (indentation, spacing, `=` alignment, list commas); `--check` names the files that are not and exits 1; `--stdin` formats one file from stdin to stdout, for editors |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
@@ -1248,6 +1249,42 @@ For zsh, add this to `~/.zshrc` if not already present:
 fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit && compinit
 ```
+
+### Formatting (`fmt`)
+
+`satz fmt` rewrites Satz files in their canonical layout without changing what they
+mean. The layout is the one this repository's own files carry: two spaces per brace or
+bracket that spans lines, `=` aligned over a run of attributes at one depth (a comment
+line inside the run is transparent, a blank line or a block ends it), every item of a
+list laid out over lines ending in a comma, an inline list written `[a, b]`, and a
+construct that spans lines opening at the end of its line and closing on a line of its
+own. The author's line breaks stay: a block written on one line stays on one line.
+Strings and `hcl { … }` bodies are verbatim, blank lines collapse to one and never sit
+against a brace. A file the parser refuses is reported with the parser's error and left
+alone.
+
+```bash
+satz fmt yaml/                     # every .satz under the directory (*.diff.satz skipped)
+satz fmt yaml/acme.satz --check    # name the files that are not formatted, exit 1, write nothing
+satz fmt --stdin < in.satz         # one file from stdin to stdout, for an editor
+```
+
+**Parameters:**
+- `PATHS…` — files or directories; a directory is walked
+- `--check` — report instead of rewrite; the exit code is the answer
+- `--stdin` — read one file from stdin, write it formatted to stdout
+
+**Under the Hood:**
+- Works on the token stream with its comments and line ends, not on the AST, so nothing
+  the parser drops is lost ([ADR 0017](docs/adr/0017-the-formatter-keeps-the-authors-line-breaks.md)).
+- Meaning is proven, not assumed: `cargo test` formats every Satz file in the repository
+  and checks that the canonical form `check-presets` compares is unchanged and that a
+  second pass changes nothing. The smoke matrix runs `satz fmt --check` over the
+  repository, so every file here is formatted.
+- A reformatted pristine pack is not drift: `merge-presets` compares canonical forms and
+  upgrades comment and format churn in place.
+- In Zed, until the language server serves formatting, an external formatter does:
+  `"languages": { "Satz": { "formatter": { "external": { "command": "satz", "arguments": ["fmt", "--stdin"] } } } }`.
 
 ## Playbooks
 

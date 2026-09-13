@@ -11,7 +11,7 @@ pack showcase_policies version "1.0"
   name   = "compute.managed.requireOsLogin"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [ { enforce = "FALSE" } ]
+    rules = [{ enforce = "FALSE" }]
   }
 }
 
@@ -19,7 +19,7 @@ pack showcase_policies version "1.0"
   name   = "compute.managed.vmExternalIpAccess"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [ { enforce = "TRUE" } ]
+    rules = [{ enforce = "TRUE" }]
   }
 }
 
@@ -27,6 +27,6 @@ pack showcase_policies version "1.0"
   name   = "iam.managed.disableServiceAccountKeyCreation"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [ { enforce = "TRUE" } ]
+    rules = [{ enforce = "TRUE" }]
   }
 }

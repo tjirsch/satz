@@ -34,7 +34,7 @@ question allowed_bucket_retention_seconds {
 
 google_org_policy_policy {
   "storage-managed-retentionPolicySeconds" {
-    name = "storage.managed.retentionPolicySeconds"
+    name   = "storage.managed.retentionPolicySeconds"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
@@ -49,13 +49,12 @@ google_org_policy_policy {
   }
 }
 
-
 // Superseded legacy twin, declared OFF — see the section of the same name in
 // CIS-GCP-Foundation-4.0.satz for why absence is not enough. `reset = true`
 // restores the constraint default, which is ALLOW here.
 google_org_policy_policy {
   "storage-retentionPolicySeconds" {
-    name = "storage.retentionPolicySeconds"
+    name   = "storage.retentionPolicySeconds"
     parent = "organizations/{customer_organization_id}"
     spec {
       reset = true
@@ -64,12 +63,12 @@ google_org_policy_policy {
 }
 
 claim "cis-gcp" "4.0" "2.3" contributes {
-  resources = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
-  interpretation = "A bucket may only carry a retention policy of an approved duration, so the log-export bucket's retention cannot be quietly shortened. The LOCK remains a human decision."
+  resources               = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
+  interpretation          = "A bucket may only carry a retention policy of an approved duration, so the log-export bucket's retention cannot be quietly shortened. The LOCK remains a human decision."
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
 }
 claim "cis-gcp" "5.0" "2.4" contributes {
-  resources = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
-  interpretation = "As for 4.0 §2.3 — 5.0 §2.4 (5.0 inserted a new 2.2 for Workspace data sharing)."
+  resources               = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
+  interpretation          = "As for 4.0 §2.3 — 5.0 §2.4 (5.0 inserted a new 2.2 for Workspace data sharing)."
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
 }

@@ -42,14 +42,14 @@ pack scc_notifications version "1.2"
 
 params {
   // The subscriber a customer attaches is theirs; the topic is the contract.
-  scc_notification_topic_name = "{customer_shortname}-scc-findings"
-  scc_notification_project    = infra_project_name
-  scc_notification_config_id  = "satz-findings"
+  scc_notification_topic_name  = "{customer_shortname}-scc-findings"
+  scc_notification_project     = infra_project_name
+  scc_notification_config_id   = "satz-findings"
   scc_notification_description = "Active findings at HIGH and CRITICAL, published by Security Command Center"
   // SCC's own filter language, not Cloud Logging's. `state="ACTIVE"` excludes
   // findings someone has already resolved; the severity pair is what a duty
   // roster can answer without drowning.
-  scc_notification_filter = "state=\"ACTIVE\" AND (severity=\"HIGH\" OR severity=\"CRITICAL\")"
+  scc_notification_filter      = "state=\"ACTIVE\" AND (severity=\"HIGH\" OR severity=\"CRITICAL\")"
 }
 
 // ---- what a customer decides, asked -------------------------------------------
