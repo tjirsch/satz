@@ -993,6 +993,27 @@ legacy form at all** — nothing to switch off. Google declares the pairing in
 managed one), and not at all for `iam.allowedPolicyMemberDomains` ↔
 `iam.managed.allowedPolicyMembers` — that pair is in the file's `CURATED` section.
 
+### The one claim that is not about an org policy
+
+The baseline claims **CIS 5.0 §2.14, Cloud Asset Inventory enabled**, against
+`google_project_service.infra_cloudasset_googleapis_com` — a resource the SCAFFOLD
+declares, not the pack. Every estate `satz init` writes enables `cloudasset.googleapis.com`
+in its infrastructure project, so every estate already satisfied that control and said
+nothing about it; it was the last technical control of CIS 5.0 with no claim anywhere in
+the library.
+
+The pack does not declare its own `google_project_service` for the API. Two resources
+enabling one API on one project is a duplicate Terraform resource, not a merge.
+
+**So the estate's project labels are a contract.** `google_project.infra` is what
+`bootstrap` imports by name, and the emitter derives that service address from it
+(`<project label>_<service, dots to underscores>`). An estate whose infrastructure
+project carries a different label, or whose service list has lost
+`cloudasset.googleapis.com`, reports this control as a **broken claim** — which is the
+right signal twice over: the witness named is genuinely not there, and
+`report-compliance` reads the organisation through that same API, so it could not verify
+anything else either.
+
 ## exemptions/
 
 **One pack, and it exempts nothing.** `exemption-tag.satz` creates the organisation tag an
@@ -1313,6 +1334,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.13 | 2026-09-13 | claims CIS 5.0 §2.14, Cloud Asset Inventory enabled — the last technical control of CIS 5.0 with no claim anywhere in the library. The estate already satisfied it: the scaffold enables `cloudasset.googleapis.com` in every infrastructure project, so the witness is the scaffold's own `google_project_service.infra_cloudasset_googleapis_com` rather than a second `google_project_service` declared here — two resources enabling one API on one project is a duplicate, not a merge. The address depends on the `infra` project label, which is already a contract (`bootstrap` imports by it) and is now held by the init-template test, so renaming it breaks a test rather than a customer's report |
 | `CIS_GCP_Foundation_4_0` | 2.12 | 2026-09-13 | `iam.managed.disableServiceAccountKeyCreation` takes its rules from `cis_sa_key_creation_rules` instead of writing them in place, so an estate can let ONE service account out with a tag condition without forking the pack. The default is the plain enforcing rule and the emitted policy is unchanged for an estate that says nothing. The one constraint here with a rules param, because it is the one organisations actually have to exempt — Google ships their own built-in exemption tag for it — and because a param per constraint would put forty list-of-object blocks into every estate's `terraform.tfvars` for a case nobody has |
 | `exemptions.exemption_tag` | 1.0 | 2026-09-13 | first version: the VOCABULARY for a tag-conditional exemption — one organisation tag key `<shortname>-exemption` with the values `enforced` and `not_enforced`, and nothing bound to either. An organisation policy is all-or-nothing per node, so letting one service account out of a control means lowering the policy for a whole folder and raising it again — a window during which nothing is enforced. A Resource Manager tag is IAM-governed and a policy rule can condition on it, which is how Google ships `iam.disableServiceAccountKeyCreation` themselves. The pack ships the ABILITY and no exemptions: a library that ships convenient exemptions lowers the baseline by default. The binding that exempts a resource and the condition on the constraint that honours it are the estate's, and the pack header shows both |
 | `estate_map` | 1.7 | 2026-09-13 | one more choice: `use_exemption_tag`, gating `exemptions/exemption-tag.satz`. Its `why` carries the question that usually ends the conversation — does the consumer need a key at all, when a workload in Google Cloud, a Cloud Run service and external CI can all federate instead |

@@ -3,6 +3,14 @@
 //! `google_project.infra`, `google_storage_bucket.state` — so those labels are
 //! a contract, not a style). Written in Satz: a new customer's first file must
 //! be one every command accepts.
+//!
+//! The contract reaches further than `bootstrap` now: the CIS pack claims CIS 5.0
+//! §2.14 (Cloud Asset Inventory enabled) against
+//! `google_project_service.infra_cloudasset_googleapis_com`, which the emitter derives
+//! from the `infra` project label and the service name below. Renaming the label, or
+//! dropping `cloudasset.googleapis.com` from that list, turns a control every estate
+//! satisfies into a broken claim. `the_generated_estate_compiles_and_carries_bootstraps_labels`
+//! holds both.
 
 use std::fs;
 use std::path::Path;

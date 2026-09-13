@@ -69,6 +69,26 @@ use "presets/billing-account-permissions.satz"
 use "presets/organization-budget.satz"
 use "presets/security-audit/sa-security-audit.satz"
 
+// The scaffold's own shape, minus everything the packs already cover: the CIS pack
+// claims CIS 5.0 §2.14 against the Cloud Asset API the infrastructure project enables,
+// so a fixture built from `estate-core.satz` alone reported that claim BROKEN while
+// every real estate satisfies it. `satz init` writes this; a fixture that omits it is
+// not testing the estates the library ships for.
+google_folder {
+  infra_folder {
+    display_name = "Infrastructure"
+    google_project {
+      infra {
+        project_id      = infra_project_name
+        billing_account = billing_account_infra
+        project_service = [
+          "cloudasset.googleapis.com",
+        ]
+      }
+    }
+  }
+}
+
 google_folder {
   shared {
     display_name = "Shared"

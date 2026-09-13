@@ -397,6 +397,11 @@ the pipeline is defined by whoever applies the pack. The steps install satz from
 release at build time (`ci_satz_release`, default `latest`) and, for the nightly run,
 tofu, because `update-schema` needs it.
 
+(An estate written by `satz init` already enables `cloudasset.googleapis.com` in its
+infrastructure project — the CIS pack claims CIS 5.0 §2.14 against exactly that resource,
+so a `require cis-gcp-5.0` reporting it as a broken claim is the same fact reaching you
+earlier than the nightly run would.)
+
 **Before the first nightly run,** enable Cloud Asset Inventory on the estate's infra
 project and grant an asset-viewer role at organization level: `report-compliance`
 needs both. `unverified` is not in the default `--fail-on` set, so a run without them
