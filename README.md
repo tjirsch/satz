@@ -994,6 +994,64 @@ The output never says "compliant": `require` judges the *declared* estate;
 verification against the *live* estate is the evidence report (next section). Catalogs carry no framework text (CIS/ISO prose is license-restricted),
 only IDs and paraphrases.
 
+### Exemptions: keeping the control on and letting one resource out
+
+A deviation says *we do not meet this control*. An exemption says *we meet it
+everywhere except here* — and an org policy cannot say that by itself, because it is
+all-or-nothing per node. Letting one service account hold a key means lowering the
+policy for its whole project or folder and raising it again afterwards: a window during
+which nothing under that node is enforced, and which nobody remembers to close.
+
+A **Resource Manager tag** closes the window. Unlike a label it is IAM-governed, and an
+org policy rule can condition on it, so the policy stays enforced and named resources
+are let out one at a time. Google ships `iam.disableServiceAccountKeyCreation` this way
+on new organisations. `presets/exemptions/exemption-tag.satz` creates the tag;
+[the library page](presets/README.md#exemptions) has the whole mechanism.
+
+**Exemptions come in classes, because IAM is set per tag value.** One blanket value
+would mean anyone allowed to exempt anything may exempt everything, so the pack ships a
+value per kind of risk — `service-account-keys`, `public-endpoint`, `public-storage`,
+`vm-image`, `vm-access`, `data-residency`, `encryption`, `network-appliance` — each
+narrow enough that granting it hands over one thing. Audit logging and
+domain-restricted sharing carry no class on purpose: exempting the record of what
+happened, or letting an outside identity in, is a decision for whoever owns the
+baseline rather than something to delegate.
+
+**Who may exempt what, and where, is two grants and both are required:**
+`roles/resourcemanager.tagUser` on the *tag value* decides which class a principal may
+grant at all, and the `createTagBinding` permission on the *target* decides whether
+they may apply it to the organisation, a folder or one project. A team holding the
+first on `public-endpoint` and the second on their own folder can exempt public
+endpoints there and nothing else anywhere else. The first half is declarable in the
+estate (`google_tags_tag_value_iam_member`), so *who may exempt what* is in the
+repository rather than in somebody's console history.
+
+That is the exception path. **Standing** authority — who administers projects, networks,
+guardrails, billing — is the [security group model](presets/README.md#security-group-models)
+the estate adopts, S1 or S2. The two are deliberately separate: the point of the tag is
+that "may grant a narrow exemption" need not imply `roles/orgpolicy.policyAdmin`, which
+is what the security-admins group holds and which can rewrite any policy outright.
+
+**Tag bindings are inherited**, which is the part that surprises people. Bound to a
+service account an exemption reaches that account; bound to a *project* it reaches
+everything in it, including every resource created afterwards, for as long as the
+binding exists; bound to a folder, everything below. Prefer binding the individual
+resource.
+
+`require` prints an exemption under the control it belongs to rather than letting a
+conditional policy read as plain "enforced" — the control is met *and* something is let
+out, and both are facts an auditor reads together:
+
+```
+  ✓ 1.4   Only GCP-managed service account keys  — google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation
+      ↳ exempted: google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation: enforce OFF where exempted service accounts
+```
+
+An exemption declared in the estate is the permanent, reviewed kind: it sits in the
+repository with its owner and its reason. A binding somebody adds out of band is not
+visible to satz yet; Cloud Asset Inventory serves tag bindings, so reporting an
+undeclared one as drift is the piece that makes temporary lifts auditable.
+
 ### Evidence report (`report-compliance`)
 
 The goal view joined with the **live estate**: every witness of a satisfied/partial

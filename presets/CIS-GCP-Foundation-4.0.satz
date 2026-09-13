@@ -45,7 +45,7 @@ params {
   //       enforce = "FALSE"
   //       condition = {
   //         title      = "exempted service accounts"
-  //         expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
+  //         expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exempt_service_account_keys.name}}')"
   //       }
   //     },
   //     { enforce = "TRUE" },

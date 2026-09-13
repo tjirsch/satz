@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-13
-- **Shipped in:** v0.54.0, amended in v0.55.0
+- **Shipped in:** v0.54.0, amended in v0.55.0 and v0.56.0
 
 ## Context
 
@@ -70,9 +70,29 @@ of — Google ships their own built-in exemption tag for it. Another constraint 
 param the same way: a real organisation that needed it.
 
 `presets/exemptions/exemption-tag.satz` ships the vocabulary: one organisation tag key
-`<shortname>-exemption` with the values `enforced` and `not_enforced`, bound to nothing.
-The `_enforced` value exists so a binding can be MOVED back rather than deleted, which
-leaves a trace. The binding that exempts a resource, and the condition on the constraint
+`<shortname>-exemption`, bound to nothing.
+
+**AMENDED in v0.56.0 — one value was the wrong shape.** This first shipped as two values,
+`enforced` and `not_enforced`. IAM is set on a tag VALUE, so a single `not_enforced` meant
+that anyone permitted to exempt anything could exempt everything: the team that needed a
+public bucket could switch off customer-managed encryption just as easily. The values are
+now one per exemption CLASS — `service-account-keys`, `public-endpoint`, `public-storage`,
+`vm-image`, `vm-access`, `data-residency`, `encryption`, `network-appliance` — each narrow
+enough that `roles/resourcemanager.tagUser` on one delegates a single kind of risk. Audit
+logging and domain-restricted sharing get no class deliberately: exempting the record of
+what happened, or letting an outside identity in, is a decision for whoever owns the
+baseline rather than a delegation. The `enforced` value is gone; its only job was leaving a
+trace instead of deleting a binding, which the estate's own history does, and it had no
+meaning once values became classes.
+
+That amendment also answers the question this record did not ask: **no new security group
+is needed, and one would defeat the purpose.** `gcp-security-admins` already holds
+`roles/orgpolicy.policyAdmin` org-wide and can rewrite any policy, so giving it the tag
+buys only an audit trail; an org-wide exemption-approver group would re-centralise what the
+tag decentralises. Scope comes from the two grants Google requires —
+`roles/resourcemanager.tagUser` on the value (which class) and `createTagBinding` on the
+target (which organisation, folder or project) — and the first is declarable in the estate
+via `google_tags_tag_value_iam_member`, so who may exempt what lives in the repository. The binding that exempts a resource, and the condition on the constraint
 that honours the tag, are the estate's to write — the pack's header shows the exact shape
 of both, and `tests/iac/exemption-tag/` compiles them.
 
