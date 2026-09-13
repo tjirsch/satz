@@ -194,6 +194,22 @@ pub(crate) fn policy_effects(manifest: &Manifest) -> BTreeMap<String, (PolicyEff
     out
 }
 
+/// Every conditional rule the estate declares, by policy address.
+///
+/// A tag-conditional exemption is a rule saying "enforced everywhere except where this
+/// tag is bound". It does not decide the verdict — the unconditional rule does — and it
+/// is what an auditor must see beside it: the control is on, and here is who is let out.
+/// `report-compliance` has shown the LIVE ones since the conditional-rule work; this is
+/// the same fact read from the estate, so a review can happen before an apply.
+pub(crate) fn declared_exemptions(manifest: &Manifest) -> BTreeMap<String, Vec<String>> {
+    manifest
+        .resources
+        .iter()
+        .filter(|(_, r)| r.tf_type == "google_org_policy_policy" && !r.conditional.is_empty())
+        .map(|(addr, r)| (addr.clone(), r.conditional.clone()))
+        .collect()
+}
+
 /// The witnesses of one claim that contradict what it says, with why.
 ///
 /// `implements` is contradicted by an inert policy: the control is not discharged.
@@ -666,6 +682,11 @@ pub(crate) struct ControlRow {
     /// the coverage word the contradicted claim used: `implements` or `deviates`
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub coverage: String,
+    /// Conditional rules the control's witnesses declare — a tag-conditional exemption
+    /// is one. The control is enforced AND something is let out, and both are facts an
+    /// auditor reads together.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub exemptions: Vec<String>,
     /// (pack, reason) for a declared deviation
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub reasons: Vec<(String, String)>,
@@ -714,6 +735,7 @@ pub(crate) fn require_report(
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
     let effects = policy_effects(manifest);
+    let exempted = declared_exemptions(manifest);
     let goals =
         resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
 
@@ -734,6 +756,7 @@ pub(crate) fn require_report(
             pack: None,
             inert: Vec::new(),
             coverage: String::new(),
+            exemptions: Vec::new(),
             reasons: Vec::new(),
             contributes_only: false,
         };
@@ -782,6 +805,16 @@ pub(crate) fn require_report(
                 row.verdict = "inherited";
             }
         }
+        // An exemption belongs to the control its policy witnesses, whatever the
+        // verdict: a satisfied control that lets one resource out is exactly the case
+        // this has to be legible for.
+        if !exempted.is_empty() {
+            for w in row.witnesses.iter().chain(row.missing.iter()) {
+                if let Some(lines) = exempted.get(w) {
+                    row.exemptions.extend(lines.iter().map(|l| format!("{w}: {l}")));
+                }
+            }
+        }
         controls.push(row);
     }
     controls.sort_by_cached_key(|c| control_order(&c.id));
@@ -798,7 +831,9 @@ pub(crate) fn require_report(
 /// Render the goal view for a terminal. Takes the report and NOTHING else.
 pub(crate) fn render_require(r: &RequireReport) -> String {
     let mut out = format!("\nrequire {} {} — goal view for {}\n\n", r.catalog, r.version, r.estate);
+    let mut exempted = 0usize;
     for c in &r.controls {
+        exempted += usize::from(!c.exemptions.is_empty());
         let line = match c.verdict {
             "satisfied" => {
                 format!("  ✓ {:5} {:45} — {}", c.id, c.title, c.witnesses.join(", "))
@@ -864,6 +899,11 @@ pub(crate) fn render_require(r: &RequireReport) -> String {
         };
         out.push_str(&line);
         out.push('\n');
+        // An exemption is not a footnote: the control is enforced AND something is
+        // let out, and the second half is the half nobody goes looking for.
+        for e in &c.exemptions {
+            out.push_str(&format!("      ↳ exempted: {}\n", e));
+        }
     }
 
     let s = &r.summary;
@@ -873,6 +913,13 @@ pub(crate) fn render_require(r: &RequireReport) -> String {
          Goal view judges the DECLARED estate; live verification is the evidence report.\n",
         s.satisfied, s.partial, s.deviations, s.unmet, s.broken, s.contradicted
     ));
+    if exempted > 0 {
+        out.push_str(&format!(
+            "{} control(s) carry a conditional exemption — enforced, with named resources let out. \
+             `satz report-compliance` lists what each one is bound to on the organisation.\n",
+            exempted
+        ));
+    }
     if s.contradicted > 0 {
         out.push_str(
             "A contradicted claim is the worst verdict here: the witness exists, so the row would \
@@ -907,6 +954,7 @@ mod tests {
             pack: None,
             inert: Vec::new(),
             coverage: String::new(),
+            exemptions: Vec::new(),
             reasons: Vec::new(),
             contributes_only: false,
         }
@@ -1032,6 +1080,48 @@ mod tests {
     }
 
     #[test]
+    fn an_exemption_leaves_the_verdict_intact_and_is_reported_beside_it() {
+        // The point of the tag route: the control stays ON while one resource is let
+        // out. R7 must still judge it — an exempted policy whose unconditional rule is
+        // switched off is as contradicted as any other.
+        let mut m = Manifest::default();
+        let policy = |enforce: Option<bool>| crate::manifest::EmittedResource {
+            tf_type: "google_org_policy_policy".into(),
+            label: "p".into(),
+            attrs: Default::default(),
+            refs: Default::default(),
+            nested: Default::default(),
+            nested_all: Default::default(),
+            enforce,
+            reset: false,
+            dry_run: false,
+            conditional: vec!["enforce OFF where exempted service accounts".to_string()],
+            import_id: None,
+            origin: None,
+        };
+        m.resources.insert("google_org_policy_policy.p".to_string(), policy(Some(true)));
+
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        assert!(
+            matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &policy_effects(&m))["2.1"], Goal::Satisfied { .. }),
+            "an exemption does not unmake the control"
+        );
+        assert_eq!(
+            declared_exemptions(&m)["google_org_policy_policy.p"],
+            vec!["enforce OFF where exempted service accounts".to_string()],
+            "and it is reported beside the verdict, never instead of it"
+        );
+
+        // The same policy with its unconditional rule off is still caught.
+        m.resources.insert("google_org_policy_policy.p".to_string(), policy(Some(false)));
+        assert!(matches!(
+            resolve_goals(&catalog(), &lib, &lib, &emitted, &policy_effects(&m))["2.1"],
+            Goal::ClaimContradicted { .. }
+        ));
+    }
+
+    #[test]
     fn a_dry_run_policy_discharges_nothing() {
         // The manifest reads `enforce` from `spec` alone, so a dry-run-only policy
         // arrives here with enforce: None and dry_run: true. It is inert while it
@@ -1050,6 +1140,7 @@ mod tests {
                 enforce: None,
                 reset: false,
                 dry_run: true,
+                conditional: Vec::new(),
                 import_id: None,
                 origin: None,
             },
@@ -3832,6 +3923,7 @@ mod iam_witness_tests {
                 enforce: None,
                 reset: false,
                 dry_run: false,
+                conditional: Vec::new(),
                 import_id: None,
                 origin: None,
             },
@@ -3851,6 +3943,7 @@ mod iam_witness_tests {
                 enforce: None,
                 reset: false,
                 dry_run: false,
+                conditional: Vec::new(),
                 import_id: None,
                 origin: None,
             },
@@ -3971,6 +4064,7 @@ mod evidence_facts_tests {
                 enforce: None,
                 reset: false,
                 dry_run: false,
+                conditional: Vec::new(),
                 import_id: None,
                 origin: Some(("presets/x.satz".to_string(), 12)),
             },

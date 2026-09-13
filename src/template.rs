@@ -295,6 +295,14 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str)] = &[
          // it by naming the runner's own account",
     ),
     ("presets/ci/verification-runner-grant.satz", "use_verification_runner", ""),
+    (
+        "presets/exemptions/exemption-tag.satz",
+        "use_exemption_tag",
+        "any time after the organisation policies — it creates the tag an exemption is bound to\n\
+         // and exempts nothing on its own. The BINDING that lets one resource out, and the\n\
+         // condition on the constraint that honours it, are the estate's to write; the pack's\n\
+         // header shows both",
+    ),
 ];
 
 /// The commented menu, as the skeleton writes it: one line per pack, a phase comment above

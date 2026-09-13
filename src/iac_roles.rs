@@ -183,6 +183,13 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
     ("google_service_account_iam_member", &[project("iam.serviceAccounts.setIamPolicy", &["roles/iam.serviceAccountAdmin"])]),
     ("google_storage_bucket", &[project("storage.buckets.create", &["roles/storage.admin"])]),
     ("google_storage_bucket_iam_member", &[project("storage.buckets.setIamPolicy", &["roles/storage.admin"])]),
+    // Resource Manager tags. The key and its values are organisation-scoped; a binding
+    // attaches a value to one resource and is the exemption itself, which is why it is
+    // listed separately: an estate may be allowed to define the vocabulary without being
+    // allowed to hand out exemptions with it.
+    ("google_tags_tag_binding", &[org("resourcemanager.tagValueBindings.create", &["roles/resourcemanager.tagUser"])]),
+    ("google_tags_tag_key", &[org("resourcemanager.tagKeys.create", &["roles/resourcemanager.tagAdmin"])]),
+    ("google_tags_tag_value", &[org("resourcemanager.tagValues.create", &["roles/resourcemanager.tagAdmin"])]),
 ];
 
 /// The table's entries for one resource type.

@@ -8231,6 +8231,235 @@
             },
             "description_kind": "plain"
           }
+        },
+        "google_tags_tag_binding": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The generated id for the TagBinding. This is a string of the form: 'tagBindings/{full-resource-name}/{tag-value-name}'",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "The full resource name of the resource the TagValue is bound to. E.g. //cloudresourcemanager.googleapis.com/projects/123",
+                "description_kind": "plain",
+                "required": true
+              },
+              "tag_value": {
+                "type": "string",
+                "description": "The TagValue of the TagBinding. Must be of the form tagValues/456.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_tags_tag_key": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "create_time": {
+                "type": "string",
+                "description": "Output only. Creation time.\n\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "User-assigned description of the TagKey. Must not exceed 256 characters.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The generated numeric id for the TagKey.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "namespaced_name": {
+                "type": "string",
+                "description": "Output only. Namespaced name of the TagKey.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "Input only. The resource name of the new TagKey's parent. Must be of the form organizations/{org_id} or projects/{project_id_or_number}.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "purpose": {
+                "type": "string",
+                "description": "Optional. A purpose cannot be changed once set.\n\nA purpose denotes that this Tag is intended for use in policies of a specific policy engine, and will involve that policy engine in management operations involving this Tag. Possible values: [\"GCE_FIREWALL\", \"DATA_GOVERNANCE\"]",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "purpose_data": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "Optional. Purpose data cannot be changed once set.\n\nPurpose data corresponds to the policy system that the tag is intended for. For example, the GCE_FIREWALL purpose expects data in the following format: 'network = \"<project-name>/<vpc-name>\"'.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "Input only. The user friendly name for a TagKey. The short name should be unique for TagKeys within the same tag namespace.\n\nThe short name can have a maximum length of 256 characters. The permitted character set for the shortName includes all UTF-8 encoded Unicode characters except single quotes ('), double quotes (\"), backslashes (\\\\), and forward slashes (/).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "Output only. Update time.\n\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_tags_tag_value": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "create_time": {
+                "type": "string",
+                "description": "Output only. Creation time.\n\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "User-assigned description of the TagValue. Must not exceed 256 characters.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The generated numeric id for the TagValue.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "namespaced_name": {
+                "type": "string",
+                "description": "Output only. Namespaced name of the TagValue. Will be in the format {parentNamespace}/{tagKeyShortName}/{shortName}.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "Input only. The resource name of the new TagValue's parent. Must be of the form tagKeys/{tag_key_id}.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "Input only. User-assigned short name for TagValue. The short name should be unique for TagValues within the same parent TagKey.\n\nThe short name can have a maximum length of 256 characters. The permitted character set for the shortName includes all UTF-8 encoded Unicode characters except single quotes ('), double quotes (\"), backslashes (\\\\), and forward slashes (/).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "Output only. Update time.\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
         }
       }
     }

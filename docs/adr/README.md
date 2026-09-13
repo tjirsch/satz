@@ -52,3 +52,4 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0012](0012-the-admin-port-policy-ships-on-and-passes-the-private-ranges.md) | the admin-port policy ships on and passes the private ranges | accepted |
 | [0013](0013-a-claim-asserts-what-its-witness-does.md) | a claim asserts what its witness DOES; an org policy that is switched off discharges nothing | accepted |
 | [0014](0014-a-dry-run-is-a-generated-twin-and-claims-nothing.md) | a dry-run policy is a GENERATED twin of its enforcing fragment and carries no claim | accepted |
+| [0015](0015-an-exemption-is-a-tag-and-the-control-stays-on.md) | an exemption is a tag binding; the control stays enforced and the exemption is reported beside it | accepted |

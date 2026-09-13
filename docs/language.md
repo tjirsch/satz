@@ -988,6 +988,10 @@ claim-entry := "resources" "=" "[" { STRING } "]"
   static.
 - `resources` are emitted Terraform addresses. A claim whose witnesses are not
   emitted is a **broken claim** (‼), never reported as satisfied.
+- An org policy's verdict is its UNCONDITIONAL rule. A conditional rule is an
+  exemption — "enforced everywhere except where this tag is bound" — and is reported
+  beside the verdict rather than replacing it. A policy with several unconditional
+  rules, or a list constraint, yields no verdict at all.
 - A claim asserts what its witnesses DO. An `implements` claim naming an org
   policy that carries `enforce = "FALSE"` or `spec { reset = true }` is a
   **contradicted claim** (‼): the witness exists and discharges nothing. A
@@ -1464,6 +1468,7 @@ On an estate with no CIS pack, every row says what would provide it:
 | ✗ | unmet | no included claim discharges it (none, or only ones that contributed zero witnesses); names the packs in the library that would |
 | ‼ | broken claim | an included claim's declared witnesses are not emitted — ranks above unmet. A `deviates` claim whose declared witness vanished reads ‼ too, not ⚠; and ‼ yields to ✓/◐ when another included claim supplied the witnesses |
 | ‼ | contradicted claim | the witnesses are all emitted and one of them does the opposite of what the claim says: an `implements` over a policy declared `enforce = "FALSE"` or `reset = true`, or a `deviates` over one that enforces. It outranks every other verdict on that control, including another claim's witnesses |
+| ↳ | exempted | printed UNDER a control, not instead of it: a witness policy carries a conditional rule — a tag-conditional exemption — so the control is enforced and named resources are let out. The verdict comes from the policy's unconditional rule |
 | ○ | organizational | the catalog marks it as having no IaC witness |
 
 Exit code is **1 when anything is unmet, broken or contradicted**, 0 otherwise;
