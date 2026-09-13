@@ -598,28 +598,25 @@ fn compile_for_diagnostics(
             return out;
         }
     };
-    let mut folded = pipeline::fold_fragments(&resolver, &fe.fragments);
-    if let Err(e) = pipeline::apply_suppressions(&mut folded, &fe.suppressions) {
-        push_err(e);
-        return out;
-    }
-    for c in folded.conflicts() {
-        let where_: Vec<String> = c.candidates.iter().flat_map(|(_, spans)| spans.iter().map(|s| format!("{}:{}", s.file, s.line))).collect();
-        for (_, spans) in &c.candidates {
-            for s in spans {
-                let p = locate(&s.file);
-                let t = text_of(&p);
-                out.push((
-                    p,
-                    line_diagnostic(
-                        &t,
-                        s.line as usize,
-                        format!("{}.{}: two different bodies for one address ({})", c.addr.tf_type, c.addr.label, where_.join(", ")),
-                        DiagnosticSeverity::ERROR,
-                    ),
-                ));
-            }
-        }
+    // Everything `transpile --check` checks after the front end, as findings: at the
+    // file and line each names, or on the estate's first line when it names none.
+    let tail = crate::compile_tail(&fe, &resolver, registry, config, &config.validation_level, root, src);
+    for finding in tail.findings {
+        let severity = match finding.severity {
+            crate::findings::Severity::Error => DiagnosticSeverity::ERROR,
+            crate::findings::Severity::Warning => DiagnosticSeverity::WARNING,
+            crate::findings::Severity::Note => DiagnosticSeverity::INFORMATION,
+        };
+        let (p, line) = match (&finding.file, finding.line) {
+            (Some(file), Some(line)) => (locate(file), line as usize),
+            _ => (root.to_path_buf(), 1),
+        };
+        let t = text_of(&p);
+        let message = match &finding.group {
+            Some(g) => format!("{}\n{}", g, finding.message),
+            None => finding.message.clone(),
+        };
+        out.push((p, line_diagnostic(&t, line, message, severity)));
     }
     out
 }

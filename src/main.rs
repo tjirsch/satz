@@ -22,6 +22,7 @@ mod cloud_identity;
 mod compliance;
 mod questions;
 mod interview;
+mod findings;
 mod lsp;
 mod mcp;
 mod dossier;
@@ -2034,6 +2035,10 @@ struct PipelineBOut {
     /// Declared `action`s, arguments resolved. Nothing is emitted for them and
     /// nothing runs them here — `run-actions` is the only thing that does.
     actions: Vec<satz_core::pipeline::ResolvedAction>,
+    /// What the compile found and did not refuse on — the warnings and notes the
+    /// CLI printed — as data, for MCP. An error never reaches here: the compile is
+    /// `Err` instead.
+    findings: Vec<crate::findings::Finding>,
 }
 
 use satz_core::pipeline::ResolvedType;
@@ -2099,36 +2104,19 @@ fn pipeline_b_generate(
         Err(format!("use \"{}\": file not found", p))
     };
     let fe = satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader)?;
-    // Before the fold, because the fold would refuse the same thing as two disagreeing
-    // definitions of one address and name the files instead of the decision.
-    report_dry_run_conflicts(&fe.env)?;
-    let mut folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-    // Subtractive override channel: estate suppressions apply before conflict
-    // reporting (suppressing a conflicted address resolves the conflict).
-    satz_core::pipeline::apply_suppressions(&mut folded, &fe.suppressions)?;
-    let conflicts = folded.conflicts();
-    if !conflicts.is_empty() {
-        let mut msg = String::from("composition conflicts:");
-        let mut files: Vec<String> = Vec::new();
-        for c in conflicts {
-            msg.push_str(&format!("\n  {}.{}: {} disagreeing definitions", c.addr.tf_type, c.addr.label, c.candidates.len()));
-            for (_, spans) in &c.candidates {
-                for s in spans {
-                    msg.push_str(&format!("\n    - {}:{}", s.file, s.line));
-                    files.push(s.file.clone());
-                }
-            }
-        }
-        if let Some(pair) = dry_run_pair(&files) {
-            msg.push_str(&format!(
-                "\n\n  `{}` is the dry-run twin of `{}` and declares the same policies with \
-                 `dry_run_spec`.\n  A dry run REPLACES enforcement while it measures — use one or the other, \
-                 never both.",
-                pair.1, pair.0
-            ));
-        }
-        return Err(msg.into());
-    }
+    let tail = compile_tail(&fe, &resolver, &registry, tool_config, &runtime_config.validation_level, input_path, &src);
+    // The CLI's two silencers: `--no-action-warnings`, and the `iac-roles` command,
+    // which reports the same finding itself and would otherwise print it twice.
+    let findings: Vec<crate::findings::Finding> = tail
+        .findings
+        .into_iter()
+        .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
+        .filter(|f| !(f.kind == crate::findings::Kind::IacRoles && IAC_ROLES_QUIET.load(std::sync::atomic::Ordering::Relaxed)))
+        .collect();
+    crate::findings::render(&findings)?;
+    let out = tail.out.expect("no error finding, so the emitter ran");
+    let providers_tf = tail.providers_tf.expect("no error finding, so the providers were emitted");
+    let folded = tail.folded;
     let org_policies: Vec<(String, serde_yaml::Value)> = folded
         .slots
         .iter()
@@ -2144,19 +2132,7 @@ fn pipeline_b_generate(
             _ => None,
         })
         .collect();
-    let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-    ctx.registry = Some(&registry);
-    let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
-    check_written_references(&folded, &out.manifest)?;
-    report_missing_required(&out.missing_required, &runtime_config.validation_level)?;
-    report_iac_roles(&out.manifest, &fe.env, input_path, &runtime_config.validation_level)?;
-    report_unadopted_packs(input_path, &fe.env, &runtime_config.validation_level)?;
-    let (provider_sources, provider_versions) = provider_maps(tool_config);
-    let providers_tf = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
-        .map_err(|e| format!("emit_providers: {}", e))?;
-    if !NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
-        crate::actions::warn(&fe.actions);
-    }
+    let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
     // computed before the struct below takes ownership of `fe`'s fields
     let descriptions = question_descriptions(&fe);
     Ok(PipelineBOut {
@@ -2174,6 +2150,7 @@ fn pipeline_b_generate(
         // customer_organization_id; the compliance plane wants None there so it
         // reports "no customer-organization-id" instead of querying org "".
         org_id: Some(ctx.org_id.clone()).filter(|s| !s.is_empty()),
+        findings,
     })
 }
 
@@ -2208,6 +2185,72 @@ fn dry_run_pair(files: &[String]) -> Option<(String, String)> {
     None
 }
 
+/// Everything the compile checks after the front end, collected rather than
+/// stopped at: the CLI renders it (`findings::render`), the language server maps
+/// it to diagnostics, MCP returns it. `estate_src` is the estate's text as the
+/// caller has it — the editor's buffer or the file — for the checks that read the
+/// estate's own lines to say where.
+pub(crate) struct Tail {
+    pub folded: satz_core::algebra::Folded,
+    /// `None` when an error finding stopped the compile before or at the emitter.
+    pub out: Option<crate::emitter::EmitOut>,
+    pub providers_tf: Option<String>,
+    pub findings: Vec<crate::findings::Finding>,
+}
+
+pub(crate) fn compile_tail(
+    fe: &satz_core::pipeline::FrontEnd,
+    resolver: &EstateResolver,
+    registry: &ResourceRegistry,
+    tool_config: &ToolConfig,
+    level: &str,
+    estate: &Path,
+    estate_src: &str,
+) -> Tail {
+    use crate::findings::{Finding, Kind, Severity};
+    let mut f: Vec<Finding> = Vec::new();
+    // Before the fold, because the fold would refuse the same thing as two disagreeing
+    // definitions of one address and name the files instead of the decision.
+    dry_run_conflict_findings(&fe.env, estate, estate_src, &mut f);
+    if !f.is_empty() {
+        return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, findings: f };
+    }
+    let mut folded = satz_core::pipeline::fold_fragments(resolver, &fe.fragments);
+    // Subtractive override channel: estate suppressions apply before conflict
+    // reporting (suppressing a conflicted address resolves the conflict).
+    if let Err(e) = satz_core::pipeline::apply_suppressions(&mut folded, &fe.suppressions) {
+        f.push(Finding::new(Severity::Error, Kind::Suppression, e.msg).located(e.file, e.line as u32));
+        return Tail { folded, out: None, providers_tf: None, findings: f };
+    }
+    if conflict_findings(&folded, &mut f) {
+        return Tail { folded, out: None, providers_tf: None, findings: f };
+    }
+    let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+    ctx.registry = Some(registry);
+    let out = match crate::emitter::emit(&folded, &ctx) {
+        Ok(o) => o,
+        Err(e) => {
+            f.push(Finding::new(Severity::Error, Kind::Emit, format!("emit: {}", e)));
+            return Tail { folded, out: None, providers_tf: None, findings: f };
+        }
+    };
+    written_reference_findings(&folded, &out.manifest, &mut f);
+    missing_required_findings(&out.missing_required, level, &mut f);
+    iac_role_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
+    unadopted_pack_findings(estate, estate_src, &fe.env, level, &mut f);
+    let (provider_sources, provider_versions) = provider_maps(tool_config);
+    let providers_tf = match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
+            None
+        }
+    };
+    action_findings(&fe.actions, &mut f);
+    hcl_findings(&fe.hcl, &mut f);
+    Tail { folded, out: Some(out), providers_tf, findings: f }
+}
+
 /// A control cannot be measured and enforced at the same time.
 ///
 /// A dry-run twin declares the SAME policy address as the fragment it is derived from,
@@ -2215,10 +2258,15 @@ fn dry_run_pair(files: &[String]) -> Option<(String, String)> {
 /// are used, which the ⊕ fold refuses as two disagreeing definitions of one address —
 /// correctly, but naming files rather than the decision behind them. This says what
 /// happened and what to do about it, and it is always an error: there is no reading of
-/// "measure it and enforce it" that the estate could have meant.
-fn report_dry_run_conflicts(
+/// "measure it and enforce it" that the estate could have meant. Its line is the dry
+/// run's `param = true` in the estate.
+fn dry_run_conflict_findings(
     env: &satz_core::pipeline::Env,
-) -> Result<(), Box<dyn std::error::Error>> {
+    estate: &Path,
+    estate_src: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
     let on = |p: &str| env.get(p).and_then(|v| v.as_bool()) == Some(true);
     let mut clashes: Vec<(String, &str)> = Vec::new();
     for (_, gate, _) in crate::template::PACK_LINES {
@@ -2228,118 +2276,282 @@ fn report_dry_run_conflicts(
         }
     }
     if clashes.is_empty() {
-        return Ok(());
+        return;
     }
-    let mut msg = String::new();
+    let group = format!("{} control(s) asked to be measured and enforced at once:", clashes.len());
+    let label = estate.to_string_lossy().into_owned();
     for (enforcing, dry) in &clashes {
-        msg.push_str(&format!(
-            "  `{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n     \
-             Switch one off: `{}` to size the control against this organisation first, `{}` to enforce it now.\n",
-            enforcing, dry, dry, enforcing
-        ));
+        f.push(
+            Finding::new(
+                Severity::Error,
+                Kind::DryRunConflict,
+                format!(
+                    "`{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n     \
+                     Switch one off: `{}` to size the control against this organisation first, `{}` to enforce it now.",
+                    enforcing, dry, dry, enforcing
+                ),
+            )
+            .in_group(&group)
+            .maybe_at(label.clone(), crate::findings::param_line(estate_src, dry)),
+        );
     }
-    Err(format!("{} control(s) asked to be measured and enforced at once:\n{}", clashes.len(), msg).into())
 }
 
-fn report_unadopted_packs(
-    estate: &Path,
-    env: &satz_core::pipeline::Env,
-    level: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if level == "none" {
-        return Ok(());
+/// The fold's conflicts, one finding per site so an editor marks every file involved;
+/// a fragment and its dry-run twin get the decision named beside the files.
+fn conflict_findings(folded: &satz_core::algebra::Folded, f: &mut Vec<crate::findings::Finding>) -> bool {
+    use crate::findings::{Finding, Kind, Severity};
+    let conflicts = folded.conflicts();
+    if conflicts.is_empty() {
+        return false;
     }
-    let Ok(src) = crate::fsx::read_to_string(estate) else {
-        return Ok(());
-    };
-    let mut commented: Vec<(&str, &str)> = Vec::new();
-    let mut absent: Vec<(&str, &str)> = Vec::new();
-    for (path, gate, _) in crate::template::PACK_LINES {
-        if gate.is_empty() || env.get(*gate).and_then(|v| v.as_bool()) != Some(true) {
-            continue;
+    let mut files: Vec<String> = Vec::new();
+    for c in &conflicts {
+        let sites: Vec<String> =
+            c.candidates.iter().flat_map(|(_, spans)| spans.iter().map(|s| format!("{}:{}", s.file, s.line))).collect();
+        for (_, spans) in &c.candidates {
+            for sp in spans {
+                files.push(sp.file.clone());
+                f.push(
+                    Finding::new(
+                        Severity::Error,
+                        Kind::Conflict,
+                        format!("{}.{}: {} disagreeing definitions — {}", c.addr.tf_type, c.addr.label, c.candidates.len(), sites.join(", ")),
+                    )
+                    .in_group("composition conflicts:")
+                    .located(sp.file.clone(), sp.line),
+                );
+            }
         }
-        let needle = format!("use \"{}\"", path);
-        let active = src
-            .lines()
-            .map(str::trim)
-            .any(|l| l.starts_with("use ") && l.contains(&needle));
-        if active {
-            continue;
-        }
-        if src.contains(&needle) {
-            commented.push((path, gate));
+    }
+    if let Some(pair) = dry_run_pair(&files) {
+        f.push(
+            Finding::new(
+                Severity::Error,
+                Kind::Conflict,
+                format!(
+                    "`{}` is the dry-run twin of `{}` and declares the same policies with \
+                     `dry_run_spec`.\n  A dry run REPLACES enforcement while it measures — use one or the other, \
+                     never both.",
+                    pair.1, pair.0
+                ),
+            )
+            .in_group("composition conflicts:"),
+        );
+    }
+    true
+}
+
+/// A `"${{…}}"` reference to an address this estate does not emit — at the line that
+/// writes it.
+fn written_reference_findings(
+    folded: &satz_core::algebra::Folded,
+    manifest: &crate::manifest::Manifest,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let emitted = manifest.addresses();
+    for r in satz_core::pipeline::written_references(folded).into_iter().filter(|r| !emitted.contains(&r.address)) {
+        let (tf_type, _) = r.address.split_once('.').unwrap_or((r.address.as_str(), ""));
+        let mut same: Vec<&str> = emitted
+            .iter()
+            .filter_map(|a| a.strip_prefix(tf_type).and_then(|rest| rest.strip_prefix('.')))
+            .collect();
+        same.sort();
+        let hint = if same.is_empty() {
+            format!("no `{}` is emitted here at all", tf_type)
         } else {
-            absent.push((path, gate));
+            format!("emitted `{}` labels: {}", tf_type, same.join(", "))
+        };
+        f.push(
+            Finding::new(
+                Severity::Error,
+                Kind::WrittenReference,
+                format!("{}:{}: {} writes `${{{}}}`\n    {}", r.file, r.line, r.site, r.traversal, hint),
+            )
+            .in_group("references to resources this estate does not emit:")
+            .located(r.file, r.line),
+        );
+    }
+}
+
+/// An emitted resource missing what its schema requires — at the declaring block,
+/// at the validation level: `warn` says so, `error` refuses, `none` skips.
+fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level: &str, f: &mut Vec<crate::findings::Finding>) {
+    use crate::findings::{Finding, Kind, Severity};
+    let Some(sev) = crate::findings::at_level(level) else { return };
+    for m in missing {
+        let at = m.origin.as_ref().map(|(fl, l)| format!(" ({}:{})", fl, l)).unwrap_or_default();
+        let text = format!("{}{}: the provider requires {}", m.address, at, m.missing.join(", "));
+        let mut finding = if sev == Severity::Error {
+            Finding::new(sev, Kind::MissingRequired, text).in_group("required arguments missing:")
+        } else {
+            Finding::new(sev, Kind::MissingRequired, format!("{} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", text))
+        };
+        if let Some((fl, l)) = &m.origin {
+            finding = finding.located(fl.clone(), *l);
         }
+        f.push(finding);
     }
-    if commented.is_empty() && absent.is_empty() {
-        return Ok(());
-    }
-    let mut msg = String::new();
-    for (path, gate) in &commented {
-        msg.push_str(&format!(
-            "  `{}` is true and `{}` is still commented out — uncomment it, or `satz interview` will\n",
-            gate, path
-        ));
-    }
-    for (path, gate) in &absent {
-        msg.push_str(&format!(
-            "  `{}` is true and this estate has no line for `{}` — run `satz merge-presets` to write it\n",
-            gate, path
-        ));
-    }
-    let head = format!(
-        "{} pack(s) this estate asks for but does not use — the answer is bound and nothing emits it:",
-        commented.len() + absent.len()
-    );
-    if level == "error" {
-        return Err(format!("{}\n{}", head, msg).into());
-    }
-    eprintln!("warning: {}\n{}", head, msg);
-    Ok(())
 }
 
 /// The roles the estate's resource types need that it does not grant its IaC
 /// service account, at the validation level: `warn` names them and the command
 /// that writes them, `error` refuses, `none` skips. A type the table does not know
-/// is a note, never an error — satz cannot say which role it needs.
-fn report_iac_roles(
+/// is a note, never an error — satz cannot say which role it needs. The line is the
+/// estate's `svc_iac_account` param, the nearest thing the grant has to a site.
+fn iac_role_findings(
     manifest: &crate::manifest::Manifest,
     env: &satz_core::pipeline::Env,
     estate: &Path,
+    estate_src: &str,
     level: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if level == "none" || IAC_ROLES_QUIET.load(std::sync::atomic::Ordering::Relaxed) {
-        return Ok(());
-    }
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let Some(sev) = crate::findings::at_level(level) else { return };
     let get = |k: &str| env.get(k).and_then(|v| v.as_str()).map(str::to_string);
-    let Some(sa) = crate::iac_roles::service_account_of(get) else {
-        return Ok(());
-    };
+    let Some(sa) = crate::iac_roles::service_account_of(get) else { return };
     let (needs, unknown) = crate::iac_roles::needs(manifest);
     let granted = crate::iac_roles::granted(manifest, &sa);
     let missing = crate::iac_roles::missing(&needs, &granted);
-    let file = estate.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    let file = estate.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
     if !missing.is_empty() {
-        let msg = format!(
-            "the IaC service account {} lacks roles this estate's resource types need — \
-             `satz iac-roles {} --execute` writes them into the estate:\n  {}",
-            sa,
-            file,
-            crate::iac_roles::describe(&crate::iac_roles::plan(&missing, &granted)).join("\n  ")
+        f.push(
+            Finding::new(
+                sev,
+                Kind::IacRoles,
+                format!(
+                    "the IaC service account {} lacks roles this estate's resource types need — \
+                     `satz iac-roles {} --execute` writes them into the estate:\n  {}",
+                    sa,
+                    file,
+                    crate::iac_roles::describe(&crate::iac_roles::plan(&missing, &granted)).join("\n  ")
+                ),
+            )
+            .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "svc_iac_account")),
         );
-        if level == "error" {
-            return Err(msg.into());
-        }
-        eprintln!("warning: {}", msg);
     }
     if !granted.owner() && !unknown.is_empty() {
-        eprintln!(
-            "note: no role is known for {} — grant the one it needs to the IaC service account in the estate",
-            unknown.into_iter().collect::<Vec<_>>().join(", ")
+        f.push(Finding::new(
+            Severity::Note,
+            Kind::IacRoles,
+            format!(
+                "no role is known for {} — grant the one it needs to the IaC service account in the estate",
+                unknown.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+        ));
+    }
+}
+
+/// A pack whose question is answered YES while its `use` line is still commented out —
+/// or missing from the estate altogether.
+///
+/// This is the failure the commented menu makes possible, and it is silent without this
+/// check: the param is bound, `satz questions` reports the estate complete, and the pack
+/// emits nothing because no line uses it. `satz merge-presets` writes the line;
+/// `satz interview` uncomments it; this says so when neither has happened — at the
+/// commented line when there is one.
+fn unadopted_pack_findings(
+    estate: &Path,
+    estate_src: &str,
+    env: &satz_core::pipeline::Env,
+    level: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind};
+    let Some(sev) = crate::findings::at_level(level) else { return };
+    let mut items: Vec<(String, Option<u32>)> = Vec::new();
+    for (path, gate, _) in crate::template::PACK_LINES {
+        if gate.is_empty() || env.get(*gate).and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        let needle = format!("use \"{}\"", path);
+        let active = estate_src.lines().map(str::trim).any(|l| l.starts_with("use ") && l.contains(&needle));
+        if active {
+            continue;
+        }
+        match estate_src.lines().position(|l| l.contains(&needle)) {
+            Some(i) => items.push((
+                format!("`{}` is true and `{}` is still commented out — uncomment it, or `satz interview` will", gate, path),
+                Some(i as u32 + 1),
+            )),
+            None => items.push((
+                format!("`{}` is true and this estate has no line for `{}` — run `satz merge-presets` to write it", gate, path),
+                None,
+            )),
+        }
+    }
+    if items.is_empty() {
+        return;
+    }
+    let group = format!(
+        "{} pack(s) this estate asks for but does not use — the answer is bound and nothing emits it:",
+        items.len()
+    );
+    let label = estate.to_string_lossy().into_owned();
+    for (msg, line) in items {
+        f.push(Finding::new(sev, Kind::UnadoptedPack, msg).in_group(&group).maybe_at(label.clone(), line));
+    }
+}
+
+/// Every declared action, at its line: `satz run-actions` will execute it, and the
+/// difference between "my estate declares this" and "a pack I downloaded declares
+/// this" is the whole of the trust story. A `reason` does not downgrade this to a
+/// note — HCL only deploys, an action executes.
+fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<crate::findings::Finding>) {
+    use crate::findings::{Finding, Kind, Severity};
+    for a in actions {
+        f.push(
+            Finding::new(
+                Severity::Warning,
+                Kind::Action,
+                format!(
+                    "action \"{}\" declared in {}:{}{} — `satz run-actions` will execute {}\n  reason: {}",
+                    a.name,
+                    a.file,
+                    a.line,
+                    if a.from_pack { " (from a pack)" } else { "" },
+                    a.run,
+                    a.reason
+                ),
+            )
+            .located(a.file.clone(), a.line as u32),
         );
     }
-    Ok(())
+    if actions.iter().any(|a| a.from_pack) {
+        f.push(Finding::new(
+            Severity::Note,
+            Kind::Action,
+            "--no-pack-actions ignores pack-declared actions, --no-actions disables all execution, \
+             --no-action-warnings silences this.",
+        ));
+    }
+}
+
+/// Every raw `hcl { … }` block, at its line: emitted verbatim, opaque to the
+/// compliance plane — a warning until `hcl trust` says it was reviewed, a note after.
+fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crate::findings::Finding>) {
+    use crate::findings::{Finding, Kind, Severity};
+    for b in blocks {
+        let lines = dedent_hcl(&b.body).lines().count();
+        let finding = match &b.trust {
+            Some(reason) => Finding::new(
+                Severity::Note,
+                Kind::HclPassthrough,
+                format!("raw HCL passthrough at {}:{} ({} lines) — trusted: {}", b.file, b.line, lines, reason),
+            ),
+            None => Finding::new(
+                Severity::Warning,
+                Kind::HclPassthrough,
+                format!(
+                    "raw HCL passthrough at {}:{} ({} lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
+                    b.file, b.line, lines
+                ),
+            ),
+        };
+        f.push(finding.located(b.file.clone(), b.line as u32));
+    }
 }
 
 /// What `whoami <estate>` tests live: the estate's needs, and its organization,
@@ -2573,29 +2785,6 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, estate: &str) -> Result<
 /// Resources the provider will refuse for a missing required argument or block,
 /// reported at the validation level: `error` refuses the compile, `warn` (the
 /// default) prints one warning per resource, `none` says nothing.
-fn report_missing_required(
-    missing: &[crate::emitter::MissingRequired],
-    level: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if missing.is_empty() || level == "none" {
-        return Ok(());
-    }
-    let lines: Vec<String> = missing
-        .iter()
-        .map(|m| {
-            let at = m.origin.as_ref().map(|(f, l)| format!(" ({}:{})", f, l)).unwrap_or_default();
-            format!("{}{}: the provider requires {}", m.address, at, m.missing.join(", "))
-        })
-        .collect();
-    if level == "error" {
-        return Err(format!("required arguments missing:\n  {}", lines.join("\n  ")).into());
-    }
-    for l in &lines {
-        eprintln!("warning: {} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", l);
-    }
-    Ok(())
-}
-
 /// `plan -x --config <dir>` puts `--config` inside the pass-through args, where
 /// clap never sees it. Detect that and print the command that would have worked.
 fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
@@ -3874,50 +4063,11 @@ fn compliance_inputs(
 /// plan time, one cycle later and pointing at generated HCL instead of the
 /// line someone wrote; the one it cannot catch is a typo that happens to name
 /// a different real resource.
-fn check_written_references(
-    folded: &satz_core::algebra::Folded,
-    manifest: &crate::manifest::Manifest,
-) -> Result<(), String> {
-    let emitted = manifest.addresses();
-    let bad: Vec<satz_core::pipeline::WrittenRef> = satz_core::pipeline::written_references(folded)
-        .into_iter()
-        .filter(|r| !emitted.contains(&r.address))
-        .collect();
-    if bad.is_empty() {
-        return Ok(());
-    }
-    let mut msg = String::from("references to resources this estate does not emit:");
-    for r in &bad {
-        msg.push_str(&format!("\n  {}:{}: {} writes `${{{}}}`", r.file, r.line, r.site, r.traversal));
-        let (tf_type, _) = r.address.split_once('.').unwrap_or((r.address.as_str(), ""));
-        let mut same: Vec<&str> = emitted
-            .iter()
-            .filter_map(|a| a.strip_prefix(tf_type).and_then(|rest| rest.strip_prefix('.')))
-            .collect();
-        same.sort();
-        if same.is_empty() {
-            msg.push_str(&format!("\n    no `{}` is emitted here at all", tf_type));
-        } else {
-            msg.push_str(&format!("\n    emitted `{}` labels: {}", tf_type, same.join(", ")));
-        }
-    }
-    Err(msg)
-}
-
+/// The raw blocks appended to main.tf, verbatim; what they mean for the compliance
+/// plane is said by `hcl_findings`.
 fn append_hcl_passthrough(mut main_tf: String, blocks: &[satz_core::pipeline::HclPassthrough]) -> String {
     for b in blocks {
         let body = dedent_hcl(&b.body);
-        let lines = body.lines().count();
-        match &b.trust {
-            Some(reason) => eprintln!(
-                "note: raw HCL passthrough at {}:{} ({} lines) — trusted: {}",
-                b.file, b.line, lines, reason
-            ),
-            None => eprintln!(
-                "warning: raw HCL passthrough at {}:{} ({} lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
-                b.file, b.line, lines
-            ),
-        }
         if !main_tf.ends_with('\n') {
             main_tf.push('\n');
         }
@@ -6716,5 +6866,102 @@ mod agent_guide_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod compile_tail_tests {
+    //! The checks after the front end, as findings: each at the line it names, at
+    //! the severity the validation level gives it. What the CLI prints, the server
+    //! shows and MCP returns is this list.
+    use super::*;
+    use crate::findings::{Kind, Severity};
+
+    const ESTATE: &str = r#"estate tail_case
+
+params {
+  customer_organization_id = "123456789012"
+  use_budget               = true
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+// use "presets/organization-budget.satz" when use_budget
+
+google_storage_bucket {
+  no_location {
+    name = "no-location-bucket"
+  }
+  refers {
+    name     = "refers-bucket"
+    location = "EU"
+    labels   = { folder = "${{google_folder.nope.name}}" }
+  }
+}
+
+action "step" {
+  reason = "a step with no resource"
+  run    = "step.sh"
+}
+"#;
+
+    fn tail(level: &str) -> Tail {
+        let reg = super::corpus::registry();
+        let resolver = EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("tail.satz", ESTATE, &resolver, &|p| Err(format!("no {}", p)))
+            .unwrap_or_else(|e| panic!("front-end failed: {}", e));
+        let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        compile_tail(&fe, &resolver, &reg, &cfg, level, Path::new("tail.satz"), ESTATE)
+    }
+
+    fn line_of(needle: &str) -> u32 {
+        ESTATE.lines().position(|l| l.contains(needle)).map(|i| i as u32 + 1).unwrap()
+    }
+
+    #[test]
+    fn a_missing_required_attribute_is_a_warning_at_the_declaring_block() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::MissingRequired).expect("the bucket without a location");
+        assert_eq!(f.severity, Severity::Warning);
+        assert!(f.message.contains("google_storage_bucket.no_location") && f.message.contains("location"), "{}", f.message);
+        assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), Some(line_of("no_location {"))));
+    }
+
+    #[test]
+    fn the_validation_level_turns_it_into_an_error_or_drops_it() {
+        assert_eq!(tail("error").findings.iter().find(|f| f.kind == Kind::MissingRequired).map(|f| f.severity), Some(Severity::Error));
+        assert!(tail("none").findings.iter().all(|f| f.kind != Kind::MissingRequired));
+        assert!(tail("error").findings.iter().find(|f| f.kind == Kind::MissingRequired).unwrap().group.is_some(), "an error is grouped for the CLI");
+    }
+
+    #[test]
+    fn a_reference_to_an_unemitted_address_is_an_error_at_its_line() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::WrittenReference).expect("the folder nobody emits");
+        assert_eq!(f.severity, Severity::Error);
+        assert!(f.message.contains("google_folder.nope.name") && f.message.contains("no `google_folder` is emitted here at all"), "{}", f.message);
+        assert_eq!(f.line, Some(line_of("refers {")), "at the declaring block: a body keeps one site");
+    }
+
+    #[test]
+    fn a_pack_answered_for_but_commented_out_is_found_at_its_line() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::UnadoptedPack).expect("the commented budget line");
+        assert!(f.message.contains("use_budget") && f.message.contains("still commented out"), "{}", f.message);
+        assert_eq!(f.line, Some(line_of("// use \"presets/organization-budget.satz\"")));
+    }
+
+    #[test]
+    fn an_action_is_a_warning_at_its_line_and_the_cli_text_is_the_finding() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::Action).expect("the action");
+        assert_eq!((f.severity, f.line), (Severity::Warning, Some(line_of("action \"step\""))));
+        assert!(f.message.starts_with("action \"step\" declared in tail.satz:"), "{}", f.message);
+        // the tail ran to the end: the emitter's output and the providers are there
+        assert!(t.out.is_some() && t.providers_tf.is_some());
     }
 }

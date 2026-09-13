@@ -1297,7 +1297,11 @@ Protocol over stdio. What the editor gets is what satz knows, from satz's own fr
   prints, at the file and line they name, published to that file. The pipeline reads the
   editor's open buffers, so an estate with an unsaved pack compiles as you see it. A pack
   has no estate of its own: its pipeline diagnostics come from the `estate` files beside
-  it that name it.
+  it that name it. Everything `transpile --check` checks is in — a required attribute
+  the provider needs, a reference to a resource the estate does not emit, an IaC role
+  the service account lacks, a pack a true answer asks for that is still commented out,
+  the actions and passthrough blocks the compile warns about — each at the line it
+  names, as a warning or an error by `validation_level`.
 - **Completion.** Inside a resource type, its attributes and nested blocks (from the
   provider schema in `schema_dir`), then `use`, then every resource type; at the top
   level the statements and every type; after `=`, the params in scope with their values,

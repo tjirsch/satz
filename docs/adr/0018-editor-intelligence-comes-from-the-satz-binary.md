@@ -66,8 +66,13 @@ name is the one frame the walk skips; a list of objects is one nested-block leve
   says nothing rather than naming every type unknown.
 - Diagnostics from the fold — two bodies for one address — are published at every
   contributing line, in every file involved, because the conflict has no single site.
-- Emission-level checks (`missing required`, the IaC role table, unadopted packs) stay
-  with `transpile`; the server stops at the front end and the fold. Adding them is a
-  matter of calling the emitter with the registry, when an editor wants them.
+- 2026-09-13, follow-up: the checks after the front end — the emitter, written
+  references, missing required attributes, the IaC role table, unadopted packs, the
+  providers, actions, passthrough blocks — are one function, `compile_tail`, returning
+  structured findings (`src/findings.rs`: severity, kind, file, line, message, group)
+  for three readers: the CLI renders them as it always did and refuses on an error,
+  the server publishes each as a diagnostic at the line it names (the estate's first
+  line when it names none), and `satz_transpile_check` returns them as data, warnings
+  included — which MCP had lost entirely. One shape, so the three never disagree.
 - The lexer's `Tok`, `Token` and `lex_spanned` are public API of `satz-core` now: two
   consumers, the formatter and the server.

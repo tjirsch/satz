@@ -1262,6 +1262,7 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"../../../README.md","framework":"cis-gcp-4.0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"satz_scan_checkov","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_iac_roles","arguments":{"estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"showcase.satz"}}}'
 } > tmp/mcp-in.jsonl
 # Being ASKED for state is not a report run: satz_report_compliance must not append
 # to the evidence history. Compare the directory across the call rather than testing
@@ -1339,6 +1340,14 @@ assert roles["service_account"].startswith("serviceAccount:") or "@" in roles["s
 assert roles["missing"] == [], f"the smoke estate lacks roles it emits types for: {roles['missing']}"
 assert roles["needs"], "no role need was derived at all"
 assert msgs[16]["result"]["structuredContent"]["written"] == [], "a read-level call wrote grants"
+# What the compile warned about reaches an agent as data — the showcase declares an
+# action and a trusted passthrough, so the check returns both, each at its line.
+chk = msgs[17]["result"]["structuredContent"]
+assert chk["addresses"], chk
+kinds = {f["kind"] for f in chk["findings"]}
+assert {"action", "hcl-passthrough"} <= kinds, chk["findings"]
+# a finding with no site (the pack-actions note) carries no line at all
+assert all(f.get("line") for f in chk["findings"] if f["kind"] in ("action", "hcl-passthrough") and f["severity"] != "note"), chk["findings"]
 
 # a granted tool returns the report as STRUCTURED content, not a string to parse
 rep = msgs[3]["result"]["structuredContent"]

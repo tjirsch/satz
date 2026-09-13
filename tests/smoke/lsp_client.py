@@ -91,10 +91,14 @@ for c in ("completionProvider", "hoverProvider", "definitionProvider", "document
 assert r["serverInfo"]["name"] == "satz"
 send("initialized", request=False)
 
-# didOpen: no diagnostics on a clean estate (parse and pipeline)
+# didOpen: no ERROR on a clean estate (parse and pipeline); what the compile warns
+# about — the showcase's action, its trusted passthrough — arrives as warnings and notes
 send("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "satz", "version": 1, "text": text}}, request=False)
 d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri, "diagnostics")
-assert d["params"]["diagnostics"] == [], f"a clean estate has diagnostics: {d['params']['diagnostics']}"
+errors = [x for x in d["params"]["diagnostics"] if x["severity"] == 1]
+assert errors == [], f"a clean estate has errors: {errors}"
+assert any("action" in x["message"] and x["severity"] == 2 for x in d["params"]["diagnostics"]), d["params"]["diagnostics"]
+assert any("passthrough" in x["message"] and x["severity"] == 3 for x in d["params"]["diagnostics"]), d["params"]["diagnostics"]
 
 # completion inside the audit bucket: the bucket's attributes come first
 n, l = line_of("uniform_bucket_level_access = true")
@@ -135,12 +139,26 @@ d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and 
 bad = text.replace("google_folder {", "google_folderx {", 1)
 send("textDocument/didChange", {"textDocument": {"uri": uri, "version": 4}, "contentChanges": [{"text": bad}]}, request=False)
 send("textDocument/didSave", {"textDocument": {"uri": uri}}, request=False)
-d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and m["params"]["diagnostics"], "a pipeline diagnostic")
-diag = d["params"]["diagnostics"][0]
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and any(x["severity"] == 1 for x in m["params"]["diagnostics"]), "a pipeline diagnostic")
+diag = next(x for x in d["params"]["diagnostics"] if x["severity"] == 1)
 n, _ = line_of("google_folder {")
 assert diag["range"]["start"]["line"] == n, f"pipeline error not at the type's line: {diag}"
+
+# an emitter-stage refusal on save: the audit bucket without its location is a
+# WARNING at the bucket's line naming the attribute; restored and saved, it clears
+n_bucket, _ = line_of("audit_logs {")
+without = text.replace('            location                    = "EU"\n', "", 1)
+assert without != text, "the showcase bucket's location line moved; adjust the client"
+send("textDocument/didChange", {"textDocument": {"uri": uri, "version": 5}, "contentChanges": [{"text": without}]}, request=False)
+send("textDocument/didSave", {"textDocument": {"uri": uri}}, request=False)
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and any("location" in x["message"] for x in m["params"]["diagnostics"]), "the missing-attribute warning")
+diag = next(x for x in d["params"]["diagnostics"] if "location" in x["message"])
+assert diag["severity"] == 2 and diag["range"]["start"]["line"] == n_bucket, diag
+send("textDocument/didChange", {"textDocument": {"uri": uri, "version": 6}, "contentChanges": [{"text": text}]}, request=False)
+send("textDocument/didSave", {"textDocument": {"uri": uri}}, request=False)
+wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and not any("location" in x["message"] for x in m["params"]["diagnostics"]), "the warning to clear")
 
 response(send("shutdown"))
 send("exit", request=False)
 proc.wait(timeout=10)
-print("lsp: OK — initialize, diagnostics (parse and pipeline), completion, hover, definition, formatting")
+print("lsp: OK — initialize, diagnostics (parse, pipeline, emitter), completion, hover, definition, formatting")
