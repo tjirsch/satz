@@ -534,6 +534,10 @@ pub(crate) struct CompileSummary {
     /// the files `satz_transpile` wrote; empty for a check
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub written: Vec<String>,
+    /// what the compile found and did not refuse on — the warnings and notes the
+    /// CLI prints — as data, each at the file and line it names; empty when there is
+    /// nothing to say
+    pub findings: Vec<crate::findings::Finding>,
 }
 
 /// Checkov over the estate's emitted HCL: the counts, and each failed check with
@@ -1158,6 +1162,7 @@ impl SatzMcp {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
                 written: Vec::new(),
+                findings: out.findings,
             }))),
             Err(e) => Ok(Err(refused(format!("transpile --check: {}", e)))),
         }
@@ -1229,6 +1234,7 @@ impl SatzMcp {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
                 written: written.iter().map(|p| p.display().to_string()).collect(),
+                findings: out.findings.clone(),
             }))),
             Err(e) => Ok(Err(refused(format!("transpile: {}", e)))),
         }

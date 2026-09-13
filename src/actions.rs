@@ -344,32 +344,6 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
     Ok(())
 }
 
-/// The warning every estate-compiling command prints, mirroring the raw-HCL one.
-///
-/// Unlike `hcl trust`, a `reason` does not downgrade this to a note: HCL only deploys,
-/// an action executes. The declaring file is on the line because the difference
-/// between "my estate declares this" and "a pack I downloaded declares this" is the
-/// whole of the trust story.
-pub(crate) fn warn(actions: &[ResolvedAction]) {
-    for a in actions {
-        eprintln!(
-            "warning: action \"{}\" declared in {}:{}{} — `satz run-actions` will execute {}\n  reason: {}",
-            a.name,
-            a.file,
-            a.line,
-            if a.from_pack { " (from a pack)" } else { "" },
-            a.run,
-            a.reason
-        );
-    }
-    if actions.iter().any(|a| a.from_pack) {
-        eprintln!(
-            "note: --no-pack-actions ignores pack-declared actions, --no-actions disables all execution, \
-             --no-action-warnings silences this."
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
