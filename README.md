@@ -795,7 +795,7 @@ each command accepting the subset it can produce and **refusing the rest by name
 
 ```bash
 satz require cis-gcp-4.0 C0example.satz --format json | jq '.summary'
-#   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 14, "broken": 0, … }
+#   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 14, "broken": 0, "contradicted": 0, … }
 ```
 
 **stdout carries the answer and nothing else.** The version banner, the schema-loader
@@ -825,9 +825,12 @@ emitted by the compiler — a resource written inside a raw `hcl { … }` block 
 open, or only `contributes` claims), **⚠ deviation** (the estate declares that it does not
 meet this control, with a reason — see below), **✗ unmet** (with the packs that would
 provide it — remediation as suggestion), **‼ broken claim** (a pack claims witnesses the
-estate does not emit; never reported as satisfied), **○ organizational**
-(no IaC witness possible). Exit code is non-zero on unmet/broken, so it gates CI —
-deviations are disclosed decisions and do not fail it.
+estate does not emit; never reported as satisfied), **‼ contradicted claim** (the
+witnesses are emitted and one of them does the opposite of what the claim says — an
+`implements` over an org policy declared `enforce = "FALSE"` or `reset = true`, or a
+`deviates` over one that enforces), **○ organizational**
+(no IaC witness possible). Exit code is non-zero on unmet/broken/contradicted, so it
+gates CI — deviations are disclosed decisions and do not fail it.
 
 ### The Satz language
 
@@ -1263,7 +1266,9 @@ claim "cis-gcp" "4.0" "2.2" implements {
 
 — read by `require`/`report-compliance` from the same compile that produces the witnesses,
 so a claim naming a witness the compile does not emit is reported as broken. Coverage is `implements`, `contributes` or
-`deviates`; witnesses are mandatory on the first two. Literal Terraform `${…}` references
+`deviates`; witnesses are mandatory on the first two. The coverage word is also an
+assertion about what the witnesses DO: `implements` over an org policy that is switched
+off, or `deviates` over one that enforces, is reported as a contradicted claim. Literal Terraform `${…}` references
 inside strings need doubled braces (`"${{google_project.x.project_id}}"`) since `{…}`
 interpolates params. Every command reads `.satz`. The legacy YAML dialect is
 accepted only as input to `satz import <file>.yaml`, which converts an estate or a pack,
