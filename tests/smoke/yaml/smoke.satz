@@ -99,6 +99,9 @@ google_folder {
         project_id = infra_project_name
         billing_account = billing_account_infra
         project_service = [
+          // The CIS pack claims CIS 5.0 §2.14 against this one, and `report-compliance`
+          // reads the organisation through it — `satz init` puts it in every estate.
+          "cloudasset.googleapis.com",
           "cloudresourcemanager.googleapis.com",
           "iam.googleapis.com",
         ]

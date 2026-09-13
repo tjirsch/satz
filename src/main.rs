@@ -6005,6 +6005,18 @@ mod init_template {
         ] {
             assert!(addrs.contains(a), "bootstrap imports {} by name; got {:?}", a, addrs);
         }
+        // The CIS pack claims CIS 5.0 §2.14 (Cloud Asset Inventory enabled) against the
+        // service the scaffold enables here, rather than declaring a second
+        // `google_project_service` for the same API on the same project. That makes the
+        // derived address part of the same contract as the labels above: it is
+        // `<project label>_<service, dots to underscores>`, so renaming the project
+        // label or dropping the service turns a satisfied control into a broken claim
+        // in every estate. Fails here first.
+        assert!(
+            addrs.contains("google_project_service.infra_cloudasset_googleapis_com"),
+            "the CIS pack claims 5.0 §2.14 against this address; got {:?}",
+            addrs
+        );
         assert!(out.imports_tf.contains("google_storage_bucket.state"), "{}", out.imports_tf);
         // the membership emits the bare email (prefix stripped), the org grants keep it
         assert!(out.main_tf.contains("id = \"first.admin@example.com\""), "{}", out.main_tf);

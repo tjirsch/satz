@@ -3,13 +3,13 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's conventions and its per-family prose are [`presets/README.md`](../README.md); its version history is [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under **History** on each page here.
 
-**46 packs · 218 resources · 82 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**46 packs · 218 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Root — `presets/*.satz`
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.12 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 29 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`CIS_GCP_Foundation_4_0`](CIS-GCP-Foundation-4.0.md) | 2.13 | The CIS GCP Foundation 4.0 organization-policy set, managed constraints included. | 25 | 30 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.2 | Billing-account IAM, split by audience. | 4 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.3 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
 | [`estate_core`](estate-core.md) | 2.0 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
@@ -103,5 +103,5 @@ What some pack in this library CLAIMS — never a verdict on an estate. A claim 
 | framework | controls in the catalog | claimed by a pack | claimed by none |
 |---|---|---|---|
 | cis-gcp 4.0 | 37 | 35 | 2.12, 2.13 |
-| cis-gcp 5.0 | 44 | 39 | 1.1.1, 1.1.2, 1.1.3, 2.2, 2.14 |
+| cis-gcp 5.0 | 44 | 40 | 1.1.1, 1.1.2, 1.1.3, 2.2 |
 

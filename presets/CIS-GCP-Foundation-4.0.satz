@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.12"
+pack CIS_GCP_Foundation_4_0 version "2.13"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -806,6 +806,29 @@ claim "cis-gcp" "5.0" "2.1" contributes {
     "google_org_policy_policy.iam_disableAuditLoggingExemption",
   ]
   interpretation = "As for 4.0 §2.1 (5.0 §2.1, unchanged)."
+}
+
+// The one control in this pack whose witness is not an org policy, and not the pack's
+// own resource either: the SCAFFOLD enables the Cloud Asset API in every estate's
+// infrastructure project (`project_service` on `google_project.infra`), so the estate
+// already satisfies 5.0 §2.14 and said nothing about it — the last technical control of
+// CIS 5.0 with no claim anywhere in the library.
+//
+// The pack does NOT declare its own `google_project_service` for the API. Two resources
+// enabling one API on one project is a duplicate Terraform resource, not a merge.
+//
+// The address depends on the scaffold's labels, which are a contract rather than a
+// style: `google_project.infra` is what `bootstrap` imports by name, and the emitter
+// derives `google_project_service.<project label>_<service, dots to underscores>` from
+// it. `init_template::the_generated_estate_compiles_and_carries_bootstraps_labels` holds
+// that address, so renaming the label breaks a test rather than this claim. An estate
+// whose infrastructure project carries a different label reports this control as a
+// BROKEN CLAIM, which is the correct signal: the witness named here is not in it.
+claim "cis-gcp" "5.0" "2.14" implements {
+  resources = [
+    "google_project_service.infra_cloudasset_googleapis_com",
+  ]
+  interpretation = "The Cloud Asset API is enabled in the estate's infrastructure project, which is what makes the organisation's inventory and its history queryable — and is what `report-compliance` itself reads through to verify every other control live."
 }
 
 claim "cis-gcp" "4.0" "3.1" implements {

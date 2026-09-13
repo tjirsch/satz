@@ -354,6 +354,14 @@ step "require cis-gcp-5.0: the same pack answers both benchmark versions"
 "$satz" --config . require cis-gcp-5.0 smoke.satz > tmp/require-50.txt 2>&1 || true
 grep -q 'satisfied' tmp/require-50.txt || fail "require printed no verdict line:\n$(cat tmp/require-50.txt)"
 grep -q '0 broken claim' tmp/require-50.txt || fail "a 5.0 claim names a witness the estate does not emit:\n$(grep -i broken tmp/require-50.txt)"
+# CIS 5.0 §2.14 is the one control whose witness is the SCAFFOLD's, not a pack's: the
+# infrastructure project enables the Cloud Asset API, so the estate satisfies it. The
+# address is derived from the `infra` project label, which is the same contract
+# `bootstrap` imports by, so this fails the moment either half moves.
+grep -q '✓ 2.14' tmp/require-50.txt \
+  || fail "5.0 2.14 does not resolve — the scaffold's Cloud Asset service or the infra label moved:\n$(grep '2.14' tmp/require-50.txt)"
+grep -q 'google_project_service.infra_cloudasset_googleapis_com' tmp/require-50.txt \
+  || fail "2.14 resolved against something other than the scaffold's own service"
 # the renumbered controls resolve against the SAME resources as their 4.0 twins
 grep -qE '✓ 1.5 .*iam_managed_disableServiceAccountKeyCreation' tmp/require-50.txt || fail "4.0 1.4 -> 5.0 1.5 did not carry over:\n$(grep ' 1.5 ' tmp/require-50.txt)"
 grep -qE '✓ 1.6 .*preventPrivilegedBasicRoles' tmp/require-50.txt || fail "4.0 1.5 -> 5.0 1.6 did not carry over"
