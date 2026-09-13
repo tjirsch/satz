@@ -1498,6 +1498,27 @@ cargo fmt && cargo clippy --workspace --all-targets  # format + lint
 cargo install --path .                             # install the release binary (see Installation)
 ```
 
+### Editor support (Zed)
+
+`editors/zed/` is a Zed extension for Satz: syntax highlighting, the outline panel,
+bracket matching and indentation for `.satz` files. Its grammar is a
+[tree-sitter](https://tree-sitter.github.io) grammar in a separate repository,
+`satz-tree-sitter`, pinned by commit in `editors/zed/extension.toml`; Zed fetches and
+compiles it itself. That repository is private, so the extension is not in Zed's
+registry and only someone with access to it can install the extension.
+
+Install it once per machine as a dev extension: in Zed, run `zed: install dev extension`
+from the command palette and pick `editors/zed` in this checkout. After a change to the
+pin or to the queries in `editors/zed/languages/satz/`, run `zed: rebuild dev extension`.
+
+The `hcl { … }` passthrough is highlighted as HCL when Zed's `terraform` extension is
+installed. A `*.diff.satz` file is a unified diff, not Satz; to open it as one, add
+`"file_types": { "Diff": ["*.diff.satz"] }` to Zed's settings.
+
+`scripts/check-grammar.sh` parses every `.satz` file under `presets/` and `tests/` with
+the pinned grammar and fails on any error. Run it before a PR that changes the language;
+the grammar is a commit in its repository first, then a pin bump here.
+
 ## Releasing
 
 Releases are built by GitHub Actions (cargo-dist) when a **version tag** is pushed. Pushing only `main` does not trigger a release. From a clean `main`:
