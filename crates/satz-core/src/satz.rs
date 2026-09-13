@@ -282,7 +282,7 @@ pub struct ClaimDecl {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Tok {
+pub enum Tok {
     Ident(String),
     /// Raw `hcl { … }` body plus its optional `trust` reason.
     Hcl(String, Option<String>),
@@ -531,20 +531,20 @@ fn try_lex_hcl(b: &[char], after_kw: usize, line: usize) -> Result<Option<LexedH
 
 /// A token with where it sits in the source: `line` (1-based) and the char range
 /// `start..end` into `src.chars()`. Trivia — comments and newlines — is lexed only
-/// on request (the formatter's), never for the parser.
+/// on request, for the formatter and the language server, never for the parser.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Token {
-    pub(crate) tok: Tok,
-    pub(crate) line: usize,
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+pub struct Token {
+    pub tok: Tok,
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
     Ok(lex_spanned(src, false)?.into_iter().map(|t| (t.tok, t.line)).collect())
 }
 
-pub(crate) fn lex_spanned(src: &str, trivia: bool) -> Result<Vec<Token>, SatzError> {
+pub fn lex_spanned(src: &str, trivia: bool) -> Result<Vec<Token>, SatzError> {
     let mut toks = Vec::new();
     let b: Vec<char> = src.chars().collect();
     let mut i = 0;

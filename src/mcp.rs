@@ -168,6 +168,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("interview", Parity::Tools(&["satz_interview"])),
     ("triage", Parity::Tools(&["satz_triage"])),
     ("prowler", Parity::Tools(&["satz_prowler"])),
+    ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
     ("fmt", Parity::Off("it rewrites files on disk; an agent writes Satz the guide's way and `satz_transpile_check` judges it")),
     ("remediation-plan", Parity::Tools(&["satz_remediation_items", "satz_remediation_annotate"])),
     ("scan", Parity::Tools(&["satz_scan_checkov"])),
@@ -224,7 +225,7 @@ fn served_by() -> String {
 fn not_served() -> String {
     let mut rows: Vec<String> = MCP_PARITY
         .iter()
-        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "fmt"))
+        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "fmt" | "lsp"))
         .filter_map(|(c, p)| match p {
             Parity::Off(why) => Some(format!("{} ({})", c, why)),
             Parity::Tools(_) => None,

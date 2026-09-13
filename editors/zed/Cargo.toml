@@ -1,0 +1,16 @@
+[package]
+name = "satz_zed"
+version = "0.2.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+# Its own root: the satz workspace above it does not list this crate, and Zed
+# builds it on its own with the wasm32-wasip2 target.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"

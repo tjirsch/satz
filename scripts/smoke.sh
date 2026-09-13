@@ -48,6 +48,9 @@ cmp -s yaml/showcase.satz tmp/fmt-stdin.satz || fail "fmt --stdin changed an alr
 printf 'a = "open' | "$satz" fmt --stdin > /dev/null 2> tmp/fmt-err.txt && fail "fmt --stdin accepted an unterminated string"
 grep -q 'unterminated string' tmp/fmt-err.txt || fail "fmt did not name the parse error:\n$(cat tmp/fmt-err.txt)"
 
+step "lsp: the language server answers an editor — diagnostics, completion, hover, definition, formatting"
+python3 "$root/tests/smoke/lsp_client.py" "$satz" yaml/showcase.satz || fail "satz lsp did not answer as an editor expects"
+
 step "transpile"
 "$satz" --config . transpile smoke.satz
 for f in main.tf providers.tf variables.tf terraform.tfvars; do

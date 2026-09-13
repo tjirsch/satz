@@ -30,3 +30,7 @@ __pycache__/
 /schemas/
 # vendor Terraform handed over for an import: customer data, never committed
 mdc-terraform.tf
+
+# What Zed writes into the dev extension when it installs or builds it
+editors/zed/grammars/
+editors/zed/target/
