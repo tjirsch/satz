@@ -419,7 +419,7 @@ fn match_scope(r: &EmittedResource, manifest: &Manifest, resolved_ids: &BTreeMap
 fn data_at(data: &serde_json::Value, dotted: &str) -> Option<String> {
     let mut cur = data;
     for part in dotted.split('.') {
-        let camel = snake_to_camel(part);
+        let camel = crate::schema::snake_to_camel(part);
         cur = cur.get(&camel).or_else(|| cur.get(part))?;
     }
     match cur {
@@ -428,22 +428,6 @@ fn data_at(data: &serde_json::Value, dotted: &str) -> Option<String> {
         serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
-}
-
-fn snake_to_camel(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut up = false;
-    for c in s.chars() {
-        if c == '_' {
-            up = true;
-        } else if up {
-            out.push(c.to_ascii_uppercase());
-            up = false;
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 async fn resolve_folder<L: Live>(
@@ -830,7 +814,10 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
         // bottom-up so earlier line numbers stay valid
         edits.sort_by_key(|a| std::cmp::Reverse(a.0));
         for (line, address, id, (tf_type, natural_key)) in edits {
-            let idx = line as usize - 1;
+            let Some(idx) = (line as usize).checked_sub(1) else {
+                hints.push(format!("{}: {}:0 is not a line", address, file));
+                continue;
+            };
             let Some(decl) = lines.get(idx) else {
                 hints.push(format!("{}: {}:{} is past the end of the file", address, file, line));
                 continue;
@@ -1140,7 +1127,6 @@ mod tests {
                     exclude: None,
                     include: None,
                     derive_yaml_key_from: None,
-                    deprecated: None,
                     import_id: template.map(|s| s.to_string()),
                     match_on: on.map(|v| v.iter().map(|s| s.to_string()).collect()),
                     activate: None,

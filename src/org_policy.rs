@@ -86,7 +86,7 @@ pub(crate) fn qualify_parent(raw: &str) -> Result<String, String> {
 /// Turn a constraint name into the label style used by the packs,
 /// e.g. `iam.managed.disableServiceAccountKeyCreation`
 ///   -> `iam-managed-disableServiceAccountKeyCreation`.
-pub fn sanitize_yaml_key(constraint: &str) -> String {
+pub fn constraint_to_key(constraint: &str) -> String {
     constraint.replace('.', "-")
 }
 
@@ -426,7 +426,7 @@ pub fn compute_diff(
         entries.push(ConstraintDiff {
             constraint: constraint.clone(),
             parent: entry_parent,
-            yaml_key: sanitize_yaml_key(constraint),
+            yaml_key: constraint_to_key(constraint),
             managed: is_managed(constraint),
             current_spec: Some(canonical_policy(live)),
             desired_spec: None,
@@ -1232,7 +1232,7 @@ fn exported_pack_satz(
             entry.insert("dry_run_spec".into(), live_spec_to_yaml(dry));
         }
         top.insert(
-            serde_yaml::Value::String(sanitize_yaml_key(constraint)),
+            serde_yaml::Value::String(constraint_to_key(constraint)),
             serde_yaml::Value::Mapping(entry),
         );
     }
@@ -1566,7 +1566,7 @@ mod tests {
         assert!(qualify_parent("123456").unwrap_err().contains("bare number"));
         assert!(qualify_parent("").is_err());
         assert_eq!(
-            sanitize_yaml_key("iam.managed.disableServiceAccountKeyCreation"),
+            constraint_to_key("iam.managed.disableServiceAccountKeyCreation"),
             "iam-managed-disableServiceAccountKeyCreation"
         );
         assert_eq!(
@@ -1615,7 +1615,7 @@ mod tests {
             m.insert(
                 policy_key(p, c),
                 DesiredPolicy {
-                    yaml_key: sanitize_yaml_key(c),
+                    yaml_key: constraint_to_key(c),
                     constraint: c.to_string(),
                     parent: p.to_string(),
                     policy: jv(body),

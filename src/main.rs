@@ -78,15 +78,6 @@ pub struct ToolConfig {
 }
 
 impl ToolConfig {
-    pub fn all_providers(&self) -> Vec<String> {
-        let mut providers = Vec::new();
-        providers.extend(self.google_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers.extend(self.aws_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers.extend(self.azure_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers.extend(self.alibaba_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers
-    }
-
     pub fn parsed_providers(&self) -> Vec<(String, String)> {
         let mut providers = Vec::new();
         // default version fallback
@@ -131,7 +122,7 @@ fn default_schema_dir() -> String { "schemas".to_string() }
 fn default_presets_dir() -> String { "presets".to_string() }
 fn default_tf_tool() -> String { "tofu".to_string() }
 fn default_google_providers() -> Vec<String> { vec!["google".to_string(), "google-beta".to_string()] }
-fn default_version() -> String { "7.12.0".to_string() }
+fn default_version() -> String { "7.14.1".to_string() }
 fn default_auto_explode() -> Vec<String> {
     vec![
         "google_project_service".to_string(),
@@ -1038,7 +1029,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Optional: check for updates per global settings (skip for SelfUpdate and Init)
     if !matches!(cmd_choice, Commands::SelfUpdate { .. } | Commands::Init { .. } | Commands::Whoami { .. }) {
-        let _ = maybe_check_for_updates(&mut global_settings).await;
+        if let Err(e) = maybe_check_for_updates(&mut global_settings).await {
+            eprintln!("⚠️  update check: {}", e);
+        }
     }
 
     // --no-impersonate wins over everything: pinning the process to the plain
@@ -1372,7 +1365,7 @@ Thumbs.db
                      let (p_name, p_ver) = ToolConfig::parse_provider_string_with_default(&prov, &def_ver);
                      let out = PathBuf::from(format!("{}/{}.json", runtime_config.schema_dir, p_name.split('/').next_back().unwrap_or(&p_name)));
                      println!("Updating schema for {} version {} using {}...", p_name, p_ver, tool);
-                     ResourceRegistry::generate_schema(&tool, &p_name, &p_ver, out.to_str().unwrap())?;
+                     ResourceRegistry::generate_schema(&tool, &p_name, &p_ver, out.to_str().ok_or_else(|| format!("{}: the schema path is not UTF-8", out.display()))?)?;
                  }
             } else {
                  // Use parsed config
@@ -1381,7 +1374,7 @@ Thumbs.db
                       let usage_ver = version.clone().unwrap_or(p_ver);
                       let out = PathBuf::from(format!("{}/{}.json", runtime_config.schema_dir, p_name.split('/').next_back().unwrap_or(&p_name)));
                       println!("Updating schema for {} version {} using {}...", p_name, usage_ver, tool);
-                      ResourceRegistry::generate_schema(&tool, &p_name, &usage_ver, out.to_str().unwrap())?;
+                      ResourceRegistry::generate_schema(&tool, &p_name, &usage_ver, out.to_str().ok_or_else(|| format!("{}: the schema path is not UTF-8", out.display()))?)?;
                  }
             }
             println!("Done.");
@@ -2846,10 +2839,9 @@ fn convert_yaml_to_satz(
         .map_err(|e| format!("{} ({})", e, src_path.display()))?;
     // The dialect's implicit `google_` prefix is not Satz, so a verbatim
     // copy of the YAML keys would not compile. Schemas decide.
-    let type_registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let satz = satz_core::migrate::normalize_type_keys(&satz, &|t: &str| {
-        type_registry.as_ref().is_some_and(|r| r.resources.contains_key(t))
-    });
+    let type_registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let satz = satz_core::migrate::normalize_type_keys(&satz, &|t: &str| type_registry.resources.contains_key(t));
     // …and point `use` at converted packs, resolved the way the compiler
     // resolves a use-path: beside the file first, then the include dirs.
     let use_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -2973,10 +2965,10 @@ fn import_state(
         }
         serde_json::from_slice(&out.stdout)?
     };
-    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let type_names: std::collections::HashSet<String> =
-        registry.as_ref().map(|r| r.resources.keys().cloned().collect()).unwrap_or_default();
-    let discoverer = crate::discovery::Discoverer::new(state_val, registry, enabled_types, filtered);
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
+    let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered);
     let found = discoverer.discover()?;
     write_imported(&found.config, output, None, &|t| type_names.contains(t), runtime_config)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
@@ -3187,7 +3179,9 @@ async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: bool, runtime_
     let out_path = Path::new(&runtime_config.presets_dir).join("type-map.yaml");
     let mut existing: std::collections::BTreeMap<String, crate::align::TypeMap> = match fsx::read_to_string(&out_path) {
         Ok(t) => serde_yaml::from_str(&t)?,
-        Err(_) => Default::default(),
+        // no map yet: the first run writes it
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => return Err(format!("{}: {}", out_path.display(), e).into()),
     };
     let (mut mapped, mut skipped) = (0usize, Vec::new());
     for (t, row) in rows {
@@ -3287,8 +3281,9 @@ fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime
         .map(|f| Ok(satz_hcl::Input { path: f.to_string_lossy().into_owned(), text: fsx::read_to_string(f)? }))
         .collect::<Result<_, std::io::Error>>()?;
     let name = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl");
-    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let imported = satz_hcl::import(&inputs, name, wrap_all, &RegistrySchema(registry.as_ref()))?;
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let imported = satz_hcl::import(&inputs, name, wrap_all, &RegistrySchema(Some(&registry)))?;
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
@@ -4486,7 +4481,7 @@ async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Bo
             .unwrap_or_default()
             .as_secs();
         settings.last_update_check = Some(now.to_string());
-        let _ = save_global_settings(settings);
+        save_global_settings(settings)?;
     }
     if let Some((version, url)) = update {
         println!("⚠️  Update available: {} (current: {}). Run `satz self-update` to install. {}", version, env!("CARGO_PKG_VERSION"), url);

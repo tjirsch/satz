@@ -136,7 +136,7 @@ struct Sinks<'a> {
 }
 
 impl Discoverer {
-    pub fn sanitize_yaml_key(s: &str) -> String {
+    pub fn sanitize_asset_key(s: &str) -> String {
         s.to_lowercase()
             .replace(|c: char| !c.is_alphanumeric() && c != '-', "-")
             .replace(['_', ' ', '.'], "-")
@@ -184,9 +184,11 @@ impl Discoverer {
 
         if !all_resources.is_empty() {
             for res in all_resources {
-                let tf_type = res["type"].as_str().unwrap_or("");
+                let tf_type = res["type"]
+                    .as_str()
+                    .ok_or_else(|| format!("state: resource {} has no `type`", res["address"].as_str().unwrap_or("(no address)")))?;
                 let values = &res["values"];
-                let tf_name = res["name"].as_str().unwrap_or("");
+                let tf_name = res["name"].as_str().ok_or_else(|| format!("state: a {} has no `name`", tf_type))?;
                 
                 if !self.is_type_enabled(tf_type) {
                     let reason = if self.filtered_types.contains(tf_type) { SkipReason::Filtered } else { SkipReason::TypeOff };
@@ -197,7 +199,10 @@ impl Discoverer {
                 match tf_type {
                     "google_folder" => {
                         let display_name = values["display_name"].as_str().unwrap_or(tf_name).to_string();
-                        let gcp_id = values["name"].as_str().unwrap_or("").to_string(); 
+                        let gcp_id = values["name"]
+                            .as_str()
+                            .ok_or_else(|| format!("state: google_folder {} has no `name`", tf_name))?
+                            .to_string(); 
                         let parent = values["parent"].as_str().unwrap_or("");
 
                         let yaml_key = if tf_name.is_empty() {
@@ -219,7 +224,10 @@ impl Discoverer {
                         }
                     }
                     "google_project" => {
-                        let project_id = values["project_id"].as_str().unwrap_or("").to_string();
+                        let project_id = values["project_id"]
+                            .as_str()
+                            .ok_or_else(|| format!("state: google_project {} has no `project_id`", tf_name))?
+                            .to_string();
                         let display_name = values["name"].as_str().map(|s| s.to_string());
                         let folder_id = values["folder_id"].as_str().unwrap_or("");
 
@@ -261,9 +269,11 @@ impl Discoverer {
         if !project_map.is_empty() { config.project = Some(project_map); }
 
         for res in orphan_resources {
-            let tf_type = res["type"].as_str().unwrap_or("");
+            let tf_type = res["type"]
+                .as_str()
+                .ok_or_else(|| format!("state: resource {} has no `type`", res["address"].as_str().unwrap_or("(no address)")))?;
             let values = &res["values"];
-            let tf_name = res["name"].as_str().unwrap_or("");
+            let tf_name = res["name"].as_str().ok_or_else(|| format!("state: a {} has no `name`", tf_type))?;
             let schema = self.registry.as_ref().and_then(|r| r.find_resource(tf_type)).map(|(_, s)| s);
 
             if let Some(p_id) = values["project"].as_str() {
@@ -833,7 +843,6 @@ impl Discoverer {
     ) -> Result<(Config, Vec<Skipped>), String> {
         let mut config = Config::default();
         let mut skipped: Vec<Skipped> = Vec::new();
-        let mut deprecated_seen = HashSet::new();
         let mut folder_map: HashMap<String, Folder> = HashMap::new(); 
         let mut project_map: HashMap<String, Project> = HashMap::new();
         let mut folder_id_to_parent: HashMap<String, String> = HashMap::new();
@@ -943,11 +952,7 @@ impl Discoverer {
                  continue;
              };
 
-             if res_config.deprecated == Some(true) {
-                 deprecated_seen.insert(tf_type.to_string());
-             }
-
-             if tf_type.contains("organization_policy") || tf_type == "google_org_policy_policy" {
+             if tf_type == "google_org_policy_policy" {
                  Self::discover_organization_policy(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if asset.iam_policy.is_some() {
                  Self::discover_iam_policy(tf_type, asset, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
@@ -964,10 +969,6 @@ impl Discoverer {
         if !folder_map.is_empty() { config.folder = Some(folder_map); }
         if !project_map.is_empty() { config.project = Some(project_map); }
         
-        for deprecated_type in deprecated_seen {
-            eprintln!("Warning: Resource type '{}' is deprecated.", deprecated_type);
-        }
-
         Ok((config, skipped))
     }
 
@@ -1044,7 +1045,7 @@ impl Discoverer {
                    data.get(field).and_then(|v| v.as_str()).unwrap_or(name).to_string()
               } else { name.clone() }
          } else { name.clone() };
-         let yaml_key = Self::sanitize_yaml_key(&yaml_key_raw);
+         let yaml_key = Self::sanitize_asset_key(&yaml_key_raw);
 
          let parts: Vec<&str> = name.split("/projects/").collect();
          if parts.len() < 2 { return; }
@@ -1219,7 +1220,7 @@ impl Discoverer {
               }
           } else { name };
           
-          let sanitized_key = Self::sanitize_yaml_key(raw_key);
+          let sanitized_key = Self::sanitize_asset_key(raw_key);
           let mut resource_val = serde_yaml::Mapping::new();
           
           if let Some(reg) = registry {
@@ -1252,9 +1253,6 @@ impl Discoverer {
               if tf_type == "google_org_policy_policy" {
                    if config.org_policy_policy.is_none() { config.org_policy_policy = Some(HashMap::new()); }
                    config.org_policy_policy.as_mut().unwrap().insert(sanitized_key.clone(), policy_map_val);
-              } else if tf_type == "google_organization_policy" {
-                   if config.google_organization_policy.is_none() { config.google_organization_policy = Some(HashMap::new()); }
-                   config.google_organization_policy.as_mut().unwrap().insert(sanitized_key.clone(), policy_map_val);
               } else {
                    config.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
                    if let Some(serde_yaml::Value::Mapping(m)) = config.extra.get_mut(tf_type) {
@@ -1378,7 +1376,7 @@ impl Discoverer {
                } else { name.clone() }
           } else { name.clone() };
           
-          let sanitized_key = Self::sanitize_yaml_key(&raw_key.to_string());
+          let sanitized_key = Self::sanitize_asset_key(&raw_key.to_string());
           
           let mut resource_val = serde_yaml::Mapping::new();
           
@@ -1559,7 +1557,6 @@ impl Discoverer {
         
         // Count Org Level
         if let Some(map) = &config.org_policy_policy { *stats.entry("google_org_policy_policy".to_string()).or_insert(0) += map.len(); }
-        if let Some(map) = &config.google_organization_policy { *stats.entry("google_organization_policy".to_string()).or_insert(0) += map.len(); }
         if let Some(map) = &config.organization_iam_member { *stats.entry("google_organization_iam_member".to_string()).or_insert(0) += map.len(); }
         for (k, v) in &config.extra {
              if let serde_yaml::Value::Mapping(m) = v {
@@ -1623,11 +1620,6 @@ impl Discoverer {
     }
 
     fn process_organization_policy_family(tf_type: &str, asset: &Asset, schema: &ResourceSchema, name: &str, _scope_id: &str) -> Option<serde_yaml::Mapping> {
-         // Derive 'constraint'
-         let constraint = if name.contains("/policies/") {
-              name.split("/policies/").last().unwrap_or(name)
-         } else { name };
-
          // Extract data to a mutable map to inject missing fields
          let mut data_map = if let Some(r) = &asset.resource {
              if let Some(d) = &r.data {
@@ -1682,25 +1674,9 @@ impl Discoverer {
              }
 
          } else {
-             // Legacy types
-             data_map.insert("constraint".to_string(), serde_json::Value::String(constraint.to_string()));
-
-             if tf_type == "google_organization_policy" {
-                 if let Some(pos) = scope_part.find("organizations/") {
-                     let id = &scope_part[pos+"organizations/".len()..];
-                     data_map.insert("org_id".to_string(), serde_json::Value::String(id.to_string()));
-                 }
-             } else if tf_type == "google_folder_organization_policy" {
-                 if let Some(pos) = scope_part.find("folders/") {
-                     let id = &scope_part[pos+"folders/".len()..];
-                     data_map.insert("folder".to_string(), serde_json::Value::String(id.to_string()));
-                 }
-             } else if tf_type == "google_project_organization_policy" {
-                 if let Some(pos) = scope_part.find("projects/") {
-                     let id = &scope_part[pos+"projects/".len()..];
-                     data_map.insert("project".to_string(), serde_json::Value::String(id.to_string()));
-                 }
-             }
+             // the caller dispatches on the type, and this is the only org-policy
+             // type the importer reads
+             unreachable!("process_organization_policy_family called for {}", tf_type);
          }
 
          let extracted = schema.block.extract_attributes(&data_map, tf_type, name);
@@ -2132,5 +2108,25 @@ mod nesting_tests {
         let v: serde_json::Value = serde_json::json!({"member": "user:a@example.com"});
         let err = grant_identity("google_project_iam_member", "x", &v).unwrap_err();
         assert!(err.contains("has no `role`"), "{}", err);
+    }
+}
+
+
+#[cfg(test)]
+mod state_document_tests {
+    //! A `tofu show -json` entry without `type` or `name` is a broken document,
+    //! not a resource of type "" that the operator turned off.
+    use super::*;
+
+    #[test]
+    fn a_resource_without_a_type_is_refused() {
+        let state = serde_json::json!({
+            "values": { "root_module": { "resources": [
+                { "address": "google_folder.x", "name": "x", "values": {} }
+            ] } }
+        });
+        let err = Discoverer::new(state, None, None, HashSet::new()).discover().err().expect("no type is not a type");
+        let msg = err.to_string();
+        assert!(msg.contains("google_folder.x") && msg.contains("`type`"), "{msg}");
     }
 }

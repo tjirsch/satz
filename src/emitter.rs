@@ -155,12 +155,19 @@ pub(crate) fn missing_required(block: &hcl::Block, registry: &crate::schema::Res
 /// A conditional grant edge carries its condition as canonical YAML text. Parse
 /// it back so the emitted label hashes EXACTLY what the walk hashed (the label
 /// is the Terraform address — it must not move for existing state), and so the
-/// `condition { … }` block renders identically.
-fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Option<serde_yaml::Value> {
+/// `condition { … }` block renders identically. A condition that does not parse
+/// is an error, never `None`: dropping it would emit the grant unconditional and
+/// move its address in the same stroke.
+fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Result<Option<serde_yaml::Value>, String> {
     if edge.condition.is_empty() {
-        return None;
+        return Ok(None);
     }
-    serde_yaml::from_str(&edge.condition).ok()
+    serde_yaml::from_str(&edge.condition).map(Some).map_err(|e| {
+        format!(
+            "grant {} → {}: its condition is not readable ({}); refusing to emit the binding without it",
+            edge.member, edge.role, e
+        )
+    })
 }
 
 /// `<type>.<label>` of a resource block.
@@ -399,7 +406,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             }
             ("google_organization_iam_member", Body::Grant(edges)) => {
                 for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e);
+                    let cond = edge_condition(&e)?;
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -430,10 +437,15 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         },
                         _ => None,
                     });
-                let fallback = ctx.billing_fallback.as_ref().and_then(|v| v.as_str()).unwrap_or("");
-                let billing_id = pinned.as_deref().unwrap_or(fallback);
+                let fallback = ctx.billing_fallback.as_ref().and_then(|v| v.as_str());
+                let Some(billing_id) = pinned.as_deref().or(fallback) else {
+                    return Err(
+                        "google_billing_account_iam_member: no billing account to bind on — pin `billing_account_id` in the estate or bind the `billing_account_infra` param"
+                            .to_string(),
+                    );
+                };
                 for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e);
+                    let cond = edge_condition(&e)?;
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -495,7 +507,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 let scope_key = pin.as_ref().map(|(_, v)| v.as_str()).unwrap_or("");
                 let parent_expr = crate::emit_shared::parse_expr(parent.as_deref().unwrap_or(""));
                 for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e);
+                    let cond = edge_condition(&e)?;
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), scope_key);
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -1165,5 +1177,94 @@ resource "not_a_type_the_registry_knows" "x" {}
         assert!(missing_required(blocks[1], &reg).is_empty());
         // no schema, no verdict
         assert!(missing_required(blocks[2], &reg).is_empty());
+    }
+}
+
+
+#[cfg(test)]
+mod grant_condition_tests {
+    //! A conditional grant is emitted with its condition or not at all. The
+    //! condition is part of the binding's identity and of its scope: losing it
+    //! would widen the grant and move its address in one stroke.
+
+    use super::*;
+
+    fn edge(condition: &str) -> satz_core::algebra::GrantEdge {
+        satz_core::algebra::GrantEdge {
+            member: "group:gcp-viewers@example.com".into(),
+            role: "roles/viewer".into(),
+            condition: condition.into(),
+            import_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_absent_condition_is_none() {
+        assert_eq!(edge_condition(&edge("")).expect("no condition is not an error"), None);
+    }
+
+    #[test]
+    fn a_canonical_condition_parses_back() {
+        let cond = edge_condition(&edge("expression: request.time < timestamp('2027-01-01T00:00:00Z')\ntitle: expires\n"))
+            .expect("canonical YAML parses")
+            .expect("a condition was given");
+        assert_eq!(cond["title"].as_str(), Some("expires"));
+    }
+
+    #[test]
+    fn a_condition_that_does_not_parse_refuses_the_grant() {
+        let err = edge_condition(&edge("title: [unclosed")).expect_err("must not degrade to an unconditional grant");
+        assert!(err.contains("roles/viewer") && err.contains("condition"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod billing_grant_tests {
+    //! A billing-account grant names the account it binds on, or is refused.
+    //! Neither a pinned `billing_account_id` nor the `billing_account_infra`
+    //! param is required elsewhere, so this was the one place an empty string
+    //! reached the provider as a resource id.
+
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn billing_grant() -> Folded {
+        let addr = satz_core::Address { tf_type: "google_billing_account_iam_member".into(), label: "billing".into() };
+        let edge = satz_core::algebra::GrantEdge {
+            member: "group:gcp-billing-admins@example.com".into(),
+            role: "roles/billing.admin".into(),
+            condition: String::new(),
+            import_id: String::new(),
+        };
+        let entity = satz_core::algebra::Entity {
+            addr: addr.clone(),
+            scope: satz_core::Scope::Billing,
+            body: Body::Grant(BTreeSet::from([edge])),
+            provenance: Vec::new(),
+            node_path: Vec::new(),
+        };
+        Folded { slots: BTreeMap::from([(addr, Slot::Ok(entity))]) }
+    }
+
+    fn ctx(fallback: Option<&str>) -> EmitCtx<'static> {
+        EmitCtx {
+            customer_id: String::new(),
+            customer_domain: String::new(),
+            org_id: String::new(),
+            billing_fallback: fallback.map(serde_yaml::Value::from),
+            registry: None,
+        }
+    }
+
+    #[test]
+    fn no_account_anywhere_is_refused_not_emitted_empty() {
+        let err = emit(&billing_grant(), &ctx(None)).err().expect("an empty billing_account_id must not reach the provider");
+        assert!(err.contains("billing_account_infra") && err.contains("billing_account_id"), "{err}");
+    }
+
+    #[test]
+    fn the_conventional_param_is_the_account() {
+        let out = emit(&billing_grant(), &ctx(Some("example-billing"))).expect("the param supplies the account");
+        assert!(out.main_tf.contains("example-billing"), "{}", out.main_tf);
     }
 }

@@ -168,8 +168,6 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("interview", Parity::Tools(&["satz_interview"])),
     ("triage", Parity::Tools(&["satz_triage"])),
     ("prowler", Parity::Tools(&["satz_prowler"])),
-    ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
-    ("fmt", Parity::Off("it rewrites files on disk; an agent writes Satz the guide's way and `satz_transpile_check` judges it")),
     ("remediation-plan", Parity::Tools(&["satz_remediation_items", "satz_remediation_annotate"])),
     ("scan", Parity::Tools(&["satz_scan_checkov"])),
     ("check-presets", Parity::Tools(&["satz_check_presets"])),
@@ -177,8 +175,10 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("adopt", Parity::Tools(&["satz_adopt"])),
     ("iac-roles", Parity::Tools(&["satz_iac_roles"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
-    // --- not served ---------------------------------------------------------
     ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
+    // --- not served ---------------------------------------------------------
+    ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
+    ("fmt", Parity::Off("it rewrites files on disk; an agent writes Satz the guide's way and `satz_transpile_check` judges it")),
     ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; `--from-live` runs as the human, before there is an estate")),
     ("bootstrap", Parity::Off("day 0: it creates the folder, project and state bucket as the human, after an interactive pre-flight")),
     ("plan", Parity::Off("it hands stdio to the tool; an agent runs tofu itself")),
@@ -799,7 +799,11 @@ impl SatzMcp {
         let resolved = p
             .canonicalize()
             .map_err(|e| refused(format!("{}: {}", p.display(), e)))?;
-        let root = self.ctx.root.canonicalize().unwrap_or_else(|_| self.ctx.root.clone());
+        let root = self
+            .ctx
+            .root
+            .canonicalize()
+            .map_err(|e| refused(format!("server root {}: {}", self.ctx.root.display(), e)))?;
         if !resolved.starts_with(&root) {
             return Err(refused(format!(
                 "{} is outside the server's root ({}) — refused",

@@ -265,7 +265,7 @@ pub(crate) fn add_use(estate_text: &str, pack: &str, after_line: Option<u32>) ->
             lines.push(use_line);
         }
         Some(n) => {
-            let idx = n as usize - 1;
+            let idx = (n as usize).checked_sub(1).ok_or_else(|| format!("line {} is not a line of the estate", n))?;
             let decl = lines.get(idx).ok_or_else(|| format!("line {} is past the end of the estate", n))?;
             if !decl.trim_end().ends_with('{') {
                 return Err(format!("line {} does not open a block: {}", n, decl.trim()));

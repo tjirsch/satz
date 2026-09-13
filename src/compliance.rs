@@ -2112,18 +2112,22 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String, LiveConten
         let mut stream = builder.by_item();
         while let Some(asset) = stream.next().await {
             let asset: google_cloud_asset_v1::model::Asset = asset?;
+            // An asset without the requested content is `Null`: a witness with
+            // nothing to compare. Content that cannot be serialised is an error —
+            // evidence that cannot be read is not evidence of anything.
             let data = match content {
-                LiveContent::Resource => asset
-                    .resource
-                    .as_ref()
-                    .and_then(|r| r.data.as_ref())
-                    .and_then(|d| serde_json::to_value(d).ok())
-                    .unwrap_or(serde_json::Value::Null),
+                LiveContent::Resource => match asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
+                    Some(d) => serde_json::to_value(d)
+                        .map_err(|e| format!("{}: the live resource data is not readable as JSON: {}", asset.name, e))?,
+                    None => serde_json::Value::Null,
+                },
                 // the policy set ON the asset: the organisation's audit configs,
                 // a bucket's bindings
-                LiveContent::IamPolicy => {
-                    asset.iam_policy.as_ref().and_then(|p| serde_json::to_value(p).ok()).unwrap_or(serde_json::Value::Null)
-                }
+                LiveContent::IamPolicy => match asset.iam_policy.as_ref() {
+                    Some(p) => serde_json::to_value(p)
+                        .map_err(|e| format!("{}: the live IAM policy is not readable as JSON: {}", asset.name, e))?,
+                    None => serde_json::Value::Null,
+                },
             };
             // scoped keys only: the bare terminal segment and the bare
             // displayName used to be keys too, and a same-named resource in
