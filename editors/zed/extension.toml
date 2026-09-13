@@ -13,3 +13,9 @@ repository = "https://github.com/tjirsch/satz"
 [grammars.satz]
 repository = "git@github.com:tjirsch/satz-tree-sitter.git"
 rev = "ac50645048316e3c46b85a54107e2219b71075f9"
+
+# The language server is the satz binary itself: `satz lsp`, found on the PATH
+# by src/lib.rs, or `lsp.satz.binary.path` in Zed's settings.
+[language_servers.satz]
+name = "satz"
+languages = ["Satz"]

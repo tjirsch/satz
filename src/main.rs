@@ -21,6 +21,7 @@ mod cloud_identity;
 mod compliance;
 mod questions;
 mod interview;
+mod lsp;
 mod mcp;
 mod dossier;
 mod presets;
@@ -249,7 +250,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "prowler", "triage", "remediation-plan"]),
-    ("Tool", &["update-schema", "map-types", "fmt", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
+    ("Tool", &["update-schema", "map-types", "fmt", "lsp", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
 #[derive(Subcommand)]
@@ -810,6 +811,14 @@ enum Commands {
         #[arg(long, conflicts_with_all = ["check", "paths"])]
         stdin: bool,
     },
+    /// The language server behind an editor's Satz support (Language Server Protocol, stdio)
+    ///
+    /// Started by the editor, never by hand. Diagnostics from the parser on every
+    /// change and from the whole pipeline on every open and save — the errors
+    /// `transpile --check` prints, at the file and line they name; completion and
+    /// hover from the provider schema the estate's config.toml points at;
+    /// go-to-definition for `use` paths and params; formatting is `satz fmt`.
+    Lsp,
     /// Answer what the estate's packs ask, one question at a time, writing each answer
     /// into the estate's params. The third way to start an estate: `init` takes every
     /// answer as a flag, an agent asks over MCP, this asks a person at a terminal
@@ -1018,7 +1027,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
-                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Fmt { .. }
+                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Fmt { .. } | Commands::Lsp
                 | Commands::IacRoles { input: None, .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
@@ -1650,6 +1659,7 @@ Thumbs.db
             Ok(())
         }
         Commands::Fmt { paths, check, stdin } => run_fmt(&paths, check, stdin),
+        Commands::Lsp => lsp::run().map_err(|e| e as Box<dyn std::error::Error>),
         Commands::Prowler { input, format } => {
             let format = format.require_one_of("prowler", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -4746,7 +4756,7 @@ fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Er
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration", "run-actions", "iac-roles", "fmt",
+        "scan-plan", "generate-migration", "run-actions", "iac-roles", "fmt", "lsp",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
@@ -5001,6 +5011,7 @@ mod command_groups {
         ("require", Identity::NoGoogleApi),
         ("prowler", Identity::NoGoogleApi),
         ("fmt", Identity::NoGoogleApi),
+        ("lsp", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),

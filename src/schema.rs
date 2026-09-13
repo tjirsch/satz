@@ -26,6 +26,9 @@ pub struct AttributeSchema {
     /// `["map","string"]` …
     #[serde(rename = "type", default)]
     pub type_: Option<serde_json::Value>,
+    /// The provider's own words, shown by the language server on hover.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl AttributeSchema {
@@ -51,6 +54,8 @@ pub struct BlockSchema {
     pub attributes: HashMap<String, AttributeSchema>,
     #[serde(default)]
     pub block_types: HashMap<String, BlockTypeSchema>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl BlockSchema {

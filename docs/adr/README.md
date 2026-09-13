@@ -55,3 +55,4 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0015](0015-an-exemption-is-a-tag-and-the-control-stays-on.md) | an exemption is a tag binding; the control stays enforced and the exemption is reported beside it | accepted |
 | [0016](0016-editor-support-is-a-tree-sitter-grammar-in-its-own-repository.md) | editor support is a tree-sitter grammar in its own repository; the Zed extension lives here and pins one commit of it | accepted |
 | [0017](0017-the-formatter-keeps-the-authors-line-breaks.md) | `satz fmt` works on the token stream and keeps the author's line breaks; alignment is per run, meaning is proven by the canonical form | accepted |
+| [0018](0018-editor-intelligence-comes-from-the-satz-binary.md) | `satz lsp` serves editors from satz's own parser, pipeline and schema; parse per change, pipeline per save; a pack is compiled through the estates that use it | accepted |

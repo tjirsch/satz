@@ -182,6 +182,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
 | `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
 | `fmt <PATHS…>` | `--check`, `--stdin` — rewrite Satz files in their canonical layout (indentation, spacing, `=` alignment, list commas); `--check` names the files that are not and exits 1; `--stdin` formats one file from stdin to stdout, for editors |
+| `lsp` | the language server behind an editor's Satz support, on stdio, started by the editor: diagnostics from the parser on every change and from the pipeline on every save, completion and hover from the provider schema, go-to-definition for `use` paths and params, formatting |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
@@ -1286,6 +1287,47 @@ satz fmt --stdin < in.satz         # one file from stdin to stdout, for an edito
 - In Zed, until the language server serves formatting, an external formatter does:
   `"languages": { "Satz": { "formatter": { "external": { "command": "satz", "arguments": ["fmt", "--stdin"] } } } }`.
 
+### Language server (`lsp`)
+
+`satz lsp` is the server behind an editor's Satz support, speaking the Language Server
+Protocol over stdio. What the editor gets is what satz knows, from satz's own front end:
+
+- **Diagnostics.** `satz::parse` on every change — the parser's error at its line — and
+  the whole fragment pipeline on every open and save: the same errors `transpile --check`
+  prints, at the file and line they name, published to that file. The pipeline reads the
+  editor's open buffers, so an estate with an unsaved pack compiles as you see it. A pack
+  has no estate of its own: its pipeline diagnostics come from the `estate` files beside
+  it that name it.
+- **Completion.** Inside a resource type, its attributes and nested blocks (from the
+  provider schema in `schema_dir`), then `use`, then every resource type; at the top
+  level the statements and every type; after `=`, the params in scope with their values,
+  and `true`/`false`; inside `question` and `action` bodies, their keys.
+- **Hover.** An attribute's type, whether it is required, and the provider's description;
+  a resource type's provider and size; a param's bound value; a `use` path's resolution;
+  a keyword's one-line meaning.
+- **Go to definition.** A `use "…"` string opens the file the compiler would load
+  (beside the estate first, then `include_dirs`); a param reference opens the
+  `params {}` line that declares it, in this file or in the pack it comes from.
+- **Formatting.** `satz fmt`, as one edit over the document.
+
+```bash
+satz lsp        # started by the editor; nothing to type
+```
+
+The server finds an estate through its `config.toml`, walking up from the file. Without
+one, or with an empty `schema_dir`, it gives parse diagnostics only; `satz update-schema`
+fills the schema. stdout is the protocol; the registry's loading progress goes to stderr,
+where the editor's log shows it.
+
+**Under the Hood:**
+- `src/lsp.rs`, on `lsp-server` (rust-analyzer's transport, a synchronous loop) and
+  `lsp-types` ([ADR 0018](docs/adr/0018-editor-intelligence-comes-from-the-satz-binary.md)).
+- Where the cursor is — the enclosing type, the nested blocks, key or value — is read from
+  the same token stream the formatter uses.
+- The smoke matrix drives the server the way an editor does (`tests/smoke/lsp_client.py`):
+  initialize, open, completion, hover, definition, formatting, a parse error and a
+  pipeline error, shutdown.
+
 ## Playbooks
 
 Standing an organisation up from nothing, adopting one that already exists, and
@@ -1538,15 +1580,20 @@ cargo install --path .                             # install the release binary 
 ### Editor support (Zed)
 
 `editors/zed/` is a Zed extension for Satz: syntax highlighting, the outline panel,
-bracket matching and indentation for `.satz` files. Its grammar is a
+bracket matching and indentation for `.satz` files, and the language server
+(`satz lsp`, see [Language server](#language-server-lsp)) for diagnostics, completion,
+hover, go-to-definition and format-on-save. Its grammar is a
 [tree-sitter](https://tree-sitter.github.io) grammar in a separate repository,
 `satz-tree-sitter`, pinned by commit in `editors/zed/extension.toml`; Zed fetches and
 compiles it itself. That repository is private, so the extension is not in Zed's
 registry and only someone with access to it can install the extension.
 
 Install it once per machine as a dev extension: in Zed, run `zed: install dev extension`
-from the command palette and pick `editors/zed` in this checkout. After a change to the
-pin or to the queries in `editors/zed/languages/satz/`, run `zed: rebuild dev extension`.
+from the command palette and pick `editors/zed` in this checkout. Zed compiles the
+extension's Rust glue for `wasm32-wasip2` (rustup installs the target). After a change to
+the pin, to the queries in `editors/zed/languages/satz/`, or to `editors/zed/src/`, run
+`zed: rebuild dev extension`. The server is the `satz` binary on the PATH Zed's shell
+sees; `lsp.satz.binary.path` in Zed's settings overrides it.
 
 The `hcl { … }` passthrough is highlighted as HCL when Zed's `terraform` extension is
 installed. A `*.diff.satz` file is a unified diff, not Satz; to open it as one, add
