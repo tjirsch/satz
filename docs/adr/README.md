@@ -36,7 +36,7 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 
 ## Records
 
-| | decision | status |
+| | what it decides | status |
 |---|---|---|
 | [0001](0001-mcp-identity-is-scoped-to-the-call.md) | the MCP server scopes the identity to each call, not the process | accepted |
 | [0002](0002-superseded-org-policies-replace-by-construction.md) | superseded org policies change address so the plan is a replace | accepted |

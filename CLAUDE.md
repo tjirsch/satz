@@ -115,7 +115,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   converting old estates and packs for as long as legacy orgs exist; that is the whole YAML surface. No new functionality grows a YAML arm, YAML is never
   generated, and a YAML code path that a cleanup breaks is deleted, not
   repaired — the legacy walk, the `.gen.yaml` twin and every YAML command arm
-  are gone since v0.46.14. A conversion is reported as NEEDS-REVIEW where it
+  are gone. A conversion is reported as NEEDS-REVIEW where it
   cannot be proven; migrated estates may need manual edits (an old
   `!import-include` becomes `use` plus `satz adopt`).
   `tests/corpus/yaml-estate/` is the converter's gate: a YAML fixture through
@@ -222,9 +222,8 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `cloud.account.uid`, the version from `metadata.product.version`, which is
   checked (an older export is refused by its version); a FAIL on a verified
   witness makes the row CONTESTED (integration proposal I2).
-- A key repeated inside one body is a parse error naming both lines (was the
-  last known v0 silent-last-wins defect; repeated blocks are a list of
-  objects, resource-type maps may repeat).
+- A key repeated inside one body is a parse error naming both lines (repeated
+  blocks are a list of objects, resource-type maps may repeat).
 
 ## Scripts and housekeeping
 
@@ -236,7 +235,7 @@ Its first half lists every file DERIVED from something outside this
 repository — the provider schema fixture, the CAI asset-type list, the
 managed/legacy constraint pairing, the catalogs, the version pins — with what
 refreshes each, what triggers it, and what catches it when nobody remembers.
-Four of them have no automatic check at all, which is the reason the page
+Five of them have no automatic check at all, which is the reason the page
 exists. Anything derived gets a script, else a gate, else a line on that page:
 a file that is out of date while the tests report success is how a compliance
 tool starts lying.

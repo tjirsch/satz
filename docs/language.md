@@ -191,7 +191,7 @@ claim "cis-gcp" "4.0" "4.4" deviates {
 ```
 
 **Include a bare list as a map's content**, or **conditionally**
-(`tests/smoke/yaml/showcase.satz`, lines 48–54):
+(`tests/smoke/yaml/showcase.satz`):
 
 ```
 use "showcase-policies.satz" as google_org_policy_policy
@@ -1618,6 +1618,12 @@ these properties was verified at this time".
 | `transpile <estate>.satz` | Satz → HCL | emit `hcl/`; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars |
 | `require <framework> <estate>.satz` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
 | `report-compliance <framework> <estate>.satz` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--format pdf`, `--fail-on <statuses>` (exit code as the CI gate) |
+| `questions <estate>.satz [--unanswered] [--format text\|json\|markdown] [--xlsx f]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet, `--xlsx` the workbook a customer fills in |
+| `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
+| `iac-roles [<estate>.satz] [--execute] [--format text\|json]` | Satz | the roles the IaC service account needs for the types the estate emits, against what it grants; `--execute` writes the missing ones into the estate |
+| `whoami [<estate>.satz]` | — | the credential satz runs as and, with an estate, the service account it becomes, with the live checks that decide whether the next call works |
+| `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |
+| `remediation-plan <framework> <estate>.satz --prowler f [--checkov] [--out d] [--authored f]` | Evidence | the remediation dossier: items per control and resource from the triage and the report, the XLSX, the authored columns merged from `--authored` |
 | `check-presets <estate>.satz` | Satz | drift of packs vs upstream |
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
@@ -1628,7 +1634,7 @@ these properties was verified at this time".
 | `scan [<estate>.satz]` | HCL | Checkov over `hcl_dir`, findings pointed at the Satz line that declared the resource; failed checks exit 1 |
 | `doc-packs [--out d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
 | `map-types [--only t,…]` | — | derive the API→Terraform field map per type into `presets/type-map.yaml` (from the Discovery Documents and the provider schema) |
-| `bootstrap <estate>.satz [--dry-run]` | Satz | first apply for a new organisation: management project, state bucket, service account |
+| `bootstrap <estate>.satz [--dry-run] [--greenfield]` | Satz | first apply for a new organisation: management project, state bucket, service account |
 | `migrate <estate>.satz --mode local\|cloud` | Satz | rewrite `deployment_mode` in the estate's params and move the state |
 | `export-` / `diff-` / `report-organizational-policies <estate>.satz [--recursive]` | Evidence | the org-policy specialist tools: snapshot live policies as a pack, diff desired vs live by (parent, constraint), inventory report |
 

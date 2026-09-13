@@ -24,7 +24,7 @@ Five steps, in this order. Each one is a section below.
    state into the bucket and makes every later command impersonate the IaC service
    account. From here nothing runs as a human.
 5. **Then add packs** — the CIS baseline and whatever else the estate needs, one at a
-   time, each with its own plan and apply. Presets come *after* step 4 on purpose: the
+   time, each with its own plan and apply. Presets come *after* step 4: the
    day-0 scaffold has to exist and the state has to be in the bucket before a pack
    creates anything on top of it. [Keeping presets current](#keeping-presets-current)
    is that loop.
@@ -229,8 +229,8 @@ account rather than as the logged-in user.
 > by itself.
 
 Then check that the service account can run the plan — this is the first deploy that
-authenticates as the service account rather than as a person, and the point of the whole
-sequence:
+authenticates as the service account rather than as a person, which is what the whole
+sequence is for:
 
 ```bash
 cd hcl/
@@ -291,7 +291,7 @@ default set. `--all` takes every type the source can deliver instead: from a sta
 file every row, live every row with an `asset_type`. `--only` narrows either set,
 and `--exclude` leaves types out (`--all --exclude "google_*_iam_member"`). The
 table is the provider's resource types at its `provider_version` — google and
-google-beta, 1283 rows: 452 with their Cloud Asset Inventory name (derived from
+google-beta, 1280 rows: 449 with their Cloud Asset Inventory name (derived from
 the type name, checked against Google's list, `presets/cai-asset-types.txt`, and
 asked of ListAssets), 439 that Cloud Asset does not serve as assets (IAM members,
 org-policy v1 shapes, the types ListAssets refuses; state shape only), 392 marked

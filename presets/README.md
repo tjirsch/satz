@@ -783,6 +783,7 @@ plan declares its own resources at top level, naming the project through a param
 use "presets/integrations/microsoft-defender-for-cloud.satz"
 use "presets/integrations/microsoft-defender-for-cloud-cspm.satz" when mdc_plan_cspm
 use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
+use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz" when mdc_cspm_least_privilege
 ```
 
 **Params:** `mdc_workload_pool_id` (the customer's Entra tenant id without dashes — that is

@@ -60,8 +60,9 @@ alone — that declares a superseded legacy twin OFF, which is not a control bei
 and has nothing to size.
 
 Six extensions get a twin. Five do not, and the table in the script says why for each:
-the legacy constraints have no dry-run form, Access Approval is not an org policy, and
-the two on-by-default extensions have nothing to size before enforcing.
+the legacy constraints have no dry-run form, Access Approval is not an org policy, DNS
+logging ships on by default with nothing to size, and the admin-port control is a
+hierarchical firewall policy rather than an org policy.
 
 The manifest now reads `enforce` from `spec` alone and records `dry_run` separately, so a
 dry-run-only policy is `PolicyEffect::Inert` under

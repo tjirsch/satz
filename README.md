@@ -126,7 +126,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | Command | Options / Arguments |
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from-live` (derive the missing values from the ADC alone) |
-| `bootstrap <CONFIG_FILE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize a not-yet-existing organization) |
+| `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize a not-yet-existing organization) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta); yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
@@ -157,16 +157,16 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `export-organizational-policies <CONFIG_FILE>` (alias `export-org-policies`) | `--customer-organization-id`, `--output` |
-| `diff-organizational-policies <CONFIG_FILE>` (alias `diff-org-policies`) | `--customer-organization-id`, `--report`, `--format` (`text`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
-| `report-organizational-policies <CONFIG_FILE>` (alias `report-org-policies`) | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
+| `export-organizational-policies <ESTATE>` (alias `export-org-policies`) | `--customer-organization-id`, `--output` |
+| `diff-organizational-policies <ESTATE>` (alias `diff-org-policies`) | `--customer-organization-id`, `--report`, `--format` (`text`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
+| `report-organizational-policies <ESTATE>` (alias `report-org-policies`) | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
 | `adopt-org-policies <INPUT>` | `--dry-run` — alias of `adopt --only google_org_policy_policy --activate --execute --import` |
 
 **Compliance and audit**
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`), `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
+| `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`), `--unanswered`, `--xlsx <FILE>` (the decisions catalog as a workbook a customer fills in and sends back) — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
 | `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. See [satz interview](docs/interview.md) |
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
@@ -186,7 +186,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
-| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Nineteen tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
+| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Twenty tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
 | `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and (with an estate) the service account that estate's live commands run as, checked — may this credential become it, is the quota project reachable, and does it hold the permissions the estate's resource types need |
 
 Details for each command are below.
@@ -216,6 +216,7 @@ satz init \
 - `--default-region <REGION>`: Default GCP region (default: `europe-west3`).
 - `--infra-project-name <ID>`: Override for the infrastructure project ID.
 - `--infra-bucket-name <NAME>`: Override for the state bucket name.
+- `--from-live`: derive the missing values from the ADC alone.
 
 **Under the Hood:**
 - Creates the standardized directory structure: `yaml/`, `hcl/`, `schemas/`.
@@ -232,12 +233,13 @@ every question is answered — [satz interview](docs/interview.md).
 `bootstrap` runs the day-0 onboarding of a new customer organization.
 
 ```bash
-satz bootstrap <CONFIG_FILE> [options]
+satz bootstrap <ESTATE> [options]
 ```
 
 **Parameters:**
 - `<ESTATE>`: The estate file (e.g. `C0example.satz`). Relative paths are looked up inside `yaml_dir`, so pass the bare filename — **not** `yaml/C0example.satz`, which would resolve to `yaml/yaml/C0example.satz`. This is not the tool config; that is `--config`.
 - `--dry-run`: Simulation mode; does not create resources.
+- `--greenfield`: materialize an organisation that does not exist yet: the infrastructure project is created without a parent, the organisation Google creates for the estate's directory customer is found by polling, the project is moved under it and the organisation id is written back into the estate.
 **Tip:** Use `--dry-run` to see what resources would be created without making changes.
 
 **Tip:** For a declarative approach, set `deployment_mode = "boot"` in the estate's `params` block and run `transpile`.
@@ -835,14 +837,6 @@ witnesses are emitted and one of them does the opposite of what the claim says �
 (no IaC witness possible). Exit code is non-zero on unmet/broken/contradicted, so it
 gates CI — deviations are disclosed decisions and do not fail it.
 
-### The Satz language
-
-Driving satz from an agent? **[`docs/llms.md`](docs/llms.md)** is
-the working subset written for that — the MCP server serves it as `satz://guide`, so an
-agent gets it without a repository.
-
-Full specification, grammar and lookup: **`docs/language.md`**.
-
 ### Adopting what already exists (`adopt`, brownfield)
 
 A first `apply` against an organisation that already has folders, groups, org
@@ -1015,7 +1009,7 @@ would mean anyone allowed to exempt anything may exempt everything, so the pack 
 value per kind of risk — `service-account-keys`, `public-endpoint`, `public-storage`,
 `vm-image`, `vm-access`, `data-residency`, `encryption`, `network-appliance` — each
 narrow enough that granting it hands over one thing. Audit logging and
-domain-restricted sharing carry no class on purpose: exempting the record of what
+domain-restricted sharing carry no class: exempting the record of what
 happened, or letting an outside identity in, is a decision for whoever owns the
 baseline rather than something to delegate.
 
@@ -1030,9 +1024,9 @@ repository rather than in somebody's console history.
 
 That is the exception path. **Standing** authority — who administers projects, networks,
 guardrails, billing — is the [security group model](presets/README.md#security-group-models)
-the estate adopts, S1 or S2. The two are deliberately separate: the point of the tag is
-that "may grant a narrow exemption" need not imply `roles/orgpolicy.policyAdmin`, which
-is what the security-admins group holds and which can rewrite any policy outright.
+the estate adopts, S1 or S2. The two are separate so that "may grant a narrow
+exemption" need not imply `roles/orgpolicy.policyAdmin`, which is what the
+security-admins group holds and which can rewrite any policy outright.
 
 **Tag bindings are inherited**, which is the part that surprises people. Bound to a
 service account an exemption reaches that account; bound to a *project* it reaches
@@ -1413,6 +1407,10 @@ accepted only as input to `satz import <file>.yaml`, which converts an estate or
 gated by compiling the result through the fragment pipeline and reporting what it emits —
 a migrated estate may need a manual edit, and `tofu plan` is the final check
 (see [docs/language.md §12](docs/language.md)).
+
+Driving satz from an agent? **[`docs/llms.md`](docs/llms.md)** is the working subset
+written for that — the MCP server serves it as `satz://guide`, so an agent gets it without
+a repository.
 
 ## Core Principles
 
