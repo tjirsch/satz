@@ -37,7 +37,7 @@ const REF_R: &str = "\u{bb}";
 const USE_L: &str = "\u{ab}U:";  // «U:form|path|cond»
 const USE_K: &str = "\u{ab}UK";  // «UK<n>» — synthetic key for Form A in mappings
 
-fn snake(name: &str) -> String {
+fn ident_from_name(name: &str) -> String {
     name.replace(['-', '.'], "_")
 }
 
@@ -180,7 +180,7 @@ fn pre_pass(src: &str) -> Result<PrePassed, MigrateError> {
                     i = j - 1;
                 }
                 let satz_value = convert_scalar_text(&substitute_aliases(&value_text))?;
-                params.push((snake(&key), satz_value));
+                params.push((ident_from_name(&key), satz_value));
                 i += 1;
                 continue;
             }
@@ -285,7 +285,7 @@ fn convert_scalar_text(text: &str) -> Result<String, MigrateError> {
         return Ok(format!("\"{}\"", format_to_interpolation(&vals)?));
     }
     if let Some(rest) = t.strip_prefix('*') {
-        return Ok(snake(rest));
+        return Ok(ident_from_name(rest));
     }
     let v: serde_yaml::Value =
         serde_yaml::from_str(t).map_err(|e| MigrateError { msg: format!("value '{}': {}", t, e) })?;
@@ -362,7 +362,7 @@ fn format_to_interpolation(vals: &[serde_yaml::Value]) -> Result<String, Migrate
                 serde_yaml::Value::String(s) => match as_ref_name(s) {
                     Some(name) => {
                         out.push('{');
-                        out.push_str(&snake(name));
+                        out.push_str(&ident_from_name(name));
                         out.push('}');
                     }
                     None => out.push_str(&esc(s)),
@@ -422,7 +422,7 @@ fn normalise_conditional_binding(m: &serde_yaml::Mapping) -> serde_yaml::Mapping
 fn scalar_value(v: &serde_yaml::Value) -> Result<String, MigrateError> {
     match v {
         serde_yaml::Value::String(s) => match as_ref_name(s) {
-            Some(name) => Ok(snake(name)),
+            Some(name) => Ok(ident_from_name(name)),
             None => Ok(format!("\"{}\"", esc(s))),
         },
         serde_yaml::Value::Number(n) => Ok(n.to_string()),
@@ -456,7 +456,7 @@ fn value_expr(v: &serde_yaml::Value, indent: usize) -> Result<String, MigrateErr
                             serde_yaml::Value::String(s) => match as_ref_name(s) {
                                 Some(name) => {
                                     out.push('{');
-                                    out.push_str(&snake(name));
+                                    out.push_str(&ident_from_name(name));
                                     out.push('}');
                                 }
                                 None => out.push_str(&esc(s)),
@@ -499,7 +499,7 @@ fn key_expr(k: &serde_yaml::Value) -> Result<(String, bool), MigrateError> {
     match k {
         serde_yaml::Value::String(s) => {
             if let Some(name) = as_ref_name(s) {
-                return Ok((format!("\"{{{}}}\"", snake(name)), false));
+                return Ok((format!("\"{{{}}}\"", ident_from_name(name)), false));
             }
             let ident_ok = !s.is_empty()
                 && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
@@ -524,7 +524,7 @@ fn is_use_sentinel(v: &serde_yaml::Value) -> Option<(String, String, Option<Stri
     let mut parts = inner.splitn(3, '|');
     let form = parts.next()?.to_string();
     let path = parts.next()?.to_string();
-    let cond = parts.next().filter(|c| !c.is_empty()).map(snake);
+    let cond = parts.next().filter(|c| !c.is_empty()).map(ident_from_name);
     Some((form, path, cond))
 }
 
@@ -944,7 +944,7 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
                 continue;
             }
         }
-        let name_snake = snake(ks);
+        let name_snake = ident_from_name(ks);
         if params.iter().any(|(n, _)| *n == name_snake) {
             return err(format!(
                 "top-level `{}` duplicates the param `{}` from the variables block — convert by hand",
@@ -1019,7 +1019,7 @@ pub fn interpolated(template: &str, params: &[&str]) -> serde_yaml::Value {
 /// The Satz param name for an HCL identifier: `-` and `.` become `_`, the same
 /// normalisation every other printed reference gets.
 pub fn param_name(name: &str) -> String {
-    snake(name)
+    ident_from_name(name)
 }
 
 /// A value that prints as a **bare** param reference (`role_id = IAMRoleID`).
@@ -1078,7 +1078,7 @@ pub fn convert_value(
     if !header.is_empty() {
         out.push('\n');
     }
-    let _ = writeln!(out, "{} {}\n", kind_keyword, snake(name));
+    let _ = writeln!(out, "{} {}\n", kind_keyword, ident_from_name(name));
 
     if !params.is_empty() {
         out.push_str("params {\n");
@@ -1115,7 +1115,7 @@ pub fn convert_value(
         // promotes params to the root anyway.
         if let (Some(ks), serde_yaml::Value::String(vs)) = (k.as_str(), v) {
             if let Some(refname) = as_ref_name(vs) {
-                if snake(refname) == snake(ks) && param_names.contains(snake(ks).as_str()) {
+                if ident_from_name(refname) == ident_from_name(ks) && param_names.contains(ident_from_name(ks).as_str()) {
                     continue;
                 }
             }

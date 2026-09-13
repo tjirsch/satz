@@ -10,21 +10,17 @@ pub struct Config {
     pub providers: Option<HashMap<String, serde_yaml::Value>>,
 
     // Organization Level Resources (First in output)
-    #[serde(alias = "google_org_policy_policy", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub org_policy_policy: Option<HashMap<String, serde_yaml::Value>>,
-    #[serde(alias = "google_organization_policy", skip_serializing_if = "Option::is_none")]
-    pub google_organization_policy: Option<HashMap<String, serde_yaml::Value>>,
-    #[serde(alias = "google_organization_iam_member", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub organization_iam_member: Option<HashMap<String, Vec<serde_yaml::Value>>>,
-    #[serde(alias = "google_billing_account_iam_member", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub billing_account_iam_member: Option<serde_yaml::Value>,
 
     // Hierarchical Resources
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(alias = "google_folder")]
     pub folder: Option<HashMap<String, Folder>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(alias = "google_project")]
     pub project: Option<HashMap<String, Project>>,
 
     // Catch-all for other top level fields
@@ -41,10 +37,8 @@ pub struct Folder {
     pub parent: Option<String>,
     // Recursive folder structure
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(alias = "google_folder")]
     pub folder: Option<HashMap<String, Folder>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(alias = "google_project")]
     pub project: Option<HashMap<String, Project>>,
 
     // Catch-all for other resources in folder
@@ -91,8 +85,6 @@ pub struct ImportResourceConfig {
     pub include: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derive_yaml_key_from: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deprecated: Option<bool>,
     /// Adoption rule for a type whose Terraform import id is user-chosen: a
     /// template over the emitted resource's attributes and resolved
     /// references, e.g. `projects/{project}/serviceAccounts/{account_id}@…`.

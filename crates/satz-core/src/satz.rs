@@ -918,16 +918,14 @@ impl P {
                     }).collect();
                     decl.interpretation = Some(lit);
                 }
-                Entry::Map { key: Key::Ident(k), name: Some(Key::Str(idp)), body, .. } if k == "duty" => {
-                    // rare form duty "id" { text = "..." } — accept but prefer attr form
-                    let _ = (idp, body);
+                Entry::Map { key: Key::Ident(k), name: Some(Key::Str(_)), .. } if k == "duty" => {
+                    // the block form `duty "id" { text = "..." }` is refused in favour of the attribute
                     return err(line, "duty: write it as an attribute, `duty_<id> = \"text\"`");
                 }
                 Entry::Attr { key: Key::Str(_), .. } => {
                     return err(line, "claim: unexpected string key (a duty is `duty_<id> = \"text\"`)")
                 }
-                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k.starts_with("duty_") || k == "duty" => {
-                    let _ = l;
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k.starts_with("duty_") || k == "duty" => {
                     let text: String = parts.iter().map(|p| match p { StrPart::Lit(s) => s.as_str(), _ => "" }).collect();
                     decl.duties.push((k.trim_start_matches("duty_").replace('_', "-"), text));
                 }

@@ -1356,7 +1356,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 | `include_dirs` | `[".", "yaml"]` | Search paths for `use`d packs |
 | `tf_tool` | `"tofu"` | The OpenTofu/Terraform binary satz runs (schemas, `plan`, `apply`) |
 | `google_providers` | `["google", "google-beta"]` | List of Google providers |
-| `provider_version` | `"7.12.0"` | Provider version to use |
+| `provider_version` | `"7.14.1"` | Provider version to use |
 | `auto_explode` | `["google_project_service", ".*_iam_member"]` | Resources that use compact explosion |
 | `validation_level` | `"warn"` | Validation level for mandatory parameters |
 

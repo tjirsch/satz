@@ -89,3 +89,6 @@ check, and the script is the pre-PR check for a language change.
 - Publishing in Zed's registry needs the grammar repository public, an `https://` pin, a
   license file inside `editors/zed/`, and weeks of review. The extension's `version`
   is bumped for every later update once that happens.
+- `zed: install dev extension` clones the pinned grammar into `editors/zed/grammars/`
+  beside the `satz.wasm` it compiles, and builds the extension's Rust glue into
+  `editors/zed/target/`. Both are Zed's build output and are git-ignored.

@@ -1548,9 +1548,9 @@ fn insert_grant(
     for r in list {
         let (role, condition, import_id) = match r {
             serde_yaml::Value::String(s) => (s, String::new(), String::new()),
-            // Conditional binding. Satz writes `{ role = "…", condition = { … } }`;
-            // the legacy YAML dialect puts the role in the key with a null value
-            // (`- roles/x:` followed by a sibling `condition:`). Both are accepted.
+            // Conditional binding: `{ role = "…", condition = { … } }`. The YAML
+            // dialect's null-valued role key is rewritten to this form by the
+            // converter, so it is the only spelling the fold reads.
             // The condition is part of the binding's IDENTITY — the emitted label
             // hashes it — so it travels with the edge through the fold.
             serde_yaml::Value::Mapping(m) => {
@@ -1581,9 +1581,6 @@ fn insert_grant(
                                 None => return perr(file_name, line, format!("grant: `role` must be a string, got {:?}", v)),
                             }
                         }
-                        // the legacy dialect's null-valued role key beside a
-                        // `condition` — the ONLY other key accepted
-                        other if v.is_null() && role.is_empty() => role = other.to_string(),
                         other => {
                             return perr(
                                 file_name,
@@ -2066,9 +2063,8 @@ google_org_policy_policy {
 
     #[test]
     fn conditional_grants_carry_their_condition_through_the_fold() {
-        // Both spellings must produce the same edge: Satz's explicit
-        // `{ role = …, condition = … }` and the legacy YAML dialect's
-        // null-valued role key with a sibling `condition:`.
+        // The explicit `{ role = …, condition = … }` object folds to one edge
+        // carrying its condition; the plain role beside it is a second edge.
         let satz_form = concat!(
             "estate e\n",
             "params { customer_organization_id = \"1\" }\n",

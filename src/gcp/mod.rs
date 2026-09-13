@@ -139,9 +139,7 @@ pub(crate) async fn base_access_token() -> Result<String, String> {
     match base_credentials()?.access_token().await {
         Ok(t) => Ok(t.token),
         Err(e) => {
-            if let Ok(mut cached) = BASE_CREDENTIALS.lock() {
-                *cached = None;
-            }
+            *BASE_CREDENTIALS.lock().map_err(|_| "the credentials cache lock is poisoned".to_string())? = None;
             Err(e.to_string())
         }
     }
@@ -181,19 +179,22 @@ fn unix_now() -> u64 {
 
 async fn cached_impersonated_token(base: &str, sa: &str) -> Result<String, String> {
     let now = unix_now();
-    if let Some((token, expires)) = IMPERSONATED
+    let cached = IMPERSONATED
         .lock()
-        .ok()
-        .and_then(|m| m.as_ref().and_then(|m| m.get(sa).cloned()))
-    {
+        .map_err(|_| "the impersonation cache lock is poisoned".to_string())?
+        .as_ref()
+        .and_then(|m| m.get(sa).cloned());
+    if let Some((token, expires)) = cached {
         if now + TOKEN_MARGIN_SECS < expires {
             return Ok(token);
         }
     }
     let (token, expires) = mint_impersonated(base, sa).await?;
-    if let Ok(mut m) = IMPERSONATED.lock() {
-        m.get_or_insert_with(Default::default).insert(sa.to_string(), (token.clone(), expires));
-    }
+    IMPERSONATED
+        .lock()
+        .map_err(|_| "the impersonation cache lock is poisoned".to_string())?
+        .get_or_insert_with(Default::default)
+        .insert(sa.to_string(), (token.clone(), expires));
     Ok(token)
 }
 

@@ -641,13 +641,6 @@ resource_types:
     content_type: IAM_POLICY
     derive_yaml_key_from: name
     exclude: []
-  google_folder_organization_policy:
-    description: Organization policy for a folder
-    import: false
-    asset_type: orgpolicy.googleapis.com/Policy
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-    deprecated: true
   google_gke_backup_backup_plan:
     description: GKE Backup for GKE backup plan
     import: false
@@ -827,13 +820,6 @@ resource_types:
     content_type: IAM_POLICY
     derive_yaml_key_from: name
     exclude: []
-  google_organization_policy:
-    description: Organization policy for an organization
-    import: false
-    asset_type: orgpolicy.googleapis.com/Policy
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-    deprecated: true
   google_os_config_os_policy_assignment:
     description: OS Config OS policy assignment
     import: false
@@ -874,13 +860,6 @@ resource_types:
     asset_type: cloudresourcemanager.googleapis.com/Project
     content_type: IAM_POLICY
     derive_yaml_key_from: name
-  google_project_organization_policy:
-    description: Organization policy for a project
-    import: false
-    asset_type: orgpolicy.googleapis.com/Policy
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-    deprecated: true
   google_project_service:
     import_id: "{project}/{service}"
     description: Google Cloud service enabled for a project
