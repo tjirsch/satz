@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.11"
+pack CIS_GCP_Foundation_4_0 version "2.12"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -29,6 +29,42 @@ params {
   cis_bucket_retention       = false
   cis_access_approval        = false
   cis_cloud_sql_iam_and_deletion_protection = false
+
+  // ---- the rules of iam.managed.disableServiceAccountKeyCreation, so ONE principal
+  // can be let out without the control coming off for a whole folder.
+  //
+  // The default is the control, enforced, and an estate that says nothing emits exactly
+  // what it emitted before this param existed. To exempt, `use
+  // "presets/exemptions/exemption-tag.satz"`, bind the tag value to the one service
+  // account, and rebind this to the two-rule form — the conditional rule turns
+  // enforcement OFF only where the tag value is bound, the unconditional rule keeps it
+  // on everywhere else:
+  //
+  //   cis_sa_key_creation_rules = [
+  //     {
+  //       enforce = "FALSE"
+  //       condition = {
+  //         title      = "exempted service accounts"
+  //         expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
+  //       }
+  //     },
+  //     { enforce = "TRUE" },
+  //   ]
+  //
+  // `require` then reads the control as SATISFIED — the unconditional rule decides —
+  // and prints the exemption under it, so the row says both things at once. Before
+  // binding one, ask whether the consumer needs a key at all: a workload in Google
+  // Cloud, a Cloud Run service and external CI can all federate instead.
+  //
+  // This is the only constraint here whose rules are a param. The rest are written in
+  // place, because a param per constraint would put forty list-of-object blocks into
+  // every estate's terraform.tfvars for a case nobody has. Another constraint earns one
+  // the same way this did: a real organisation that needed it.
+  cis_sa_key_creation_rules = [
+    {
+      enforce = "TRUE"
+    },
+  ]
 
   // ---- DRY RUN: measure a control against this organisation before enforcing it.
   // A dry-run policy carries `dry_run_spec` instead of `spec`: Google evaluates
@@ -314,15 +350,17 @@ question allowed_policy_member_subjects {
   }
 }
 
+// The one constraint in this baseline whose rules are a PARAM rather than written
+// here, because it is the one an organisation actually has to let a single principal
+// out of — Google ships their own built-in exemption tag for exactly this constraint.
+// The default below is the plain enforcing rule, so an estate that says nothing gets
+// what it got before. See `cis_sa_key_creation_rules` in this pack's params for the
+// exempting form, and `presets/exemptions/exemption-tag.satz` for the tag it names.
 "iam-managed-disableServiceAccountKeyCreation" {
   name = "iam.managed.disableServiceAccountKeyCreation"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+    rules = cis_sa_key_creation_rules
   }
 }
 
