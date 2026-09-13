@@ -12,7 +12,6 @@
 //! satisfies into a broken claim. `the_generated_estate_compiles_and_carries_bootstraps_labels`
 //! holds both.
 
-use std::fs;
 use std::path::Path;
 
 pub struct TemplateArgs {
@@ -78,8 +77,8 @@ google_cloud_identity_group {
     id           = "{svc_iac_users_group}@{customer_domain}"
     display_name = "Service Account IaC Users"
     description  = "Service account users allowed to impersonate the IaC service account"
-    owner        = [ "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" ]
-    member       = [ "user:{first_admin}@{customer_domain}" ]
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+    member       = ["user:{first_admin}@{customer_domain}"]
   }
 }
 
@@ -157,10 +156,14 @@ google_folder {
             public_access_prevention    = "enforced"
             uniform_bucket_level_access = true
             lifecycle_rule = [
-              { action { type = "Delete" }
-                condition { num_newer_versions = 100 with_state = "ARCHIVED" } },
-              { action { type = "Delete" }
-                condition { days_since_noncurrent_time = 365 } },
+              {
+                action { type = "Delete" }
+                condition { num_newer_versions = 100 with_state = "ARCHIVED" }
+              },
+              {
+                action { type = "Delete" }
+                condition { days_since_noncurrent_time = 365 }
+              },
             ]
           }
         }
@@ -240,9 +243,9 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str)] = &[
     (
         "presets/cis-extensions/api-key-services-dry-run.satz",
         "cis_api_key_services_dry_run",
-        "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the
-         // same policy with `dry_run_spec`: Google logs every action it would have blocked and
-         // blocks none, so the violation count sizes the control against this organisation
+        "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the\n\
+         // same policy with `dry_run_spec`: Google logs every action it would have blocked and\n\
+         // blocks none, so the violation count sizes the control against this organisation\n\
          // before it bites. Nothing is enforced while it runs.",
     ),
     (
@@ -338,7 +341,6 @@ pub(crate) fn pack_menu() -> String {
         out.push_str(&pack_line(path, gate));
         out.push('\n');
     }
-    out.push('\n');
     out
 }
 
@@ -456,7 +458,7 @@ params {{
         region = args.region,
     );
 
-    fs::write(output_path, content)?;
+    crate::fsx::write_generated_satz(output_path, &content)?;
     Ok(())
 }
 
@@ -484,6 +486,25 @@ pub(crate) mod tests {
             bucket_id: "acme-iac-infra".into(),
             first_admin: first_admin.into(),
         }
+    }
+
+    /// The templates are canonical at the source: what `init` and the interview write
+    /// is what the formatter would write, so the source reads as the file does. A
+    /// failure here is fixed in the template, never in the test.
+    #[test]
+    fn the_skeleton_is_in_the_canonical_layout() {
+        let sk = skeleton("acme");
+        assert_eq!(satz_core::fmt::format(&sk).unwrap(), sk, "template::skeleton is not formatted");
+    }
+
+    #[test]
+    fn the_init_estate_is_in_the_canonical_layout() {
+        let dir = scratch("canon");
+        let path = dir.join("C0example.satz");
+        generate_template(&args("first.admin", "example.com"), &path).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(satz_core::fmt::format(&out).unwrap(), out);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Only a `use` line gates a pack. Prose in a comment may say the word "when" and
@@ -551,7 +572,7 @@ pub(crate) mod tests {
         let path = dir.join("out.satz");
         generate_template(&args("first.admin", "example.com"), &path).unwrap();
         let out = std::fs::read_to_string(&path).unwrap();
-        assert!(out.contains(r#"member       = [ "user:{first_admin}@{customer_domain}" ]"#), "{out}");
+        assert!(out.contains(r#"member       = ["user:{first_admin}@{customer_domain}"]"#), "{out}");
         assert!(!out.contains("first.admin@example.com"), "{out}");
         assert!(out.contains(r#"first_admin              = "first.admin""#), "{out}");
         assert!(out.contains(r#"customer_domain          = "example.com""#), "{out}");

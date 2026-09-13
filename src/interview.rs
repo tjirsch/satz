@@ -218,6 +218,7 @@ pub(crate) fn apply(
 ) -> Result<usize, String> {
     let report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
     let mut src = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let before = src.clone();
     let mut n = 0;
     for (name, value) in answers {
         let row = report.questions.iter().find(|q| q.subject == *name).ok_or_else(|| {
@@ -237,7 +238,7 @@ pub(crate) fn apply(
         let now = if answers.is_empty() {
             report
         } else {
-            crate::fsx::write(estate, &src).map_err(|e| format!("{}: {}", estate.display(), e))?;
+            crate::fsx::write_edited_satz(estate, &before, &src).map_err(|e| e.to_string())?;
             questions_report(estate, runtime).map_err(|e| e.to_string())?
         };
         for q in now.questions.iter().filter(|q| q.state == "unanswered") {
@@ -248,7 +249,7 @@ pub(crate) fn apply(
         }
     }
     if n > 0 {
-        crate::fsx::write(estate, &src).map_err(|e| format!("{}: {}", estate.display(), e))?;
+        crate::fsx::write_edited_satz(estate, &before, &src).map_err(|e| e.to_string())?;
     }
     Ok(n)
 }
@@ -369,7 +370,7 @@ pub(crate) fn run(
                 continue;
             }
         };
-        crate::fsx::write(estate, new_src).map_err(|e| e.to_string())?;
+        crate::fsx::write_edited_satz(estate, &src, &new_src).map_err(|e| e.to_string())?;
         w(out, &format!("  ✓ {} = {}\n", q.subject, literal(&value)))?;
         done.insert(q.subject.clone());
         // Re-read: a derived default may have become usable, a `use … when` may
@@ -645,9 +646,18 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         let r = questions_report(&estate, &cfg).unwrap();
         assert!(r.summary.complete, "{:?}", r.summary);
         let src = std::fs::read_to_string(&estate).unwrap();
-        assert!(src.contains("model_a = true\n") && src.contains("model_b = false\n"), "{}", src);
-        assert!(src.contains("project = \"acme-infra-001\"\n"), "{}", src);
+        assert!(bound(&src, "model_a", "true") && bound(&src, "model_b", "false"), "{}", src);
+        assert!(bound(&src, "project", "\"acme-infra-001\""), "{}", src);
         assert!(crate::questions::require_complete(&estate, &cfg, "apply").is_ok());
+    }
+
+    /// A param bound in the file: its line reads `name = value`, at whatever column
+    /// the formatter aligned the `=` to.
+    fn bound(src: &str, name: &str, value: &str) -> bool {
+        src.lines().any(|l| {
+            let l = l.trim();
+            l.starts_with(name) && l[name.len()..].trim_start().starts_with('=') && l.ends_with(&format!("= {}", value))
+        })
     }
 
     #[test]
@@ -688,7 +698,7 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         assert!(text.contains("✓ model = \"model_b\""), "{}", text);
         assert!(text.contains("NOT complete") && text.contains("still open: project"), "{}", text);
         let src = std::fs::read_to_string(&estate).unwrap();
-        assert!(src.contains("model_b = true\n") && src.contains("model_a = false\n"), "{}", src);
+        assert!(bound(&src, "model_b", "true") && bound(&src, "model_a", "false"), "{}", src);
         assert!(!src.contains("project ="), "skipped means not written: {}", src);
 
         // the second run asks only what is open; accepting the offer finishes it

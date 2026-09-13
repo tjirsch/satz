@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 mod config;
 mod fsx;
 mod schema;
@@ -1596,7 +1597,7 @@ Thumbs.db
                     format!("{}deployment_mode{}= \"{}\" // switched by `satz migrate`", &caps[1], &caps[2], target_mode)
                 })
                 .to_string();
-            fsx::write(&input_path, new_content)?;
+            fsx::write_edited_satz(&input_path, &content, &new_content)?;
             println!("Updated estate: {}", input_path.display());
 
             // Transpile
@@ -1876,7 +1877,7 @@ Thumbs.db
                 if let Some(dir) = input_path.parent() {
                     crate::fsx::create_dir_all(dir)?;
                 }
-                crate::fsx::write(&input_path, crate::template::skeleton(stem))?;
+                crate::fsx::write_generated_satz(&input_path, &crate::template::skeleton(stem))?;
                 eprintln!("wrote {}", input_path.display());
             }
             let stdin = std::io::stdin();
@@ -2500,7 +2501,7 @@ pub(crate) fn iac_roles_write(
     let before = fsx::read_to_string(path)?;
     let written = crate::iac_roles::write_grants(path, &params, &report.service_account, &org, &bill)?;
     let restore = |why: String| -> Box<dyn std::error::Error> {
-        match std::fs::write(path, &before) {
+        match crate::fsx::write_verbatim(path, &before) {
             Ok(()) => format!("{} — {} restored", why, path.display()).into(),
             Err(e) => format!("{} — and restoring {} failed: {}", why, path.display(), e).into(),
         }
@@ -2879,7 +2880,7 @@ fn convert_yaml_to_satz(
         src_path.with_extension("satz")
     };
 
-    fsx::write(&satz_path, satz.as_bytes())?;
+    fsx::write_generated_satz(&satz_path, &satz)?;
     println!("converted {} -> {}", src_path.display(), satz_path.display());
     if satz.contains("// NEEDS ADOPTION") {
         println!("note: the source used `!import-include` — run `satz adopt` on the converted estate to import what already exists.");
@@ -3015,7 +3016,7 @@ fn write_imported(
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
-    fsx::write(&final_output, text)?;
+    fsx::write_generated_satz(&final_output, &text)?;
     println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
     Ok(())
 }
@@ -3288,7 +3289,7 @@ fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
-    fsx::write(&final_output, &imported.satz)?;
+    fsx::write_generated_satz(&final_output, &imported.satz)?;
     println!("Wrote {} — review it, then `satz transpile` and `tofu plan` against the source's state: no changes.", final_output.display());
     println!("{}", satz_hcl::summary(&imported.rows));
     for r in &imported.rows {
@@ -3382,6 +3383,7 @@ async fn import_delta(
     // 4. packs + `use` lines
     let yaml_dir = Path::new(&runtime_config.yaml_dir);
     let mut estate_text = fsx::read_to_string(&estate)?;
+    let estate_before = estate_text.clone();
     let mut written: Vec<String> = Vec::new();
     let header = |what: &str| {
         vec![
@@ -3406,7 +3408,7 @@ async fn import_delta(
         let name = delta::pack_name(parent, None);
         let satz = satz_core::migrate::convert_value(&d.top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-        fsx::write(yaml_dir.join(&name), satz)?;
+        fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
         if let Some(t) = delta::add_use(&estate_text, &name, None)? {
             estate_text = t;
         }
@@ -3420,7 +3422,7 @@ async fn import_delta(
         let name = delta::pack_name(parent, Some(address));
         let satz = satz_core::migrate::convert_value(children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-        fsx::write(yaml_dir.join(&name), satz)?;
+        fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
         let origin = declared.containers.values().find(|(a, _)| a == address).and_then(|(_, o)| o.clone());
         match origin {
             Some((file, line)) if Path::new(&file) == estate.as_path() || Path::new(&file).ends_with(&estate) => {
@@ -3451,7 +3453,7 @@ async fn import_delta(
             println!("  removed {} (nothing left to import under {})", yaml_dir.join(&name).display(), address);
         }
     }
-    fsx::write(&estate, estate_text)?;
+    fsx::write_edited_satz(&estate, &estate_before, &estate_text)?;
 
     // 5. report
     println!();
@@ -4708,7 +4710,7 @@ fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool) -> Result<(), Box<dyn st
             Ok(out) if out == src => {}
             Ok(out) => {
                 if !check {
-                    std::fs::write(f, out)?;
+                    fsx::write_verbatim(f, out)?;
                 }
                 changed.push(f.display().to_string());
             }

@@ -519,7 +519,7 @@ pub(crate) fn write_grants(
         };
         written.extend(roles.iter().map(|r| format!("{} in {}", r, block)));
     }
-    std::fs::write(estate, out).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    crate::fsx::write_edited_satz(estate, &text, &out).map_err(|e| e.to_string())?;
     Ok(written)
 }
 

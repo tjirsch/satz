@@ -854,7 +854,7 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
         if text.ends_with('\n') {
             out.push('\n');
         }
-        std::fs::write(&file, out).map_err(|e| format!("{}: {}", file, e))?;
+        crate::fsx::write_edited_satz(&file, &text, &out).map_err(|e| format!("{}: {}", file, e))?;
     }
     Ok((written, hints))
 }
@@ -1430,7 +1430,7 @@ import {
         ];
         let (written, hints) = write_import_ids(&rs, Some(&presets)).unwrap();
         let text = std::fs::read_to_string(&tmp).unwrap();
-        assert_eq!(text, "google_folder {\n  workloads {\n    \"import-id\" = \"folders/111\"\n    display_name = \"Workloads\"\n  }\n  one { display_name = \"x\" }\n}\n");
+        assert_eq!(text, "google_folder {\n  workloads {\n    \"import-id\"  = \"folders/111\"\n    display_name = \"Workloads\"\n  }\n  one { display_name = \"x\" }\n}\n", "written after the declaring line, and the formatted file stays formatted");
         assert_eq!(written.len(), 1);
         assert_eq!(hints.len(), 3, "{:?}", hints);
         assert!(hints.iter().any(|h| h.contains("google_folder.one") && h.contains("by hand")));

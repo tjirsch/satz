@@ -3512,7 +3512,7 @@ pub(crate) fn write_remediation(
     let mut written = Vec::new();
     let mut put = |name: &str, bytes: &[u8]| -> Result<(), BoxErr> {
         let p = out.join(name);
-        std::fs::write(&p, bytes).map_err(|e| format!("{}: {}", p.display(), e))?;
+        crate::fsx::write(&p, bytes).map_err(|e| e.to_string())?;
         written.push(p);
         Ok(())
     };
