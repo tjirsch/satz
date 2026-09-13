@@ -167,6 +167,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("questions", Parity::Tools(&["satz_questions"])),
     ("interview", Parity::Tools(&["satz_interview"])),
     ("triage", Parity::Tools(&["satz_triage"])),
+    ("prowler", Parity::Tools(&["satz_prowler"])),
     ("remediation-plan", Parity::Tools(&["satz_remediation_items", "satz_remediation_annotate"])),
     ("scan", Parity::Tools(&["satz_scan_checkov"])),
     ("check-presets", Parity::Tools(&["satz_check_presets"])),
@@ -1098,6 +1099,34 @@ impl SatzMcp {
             Ok(t) => Ok(Ok(Json(t.rows))),
             Err(e) => Ok(Err(refused(format!("triage: {}", e)))),
         }
+    }
+
+    #[tool(
+        name = "satz_prowler",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::prowler::ProwlerPlan>(),
+        description = "The Prowler invocation THIS estate needs: which frameworks, which projects, \
+                       which output path — read from what the estate declares. It PRINTS the command; \
+                       satz never runs Prowler, and neither does this tool. Run the command yourself, \
+                       then feed its export to satz_report_compliance.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn prowler(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<crate::prowler::ProwlerPlan>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let (manifest, claims, org) = match self.inputs(&open, &estate) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let today = crate::prowler::today_utc();
+        Ok(Ok(Json(crate::prowler::plan(&manifest, &claims, org.as_deref(), &today))))
     }
 
     #[tool(

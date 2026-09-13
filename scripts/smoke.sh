@@ -756,6 +756,27 @@ grep -q 'dry_run_spec' "$root/presets/cis-extensions/cloud-sql-dry-run.satz" \
 # names a control its catalog carries, and every pack version has a changelog
 # row. The shell loop that checked the last one lived here; the tool knows both
 # halves, so its message can name the line and `cargo test` runs it too.
+step "prowler: the invocation this estate needs, printed and never run"
+"$satz" --config . prowler smoke.satz > tmp/prowler-plan.txt 2>&1 \
+  || fail "satz prowler failed on the smoke estate"
+grep -q 'prowler gcp --organization-id' tmp/prowler-plan.txt || fail "no invocation printed"
+grep -q -- '--compliance cis_4.0_gcp cis_5.0_gcp' tmp/prowler-plan.txt \
+  || fail "the frameworks the estate CLAIMS did not reach --compliance"
+grep -q -- '--output-formats json-ocsf' tmp/prowler-plan.txt \
+  || fail "the only export shape report-compliance reads is not requested"
+grep -q 'evidence/prowler/' tmp/prowler-plan.txt || fail "the standard output location is not used"
+# Read-only means read-only: nothing is created, least of all the evidence directory.
+[ ! -e evidence/prowler ] || fail "satz prowler created something — it prints, it does not run"
+"$satz" --config . prowler smoke.satz --format json > tmp/prowler-plan.json 2>/dev/null || true
+python3 - <<'PYEOF' || fail "satz prowler --format json did not emit parseable JSON"
+import json, pathlib
+d = json.loads(pathlib.Path("tmp/prowler-plan.json").read_text())
+assert d["command"].startswith("prowler gcp "), d["command"]
+assert d["output_path"].endswith(".ocsf.json"), d
+assert d["compliance"] == ["cis_4.0_gcp", "cis_5.0_gcp"], d
+assert d["projects"], "no project reached the plan"
+PYEOF
+
 step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
 
@@ -1242,6 +1263,7 @@ tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 # EXACTLY these: a tool that ships without a step in this matrix is exercised by
 # nothing, and `cargo test` only holds the list against MCP_PARITY and the docs
 assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "satz_interview", "satz_triage",
+                      "satz_prowler",
                       "satz_transpile_check", "satz_transpile", "satz_report_compliance",
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
@@ -1261,7 +1283,7 @@ assert opened["runs_as"] is None, opened
 # Every data tool publishes an OUTPUT SCHEMA and is ANNOTATED. The annotations are
 # the client's half of the safety model: the server's --allow ceiling says what is
 # permitted, readOnlyHint says what an agent may run without stopping to ask.
-for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_check_presets",
+for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_prowler", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
              "satz_adopt", "satz_get_presets", "satz_iac_roles", "satz_merge_presets"):

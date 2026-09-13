@@ -27,6 +27,7 @@ mod presets;
 mod doc_packs;
 mod github;
 mod policy_tree;
+mod prowler;
 
 use clap::{Parser, Subcommand, CommandFactory};
 // the MCP output schema of `IacRolesReport`; schemars reaches the crate through rmcp
@@ -247,7 +248,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
             "adopt-org-policies",
         ],
     ),
-    ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "triage", "remediation-plan"]),
+    ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "prowler", "triage", "remediation-plan"]),
     ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
@@ -778,6 +779,19 @@ enum Commands {
         #[arg(long, value_name = "FILE")]
         xlsx: Option<PathBuf>,
     },
+    /// The Prowler invocation this estate needs — printed, never run
+    ///
+    /// satz does not run Prowler: the scan spends API quota in every project of the
+    /// estate, and Prowler reads as whoever is logged in rather than as the estate's
+    /// service account. What this answers is which frameworks, which projects, which
+    /// formats and which output path — read from what the estate actually declares.
+    Prowler {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Output format: text, or json for an agent
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
+    },
     /// Answer what the estate's packs ask, one question at a time, writing each answer
     /// into the estate's params. The third way to start an estate: `init` takes every
     /// answer as a flag, an agent asks over MCP, this asks a person at a terminal
@@ -971,7 +985,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::IacRoles { input: Some(_), .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
@@ -1614,6 +1628,20 @@ Thumbs.db
             print!("{}", crate::presets::render_merge(&report));
             if report.attention {
                 std::process::exit(1);
+            }
+            Ok(())
+        }
+        Commands::Prowler { input, format } => {
+            let format = format.require_one_of("prowler", &[OutFormat::Text, OutFormat::Json])?;
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let (manifest, included_claims, org_id) =
+                compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            let today = crate::prowler::today_utc();
+            let plan =
+                crate::prowler::plan(&manifest, &included_claims, org_id.as_deref(), &today);
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&plan)?),
+                _ => print!("{}", crate::prowler::render(&plan)),
             }
             Ok(())
         }
@@ -4867,6 +4895,7 @@ mod command_groups {
         ("check-presets", Identity::NoGoogleApi),
         ("doc-packs", Identity::NoGoogleApi),
         ("require", Identity::NoGoogleApi),
+        ("prowler", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),

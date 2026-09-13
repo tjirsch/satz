@@ -404,6 +404,55 @@ fails only on drift. The pack writes nothing back; the result is the exit code a
 build log. Committing evidence to the watched repository needs write access the runner
 does not have by default.
 
+## Scanning with Prowler
+
+Prowler is a second opinion: it reads the live organisation and reports what it finds,
+where satz reports what the estate declares and verifies its own witnesses. Putting the
+two together is what makes a FAIL on a verified witness a CONTESTED row rather than a
+number in a different tool.
+
+**satz does not run Prowler.** The scan spends API quota in every project of the estate,
+and Prowler reads as whoever is logged in rather than as the estate's IaC service
+account, so starting it is the operator's decision. What satz answers is how to point it
+at this estate:
+
+```bash
+satz prowler C0example.satz
+```
+
+It prints a ready-to-paste command line and the command to run afterwards. Every argument
+comes from what the estate declares — the organisation id, the project ids, and the
+frameworks its claims name. A framework satz ships a catalog for but Prowler has no
+equivalent of is NAMED as unmapped rather than mapped to something that looks close: a
+wrong `--compliance` argument silently scans the wrong control set.
+
+`--format json` is the same answer for an agent, and `satz_prowler` serves it over MCP.
+
+**Where a scan's output goes:**
+
+```
+evidence/prowler/<UTC date>/<scope>-<UTC date>.ocsf.json
+```
+
+`evidence/` sits beside the estate and is git-ignored — a scan's output is full of a
+customer's project ids and findings. The date is UTC so two people in two time zones
+scanning on the same day write into one directory rather than two that look like two
+scans, and `<scope>` is `org` or `projects` after how the scan was narrowed. The path is
+deterministic because `--output-directory` and `--output-filename` are both passed:
+without them Prowler names the file after the moment it ran, and nothing downstream can
+predict it.
+
+Then fold the export back in — any of the three read the same file:
+
+```bash
+satz report-compliance cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json
+satz triage cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json
+satz remediation-plan cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json
+```
+
+satz reads the OCSF export of Prowler 5 only, and checks the version the export carries:
+an older one is refused by its version rather than read as empty.
+
 ## Keeping presets current
 
 How to tell whether a newer preset exists, what to do about it, and which command to
