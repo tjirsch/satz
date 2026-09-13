@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's conventions and its per-family prose are [`presets/README.md`](../README.md); its version history is [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under **History** on each page here.
 
-**46 packs · 218 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**46 packs · 224 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Root — `presets/*.satz`
 
@@ -49,7 +49,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`exemptions.exemption_tag`](exemption-tag.md) | 1.0 | The vocabulary for a tag-conditional exemption: one organisation tag key with two values, and nothing bound to either. | 3 | — |
+| [`exemptions.exemption_tag`](exemption-tag.md) | 2.0 | Exemption classes: one organisation tag key, one value per KIND of exemption, and nothing bound to any of them. | 9 | — |
 
 ## `integrations/`
 

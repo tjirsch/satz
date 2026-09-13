@@ -344,6 +344,14 @@ hand, and the map's header says so.
 
 ## security-group-models/
 
+**This is where STANDING authority is modelled** — who administers projects, networks,
+guardrails, billing, org-wide and continuously. Its counterpart is
+[exemptions/](#exemptions), which says who may make a narrow, named EXCEPTION to a
+control this authority set, without holding this authority. Keeping the two apart is
+deliberate: `gcp-security-admins` holds `roles/orgpolicy.policyAdmin` and can rewrite any
+policy, and that is a much bigger thing to hand someone than "may let one service account
+hold a key".
+
 The security group models: admin groups plus their org-level role grants.
 Two spellings of S1 exist — an estate takes ONE of them, never both:
 
@@ -1016,47 +1024,104 @@ anything else either.
 
 ## exemptions/
 
-**One pack, and it exempts nothing.** `exemption-tag.satz` creates the organisation tag an
-org policy can condition on: the key `<shortname>-exemption` with the values `enforced` and
-`not_enforced`, bound to nothing.
+**Two features live here, and they are two halves of one question: who may do what.**
+The [security group models](#security-group-models) say who holds STANDING authority —
+who administers projects, networks, guardrails, billing. This pack says who may make a
+narrow, named EXCEPTION to a control that authority set, without holding that authority.
 
-An org policy is all-or-nothing per node. Letting ONE service account create ONE key means
-lowering the policy for a whole folder and raising it again — a window during which nothing
-under that node is enforced, and which nobody remembers to close. A Resource Manager tag is
-IAM-governed and a policy rule can condition on it, so the policy stays enforced everywhere
-and named resources are let out one at a time. Google ships
-`iam.disableServiceAccountKeyCreation` this way on new organisations.
+**One pack, and it exempts nothing.** `exemption-tag.satz` creates the organisation tag
+an org policy can condition on: the key `<shortname>-exemption` and one value per
+exemption CLASS, bound to nothing.
 
-The pack ships the ABILITY, not the exemptions: a library that ships convenient exemptions
-lowers the baseline by default. The BINDING that exempts a resource, and the CONDITION on
-the constraint that honours the tag, are the estate's to write — the pack's header carries
-the exact shape of both, and `tests/iac/exemption-tag/main.satz` compiles them.
+### Why a tag rather than lowering the policy
 
-An exemption is visible in three places: the estate that declares the binding, `satz
-require` — which prints it under its control rather than letting a conditional policy read
-as plain "enforced" —
+An org policy is all-or-nothing per node. Letting ONE service account create ONE key
+means lowering the policy for its whole project or folder and raising it again — a
+window during which nothing under that node is enforced, and which nobody remembers to
+close. A Resource Manager tag is IAM-governed and a policy rule can condition on it, so
+the policy stays enforced everywhere and named resources are let out one at a time.
+Google ships `iam.disableServiceAccountKeyCreation` this way on new organisations.
+
+### The classes, and why there are several
+
+**IAM is set on a tag VALUE.** One blanket `not_enforced` would mean that anyone allowed
+to exempt anything may exempt everything — the team that needs a public bucket could
+switch off customer-managed encryption just as easily. So each value is a class covering
+one kind of risk, and `roles/resourcemanager.tagUser` on one value delegates exactly
+that kind:
+
+| class | what it lets out | constraints it is written for |
+|---|---|---|
+| `service-account-keys` | a principal that must hold a static credential | `iam.managed.disableServiceAccountKeyCreation`, `…KeyUpload`, `iam.managed.disableServiceAccountApiKeyCreation` |
+| `public-endpoint` | a workload reachable from the internet on its own address | `compute.managed.vmExternalIpAccess`, `sql.managed.restrictPublicIp`, `sql.managed.restrictAuthorizedNetworks` |
+| `public-storage` | an object store published on purpose, and the access model for it | `storage.publicAccessPrevention`, `storage.uniformBucketLevelAccess` |
+| `vm-image` | an image or machine family that cannot boot shielded or confidential | `compute.requireShieldedVm`, `compute.managed.restrictNonConfidentialComputing` |
+| `vm-access` | an instance reached by metadata SSH keys or the serial console | `compute.managed.requireOsLogin`, `compute.managed.blockProjectSshKeys`, `compute.managed.disableSerialPortAccess` |
+| `data-residency` | a resource created outside the permitted locations | `gcp.resourceLocations` |
+| `encryption` | a resource that may use Google-managed keys | `gcp.restrictNonCmekServices`, `gcp.restrictCmekCryptoKeyProjects` |
+| `network-appliance` | an instance that forwards traffic for others | `compute.managed.vmCanIpForward`, `compute.managed.restrictProtocolForwardingCreationForTypes` |
+
+The classes are deliberately narrow, and `vm-image` is separate from `vm-access` for that
+reason: what a machine can run and who can get into it are different risks and should be
+different grants. A wide class is a grant that hands over more than the person asking for
+it described.
+
+**What has no class, on purpose.** Audit logging (`gcp.detailedAuditLoggingMode`,
+`iam.disableAuditLoggingExemption`), VPC flow logs, DNS query logging and
+domain-restricted sharing (`iam.managed.allowedPolicyMembers`). Exempting the record of
+what happened, or letting an outside identity in, is not a delegation — it is a decision
+for whoever owns the baseline, made by editing the policy where the change is visible.
+The service-agent caveat for domain-restricted sharing is already a baseline parameter
+(`allowed_policy_member_subjects`), which is the route there.
+
+### Who may exempt, and where: two grants, both required
+
+| grant | on what | decides |
+|---|---|---|
+| `roles/resourcemanager.tagUser` | the tag VALUE | WHICH class this principal may grant at all |
+| the `createTagBinding` permission | the TARGET (organisation, folder or project) | WHERE they may apply it |
+
+That pair is the project / folder / organisation restriction — no separate mechanism. A
+team holding `tagUser` on `public-endpoint` and `createTagBinding` on their own folder can
+exempt public endpoints in that folder, and nothing else, anywhere else.
+
+The first half is declarable in the estate, so *who may exempt what* is in the repository
+rather than in somebody's console history:
 
 ```
-  ✓ 1.4   Only GCP-managed service account keys  — google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation
-      ↳ exempted: google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation: enforce OFF where exempted service accounts
+google_tags_tag_value_iam_member {
+  "platform_may_exempt_keys" {
+    tag_value = "${{google_tags_tag_value.exempt_service_account_keys.name}}"
+    role      = "roles/resourcemanager.tagUser"
+    member    = "group:gcp-platform-admins@{customer_domain}"
+  }
+}
 ```
 
-— and Cloud Asset Inventory, which answers the org-wide question:
+The second half stays the estate's too, but is not in this pack: which folder a team owns
+is the customer's hierarchy, not the library's.
 
-```bash
-gcloud asset search-all-resources --scope=organizations/ORG \
-  --query='tagValues:<shortname>-exemption/not_enforced'
-```
+**No new security group is needed for this, and adding one would defeat it.**
+`gcp-security-admins` already holds `roles/orgpolicy.policyAdmin` org-wide, so that group
+can lift any policy today by editing it; giving it the tag as well buys only an audit
+trail. The point of the tag is that "may grant a narrow exemption" need not imply "may
+rewrite any policy", and an org-wide exemption-approver group would re-centralise exactly
+what the tag decentralises. Grant the node half to whoever owns the project or folder.
 
-**Before granting any exemption, ask whether the consumer needs one.** A workload inside
-Google Cloud, a Cloud Run service, and external CI on GitHub or GitLab can all use Workload
-Identity Federation or impersonation and leave the control intact. The tag route is the
-exception with a named owner, never the default.
+### What a binding reaches
 
-**One CIS constraint is exemptable out of the box**, and no forking is involved.
-`iam.managed.disableServiceAccountKeyCreation` takes its rules from the baseline param
-`cis_sa_key_creation_rules`, which defaults to the plain enforcing rule. To let one
-service account out, rebind it:
+**Tag bindings are inherited.** Bound to a service account, an exemption reaches that
+account. Bound to a PROJECT it reaches everything in that project — including every
+resource created in it afterwards, for as long as the binding exists. Bound to a folder,
+everything below. A project-level binding is the widest and quietest exemption available;
+prefer binding the individual resource.
+
+### Using one
+
+The constraint has to condition on the class. **One CIS constraint does already, with no
+forking involved:** `iam.managed.disableServiceAccountKeyCreation` takes its rules from
+the baseline param `cis_sa_key_creation_rules`, which defaults to the plain enforcing
+rule. To let one service account out, rebind it:
 
 ```
 cis_sa_key_creation_rules = [
@@ -1064,21 +1129,50 @@ cis_sa_key_creation_rules = [
     enforce = "FALSE"
     condition = {
       title      = "exempted service accounts"
-      expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
+      expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exempt_service_account_keys.name}}')"
     }
   },
   { enforce = "TRUE" },
 ]
 ```
 
-and bind the tag value to that one account. `tests/iac/exemption-tag/main.satz` is the
-whole thing end to end.
+then bind that value to the one account. `tests/iac/exemption-tag/main.satz` is the whole
+thing end to end: the rebound param, the class grant, and the binding.
 
 It is the only constraint with a rules param. The rest are written in place, because a
 param per constraint would put forty list-of-object blocks into every estate's
 `terraform.tfvars` for a case nobody has; another constraint earns one the way this did,
-from a real organisation that needed it. Until then, an estate can `suppress` a pack's
+from a real organisation that needed it. Until then an estate can `suppress` a pack's
 policy and declare its own — a fork, and the thing the param exists to avoid.
+
+### Where an exemption is visible
+
+`satz require` prints it under its control rather than letting a conditional policy read
+as plain "enforced" — the control is met *and* something is let out:
+
+```
+  ✓ 1.4   Only GCP-managed service account keys  — google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation
+      ↳ exempted: google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation: enforce OFF where exempted service accounts
+```
+
+The estate carries the binding with its owner and reason, which is what makes a permanent
+exemption reviewable. And Cloud Asset Inventory answers the org-wide question, per class:
+
+```bash
+gcloud asset search-all-resources --scope=organizations/ORG \
+  --query='tagValues:<shortname>-exemption/service-account-keys'
+```
+
+A binding somebody adds out of band is not visible to satz yet. Cloud Asset Inventory
+serves `cloudresourcemanager.googleapis.com/TagBinding`, so reporting an undeclared
+binding as drift is the piece that would make temporary lifts auditable.
+
+### Before granting any exemption
+
+Does the consumer need one? A workload inside Google Cloud, a Cloud Run service, and
+external CI on GitHub or GitLab can all use Workload Identity Federation or impersonation
+and leave the control intact. The tag route is the exception with a named owner, never the
+default.
 
 ## cis-extensions/
 
@@ -1334,6 +1428,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `exemptions.exemption_tag` | 2.0 | 2026-09-13 | one value per exemption CLASS instead of a single `not_enforced`: `service-account-keys`, `public-endpoint`, `public-storage`, `vm-image`, `vm-access`, `data-residency`, `encryption`, `network-appliance`. IAM is set on a tag VALUE, so one blanket value meant anyone allowed to exempt anything could exempt everything — the team needing a public bucket could switch off customer-managed encryption just as easily. The classes are deliberately narrow: a wide class is a grant that hands over more than the person asking described. Audit logging, flow logs, DNS logging and domain-restricted sharing carry NO class on purpose — exempting the record of what happened, or letting an outside identity in, is a decision for whoever owns the baseline, not a delegation. The `enforced` value is GONE: its only job was leaving a trace instead of deleting a binding, which the estate's own history already does, and it had no meaning once values became classes |
 | `CIS_GCP_Foundation_4_0` | 2.13 | 2026-09-13 | claims CIS 5.0 §2.14, Cloud Asset Inventory enabled — the last technical control of CIS 5.0 with no claim anywhere in the library. The estate already satisfied it: the scaffold enables `cloudasset.googleapis.com` in every infrastructure project, so the witness is the scaffold's own `google_project_service.infra_cloudasset_googleapis_com` rather than a second `google_project_service` declared here — two resources enabling one API on one project is a duplicate, not a merge. The address depends on the `infra` project label, which is already a contract (`bootstrap` imports by it) and is now held by the init-template test, so renaming it breaks a test rather than a customer's report |
 | `CIS_GCP_Foundation_4_0` | 2.12 | 2026-09-13 | `iam.managed.disableServiceAccountKeyCreation` takes its rules from `cis_sa_key_creation_rules` instead of writing them in place, so an estate can let ONE service account out with a tag condition without forking the pack. The default is the plain enforcing rule and the emitted policy is unchanged for an estate that says nothing. The one constraint here with a rules param, because it is the one organisations actually have to exempt — Google ships their own built-in exemption tag for it — and because a param per constraint would put forty list-of-object blocks into every estate's `terraform.tfvars` for a case nobody has |
 | `exemptions.exemption_tag` | 1.0 | 2026-09-13 | first version: the VOCABULARY for a tag-conditional exemption — one organisation tag key `<shortname>-exemption` with the values `enforced` and `not_enforced`, and nothing bound to either. An organisation policy is all-or-nothing per node, so letting one service account out of a control means lowering the policy for a whole folder and raising it again — a window during which nothing is enforced. A Resource Manager tag is IAM-governed and a policy rule can condition on it, which is how Google ships `iam.disableServiceAccountKeyCreation` themselves. The pack ships the ABILITY and no exemptions: a library that ships convenient exemptions lowers the baseline by default. The binding that exempts a resource and the condition on the constraint that honours it are the estate's, and the pack header shows both |

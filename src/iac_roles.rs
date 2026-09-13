@@ -190,6 +190,7 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
     ("google_tags_tag_binding", &[org("resourcemanager.tagValueBindings.create", &["roles/resourcemanager.tagUser"])]),
     ("google_tags_tag_key", &[org("resourcemanager.tagKeys.create", &["roles/resourcemanager.tagAdmin"])]),
     ("google_tags_tag_value", &[org("resourcemanager.tagValues.create", &["roles/resourcemanager.tagAdmin"])]),
+    ("google_tags_tag_value_iam_member", &[org("resourcemanager.tagValues.setIamPolicy", &["roles/resourcemanager.tagAdmin"])]),
 ];
 
 /// The table's entries for one resource type.
