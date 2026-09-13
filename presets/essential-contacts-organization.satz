@@ -37,8 +37,8 @@ question essential_contacts_email {
 }
 
 all {
-  parent = "organizations/{customer_organization_id}"
-  email = essential_contacts_email
+  parent       = "organizations/{customer_organization_id}"
+  email        = essential_contacts_email
   language_tag = "en-GB"
   notification_category_subscriptions = [
     "ALL",

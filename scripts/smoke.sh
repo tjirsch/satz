@@ -37,6 +37,17 @@ mkdir -p tmp
 step() { printf '\n==> %s\n' "$*"; }
 fail() { printf '\nSMOKE FAILED: %s\n' "$*" >&2; exit 1; }
 
+# First, on the clean tree: every Satz file in the repository is in its canonical
+# layout. Later steps write .satz files of their own under tests/smoke.
+step "fmt --check: every Satz file in the repository is formatted; --stdin round-trips"
+"$satz" fmt --check "$root/presets" "$root/tests" > tmp/fmt-check.txt 2>&1 \
+  || fail "satz fmt --check: run \`satz fmt presets tests\` and commit:\n$(cat tmp/fmt-check.txt)"
+grep -q 'fmt --check: OK' tmp/fmt-check.txt || fail "fmt --check did not report OK"
+"$satz" fmt --stdin < yaml/showcase.satz > tmp/fmt-stdin.satz || fail "fmt --stdin failed"
+cmp -s yaml/showcase.satz tmp/fmt-stdin.satz || fail "fmt --stdin changed an already formatted file"
+printf 'a = "open' | "$satz" fmt --stdin > /dev/null 2> tmp/fmt-err.txt && fail "fmt --stdin accepted an unterminated string"
+grep -q 'unterminated string' tmp/fmt-err.txt || fail "fmt did not name the parse error:\n$(cat tmp/fmt-err.txt)"
+
 step "transpile"
 "$satz" --config . transpile smoke.satz
 for f in main.tf providers.tf variables.tf terraform.tfvars; do

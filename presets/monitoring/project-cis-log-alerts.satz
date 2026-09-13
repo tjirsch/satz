@@ -83,10 +83,10 @@
 pack project_cis_log_alerts version "1.1"
 
 params {
-  cis_alert_project = "{infra_project_name}"
-  cis_alert_email_local = "gcp-security"
+  cis_alert_project      = "{infra_project_name}"
+  cis_alert_email_local  = "gcp-security"
   cis_alert_channel_name = "CIS Security Alerts"
-  cis_alert_window = "300s"
+  cis_alert_window       = "300s"
 }
 
 // ---- what a customer decides, asked -------------------------------------------
@@ -107,9 +107,9 @@ question cis_alert_email_local {
 
 google_monitoring_notification_channel {
   cis_security_alerts {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = cis_alert_channel_name
-    type = "email"
+    type         = "email"
     labels {
       email_address = "{cis_alert_email_local}@{customer_domain}"
     }
@@ -118,100 +118,100 @@ google_monitoring_notification_channel {
 
 google_logging_metric {
   cis_2_5_project_ownership {
-    project = cis_alert_project
-    name = "cis-2-5-project-ownership-changes"
+    project     = cis_alert_project
+    name        = "cis-2-5-project-ownership-changes"
     description = "CIS 2.5 — project ownership assignments changed"
-    filter = "(protoPayload.serviceName=\"cloudresourcemanager.googleapis.com\") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"REMOVE\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"ADD\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\")"
+    filter      = "(protoPayload.serviceName=\"cloudresourcemanager.googleapis.com\") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"REMOVE\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"ADD\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\")"
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
   cis_2_6_audit_config {
-    project = cis_alert_project
-    name = "cis-2-6-audit-config-changes"
+    project     = cis_alert_project
+    name        = "cis-2-6-audit-config-changes"
     description = "CIS 2.6 — audit configuration changed"
-    filter = "protoPayload.methodName=\"SetIamPolicy\" AND protoPayload.serviceData.policyDelta.auditConfigDeltas:*"
+    filter      = "protoPayload.methodName=\"SetIamPolicy\" AND protoPayload.serviceData.policyDelta.auditConfigDeltas:*"
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
   cis_2_7_custom_role {
-    project = cis_alert_project
-    name = "cis-2-7-custom-role-changes"
+    project     = cis_alert_project
+    name        = "cis-2-7-custom-role-changes"
     description = "CIS 2.7 — custom role created, updated or deleted"
-    filter = "resource.type=\"iam_role\" AND (protoPayload.methodName=\"google.iam.admin.v1.CreateRole\" OR protoPayload.methodName=\"google.iam.admin.v1.DeleteRole\" OR protoPayload.methodName=\"google.iam.admin.v1.UpdateRole\")"
+    filter      = "resource.type=\"iam_role\" AND (protoPayload.methodName=\"google.iam.admin.v1.CreateRole\" OR protoPayload.methodName=\"google.iam.admin.v1.DeleteRole\" OR protoPayload.methodName=\"google.iam.admin.v1.UpdateRole\")"
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
   cis_2_8_firewall_rule {
-    project = cis_alert_project
-    name = "cis-2-8-firewall-rule-changes"
+    project     = cis_alert_project
+    name        = "cis-2-8-firewall-rule-changes"
     description = "CIS 2.8 — VPC firewall rule changed"
-    filter = "resource.type=\"gce_firewall_rule\" AND (protoPayload.methodName:\"compute.firewalls.patch\" OR protoPayload.methodName:\"compute.firewalls.insert\" OR protoPayload.methodName:\"compute.firewalls.delete\")"
+    filter      = "resource.type=\"gce_firewall_rule\" AND (protoPayload.methodName:\"compute.firewalls.patch\" OR protoPayload.methodName:\"compute.firewalls.insert\" OR protoPayload.methodName:\"compute.firewalls.delete\")"
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
   cis_2_9_network_route {
-    project = cis_alert_project
-    name = "cis-2-9-network-route-changes"
+    project     = cis_alert_project
+    name        = "cis-2-9-network-route-changes"
     description = "CIS 2.9 — VPC network route changed"
-    filter = "resource.type=\"gce_route\" AND (protoPayload.methodName:\"compute.routes.delete\" OR protoPayload.methodName:\"compute.routes.insert\")"
+    filter      = "resource.type=\"gce_route\" AND (protoPayload.methodName:\"compute.routes.delete\" OR protoPayload.methodName:\"compute.routes.insert\")"
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
   cis_2_10_network {
-    project = cis_alert_project
-    name = "cis-2-10-network-changes"
+    project     = cis_alert_project
+    name        = "cis-2-10-network-changes"
     description = "CIS 2.10 — VPC network changed"
-    filter = "resource.type=\"gce_network\" AND (protoPayload.methodName:\"compute.networks.insert\" OR protoPayload.methodName:\"compute.networks.patch\" OR protoPayload.methodName:\"compute.networks.delete\" OR protoPayload.methodName:\"compute.networks.removePeering\" OR protoPayload.methodName:\"compute.networks.addPeering\")"
+    filter      = "resource.type=\"gce_network\" AND (protoPayload.methodName:\"compute.networks.insert\" OR protoPayload.methodName:\"compute.networks.patch\" OR protoPayload.methodName:\"compute.networks.delete\" OR protoPayload.methodName:\"compute.networks.removePeering\" OR protoPayload.methodName:\"compute.networks.addPeering\")"
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
   cis_2_11_bucket_permission {
-    project = cis_alert_project
-    name = "cis-2-11-bucket-permission-changes"
+    project     = cis_alert_project
+    name        = "cis-2-11-bucket-permission-changes"
     description = "CIS 2.11 — Cloud Storage IAM permissions changed"
-    filter = "resource.type=\"gcs_bucket\" AND protoPayload.methodName=\"storage.setIamPermissions\""
+    filter      = "resource.type=\"gcs_bucket\" AND protoPayload.methodName=\"storage.setIamPermissions\""
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
   cis_2_12_sql_instance {
-    project = cis_alert_project
-    name = "cis-2-12-sql-instance-changes"
+    project     = cis_alert_project
+    name        = "cis-2-12-sql-instance-changes"
     description = "CIS 2.12 — Cloud SQL instance configuration changed"
-    filter = "protoPayload.methodName=\"cloudsql.instances.update\""
+    filter      = "protoPayload.methodName=\"cloudsql.instances.update\""
     metric_descriptor {
       metric_kind = "DELTA"
-      value_type = "INT64"
-      unit = "1"
+      value_type  = "INT64"
+      unit        = "1"
     }
   }
 }
 
 google_monitoring_alert_policy {
   cis_2_5_project_ownership {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.5 — Project ownership changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -219,14 +219,14 @@ google_monitoring_alert_policy {
       {
         display_name = "Project ownership assignment changed"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_5_project_ownership.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_5_project_ownership.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -235,9 +235,9 @@ google_monitoring_alert_policy {
     ]
   }
   cis_2_6_audit_config {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.6 — Audit configuration changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -245,14 +245,14 @@ google_monitoring_alert_policy {
       {
         display_name = "Audit configuration changed"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_6_audit_config.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_6_audit_config.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -261,9 +261,9 @@ google_monitoring_alert_policy {
     ]
   }
   cis_2_7_custom_role {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.7 — Custom role changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -271,14 +271,14 @@ google_monitoring_alert_policy {
       {
         display_name = "Custom role created, updated or deleted"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_7_custom_role.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_7_custom_role.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -287,9 +287,9 @@ google_monitoring_alert_policy {
     ]
   }
   cis_2_8_firewall_rule {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.8 — VPC firewall rule changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -297,14 +297,14 @@ google_monitoring_alert_policy {
       {
         display_name = "Firewall rule changed"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_8_firewall_rule.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_8_firewall_rule.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -313,9 +313,9 @@ google_monitoring_alert_policy {
     ]
   }
   cis_2_9_network_route {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.9 — VPC network route changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -323,14 +323,14 @@ google_monitoring_alert_policy {
       {
         display_name = "Network route changed"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_9_network_route.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_9_network_route.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -339,9 +339,9 @@ google_monitoring_alert_policy {
     ]
   }
   cis_2_10_network {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.10 — VPC network changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -349,14 +349,14 @@ google_monitoring_alert_policy {
       {
         display_name = "VPC network changed"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_10_network.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_10_network.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -365,9 +365,9 @@ google_monitoring_alert_policy {
     ]
   }
   cis_2_11_bucket_permission {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.11 — Cloud Storage IAM permission changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -375,14 +375,14 @@ google_monitoring_alert_policy {
       {
         display_name = "Bucket IAM permissions changed"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_11_bucket_permission.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_11_bucket_permission.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -391,9 +391,9 @@ google_monitoring_alert_policy {
     ]
   }
   cis_2_12_sql_instance {
-    project = cis_alert_project
+    project      = cis_alert_project
     display_name = "CIS 2.12 — Cloud SQL instance configuration changes"
-    combiner = "OR"
+    combiner     = "OR"
     notification_channels = [
       "${{google_monitoring_notification_channel.cis_security_alerts.id}}",
     ]
@@ -401,14 +401,14 @@ google_monitoring_alert_policy {
       {
         display_name = "Cloud SQL instance configuration changed"
         condition_threshold {
-          filter = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_12_sql_instance.name}}\""
-          comparison = "COMPARISON_GT"
+          filter          = "metric.type=\"logging.googleapis.com/user/${{google_logging_metric.cis_2_12_sql_instance.name}}\""
+          comparison      = "COMPARISON_GT"
           threshold_value = 0
-          duration = "0s"
+          duration        = "0s"
           aggregations = [
             {
-              alignment_period = cis_alert_window
-              per_series_aligner = "ALIGN_COUNT"
+              alignment_period     = cis_alert_window
+              per_series_aligner   = "ALIGN_COUNT"
               cross_series_reducer = "REDUCE_SUM"
             },
           ]
@@ -417,4 +417,3 @@ google_monitoring_alert_policy {
     ]
   }
 }
-

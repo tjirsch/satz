@@ -20,46 +20,46 @@ pack cis_extensions.cloud_sql_iam_and_deletion_protection_dry_run version "1.0"
 
 google_org_policy_custom_constraint {
   cis_sql_iam_authentication {
-    name = "custom.cisCloudSqlIamAuthentication"
-    parent = "organizations/{customer_organization_id}"
-    display_name = "Cloud SQL: IAM database authentication on"
-    description = "CIS 5.0 6.6. PostgreSQL and MySQL instances carry the IAM authentication flag set to on; SQL Server instances pass."
+    name           = "custom.cisCloudSqlIamAuthentication"
+    parent         = "organizations/{customer_organization_id}"
+    display_name   = "Cloud SQL: IAM database authentication on"
+    description    = "CIS 5.0 6.6. PostgreSQL and MySQL instances carry the IAM authentication flag set to on; SQL Server instances pass."
     resource_types = ["sqladmin.googleapis.com/Instance"]
-    method_types = ["CREATE", "UPDATE"]
-    action_type = "ALLOW"
-    condition = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
+    method_types   = ["CREATE", "UPDATE"]
+    action_type    = "ALLOW"
+    condition      = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
   }
   cis_sql_deletion_protection {
-    name = "custom.cisCloudSqlDeletionProtection"
-    parent = "organizations/{customer_organization_id}"
-    display_name = "Cloud SQL: deletion protection on"
-    description = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
+    name           = "custom.cisCloudSqlDeletionProtection"
+    parent         = "organizations/{customer_organization_id}"
+    display_name   = "Cloud SQL: deletion protection on"
+    description    = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
     resource_types = ["sqladmin.googleapis.com/Instance"]
-    method_types = ["CREATE", "UPDATE"]
-    action_type = "ALLOW"
-    condition = "resource.settings.deletionProtectionEnabled == true"
+    method_types   = ["CREATE", "UPDATE"]
+    action_type    = "ALLOW"
+    condition      = "resource.settings.deletionProtectionEnabled == true"
   }
 }
 
 google_org_policy_policy {
   "custom-cisCloudSqlIamAuthentication" {
-    name = "custom.cisCloudSqlIamAuthentication"
+    name   = "custom.cisCloudSqlIamAuthentication"
     parent = "organizations/{customer_organization_id}"
     dry_run_spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }
   }
   "custom-cisCloudSqlDeletionProtection" {
-    name = "custom.cisCloudSqlDeletionProtection"
+    name   = "custom.cisCloudSqlDeletionProtection"
     parent = "organizations/{customer_organization_id}"
     dry_run_spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }

@@ -54,3 +54,4 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0014](0014-a-dry-run-is-a-generated-twin-and-claims-nothing.md) | a dry-run policy is a GENERATED twin of its enforcing fragment and carries no claim | accepted |
 | [0015](0015-an-exemption-is-a-tag-and-the-control-stays-on.md) | an exemption is a tag binding; the control stays enforced and the exemption is reported beside it | accepted |
 | [0016](0016-editor-support-is-a-tree-sitter-grammar-in-its-own-repository.md) | editor support is a tree-sitter grammar in its own repository; the Zed extension lives here and pins one commit of it | accepted |
+| [0017](0017-the-formatter-keeps-the-authors-line-breaks.md) | `satz fmt` works on the token stream and keeps the author's line breaks; alignment is per run, meaning is proven by the canonical form | accepted |

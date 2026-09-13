@@ -49,7 +49,7 @@ question cmek_allowed_key_projects {
 
 google_org_policy_policy {
   "gcp-restrictNonCmekServices" {
-    name = "gcp.restrictNonCmekServices"
+    name   = "gcp.restrictNonCmekServices"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
@@ -63,7 +63,7 @@ google_org_policy_policy {
   }
 
   "gcp-restrictCmekCryptoKeyProjects" {
-    name = "gcp.restrictCmekCryptoKeyProjects"
+    name   = "gcp.restrictCmekCryptoKeyProjects"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
@@ -82,7 +82,7 @@ claim "cis-gcp" "4.0" "7.2" implements {
     "google_org_policy_policy.gcp_restrictNonCmekServices",
     "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
   ]
-  interpretation = "BigQuery may not create resources without a customer-managed key, and the key must come from an approved project."
+  interpretation  = "BigQuery may not create resources without a customer-managed key, and the key must come from an approved project."
   duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
 }
 claim "cis-gcp" "5.0" "7.2" implements {
@@ -90,18 +90,18 @@ claim "cis-gcp" "5.0" "7.2" implements {
     "google_org_policy_policy.gcp_restrictNonCmekServices",
     "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
   ]
-  interpretation = "As for 4.0 §7.2 (5.0 §7.2, unchanged)."
+  interpretation  = "As for 4.0 §7.2 (5.0 §7.2, unchanged)."
   duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
 }
 
 claim "cis-gcp" "4.0" "7.3" contributes {
-  resources = ["google_org_policy_policy.gcp_restrictNonCmekServices"]
-  interpretation = "A dataset cannot be created without a CMEK, which is what makes a default key present; the default key ITSELF is a dataset attribute the org policy cannot set."
+  resources        = ["google_org_policy_policy.gcp_restrictNonCmekServices"]
+  interpretation   = "A dataset cannot be created without a CMEK, which is what makes a default key present; the default key ITSELF is a dataset attribute the org policy cannot set."
   duty_default_key = "Set defaultEncryptionConfiguration on each dataset — the constraint forces a key to exist, not which one is the dataset default."
 }
 claim "cis-gcp" "5.0" "7.3" contributes {
-  resources = ["google_org_policy_policy.gcp_restrictNonCmekServices"]
-  interpretation = "As for 4.0 §7.3 (5.0 §7.3, unchanged)."
+  resources        = ["google_org_policy_policy.gcp_restrictNonCmekServices"]
+  interpretation   = "As for 4.0 §7.3 (5.0 §7.3, unchanged)."
   duty_default_key = "Set defaultEncryptionConfiguration on each dataset — the constraint forces a key to exist, not which one is the dataset default."
 }
 
@@ -110,7 +110,7 @@ claim "cis-gcp" "4.0" "8.1" implements {
     "google_org_policy_policy.gcp_restrictNonCmekServices",
     "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
   ]
-  interpretation = "Dataproc may not create clusters without a customer-managed key, and the key must come from an approved project."
+  interpretation  = "Dataproc may not create clusters without a customer-managed key, and the key must come from an approved project."
   duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
 }
 claim "cis-gcp" "5.0" "8.1" implements {
@@ -118,6 +118,6 @@ claim "cis-gcp" "5.0" "8.1" implements {
     "google_org_policy_policy.gcp_restrictNonCmekServices",
     "google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects",
   ]
-  interpretation = "As for 4.0 §8.1 (5.0 §8.1, unchanged)."
+  interpretation  = "As for 4.0 §8.1 (5.0 §8.1, unchanged)."
   duty_keys_exist = "The constraint denies creation; it does not create keys. The key ring, the keys and the service agents' encrypterDecrypter grants have to be in place before this is enforced."
 }

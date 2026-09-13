@@ -41,14 +41,14 @@
 pack integrations.microsoft_sentinel_auditlogs version "1.0"
 
 params {
-  sentinel_auditlogs_topic        = "sentinel-topic"
-  sentinel_auditlogs_subscription = "sentinel-subscription-auditlogs"
-  sentinel_auditlogs_sink_name    = "audit-logs-organization-sentinel-sink"
+  sentinel_auditlogs_topic                = "sentinel-topic"
+  sentinel_auditlogs_subscription         = "sentinel-subscription-auditlogs"
+  sentinel_auditlogs_sink_name            = "audit-logs-organization-sentinel-sink"
   // The four audit streams, as alternatives. Dropping data_access here is the one
   // edit an estate makes for cost.
-  sentinel_auditlogs_filter = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
+  sentinel_auditlogs_filter               = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
   // A week, so a connector that is down over a weekend loses nothing.
-  sentinel_auditlogs_retention = "604800s"
+  sentinel_auditlogs_retention            = "604800s"
   // What Microsoft's connector uses.
   sentinel_auditlogs_ack_deadline_seconds = 60
 }

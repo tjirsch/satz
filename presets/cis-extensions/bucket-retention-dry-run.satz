@@ -36,7 +36,7 @@ question allowed_bucket_retention_seconds {
 
 google_org_policy_policy {
   "storage-managed-retentionPolicySeconds" {
-    name = "storage.managed.retentionPolicySeconds"
+    name   = "storage.managed.retentionPolicySeconds"
     parent = "organizations/{customer_organization_id}"
     dry_run_spec {
       rules = [
@@ -51,13 +51,12 @@ google_org_policy_policy {
   }
 }
 
-
 // Superseded legacy twin, declared OFF — see the section of the same name in
 // CIS-GCP-Foundation-4.0.satz for why absence is not enough. `reset = true`
 // restores the constraint default, which is ALLOW here.
 google_org_policy_policy {
   "storage-retentionPolicySeconds" {
-    name = "storage.retentionPolicySeconds"
+    name   = "storage.retentionPolicySeconds"
     parent = "organizations/{customer_organization_id}"
     spec {
       reset = true

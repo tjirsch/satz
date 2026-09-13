@@ -21,13 +21,13 @@ terraform {
 
 // two buckets, one member, one role
 google_storage_bucket_iam_member {
-  bucket = audit_bucket
+  bucket                           = audit_bucket
   "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
 }
 
 google_storage_bucket_iam_member {
   "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
-  bucket = log_bucket
+  bucket                           = log_bucket
 }
 
 // a service-account-scoped grant: the scope is a reference to the account the
@@ -40,7 +40,7 @@ google_service_account {
 }
 
 google_service_account_iam_member {
-  service_account_id = "${{google_service_account.onboarding.name}}"
+  service_account_id               = "${{google_service_account.onboarding.name}}"
   "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
   "serviceAccount:acme-onboarding-sa@acme-infra-001.iam.gserviceaccount.com" = [
     "roles/iam.workloadIdentityUser",
@@ -54,7 +54,7 @@ google_organization_iam_member {
 }
 
 google_billing_account_iam_member {
-  billing_account_id = billing_account_infra
+  billing_account_id               = billing_account_infra
   "group:gcp-auditors@example.com" = ["roles/storage.objectViewer"]
 }
 

@@ -17,15 +17,15 @@ params {
   billing_account_infra    = "01AA-BB-CC"
   customer_domain          = "example.com"
 
-  cis_block_project_ssh_keys = true
-  cis_require_shielded_vm    = true
-  cis_confidential_computing = true
-  cis_cloud_sql_hardening    = true
-  cis_cmek_required          = true
-  cis_api_key_services       = true
-  cis_bucket_retention       = true
-  cis_access_approval        = true
-  cis_block_internet_ssh_rdp = true
+  cis_block_project_ssh_keys                = true
+  cis_require_shielded_vm                   = true
+  cis_confidential_computing                = true
+  cis_cloud_sql_hardening                   = true
+  cis_cmek_required                         = true
+  cis_api_key_services                      = true
+  cis_bucket_retention                      = true
+  cis_access_approval                       = true
+  cis_block_internet_ssh_rdp                = true
   cis_cloud_sql_iam_and_deletion_protection = true
 
   allowed_api_key_services = [

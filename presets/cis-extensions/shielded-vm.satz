@@ -14,12 +14,12 @@ pack cis_extensions.shielded_vm version "1.0"
 
 google_org_policy_policy {
   "compute-requireShieldedVm" {
-    name = "compute.requireShieldedVm"
+    name   = "compute.requireShieldedVm"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }
@@ -38,4 +38,3 @@ claim "cis-gcp" "5.0" "4.8" implements {
   ]
   interpretation = "As for 4.0 §4.8 (5.0 §4.8, unchanged)."
 }
-

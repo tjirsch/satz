@@ -130,6 +130,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   only when you built the binary yourself and want that one.
 - **Corpus (`tests/corpus/`) is snapshot-gated:** `UPDATE_CORPUS=1` + review
   the diff.
+- **Every Satz file in the repository is formatted (2026-09-13, ADR 0017).** `satz fmt`
+  is the layout — two-space indent, `=` aligned over a run, list commas — and both
+  `cargo test` (`crates/satz-core/tests/fmt_corpus.rs`) and the smoke matrix fail on a
+  file that is not. Run `satz fmt presets tests` before committing a `.satz` change;
+  the formatter never changes meaning, and the same test proves it.
 - **Docs ship with the change, in two renderings.** A change to the language,
   a command, a flag or a pack updates `README.md`, `docs/*.md` and
   `presets/README.md` in the same PR (the language reference cites

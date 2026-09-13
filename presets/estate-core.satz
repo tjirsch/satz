@@ -76,9 +76,9 @@ question customer_shortname {
 }
 
 question customer_longname {
-  prompt    = "The customer's display name, as it should appear in descriptions"
-  reversal  = edit
-  blast     = none
+  prompt   = "The customer's display name, as it should appear in descriptions"
+  reversal = edit
+  blast    = none
 }
 
 question first_admin {
@@ -124,10 +124,10 @@ question svc_iac_account {
 }
 
 question svc_iac_users_group {
-  prompt    = "The group whose members may impersonate the IaC service account"
-  why       = "Membership of this group is what lets a human operate the estate. Renaming it moves every member."
-  reversal  = recreate
-  blast     = low
+  prompt   = "The group whose members may impersonate the IaC service account"
+  why      = "Membership of this group is what lets a human operate the estate. Renaming it moves every member."
+  reversal = recreate
+  blast    = low
 }
 
 question deployment_engine {
@@ -146,15 +146,15 @@ question deployment_mode {
 }
 
 question default_region {
-  prompt   = "The default region for regional resources"
-  why      = "Regional resources — the alerting bucket, sinks with a location — cannot move regions; a change recreates them."
-  reversal = recreate
-  blast    = high
+  prompt    = "The default region for regional resources"
+  why       = "Regional resources — the alerting bucket, sinks with a location — cannot move regions; a change recreates them."
+  reversal  = recreate
+  blast     = high
   recommend = "europe-west3"
 }
 
 question default_zone {
-  prompt    = "The default zone, inside that region"
-  reversal  = edit
-  blast     = low
+  prompt   = "The default zone, inside that region"
+  reversal = edit
+  blast    = low
 }

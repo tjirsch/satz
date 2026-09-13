@@ -31,11 +31,11 @@ question access_approval_notification_emails {
 
 google_organization_access_approval_settings {
   access_approval {
-    organization_id = customer_organization_id
+    organization_id     = customer_organization_id
     notification_emails = access_approval_notification_emails
     enrolled_services = [
       {
-        cloud_product = "all"
+        cloud_product    = "all"
         enrollment_level = "BLOCK_ALL"
       },
     ]
@@ -46,13 +46,13 @@ claim "cis-gcp" "4.0" "2.15" implements {
   resources = [
     "google_organization_access_approval_settings.access_approval",
   ]
-  interpretation = "Access Approval covers every supported service at the organisation, so Google personnel reach its content only after an approval."
+  interpretation       = "Access Approval covers every supported service at the organisation, so Google personnel reach its content only after an approval."
   duty_answer_requests = "Someone on the notification list answers each request; an unanswered request is a support case that waits."
 }
 claim "cis-gcp" "5.0" "2.16" implements {
   resources = [
     "google_organization_access_approval_settings.access_approval",
   ]
-  interpretation = "As for 4.0 §2.15 (5.0 §2.16: its new §2.2 moved the rest of §2 by one)."
+  interpretation       = "As for 4.0 §2.15 (5.0 §2.16: its new §2.2 moved the rest of §2 by one)."
   duty_answer_requests = "Someone on the notification list answers each request; an unanswered request is a support case that waits."
 }

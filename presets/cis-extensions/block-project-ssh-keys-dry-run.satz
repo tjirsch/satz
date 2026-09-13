@@ -20,12 +20,12 @@ pack cis_extensions.block_project_ssh_keys_dry_run version "1.0"
 
 google_org_policy_policy {
   "compute-managed-blockProjectSshKeys" {
-    name = "compute.managed.blockProjectSshKeys"
+    name   = "compute.managed.blockProjectSshKeys"
     parent = "organizations/{customer_organization_id}"
     dry_run_spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }

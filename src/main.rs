@@ -249,7 +249,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "prowler", "triage", "remediation-plan"]),
-    ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
+    ("Tool", &["update-schema", "map-types", "fmt", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
 #[derive(Subcommand)]
@@ -792,6 +792,24 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = OutFormat::Text)]
         format: OutFormat,
     },
+    /// Format Satz files in place: indentation, spacing, `=` alignment, list commas
+    ///
+    /// The layout is the corpus's own — two spaces per brace or bracket that spans
+    /// lines, `=` aligned over a run of attributes, every item of a list laid out
+    /// over lines ending in a comma, a construct that spans lines opening at the end
+    /// of its line and closing on a line of its own. The author's line breaks stay;
+    /// strings and `hcl { … }` bodies are verbatim. Meaning never changes: the
+    /// canonical form `check-presets` compares is the same before and after.
+    Fmt {
+        /// Files or directories to format (.satz; a directory is walked, *.diff.satz skipped)
+        paths: Vec<PathBuf>,
+        /// Name the files that are not formatted and exit 1; write nothing
+        #[arg(long)]
+        check: bool,
+        /// Read one file from stdin and write it formatted to stdout
+        #[arg(long, conflicts_with_all = ["check", "paths"])]
+        stdin: bool,
+    },
     /// Answer what the estate's packs ask, one question at a time, writing each answer
     /// into the estate's params. The third way to start an estate: `init` takes every
     /// answer as a flag, an agent asks over MCP, this asks a person at a terminal
@@ -1000,7 +1018,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
-                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. }
+                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Fmt { .. }
                 | Commands::IacRoles { input: None, .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
@@ -1631,6 +1649,7 @@ Thumbs.db
             }
             Ok(())
         }
+        Commands::Fmt { paths, check, stdin } => run_fmt(&paths, check, stdin),
         Commands::Prowler { input, format } => {
             let format = format.require_one_of("prowler", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -4638,11 +4657,96 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
 /// `--html-help`: the documentation site, at the section of the invoked
 /// command when the README has one (`id="cmd-<name>"`, stamped by
 /// `scripts/build-site.py`), else the front page — said, not assumed.
+/// `satz fmt`: every `.satz` under the given paths, rewritten in its canonical
+/// layout — or, with `--check`, named when it is not. `*.diff.satz` files are
+/// unified diffs and are skipped.
+fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if stdin {
+        let mut src = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut src)?;
+        print!("{}", satz_core::fmt::format(&src).map_err(|e| format!("fmt: <stdin>: {}", e))?);
+        return Ok(());
+    }
+    if paths.is_empty() {
+        return Err("fmt: name the files or directories to format (or --stdin)".into());
+    }
+    fn collect(p: &Path, out: &mut Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+        if p.is_dir() {
+            let mut entries: Vec<PathBuf> = std::fs::read_dir(p)?.map(|e| e.map(|e| e.path())).collect::<Result<_, _>>()?;
+            entries.sort();
+            for e in entries {
+                collect(&e, out)?;
+            }
+        } else if p.is_file() {
+            let name = p.to_string_lossy();
+            if name.ends_with(".satz") && !name.ends_with(".diff.satz") {
+                out.push(p.to_path_buf());
+            }
+        } else {
+            return Err(format!("fmt: {}: no such file or directory", p.display()).into());
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    for p in paths {
+        collect(p, &mut files)?;
+    }
+    if files.is_empty() {
+        return Err("fmt: no .satz file under the given paths".into());
+    }
+    let mut errors = Vec::new();
+    let mut changed = Vec::new();
+    for f in &files {
+        let src = std::fs::read_to_string(f)?;
+        match satz_core::fmt::format(&src) {
+            Err(e) => errors.push(format!("{}: {}", f.display(), e)),
+            Ok(out) if out == src => {}
+            Ok(out) => {
+                if !check {
+                    std::fs::write(f, out)?;
+                }
+                changed.push(f.display().to_string());
+            }
+        }
+    }
+    if check {
+        for c in &changed {
+            println!("{}", c);
+        }
+    } else {
+        for c in &changed {
+            println!("fmt: rewrote {}", c);
+        }
+    }
+    for e in &errors {
+        eprintln!("{}", e);
+    }
+    let unchanged = files.len() - changed.len() - errors.len();
+    if check {
+        if !changed.is_empty() || !errors.is_empty() {
+            return Err(format!(
+                "fmt --check: {} file(s) not formatted, {} with errors, {} formatted — run `satz fmt` on them",
+                changed.len(),
+                errors.len(),
+                unchanged
+            )
+            .into());
+        }
+        println!("fmt --check: OK — {} file(s) formatted", files.len());
+    } else {
+        println!("fmt: {} file(s) rewritten, {} already formatted", changed.len(), unchanged);
+        if !errors.is_empty() {
+            return Err(format!("fmt: {} file(s) could not be formatted", errors.len()).into());
+        }
+    }
+    Ok(())
+}
+
 fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration", "run-actions", "iac-roles",
+        "scan-plan", "generate-migration", "run-actions", "iac-roles", "fmt",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
@@ -4896,6 +5000,7 @@ mod command_groups {
         ("doc-packs", Identity::NoGoogleApi),
         ("require", Identity::NoGoogleApi),
         ("prowler", Identity::NoGoogleApi),
+        ("fmt", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),

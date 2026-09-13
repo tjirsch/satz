@@ -13,12 +13,12 @@ pack cis_extensions.block_project_ssh_keys version "1.0"
 
 google_org_policy_policy {
   "compute-managed-blockProjectSshKeys" {
-    name = "compute.managed.blockProjectSshKeys"
+    name   = "compute.managed.blockProjectSshKeys"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }
@@ -37,4 +37,3 @@ claim "cis-gcp" "5.0" "4.3" implements {
   ]
   interpretation = "As for 4.0 §4.3 (5.0 §4.3, unchanged)."
 }
-

@@ -53,7 +53,7 @@ google_org_policy_policy {
     spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }
@@ -65,6 +65,6 @@ claim "cis-gcp" "5.0" "2.13" contributes {
     "google_org_policy_custom_constraint.cis_dns_logging",
     "google_org_policy_policy.custom_cisDnsPolicyLogging",
   ]
-  interpretation  = "A Cloud DNS policy cannot be created or updated with query logging off."
+  interpretation     = "A Cloud DNS policy cannot be created or updated with query logging off."
   duty_attach_policy = "The control also asks that every VPC network HAS such a policy, which no org policy can require: the estate declares one per network it owns, and report-compliance names the networks that have none."
 }
