@@ -72,6 +72,7 @@ every `satz` block in the guide.
 | `satz_questions` | `read` | every question the estate's packs declare with its state — `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible — and `summary.complete`, the gate bootstrap and apply refuse on |
 | `satz_interview` | `read` / `write` | the interview: the open questions (or all, with `filter: all`), each with its pack's description and its offer. With `write`: `create` writes the estate first, `answers` writes what the human decided, `accept_defaults` writes every offer — and the report comes back as it now stands. `create` writes the day-0 estate: sixteen questions, and every pack's `use` line commented out under the phase it can be adopted in. Answering a pack's question `true` uncomments its line, so an answer and what the estate uses cannot disagree. [satz interview](interview.md) |
 | `satz_triage` | `read` | a Prowler export's FAILs sorted into buckets A–E against what the estate claims |
+| `satz_prowler` | `read` | the Prowler invocation this estate needs — frameworks, projects, output path. It prints the command; nothing runs the scanner |
 | `satz_transpile_check` | `read` | compiles in memory and reports what it *would* emit — writes nothing |
 | `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
 | `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration |
@@ -141,7 +142,7 @@ it may run without asking:
 
 | annotation | on |
 |---|---|
-| `readOnlyHint: true` | `satz_open`, `satz_estates`, `satz_require`, `satz_questions`, `satz_triage`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_remediation_items` |
+| `readOnlyHint: true` | `satz_open`, `satz_estates`, `satz_require`, `satz_questions`, `satz_triage`, `satz_prowler`, `satz_transpile_check`, `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_remediation_items` |
 | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_iac_roles` — reading is free, `execute` writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_restrict` — it lowers this session's level and nothing else |
 | `destructiveHint: true` | `satz_get_presets` — with `force` it overwrites packs the estate uses |
 | `openWorldHint: true` (also) | `satz_merge_presets` — without `pristine_dir` it fetches the upstream library |
