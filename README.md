@@ -1585,10 +1585,11 @@ bracket matching and indentation for `.satz` files, and the language server
 hover, go-to-definition and format-on-save. Its grammar is a
 [tree-sitter](https://tree-sitter.github.io) grammar in a separate repository,
 `satz-tree-sitter`, pinned by commit in `editors/zed/extension.toml`; Zed fetches and
-compiles it itself. That repository is private, so the extension is not in Zed's
-registry and only someone with access to it can install the extension.
+compiles it itself. The extension is submitted to Zed's registry
+(`zed-industries/extensions`, as the submodule `extensions/satz` with
+`path = "editors/zed"`); until it is listed there, install it as a dev extension.
 
-Install it once per machine as a dev extension: in Zed, run `zed: install dev extension`
+To install it as a dev extension: in Zed, run `zed: install dev extension`
 from the command palette and pick `editors/zed` in this checkout. Zed compiles the
 extension's Rust glue for `wasm32-wasip2` (rustup installs the target). After a change to
 the pin, to the queries in `editors/zed/languages/satz/`, or to `editors/zed/src/`, run

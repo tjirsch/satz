@@ -8,7 +8,7 @@
 #   GRAMMAR=../satz-tree-sitter scripts/check-grammar.sh      # a local checkout instead
 #
 # Needs the tree-sitter CLI (brew install tree-sitter-cli) or node, through
-# which npx fetches it. Not run by CI: the grammar repository is private.
+# which npx fetches it. CI runs it: .github/workflows/smoke.yml, job `grammar`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$PWD

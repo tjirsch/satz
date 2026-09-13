@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-13
-- **Shipped in:** v0.56.1
+- **Shipped in:** v0.56.1; the repository went public in v0.56.3 for Zed's registry, and the corpus-parse gate joined this repository's CI with it
 
 ## Context
 
@@ -55,9 +55,9 @@ Option 3. The grammar is the repository `satz-tree-sitter` (parser name `satz`, 
 generated `src/` committed, MIT). It is private: it carries no privacy gate, so its own
 test inputs use example values only, and the corpus it is verified against is this
 repository's, cloned by its CI on every push and weekly. The Zed extension is
-`editors/zed/` here, pinning a grammar commit over SSH; it is installed as a dev
-extension once per machine and is not in Zed's registry, which would need the grammar
-public.
+`editors/zed/` here, pinning a grammar commit. It was installed as a dev extension
+while the grammar was private; the grammar is public now and the extension is
+submitted to Zed's registry.
 
 The `hcl` body is the nested rule, not a scanner. Its content between the braces is one
 node, `hcl_content`, so the extension can hand exactly that text to Zed's HCL grammar as
