@@ -1027,8 +1027,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Optional: check for updates per global settings (skip for SelfUpdate and Init)
-    if !matches!(cmd_choice, Commands::SelfUpdate { .. } | Commands::Init { .. } | Commands::Whoami { .. }) {
+    // Optional: check for updates per global settings — never for the commands that
+    // own stdout as a protocol or that are the update itself.
+    if checks_for_updates(&cmd_choice) {
         if let Err(e) = maybe_check_for_updates(&mut global_settings).await {
             eprintln!("⚠️  update check: {}", e);
         }
@@ -4448,6 +4449,18 @@ async fn check_update_available(client: &reqwest::Client) -> Result<Option<(Stri
 }
 
 /// If global settings say so, run a check-only update check and optionally persist last_update_check (daily).
+/// Whether a command runs the background update check. Not the update itself, not
+/// `init`, not `whoami` — and not the two protocol servers: `mcp` and `lsp` speak
+/// JSON-RPC on stdout and are started by a client, so a network round trip to
+/// GitHub before the first message is a cost with no reader, and the notice would
+/// have nobody to read it but the client's parser.
+fn checks_for_updates(cmd: &Commands) -> bool {
+    !matches!(
+        cmd,
+        Commands::SelfUpdate { .. } | Commands::Init { .. } | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Lsp
+    )
+}
+
 async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Box<dyn std::error::Error>> {
     let freq = settings.self_update_frequency.as_str();
     if freq == "never" {
@@ -4484,7 +4497,9 @@ async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Bo
         save_global_settings(settings)?;
     }
     if let Some((version, url)) = update {
-        println!("⚠️  Update available: {} (current: {}). Run `satz self-update` to install. {}", version, env!("CARGO_PKG_VERSION"), url);
+        // stderr: stdout is a command's output — the JSON of `--format json`, or the
+        // protocol of `mcp` and `lsp` — and a notice in front of it breaks every reader.
+        eprintln!("⚠️  Update available: {} (current: {}). Run `satz self-update` to install. {}", version, env!("CARGO_PKG_VERSION"), url);
     }
     Ok(())
 }
@@ -5059,6 +5074,24 @@ mod command_groups {
     /// A command that claims the service account and does not bind it runs as the
     /// human — which shows up in no output, no test and no diff, only in an audit
     /// log months later.
+    /// `mcp` and `lsp` own stdout as a protocol and are started by a client; the
+    /// update itself, `init` and `whoami` never checked. Everything else does, and
+    /// hears about it on stderr.
+    #[test]
+    fn the_protocol_servers_never_check_for_updates() {
+        let parse = |args: &[&str]| {
+            let mut argv = vec!["satz"];
+            argv.extend_from_slice(args);
+            Cli::try_parse_from(argv).expect("parses").command.expect("a subcommand")
+        };
+        for args in [&["mcp"][..], &["lsp"], &["self-update"], &["whoami"]] {
+            assert!(!checks_for_updates(&parse(args)), "{args:?} must not check");
+        }
+        for args in [&["questions", "x.satz"][..], &["transpile", "x.satz"]] {
+            assert!(checks_for_updates(&parse(args)), "{args:?} checks");
+        }
+    }
+
     #[test]
     fn the_estate_commands_are_the_ones_that_bind() {
         let bound: BTreeSet<&str> = BINDING_SITES.iter().flat_map(|s| s.iter().copied()).collect();
