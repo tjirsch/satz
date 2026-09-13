@@ -137,10 +137,10 @@ the line for a pack the library has gained since; and the compile reports a ques
 Then the interview:
 
 ```
-56 open question(s): 40 have a default, 16 need a value.
-Accept all defaults now and answer only those 16? [Y/n] — n goes through every question
+16 open question(s): 7 have a default, 9 need a value.
+Accept all defaults now and answer only those 9? [Y/n] — n goes through every question
 > y
-  accepted 40 default(s).
+  accepted 7 default(s).
 
 ── estate_core ──
 The questions every estate has to answer on day 0, with the params they answer.
