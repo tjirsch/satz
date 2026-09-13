@@ -53,3 +53,4 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0013](0013-a-claim-asserts-what-its-witness-does.md) | a claim asserts what its witness DOES; an org policy that is switched off discharges nothing | accepted |
 | [0014](0014-a-dry-run-is-a-generated-twin-and-claims-nothing.md) | a dry-run policy is a GENERATED twin of its enforcing fragment and carries no claim | accepted |
 | [0015](0015-an-exemption-is-a-tag-and-the-control-stays-on.md) | an exemption is a tag binding; the control stays enforced and the exemption is reported beside it | accepted |
+| [0016](0016-editor-support-is-a-tree-sitter-grammar-in-its-own-repository.md) | editor support is a tree-sitter grammar in its own repository; the Zed extension lives here and pins one commit of it | accepted |
