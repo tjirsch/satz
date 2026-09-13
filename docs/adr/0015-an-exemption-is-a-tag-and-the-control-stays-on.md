@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-13
-- **Shipped in:** v0.54.0
+- **Shipped in:** v0.54.0, amended in v0.55.0
 
 ## Context
 
@@ -60,6 +60,15 @@ so the declared and the live side answer the question the same way. `require` pr
 exemption under its control (`↳ exempted: …`) and counts the controls that carry one;
 `report-compliance` was already listing the live ones beside the live verdict.
 
+One CIS constraint ships exemptable: `iam.managed.disableServiceAccountKeyCreation`
+takes its rules from the baseline param `cis_sa_key_creation_rules`, defaulting to the
+plain enforcing rule, so an estate rebinds that one param instead of forking the pack.
+It is the only one, because a rules param per constraint would put forty list-of-object
+blocks into every estate's `terraform.tfvars` for a case nobody has, and it is THAT one
+because it is the constraint organisations actually have to let a single principal out
+of — Google ships their own built-in exemption tag for it. Another constraint earns a
+param the same way: a real organisation that needed it.
+
 `presets/exemptions/exemption-tag.satz` ships the vocabulary: one organisation tag key
 `<shortname>-exemption` with the values `enforced` and `not_enforced`, bound to nothing.
 The `_enforced` value exists so a binding can be MOVED back rather than deleted, which
@@ -85,12 +94,21 @@ exception with a named owner, never the default.
 - An exemption is visible in three places: the estate that declares the binding, the goal
   view that prints it under its control, and Cloud Asset Inventory, which answers the
   org-wide question — `gcloud asset search-all-resources --query='tagValues:…'`.
-- **The CIS constraints do not yet carry a condition, and cannot without a language
-  change.** A pack's policy body is fixed text; a param interpolates a VALUE, not a
-  structural list, and `rules = {param}` is a parse error because `{` opens a block. So an
-  estate that wants a shipped constraint to honour the tag must `suppress` the pack's
-  policy and declare its own. Making that a first-class pack option needs param-valued
-  rule lists, which is its own decision and is not taken here.
+- **CORRECTED 2026-09-13, before this record was a day old.** This consequence first
+  read: "the CIS constraints cannot carry a condition without a language change — a param
+  interpolates a VALUE, not a structural list, and `rules = {param}` is a parse error."
+  The parse error was real and the conclusion drawn from it was wrong. `{param}` is
+  OBJECT syntax; a param reference in value position is a BARE identifier
+  (`Value::Ref`), and `rules = cis_sa_key_creation_rules` bound to a list of objects
+  already emits repeated `rules` blocks, condition blocks included. No language change
+  was ever needed, and the amendment above ships the constraint that wanted it.
+  The lesson is the cheaper half of the same rule that made this record worth writing:
+  a gap claimed against a parser is checked against the parser, in both spellings,
+  before it reaches a decision record — a wrong blocker in an ADR is how a language
+  change gets proposed for a problem that does not exist.
+- An estate that wants a DIFFERENT shipped constraint to honour the tag still has to
+  `suppress` the pack's policy and declare its own, which is a fork. The fix is one more
+  rules param on that constraint, not a mechanism.
 - The library ships no exemption. The two Google-forced cases (SCC activation, the
   domain-restricted-sharing service agent) are already handled where they arise — the
   CIS pack passes the service agents through `allowedMemberSubjects` — so neither needs

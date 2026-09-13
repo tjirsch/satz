@@ -726,14 +726,12 @@ uv run --with ruamel.yaml "$root/scripts/update_import_config.py" --config-file 
 grep -q '^asset_type filled: 0;' tmp/fill.txt || fail "presets/import-config.yaml is behind presets/cai-asset-types.txt — run the fill and commit it"
 
 step "a tag-conditional exemption keeps the verdict and is reported beside it"
+# The CIS baseline's OWN constraint, exempted by rebinding one param — no fork, and the
+# claim is the pack's rather than one this step wrote to make the assertion pass.
 cp "$root/tests/iac/exemption-tag/main.satz" tmp/exemption.satz
-cat >> tmp/exemption.satz <<'SATZ'
-claim "cis-gcp" "4.0" "1.4" implements {
-  resources = ["google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation"]
-  interpretation = "Keys cannot be created, except where the exemption tag value is bound."
-}
-SATZ
 "$satz" --config . require cis-gcp-4.0 ../tmp/exemption.satz > tmp/exemption.txt 2>&1 || true
+grep -q 'cis_sa_key_creation_rules' "$root/presets/CIS-GCP-Foundation-4.0.satz" \
+  || fail "the baseline no longer takes the SA-key rules from a param — the exemption needs a fork again"
 grep -qE '^  . 1\.4 ' tmp/exemption.txt || fail "the exempted control is not in the goal view at all"
 grep -q '✓ 1.4' tmp/exemption.txt \
   || fail "a conditional exemption unmade the verdict — the unconditional rule decides"

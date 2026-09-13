@@ -1,10 +1,17 @@
-// IaC-roles gate: the exemption tag vocabulary, plus a binding and a conditional policy
-// written the way the pack's header says an estate writes them.
+// IaC-roles gate, and the worked example of a tag-conditional exemption: the CIS
+// baseline's OWN service-account-key constraint, let out for exactly one principal.
 //
-// It is its own case rather than a line in `all-packs` because the policy below carries
-// a tag CONDITION, which is the thing being proved: the manifest must read the verdict
-// from the unconditional rule and record the conditional one beside it, so a policy that
-// lets one resource out still reads as enforced instead of losing its verdict.
+// Nothing here forks a pack. The constraint's rules are a param the baseline declares
+// (`cis_sa_key_creation_rules`, defaulting to the plain enforcing rule); this estate
+// rebinds it to the two-rule form, and binds the tag value to one service account.
+//
+// What it proves: the manifest reads the verdict from the UNCONDITIONAL rule and records
+// the conditional one beside it, so a policy that lets one resource out still reads as
+// enforced instead of losing its verdict — which is what happened before v0.54.0, and
+// which made the control invisible to the compliance plane exactly when it mattered.
+//
+// It is its own case rather than a line in `all-packs` because it rebinds a baseline
+// param, and `all-packs` is what the DEFAULTS emit.
 
 estate iac_exemption_tag
 
@@ -13,8 +20,35 @@ params {
   customer_id = "C0example"
   customer_domain = "example.com"
   customer_shortname = "acme"
+  customer_longname = "Acme Corp."
+  infra_folder_name = "Infrastructure"
   infra_project_name = "acme-infra-001"
+  infra_bucket_name = "acme-infra-001-state"
   svc_iac_account = "svc-iac-001"
+  svc_iac_users_group = "svc-iac-001-users"
+  first_admin = "admin@example.com"
+  billing_account_infra = "012345-6789AB-CDEF01"
+  logsink_project_id = "acme-log-001"
+  deployment_engine = "tofu"
+  deployment_mode = "local"
+  default_region = "europe-west3"
+  default_zone = "europe-west3-a"
+
+  // The exemption, declared where an auditor reads it. The conditional rule turns
+  // enforcement OFF only where the tag value is bound; the unconditional rule keeps the
+  // control on everywhere else.
+  cis_sa_key_creation_rules = [
+    {
+      enforce = "FALSE"
+      condition = {
+        title      = "exempted service accounts"
+        expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
+      }
+    },
+    {
+      enforce = "TRUE"
+    },
+  ]
 }
 
 terraform {
@@ -23,36 +57,20 @@ terraform {
   }
 }
 
+use "presets/estate-core.satz"
+
+google_org_policy_policy {
+  use "presets/CIS-GCP-Foundation-4.0.satz"
+}
+
 use "presets/exemptions/exemption-tag.satz"
 
-// The exemption itself: one service account, named, with its owner in the comment.
+// Who is let out, and on whose authority. One binding per exempted resource.
 google_tags_tag_binding {
   "svc-legacy-connector" {
     // Owner: the platform team. Review: the next access review.
     // Reason: the vendor's connector cannot federate.
     parent    = "//iam.googleapis.com/projects/acme-infra-001/serviceAccounts/svc-legacy@acme-infra-001.iam.gserviceaccount.com"
     tag_value = "${{google_tags_tag_value.exemption_not_enforced.name}}"
-  }
-}
-
-// The constraint that honours the tag: enforced everywhere, off where the value is bound.
-google_org_policy_policy {
-  "iam-managed-disableServiceAccountKeyCreation" {
-    name = "organizations/{customer_organization_id}/policies/iam.managed.disableServiceAccountKeyCreation"
-    parent = "organizations/{customer_organization_id}"
-    spec {
-      rules = [
-        {
-          enforce = "FALSE"
-          condition {
-            title      = "exempted service accounts"
-            expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
-          }
-        },
-        {
-          enforce = "TRUE"
-        },
-      ]
-    }
   }
 }

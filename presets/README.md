@@ -1032,9 +1032,32 @@ Google Cloud, a Cloud Run service, and external CI on GitHub or GitLab can all u
 Identity Federation or impersonation and leave the control intact. The tag route is the
 exception with a named owner, never the default.
 
-The CIS constraints do not yet carry a condition: a pack's policy body is fixed text, and a
-param interpolates a value rather than a rules list. An estate that wants a shipped
-constraint to honour the tag `suppress`es the pack's policy and declares its own.
+**One CIS constraint is exemptable out of the box**, and no forking is involved.
+`iam.managed.disableServiceAccountKeyCreation` takes its rules from the baseline param
+`cis_sa_key_creation_rules`, which defaults to the plain enforcing rule. To let one
+service account out, rebind it:
+
+```
+cis_sa_key_creation_rules = [
+  {
+    enforce = "FALSE"
+    condition = {
+      title      = "exempted service accounts"
+      expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
+    }
+  },
+  { enforce = "TRUE" },
+]
+```
+
+and bind the tag value to that one account. `tests/iac/exemption-tag/main.satz` is the
+whole thing end to end.
+
+It is the only constraint with a rules param. The rest are written in place, because a
+param per constraint would put forty list-of-object blocks into every estate's
+`terraform.tfvars` for a case nobody has; another constraint earns one the way this did,
+from a real organisation that needed it. Until then, an estate can `suppress` a pack's
+policy and declare its own — a fork, and the thing the param exists to avoid.
 
 ## cis-extensions/
 
@@ -1290,6 +1313,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.12 | 2026-09-13 | `iam.managed.disableServiceAccountKeyCreation` takes its rules from `cis_sa_key_creation_rules` instead of writing them in place, so an estate can let ONE service account out with a tag condition without forking the pack. The default is the plain enforcing rule and the emitted policy is unchanged for an estate that says nothing. The one constraint here with a rules param, because it is the one organisations actually have to exempt — Google ships their own built-in exemption tag for it — and because a param per constraint would put forty list-of-object blocks into every estate's `terraform.tfvars` for a case nobody has |
 | `exemptions.exemption_tag` | 1.0 | 2026-09-13 | first version: the VOCABULARY for a tag-conditional exemption — one organisation tag key `<shortname>-exemption` with the values `enforced` and `not_enforced`, and nothing bound to either. An organisation policy is all-or-nothing per node, so letting one service account out of a control means lowering the policy for a whole folder and raising it again — a window during which nothing is enforced. A Resource Manager tag is IAM-governed and a policy rule can condition on it, which is how Google ships `iam.disableServiceAccountKeyCreation` themselves. The pack ships the ABILITY and no exemptions: a library that ships convenient exemptions lowers the baseline by default. The binding that exempts a resource and the condition on the constraint that honours it are the estate's, and the pack header shows both |
 | `estate_map` | 1.7 | 2026-09-13 | one more choice: `use_exemption_tag`, gating `exemptions/exemption-tag.satz`. Its `why` carries the question that usually ends the conversation — does the consumer need a key at all, when a workload in Google Cloud, a Cloud Run service and external CI can all federate instead |
 | `CIS_GCP_Foundation_4_0` | 2.11 | 2026-09-13 | six dry-run params and their questions: `cis_api_key_services_dry_run`, `cis_block_project_ssh_keys_dry_run`, `cis_bucket_retention_dry_run`, `cis_cloud_sql_hardening_dry_run`, `cis_cloud_sql_iam_and_deletion_protection_dry_run`, `cis_confidential_computing_dry_run`. Each gates the dry-run twin of the extension it names, to be turned on INSTEAD of the enforcing flag — both at once declares the same policy twice and is refused. The other five extensions have no dry-run form: Shielded VM and both CMEK constraints are legacy, Access Approval is not an org policy, and the two on-by-default extensions have nothing to size |

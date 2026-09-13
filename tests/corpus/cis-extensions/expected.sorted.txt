@@ -620,6 +620,7 @@ resource "google_organization_access_approval_settings" "access_approval" {
 }
 }
 ---tfvars---
+    "enforce" = "TRUE"
   "//cloudresourcemanager.googleapis.com/organizations/123456789"
   "10.0.0.0/8",
   "172.16.0.0/12",
@@ -642,6 +643,9 @@ resource "google_organization_access_approval_settings" "access_approval" {
   "serviceAccount:service-org-123456789@security-center-api.iam.gserviceaccount.com",
   "storage.googleapis.com"
   "under:organizations/123456789"
+  {
+  }
+]
 ]
 ]
 ]
@@ -681,6 +685,7 @@ cis-confidential-computing = true
 cis-confidential-computing-dry-run = false
 cis-dns-logging = true
 cis-require-shielded-vm = true
+cis-sa-key-creation-rules = [
 cmek-allowed-key-projects = [
 cmek-required-services = [
 customer-domain = "example.com"
