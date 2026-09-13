@@ -97,6 +97,29 @@ pub(crate) fn param_line(src: &str, name: &str) -> Option<u32> {
     .map(|i| i as u32 + 1)
 }
 
+/// A compile the findings refused, as an error: it renders exactly what the CLI
+/// prints, and carries the findings that produced it for a caller that can show
+/// them at their lines. `pipeline_b_generate` returns this boxed, so every `?`
+/// call site is unchanged and only the callers that want structure look for it.
+#[derive(Debug)]
+pub(crate) struct CompileRefusal {
+    pub message: String,
+    pub findings: Vec<Finding>,
+}
+
+impl std::fmt::Display for CompileRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+impl std::error::Error for CompileRefusal {}
+
+/// The findings behind a refusal, if this error is one. Empty for every other
+/// failure — a missing schema directory has no line to point at.
+pub(crate) fn refusal_findings(e: &(dyn std::error::Error + 'static)) -> Vec<Finding> {
+    e.downcast_ref::<CompileRefusal>().map(|c| c.findings.clone()).unwrap_or_default()
+}
+
 /// The CLI's rendering: warnings and notes to stderr as they always were, each group's
 /// header once; the errors joined into one message under their headers — `Err` when
 /// there is any, so `?` refuses the compile.
@@ -159,6 +182,17 @@ mod tests {
         let src = "estate x\nparams {\n  a         = 1\n  svc_iac_account = \"svc\"\n}\n";
         assert_eq!(param_line(src, "svc_iac_account"), Some(4));
         assert_eq!(param_line(src, "svc"), None, "a prefix is not the name");
+    }
+
+    #[test]
+    fn a_refusal_displays_as_the_cli_text_and_hands_its_findings_over() {
+        let findings = vec![Finding::new(Severity::Error, Kind::Emit, "emit: no").located("e.satz", 7)];
+        let e: Box<dyn std::error::Error> =
+            Box::new(CompileRefusal { message: "emit: no".into(), findings: findings.clone() });
+        assert_eq!(e.to_string(), "emit: no");
+        assert_eq!(refusal_findings(e.as_ref()).len(), 1);
+        let other: Box<dyn std::error::Error> = "no schemas".into();
+        assert!(refusal_findings(other.as_ref()).is_empty(), "only a refusal carries findings");
     }
 
     #[test]

@@ -1263,10 +1263,15 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"satz_scan_checkov","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_iac_roles","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"showcase.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"tmp/refuse.satz"}}}'
 } > tmp/mcp-in.jsonl
 # Being ASKED for state is not a report run: satz_report_compliance must not append
 # to the evidence history. Compare the directory across the call rather than testing
 # for its absence — earlier steps create it legitimately.
+# An estate that cannot compile: it writes a reference to a folder nobody emits.
+# The refusal must carry that finding at its line, not only the sentence.
+sed 's|name *= *"{customer_shortname}-audit-logs"|name = "${{google_folder.nope.name}}"|' yaml/showcase.satz > tmp/refuse.satz
+grep -q 'google_folder.nope.name' tmp/refuse.satz || fail "the refusing fixture was not written"
 ls evidence 2>/dev/null | sort > tmp/evidence-before.txt || true
 python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-in.jsonl > tmp/mcp.jsonl 2>/dev/null || true
 ls evidence 2>/dev/null | sort > tmp/evidence-after.txt || true
@@ -1348,6 +1353,14 @@ kinds = {f["kind"] for f in chk["findings"]}
 assert {"action", "hcl-passthrough"} <= kinds, chk["findings"]
 # a finding with no site (the pack-actions note) carries no line at all
 assert all(f.get("line") for f in chk["findings"] if f["kind"] in ("action", "hcl-passthrough") and f["severity"] != "note"), chk["findings"]
+# A REFUSED check is an error result that still carries its findings, each at its
+# line — a client shows them where they are instead of parsing the sentence.
+bad = msgs[18]["result"]
+assert bad.get("isError"), bad
+assert "does not emit" in bad["content"][0]["text"], bad["content"]
+ref = [f for f in bad["structuredContent"]["findings"] if f["kind"] == "written-reference"]
+assert ref and ref[0]["severity"] == "error" and ref[0]["line"], bad["structuredContent"]
+assert bad["structuredContent"]["addresses"] == [], "a refused compile emitted nothing"
 
 # a granted tool returns the report as STRUCTURED content, not a string to parse
 rep = msgs[3]["result"]["structuredContent"]

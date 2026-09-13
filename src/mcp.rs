@@ -665,6 +665,25 @@ fn refused(msg: String) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(msg)])
 }
 
+/// A refusal that also hands over what the compile found, so a client can show
+/// each error at its own line instead of parsing the text. The text is the one
+/// `refused` carries; the structure is a `CompileSummary` with nothing emitted,
+/// so it conforms to the schema the tool publishes.
+fn refused_with_findings(msg: String, estate: &std::path::Path, e: &(dyn std::error::Error + 'static)) -> CallToolResult {
+    let findings = crate::findings::refusal_findings(e);
+    let mut result = refused(msg);
+    if !findings.is_empty() {
+        let summary = CompileSummary {
+            estate: estate.display().to_string(),
+            addresses: Vec::new(),
+            written: Vec::new(),
+            findings,
+        };
+        result.structured_content = serde_json::to_value(summary).ok();
+    }
+    result
+}
+
 /// Every `config.toml` under `root`, depth-limited and blind to the directories
 /// that never hold one. A fleet root is somebody's home directory in the worst
 /// case; this walk has to stay cheap and finite.
@@ -1164,7 +1183,11 @@ impl SatzMcp {
                 written: Vec::new(),
                 findings: out.findings,
             }))),
-            Err(e) => Ok(Err(refused(format!("transpile --check: {}", e)))),
+            Err(e) => Ok(Err(refused_with_findings(
+                format!("transpile --check: {}", e),
+                &estate,
+                e.as_ref(),
+            ))),
         }
     }
 
@@ -1220,7 +1243,9 @@ impl SatzMcp {
         };
         let out = match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
             Ok(out) => out,
-            Err(e) => return Ok(Err(refused(format!("transpile: {}", e)))),
+            Err(e) => {
+                return Ok(Err(refused_with_findings(format!("transpile: {}", e), &estate, e.as_ref())));
+            }
         };
         // The directory, or the part of it that exists, must be inside the root.
         let dir = PathBuf::from(&open.runtime.hcl_dir);

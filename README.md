@@ -1270,6 +1270,9 @@ satz fmt --stdin < in.satz         # one file from stdin to stdout, for an edito
 - `--stdin` — read one file from stdin, write it formatted to stdout
 
 **Under the Hood:**
+- An answer written by `satz interview` replaces the value alone, so the line keeps its
+  indentation, its `=` column and its trailing comment; a value that does not finish on
+  its line is refused rather than half-rewritten.
 - Works on the token stream with its comments and line ends, not on the AST, so nothing
   the parser drops is lost ([ADR 0017](docs/adr/0017-the-formatter-keeps-the-authors-line-breaks.md)).
 - Meaning is proven, not assumed: `cargo test` formats every Satz file in the repository
