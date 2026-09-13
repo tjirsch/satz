@@ -1,9 +1,52 @@
 # satz workflows
 
-Three walkthroughs, in the order most estates meet them: standing an organisation
-up from nothing, bringing one that already exists under management, and keeping the
-preset library current afterwards. Every command has its own reference section in
+Three walkthroughs, in the order most estates meet them, each a section of this page,
+and after them two shorter ones: [continuous verification](#continuous-verification),
+the compile check and the compliance report run as CI gates, and
+[scanning with Prowler](#scanning-with-prowler), the second opinion satz joins with its
+own report. Every command has its own reference section in
 [the README](../README.md#cli-usage); this page is the order to run them in.
+
+**[From nothing to applied](#from-nothing-to-applied).** The estate is written, the
+folder, management project and state bucket are bootstrapped, the identity layer is
+applied as the logged-in user, the state and the identity move to the IaC service
+account, and only then packs go in, one at a time. Its prerequisites section describes
+the fresh-organisation case — a super admin creating the identity layer, an
+Organization Administrator on the organisation — because a new organisation has one
+principal, the super admin who created it, and Google grants that principal
+Organization Administrator. That is the strongest case, not what satz needs in
+general; the last paragraph below says what it needs.
+
+**[Adopting an organisation that already exists](#adopting-an-organisation-that-already-exists).**
+Folders, projects, groups and policies are already live. `satz import` discovers them
+into an estate from a state file or from the organisation itself, the hierarchy is
+refined by hand, `satz transpile` and `tofu plan` hold the result against what is
+live, and `satz adopt` resolves the ids of what exists so the plan reads no changes
+rather than replace. Once it does, the infrastructure is changed through the estate
+from then on; nothing is recreated on the way.
+
+**[Keeping presets current](#keeping-presets-current).** The loop that runs for the
+life of an estate. `check-presets` reports which packs are behind upstream, edited
+locally or changed only in what they ask; `get-presets` installs what is missing and
+refreshes what the estate does not use; `merge-presets` reconciles the rest — a pack
+behind upstream is refreshed, one you edited becomes an `X.local.satz` fork with the
+delta beside it in `X.diff.satz`, and the estate is repointed. The filename suffix says
+who owns each file.
+
+**What satz needs, and where.** satz owns no credential: it runs as the logged-in
+user's Application Default Credentials until the switch to the service account, and as
+that account afterwards. Before `bootstrap` creates anything it tests the permissions it
+needs on the *scope root* — the organisation, or a folder — and on the billing account,
+and names what is missing. With a folder as the scope root
+(`customer_organization_id = "folders/<id>"`) the estate installs under that folder: the
+permissions are tested there, organisation-root operations are skipped, and an operator
+granted on the folder is not asked for organisation admin. What satz needs is the right
+to do its work where its root is — create the folder and the project, link billing —
+and nothing above it. The one exception is Google's: `roles/orgpolicy.policyAdmin` is
+granted at organisation level only, so an estate that declares org policies on its
+folder needs that grant from an organisation administrator before its first apply. The
+details, including what bootstrap self-grants and when it stops instead, are under
+[Bootstrap the organisation](#bootstrap-the-organisation).
 
 ---
 
