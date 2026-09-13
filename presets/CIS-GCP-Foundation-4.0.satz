@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.10"
+pack CIS_GCP_Foundation_4_0 version "2.11"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -29,6 +29,26 @@ params {
   cis_bucket_retention       = false
   cis_access_approval        = false
   cis_cloud_sql_iam_and_deletion_protection = false
+
+  // ---- DRY RUN: measure a control against this organisation before enforcing it.
+  // A dry-run policy carries `dry_run_spec` instead of `spec`: Google evaluates
+  // every rule, writes a violation to the audit log for each action it WOULD have
+  // blocked, and blocks nothing. So "will this break us?" is answered in the
+  // organisation's own numbers instead of in an outage. Turn one on INSTEAD of its
+  // enforcing flag - both at once declares the same policy twice and is refused -
+  // read the violations in Cloud Logging (`protoPayload.metadata."@type"` =
+  // `type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo`), then promote by
+  // swapping the two. Nothing is enforced while a dry run runs, so the control
+  // reports as unmet, which is the truth. Only these six constraints support it: the
+  // legacy ones (Shielded VM, both CMEK list constraints) have no dry-run form,
+  // Access Approval is not an org policy, and the two on-by-default extensions have
+  // nothing to size.
+  cis_api_key_services_dry_run       = false
+  cis_block_project_ssh_keys_dry_run = false
+  cis_bucket_retention_dry_run       = false
+  cis_cloud_sql_hardening_dry_run    = false
+  cis_confidential_computing_dry_run = false
+  cis_cloud_sql_iam_and_deletion_protection_dry_run = false
 
   // The two extensions that are ON by default. The rest of the list restricts what a
   // customer may create and waits to be asked for; these two are what an organisation
@@ -165,6 +185,48 @@ question cis_cloud_sql_hardening {
   why      = "Existing instances reached over a public IP lose connectivity the moment this is enforced; the private path has to exist first."
   reversal = edit
   blast    = high
+}
+
+question cis_api_key_services_dry_run {
+  prompt   = "Measure first: run 'API keys restricted to the services an application needs' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_api_key_services, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_api_key_services on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_block_project_ssh_keys_dry_run {
+  prompt   = "Measure first: run 'project-wide SSH keys blocked on VM instances' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_block_project_ssh_keys, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_block_project_ssh_keys on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_bucket_retention_dry_run {
+  prompt   = "Measure first: run 'bucket retention durations constrained organisation-wide' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_bucket_retention, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_bucket_retention on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_cloud_sql_hardening_dry_run {
+  prompt   = "Measure first: run 'Cloud SQL public IPs and authorized networks restricted' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_hardening, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_hardening on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_confidential_computing_dry_run {
+  prompt   = "Measure first: run 'Confidential Computing required on instances' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_confidential_computing, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_confidential_computing on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_cloud_sql_iam_and_deletion_protection_dry_run {
+  prompt   = "Measure first: run 'Cloud SQL IAM authentication and deletion protection required' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_iam_and_deletion_protection, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_iam_and_deletion_protection on."
+  reversal = edit
+  blast    = none
 }
 
 question cis_cmek_required {

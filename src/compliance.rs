@@ -173,6 +173,15 @@ pub(crate) fn policy_effects(manifest: &Manifest) -> BTreeMap<String, (PolicyEff
         }
         let v = if r.reset {
             (PolicyEffect::Inert, "declared off with `reset = true`".to_string())
+        } else if r.dry_run && r.enforce.is_none() {
+            // A dry run measures: Google logs what the rule WOULD have blocked and
+            // blocks nothing. It is the honest way to size a breaking control before
+            // enforcing it, and it discharges no control while it runs.
+            (
+                PolicyEffect::Inert,
+                "declared as a dry run (`dry_run_spec`): it logs what it would block and blocks nothing"
+                    .to_string(),
+            )
         } else {
             match r.enforce {
                 Some(true) => (PolicyEffect::Enforcing, "enforced".to_string()),
@@ -1020,6 +1029,42 @@ mod tests {
         let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
         let off = effects(&[("google_org_policy_policy.p", PolicyEffect::Inert)]);
         assert!(matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &off)["2.3"], Goal::Partial { .. }));
+    }
+
+    #[test]
+    fn a_dry_run_policy_discharges_nothing() {
+        // The manifest reads `enforce` from `spec` alone, so a dry-run-only policy
+        // arrives here with enforce: None and dry_run: true. It is inert while it
+        // measures, and a claim over it is contradicted — which is why a generated
+        // dry-run fragment carries no claim.
+        let mut m = Manifest::default();
+        m.resources.insert(
+            "google_org_policy_policy.p".to_string(),
+            crate::manifest::EmittedResource {
+                tf_type: "google_org_policy_policy".into(),
+                label: "p".into(),
+                attrs: Default::default(),
+                refs: Default::default(),
+                nested: Default::default(),
+                nested_all: Default::default(),
+                enforce: None,
+                reset: false,
+                dry_run: true,
+                import_id: None,
+                origin: None,
+            },
+        );
+        let effects = policy_effects(&m);
+        let (effect, why) = &effects["google_org_policy_policy.p"];
+        assert_eq!(*effect, PolicyEffect::Inert);
+        assert!(why.contains("dry run"), "the reason must say what it is: {why}");
+
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        assert!(matches!(
+            resolve_goals(&catalog(), &lib, &lib, &emitted, &effects)["2.1"],
+            Goal::ClaimContradicted { .. }
+        ));
     }
 
     #[test]
@@ -3786,6 +3831,7 @@ mod iam_witness_tests {
                 nested_all: BTreeMap::new(),
                 enforce: None,
                 reset: false,
+                dry_run: false,
                 import_id: None,
                 origin: None,
             },
@@ -3804,6 +3850,7 @@ mod iam_witness_tests {
                 nested_all: BTreeMap::new(),
                 enforce: None,
                 reset: false,
+                dry_run: false,
                 import_id: None,
                 origin: None,
             },
@@ -3923,6 +3970,7 @@ mod evidence_facts_tests {
                 nested_all: BTreeMap::new(),
                 enforce: None,
                 reset: false,
+                dry_run: false,
                 import_id: None,
                 origin: Some(("presets/x.satz".to_string(), 12)),
             },

@@ -2047,6 +2047,9 @@ fn pipeline_b_generate(
         Err(format!("use \"{}\": file not found", p))
     };
     let fe = satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader)?;
+    // Before the fold, because the fold would refuse the same thing as two disagreeing
+    // definitions of one address and name the files instead of the decision.
+    report_dry_run_conflicts(&fe.env)?;
     let mut folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
     // Subtractive override channel: estate suppressions apply before conflict
     // reporting (suppressing a conflicted address resolves the conflict).
@@ -2054,13 +2057,23 @@ fn pipeline_b_generate(
     let conflicts = folded.conflicts();
     if !conflicts.is_empty() {
         let mut msg = String::from("composition conflicts:");
+        let mut files: Vec<String> = Vec::new();
         for c in conflicts {
             msg.push_str(&format!("\n  {}.{}: {} disagreeing definitions", c.addr.tf_type, c.addr.label, c.candidates.len()));
             for (_, spans) in &c.candidates {
                 for s in spans {
                     msg.push_str(&format!("\n    - {}:{}", s.file, s.line));
+                    files.push(s.file.clone());
                 }
             }
+        }
+        if let Some(pair) = dry_run_pair(&files) {
+            msg.push_str(&format!(
+                "\n\n  `{}` is the dry-run twin of `{}` and declares the same policies with \
+                 `dry_run_spec`.\n  A dry run REPLACES enforcement while it measures — use one or the other, \
+                 never both.",
+                pair.1, pair.0
+            ));
         }
         return Err(msg.into());
     }
@@ -2125,6 +2138,57 @@ static IAC_ROLES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 /// to disappear — a pack shipped after an estate was written had no line in that estate, so
 /// answering its question did nothing at all. `satz merge-presets` writes the line;
 /// `satz interview` uncomments it; this says so when neither has happened.
+/// Two of the conflicting files are a fragment and its own dry-run twin, if they are.
+///
+/// The fold reports one address defined twice and names the files; when those files are
+/// `X.satz` and `X-dry-run.satz` the real fault is a decision, not a composition
+/// accident, and the message says so.
+fn dry_run_pair(files: &[String]) -> Option<(String, String)> {
+    let stem = |f: &str| f.rsplit('/').next().unwrap_or(f).to_string();
+    for f in files {
+        let twin = stem(f);
+        let Some(base) = twin.strip_suffix("-dry-run.satz") else { continue };
+        let want = format!("{}.satz", base);
+        if files.iter().any(|o| stem(o) == want) {
+            return Some((want, twin));
+        }
+    }
+    None
+}
+
+/// A control cannot be measured and enforced at the same time.
+///
+/// A dry-run twin declares the SAME policy address as the fragment it is derived from,
+/// with `dry_run_spec` where that one has `spec`. Both gates true means both fragments
+/// are used, which the ⊕ fold refuses as two disagreeing definitions of one address —
+/// correctly, but naming files rather than the decision behind them. This says what
+/// happened and what to do about it, and it is always an error: there is no reading of
+/// "measure it and enforce it" that the estate could have meant.
+fn report_dry_run_conflicts(
+    env: &satz_core::pipeline::Env,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let on = |p: &str| env.get(p).and_then(|v| v.as_bool()) == Some(true);
+    let mut clashes: Vec<(String, &str)> = Vec::new();
+    for (_, gate, _) in crate::template::PACK_LINES {
+        let Some(enforcing) = gate.strip_suffix("_dry_run") else { continue };
+        if on(gate) && on(enforcing) {
+            clashes.push((enforcing.to_string(), gate));
+        }
+    }
+    if clashes.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::new();
+    for (enforcing, dry) in &clashes {
+        msg.push_str(&format!(
+            "  `{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n     \
+             Switch one off: `{}` to size the control against this organisation first, `{}` to enforce it now.\n",
+            enforcing, dry, dry, enforcing
+        ));
+    }
+    Err(format!("{} control(s) asked to be measured and enforced at once:\n{}", clashes.len(), msg).into())
+}
+
 fn report_unadopted_packs(
     estate: &Path,
     env: &satz_core::pipeline::Env,

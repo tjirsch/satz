@@ -725,6 +725,16 @@ cp "$root/presets/import-config.yaml" tmp/import-config.yaml
 uv run --with ruamel.yaml "$root/scripts/update_import_config.py" --config-file tmp/import-config.yaml --cai-types "$root/presets/cai-asset-types.txt" | tee tmp/fill.txt
 grep -q '^asset_type filled: 0;' tmp/fill.txt || fail "presets/import-config.yaml is behind presets/cai-asset-types.txt — run the fill and commit it"
 
+step "dry-run twins are derived from their enforcing fragments, not written beside them"
+uv run "$root/scripts/build_dry_run_fragments.py" --check \
+  || fail "a dry-run twin is stale — run scripts/build_dry_run_fragments.py and commit"
+# A twin claims nothing: a dry run discharges no control while it measures, so a claim
+# over it would be contradicted by its own witness (ADR 0013).
+grep -l '^claim ' "$root"/presets/cis-extensions/*-dry-run.satz 2>/dev/null \
+  && fail "a dry-run fragment carries a claim — a dry run discharges nothing"
+grep -q 'dry_run_spec' "$root/presets/cis-extensions/cloud-sql-dry-run.satz" \
+  || fail "the dry-run twin does not declare dry_run_spec"
+
 # doc-packs carries three gates now: the pages match the packs, every claim
 # names a control its catalog carries, and every pack version has a changelog
 # row. The shell loop that checked the last one lived here; the tool knows both

@@ -51,3 +51,4 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0011](0011-plan-and-apply-replace-a-policy-switching-to-reset.md) | `satz plan` and `satz apply` replace an org policy the state holds with rules and the estate declares reset | accepted |
 | [0012](0012-the-admin-port-policy-ships-on-and-passes-the-private-ranges.md) | the admin-port policy ships on and passes the private ranges | accepted |
 | [0013](0013-a-claim-asserts-what-its-witness-does.md) | a claim asserts what its witness DOES; an org policy that is switched off discharges nothing | accepted |
+| [0014](0014-a-dry-run-is-a-generated-twin-and-claims-nothing.md) | a dry-run policy is a GENERATED twin of its enforcing fragment and carries no claim | accepted |

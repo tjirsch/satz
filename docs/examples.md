@@ -104,6 +104,12 @@ federation example cannot avoid naming the issuer it federates, and
 other domain fails the gate, including ones that look fictional: most such
 domains are registered by real businesses.
 
+One entry is not a host at all: `google.cloud` is the package name of Google's own
+audit protobufs, as it appears in a Cloud Logging filter
+(`type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo`). The gate reads it as
+a `.cloud` domain because that is what the shape says; it is identical for every
+customer, so it is allowed by exact name.
+
 **Commit identity.** Every commit's author and committer must be the
 maintainer's address or a GitHub noreply address
 (`<id>+<user>@users.noreply.github.com` — enable "keep my email address
