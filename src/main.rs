@@ -2113,7 +2113,9 @@ fn pipeline_b_generate(
         .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
         .filter(|f| !(f.kind == crate::findings::Kind::IacRoles && IAC_ROLES_QUIET.load(std::sync::atomic::Ordering::Relaxed)))
         .collect();
-    crate::findings::render(&findings)?;
+    if let Err(message) = crate::findings::render(&findings) {
+        return Err(Box::new(crate::findings::CompileRefusal { message, findings }));
+    }
     let out = tail.out.expect("no error finding, so the emitter ran");
     let providers_tf = tail.providers_tf.expect("no error finding, so the providers were emitted");
     let folded = tail.folded;

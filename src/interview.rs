@@ -88,7 +88,9 @@ fn params_block(src: &str) -> Result<(usize, usize), String> {
 
 /// Bind `name = value` in the estate's `params {}`: replace an existing binding in
 /// place, else append before the closing brace. Text surgery rather than a re-emit,
-/// so the comments and the ordering of a hand-edited file survive the interview.
+/// so the comments and the ordering of a hand-edited file survive the interview —
+/// the VALUE alone is replaced, so the line keeps its indentation, its `=` column and
+/// its trailing comment.
 pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<String, String> {
     let (open, close) = params_block(src)?;
     let lit = literal(value);
@@ -103,8 +105,10 @@ pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<S
                 .map(|rest| rest.trim_start().starts_with('='))
                 .unwrap_or(false);
         if binds_it {
-            let indent = &line[..line.len() - trimmed.len()];
-            out.push_str(&format!("{indent}{name} = {lit}\n"));
+            let (from, to) = value_span(line, name)?;
+            out.push_str(&line[..from]);
+            out.push_str(&lit);
+            out.push_str(&line[to..]);
             replaced = true;
         } else {
             out.push_str(line);
@@ -118,6 +122,69 @@ pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<S
     }
     out.push_str(&src[close..]);
     Ok(out)
+}
+
+/// The value of `name = …` on this line, as a byte range: from the first character
+/// after the `=` to the end of the value, with the trailing whitespace and any
+/// trailing comment left outside it. A `#` or `//` inside a string is text, not a
+/// comment.
+///
+/// A value that does not finish on its line — an open list or string — is refused
+/// rather than half-rewritten: `bind` works a line at a time, and replacing the
+/// first line of a multi-line list would leave its tail behind as stray text.
+fn value_span(line: &str, name: &str) -> Result<(usize, usize), String> {
+    let eq = line[line.find(name).unwrap_or(0)..]
+        .find('=')
+        .map(|i| line.find(name).unwrap_or(0) + i)
+        .ok_or_else(|| format!("{}: the binding has no `=`", name))?;
+    let from = line[eq + 1..]
+        .find(|c: char| !c.is_whitespace())
+        .map(|i| eq + 1 + i)
+        .ok_or_else(|| format!("{}: the binding has no value on its line", name))?;
+
+    let bytes = line.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut i = from;
+    let mut end = line.len();
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_string {
+            match c {
+                b'\\' => i += 1,
+                b'"' => in_string = false,
+                _ => {}
+            }
+        } else {
+            match c {
+                b'"' => in_string = true,
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' => depth -= 1,
+                b'#' if depth == 0 => {
+                    end = i;
+                    break;
+                }
+                b'/' if depth == 0 && bytes.get(i + 1) == Some(&b'/') => {
+                    end = i;
+                    break;
+                }
+                b'\n' => {
+                    end = i;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    if in_string || depth != 0 {
+        return Err(format!(
+            "{}: its value does not finish on one line — write that param by hand, or `satz fmt` it first",
+            name
+        ));
+    }
+    let end = line[..end].trim_end().len();
+    Ok((from, end))
 }
 
 /// Write one answer, given the question it answers. A `oneof` takes an option's
@@ -651,6 +718,10 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         assert!(crate::questions::require_complete(&estate, &cfg, "apply").is_ok());
     }
 
+    fn yaml_num(n: i64) -> serde_yaml::Value {
+        serde_yaml::Value::Number(n.into())
+    }
+
     /// A param bound in the file: its line reads `name = value`, at whatever column
     /// the formatter aligned the `=` to.
     fn bound(src: &str, name: &str, value: &str) -> bool {
@@ -658,6 +729,35 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
             let l = l.trim();
             l.starts_with(name) && l[name.len()..].trim_start().starts_with('=') && l.ends_with(&format!("= {}", value))
         })
+    }
+
+    /// An answer replaces the VALUE. What the author wrote around it — the `=` column
+    /// of a hand-aligned block, the note at the end of the line — is theirs, and an
+    /// interview that eats it is an interview nobody runs twice.
+    #[test]
+    fn binding_keeps_the_trailing_comment_and_the_alignment() {
+        let src = "estate e\n\nparams {\n  audit_retention_days     = 400 # a number\n  customer_shortname       = \"old\"  // typed on day 0\n}\n";
+        let out = bind(src, "audit_retention_days", &yaml_num(30)).unwrap();
+        assert!(out.contains("  audit_retention_days     = 30 # a number\n"), "{out}");
+        let out = bind(&out, "customer_shortname", &yaml("acme")).unwrap();
+        assert!(out.contains("  customer_shortname       = \"acme\"  // typed on day 0\n"), "{out}");
+    }
+
+    #[test]
+    fn a_hash_or_slashes_inside_a_string_are_the_value_not_a_comment() {
+        let src = "estate e\n\nparams {\n  logsink_filter = \"log_id(\\\"a#b\\\") // keep\"\n}\n";
+        let out = bind(src, "logsink_filter", &yaml("x")).unwrap();
+        assert!(out.contains("  logsink_filter = \"x\"\n"), "{out}");
+    }
+
+    /// `bind` works a line at a time, so a value that opens a list and closes it three
+    /// lines down cannot be replaced by rewriting one line: say so instead of leaving
+    /// the tail behind as stray text.
+    #[test]
+    fn a_value_that_spans_lines_is_refused_not_half_written() {
+        let src = "estate e\n\nparams {\n  members = [\n    \"a\",\n  ]\n}\n";
+        let e = bind(src, "members", &yaml("x")).unwrap_err();
+        assert!(e.contains("does not finish on one line"), "{e}");
     }
 
     #[test]

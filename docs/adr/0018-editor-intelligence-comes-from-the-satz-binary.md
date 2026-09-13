@@ -73,6 +73,9 @@ name is the one frame the walk skips; a list of objects is one nested-block leve
   for three readers: the CLI renders them as it always did and refuses on an error,
   the server publishes each as a diagnostic at the line it names (the estate's first
   line when it names none), and `satz_transpile_check` returns them as data, warnings
-  included — which MCP had lost entirely. One shape, so the three never disagree.
+  included — which MCP had lost entirely. One shape, so the three never disagree. A
+  refused compile carries the list too: `CompileRefusal` is the error, rendering as
+  the CLI's text and holding the findings behind it, so the MCP refusal hands over a
+  `CompileSummary` with nothing emitted and every error at its line.
 - The lexer's `Tok`, `Token` and `lex_spanned` are public API of `satz-core` now: two
   consumers, the formatter and the server.
