@@ -1,0 +1,58 @@
+// IaC-roles gate: the exemption tag vocabulary, plus a binding and a conditional policy
+// written the way the pack's header says an estate writes them.
+//
+// It is its own case rather than a line in `all-packs` because the policy below carries
+// a tag CONDITION, which is the thing being proved: the manifest must read the verdict
+// from the unconditional rule and record the conditional one beside it, so a policy that
+// lets one resource out still reads as enforced instead of losing its verdict.
+
+estate iac_exemption_tag
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0example"
+  customer_domain = "example.com"
+  customer_shortname = "acme"
+  infra_project_name = "acme-infra-001"
+  svc_iac_account = "svc-iac-001"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/exemptions/exemption-tag.satz"
+
+// The exemption itself: one service account, named, with its owner in the comment.
+google_tags_tag_binding {
+  "svc-legacy-connector" {
+    // Owner: the platform team. Review: the next access review.
+    // Reason: the vendor's connector cannot federate.
+    parent    = "//iam.googleapis.com/projects/acme-infra-001/serviceAccounts/svc-legacy@acme-infra-001.iam.gserviceaccount.com"
+    tag_value = "${{google_tags_tag_value.exemption_not_enforced.name}}"
+  }
+}
+
+// The constraint that honours the tag: enforced everywhere, off where the value is bound.
+google_org_policy_policy {
+  "iam-managed-disableServiceAccountKeyCreation" {
+    name = "organizations/{customer_organization_id}/policies/iam.managed.disableServiceAccountKeyCreation"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "FALSE"
+          condition {
+            title      = "exempted service accounts"
+            expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
+          }
+        },
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}

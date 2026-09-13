@@ -1,0 +1,90 @@
+// The vocabulary for a tag-conditional exemption: one organisation tag key with two
+// values, and nothing bound to either.
+//
+//   use "presets/exemptions/exemption-tag.satz" when use_exemption_tag
+//
+// An org policy is all-or-nothing per node. To let ONE service account create ONE key,
+// the policy has to be lowered for a whole project or folder and raised again
+// afterwards — a lift WINDOW during which nothing is enforced and nobody remembers to
+// close it. A Resource Manager TAG replaces the window: unlike a label it is
+// IAM-governed and an org policy's rule can CONDITION on it, so the policy stays
+// enforced everywhere and named resources are let out one at a time.
+//
+// Google does this themselves. Since 2024 a new organisation gets
+// `iam.disableServiceAccountKeyCreation` carrying
+// `resource.matchTagId('tagKeys/…', 'tagValues/…')` against a built-in key, so binding
+// `not_enforced` to one service account exempts that account and nothing else.
+//
+// ---- BEFORE granting any exemption, the question that usually ends it -------------
+//
+// Does the consumer need a KEY at all? A workload inside Google Cloud, a Cloud Run
+// service, and external CI on GitHub or GitLab can all use Workload Identity Federation
+// or impersonation and leave the control intact. The tag route is the exception with a
+// named owner, never the default.
+//
+// ---- WHAT THIS PACK DOES AND DOES NOT DO -------------------------------------------
+//
+// It ships the ABILITY, not the exemptions. A library that ships convenient exemptions
+// is a library that lowers the baseline by default. So: the key and the two values are
+// here; the BINDING that exempts a resource is the estate's, written where an auditor
+// reads it, and the policy CONDITION that honours the tag is written per constraint.
+//
+// The binding, in the estate, one per exempted resource and each with a comment saying
+// who owns it and until when:
+//
+//   google_tags_tag_binding {
+//     "svc-legacy-etl-key" {
+//       // Owner: the platform team. Review: the next quarter's access review.
+//       // Reason: the vendor's connector cannot federate; migration ticket OPS-1234.
+//       parent    = "//iam.googleapis.com/projects/{infra_project_name}/serviceAccounts/…"
+//       tag_value = "${{google_tags_tag_value.exemption_not_enforced.name}}"
+//     }
+//   }
+//
+// The condition, on the constraint that should honour it — a second rule BEFORE the
+// unconditional one, turning enforcement off only where the value is bound:
+//
+//   rules = [
+//     {
+//       enforce = "FALSE"
+//       condition {
+//         title      = "exempted resources"
+//         expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exemption_not_enforced.name}}')"
+//       }
+//     },
+//     { enforce = "TRUE" },
+//   ]
+//
+// `require` reads that rule from the estate and prints it under the control
+// (`↳ exempted: …`) rather than letting a conditional policy read as plain "enforced";
+// `report-compliance` lists the live conditional rules beside the live verdict. The
+// org-wide answer to "who is exempted" is Cloud Asset Inventory:
+//
+//   gcloud asset search-all-resources --scope=organizations/ORG \
+//     --query='tagValues:{customer_shortname}-exemption/not_enforced'
+
+pack exemptions.exemption_tag version "1.0"
+
+google_tags_tag_key {
+  "exemption" {
+    parent      = "organizations/{customer_organization_id}"
+    short_name  = "{customer_shortname}-exemption"
+    description = "Marks a resource as exempted from an organisation policy that conditions on this key. Bound one resource at a time, with a named owner and a review date."
+  }
+}
+
+google_tags_tag_value {
+  "exemption_enforced" {
+    parent      = "${{google_tags_tag_key.exemption.name}}"
+    short_name  = "enforced"
+    description = "The default. Present so a binding can be moved back rather than deleted, which leaves a trace."
+  }
+}
+
+google_tags_tag_value {
+  "exemption_not_enforced" {
+    parent      = "${{google_tags_tag_key.exemption.name}}"
+    short_name  = "not_enforced"
+    description = "Bound to a resource that an organisation policy conditioning on this key lets out. Every binding is an accepted risk with an owner."
+  }
+}

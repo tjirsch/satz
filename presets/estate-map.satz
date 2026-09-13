@@ -21,7 +21,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.6"
+pack estate_map version "1.7"
 
 params {
   // ---- the security-group model: exactly one ------------------------------
@@ -50,6 +50,7 @@ params {
   use_sentinel_auditlogs   = use_sentinel
   use_sentinel_network_logs = use_sentinel
   use_verification_runner  = false
+  use_exemption_tag        = false
 }
 
 question oneof security_model {
@@ -179,4 +180,11 @@ question use_verification_runner {
   why      = "The customer-hosted shape: Cloud Build triggers and a runner account in the infrastructure project, plus the grant that lets the runner read as the estate. An MSP-hosted runner is the grant alone here and the runner in the MSP's estate, wired by hand."
   reversal = recreate
   blast    = low
+}
+
+question use_exemption_tag {
+  prompt   = "Create the organisation tag that lets a policy exempt named resources?"
+  why      = "An organisation policy is all-or-nothing per node: letting ONE service account or ONE project out of a control today means lowering the policy for a whole folder and raising it again afterwards, a window during which nothing is enforced and which nobody remembers to close. A Resource Manager tag is IAM-governed and an organisation policy's rule can condition on it, so the policy stays enforced everywhere and named resources are let out one at a time — visible in the compliance report and listable organisation-wide through Cloud Asset Inventory. Creating the tag exempts nothing on its own: a binding does, and each binding is written in the estate with its owner and its reason. Before granting any exemption, ask whether the consumer needs it at all — a workload in Google Cloud, a Cloud Run service and external CI can all federate instead."
+  reversal = edit
+  blast    = none
 }

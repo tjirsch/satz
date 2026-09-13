@@ -725,6 +725,23 @@ cp "$root/presets/import-config.yaml" tmp/import-config.yaml
 uv run --with ruamel.yaml "$root/scripts/update_import_config.py" --config-file tmp/import-config.yaml --cai-types "$root/presets/cai-asset-types.txt" | tee tmp/fill.txt
 grep -q '^asset_type filled: 0;' tmp/fill.txt || fail "presets/import-config.yaml is behind presets/cai-asset-types.txt — run the fill and commit it"
 
+step "a tag-conditional exemption keeps the verdict and is reported beside it"
+cp "$root/tests/iac/exemption-tag/main.satz" tmp/exemption.satz
+cat >> tmp/exemption.satz <<'SATZ'
+claim "cis-gcp" "4.0" "1.4" implements {
+  resources = ["google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation"]
+  interpretation = "Keys cannot be created, except where the exemption tag value is bound."
+}
+SATZ
+"$satz" --config . require cis-gcp-4.0 ../tmp/exemption.satz > tmp/exemption.txt 2>&1 || true
+grep -qE '^  . 1\.4 ' tmp/exemption.txt || fail "the exempted control is not in the goal view at all"
+grep -q '✓ 1.4' tmp/exemption.txt \
+  || fail "a conditional exemption unmade the verdict — the unconditional rule decides"
+grep -q '↳ exempted:' tmp/exemption.txt \
+  || fail "the exemption is not reported beside the verdict"
+grep -q '1 control(s) carry a conditional exemption' tmp/exemption.txt \
+  || fail "the exemption is not counted in the summary"
+
 step "dry-run twins are derived from their enforcing fragments, not written beside them"
 uv run "$root/scripts/build_dry_run_fragments.py" --check \
   || fail "a dry-run twin is stale — run scripts/build_dry_run_fragments.py and commit"
