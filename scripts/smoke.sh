@@ -280,6 +280,14 @@ grep -q '^// use \"presets/estate-map.satz\"' tmp/iv/new.satz \
   || fail "the map must be written commented — it is what asks which packs the estate has"
 grep -q '^// use \"presets/scc/scc-export.satz\" when use_scc_export' tmp/iv/new.satz \
   || fail "every optional pack must be written commented, under its phase"
+# an estate path resolves inside yaml_dir, so naming the directory doubles it:
+# `--create` used to write yaml/yaml/x.satz and report success
+if "$satz" --config . interview yaml/doubled.satz --create --accept-defaults > tmp/iv/doubled.txt 2>&1; then
+  fail "a path that names yaml_dir must be refused, not created:\n$(cat tmp/iv/doubled.txt)"
+fi
+grep -q 'pass `doubled.satz` instead' tmp/iv/doubled.txt \
+  || fail "the refusal must name the bare form:\n$(cat tmp/iv/doubled.txt)"
+[ ! -e yaml/yaml ] || fail "satz created a doubled yaml/yaml directory"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
