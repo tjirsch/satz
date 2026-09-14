@@ -340,7 +340,10 @@ asked of ListAssets), 439 that Cloud Asset does not serve as assets (IAM members
 org-policy v1 shapes, the types ListAssets refuses; state shape only), 392 marked
 `TODO/UNKNOWN` (Cloud Asset does not inventory them, or the name could not be
 derived — `scripts/update_import_config.py` prints what it tried). A copy of the table with your own `import:` flags, passed with
-`--import-config`, is the repeatable form.
+`--import-config`, is the repeatable form. A grant one principal holds on two
+folders or two projects is refused, because the map form emits one address per
+member and role; `--on-collision counter` writes the second and later as labelled
+resources with a running number, and says which.
 
 A live resource whose provider block would not plan is never written: a required
 attribute the asset data lacks is derived where it can be (`parent`,

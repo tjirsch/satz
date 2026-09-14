@@ -496,6 +496,12 @@ enum Commands {
         /// zero-risk form; the estate deploys exactly as the source did)
         #[arg(long)]
         wrap_all: bool,
+        /// state/live shapes: a grant one principal holds on two folders or
+        /// two projects — `error` refuses the import naming them, `counter`
+        /// writes the second and later as labelled resources with a running
+        /// number (the map form emits one address per member and role)
+        #[arg(long, default_value = "error")]
+        on_collision: String,
     },
 
     /// Migrate state and configuration between local and cloud modes
@@ -1400,7 +1406,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, all, exclude, output, import_config, gate, kind, fork, into, wrap_all } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, gate, kind, fork, into, wrap_all, on_collision } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1418,6 +1424,7 @@ Thumbs.db
                 }
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
+                    let on_collision: crate::discovery::OnCollision = on_collision.parse()?;
                     if all {
                         let on = cfg.apply_all(shape == "org");
                         println!("import: --all — {} type(s) switched on beside the table's defaults", on);
@@ -1456,7 +1463,7 @@ Thumbs.db
                             None | Some("-") => None,
                             Some(p) => Some(PathBuf::from(p)),
                         };
-                        import_state(state_json, output, cfg, filtered, cli.verbose, &tool_config, &runtime_config)
+                        import_state(state_json, output, cfg, filtered, on_collision, cli.verbose, &tool_config, &runtime_config)
                     } else {
                         // `--into` names an existing estate, and the delta runs
                         // exactly `adopt`'s read path — the same Cloud Asset
@@ -1471,8 +1478,8 @@ Thumbs.db
                         }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         match into_path {
-                            Some(estate) => import_delta(&parent, estate, cfg, filtered, cli.verbose, &tool_config, &runtime_config).await,
-                            None => import_org(&parent, output, cfg, filtered, cli.verbose, &runtime_config).await,
+                            Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, &tool_config, &runtime_config).await,
+                            None => import_org(&parent, output, cfg, filtered, on_collision, cli.verbose, &runtime_config).await,
                         }
                     }
                 }
@@ -3130,11 +3137,13 @@ fn convert_yaml_to_satz(
 }
 
 /// The state shape of `satz import`: `tofu show -json` (a file, or run now).
+#[allow(clippy::too_many_arguments)]
 fn import_state(
     state_json: Option<PathBuf>,
     output: PathBuf,
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
+    on_collision: crate::discovery::OnCollision,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -3161,7 +3170,7 @@ fn import_state(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
-    let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered);
+    let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered, on_collision);
     let found = discoverer.discover()?;
     write_imported(&found.config, output, None, &|t| type_names.contains(t), runtime_config)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
@@ -3178,6 +3187,7 @@ async fn import_org(
     output: PathBuf,
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
+    on_collision: crate::discovery::OnCollision,
     verbose: bool,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3187,7 +3197,7 @@ async fn import_org(
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let org_hint = cfg.root.as_ref().and_then(|r| r.organization.clone())
         .or_else(|| parent.strip_prefix("organizations/").map(String::from));
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry), on_collision).await?;
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
@@ -3520,11 +3530,13 @@ impl satz_hcl::Schema for RegistrySchema<'_> {
 }
 
 /// The live shape with `--into`: the delta against what the estate declares.
+#[allow(clippy::too_many_arguments)]
 async fn import_delta(
     parent: &str,
     estate: PathBuf,
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
+    on_collision: crate::discovery::OnCollision,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -3561,7 +3573,7 @@ async fn import_delta(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry), on_collision).await?;
     attach_billing_accounts(&mut found.config).await;
     let top = match serde_yaml::to_value(&found.config)? {
         serde_yaml::Value::Mapping(m) => m,
@@ -6224,7 +6236,7 @@ mod import_skipped_report {
         let state: serde_json::Value = serde_json::from_str(STATE).unwrap();
         let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
         let filtered = ["google_compute_network"].into_iter().map(String::from).collect();
-        let found = Discoverer::new(state, None, Some(enabled), filtered).discover().unwrap();
+        let found = Discoverer::new(state, None, Some(enabled), filtered, Default::default()).discover().unwrap();
         let mut got: Vec<(String, String, SkipReason)> =
             found.skipped.iter().map(|s| (s.tf_type.clone(), s.what.clone(), s.reason.clone())).collect();
         got.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
@@ -6253,7 +6265,7 @@ mod import_skipped_report {
              "versioning":{"enabled":true}}}
         ]}}}"#).unwrap();
         let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
-        let found = Discoverer::new(state, Some(reg), Some(enabled), Default::default()).discover().unwrap();
+        let found = Discoverer::new(state, Some(reg), Some(enabled), Default::default(), Default::default()).discover().unwrap();
         assert_eq!(found.dropped_attrs, vec![("google_storage_bucket".to_string(), "lifecycle".to_string())]);
         let bucket = &found.config.project.as_ref().unwrap()["infra"].extra["google_storage_bucket"];
         let text = serde_yaml::to_string(bucket).unwrap();
@@ -6408,6 +6420,51 @@ google_organization_iam_audit_config:
             assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
         }
         assert!(!out.main_tf.contains("import-id"));
+    }
+
+    #[test]
+    fn a_counted_grant_emits_its_own_address() {
+        // one principal, one role, two folders: the map form alone emits one
+        // address (its label hashes member + role) and the emitter refuses;
+        // with the counter the second edge is a labelled resource of its own
+        let yaml = r#"
+folder:
+  a:
+    display_name: A
+    import-id: folders/1
+    google_folder_iam_member:
+      "user:x@example.com":
+        - role: roles/resourcemanager.folderAdmin
+          import-id: folders/1 roles/resourcemanager.folderAdmin user:x@example.com
+  b:
+    display_name: B
+    import-id: folders/2
+    google_folder_iam_member:
+      "user:x@example.com":
+        - role: roles/resourcemanager.folderAdmin
+          import-id: folders/2 roles/resourcemanager.folderAdmin user:x@example.com
+"#;
+        let mut config: Config = serde_yaml::from_str(yaml).unwrap();
+        let reg = super::corpus::registry();
+        let notes = crate::discovery::resolve_grant_collisions(&mut config, crate::discovery::OnCollision::Counter).unwrap();
+        assert_eq!(notes.len(), 1, "{:?}", notes);
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &|t| reg.resources.contains_key(t)).unwrap();
+        assert!(text.contains("folderAdmin_x_2 {"), "{}", text);
+
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("counted estate does not compile: {:?}\n{}", e, text));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs = out.manifest.addresses();
+        assert_eq!(addrs.iter().filter(|a| a.starts_with("google_folder_iam_member.")).count(), 2, "{:?}", addrs);
+        assert!(addrs.contains("google_folder_iam_member.folderAdmin_x_2"), "{:?}", addrs);
+        assert!(out.main_tf.contains("google_folder.b.name"), "the labelled grant inherits its folder from the node:\n{}", out.main_tf);
+        for id in ["folders/1 roles/resourcemanager.folderAdmin user:x@example.com", "folders/2 roles/resourcemanager.folderAdmin user:x@example.com"] {
+            assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
+        }
     }
 
     #[test]
