@@ -33,6 +33,12 @@ behind upstream is refreshed, one you edited becomes an `X.local.satz` fork with
 delta beside it in `X.diff.satz`, and the estate is repointed. The filename suffix says
 who owns each file.
 
+**satz studio** is the desktop app beside satz. It drives the same binary and the same
+estate files, so every step below can be taken either way, and the diagrams show both:
+the commands in the terminal, and the views in the app. What the app does not run itself
+— `bootstrap` and `apply`, which create as the human and ask for approval — it hands to
+the terminal as a command line to copy.
+
 **What satz needs, and where.** satz owns no credential: it runs as the logged-in
 user's Application Default Credentials until the switch to the service account, and as
 that account afterwards. Before `bootstrap` creates anything it tests the permissions it
@@ -85,6 +91,8 @@ Five steps, in this order. Each one is a section below.
    the library's rather than one person's memory of it. A question answered `true` whose
    line is still commented — or missing — is reported at every compile, because otherwise
    the answer is bound and nothing emits it.
+
+![The five steps of an estate's life, each as satz commands in the terminal and as satz studio: write the estate, bootstrap, apply as yourself, switch to the service account, add packs one at a time; steps 1–3 run as the logged-in user with a local state, steps 4–5 as the IaC service account with the state in the bucket](workflow-lifecycle.svg)
 
 ### Prerequisites
 
@@ -259,6 +267,8 @@ few minutes.
 
 Steps 1–3 ran as the logged-in user. This is where that ends: the state moves into the
 GCS bucket and every later command impersonates the estate's IaC service account.
+
+![Local and cloud side by side: as yourself with a local state file in steps 1–3, then satz migrate --mode cloud moves the state into the bucket and makes provider and backend impersonate the IaC service account, which runs everything from step 4 on](workflow-local-cloud.svg)
 
 Switch the state to the GCS bucket and the identity to impersonation:
 
@@ -535,6 +545,8 @@ an older one is refused by its version rather than read as empty.
 
 How to tell whether a newer preset exists, what to do about it, and which command to
 reach for.
+
+![The pack loop: the library, the estate's presets folder with pristine, fork and diff files, check-presets and its states, merge-presets and what it writes into the estate file, then questions, interview and one apply per pack; below, the same loop through satz studio's Map, Interview, Commands and Diagnostics views](workflow-packs.svg)
 
 ### Files and owners
 
