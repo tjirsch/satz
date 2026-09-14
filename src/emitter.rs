@@ -217,6 +217,36 @@ fn order_after_service_accounts(blocks: &mut [hcl::Block]) {
     }
 }
 
+/// A grant on a group the estate declares names it by its email string
+/// (`group:<key>@<domain>`), so tofu would create the grant beside the group:
+/// the IAM API refuses a member that does not exist yet, and on a fresh
+/// organisation the first refusal stops the groups still queued from ever
+/// being created. Each such grant — and a membership whose member key names
+/// such a group — gets a `depends_on` on the group, the way a grant on a
+/// declared service account does; on destroy the grant then goes before the
+/// group, leaving no `deleted:group:…` binding behind.
+fn order_after_groups(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let groups: std::collections::BTreeMap<String, String> = manifest
+        .of_type("google_cloud_identity_group")
+        .filter_map(|r| Some((r.nested.get("group_key.id")?.clone(), r.address())))
+        .collect();
+    if groups.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address) else { continue };
+        let named = r
+            .attrs
+            .get("member")
+            .and_then(|m| m.strip_prefix("group:"))
+            .or_else(|| r.nested.get("preferred_member_key.id").map(String::as_str));
+        let Some(group) = named.and_then(|email| groups.get(email)) else { continue };
+        add_depends_on(b, group);
+    }
+}
+
 /// A policy on a custom constraint names the constraint by its string
 /// (`…/policies/custom.x`), so tofu would create the policy beside the
 /// constraint, and the API refuses a policy on a constraint that does not exist
@@ -583,6 +613,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     }
 
     order_after_service_accounts(&mut blocks);
+    order_after_groups(&mut blocks);
     order_after_custom_constraints(&mut blocks);
 
     let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
@@ -1113,6 +1144,56 @@ resource "google_cloud_identity_group_membership" "owner" {
         // an account the estate does not declare orders nothing
         assert_eq!(depends_on(by("elsewhere")), None);
         assert_eq!(depends_on(by("iac")), None);
+    }
+
+    #[test]
+    fn grants_and_memberships_naming_a_declared_group_wait_for_it() {
+        // a grant names its group by email; on a fresh organisation the grant
+        // used to run beside the group's creation and the first refusal
+        // stopped the groups still queued
+        let mut bs = blocks(
+            r#"
+resource "google_cloud_identity_group" "gcp_auditors" {
+  display_name = "Auditors"
+  parent = "customers/C0example"
+  group_key {
+    id = "gcp-auditors@example.com"
+  }
+}
+resource "google_organization_iam_member" "auditors_viewer" {
+  role = "roles/viewer"
+  member = "group:gcp-auditors@example.com"
+  org_id = "123456789012"
+}
+resource "google_project_iam_member" "auditors_logs" {
+  role = "roles/logging.viewer"
+  member = "group:gcp-auditors@example.com"
+  project = "acme-infra-001"
+  depends_on = [google_project.infra]
+}
+resource "google_organization_iam_member" "elsewhere" {
+  role = "roles/viewer"
+  member = "group:other@example.com"
+  org_id = "123456789012"
+}
+resource "google_cloud_identity_group_membership" "nested" {
+  group = "groups/x"
+  preferred_member_key {
+    id = "gcp-auditors@example.com"
+  }
+}
+"#,
+        );
+        order_after_groups(&mut bs);
+        let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
+        assert_eq!(depends_on(by("auditors_viewer")).as_deref(), Some("[google_cloud_identity_group.gcp_auditors]"));
+        // an existing depends_on is extended, not replaced
+        assert_eq!(depends_on(by("auditors_logs")).as_deref(), Some("[google_project.infra,google_cloud_identity_group.gcp_auditors]"));
+        // a group nested in another group waits for it too
+        assert_eq!(depends_on(by("nested")).as_deref(), Some("[google_cloud_identity_group.gcp_auditors]"));
+        // a group the estate does not declare orders nothing
+        assert_eq!(depends_on(by("elsewhere")), None);
+        assert_eq!(depends_on(by("gcp_auditors")), None);
     }
 
     #[test]

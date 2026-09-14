@@ -67,6 +67,18 @@ for f in main.tf providers.tf variables.tf terraform.tfvars; do
 done
 grep -q 'resource "google_org_policy_policy"' hcl/main.tf || fail "the CIS pack's policies are not in main.tf"
 grep -q 'resource "google_cloud_identity_group_membership"' hcl/main.tf || fail "the group member was not emitted"
+# a grant on a group the estate declares waits for the group: on a fresh
+# organisation the grant used to run beside the creation and the first refusal
+# stopped the groups still queued
+python3 - <<'PYEOF' || fail "a grant on a group the estate declares carries no depends_on on it"
+import re, sys
+tf = open("hcl/main.tf").read()
+blocks = re.split(r'(?m)^(?=resource )', tf)
+grants = [b for b in blocks if b.startswith('resource "google_organization_iam_member"') and 'member = "group:' in b]
+assert grants, "no organization grant on a group in main.tf"
+waiting = [b for b in grants if "google_cloud_identity_group." in b]
+assert waiting, "no grant on a group waits for it:\n" + "\n".join(g.splitlines()[0] for g in grants)
+PYEOF
 grep -q 'ignore_changes' hcl/main.tf || fail "group lifecycle default missing"
 # The provenance line: which satz emitted this, and from what. It is a TRIAGE
 # hint — across a fleet, `grep` finds the estates last emitted by an old binary —
