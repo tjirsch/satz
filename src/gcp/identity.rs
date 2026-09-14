@@ -449,6 +449,9 @@ pub(crate) struct LiveDefaults {
     pub(crate) customer_domain: String,
     /// Bare organization number — `None` on a greenfield tenant.
     pub(crate) org_id: Option<String>,
+    /// The organization's display name — its primary domain, which is the
+    /// customer's domain even when the identity's differs.
+    pub(crate) org_display_name: Option<String>,
     /// The directory customer id (`C0…`).
     pub(crate) customer_id: Option<String>,
     /// Bare billing account id — only when exactly ONE open account is
@@ -461,9 +464,12 @@ pub(crate) struct LiveDefaults {
 /// `billingAccounts.list` → the single open account. Ambiguity is an error or
 /// a named gap, never a guess — and only what is actually MISSING is queried,
 /// so explicit flags keep working on accounts that see many organizations.
+/// `org_hint` names the organization the caller already knows (an import's
+/// sweep root): among many visible ones, that one is taken.
 pub(crate) async fn live_defaults(
     need_org: bool,
     need_billing: bool,
+    org_hint: Option<&str>,
 ) -> Result<LiveDefaults, String> {
     let token = crate::gcp::access_token().await?;
     let info = credential_info(&token).await;
@@ -478,23 +484,32 @@ pub(crate) async fn live_defaults(
     };
 
     let client = reqwest::Client::new();
-    let (org_id, customer_id) = if !need_org {
+    let (org_id, customer_id, org_display_name) = if !need_org {
         // Both values arrived as flags — no search, no ambiguity to trip on.
-        (None, None)
+        (None, None, None)
     } else {
         let orgs = crate::gcp::resourcemanager::search_organizations(&client, &token)
             .await
             .map_err(|e| format!("could not search organizations: {}", e))?;
-        match orgs.as_slice() {
-            [] => (None, None),
-            [one] => (
+        let facts = |one: &serde_json::Value| {
+            (
                 one.get("name")
                     .and_then(|n| n.as_str())
                     .and_then(|n| n.strip_prefix("organizations/"))
                     .map(str::to_string),
                 one.get("directoryCustomerId").and_then(|c| c.as_str()).map(str::to_string),
-            ),
-            many => {
+                one.get("displayName").and_then(|d| d.as_str()).map(str::to_string),
+            )
+        };
+        let hinted = org_hint.and_then(|h| {
+            let h = h.trim_start_matches("organizations/");
+            orgs.iter().find(|o| o.get("name").and_then(|n| n.as_str()) == Some(&format!("organizations/{}", h)))
+        });
+        match (hinted, orgs.as_slice()) {
+            (Some(one), _) => facts(one),
+            (None, []) => (None, None, None),
+            (None, [one]) => facts(one),
+            (None, many) => {
                 return Err(format!(
                     "{} organizations are visible to {} — pass --customer-organization-id and \
                      --customer-id explicitly: {}",
@@ -554,6 +569,7 @@ pub(crate) async fn live_defaults(
         first_admin: local.to_string(),
         customer_domain: domain.to_string(),
         org_id,
+        org_display_name,
         customer_id,
         billing_account,
     })

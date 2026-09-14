@@ -841,6 +841,15 @@ grep -qE 'name += "compute\.skipDefaultNetworkCreation"' yaml/imported-state.sat
 if grep -q 'parent = "organizations/' yaml/imported-state.satz; then fail "a top-level policy repeats the organization parent"; fi
 if grep -qE '"import-id" += "organizations/123456789012' yaml/imported-state.satz; then fail "the organization number is repeated where a reference belongs"; fi
 grep -q 'id = "organizations/123456789012/policies/compute.skipDefaultNetworkCreation"' tmp/imported-state-hcl/imports.tf || fail "the interpolated import id did not reach imports.tf as the literal"
+# the day-0 vocabulary: inferred values are marked with their rule, the rest
+# is reported, and a bound literal is referenced where the body repeats it
+grep -qE '^  customer_shortname += "corp" +// inferred: the leading token' yaml/imported-state.satz || fail "the short name was not inferred and marked:\n$(cat yaml/imported-state.satz)"
+grep -q 'import: params inferred: customer_shortname = "corp"' tmp/import-state.txt || fail "the inference is not reported"
+grep -q 'import: params not derivable: svc_iac_account' tmp/import-state.txt || fail "a value nothing states is not reported as not derivable"
+if grep -q 'customer_longname' yaml/imported-state.satz; then fail "a value nothing states must not be written"; fi
+grep -qE 'project_id += "\{customer_shortname\}-infra-001"' yaml/imported-state.satz || fail "the bound short name is not referenced in the project id"
+"$satz" --config . import state.json --customer-shortname acme -o imported-state-named.satz > /dev/null 2>&1 || fail "import with --customer-shortname failed"
+grep -qE '^  customer_shortname += "acme"$' yaml/imported-state-named.satz || fail "--customer-shortname did not win over the inference"
 # The table's `import: true` rows are the default set: --all takes every type the
 # source delivers, --exclude leaves types out. A copy of the table with the bucket
 # off shows all three.
