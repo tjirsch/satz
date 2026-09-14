@@ -1888,6 +1888,19 @@ Thumbs.db
                     )
                     .into());
                 }
+                // creating the file is where the doubled directory becomes permanent:
+                // `yaml/x.satz` lands at `yaml/yaml/x.satz` and nothing looks there again
+                if let Some(bare) = redundant_yaml_dir(&input, &runtime_config.yaml_dir) {
+                    return Err(format!(
+                        "{}: an estate path already resolves inside {}/, so this would create {} — \
+                         pass `{}` instead",
+                        input,
+                        runtime_config.yaml_dir,
+                        input_path.display(),
+                        bare
+                    )
+                    .into());
+                }
                 let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
                 if let Some(dir) = input_path.parent() {
                     crate::fsx::create_dir_all(dir)?;
@@ -4345,6 +4358,34 @@ pub(crate) fn estate_param(
         .map(str::to_string)
 }
 
+/// A relative estate path that already names `yaml_dir`, and the bare form it should have
+/// been. Paths resolve INSIDE `yaml_dir`, so `estate_path` joins it a second time: naming it
+/// yourself writes `yaml/yaml/x.satz`, which every later command misses because they all look
+/// in `yaml/`. Returns `None` when the path is absolute, or does not start with the directory.
+fn redundant_yaml_dir(estate: &str, yaml_dir: &str) -> Option<String> {
+    if std::path::Path::new(estate).is_absolute() {
+        return None;
+    }
+    // by component, not by string: the configured directory reaches here as
+    // `./yaml` as often as `yaml`, and a textual prefix misses that
+    let parts = |s: &str| -> Vec<String> {
+        std::path::Path::new(s)
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(x) => Some(x.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+    let dir = parts(yaml_dir);
+    let est = parts(estate);
+    let last = dir.last()?;
+    if est.len() < 2 || &est[0] != last {
+        return None;
+    }
+    Some(est[1..].join("/"))
+}
+
 fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
     if estate.is_absolute() {
         return estate;
@@ -6490,6 +6531,32 @@ mod init_template {
         let out = re_line.replace(src, |c: &regex::Captures| format!("{}deployment_mode{}= \"cloud\" // switched by `satz migrate`", &c[1], &c[2])).to_string();
         assert_eq!(out, "params {\n  deployment_mode          = \"cloud\" // switched by `satz migrate`\n  x = 1\n}\n");
         assert!(re_mode.captures("params { x = 1 }").is_none());
+    }
+}
+
+#[cfg(test)]
+mod estate_paths {
+    //! An estate path resolves inside `yaml_dir`, so naming the directory yourself
+    //! doubles it. Harmless for a file that exists; permanent when one is created.
+    use super::*;
+
+    #[test]
+    fn a_path_that_names_yaml_dir_is_caught_with_the_bare_form() {
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "yaml").as_deref(), Some("SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("yaml/sub/SKEL.satz", "yaml").as_deref(), Some("sub/SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "yaml/").as_deref(), Some("SKEL.satz"));
+        // how it actually arrives with `--config .`, which is what the guard missed first
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "./yaml").as_deref(), Some("SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("./yaml/SKEL.satz", "./yaml").as_deref(), Some("SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "/abs/estate/yaml").as_deref(), Some("SKEL.satz"));
+        // the bare form, another directory, and a path that IS the directory
+        assert_eq!(redundant_yaml_dir("SKEL.satz", "yaml"), None);
+        assert_eq!(redundant_yaml_dir("estates/SKEL.satz", "yaml"), None);
+        assert_eq!(redundant_yaml_dir("yaml", "yaml"), None);
+        // an absolute path is taken as given, and a flat layout has nothing to double
+        assert_eq!(redundant_yaml_dir("/abs/yaml/SKEL.satz", "yaml"), None);
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "."), None);
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", ""), None);
     }
 }
 
