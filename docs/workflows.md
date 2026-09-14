@@ -356,21 +356,29 @@ buckets, IAM, org policies, org/folder/project log sinks, a service account and 
 essential contact: `tofu plan` = every resource imported, nothing added or
 destroyed.
 
-### Refine the hierarchy
+### Refine the estate
 
-The discovered estate compiles as-is and mirrors the live layout. Restructure it so
-resources inherit their scope:
+The discovered estate compiles as-is and mirrors the live layout in the language's
+own forms: projects sit in their folders and resources in their projects, folders are
+labelled by display name, grants are member → roles maps with one line per edge,
+services are the project's `project_service` list, an org policy is its bare
+constraint with a `spec { … }` block, and the organization is referenced as
+`customer_organization_id` wherever its number was written. What the platform owns —
+the built-in `_Default` and `_Required` log sinks on every container, the grants of
+Google's service agents, the legacy bucket grants, Google-created service accounts, a
+project that is no longer ACTIVE — is not in the file; the import lists each group
+under the `skip:` pattern of the import-config row that took it, and a copy of the
+table without that pattern imports it.
 
-- Move projects into their folders.
-- Nest resources (buckets, networks, …) inside their projects.
-- Drop the attributes that are now inherited from context (`project_id` and its
-  kind).
+What is left is what only a person decides:
 
-Then compress the repetitive parts into the language's own forms: group
-`google_project_service` resources into a single `project_service` list, combine
-individual IAM members into compact `project_iam_member` / `folder_iam_member`
-blocks, and indent sub-structures (`project_service` with `disable_on_destroy`, for
-one) where they belong.
+- Replace the policies and grants a pack already carries with the pack's `use` line,
+  and bind its params.
+- Name the remaining literals as params where the estate will vary them.
+- Declare the groups and memberships: they are not in Cloud Asset Inventory, and
+  `satz adopt` resolves their ids.
+- Look through the skipped list and the numbered grants (`--on-collision counter`),
+  and keep or drop them deliberately.
 
 ### Reconcile
 

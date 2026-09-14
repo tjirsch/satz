@@ -45,7 +45,17 @@ pub struct ResourceSchema {
 #[derive(Debug, Deserialize, Clone)]
 pub struct BlockTypeSchema {
     pub min_items: Option<u64>,
+    pub max_items: Option<u64>,
+    pub nesting_mode: Option<String>,
     pub block: BlockSchema,
+}
+
+impl BlockTypeSchema {
+    /// A block that occurs at most once — written `key { … }`, never as a
+    /// list of one.
+    pub fn is_single(&self) -> bool {
+        self.nesting_mode.as_deref() == Some("single") || self.max_items == Some(1)
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -207,6 +217,23 @@ impl ResourceRegistry {
             }
         }
         Ok(ResourceRegistry { resources })
+    }
+
+    /// Whether the nested block at `path` (`spec`, `spec/rules/condition`) of
+    /// a resource type is a single block. Unknown type or path: `false` — the
+    /// list form is always valid, the block form only where the schema says.
+    pub fn single_block(&self, tf_type: &str, path: &str) -> bool {
+        let Some((_, schema)) = self.find_resource(tf_type) else { return false };
+        let mut block = &schema.block;
+        let mut segments = path.split('/').peekable();
+        while let Some(seg) = segments.next() {
+            let Some(bt) = block.block_types.get(seg) else { return false };
+            if segments.peek().is_none() {
+                return bt.is_single();
+            }
+            block = &bt.block;
+        }
+        false
     }
 
     pub fn find_resource(&self, key: &str) -> Option<(&str, &ResourceSchema)> {

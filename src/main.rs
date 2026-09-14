@@ -3169,10 +3169,10 @@ fn import_state(
     };
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
-    let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered, on_collision);
     let found = discoverer.discover()?;
-    write_imported(&found.config, output, None, &|t| type_names.contains(t), runtime_config)?;
+    let registry = discoverer.registry.as_ref().ok_or("the registry loaded above is gone")?;
+    write_imported(&found.config, output, None, registry, runtime_config)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
     if verbose {
         crate::discovery::Discoverer::print_summary(&found.config);
@@ -3194,14 +3194,13 @@ async fn import_org(
     println!("import: root {}", parent);
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
-    let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let org_hint = cfg.root.as_ref().and_then(|r| r.organization.clone())
         .or_else(|| parent.strip_prefix("organizations/").map(String::from));
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry), on_collision).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision).await?;
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
-    write_imported(&found.config, output, org_hint.as_deref(), &|t| type_names.contains(t), runtime_config)?;
+    write_imported(&found.config, output, org_hint.as_deref(), &registry, runtime_config)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
     Ok(())
 }
@@ -3210,11 +3209,11 @@ fn write_imported(
     config: &Config,
     output: PathBuf,
     org_hint: Option<&str>,
-    is_type: &dyn Fn(&str) -> bool,
+    registry: &ResourceRegistry,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
-    let text = discovered_to_satz(config, "discovered", org_hint, is_type)?;
+    let text = discovered_to_satz(config, "discovered", org_hint, registry)?;
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
@@ -3305,9 +3304,11 @@ fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
 
 /// A discovered `Config` as a Satz estate that compiles as-is: the local
 /// backend the emitter requires, `customer_organization_id` inferred from the
-/// resources (every `organizations/<n>` reference or `org_id` names it), the
-/// data printed by the same printer the yaml import uses, and shorthand
-/// type keys (`folder`, `project`) normalised to provider names.
+/// resources (every `organizations/<n>` reference or `org_id` names it) and
+/// referenced wherever the number was written, the document shaped into the
+/// language's own forms (`satz_core::condense`), printed by the same printer
+/// the yaml import uses, and shorthand type keys (`folder`, `project`)
+/// normalised to provider names.
 ///
 /// Discovery emits plain data — no anchors, tags, includes or nulls — so no
 /// dialect pre-pass is needed; that is what makes the direct route possible.
@@ -3315,8 +3316,9 @@ fn discovered_to_satz(
     config: &Config,
     name: &str,
     org_hint: Option<&str>,
-    is_type: &dyn Fn(&str) -> bool,
+    registry: &ResourceRegistry,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let is_type = |t: &str| registry.resources.contains_key(t);
     let mut top = match serde_yaml::to_value(config)? {
         serde_yaml::Value::Mapping(m) => m,
         other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
@@ -3330,10 +3332,10 @@ fn discovered_to_satz(
     // provider alias, which an estate declares in `providers { … }`; without
     // it `tofu plan` says "Provider configuration not present" (live-run F10).
     if !top.contains_key(serde_yaml::Value::String("providers".into())) {
-        // Org-scoped APIs (Org Policy, Cloud Identity) need a quota project:
-        // the first project the import found stands in, the way the Day-0
-        // template uses the infra project. Review it.
-        let billing = first_project_id(config);
+        // Org-scoped APIs (Org Policy, Cloud Identity) need a quota project
+        // that enables them, the way the Day-0 template uses the infra
+        // project. Review it.
+        let billing = quota_project(config);
         let quota = billing
             .as_deref()
             .map(|p| format!("  project: {p}\n  billing_project: {p}\n"))
@@ -3347,19 +3349,37 @@ fn discovered_to_satz(
         }
     }
     let mut params = Vec::new();
-    match infer_org_id(&serde_yaml::Value::Mapping(top.clone())).or_else(|| org_hint.map(String::from)) {
-        Some(org) => params.push(("customer_organization_id".to_string(), format!("\"{}\"", org))),
+    let org = infer_org_id(&serde_yaml::Value::Mapping(top.clone())).or_else(|| org_hint.map(String::from));
+    match &org {
+        Some(org) => params.push((satz_core::condense::ORG_PARAM.to_string(), format!("\"{}\"", org))),
         None => eprintln!(
             "warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand"
         ),
     }
+    condense_document(&mut top, org.as_deref(), registry);
     let header = vec![
-        "Discovered estate — review before use: hierarchy is as found, names are the".to_string(),
-        "Terraform labels, every resource carries its \"import-id\". `satz transpile`, then".to_string(),
-        "`tofu plan` should show imports and no creates.".to_string(),
+        "Discovered estate — review before use: the hierarchy is as found, folders are labelled".to_string(),
+        "by display name, every resource carries its \"import-id\", and what the platform owns".to_string(),
+        "was skipped and listed. `satz transpile`, then `tofu plan` should show imports and".to_string(),
+        "no creates.".to_string(),
     ];
     let satz = satz_core::migrate::convert_value(&top, "estate", name, &params, &header)?;
-    Ok(satz_core::migrate::normalize_type_keys(&satz, is_type))
+    Ok(satz_core::migrate::normalize_type_keys(&satz, &is_type))
+}
+
+/// The shaping pass over a discovered document, answered from the provider
+/// schema: which document keys are resource types (shorthand included), and
+/// which nested blocks occur once.
+fn condense_document(top: &mut serde_yaml::Mapping, organization: Option<&str>, registry: &ResourceRegistry) {
+    let type_of = |k: &str| -> Option<String> {
+        if registry.resources.contains_key(k) {
+            return Some(k.to_string());
+        }
+        let prefixed = format!("google_{}", k);
+        registry.resources.contains_key(&prefixed).then_some(prefixed)
+    };
+    let single_block = |tf_type: &str, path: &str| registry.single_block(tf_type, path);
+    satz_core::condense::condense(top, &satz_core::condense::Shaping { type_of: &type_of, single_block: &single_block, organization });
 }
 
 /// `satz map-types`: align every selected row's API schema against the
@@ -3573,7 +3593,7 @@ async fn import_delta(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry), on_collision).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision).await?;
     attach_billing_accounts(&mut found.config).await;
     let top = match serde_yaml::to_value(&found.config)? {
         serde_yaml::Value::Mapping(m) => m,
@@ -3610,7 +3630,9 @@ async fn import_delta(
     }
     if !d.top.is_empty() {
         let name = delta::pack_name(parent, None);
-        let satz = satz_core::migrate::convert_value(&d.top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
+        let mut top = d.top.clone();
+        condense_document(&mut top, found.organization.as_deref(), &registry);
+        let satz = satz_core::migrate::convert_value(&top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
         fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
         if let Some(t) = delta::add_use(&estate_text, &name, None)? {
@@ -3624,7 +3646,9 @@ async fn import_delta(
     let mut inserts: Vec<(u32, String)> = Vec::new();
     for (address, children) in &d.under {
         let name = delta::pack_name(parent, Some(address));
-        let satz = satz_core::migrate::convert_value(children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
+        let mut children = children.clone();
+        condense_document(&mut children, found.organization.as_deref(), &registry);
+        let satz = satz_core::migrate::convert_value(&children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
         fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
         let origin = declared.containers.values().find(|(a, _)| a == address).and_then(|(_, o)| o.clone());
@@ -3742,10 +3766,30 @@ async fn attach_billing_accounts(config: &mut Config) {
 }
 
 /// The alphabetically first project id in the discovered tree, at any depth.
-fn first_project_id(config: &Config) -> Option<String> {
-    fn walk_folder(f: &crate::config::Folder, out: &mut Vec<String>) {
+/// The APIs an organization-scoped read is billed against: a quota project
+/// without them makes every org policy, service list and contact read fail
+/// with a 403, which is how a live import's `tofu plan` came out as 25 errors
+/// on the test organization.
+const QUOTA_PROJECT_APIS: [&str; 2] = ["orgpolicy.googleapis.com", "serviceusage.googleapis.com"];
+
+/// The project the providers bill organization-scoped calls to: the first
+/// (by id) that enables the APIs those calls need — the day-0 infra project
+/// does — else the first project at all, said so. `None` without a project.
+fn quota_project(config: &Config) -> Option<String> {
+    fn services(p: &crate::config::Project) -> Vec<String> {
+        p.project_service
+            .iter()
+            .flatten()
+            .filter_map(|s| match s {
+                serde_yaml::Value::String(svc) => Some(svc.clone()),
+                serde_yaml::Value::Mapping(m) => m.get("service").and_then(|v| v.as_str()).map(String::from),
+                _ => None,
+            })
+            .collect()
+    }
+    fn walk_folder(f: &crate::config::Folder, out: &mut Vec<(String, Vec<String>)>) {
         if let Some(ps) = &f.project {
-            out.extend(ps.values().map(|p| p.project_id.clone()));
+            out.extend(ps.values().map(|p| (p.project_id.clone(), services(p))));
         }
         if let Some(fs) = &f.folder {
             for sub in fs.values() {
@@ -3753,14 +3797,30 @@ fn first_project_id(config: &Config) -> Option<String> {
             }
         }
     }
-    let mut ids: Vec<String> = config.project.iter().flat_map(|ps| ps.values().map(|p| p.project_id.clone())).collect();
+    let mut projects: Vec<(String, Vec<String>)> =
+        config.project.iter().flat_map(|ps| ps.values().map(|p| (p.project_id.clone(), services(p)))).collect();
     if let Some(fs) = &config.folder {
         for f in fs.values() {
-            walk_folder(f, &mut ids);
+            walk_folder(f, &mut projects);
         }
     }
-    ids.sort();
-    ids.into_iter().next()
+    projects.sort();
+    let able = projects.iter().find(|(_, svcs)| QUOTA_PROJECT_APIS.iter().all(|api| svcs.iter().any(|s| s == api)));
+    match (able, projects.first()) {
+        (Some((id, _)), _) => {
+            println!("import: providers' quota project {} — it enables {}", id, QUOTA_PROJECT_APIS.join(" and "));
+            Some(id.clone())
+        }
+        (None, Some((id, _))) => {
+            println!(
+                "import: providers' quota project {} — no project enables {}; organization-scoped reads may fail with 403 until one does (set `billing_project` in `providers` by hand)",
+                id,
+                QUOTA_PROJECT_APIS.join(" and ")
+            );
+            Some(id.clone())
+        }
+        (None, None) => None,
+    }
 }
 
 /// The first organization number the tree names: an `organizations/<n>`
@@ -5448,7 +5508,10 @@ mod corpus {
     }
 
     /// Compile `<case>/main.satz` through the fragment pipeline, the way
-    /// `transpile` does, and return `sorted(main.tf) ---tfvars--- sorted(tfvars)`.
+    /// `transpile` does, and return
+    /// `sorted(main.tf) ---tfvars--- sorted(tfvars) ---imports--- sorted(imports.tf)`:
+    /// an `"import-id"` is emission too, and one written as an interpolation
+    /// must reach `imports.tf` as the literal.
     pub(super) fn run_case(case: &Path) -> String {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let name = case.file_name().unwrap().to_string_lossy().to_string();
@@ -5475,9 +5538,10 @@ mod corpus {
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
         format!(
-            "{}\n---tfvars---\n{}",
+            "{}\n---tfvars---\n{}\n---imports---\n{}",
             sorted_lines(&out.main_tf).join("\n"),
-            sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n")
+            sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n"),
+            sorted_lines(&out.imports_tf).join("\n")
         )
     }
 
@@ -6387,22 +6451,53 @@ folder:
         project_id: acme-infra-001
         name: acme-infra-001
         import-id: acme-infra-001
+        project_service:
+          - service: iam.googleapis.com
+            import-id: acme-infra-001/iam.googleapis.com
 google_storage_bucket:
   state:
     name: acme-state
     location: EU
     import-id: acme-state
+    versioning:
+      - enabled: true
 google_organization_iam_audit_config:
   all:
     org_id: "123456789012"
     service: allServices
+org_policy_policy:
+  compute-managed-requireOsLogin:
+    import-id: organizations/123456789012/policies/compute.managed.requireOsLogin
+    name: compute.managed.requireOsLogin
+    spec:
+      - rules:
+          - enforce: "TRUE"
+google_organization_iam_member:
+  "group:a@example.com":
+    - role: roles/viewer
+      import-id: 123456789012 roles/viewer group:a@example.com
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         let reg = super::corpus::registry();
-        let text = discovered_to_satz(&config, "discovered", None, &|t| reg.resources.contains_key(t)).unwrap();
+        let text = discovered_to_satz(&config, "discovered", None, &reg).unwrap();
         assert!(text.contains("customer_organization_id = \"123456789012\""), "{}", text);
         assert!(text.contains("terraform {"), "{}", text);
         assert!(text.contains("google_folder {"), "shorthand keys must be normalised:\n{}", text);
+        // the condensed forms: one line per service and per grant edge, a
+        // single block as a block, the organization referenced not repeated,
+        // a project name equal to its id dropped
+        assert!(text.contains("{ service = \"iam.googleapis.com\" \"import-id\" = \"acme-infra-001/iam.googleapis.com\" },"), "{}", text);
+        assert!(text.contains("{ role = \"roles/viewer\" \"import-id\" = \"{customer_organization_id} roles/viewer group:a@example.com\" },"), "{}", text);
+        assert!(text.contains("spec {\n"), "{}", text);
+        assert!(text.contains("{ enforce = \"TRUE\" },"), "{}", text);
+        assert!(text.contains("versioning {\n"), "{}", text);
+        assert!(text.contains("org_id = customer_organization_id"), "{}", text);
+        assert!(text.contains("\"import-id\" = \"organizations/{customer_organization_id}/policies/compute.managed.requireOsLogin\""), "{}", text);
+        assert!(!text.contains("name = \"acme-infra-001\""), "{}", text);
+        // the file is formatted on the way to disk; the inline forms survive it
+        let formatted = satz_core::fmt::format(&text).unwrap();
+        assert!(formatted.contains("{ service = \"iam.googleapis.com\" \"import-id\" = \"acme-infra-001/iam.googleapis.com\" },"), "{}", formatted);
+        assert!(formatted.contains("{ enforce = \"TRUE\" },"), "{}", formatted);
 
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
@@ -6413,12 +6508,28 @@ google_organization_iam_audit_config:
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         let addrs = out.manifest.addresses();
-        for a in ["google_folder.workloads", "google_project.infra", "google_storage_bucket.state", "google_organization_iam_audit_config.all"] {
+        for a in [
+            "google_folder.workloads",
+            "google_project.infra",
+            "google_storage_bucket.state",
+            "google_organization_iam_audit_config.all",
+            "google_org_policy_policy.compute_managed_requireOsLogin",
+            "google_project_service.infra_iam_googleapis_com",
+        ] {
             assert!(addrs.contains(a), "missing {} in {:?}", a, addrs);
         }
-        for id in ["folders/111", "acme-infra-001", "acme-state"] {
+        for id in [
+            "folders/111",
+            "acme-infra-001",
+            "acme-state",
+            "acme-infra-001/iam.googleapis.com",
+            "organizations/123456789012/policies/compute.managed.requireOsLogin",
+            "123456789012 roles/viewer group:a@example.com",
+        ] {
             assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
         }
+        assert!(out.main_tf.contains("organizations/123456789012/policies/compute.managed.requireOsLogin"), "the bare constraint expands:\n{}", out.main_tf);
+        assert!(out.main_tf.contains("versioning {"), "{}", out.main_tf);
         assert!(!out.main_tf.contains("import-id"));
     }
 
@@ -6448,7 +6559,7 @@ folder:
         let reg = super::corpus::registry();
         let notes = crate::discovery::resolve_grant_collisions(&mut config, crate::discovery::OnCollision::Counter).unwrap();
         assert_eq!(notes.len(), 1, "{:?}", notes);
-        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &|t| reg.resources.contains_key(t)).unwrap();
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg).unwrap();
         assert!(text.contains("folderAdmin_x_2 {"), "{}", text);
 
         let resolver = crate::EstateResolver { registry: &reg };
@@ -6465,6 +6576,33 @@ folder:
         for id in ["folders/1 roles/resourcemanager.folderAdmin user:x@example.com", "folders/2 roles/resourcemanager.folderAdmin user:x@example.com"] {
             assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
         }
+    }
+
+    #[test]
+    fn the_quota_project_is_one_that_enables_the_organization_apis() {
+        // alphabetically first is `alpha`, which enables nothing the
+        // organization-scoped reads need; `infra` does
+        let yaml = r#"
+project:
+  alpha:
+    project_id: alpha-001
+    project_service:
+      - compute.googleapis.com
+folder:
+  f:
+    display_name: F
+    project:
+      infra:
+        project_id: infra-001
+        project_service:
+          - { service: orgpolicy.googleapis.com, import-id: infra-001/orgpolicy.googleapis.com }
+          - serviceusage.googleapis.com
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(quota_project(&config).as_deref(), Some("infra-001"));
+        let none: Config = serde_yaml::from_str("project:\n  alpha:\n    project_id: alpha-001\n").unwrap();
+        assert_eq!(quota_project(&none).as_deref(), Some("alpha-001"), "the first project, and the report says why it may fail");
+        assert_eq!(quota_project(&Config::default()), None);
     }
 
     #[test]

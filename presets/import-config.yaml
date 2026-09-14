@@ -636,6 +636,7 @@ resource_types:
   google_folder_iam_member:
     import_id: "{folder} {role} {member}"
     description: IAM policy for a folder
+    skip: ["serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot-prod.iam.gserviceaccount.com", "serviceAccount:service-*@*-system.iam.gserviceaccount.com", "serviceAccount:*@cloudservices.gserviceaccount.com", "serviceAccount:*-compute@developer.gserviceaccount.com", "serviceAccount:*@appspot.gserviceaccount.com", "deleted:*"]
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Folder
     content_type: IAM_POLICY
@@ -719,6 +720,7 @@ resource_types:
   google_logging_folder_sink:
     import_id: "folders/{folder}/sinks/{name}"
     description: Cloud Logging sink for a folder
+    skip: ["_Default", "_Required"]
     import: true
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
@@ -733,6 +735,7 @@ resource_types:
   google_logging_organization_sink:
     import_id: "organizations/{org_id}/sinks/{name}"
     description: Cloud Logging sink for an organization
+    skip: ["_Default", "_Required"]
     import: true
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
@@ -740,6 +743,7 @@ resource_types:
   google_logging_project_sink:
     import_id: "projects/{project}/sinks/{name}"
     description: Cloud Logging sink for a project
+    skip: ["_Default", "_Required"]
     import: true
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
@@ -815,6 +819,7 @@ resource_types:
   google_organization_iam_member:
     import_id: "{org_id} {role} {member}"
     description: IAM policy for an organization
+    skip: ["serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot-prod.iam.gserviceaccount.com", "serviceAccount:service-*@*-system.iam.gserviceaccount.com", "serviceAccount:*@cloudservices.gserviceaccount.com", "serviceAccount:*-compute@developer.gserviceaccount.com", "serviceAccount:*@appspot.gserviceaccount.com", "deleted:*"]
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Organization
     content_type: IAM_POLICY
@@ -856,6 +861,7 @@ resource_types:
   google_project_iam_member:
     import_id: "{project} {role} {member}"
     description: IAM policy for a project
+    skip: ["serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot-prod.iam.gserviceaccount.com", "serviceAccount:service-*@*-system.iam.gserviceaccount.com", "serviceAccount:*@cloudservices.gserviceaccount.com", "serviceAccount:*-compute@developer.gserviceaccount.com", "serviceAccount:*@appspot.gserviceaccount.com", "deleted:*"]
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Project
     content_type: IAM_POLICY
@@ -995,6 +1001,8 @@ resource_types:
   google_storage_bucket:
     import_id: "{name}"
     description: Cloud Storage bucket
+    map:
+      lifecycle.rule: lifecycle_rule
     import: true
     asset_type: storage.googleapis.com/Bucket
     content_type: RESOURCE
@@ -1003,6 +1011,7 @@ resource_types:
   google_storage_bucket_iam_member:
     import_id: "b/{bucket} {role} {member}"
     description: IAM policy for a Cloud Storage bucket
+    skip: ["projectEditor:*", "projectOwner:*", "projectViewer:*", "deleted:*"]
     import: true
     asset_type: storage.googleapis.com/Bucket
     content_type: IAM_POLICY
@@ -4684,6 +4693,7 @@ resource_types:
   google_service_account:
     import_id: "projects/{project}/serviceAccounts/{account_id}@{project}.iam.gserviceaccount.com"
     description: Auto-generated entry for google_service_account
+    skip: ["*-compute@developer.gserviceaccount.com", "*@appspot.gserviceaccount.com"]
     import: true
     asset_type: iam.googleapis.com/ServiceAccount
     content_type: RESOURCE

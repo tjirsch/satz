@@ -831,6 +831,16 @@ grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print
 "$satz" --config . transpile imported-state.satz --output "$PWD/tmp/imported-state-hcl"
 "$satz" fmt --check yaml/imported-state.satz || fail "import wrote an estate that is not in the canonical layout"
 grep -q 'import {' tmp/imported-state-hcl/imports.tf || fail "state import produced no import blocks"
+# the condensed forms: one line per grant edge and per service, a single block
+# as a block, the bare constraint, the organization referenced not repeated
+grep -qE '^ +\{ role = "roles/[^"]+" "import-id" = "\{customer_organization_id\} roles/' yaml/imported-state.satz || fail "a grant edge is not one line with its import id:\n$(cat yaml/imported-state.satz)"
+grep -qE '^ +\{ service = "[^"]+" "import-id" = "[^"]+" \},' yaml/imported-state.satz || fail "a service entry is not the one-line object form"
+grep -qE '^ +spec \{$' yaml/imported-state.satz || fail "the policy spec is not a block"
+if grep -q 'spec = \[' yaml/imported-state.satz; then fail "a single block came out as a one-element list"; fi
+grep -qE 'name += "compute\.skipDefaultNetworkCreation"' yaml/imported-state.satz || fail "the policy name is not the bare constraint"
+if grep -q 'parent = "organizations/' yaml/imported-state.satz; then fail "a top-level policy repeats the organization parent"; fi
+if grep -qE '"import-id" += "organizations/123456789012' yaml/imported-state.satz; then fail "the organization number is repeated where a reference belongs"; fi
+grep -q 'id = "organizations/123456789012/policies/compute.skipDefaultNetworkCreation"' tmp/imported-state-hcl/imports.tf || fail "the interpolated import id did not reach imports.tf as the literal"
 # The table's `import: true` rows are the default set: --all takes every type the
 # source delivers, --exclude leaves types out. A copy of the table with the bucket
 # off shows all three.

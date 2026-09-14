@@ -67,6 +67,15 @@ pub enum SkipReason {
     Unmapped(String),
     /// Its project/folder is not in the imported tree, so it has no place.
     ParentNotFound(String),
+    /// The platform's, not the estate's: matched a `skip:` pattern on the
+    /// import-config row (the built-in `_Default` sink, a service agent's
+    /// grant, a Compute default service account). The pattern is named so
+    /// the operator can lift it from a copy of the table.
+    PlatformOwned(String),
+    /// A project Cloud Asset still lists but that is no longer ACTIVE — a
+    /// deleted project stays visible for 30 days and nothing can be managed
+    /// in it.
+    NotActive(String),
 }
 
 impl std::fmt::Display for SkipReason {
@@ -76,8 +85,34 @@ impl std::fmt::Display for SkipReason {
             SkipReason::Filtered => write!(f, "filtered by --only/--exclude"),
             SkipReason::Unmapped(d) => write!(f, "unmapped: {}", d),
             SkipReason::ParentNotFound(p) => write!(f, "parent not imported: {}", p),
+            SkipReason::PlatformOwned(p) => write!(f, "platform-owned: matches skip pattern `{}` on its import-config row", p),
+            SkipReason::NotActive(s) => write!(f, "project is {}, not ACTIVE (Cloud Asset lists a deleted project for 30 days)", s),
         }
     }
+}
+
+/// The `skip:` pattern on the row that matches `what`, if one does.
+fn skip_pattern(res_config: &crate::config::ImportResourceConfig, what: &str) -> Option<String> {
+    res_config.skip.iter().flatten().find(|p| crate::config::glob_match(p, what)).cloned()
+}
+
+/// The `skip:` pattern a RESOURCE asset matches by what it is called: the
+/// last segment of its asset name (`_Default` for a sink), or its `email`,
+/// `name` or `displayName` in the asset data — Cloud Asset names a service
+/// account by its numeric unique id, and the email that says it is the
+/// Compute default account is data.
+fn platform_owned(res_config: &crate::config::ImportResourceConfig, asset: &Asset) -> Option<String> {
+    res_config.skip.as_ref()?;
+    let natural = asset.name.rsplit('/').next().unwrap_or(&asset.name).to_string();
+    let mut candidates = vec![natural];
+    if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
+        for key in ["email", "name", "displayName"] {
+            if let Some(v) = data.get(key).and_then(|v| v.as_str()) {
+                candidates.push(v.to_string());
+            }
+        }
+    }
+    candidates.iter().find_map(|c| skip_pattern(res_config, c))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -384,13 +419,17 @@ impl Discoverer {
         }
 
         if tf_type == "google_project_service" {
+            // a `project_service` entry: the bare service, or the documented
+            // object form `{ service = "…" "import-id" = "…" }` (language
+            // reference §6.7) when it carries more — service first
             if let serde_yaml::Value::Mapping(mut map) = yaml_val {
                 if let Some(serde_yaml::Value::String(service)) = map.remove(serde_yaml::Value::String("service".to_string())) {
                     if map.is_empty() {
                         return serde_yaml::Value::String(service);
                     } else {
                         let mut new_map = serde_yaml::Mapping::new();
-                        new_map.insert(serde_yaml::Value::String(service), serde_yaml::Value::Mapping(map));
+                        new_map.insert("service".into(), serde_yaml::Value::String(service));
+                        new_map.extend(map);
                         return serde_yaml::Value::Mapping(new_map);
                     }
                 }
@@ -711,7 +750,7 @@ impl Discoverer {
         parent: &str,
         verbose: bool,
         discovery_config: Option<ImportConfig>,
-        registry: Option<ResourceRegistry>,
+        registry: Option<&ResourceRegistry>,
         on_collision: OnCollision,
     ) -> Result<Discovered, Box<dyn std::error::Error>> {
         use google_cloud_gax::options::RequestOptionsBuilder;
@@ -863,7 +902,7 @@ impl Discoverer {
         }
 
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
-        let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
+        let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry, discovery_config.as_ref())?;
         qualify_duplicate_keys(&mut config);
         let notes = resolve_grant_collisions(&mut config, on_collision)?;
         for (tf_type, name) in unscoped {
@@ -926,9 +965,12 @@ impl Discoverer {
              if tf_type == "google_folder" {
                  Self::discover_google_folder(asset, res_config, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
              } else if tf_type == "google_project" {
-                 Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name);
+                 if let Err(reason) = Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name) {
+                     skipped.push(Skipped { tf_type: tf_type.clone(), what: asset.name.clone(), reason });
+                 }
              }
         }
+        label_folders_by_display_name(&mut folder_map, &mut gcp_id_to_yaml_name);
 
         // Pass 2: Process all other resources (IAM, Policies, Services, Generic)
         for asset in &assets {
@@ -996,7 +1038,7 @@ impl Discoverer {
              if tf_type == "google_org_policy_policy" {
                  Self::discover_organization_policy(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if asset.iam_policy.is_some() {
-                 Self::discover_iam_policy(tf_type, asset, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
+                 Self::discover_iam_policy(tf_type, asset, res_config, &scope, &scope_id, &mut skipped, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if tf_type == "google_project_service" {
                  Self::discover_google_project_service(tf_type, asset, res_config, registry, &scope_id, &mut project_map, &gcp_id_to_yaml_name);
              } else if let Err(reason) = Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name }) {
@@ -1073,14 +1115,24 @@ impl Discoverer {
           }
     }
 
+    /// A project that is no longer ACTIVE is skipped with its state: Cloud
+    /// Asset lists a deleted project for 30 days, nothing in it can be
+    /// managed, and one chosen as the providers' quota project fails every
+    /// organization-scoped read.
     fn discover_google_project(
         asset: &Asset,
         res_config: &crate::config::ImportResourceConfig,
         project_map: &mut HashMap<String, Project>,
         project_id_to_parent: &mut HashMap<String, String>,
         gcp_id_to_yaml_name: &mut HashMap<String, String>,
-    ) {
-         let name = &asset.name; 
+    ) -> Result<(), SkipReason> {
+         let name = &asset.name;
+         if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
+             let state = data.get("lifecycleState").or_else(|| data.get("state")).and_then(|v| v.as_str());
+             if let Some(state) = state.filter(|s| *s != "ACTIVE") {
+                 return Err(SkipReason::NotActive(state.to_string()));
+             }
+         }
          let yaml_key_raw = if let Some(field) = &res_config.derive_yaml_key_from {
               if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
                    data.get(field).and_then(|v| v.as_str()).unwrap_or(name).to_string()
@@ -1089,7 +1141,7 @@ impl Discoverer {
          let yaml_key = Self::sanitize_asset_key(&yaml_key_raw);
 
          let parts: Vec<&str> = name.split("/projects/").collect();
-         if parts.len() < 2 { return; }
+         if parts.len() < 2 { return Ok(()); }
          let project_id_prefix = parts[1];
          
          let project_id = if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
@@ -1170,6 +1222,7 @@ impl Discoverer {
                     }
                }
           }
+          Ok(())
     }
 
     fn discover_google_project_service(
@@ -1204,26 +1257,23 @@ impl Discoverer {
           if let Some(p_yaml) = gcp_id_to_yaml_name.get(scope_id) {
                if let Some(p) = project_map.get_mut(p_yaml) {
                     // The service's import id is `<project>/<service>` (adopt's
-                    // rule), in the `{ "<service>": { "import-id": … } }` form the
-                    // emitter reads (`filter_values` collapsed a bare service to a
-                    // string).
+                    // rule), in the documented object form
+                    // `{ service = "…" "import-id" = "…" }` (language reference
+                    // §6.7), which the printer writes on one line;
+                    // `filter_values` gave a bare service as a string and one
+                    // with more attributes as `{ service, … }`.
                     let id = serde_yaml::Value::String(format!("{}/{}", p.project_id, service_name));
-                    let resource_val = match resource_val {
-                        serde_yaml::Value::String(svc) => {
-                            let mut attrs = serde_yaml::Mapping::new();
-                            attrs.insert("import-id".into(), id);
-                            let mut m = serde_yaml::Mapping::new();
-                            m.insert(serde_yaml::Value::String(svc), serde_yaml::Value::Mapping(attrs));
-                            serde_yaml::Value::Mapping(m)
-                        }
-                        serde_yaml::Value::Mapping(mut m) => {
-                            if let Some((_, serde_yaml::Value::Mapping(attrs))) = m.iter_mut().next() {
-                                attrs.insert("import-id".into(), id);
+                    let mut entry = serde_yaml::Mapping::new();
+                    entry.insert("service".into(), serde_yaml::Value::String(service_name.clone()));
+                    entry.insert("import-id".into(), id);
+                    if let serde_yaml::Value::Mapping(m) = resource_val {
+                        for (k, v) in m {
+                            if k.as_str() != Some("service") {
+                                entry.insert(k, v);
                             }
-                            serde_yaml::Value::Mapping(m)
                         }
-                        other => other,
-                    };
+                    }
+                    let resource_val = serde_yaml::Value::Mapping(entry);
                     if p.project_service.is_none() { p.project_service = Some(Vec::new()); }
                     p.project_service.as_mut().unwrap().push(resource_val);
                }
@@ -1242,21 +1292,18 @@ impl Discoverer {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
           let name = &asset.name;
           
-          let raw_key = if let Some(field) = &res_config.derive_yaml_key_from {
-              if field == "name" {
-                   if name.contains("/policies/") {
-                        name.split("/policies/").last().unwrap_or(name)
-                   } else {
-                        name
-                   }
-              } else {
-                   name // Fallback
-              }
-          } else { name };
-          
-          let sanitized_key = Self::sanitize_asset_key(raw_key);
+          // The constraint is the policy's identity. Its address is the
+          // library's spelling — dots to dashes, case kept
+          // (`compute-managed-vmExternalIpAccess`) — so a pack that later
+          // carries the same policy replaces this block by address.
+          let constraint = name.rsplit("/policies/").next().unwrap_or(name);
+          let sanitized_key = if res_config.derive_yaml_key_from.as_deref() == Some("name") && name.contains("/policies/") {
+              constraint.replace('.', "-")
+          } else {
+              Self::sanitize_asset_key(name)
+          };
           let mut resource_val = serde_yaml::Mapping::new();
-          
+
           if let Some(reg) = registry {
                 if let Some((_, schema)) = reg.find_resource(tf_type) {
                      if let Some(map) = Self::process_organization_policy_family(tf_type, asset, schema, name, scope_id) {
@@ -1266,16 +1313,19 @@ impl Discoverer {
           }
 
           if !resource_val.is_empty() {
-                    let import_id_val = resource_val.get(serde_yaml::Value::String("name".to_string())).cloned();
-
-                    if let Some(val) = import_id_val {
-                         let old_map = std::mem::replace(&mut resource_val, serde_yaml::Mapping::new());
-                         
-                         resource_val.insert(serde_yaml::Value::String("import-id".to_string()), val);
-                         
-                         for (k, v) in old_map {
-                              resource_val.insert(k, v);
-                         }
+                    // the import id is the full resource name; the block's
+                    // `name` is the bare constraint the emitter expands
+                    // (transformation 9), and `parent` is the enclosing scope
+                    let import_id = name.find("organizations/").or_else(|| name.find("folders/")).or_else(|| name.find("projects/")).map(|i| name[i..].to_string());
+                    let old_map = std::mem::replace(&mut resource_val, serde_yaml::Mapping::new());
+                    if let Some(id) = import_id {
+                        resource_val.insert(serde_yaml::Value::String("import-id".to_string()), serde_yaml::Value::String(id));
+                    }
+                    for (k, v) in old_map {
+                        if k.as_str() == Some("parent") {
+                            continue;
+                        }
+                        resource_val.insert(k, v);
                     }
                }
           
@@ -1314,19 +1364,36 @@ impl Discoverer {
           }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn discover_iam_policy(
          tf_type: &str,
          asset: &Asset,
+         res_config: &crate::config::ImportResourceConfig,
          scope: &str,
          scope_id: &str,
+         skipped: &mut Vec<Skipped>,
          sinks: Sinks<'_>,
     ) {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
+         // a grant on a folder/project that is not in the tree (skipped, or
+         // outside the sweep) has no place — say so, per policy
+         if scope != "organization" && !gcp_id_to_yaml_name.contains_key(scope_id) {
+             skipped.push(Skipped { tf_type: tf_type.to_string(), what: asset.name.clone(), reason: SkipReason::ParentNotFound(scope_id.to_string()) });
+             return;
+         }
          if let Some(iam) = &asset.iam_policy {
              for binding in &iam.bindings {
                  if !binding.members.is_empty() {
                      for member in &binding.members {
                          let role = &binding.role;
+                         if let Some(pattern) = skip_pattern(res_config, member) {
+                             skipped.push(Skipped {
+                                 tf_type: tf_type.to_string(),
+                                 what: format!("{} {} on {}", member, role, scope_id),
+                                 reason: SkipReason::PlatformOwned(pattern),
+                             });
+                             continue;
+                         }
                          if scope == "organization" {
                              if tf_type == "google_organization_iam_member" {
                                  if config.organization_iam_member.is_none() { config.organization_iam_member = Some(HashMap::new()); }
@@ -1404,6 +1471,10 @@ impl Discoverer {
     ) -> Result<(), SkipReason> {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
           let name = &asset.name;
+          // the platform's own: the built-in sinks, a default service account
+          if let Some(pattern) = platform_owned(res_config, asset) {
+              return Err(SkipReason::PlatformOwned(pattern));
+          }
           let raw_key = if let Some(field) = &res_config.derive_yaml_key_from {
                if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
                     data.get(field).and_then(|v| v.as_str()).unwrap_or(name).to_string()
@@ -1675,37 +1746,14 @@ impl Discoverer {
              // 'name' argument is the full resource name: organizations/{org_id}/policies/{constraint_name}
              // 'parent' argument is the parent resource: organizations/{org_id}
              
-             // Check if 'name' is present, if not inject it from asset name (stripped of service prefix)
-             if !data_map.contains_key("name") {
-                 // Asset name: //orgpolicy.googleapis.com/organizations/...
-                 // We want: organizations/...
-                 let relative_name = if let Some(idx) = name.find("organizations/") {
-                     &name[idx..]
-                 } else if let Some(idx) = name.find("folders/") {
-                     &name[idx..]
-                 } else if let Some(idx) = name.find("projects/") {
-                     &name[idx..]
-                 } else {
-                     name // Fallback
-                 };
-                 data_map.insert("name".to_string(), serde_json::Value::String(relative_name.to_string()));
-             }
-             
-             // Inject 'parent' if not present
-             if !data_map.contains_key("parent") {
-                  let parent = if let Some(idx) = scope_part.find("organizations/") {
-                     &scope_part[idx..]
-                 } else if let Some(idx) = scope_part.find("folders/") {
-                     &scope_part[idx..]
-                 } else if let Some(idx) = scope_part.find("projects/") {
-                     &scope_part[idx..]
-                 } else {
-                     "" 
-                 };
-                 if !parent.is_empty() {
-                    data_map.insert("parent".to_string(), serde_json::Value::String(parent.to_string()));
-                 }
-             }
+             // `name` is the bare constraint (`compute.managed.requireOsLogin`):
+             // the emitter expands it to the full resource name under the
+             // enclosing scope (language reference, transformation 9), and
+             // derives `parent` from that scope, so neither is written
+             let constraint = name.rsplit("/policies/").next().unwrap_or(name);
+             data_map.insert("name".to_string(), serde_json::Value::String(constraint.to_string()));
+             data_map.remove("parent");
+             let _ = scope_part;
 
          } else {
              // the caller dispatches on the type, and this is the only org-policy
@@ -1720,6 +1768,63 @@ impl Discoverer {
          } else {
              Some(extracted)
          }
+    }
+}
+
+/// The label a discovered folder is written under: its display name as an
+/// identifier (`Infrastructure` → `infrastructure`, `satz-preflight scratch`
+/// → `satz_preflight_scratch`), the folder number appended only where two
+/// folders share a display name. Discovery keys folders `folder-<n>` while
+/// the sweep runs (unique by construction, and what every pass-2 lookup
+/// resolves by), so the renaming is one pass over both maps once every
+/// folder is known. The `"import-id"` still carries `folders/<n>`.
+fn label_folders_by_display_name(folder_map: &mut HashMap<String, Folder>, gcp_id_to_yaml_name: &mut HashMap<String, String>) {
+    fn identifier(display_name: &str) -> String {
+        let mut out: String = display_name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        while out.contains("__") {
+            out = out.replace("__", "_");
+        }
+        let out = out.trim_matches('_').to_string();
+        if out.is_empty() || out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            format!("folder_{}", out)
+        } else {
+            out
+        }
+    }
+    let mut keys: Vec<String> = folder_map.keys().cloned().collect();
+    keys.sort();
+    let mut by_label: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for key in &keys {
+        by_label.entry(identifier(&folder_map[key].display_name)).or_default().push(key.clone());
+    }
+    let mut renames: Vec<(String, String)> = Vec::new();
+    for (label, olds) in by_label {
+        let unique = olds.len() == 1;
+        for old in olds {
+            let new = if unique {
+                label.clone()
+            } else {
+                format!("{}_{}", label, old.trim_start_matches("folder-"))
+            };
+            renames.push((old, new));
+        }
+    }
+    for (old, new) in renames {
+        if old == new {
+            continue;
+        }
+        if let Some(f) = folder_map.remove(&old) {
+            folder_map.insert(new.clone(), f);
+        }
+        for v in gcp_id_to_yaml_name.values_mut() {
+            if *v == old {
+                *v = new.clone();
+            }
+        }
     }
 }
 
@@ -2202,6 +2307,9 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
             SkipReason::Filtered => "filtered by --only/--exclude".to_string(),
             SkipReason::Unmapped(_) => "unmapped (no import-config row fits)".to_string(),
             SkipReason::ParentNotFound(_) => "parent not imported".to_string(),
+            // one line per pattern: the operator sees what each one took
+            SkipReason::PlatformOwned(p) => format!("platform-owned, skip pattern `{}`", p),
+            SkipReason::NotActive(s) => format!("project not ACTIVE ({})", s),
         };
         *by_reason.entry(key).or_default() += 1;
     }
@@ -2297,6 +2405,55 @@ mod key_tests {
         qualify_duplicate_keys(&mut config);
         assert_eq!(keys(&config, "alpha"), ["-default"]);
         assert_eq!(keys(&config, "beta"), ["audit"]);
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    //! The forms the live shape writes: folders labelled by display name,
+    //! the platform's own resources skipped under the pattern that matched.
+    use super::*;
+
+    #[test]
+    fn folders_are_labelled_by_display_name_and_numbered_only_on_collision() {
+        let mut folders: HashMap<String, Folder> = HashMap::from([
+            ("folder-1".to_string(), Folder { display_name: "Infrastructure".into(), ..Default::default() }),
+            ("folder-2".to_string(), Folder { display_name: "Infrastructure".into(), ..Default::default() }),
+            ("folder-3".to_string(), Folder { display_name: "satz-preflight scratch".into(), ..Default::default() }),
+            ("folder-4".to_string(), Folder { display_name: "2024 archive".into(), ..Default::default() }),
+        ]);
+        let mut names: HashMap<String, String> = HashMap::from([
+            ("folders/1".to_string(), "folder-1".to_string()),
+            ("folders/2".to_string(), "folder-2".to_string()),
+            ("folders/3".to_string(), "folder-3".to_string()),
+            ("folders/4".to_string(), "folder-4".to_string()),
+        ]);
+        label_folders_by_display_name(&mut folders, &mut names);
+        let mut keys: Vec<&String> = folders.keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["folder_2024_archive", "infrastructure_1", "infrastructure_2", "satz_preflight_scratch"]);
+        assert_eq!(names["folders/3"], "satz_preflight_scratch", "every pass-2 lookup follows the rename");
+        assert_eq!(names["folders/1"], "infrastructure_1");
+        assert_eq!(folders["infrastructure_2"].display_name, "Infrastructure");
+    }
+
+    #[test]
+    fn a_skip_pattern_names_what_it_matched_and_the_row_refuses_a_typo() {
+        let row: crate::config::ImportResourceConfig = serde_yaml::from_str(
+            "description: x\nimport: true\nskip: [\"_Default\", \"serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com\"]\n",
+        )
+        .unwrap();
+        assert_eq!(skip_pattern(&row, "_Default").as_deref(), Some("_Default"));
+        assert_eq!(
+            skip_pattern(&row, "serviceAccount:service-123@gcp-sa-ktd.iam.gserviceaccount.com").as_deref(),
+            Some("serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com")
+        );
+        assert_eq!(skip_pattern(&row, "serviceAccount:svc-iac-001@acme-infra.iam.gserviceaccount.com"), None);
+        assert_eq!(skip_pattern(&row, "audit-sink"), None);
+        let typo: Result<crate::config::ImportResourceConfig, _> = serde_yaml::from_str("description: x\nimport: true\nskp: []\n");
+        assert!(typo.is_err(), "an unknown key on a row is refused, never ignored");
+        assert!(SkipReason::PlatformOwned("_Default".into()).to_string().contains("skip pattern `_Default`"));
+        assert!(SkipReason::NotActive("DELETE_REQUESTED".into()).to_string().contains("DELETE_REQUESTED, not ACTIVE"));
     }
 }
 

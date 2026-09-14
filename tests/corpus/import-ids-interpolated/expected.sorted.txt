@@ -1,0 +1,78 @@
+      enforce = "TRUE"
+    rules {
+    }
+  billing_account = "01AA-BB-CC"
+  destination = "storage.googleapis.com/acme-organization-audit-logs"
+  display_name = "Infrastructure"
+  filter = "log_id(\"cloudaudit.googleapis.com/activity\")"
+  folder_id = google_folder.infra.name
+  member = "group:gcp-auditors@example.com"
+  member = "group:gcp-auditors@example.com"
+  name = "acme-infra-001"
+  name = "audit"
+  name = "organizations/123456789012/policies/compute.managed.requireOsLogin"
+  org_id = "123456789012"
+  org_id = "123456789012"
+  parent = "organizations/123456789012"
+  parent = "organizations/123456789012"
+  project = google_project.infra.project_id
+  project = google_project.infra.project_id
+  project_id = "acme-infra-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.project_infra
+  role = "roles/viewer"
+  role = "roles/viewer"
+  service = "iam.googleapis.com"
+  spec {
+  }
+resource "google_folder" "infra" {
+resource "google_logging_organization_sink" "audit" {
+resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
+resource "google_organization_iam_member" "iam_group_gcp_auditors_example_com_ce92d5c45d8780e5" {
+resource "google_project" "infra" {
+resource "google_project_iam_member" "iam_group_gcp_auditors_example_com_ce92d5c45d8780e5" {
+resource "google_project_service" "infra_iam_googleapis_com" {
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+billing-account-infra = "01AA-BB-CC"
+customer-organization-id = "123456789012"
+---imports---
+  id = "123456789012 roles/viewer group:gcp-auditors@example.com"
+  id = "acme-infra-001 roles/viewer group:gcp-auditors@example.com"
+  id = "acme-infra-001"
+  id = "acme-infra-001/iam.googleapis.com"
+  id = "folders/111"
+  id = "organizations/123456789012/policies/compute.managed.requireOsLogin"
+  id = "organizations/123456789012/sinks/audit"
+  to = google_folder.infra
+  to = google_logging_organization_sink.audit
+  to = google_org_policy_policy.compute_managed_requireOsLogin
+  to = google_organization_iam_member.iam_group_gcp_auditors_example_com_ce92d5c45d8780e5
+  to = google_project.infra
+  to = google_project_iam_member.iam_group_gcp_auditors_example_com_ce92d5c45d8780e5
+  to = google_project_service.infra_iam_googleapis_com
+import {
+import {
+import {
+import {
+import {
+import {
+import {
+}
+}
+}
+}
+}
+}
+}

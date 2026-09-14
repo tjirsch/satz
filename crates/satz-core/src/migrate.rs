@@ -418,6 +418,15 @@ fn normalise_conditional_binding(m: &serde_yaml::Mapping) -> serde_yaml::Mapping
     out
 }
 
+/// A value that prints on one line: a scalar, or a tagged value that renders
+/// to a string (`!format`, `!expr`).
+fn is_scalar_like(v: &serde_yaml::Value) -> bool {
+    matches!(
+        v,
+        serde_yaml::Value::String(_) | serde_yaml::Value::Number(_) | serde_yaml::Value::Bool(_) | serde_yaml::Value::Tagged(_)
+    )
+}
+
 /// A scalar Value into a Satz value expression.
 fn scalar_value(v: &serde_yaml::Value) -> Result<String, MigrateError> {
     match v {
@@ -477,6 +486,19 @@ fn value_expr(v: &serde_yaml::Value, indent: usize) -> Result<String, MigrateErr
                 match item {
                     serde_yaml::Value::Mapping(m) => {
                         let m = normalise_conditional_binding(m);
+                        // an object of scalars is one line — the form adopt
+                        // writes for a grant edge with its import id, and the
+                        // library's `rules = [ { enforce = "TRUE" } ]`; the
+                        // formatter keeps an inline construct inline
+                        if m.values().all(is_scalar_like) {
+                            let mut fields = Vec::new();
+                            for (k, v) in &m {
+                                let (key, _) = key_expr(k)?;
+                                fields.push(format!("{} = {}", key, value_expr(v, indent + 2)?));
+                            }
+                            let _ = writeln!(out, "{}{{ {} }},", pad, fields.join(" "));
+                            continue;
+                        }
                         let _ = writeln!(out, "{}{{", pad);
                         emit_entries(&m, &mut out, indent + 4)?;
                         let _ = writeln!(out, "{}}},", pad);
