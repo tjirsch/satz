@@ -59,6 +59,24 @@ rm -rf tmp/init && mkdir -p tmp/init
   --infra-project-name acme-infra-001 --infra-bucket-name acme-infra-state > ../init.txt 2>&1) \
   || fail "satz init failed:\n$(cat tmp/init.txt)"
 "$satz" fmt --check tmp/init/yaml/C0example.satz || fail "satz init wrote an estate that is not in the canonical layout"
+# the menu, from either door: an init estate is not a dead end for packs, and the
+# packs scoped to a block are written INSIDE it, from the same table merge-presets reads
+grep -q '// use "presets/estate-map.satz"' tmp/init/yaml/C0example.satz \
+  || fail "satz init wrote no pack menu — an estate nothing can add a pack to"
+python3 - <<'PYEOF' || fail "a block-scoped pack line is not inside its block"
+est = open("tmp/init/yaml/C0example.satz").read().splitlines()
+def line_of(n):
+    return next(i for i, l in enumerate(est) if n in l)
+folder, sink = line_of("  infra_folder {"), line_of("organization-audit-logsink")
+alerts, project = line_of("organization-cis-log-alerts-central"), line_of("    google_project {")
+assert folder < sink < alerts < project, (folder, sink, alerts, project)
+assert est[sink].startswith("    // use "), est[sink]
+contacts = line_of("essential-contacts-organization")
+assert est[contacts - 2].startswith("google_essential_contacts_contact {"), est[contacts - 2 : contacts + 1]
+PYEOF
+if grep -qE '^use "presets/' tmp/init/yaml/C0example.satz; then
+  fail "an init estate must compile with no presets fetched — bootstrap is the next command"
+fi
 
 step "transpile"
 "$satz" --config . transpile smoke.satz

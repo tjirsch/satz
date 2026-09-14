@@ -1546,32 +1546,62 @@ fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
     let src = crate::fsx::read_to_string(estate)?;
     let mut added: Vec<(String, String)> = Vec::new();
     let mut block = String::new();
-    for (path, gate, phase) in crate::template::PACK_LINES {
+    let mut nested = src.clone();
+    for (path, gate, phase, at) in crate::template::PACK_LINES {
         if src.contains(&format!("use \"{}\"", path)) {
             continue;
         }
         // the phase text carries its own `//` continuations; the first line is the summary
         let summary = phase.lines().next().unwrap_or("").trim().to_string();
+        let summary = if summary.is_empty() { "with the group above".to_string() } else { summary };
+        // a pack scoped to a block belongs IN that block: appended at the top
+        // level it would be scoped to the organisation instead
+        if !at.is_empty() {
+            match crate::template::insert_into_block(&nested, at, &crate::template::pack_line(path, gate), phase) {
+                Some(next) => {
+                    nested = next;
+                    added.push((path.to_string(), format!("{} (in `{}`)", summary, at)));
+                }
+                // no such block: a resource-type map is content and is written
+                // whole; a folder is the estate's own structure and is reported
+                None => match crate::template::block_stub(at, &crate::template::pack_line(path, gate), phase) {
+                    Some(stub) => {
+                        block.push('\n');
+                        block.push_str(&stub);
+                        added.push((path.to_string(), format!("{} (in a new `{}` block)", summary, at)));
+                    }
+                    None => println!(
+                        "  {} needs a `{}` block and this estate has none — add the block, then re-run",
+                        path, at
+                    ),
+                },
+            }
+            continue;
+        }
         if !phase.is_empty() {
             block.push_str(&format!("\n// {}\n", phase));
         }
         block.push_str(&crate::template::pack_line(path, gate));
         block.push('\n');
-        added.push((path.to_string(), if summary.is_empty() { "with the group above".into() } else { summary }));
+        added.push((path.to_string(), summary));
     }
     if added.is_empty() {
         return Ok(added);
     }
-    let mut out = src.clone();
-    if !out.ends_with('\n') {
-        out.push('\n');
+    let mut out = nested;
+    // the header belongs to the appended group; a run that only placed nested
+    // lines has nothing to append and must not write an empty section
+    if !block.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(
+            "\n// ---- packs the library gained since this estate was written -------------------\n\
+             // Written by `satz merge-presets`, commented like every other pack line. Uncomment one\n\
+             // to use it, or answer its question and `satz interview` will.\n",
+        );
+        out.push_str(&block);
     }
-    out.push_str(
-        "\n// ---- packs the library gained since this estate was written -------------------\n\
-         // Written by `satz merge-presets`, commented like every other pack line. Uncomment one\n\
-         // to use it, or answer its question and `satz interview` will.\n",
-    );
-    out.push_str(&block);
     crate::fsx::write_edited_satz(estate, &src, &out)?;
     Ok(added)
 }

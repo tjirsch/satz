@@ -55,7 +55,12 @@ details, including what bootstrap self-grants and when it stops instead, are und
 Five steps, in this order. Each one is a section below.
 
 1. **Write the estate** — `satz init` with the day-0 values, or `satz interview
-   … --create` to be asked for them one at a time.
+   … --create` to be asked for them one at a time. Either way the file carries the same
+   commented pack menu, so a pack is added by uncommenting its line, by answering its
+   question, or by `satz merge-presets` writing the line for a pack the library gained
+   since. A pack scoped to a block — the audit logsink and the CIS log alerts to the
+   infrastructure folder, essential contacts to its own resource map — has its line
+   written inside that block, where its resources belong.
 2. **Bootstrap the organisation** — `satz bootstrap`, which creates the folder, the
    management project, the billing link, the foundation APIs and the state bucket, then
    transpiles and imports what it made.
