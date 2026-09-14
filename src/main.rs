@@ -2284,7 +2284,7 @@ fn dry_run_conflict_findings(
     use crate::findings::{Finding, Kind, Severity};
     let on = |p: &str| env.get(p).and_then(|v| v.as_bool()) == Some(true);
     let mut clashes: Vec<(String, &str)> = Vec::new();
-    for (_, gate, _) in crate::template::PACK_LINES {
+    for (_, gate, _, _) in crate::template::PACK_LINES {
         let Some(enforcing) = gate.strip_suffix("_dry_run") else { continue };
         if on(gate) && on(enforcing) {
             clashes.push((enforcing.to_string(), gate));
@@ -2477,7 +2477,7 @@ fn unadopted_pack_findings(
     use crate::findings::{Finding, Kind};
     let Some(sev) = crate::findings::at_level(level) else { return };
     let mut items: Vec<(String, Option<u32>)> = Vec::new();
-    for (path, gate, _) in crate::template::PACK_LINES {
+    for (path, gate, _, _) in crate::template::PACK_LINES {
         if gate.is_empty() || env.get(*gate).and_then(|v| v.as_bool()) != Some(true) {
             continue;
         }
@@ -6421,6 +6421,8 @@ mod init_template {
 
         let reg = super::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
+        // An init estate carries no uncommented pack line: it must compile with no presets
+        // fetched, because `satz bootstrap` is the very next command the operator runs.
         let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
             .unwrap_or_else(|e| panic!("init template does not compile: {:?}\n{}", e, src));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
