@@ -16,6 +16,7 @@ mod template;
 mod adopt;
 mod bootstrap;
 mod preflight;
+mod day_zero;
 mod iac_roles;
 mod gcp;
 mod org_policy;
