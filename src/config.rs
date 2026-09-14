@@ -72,9 +72,17 @@ pub struct Project {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ImportResourceConfig {
     pub description: String,
     pub import: bool,
+    /// Live shape only: what the platform owns and the estate never declares —
+    /// glob patterns (`*`) over the resource's own name (a sink's `_Default`,
+    /// a service account's email) or, on an IAM row, the member. A match is
+    /// skipped and reported under the pattern, never dropped in silence. A
+    /// copy of the table without the pattern imports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub asset_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

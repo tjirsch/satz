@@ -1,0 +1,67 @@
+// Corpus case: an `"import-id"` that references a param, as `satz import` writes
+// them — the organization number is `customer_organization_id` wherever it was
+// found, inside import ids included. Every id must reach `imports.tf` as the
+// literal, on a block attribute, a grant edge, a service entry and a policy.
+// Snapshot-gated.
+
+estate corpus_import_ids_interpolated
+
+params {
+  customer_organization_id = "123456789012"
+  billing_account_infra    = "01AA-BB-CC"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_organization_iam_member {
+  "group:gcp-auditors@example.com" = [
+    { role = "roles/viewer" "import-id" = "{customer_organization_id} roles/viewer group:gcp-auditors@example.com" },
+  ]
+}
+
+google_org_policy_policy {
+  "compute-managed-requireOsLogin" {
+    "import-id" = "organizations/{customer_organization_id}/policies/compute.managed.requireOsLogin"
+    name        = "compute.managed.requireOsLogin"
+    spec {
+      rules = [
+        { enforce = "TRUE" },
+      ]
+    }
+  }
+}
+
+google_logging_organization_sink {
+  audit {
+    "import-id" = "organizations/{customer_organization_id}/sinks/audit"
+    org_id      = customer_organization_id
+    name        = "audit"
+    destination = "storage.googleapis.com/acme-organization-audit-logs"
+    filter      = "log_id(\"cloudaudit.googleapis.com/activity\")"
+  }
+}
+
+google_folder {
+  infra {
+    "import-id"  = "folders/111"
+    display_name = "Infrastructure"
+    google_project {
+      infra {
+        "import-id" = "acme-infra-001"
+        project_id  = "acme-infra-001"
+        project_service = [
+          { service = "iam.googleapis.com" "import-id" = "acme-infra-001/iam.googleapis.com" },
+        ]
+        google_project_iam_member {
+          "group:gcp-auditors@example.com" = [
+            { role = "roles/viewer" "import-id" = "acme-infra-001 roles/viewer group:gcp-auditors@example.com" },
+          ]
+        }
+      }
+    }
+  }
+}

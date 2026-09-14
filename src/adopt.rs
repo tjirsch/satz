@@ -1122,6 +1122,7 @@ mod tests {
                 ImportResourceConfig {
                     description: String::new(),
                     import: false,
+                    skip: None,
                     asset_type: on.map(|_| format!("test.googleapis.com/{}", t)),
                     content_type: None,
                     exclude: None,

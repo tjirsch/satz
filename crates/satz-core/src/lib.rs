@@ -55,6 +55,7 @@
 //! replaced by one fold whose laws are the property tests in this crate.
 
 pub mod algebra;
+pub mod condense;
 pub mod fmt;
 pub mod migrate;
 pub mod pipeline;

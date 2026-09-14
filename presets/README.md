@@ -1410,6 +1410,13 @@ Its rows are every resource type of the google and google-beta providers at
 `provider_version`, the pinned version; `import: true` marks the default set, and
 `satz import --all` takes every row the source can deliver.
 
+A row's `skip:` is the live shape's list of what the platform owns and an estate never
+declares: glob patterns (`*`) over the resource's own name — a sink's `_Default`, a
+service account's email — or, on an IAM row, over the member (`serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com`,
+`deleted:*`). A match is skipped and listed under its pattern, never dropped in
+silence; a copy of the table without the pattern imports it. A key the row does not
+know is refused at load, so a misspelt field never passes as an empty one.
+
 `cai-asset-types.txt` beside it is Google's published list of Cloud Asset Inventory
 resource types (dated in its header); `scripts/update_import_config.py --cai-types`
 fills `asset_type` from it — a derived name is kept only when it is in the list.
