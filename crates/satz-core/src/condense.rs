@@ -14,6 +14,17 @@ use crate::migrate::{interpolation, param_ref};
 /// The param every estate declares for its organization.
 pub const ORG_PARAM: &str = "customer_organization_id";
 
+/// A literal the document repeats and the param that names it: every
+/// occurrence bounded by non-identifier characters (or the string's ends)
+/// becomes a reference — bare where the whole value is the literal, an
+/// interpolation where it sits inside one. The organization number, a
+/// customer's domain, the infra project id, a region are all of this kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Substitution {
+    pub literal: String,
+    pub param: String,
+}
+
 /// What the pass needs to know from outside.
 pub struct Shaping<'a> {
     /// The full type name behind a document key (`folder` → `google_folder`,
@@ -27,16 +38,112 @@ pub struct Shaping<'a> {
     /// The estate's organization number. Every literal naming it becomes the
     /// `customer_organization_id` reference; `None` leaves the literals.
     pub organization: Option<&'a str>,
+    /// Further literals to reference, the estate's own vocabulary (a bound
+    /// `customer_domain`, `infra_project_name`, …).
+    pub substitutions: &'a [Substitution],
 }
 
 /// Shape a discovered document in place.
 pub fn condense(top: &mut serde_yaml::Mapping, s: &Shaping<'_>) {
     shape_container(top, s, true);
+    let mut table: Vec<Substitution> = s.substitutions.to_vec();
     if let Some(org) = s.organization {
-        for (_, v) in top.iter_mut() {
-            reference_organization(v, org);
+        if !org.is_empty() {
+            table.push(Substitution { literal: org.to_string(), param: ORG_PARAM.to_string() });
         }
     }
+    if !table.is_empty() {
+        // longest literal first, so `svc-iac-001-users` is the group and not
+        // the account followed by `-users`
+        table.sort_by(|a, b| b.literal.len().cmp(&a.literal.len()).then(a.literal.cmp(&b.literal)));
+        table.dedup_by(|a, b| a.literal == b.literal);
+        reference_params(top, &table);
+    }
+}
+
+/// Every string in the document, the member keys of grant maps included
+/// (a member is `"user:{first_admin}@{customer_domain}"` in a written
+/// estate), through the substitution table. Labels — the keys of resource
+/// maps and containers — are never rewritten: an address stays literal.
+fn reference_params(body: &mut serde_yaml::Mapping, table: &[Substitution]) {
+    let entries: Vec<(serde_yaml::Value, serde_yaml::Value)> = std::mem::take(body).into_iter().collect();
+    for (k, mut v) in entries {
+        reference_in_value(&mut v, table);
+        let key = match (&k, &v) {
+            // a member line: the key is a principal, the value its roles
+            (serde_yaml::Value::String(member), serde_yaml::Value::Sequence(_)) => {
+                substitute(member, table).unwrap_or(k)
+            }
+            _ => k,
+        };
+        body.insert(key, v);
+    }
+}
+
+fn reference_in_value(v: &mut serde_yaml::Value, table: &[Substitution]) {
+    match v {
+        serde_yaml::Value::String(s) => {
+            if let Some(r) = substitute(s, table) {
+                *v = r;
+            }
+        }
+        serde_yaml::Value::Sequence(items) => {
+            for item in items.iter_mut() {
+                reference_in_value(item, table);
+            }
+        }
+        serde_yaml::Value::Mapping(m) => reference_params(m, table),
+        _ => {}
+    }
+}
+
+fn is_boundary(c: Option<char>) -> bool {
+    !c.is_some_and(|c| c.is_ascii_alphanumeric())
+}
+
+/// The value `s` becomes with the table applied, `None` when nothing in it is
+/// a table literal. One left-to-right pass; at each position the longest
+/// literal that fits with boundaries on both sides wins, and a substituted
+/// span is never rescanned.
+pub fn substitute(s: &str, table: &[Substitution]) -> Option<serde_yaml::Value> {
+    if let Some(sub) = table.iter().find(|sub| sub.literal == s) {
+        return Some(param_ref(&sub.param));
+    }
+    let mut parts: Vec<serde_yaml::Value> = Vec::new();
+    let mut literal = String::new();
+    let mut i = 0;
+    let mut hit = false;
+    while i < s.len() {
+        let before = s[..i].chars().next_back();
+        let found = table.iter().find(|sub| {
+            !sub.literal.is_empty()
+                && s[i..].starts_with(sub.literal.as_str())
+                && is_boundary(before)
+                && is_boundary(s[i + sub.literal.len()..].chars().next())
+        });
+        match found {
+            Some(sub) => {
+                if !literal.is_empty() {
+                    parts.push(serde_yaml::Value::String(std::mem::take(&mut literal)));
+                }
+                parts.push(param_ref(&sub.param));
+                i += sub.literal.len();
+                hit = true;
+            }
+            None => {
+                let ch_len = s[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+                literal.push_str(&s[i..i + ch_len]);
+                i += ch_len;
+            }
+        }
+    }
+    if !hit {
+        return None;
+    }
+    if !literal.is_empty() {
+        parts.push(serde_yaml::Value::String(literal));
+    }
+    Some(interpolation(parts))
 }
 
 /// A body that holds resource-type maps beside plain attributes: the top
@@ -129,66 +236,6 @@ fn shape_resource(tf_type: &str, body: &mut serde_yaml::Mapping, path: &str, s: 
     }
 }
 
-/// Every string naming the organization, anywhere in the value, becomes the
-/// param reference — bare where the string IS the number (`org_id`), an
-/// interpolation where it sits in a path (`organizations/<n>/policies/x`) or
-/// leads an organization grant's import id (`<n> roles/x member`). Keys are
-/// never touched: a member is a principal, not a reference.
-fn reference_organization(v: &mut serde_yaml::Value, org: &str) {
-    match v {
-        serde_yaml::Value::String(s) => {
-            if let Some(r) = organization_reference(s, org) {
-                *v = r;
-            }
-        }
-        serde_yaml::Value::Sequence(items) => {
-            for item in items.iter_mut() {
-                reference_organization(item, org);
-            }
-        }
-        serde_yaml::Value::Mapping(m) => {
-            for (_, item) in m.iter_mut() {
-                reference_organization(item, org);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn organization_reference(s: &str, org: &str) -> Option<serde_yaml::Value> {
-    if org.is_empty() {
-        return None;
-    }
-    if s == org {
-        return Some(param_ref(ORG_PARAM));
-    }
-    let needle = format!("organizations/{}", org);
-    if s.contains(&needle) {
-        let chunks: Vec<&str> = s.split(needle.as_str()).collect();
-        // a longer number with this one as its prefix is another organization
-        if chunks[1..].iter().any(|c| c.chars().next().is_some_and(|ch| ch.is_ascii_digit())) {
-            return None;
-        }
-        let mut parts = Vec::new();
-        for (i, chunk) in chunks.iter().enumerate() {
-            if i > 0 {
-                parts.push(serde_yaml::Value::String("organizations/".into()));
-                parts.push(param_ref(ORG_PARAM));
-            }
-            if !chunk.is_empty() {
-                parts.push(serde_yaml::Value::String((*chunk).to_string()));
-            }
-        }
-        return Some(interpolation(parts));
-    }
-    if let Some(rest) = s.strip_prefix(org) {
-        if rest.starts_with(' ') {
-            return Some(interpolation(vec![param_ref(ORG_PARAM), serde_yaml::Value::String(rest.to_string())]));
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,12 +263,20 @@ mod tests {
         convert_value(top, "estate", "t", &[], &[]).unwrap()
     }
 
+    fn shaping<'a>(organization: Option<&'a str>, substitutions: &'a [Substitution]) -> Shaping<'a> {
+        Shaping { type_of: &type_of, single_block: &single_block, organization, substitutions }
+    }
+
+    fn sub(literal: &str, param: &str) -> Substitution {
+        Substitution { literal: literal.into(), param: param.into() }
+    }
+
     #[test]
     fn a_single_block_prints_as_a_block_and_a_repeated_one_stays_a_list() {
         let mut top = doc(
             "org_policy_policy:\n  x:\n    name: compute.requireOsLogin\n    spec:\n      - rules:\n          - enforce: 'TRUE'\n",
         );
-        condense(&mut top, &Shaping { type_of: &type_of, single_block: &single_block, organization: None });
+        condense(&mut top, &shaping(None, &[]));
         let text = print(&top);
         assert!(text.contains("    spec {\n"), "{}", text);
         assert!(text.contains("rules = [\n"), "rules is a repeated block type:\n{}", text);
@@ -233,7 +288,7 @@ mod tests {
         let mut top = doc(
             "org_policy_policy:\n  x:\n    import-id: organizations/123456789012/policies/compute.requireOsLogin\n    name: organizations/123456789012/policies/compute.requireOsLogin\n    parent: organizations/123456789012\n    spec:\n      - rules:\n          - enforce: 'TRUE'\nfolder:\n  f:\n    display_name: F\n    org_policy_policy:\n      y:\n        name: folders/1/policies/compute.requireOsLogin\n        parent: folders/1\n",
         );
-        condense(&mut top, &Shaping { type_of: &type_of, single_block: &single_block, organization: Some("123456789012") });
+        condense(&mut top, &shaping(Some("123456789012"), &[]));
         let text = print(&top);
         assert!(text.contains("name = \"compute.requireOsLogin\"\n"), "{}", text);
         assert!(!text.contains("parent = \"organizations/"), "a top-level policy's organization parent is derived:\n{}", text);
@@ -246,7 +301,7 @@ mod tests {
         let mut top = doc(
             "folder:\n  f:\n    display_name: F\n    project:\n      p:\n        project_id: p\n        name: p\n        google_storage_bucket:\n          b:\n            name: b\n            versioning:\n              - enabled: true\n",
         );
-        condense(&mut top, &Shaping { type_of: &type_of, single_block: &single_block, organization: None });
+        condense(&mut top, &shaping(None, &[]));
         let text = print(&top);
         assert!(text.contains("versioning {\n"), "{}", text);
         assert!(!text.contains("name = \"p\""), "a name equal to the project id is dropped:\n{}", text);
@@ -256,7 +311,7 @@ mod tests {
     #[test]
     fn a_project_name_that_differs_stays() {
         let mut top = doc("project:\n  p:\n    project_id: p\n    name: Production\n");
-        condense(&mut top, &Shaping { type_of: &type_of, single_block: &single_block, organization: None });
+        condense(&mut top, &shaping(None, &[]));
         assert!(print(&top).contains("name = \"Production\""));
     }
 
@@ -265,7 +320,7 @@ mod tests {
         let mut top = doc(
             "google_logging_organization_sink:\n  s:\n    org_id: '123456789012'\n    import-id: organizations/123456789012/sinks/s\n    destination: logging.googleapis.com/organizations/123456789012/locations/global/buckets/_Default\ngoogle_organization_iam_member:\n  'group:a@example.com':\n    - role: roles/viewer\n      import-id: 123456789012 roles/viewer group:a@example.com\ngoogle_essential_contacts_contact:\n  c:\n    parent: organizations/123456789012\n    email: a@example.com\n",
         );
-        condense(&mut top, &Shaping { type_of: &type_of, single_block: &single_block, organization: Some("123456789012") });
+        condense(&mut top, &shaping(Some("123456789012"), &[]));
         let text = print(&top);
         assert!(text.contains("org_id = customer_organization_id\n"), "bare where the string is the number:\n{}", text);
         assert!(text.contains("\"import-id\" = \"organizations/{customer_organization_id}/sinks/s\""), "{}", text);
@@ -277,9 +332,47 @@ mod tests {
     }
 
     #[test]
-    fn another_organization_with_this_number_as_a_prefix_is_left_alone() {
-        assert_eq!(organization_reference("organizations/12345/x", "1234"), None);
-        assert_eq!(organization_reference("serviceAccount:service-org-123456789012@gcp-sa-x.iam.gserviceaccount.com", "123456789012"), None);
-        assert_eq!(organization_reference("x", ""), None);
+    fn a_literal_is_referenced_only_between_boundaries_and_the_longest_wins() {
+        let table = [
+            sub("svc-iac-001-users", "svc_iac_users_group"),
+            sub("acme-infra-001", "infra_project_name"),
+            sub("europe-west3-a", "default_zone"),
+            sub("europe-west3", "default_region"),
+            sub("svc-iac-001", "svc_iac_account"),
+            sub("example.com", "customer_domain"),
+            sub("alice", "first_admin"),
+            sub("acme", "customer_shortname"),
+            sub("1234", ORG_PARAM),
+        ];
+        let text = |s: &str| convert_value(&doc(&format!("google_x:\n  y:\n    v: '{}'\n", s)), "estate", "t", &[], &[]).unwrap();
+        let mut top = doc("google_x:\n  y:\n    v: 'serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com'\n");
+        condense(&mut top, &shaping(None, &table));
+        assert!(print(&top).contains("v = \"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\""), "{}", print(&top));
+        let mut top = doc("google_x:\n  y:\n    v: 'group:svc-iac-001-users@example.com'\n");
+        condense(&mut top, &shaping(None, &table));
+        assert!(print(&top).contains("v = \"group:{svc_iac_users_group}@{customer_domain}\""), "the longest literal wins:\n{}", print(&top));
+        let mut top = doc("google_x:\n  y:\n    v: acme-log-001\n    w: acmecorp-log\n    z: europe-west3-a\n");
+        condense(&mut top, &shaping(None, &table));
+        let out = print(&top);
+        assert!(out.contains("v = \"{customer_shortname}-log-001\""), "{}", out);
+        assert!(out.contains("w = \"acmecorp-log\""), "no boundary, no reference:\n{}", out);
+        assert!(out.contains("z = default_zone\n"), "a whole value is a bare reference:\n{}", out);
+        assert!(text("organizations/12345/x").contains("organizations/12345/x"), "a longer number is another organization");
+        let mut top = doc("google_x:\n  y:\n    v: organizations/12345/x\n");
+        condense(&mut top, &shaping(Some("1234"), &[]));
+        assert!(print(&top).contains("v = \"organizations/12345/x\""), "{}", print(&top));
+    }
+
+    #[test]
+    fn a_member_key_is_rewritten_and_a_label_is_not() {
+        let table = [sub("example.com", "customer_domain"), sub("alice", "first_admin")];
+        let mut top = doc(
+            "google_organization_iam_member:\n  'user:alice@example.com':\n    - roles/viewer\ngoogle_storage_bucket:\n  alice:\n    name: alice-bucket-001\n",
+        );
+        condense(&mut top, &shaping(None, &table));
+        let out = print(&top);
+        assert!(out.contains("\"user:{first_admin}@{customer_domain}\" = ["), "{}", out);
+        assert!(out.contains("\n  alice {\n"), "a label stays literal:\n{}", out);
+        assert!(out.contains("name = \"{first_admin}-bucket-001\""), "{}", out);
     }
 }

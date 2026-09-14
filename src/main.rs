@@ -7,6 +7,7 @@ mod emitter;
 mod manifest;
 mod state_migration;
 mod discovery;
+mod vocabulary;
 mod delta;
 mod align;
 mod scan;
@@ -502,6 +503,10 @@ enum Commands {
         /// number (the map form emits one address per member and role)
         #[arg(long, default_value = "error")]
         on_collision: String,
+        /// state/live shapes: the customer's short name, which no platform
+        /// fact carries — wins over the inference from the names found
+        #[arg(long)]
+        customer_shortname: Option<String>,
     },
 
     /// Migrate state and configuration between local and cloud modes
@@ -1262,6 +1267,7 @@ Thumbs.db
                     let live = crate::gcp::identity::live_defaults(
                         customer_organization_id.is_none() || customer_id.is_none(),
                         billing_account_infra.is_none(),
+                        None,
                     )
                     .await?;
                     let customer_domain = customer_domain.or_else(|| Some(live.customer_domain.clone()));
@@ -1406,7 +1412,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, all, exclude, output, import_config, gate, kind, fork, into, wrap_all, on_collision } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, gate, kind, fork, into, wrap_all, on_collision, customer_shortname } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1463,7 +1469,7 @@ Thumbs.db
                             None | Some("-") => None,
                             Some(p) => Some(PathBuf::from(p)),
                         };
-                        import_state(state_json, output, cfg, filtered, on_collision, cli.verbose, &tool_config, &runtime_config)
+                        import_state(state_json, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, &tool_config, &runtime_config)
                     } else {
                         // `--into` names an existing estate, and the delta runs
                         // exactly `adopt`'s read path — the same Cloud Asset
@@ -1479,7 +1485,7 @@ Thumbs.db
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         match into_path {
                             Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, &tool_config, &runtime_config).await,
-                            None => import_org(&parent, output, cfg, filtered, on_collision, cli.verbose, &runtime_config).await,
+                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, &runtime_config).await,
                         }
                     }
                 }
@@ -3144,6 +3150,7 @@ fn import_state(
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
     on_collision: crate::discovery::OnCollision,
+    customer_shortname: Option<&str>,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -3170,9 +3177,13 @@ fn import_state(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered, on_collision);
-    let found = discoverer.discover()?;
+    let mut found = discoverer.discover()?;
     let registry = discoverer.registry.as_ref().ok_or("the registry loaded above is gone")?;
-    write_imported(&found.config, output, None, registry, runtime_config)?;
+    // the state shape has no ADC: what the data carries, and the flag
+    let org = organization_of(&found.config, None);
+    let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), None, customer_shortname);
+    vocab.apply_billing(&mut found.config);
+    write_imported(&found.config, output, None, registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
     if verbose {
         crate::discovery::Discoverer::print_summary(&found.config);
@@ -3182,12 +3193,14 @@ fn import_state(
 
 /// The live shape of `satz import`: one Cloud Asset Inventory sweep under
 /// `parent` (`organizations/<n>`, `folders/<n>` or `projects/<id>`).
+#[allow(clippy::too_many_arguments)]
 async fn import_org(
     parent: &str,
     output: PathBuf,
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
     on_collision: crate::discovery::OnCollision,
+    customer_shortname: Option<&str>,
     verbose: bool,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3200,7 +3213,19 @@ async fn import_org(
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
-    write_imported(&found.config, output, org_hint.as_deref(), &registry, runtime_config)?;
+    // what the ADC states, the way `init --from-live` reads it — the sweep's
+    // organization is the hint, so an identity that sees many is no ambiguity
+    let live = crate::gcp::identity::live_defaults(true, true, org_hint.as_deref()).await?;
+    let facts = crate::vocabulary::LiveFacts {
+        customer_id: live.customer_id.clone(),
+        customer_domain: Some(live.org_display_name.clone().unwrap_or_else(|| live.customer_domain.clone())),
+        first_admin: Some(live.first_admin.clone()),
+        billing_account: live.billing_account.clone(),
+    };
+    let org = organization_of(&found.config, org_hint.as_deref());
+    let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), Some(&facts), customer_shortname);
+    vocab.apply_billing(&mut found.config);
+    write_imported(&found.config, output, org_hint.as_deref(), &registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
     Ok(())
 }
@@ -3210,10 +3235,14 @@ fn write_imported(
     output: PathBuf,
     org_hint: Option<&str>,
     registry: &ResourceRegistry,
+    vocab: &crate::vocabulary::Vocabulary,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
-    let text = discovered_to_satz(config, "discovered", org_hint, registry)?;
+    for line in vocab.report() {
+        println!("{}", line);
+    }
+    let text = discovered_to_satz(config, "discovered", org_hint, registry, vocab)?;
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
@@ -3317,6 +3346,7 @@ fn discovered_to_satz(
     name: &str,
     org_hint: Option<&str>,
     registry: &ResourceRegistry,
+    vocab: &crate::vocabulary::Vocabulary,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let is_type = |t: &str| registry.resources.contains_key(t);
     let mut top = match serde_yaml::to_value(config)? {
@@ -3324,8 +3354,18 @@ fn discovered_to_satz(
         other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
     };
     if !top.contains_key(serde_yaml::Value::String("terraform".into())) {
-        let backend: serde_yaml::Value =
+        // the scaffold `init` writes: the local backend for day 0 and, once
+        // the state bucket is known, the gcs one `deployment_mode` switches to
+        let mut backend: serde_yaml::Value =
             serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n")?;
+        if vocab.bindings.iter().any(|b| b.name == "infra_bucket_name") {
+            let mut gcs = serde_yaml::Mapping::new();
+            gcs.insert("bucket".into(), satz_core::migrate::param_ref("infra_bucket_name"));
+            gcs.insert("prefix".into(), serde_yaml::Value::String("hcl/state".into()));
+            if let Some(b) = backend.get_mut("backend").and_then(|b| b.as_mapping_mut()) {
+                b.insert("gcs".into(), serde_yaml::Value::Mapping(gcs));
+            }
+        }
         top.insert(serde_yaml::Value::String("terraform".into()), backend);
     }
     // Root-scoped resources (org IAM, org policies, groups) use the root
@@ -3348,29 +3388,41 @@ fn discovered_to_satz(
             eprintln!("warning: no project among the imported resources — set `billing_project` in the estate's `providers` block by hand (org-scoped APIs need a quota project)");
         }
     }
-    let mut params = Vec::new();
-    let org = infer_org_id(&serde_yaml::Value::Mapping(top.clone())).or_else(|| org_hint.map(String::from));
-    match &org {
-        Some(org) => params.push((satz_core::condense::ORG_PARAM.to_string(), format!("\"{}\"", org))),
-        None => eprintln!(
-            "warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand"
-        ),
+    let org = organization_of(config, org_hint);
+    let mut params = vocab.params();
+    if org.is_none() {
+        eprintln!("warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand");
+    } else if !params.iter().any(|(n, _)| n == satz_core::condense::ORG_PARAM) {
+        params.insert(0, (satz_core::condense::ORG_PARAM.to_string(), format!("\"{}\"", org.clone().unwrap_or_default())));
     }
-    condense_document(&mut top, org.as_deref(), registry);
+    condense_document(&mut top, org.as_deref(), &vocab.substitutions(), registry);
     let header = vec![
         "Discovered estate — review before use: the hierarchy is as found, folders are labelled".to_string(),
-        "by display name, every resource carries its \"import-id\", and what the platform owns".to_string(),
-        "was skipped and listed. `satz transpile`, then `tofu plan` should show imports and".to_string(),
-        "no creates.".to_string(),
+        "by display name, every resource carries its \"import-id\", what the platform owns was".to_string(),
+        "skipped and listed, and the params are bound from what the platform states — a value".to_string(),
+        "marked `// inferred:` names the rule that chose it. `satz transpile`, then `tofu plan`".to_string(),
+        "should show imports and no creates.".to_string(),
     ];
     let satz = satz_core::migrate::convert_value(&top, "estate", name, &params, &header)?;
     Ok(satz_core::migrate::normalize_type_keys(&satz, &is_type))
 }
 
+/// The organization a discovered estate belongs to: named by its resources
+/// (every `organizations/<n>` reference or `org_id`), else the sweep's hint.
+fn organization_of(config: &Config, org_hint: Option<&str>) -> Option<String> {
+    let top = serde_yaml::to_value(config).ok()?;
+    infer_org_id(&top).or_else(|| org_hint.map(String::from))
+}
+
 /// The shaping pass over a discovered document, answered from the provider
 /// schema: which document keys are resource types (shorthand included), and
 /// which nested blocks occur once.
-fn condense_document(top: &mut serde_yaml::Mapping, organization: Option<&str>, registry: &ResourceRegistry) {
+fn condense_document(
+    top: &mut serde_yaml::Mapping,
+    organization: Option<&str>,
+    substitutions: &[satz_core::condense::Substitution],
+    registry: &ResourceRegistry,
+) {
     let type_of = |k: &str| -> Option<String> {
         if registry.resources.contains_key(k) {
             return Some(k.to_string());
@@ -3379,7 +3431,7 @@ fn condense_document(top: &mut serde_yaml::Mapping, organization: Option<&str>, 
         registry.resources.contains_key(&prefixed).then_some(prefixed)
     };
     let single_block = |tf_type: &str, path: &str| registry.single_block(tf_type, path);
-    satz_core::condense::condense(top, &satz_core::condense::Shaping { type_of: &type_of, single_block: &single_block, organization });
+    satz_core::condense::condense(top, &satz_core::condense::Shaping { type_of: &type_of, single_block: &single_block, organization, substitutions });
 }
 
 /// `satz map-types`: align every selected row's API schema against the
@@ -3631,7 +3683,7 @@ async fn import_delta(
     if !d.top.is_empty() {
         let name = delta::pack_name(parent, None);
         let mut top = d.top.clone();
-        condense_document(&mut top, found.organization.as_deref(), &registry);
+        condense_document(&mut top, found.organization.as_deref(), &[], &registry);
         let satz = satz_core::migrate::convert_value(&top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
         fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
@@ -3647,7 +3699,7 @@ async fn import_delta(
     for (address, children) in &d.under {
         let name = delta::pack_name(parent, Some(address));
         let mut children = children.clone();
-        condense_document(&mut children, found.organization.as_deref(), &registry);
+        condense_document(&mut children, found.organization.as_deref(), &[], &registry);
         let satz = satz_core::migrate::convert_value(&children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
         fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
@@ -6479,7 +6531,7 @@ google_organization_iam_member:
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         let reg = super::corpus::registry();
-        let text = discovered_to_satz(&config, "discovered", None, &reg).unwrap();
+        let text = discovered_to_satz(&config, "discovered", None, &reg, &crate::vocabulary::Vocabulary::default()).unwrap();
         assert!(text.contains("customer_organization_id = \"123456789012\""), "{}", text);
         assert!(text.contains("terraform {"), "{}", text);
         assert!(text.contains("google_folder {"), "shorthand keys must be normalised:\n{}", text);
@@ -6559,7 +6611,7 @@ folder:
         let reg = super::corpus::registry();
         let notes = crate::discovery::resolve_grant_collisions(&mut config, crate::discovery::OnCollision::Counter).unwrap();
         assert_eq!(notes.len(), 1, "{:?}", notes);
-        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg).unwrap();
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg, &crate::vocabulary::Vocabulary::default()).unwrap();
         assert!(text.contains("folderAdmin_x_2 {"), "{}", text);
 
         let resolver = crate::EstateResolver { registry: &reg };
@@ -6576,6 +6628,78 @@ folder:
         for id in ["folders/1 roles/resourcemanager.folderAdmin user:x@example.com", "folders/2 roles/resourcemanager.folderAdmin user:x@example.com"] {
             assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
         }
+    }
+
+    #[test]
+    fn the_vocabulary_is_bound_in_the_params_and_referenced_in_the_body() {
+        // the day-0 params, inferred from what the sweep found, each marked
+        // with its rule; every literal they name becomes the reference the
+        // library spells, and an interpolated import id still resolves
+        let yaml = r#"
+organization_iam_member:
+  "serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com":
+    - role: roles/resourcemanager.organizationAdmin
+      import-id: 123456789012 roles/resourcemanager.organizationAdmin serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com
+  "user:alice@example.com":
+    - roles/viewer
+folder:
+  infra_folder:
+    display_name: Infrastructure
+    import-id: folders/111
+    project:
+      infra:
+        project_id: acme-infra-001
+        billing_account: 01AA-BB-CC
+        import-id: acme-infra-001
+        google_storage_bucket:
+          state:
+            name: acme-infra-001-state
+            location: EU
+            import-id: acme-infra-001-state
+            versioning:
+              - enabled: true
+project:
+  logs:
+    project_id: acme-logs-001
+    import-id: acme-logs-001
+"#;
+        let mut config: Config = serde_yaml::from_str(yaml).unwrap();
+        let reg = super::corpus::registry();
+        let vocab = crate::vocabulary::Vocabulary::infer(&config, Some("123456789012"), None, None);
+        vocab.apply_billing(&mut config);
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg, &vocab).unwrap();
+        assert!(text.contains("customer_shortname = \"acme\" // inferred: the leading token of"), "{}", text);
+        assert!(text.contains("infra_project_name = \"acme-infra-001\" // inferred:"), "{}", text);
+        assert!(text.contains("infra_bucket_name = \"acme-infra-001-state\" // inferred:"), "{}", text);
+        assert!(text.contains("billing_account_infra = \"01AA-BB-CC\" // inferred:"), "{}", text);
+        assert!(text.contains("customer_domain = \"example.com\" // inferred:"), "{}", text);
+        assert!(!text.contains("customer_longname"), "never a placeholder:\n{}", text);
+        assert!(text.contains("display_name = infra_folder_name"), "{}", text);
+        assert!(text.contains("project_id = infra_project_name"), "{}", text);
+        assert!(text.contains("name = infra_bucket_name"), "{}", text);
+        assert!(text.contains("\"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\" = ["), "{}", text);
+        assert!(text.contains("\"import-id\" = \"{customer_organization_id} roles/resourcemanager.organizationAdmin serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\""), "{}", text);
+        assert!(text.contains("project_id = \"{customer_shortname}-logs-001\""), "{}", text);
+        assert!(text.contains("billing_account = \"\""), "a project without an account says so:\n{}", text);
+        assert!(!text.contains("billing_account = \"01AA-BB-CC\""), "the infra project's account is the param:\n{}", text);
+        assert!(text.contains("bucket = infra_bucket_name") && text.contains("prefix = \"hcl/state\""), "the gcs backend beside the local one:\n{}", text);
+
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("vocabulary estate does not compile: {:?}\n{}", e, text));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        for id in [
+            "123456789012 roles/resourcemanager.organizationAdmin serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com",
+            "acme-infra-001",
+            "acme-infra-001-state",
+            "acme-logs-001",
+        ] {
+            assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
+        }
+        assert!(out.main_tf.contains("project_id = \"acme-logs-001\""), "{}", out.main_tf);
     }
 
     #[test]

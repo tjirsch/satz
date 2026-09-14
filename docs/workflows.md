@@ -370,11 +370,25 @@ project that is no longer ACTIVE — is not in the file; the import lists each g
 under the `skip:` pattern of the import-config row that took it, and a copy of the
 table without that pattern imports it.
 
+The `params` block is the day-0 vocabulary `init` writes, bound from what the
+platform states and what the sweep implies: the ADC gives `customer_id`,
+`customer_domain`, `first_admin` and a single open billing account; the service
+account granted organizationAdmin at the organization gives `svc_iac_account` and
+`infra_project_name`, and that project its folder, its versioned bucket and its
+billing account; the members give `svc_iac_users_group`; the regional resources give
+`default_region`; the leading token of the project and bucket names gives
+`customer_shortname`, unless `--customer-shortname` says. A value a rule chose carries
+`// inferred:` with the rule and its evidence; a value nothing states is left out and
+reported with how to bind it. Every bound literal is referenced wherever the body
+repeats it, the way the library spells it, so the estate already speaks the packs'
+vocabulary.
+
 What is left is what only a person decides:
 
+- Read the `// inferred:` notes and the "not derivable" lines, and bind what the
+  rules could not (`customer_longname` always; `satz interview` asks).
 - Replace the policies and grants a pack already carries with the pack's `use` line,
   and bind its params.
-- Name the remaining literals as params where the estate will vary them.
 - Declare the groups and memberships: they are not in Cloud Asset Inventory, and
   `satz adopt` resolves their ids.
 - Look through the skipped list and the numbered grants (`--on-collision counter`),
