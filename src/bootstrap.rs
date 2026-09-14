@@ -594,6 +594,24 @@ pub async fn bootstrap(
     println!("Service Account: {}.iam.gserviceaccount.com", sa_name);
     println!("----------------------");
 
+    // The gate, before a credential is asked for: an empty or malformed param
+    // used to reach Google inside a URL and come back as an HTML 404, and a
+    // plausible-but-wrong organisation id used to produce an ordinary-looking
+    // pre-flight against somebody else's organisation.
+    if let Err(detail) = crate::day_zero::gate(&crate::day_zero::DayZero {
+        shortname: &sn,
+        organization_id: oid_val.trim(),
+        greenfield,
+        billing_account: &bid,
+        project_id: &project_id,
+        bucket_name: &bucket_name,
+    }) {
+        // printed, not returned: `main` renders a returned error with `Debug`,
+        // which escapes the newlines into one unreadable line
+        eprintln!("\n{}", detail);
+        return Err("the estate is not ready to bootstrap (the params are listed above)".into());
+    }
+
     if dry_run {
         println!("Dry run: nothing will be created; the identity check and permission pre-flight are read-only.");
     }
@@ -695,6 +713,9 @@ pub async fn bootstrap(
     let infra_folder_name = lookup_str(&["infra-folder-name"]).filter(|s| !s.is_empty());
     let infra_folder_name = infra_folder_name.as_deref();
     let principal = resolved_identity.as_ref().map(|(email, _)| email.as_str());
+    // the estate binds the directory customer id as well: the pre-flight cross-checks
+    // the two, so an organisation that is not this customer's is named as that
+    let estate_customer_id = lookup_str(&["customer-id"]);
     crate::preflight::run(
         &client,
         &token,
@@ -702,6 +723,7 @@ pub async fn bootstrap(
         infra_folder_name.is_some(),
         &bid,
         principal,
+        estate_customer_id.as_deref(),
         dry_run,
     )
     .await?;

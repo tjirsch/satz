@@ -988,6 +988,31 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.s
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
 grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
 
+# The day-0 gate: a malformed param is refused BEFORE any credential is asked
+# for. An empty billing account used to reach Google inside a URL and come back
+# as an HTML 404; a domain in the organisation id used to reach the pre-flight.
+python3 - <<'PYEOF' || fail "could not write the malformed estates"
+import re
+src = open("yaml/smoke.satz").read()
+for name, param, bad in [
+    ("tmp/gate-billing.satz", "billing_account_infra", ""),
+    ("tmp/gate-org.satz", "customer_organization_id", "example.com"),
+]:
+    out, n = re.subn(rf'(?m)^(\s*{param}\s*=\s*)"[^"]*"', rf'\g<1>"{bad}"', src, count=1)
+    assert n == 1, (name, param, n)
+    open(name, "w").write(out)
+PYEOF
+for case in "gate-billing billing_account_infra" "gate-org customer_organization_id"; do
+  set -- $case
+  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "tmp/$1.satz" --dry-run > "tmp/$1.txt" 2>&1; then
+    fail "bootstrap must refuse a malformed $2:\n$(cat tmp/$1.txt)"
+  fi
+  grep -q "$2" "tmp/$1.txt" || fail "the refusal must name $2:\n$(cat tmp/$1.txt)"
+  grep -q 'nothing was called' "tmp/$1.txt" || fail "the gate must run before any API call:\n$(cat tmp/$1.txt)"
+  grep -q 'satz init --' "tmp/$1.txt" || fail "the refusal must name the flag that sets it:\n$(cat tmp/$1.txt)"
+  if grep -qi 'DOCTYPE html' "tmp/$1.txt"; then fail "an HTML error page reached the operator again"; fi
+done
+
 step "help fits the terminal: no line wider than the width, globals under their own heading"
 # clap reads the tty width; there is none in CI, so COLUMNS pins it
 long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80' | head -3)

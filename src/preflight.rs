@@ -211,10 +211,87 @@ pub(crate) fn split_folder_advisory(
     }
 }
 
+/// Is this scope root visible to the caller at all, and — when the estate also
+/// binds a directory customer id — is it the organisation that customer owns?
+///
+/// `testIamPermissions` on a resource the caller cannot see returns the EMPTY
+/// set, which is byte-identical to "you legitimately hold none of these". So a
+/// wrong organisation id used to be reported as missing permissions, with
+/// `add-iam-policy-binding` advice that could never work for anyone. Asking
+/// first turns that into the truth: the organisation is not visible, or it is
+/// not the customer's.
+///
+/// A folder scope is left alone: `organizations:search` does not list folders,
+/// and the folder's own permission test is the check that matters there.
+pub(crate) async fn resolve_organization(
+    client: &reqwest::Client,
+    token: &str,
+    scope: &Scope,
+    customer_id: Option<&str>,
+    principal: Option<&str>,
+) -> Result<(), String> {
+    let Scope::Org(resource) = scope else { return Ok(()) };
+    let id = resource.trim_start_matches("organizations/");
+    let orgs = crate::gcp::resourcemanager::search_organizations(client, token)
+        .await
+        .map_err(|e| format!("could not list the organizations visible to these credentials: {}", e))?;
+    let _ = id;
+    match organization_verdict(resource, &orgs, customer_id, principal.unwrap_or("these credentials")) {
+        Ok(line) => {
+            println!("  ok       {}", line);
+            Ok(())
+        }
+        Err(why) => Err(why),
+    }
+}
+
+/// The verdict on one scope root, given what the search returned. Pure, so the
+/// two failures it exists for are pinned by tests rather than by a live tenant.
+fn organization_verdict(
+    resource: &str,
+    orgs: &[serde_json::Value],
+    customer_id: Option<&str>,
+    who: &str,
+) -> Result<String, String> {
+    let named = |o: &serde_json::Value| -> String {
+        let name = o.get("name").and_then(|v| v.as_str()).unwrap_or("organizations/?").to_string();
+        match o.get("displayName").and_then(|v| v.as_str()) {
+            Some(d) => format!("{} ({})", name, d),
+            None => name,
+        }
+    };
+    let Some(found) = orgs.iter().find(|o| o.get("name").and_then(|v| v.as_str()) == Some(resource)) else {
+        let visible = if orgs.is_empty() {
+            "none are visible".to_string()
+        } else {
+            format!("visible: {}", orgs.iter().map(named).collect::<Vec<_>>().join(", "))
+        };
+        return Err(format!(
+            "{} is not visible to {} — check `customer_organization_id` in the estate ({})",
+            resource, who, visible
+        ));
+    };
+    // The estate binds BOTH ids. One search resolves the directory customer to
+    // its organisation, so a mismatch is caught here rather than on apply.
+    if let Some(cid) = customer_id.map(str::trim).filter(|c| !c.is_empty()) {
+        if let Some(owner) = found.get("directoryCustomerId").and_then(|v| v.as_str()).filter(|o| *o != cid) {
+            return Err(format!(
+                "the estate binds `customer_id = \"{}\"` and `customer_organization_id = \"{}\"`, but {} belongs to directory customer {} — one of the two is wrong",
+                cid,
+                resource.trim_start_matches("organizations/"),
+                resource,
+                owner
+            ));
+        }
+    }
+    Ok(format!("{} is visible to {}", named(found), who))
+}
+
 /// Run the pre-flight against the live IAM: test, decide, and — on a live run
 /// with `setIamPolicy` in hand — self-grant, audibly, then re-test until IAM
 /// propagation catches up. Returns only when bootstrap may create things;
 /// every other outcome is an `Err` and nothing has been created.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     client: &reqwest::Client,
     token: &str,
@@ -222,12 +299,17 @@ pub(crate) async fn run(
     wants_folder: bool,
     billing_account: &str,
     principal: Option<&str>,
+    customer_id: Option<&str>,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scope = detect_scope(normalized_parent)?;
     let resource = scope.resource().to_string();
 
     println!("--- Pre-flight: permissions of the caller ---");
+    // does this organisation exist, and is it the customer's — the question that
+    // has to come before any permission verdict, because an invisible resource
+    // answers a permission test with silence
+    resolve_organization(client, token, &scope, customer_id, principal).await?;
     if let Scope::Folder(_) = scope {
         println!(
             "folder-scoped install ({}): org-root operations are out of scope and were not checked",
@@ -560,5 +642,39 @@ mod tests {
         let (blocking, advisory) = split_folder_advisory(&org(), missing.clone());
         assert_eq!(blocking, missing);
         assert!(advisory.is_empty());
+    }
+
+    fn seen_org(name: &str, display: &str, customer: &str) -> serde_json::Value {
+        serde_json::json!({"name": name, "displayName": display, "directoryCustomerId": customer})
+    }
+
+    #[test]
+    fn an_organisation_the_caller_cannot_see_is_named_as_that_not_as_missing_permissions() {
+        // testIamPermissions answers an invisible resource with the EMPTY set,
+        // which reads exactly like "you hold none of these" — so the question
+        // has to be asked before any permission verdict
+        let visible = [seen_org("organizations/111", "acme.example", "C0acme")];
+        let err = organization_verdict("organizations/999", &visible, None, "someone@example.com").unwrap_err();
+        assert!(err.contains("organizations/999 is not visible to someone@example.com"), "{}", err);
+        assert!(err.contains("check `customer_organization_id`"), "{}", err);
+        assert!(err.contains("organizations/111 (acme.example)"), "it says what IS visible:\n{}", err);
+        let err = organization_verdict("organizations/999", &[], None, "someone@example.com").unwrap_err();
+        assert!(err.contains("none are visible"), "{}", err);
+    }
+
+    #[test]
+    fn the_two_ids_the_estate_binds_are_cross_checked_against_each_other() {
+        let visible = [seen_org("organizations/111", "acme.example", "C0acme")];
+        // visible, but not this customer's
+        let err = organization_verdict("organizations/111", &visible, Some("C0other"), "who").unwrap_err();
+        assert!(err.contains("customer_id = \"C0other\""), "{}", err);
+        assert!(err.contains("belongs to directory customer C0acme"), "{}", err);
+        // matching, absent and blank all pass
+        assert!(organization_verdict("organizations/111", &visible, Some("C0acme"), "who").is_ok());
+        assert!(organization_verdict("organizations/111", &visible, None, "who").is_ok());
+        assert!(organization_verdict("organizations/111", &visible, Some("  "), "who").is_ok());
+        // an organisation the search reports without a directory customer id
+        let bare = [serde_json::json!({"name": "organizations/111"})];
+        assert!(organization_verdict("organizations/111", &bare, Some("C0acme"), "who").is_ok());
     }
 }

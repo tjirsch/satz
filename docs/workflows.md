@@ -129,6 +129,18 @@ estate binds, and nothing below runs while one is missing.
 `bootstrap` refuses while any question the estate's packs declare is unanswered;
 `--dry-run` warns instead.
 
+Before it asks for a credential, `bootstrap` checks the params it is about to use:
+`customer_shortname` and `billing_account_infra` are present, the organisation id is
+a number, the billing account reads `XXXXXX-XXXXXX-XXXXXX`, and the project id and
+bucket name are shaped the way Google accepts them. A failure names the param and the
+flag that sets it, and nothing is called — an empty value used to travel into a URL
+and come back as an HTML error page. Then, before any permission is tested, the
+organisation itself is resolved: one that is not visible to the caller is reported as
+that, with the ones that are listed, rather than as a wall of missing permissions.
+Where the estate binds `customer_id` as well, the two are cross-checked, so an
+organisation belonging to a different directory customer is named before anything is
+created.
+
 `bootstrap` creates the day-0 infrastructure — the infrastructure folder, the
 management project, the billing link, the foundation APIs (which `tofu` needs
 enabled before its first run) and the state bucket — then runs `transpile`, `init` and
