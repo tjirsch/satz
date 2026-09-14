@@ -686,6 +686,14 @@ once: the API refuses a member that does not exist yet, and an account deleted f
 leaves `deleted:serviceAccount:…` bindings behind. A group membership whose member key
 names such an account waits for it the same way.
 
+**A member that names a group the estate declares waits for it the same way.** When
+the member is `group:<key>@<customer_domain>` of a `google_cloud_identity_group` in the
+same estate, the grant carries `depends_on = [google_cloud_identity_group.<label>]`, and
+so does a membership whose member key names that group. Without it a fresh organisation
+fails on apply: the grants run beside the group creations, the IAM API refuses a member
+that does not exist yet, and the first refusal stops the groups still queued from being
+created at all.
+
 **Every `*_iam_member` type takes the member map.** The organisation's scope
 comes from `customer_organization_id`, a project's or folder's from the node the
 map is written in, and every other type writes its scope in the map — one key

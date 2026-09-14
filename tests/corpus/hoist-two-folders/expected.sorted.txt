@@ -2,8 +2,14 @@
     "cloudidentity.googleapis.com/groups.discussion_forum" = ""
     "cloudidentity.googleapis.com/groups.security" = ""
     ]
+    google_cloud_identity_group.log_admins
+    google_cloud_identity_group.log_admins
     id = "log-admins@example.com"
     ignore_changes = [
+  ]
+  ]
+  depends_on = [
+  depends_on = [
   display_name = "A"
   display_name = "B"
   display_name = "Log Admins"
