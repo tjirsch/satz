@@ -59,6 +59,31 @@ rm -rf tmp/init && mkdir -p tmp/init
   --infra-project-name acme-infra-001 --infra-bucket-name acme-infra-state > ../init.txt 2>&1) \
   || fail "satz init failed:\n$(cat tmp/init.txt)"
 "$satz" fmt --check tmp/init/yaml/C0example.satz || fail "satz init wrote an estate that is not in the canonical layout"
+# init invents nothing: a value nobody supplied and nothing could derive is EMPTY.
+# The placeholders it used to write looked like answers and pointed bootstrap at
+# an organisation nobody owned. (The run above STATES the org id, so it is right
+# to write it; this one states nothing and has no credentials to derive from.)
+rm -rf tmp/init-bare && mkdir -p tmp/init-bare
+(cd tmp/init-bare && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
+  "$satz" init --customer-id C0bare > ../init-bare.txt 2>&1) \
+  || fail "satz init without credentials must still write an estate:\n$(cat tmp/init-bare.txt)"
+grep -qE '^  customer_organization_id += ""$' tmp/init-bare/yaml/C0bare.satz \
+  || fail "an organisation id nobody supplied must be empty, never a placeholder:\n$(grep organization tmp/init-bare/yaml/C0bare.satz)"
+grep -qE '^  first_admin += ""$' tmp/init-bare/yaml/C0bare.satz \
+  || fail "an admin nobody supplied must be empty:\n$(grep first_admin tmp/init-bare/yaml/C0bare.satz)"
+grep -q 'nothing could be derived' tmp/init-bare.txt \
+  || fail "init must say that it derived nothing:\n$(cat tmp/init-bare.txt)"
+# a re-run MERGES what it names and leaves the rest alone (it used to skip silently)
+cp tmp/init/yaml/C0example.satz tmp/init-before.satz
+(cd tmp/init && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent "$satz" init \
+  --customer-id C0example --billing-account-infra 012345-6789AB-CDEF01 > ../init-merge.txt 2>&1) \
+  || fail "satz init on an existing estate failed:\n$(cat tmp/init-merge.txt)"
+grep -q 'Merged into' tmp/init-merge.txt || fail "a re-run must merge, not skip:\n$(cat tmp/init-merge.txt)"
+grep -qE '^  billing_account_infra +=  *"012345-6789AB-CDEF01"' tmp/init/yaml/C0example.satz \
+  || fail "the param named on the re-run did not land:\n$(grep billing tmp/init/yaml/C0example.satz)"
+grep -qE '^  customer_shortname +=  *"acme"' tmp/init/yaml/C0example.satz \
+  || fail "a param the re-run did not name was lost"
+"$satz" fmt --check tmp/init/yaml/C0example.satz || fail "the merge left the estate uncanonical"
 # the menu, from either door: an init estate is not a dead end for packs, and the
 # packs scoped to a block are written INSIDE it, from the same table merge-presets reads
 grep -q '// use "presets/estate-map.satz"' tmp/init/yaml/C0example.satz \

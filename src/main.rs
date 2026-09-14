@@ -17,6 +17,7 @@ mod adopt;
 mod bootstrap;
 mod preflight;
 mod day_zero;
+mod init_params;
 mod iac_roles;
 mod gcp;
 mod org_policy;
@@ -355,11 +356,12 @@ enum Commands {
         /// Initial IaC Admin User (default: first.admin@<domain>)
         #[arg(long)]
         iac_user: Option<String>,
-        /// Derive the missing values from the Application Default Credentials alone: identity → first admin + domain, organizations:search → org id + directory customer id, billing accounts → the single open account
-        ///
-        /// Explicit flags always win; nothing is ever guessed
-        #[arg(long)]
+        /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
+        #[arg(long, hide = true)]
         from_live: bool,
+        /// Overwrite an existing estate instead of merging the params named here into it
+        #[arg(long)]
+        force: bool,
     },
     /// Bootstrap day-0 infrastructure (folder, project, billing link, core APIs, state bucket) after a permission pre-flight
     Bootstrap {
@@ -1158,6 +1160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             infra_bucket_name,
             iac_user,
             from_live,
+            force,
         } => {
             let mut final_google = Vec::new();
             let mut final_aws = Vec::new();
@@ -1261,58 +1264,120 @@ Thumbs.db
                 println!("Created {}", gitignore_path.display());
             }
 
-            // 3b. --from-live: derive the missing values from the ADC alone.
-            // Explicit flags always win, and nothing is ever guessed.
-            let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) =
-                if from_live {
-                    let live = crate::gcp::identity::live_defaults(
-                        customer_organization_id.is_none() || customer_id.is_none(),
-                        billing_account_infra.is_none(),
-                        None,
-                    )
-                    .await?;
-                    let customer_domain = customer_domain.or_else(|| Some(live.customer_domain.clone()));
-                    let iac_user =
-                        iac_user.or_else(|| Some(format!("{}@{}", live.first_admin, live.customer_domain)));
-                    let customer_id = customer_id.or_else(|| live.customer_id.clone());
-                    // No organization visible = greenfield: the estate is
-                    // written with an empty id and bootstrap --greenfield
-                    // fills it in.
-                    let customer_organization_id =
-                        customer_organization_id.or_else(|| Some(live.org_id.clone().unwrap_or_default()));
-                    let billing_account_infra = billing_account_infra.or_else(|| live.billing_account.clone());
-                    let customer_shortname = match customer_shortname {
-                        Some(s) => Some(s),
-                        None => Some(crate::gcp::identity::prompt_shortname()?),
-                    };
-                    if customer_id.is_none() {
-                        return Err("no organization (and so no directory customer id) is visible — \
-                                    pass --customer-id explicitly alongside --from-live"
-                            .into());
-                    }
-                    if billing_account_infra.as_deref().unwrap_or("").is_empty() {
-                        return Err("--from-live could not settle on ONE open billing account — \
-                                    pass --billing-account-infra (the visible accounts are listed above)"
-                            .into());
-                    }
-                    if customer_organization_id.as_deref().unwrap_or("").is_empty() {
-                        println!(
-                            "no organization is visible to these credentials — the estate is written \
-                             with an empty customer_organization_id; `satz bootstrap <estate> --greenfield` \
-                             materializes the organization and fills it in"
+            // 3b. What the operator TYPED, before anything is derived: a re-run
+            // merges exactly these into an estate that already exists, and
+            // nothing else, so a value somebody put there by hand survives.
+            let stated = crate::init_params::Stated {
+                customer_id: customer_id.clone(),
+                customer_shortname: customer_shortname.clone(),
+                billing_account_infra: billing_account_infra.clone(),
+                default_region: default_region.clone(),
+                customer_organization_id: customer_organization_id.clone(),
+                customer_domain: customer_domain.clone(),
+                infra_project_name: infra_project_name.clone(),
+                infra_bucket_name: infra_bucket_name.clone(),
+                iac_user: iac_user.clone(),
+            };
+
+            // Derivation from the credentials is the DEFAULT, not a flag: every
+            // value below is sitting in the ADC the operator already
+            // authenticated with. Stated wins, derived fills the rest and says
+            // where it came from, and what nothing can answer stays EMPTY —
+            // never a placeholder. `--from-live` is accepted and ignored.
+            let _ = from_live;
+            let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) = {
+                let need_org = customer_organization_id.is_none() || customer_id.is_none();
+                let need_billing = billing_account_infra.is_none();
+                match crate::gcp::identity::live_defaults(need_org, need_billing, None).await {
+                    Ok(live) => {
+                        let mut note = crate::init_params::Derivations::default();
+                        let customer_domain = note.fill(
+                            "customer_domain",
+                            customer_domain,
+                            Some(live.customer_domain.clone()),
+                            "the ADC identity",
                         );
+                        let iac_user = note.fill(
+                            "first_admin",
+                            iac_user,
+                            Some(format!("{}@{}", live.first_admin, live.customer_domain)),
+                            "the ADC identity",
+                        );
+                        let customer_id =
+                            note.fill("customer_id", customer_id, live.customer_id.clone(), "organizations:search");
+                        // No organization visible is the greenfield case: the id
+                        // stays empty and `bootstrap --greenfield` fills it in.
+                        let customer_organization_id = note.fill(
+                            "customer_organization_id",
+                            customer_organization_id,
+                            live.org_id.clone(),
+                            "organizations:search",
+                        );
+                        let billing_account_infra = note.fill(
+                            "billing_account_infra",
+                            billing_account_infra,
+                            live.billing_account.clone(),
+                            "billingAccounts.list (the one open account)",
+                        );
+                        // nothing on the platform names the customer: it is
+                        // reported as unanswered rather than guessed at
+                        let customer_shortname = note.fill("customer_shortname", customer_shortname, None, "");
+                        note.report();
+                        (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
                     }
-                    (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                } else {
-                    (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                };
+                    Err(why) => {
+                        eprintln!("init: nothing could be derived from the credentials — {}", why);
+                        eprintln!(
+                            "      what you did not pass is written empty; `satz bootstrap` names each one, and \
+                             `satz init` merges them in later."
+                        );
+                        (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
+                    }
+                }
+            };
 
             // 4. Generate the template estate if customer_id provided
             if let Some(c_id) = customer_id {
                 let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", c_id));
-                if !yaml_path.exists() {
+                if yaml_path.exists() && !force {
+                    // A re-run MERGES: it used to print "Template already exists",
+                    // change nothing, and still sign off with "Initialization
+                    // complete" — so a param somebody added to the command line
+                    // never landed and nothing said so.
+                    let src = crate::fsx::read_to_string(&yaml_path)?;
+                    let (merged, log) = crate::init_params::merge(&src, &stated)?;
+                    if log.is_empty() {
+                        println!(
+                            "{} exists and this command named no params to merge into it (`--force` rewrites it).",
+                            yaml_path.display()
+                        );
+                    } else {
+                        for entry in &log {
+                            match entry {
+                                crate::init_params::Merged::Changed { param, from, to } if from.is_empty() => {
+                                    println!("  set     {} = {:?}", param, to)
+                                }
+                                crate::init_params::Merged::Changed { param, from, to } => {
+                                    println!("  changed {} = {:?} (was {:?})", param, to, from)
+                                }
+                                crate::init_params::Merged::Same { param, value } => {
+                                    println!("  kept    {} = {:?}", param, value)
+                                }
+                            }
+                        }
+                        if merged != src {
+                            crate::fsx::write_edited_satz(&yaml_path, &src, &merged)?;
+                        }
+                        println!(
+                            "Merged into {} — every line this command did not name is unchanged.",
+                            yaml_path.display()
+                        );
+                    }
+                } else {
                     let domain = customer_domain.clone().unwrap_or_default();
-                    let resolved_iac_user = iac_user.unwrap_or_else(|| format!("first.admin@{}", domain));
+                    // an admin nobody named stays empty: `first.admin` looked
+                    // like an answer and was not one
+                    let resolved_iac_user = iac_user.unwrap_or_default();
 
                     // The template and the shipped presets both compose members as
                     // `user:{first-admin}@{customer-domain}`, so `first-admin` holds the
@@ -1329,21 +1394,34 @@ Thumbs.db
                         );
                     }
 
+                    // the two names that FOLLOW from the short name, by the
+                    // defaults `presets/estate-core.satz` documents — derived
+                    // when it is known, empty when it is not
+                    let shortname = customer_shortname.clone().unwrap_or_default();
+                    let derive_from_shortname = |given: Option<String>, suffix: &str| -> String {
+                        match given {
+                            Some(v) => v,
+                            None if !shortname.trim().is_empty() => format!("{}{}", shortname.trim(), suffix),
+                            None => String::new(),
+                        }
+                    };
+                    let infra_project_name = derive_from_shortname(infra_project_name, "-infra-001");
+                    let infra_bucket_name = derive_from_shortname(infra_bucket_name, "-infra-001-state");
                     let args = crate::template::TemplateArgs {
                         customer_id: c_id.clone(),
                         shortname: customer_shortname.unwrap_or_default(),
                         billing_id: billing_account_infra.unwrap_or_default(),
                         region: default_region.unwrap_or_else(|| "europe-west3".to_string()),
-                        org_id: customer_organization_id.unwrap_or_else(|| "123456789012".to_string()),
+                        // never a placeholder: unset stays empty, and the
+                        // bootstrap gate refuses it by name
+                        org_id: customer_organization_id.unwrap_or_default(),
                         domain: domain.clone(),
-                        project_id: infra_project_name.unwrap_or_default(),
-                        bucket_id: infra_bucket_name.unwrap_or_default(),
+                        project_id: infra_project_name,
+                        bucket_id: infra_bucket_name,
                         first_admin: first_admin.to_string(),
                     };
                     crate::template::generate_template(&args, &yaml_path)?;
                     println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
-                } else {
-                    println!("Template already exists: {}", yaml_path.display());
                 }
             }
 
