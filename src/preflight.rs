@@ -300,6 +300,7 @@ pub(crate) async fn run(
     billing_account: &str,
     principal: Option<&str>,
     customer_id: Option<&str>,
+    no_default_grants: bool,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scope = detect_scope(normalized_parent)?;
@@ -357,19 +358,38 @@ pub(crate) async fn run(
             println!("pre-flight: OK");
             Ok(())
         }
+        Decision::SelfGrant(roles) if no_default_grants => {
+            // The operator has declined the self-grant. Acquiring folderAdmin
+            // and orgPolicyAdmin at the organisation root is the reportable
+            // event in a change process that audits org-level IAM, and printing
+            // the undo afterwards does not unmake it. Same path as a grant that
+            // is impossible: the commands, and nothing created.
+            let member = principal.map(|p| format!("user:{}", p)).unwrap_or_else(|| "user:<YOUR_ADMIN_EMAIL>".to_string());
+            eprintln!("\n--no-default-grants: satz will not widen your own IAM at {}.", resource);
+            eprintln!("An administrator can grant these, or drop the flag to let satz self-grant them:\n");
+            for role in &roles {
+                eprintln!("  {}", scope.grant_command(role, &member));
+            }
+            eprintln!();
+            Err("bootstrap stopped before creating anything: the required roles were declined".into())
+        }
         Decision::SelfGrant(roles) => {
             let principal = principal.expect("decide() returns SelfGrant only with a principal");
             if dry_run {
                 for role in &roles {
                     println!("  would self-grant {} to user:{} on {}", role, principal, resource);
                 }
-                return Err(format!(
-                    "pre-flight: {} permission(s) missing — a live run would self-grant the roles above \
-                     (the caller holds {})",
+                // A would-be self-grant is the HEALTHY outcome for a fresh
+                // organisation: the live run resolves it. Reporting it as
+                // `Error:` made a good pre-flight read as a refusal, so the
+                // dry run says so and exits 0. Non-zero is for what a live run
+                // could not fix.
+                println!(
+                    "pre-flight: OK on a live run — {} permission(s) missing now, self-granted then (the caller holds {})",
                     missing.len(),
                     scope.set_iam_policy_permission()
-                )
-                .into());
+                );
+                return Ok(());
             }
             self_grant(client, token, &scope, &roles, principal).await?;
             retest(client, token, &resource, &missing).await?;
@@ -676,5 +696,27 @@ mod tests {
         // an organisation the search reports without a directory customer id
         let bare = [serde_json::json!({"name": "organizations/111"})];
         assert!(organization_verdict("organizations/111", &bare, Some("C0acme"), "who").is_ok());
+    }
+
+    #[test]
+    fn declining_the_self_grant_asks_an_administrator_for_exactly_those_roles() {
+        // `--no-default-grants` does not change the DECISION — the caller still
+        // holds setIamPolicy — it changes what satz does with it: the same
+        // commands a caller who cannot self-grant would be given, and nothing
+        // created. Acquiring folderAdmin at the organisation root is the
+        // reportable event; printing the undo afterwards does not unmake it.
+        let scope = Scope::Org("organizations/123456789012".into());
+        let missing = vec![
+            ("resourcemanager.folders.create".to_string(), "roles/resourcemanager.folderAdmin".to_string()),
+            ("orgpolicy.policies.create".to_string(), "roles/orgpolicy.policyAdmin".to_string()),
+        ];
+        let decision = decide(&missing, false, true, &scope, "012345-6789AB-CDEF01", Some("a@example.com"));
+        let Decision::SelfGrant(roles) = decision else { panic!("{:?}", decision) };
+        let commands: Vec<String> =
+            roles.iter().map(|r| scope.grant_command(r, "user:a@example.com")).collect();
+        assert_eq!(commands.len(), 2, "{:?}", commands);
+        assert!(commands[0].contains("add-iam-policy-binding 123456789012"), "{}", commands[0]);
+        assert!(commands.iter().any(|c| c.contains("roles/resourcemanager.folderAdmin")), "{:?}", commands);
+        assert!(commands.iter().any(|c| c.contains("roles/orgpolicy.policyAdmin")), "{:?}", commands);
     }
 }

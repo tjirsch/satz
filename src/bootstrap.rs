@@ -512,10 +512,12 @@ fn load_bootstrap_yaml(
     Ok((Value::Mapping(with_block), Value::Mapping(flat)))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn bootstrap(
     config_file: PathBuf,
     dry_run: bool,
     greenfield: bool,
+    no_default_grants: bool,
     runtime_config: crate::ToolConfig,
     cli_config: Option<PathBuf>,
     cli_validation: Option<String>,
@@ -724,6 +726,7 @@ pub async fn bootstrap(
         &bid,
         principal,
         estate_customer_id.as_deref(),
+        no_default_grants,
         dry_run,
     )
     .await?;

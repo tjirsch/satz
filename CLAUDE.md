@@ -65,7 +65,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   account, derived from `svc_iac_account` + `infra_project_name` exactly as the
   emitter derives the provider's `impersonate_service_account`. The exceptions
   are bare `whoami` (given an estate it binds like everything else, to answer
-  what that estate acts as), `bootstrap`, `init --from-live` and `map-types`, each named with
+  what that estate acts as), `bootstrap`, `init` and `map-types`, each named with
   its reason in `IDENTITIES` (`src/main.rs`), which a test forces every new
   command to join. One command, one identity: the CLI binds it for the process
   and a second, different binding is refused, never ignored. `satz mcp` is

@@ -362,6 +362,10 @@ enum Commands {
         /// Overwrite an existing estate instead of merging the params named here into it
         #[arg(long)]
         force: bool,
+        /// Ask for what is still unbound: hand the estate to `satz interview` when a
+        /// day-0 param was neither stated nor derivable
+        #[arg(long)]
+        interview: bool,
     },
     /// Bootstrap day-0 infrastructure (folder, project, billing link, core APIs, state bucket) after a permission pre-flight
     Bootstrap {
@@ -379,6 +383,10 @@ enum Commands {
         /// project under it and write the id back into the estate
         #[arg(long)]
         greenfield: bool,
+        /// Never widen the caller's own IAM: report the roles an administrator
+        /// must grant and stop, instead of self-granting them at the scope root
+        #[arg(long)]
+        no_default_grants: bool,
     },
     /// Export the current live Organization Policies to a re-importable YAML preset
     #[command(visible_alias = "export-org-policies")]
@@ -1161,6 +1169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             iac_user,
             from_live,
             force,
+            interview,
         } => {
             let mut final_google = Vec::new();
             let mut final_aws = Vec::new();
@@ -1423,6 +1432,18 @@ Thumbs.db
                     crate::template::generate_template(&args, &yaml_path)?;
                     println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
                 }
+
+                // A day-0 param is either stated, derived, or ASKED — there is
+                // no fourth state where an estate is simply born incomplete.
+                // Stating it is the flag because the interview is interactive
+                // and a scripted run must not block on it.
+                if interview {
+                    println!();
+                    let stdin = std::io::stdin();
+                    let mut input = stdin.lock();
+                    let mut out = std::io::stdout();
+                    crate::interview::run(&yaml_path, &runtime_config, false, false, &mut input, &mut out)?;
+                }
             }
 
             // 4. Fetch Schemas
@@ -1556,7 +1577,7 @@ Thumbs.db
                         // as the same identity: the estate's service account.
                         // Without `--into` there is no estate to be (the output
                         // is a new file), so discovery stays on the human's ADC,
-                        // like `init --from-live`.
+                        // like `init`.
                         let into_path = into.map(|estate| estate_path(estate, &runtime_config));
                         if let Some(estate) = &into_path {
                             configure_estate_impersonation(estate, &runtime_config)?;
@@ -1571,7 +1592,7 @@ Thumbs.db
                 other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
             }
         }
-        Commands::Bootstrap { estate, dry_run, greenfield } => {
+        Commands::Bootstrap { estate, dry_run, greenfield, no_default_grants } => {
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
@@ -1586,6 +1607,7 @@ Thumbs.db
                 config_path,
                 dry_run,
                 greenfield,
+                no_default_grants,
                 runtime_config,
                 cli.config.clone(),
                 cli.validation.clone(),
@@ -3305,7 +3327,7 @@ async fn import_org(
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
-    // what the ADC states, the way `init --from-live` reads it — the sweep's
+    // what the ADC states, the way `init` reads it — the sweep's
     // organization is the hint, so an identity that sees many is no ambiguity
     let live = crate::gcp::identity::live_defaults(true, true, org_hint.as_deref()).await?;
     let facts = crate::vocabulary::LiveFacts {
@@ -4494,7 +4516,7 @@ fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
 /// THE RULE: post-init, anything that reads or writes a customer's estate runs
 /// as that estate's service account. The exceptions are deliberate and few —
 /// bare `whoami` (it asks about the human; given an estate it binds like
-/// everything else), `bootstrap` and `init --from-live` (no SA exists yet), and
+/// everything else), `bootstrap` and `init` (no SA exists yet), and
 /// `map-types` (no credentials at all). A live command that calls neither this
 /// nor `disable_impersonation` runs as the human by accident, which is what
 /// `the_estate_commands_are_the_ones_that_bind` gates.
@@ -5398,7 +5420,7 @@ mod command_groups {
         ("report-compliance", Identity::EstateSa),
         ("adopt", Identity::EstateSa),
         // Only `--into` names an estate; plain discovery writes a NEW file and so
-        // has no estate to be, exactly like `init --from-live`.
+        // has no estate to be, exactly like `init`.
         ("import", Identity::EstateSa),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
         ("init", Identity::Human("--from-live runs before the estate exists")),
