@@ -575,28 +575,6 @@ pub(crate) async fn live_defaults(
     })
 }
 
-/// Ask for the one value that cannot be derived. Interactive terminals only;
-/// a scripted run must pass --customer-shortname.
-pub(crate) fn prompt_shortname() -> Result<String, String> {
-    use std::io::{BufRead, IsTerminal, Write};
-    if !std::io::stdin().is_terminal() {
-        return Err(
-            "--from-live needs --customer-shortname when not run interactively (every name \
-             derives from it)"
-                .to_string(),
-        );
-    }
-    print!("customer_shortname (every derived name builds on it, e.g. acme): ");
-    std::io::stdout().flush().map_err(|e| e.to_string())?;
-    let mut s = String::new();
-    std::io::stdin().lock().read_line(&mut s).map_err(|e| e.to_string())?;
-    let s = s.trim().to_string();
-    if s.is_empty() {
-        return Err("customer_shortname must not be empty".to_string());
-    }
-    Ok(s)
-}
-
 /// How the ADC identity was established, so an unexpected result can be
 /// traced back to the mechanism that produced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

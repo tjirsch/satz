@@ -151,7 +151,7 @@ params {
 
 Its `customer_organization_id` is empty: the state of a tenant whose Google Cloud
 organization does not exist yet. `satz bootstrap` answers that with the greenfield
-path — `--greenfield`, or `init --from-live` — rather than a bare "missing org
+path — `--greenfield`, or `satz init` re-run with the id — rather than a bare "missing org
 id". See [from nothing to applied](workflows.md#from-nothing-to-applied).
 
 ## A working estate, end to end

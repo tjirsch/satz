@@ -235,7 +235,7 @@ project or billing account
 ([documented](https://docs.cloud.google.com/resource-manager/docs/creating-managing-organization)).
 satz uses the second trigger:
 
-1. `satz init --from-live --customer-id <C0…>` — derives every derivable init value
+1. `satz init --customer-id <C0…>` — derives every derivable init value
    from the ADC alone (identity → `first_admin` + `customer_domain`,
    `organizations:search` → org id + directory customer id,
    `billingAccounts.list` → the single open account; explicit flags always win,
