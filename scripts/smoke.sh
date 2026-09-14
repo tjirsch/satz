@@ -1012,6 +1012,12 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.s
   || fail "bootstrap --dry-run must exit 0 without credentials:\n$(cat tmp/boot-dry.txt)"
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
 grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
+# the operator can decline the self-grant; the flag is part of the surface even
+# where no credentials let this run reach the pre-flight
+GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.satz --dry-run --no-default-grants \
+  > tmp/boot-nogrants.txt 2>&1 || fail "bootstrap --no-default-grants must be accepted:\n$(cat tmp/boot-nogrants.txt)"
+"$satz" bootstrap --help 2>&1 | grep -q -- '--no-default-grants' || fail "--no-default-grants is not in bootstrap's help"
+"$satz" init --help 2>&1 | grep -q -- '--interview' || fail "--interview is not in init's help"
 
 # The day-0 gate: a malformed param is refused BEFORE any credential is asked
 # for. An empty billing account used to reach Google inside a URL and come back
