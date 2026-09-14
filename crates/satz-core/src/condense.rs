@@ -364,6 +364,33 @@ mod tests {
     }
 
     #[test]
+    fn a_grant_type_is_written_by_the_one_rule() {
+        use crate::pipeline::{grant_form, GrantForm};
+        assert_eq!(grant_form("google_storage_bucket", &["name", "location"]), GrantForm::NotAGrant);
+        assert_eq!(grant_form("google_organization_iam_member", &["org_id", "role", "member"]), GrantForm::Org);
+        assert_eq!(grant_form("google_billing_account_iam_member", &["billing_account_id", "role", "member"]), GrantForm::Billing);
+        assert_eq!(grant_form("google_project_iam_member", &["project", "role", "member"]), GrantForm::Node);
+        assert_eq!(grant_form("google_folder_iam_member", &["folder", "role", "member"]), GrantForm::Node);
+        assert_eq!(grant_form("google_storage_bucket_iam_member", &["bucket", "role", "member"]), GrantForm::Pinned("bucket".into()));
+        assert_eq!(grant_form("google_service_account_iam_member", &["service_account_id", "member", "role"]), GrantForm::Pinned("service_account_id".into()));
+        assert_eq!(grant_form("google_x_iam_member", &["a", "b", "role", "member"]), GrantForm::Labelled, "two scope attributes: no pin");
+        assert_eq!(grant_form("google_x_iam_member", &[]), GrantForm::Labelled, "no schema: no pin");
+    }
+
+    #[test]
+    fn pinned_maps_print_as_one_block_each() {
+        let mut top = doc(
+            "project:\n  p:\n    project_id: p\n    google_storage_bucket_iam_member:\n      - bucket: a\n        'group:x@example.com':\n          - roles/storage.objectViewer\n      - bucket: b\n        'group:x@example.com':\n          - { role: roles/storage.objectViewer, import-id: 'b/b roles/storage.objectViewer group:x@example.com' }\n",
+        );
+        condense(&mut top, &shaping(None, &[]));
+        let out = print(&top);
+        assert_eq!(out.matches("google_storage_bucket_iam_member {").count(), 2, "{}", out);
+        assert!(out.contains("bucket = \"a\""), "{}", out);
+        assert!(out.contains("{ role = \"roles/storage.objectViewer\" \"import-id\" = \"b/b roles/storage.objectViewer group:x@example.com\" },"), "{}", out);
+        assert!(!out.contains("google_storage_bucket_iam_member = ["), "{}", out);
+    }
+
+    #[test]
     fn a_member_key_is_rewritten_and_a_label_is_not() {
         let table = [sub("example.com", "customer_domain"), sub("alice", "first_admin")];
         let mut top = doc(

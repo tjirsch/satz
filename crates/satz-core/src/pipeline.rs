@@ -865,6 +865,43 @@ pub fn type_facts(tf_type: &str) -> (crate::MergeClass, crate::Scope) {
     }
 }
 
+/// How a `*_iam_member` type is written in the member-map form
+/// (`"member" = [roles…]`, language reference §6.5): scoped by the estate's
+/// organization, by its billing account, by the folder/project it is written
+/// in, or PINNED — the type's one required attribute that is neither `role`
+/// nor `member` names its scope in the map (`bucket = …`,
+/// `service_account_id = …`). `Labelled` is a grant type whose scope the
+/// schema does not single out; it is written as a labelled resource. The one
+/// rule every importer and the delta consult, so none of them keeps its own
+/// allow-list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantForm {
+    NotAGrant,
+    Org,
+    Billing,
+    Node,
+    Pinned(String),
+    Labelled,
+}
+
+pub fn grant_form(tf_type: &str, required_attrs: &[&str]) -> GrantForm {
+    if !tf_type.ends_with("_iam_member") {
+        return GrantForm::NotAGrant;
+    }
+    match tf_type {
+        "google_organization_iam_member" => GrantForm::Org,
+        "google_billing_account_iam_member" => GrantForm::Billing,
+        t if scoped_by_node(t) => GrantForm::Node,
+        _ => {
+            let pins: Vec<&str> = required_attrs.iter().copied().filter(|a| !matches!(*a, "role" | "member" | "condition")).collect();
+            match pins.as_slice() {
+                [one] => GrantForm::Pinned((*one).to_string()),
+                _ => GrantForm::Labelled,
+            }
+        }
+    }
+}
+
 /// One fragment per source file, recursively over `use`. `load` maps a use-path
 /// to source text (the bin supplies file access; this module stays pure).
 pub fn fragments_from_source(

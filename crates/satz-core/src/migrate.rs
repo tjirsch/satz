@@ -648,6 +648,23 @@ fn list_form(key: &str, seq: &[serde_yaml::Value]) -> Result<Option<serde_yaml::
     Ok(Some(out))
 }
 
+/// A grant type carrying a SEQUENCE of maps — one scope-pinned member map per
+/// bucket, service account, … (`google_storage_bucket_iam_member { bucket = "a"
+/// … } google_storage_bucket_iam_member { bucket = "b" … }`): resource-type maps
+/// may repeat, and the document holds one key per type, so the repeats travel
+/// as a list and print as one block each.
+fn repeated_grant_maps<'a>(k: &serde_yaml::Value, v: &'a serde_yaml::Value) -> Option<Vec<&'a serde_yaml::Mapping>> {
+    let key = k.as_str()?;
+    if !key.ends_with("_iam_member") {
+        return None;
+    }
+    let seq = v.as_sequence()?;
+    if seq.is_empty() {
+        return None;
+    }
+    seq.iter().map(|item| item.as_mapping()).collect()
+}
+
 /// The body a key opens as a `{ … }` block, or `None` when the value is an
 /// attribute. A mapping is always a block; a sequence is one only in the
 /// Tier-2 list form (`list_form`), never as a plain list of values.
@@ -689,6 +706,14 @@ fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Res
             }
         }
         let (key, _) = key_expr(k)?;
+        if let Some(maps) = repeated_grant_maps(k, v) {
+            for child in maps {
+                let _ = writeln!(out, "{}{} {{", pad, key);
+                emit_entries(child, out, indent + 2)?;
+                let _ = writeln!(out, "{}}}", pad);
+            }
+            continue;
+        }
         match as_block(k, v)? {
             Some(child) => {
                 let _ = writeln!(out, "{}{} {{", pad, key);
@@ -1143,6 +1168,14 @@ pub fn convert_value(
             }
         }
         let (key, is_ident) = key_expr(k)?;
+        if let Some(maps) = repeated_grant_maps(k, v) {
+            for child in maps {
+                let _ = writeln!(out, "{} {{", key);
+                emit_entries(child, &mut out, 2)?;
+                out.push_str("}\n\n");
+            }
+            continue;
+        }
         match as_block(k, v)? {
             Some(child) => {
                 let _ = writeln!(out, "{} {{", key);
