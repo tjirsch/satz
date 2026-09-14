@@ -3599,6 +3599,13 @@ impl satz_hcl::Schema for RegistrySchema<'_> {
             r.resources.get(tf_type).is_some_and(|s| s.1.block.attributes.contains_key(attr))
         })
     }
+
+    fn required_attrs(&self, tf_type: &str) -> Vec<String> {
+        self.0
+            .and_then(|r| r.resources.get(tf_type))
+            .map(|s| s.1.block.attributes.iter().filter(|(_, a)| a.required).map(|(k, _)| k.clone()).collect())
+            .unwrap_or_default()
+    }
 }
 
 /// The live shape with `--into`: the delta against what the estate declares.
@@ -6626,6 +6633,42 @@ folder:
         assert!(addrs.contains("google_folder_iam_member.folderAdmin_x_2"), "{:?}", addrs);
         assert!(out.main_tf.contains("google_folder.b.name"), "the labelled grant inherits its folder from the node:\n{}", out.main_tf);
         for id in ["folders/1 roles/resourcemanager.folderAdmin user:x@example.com", "folders/2 roles/resourcemanager.folderAdmin user:x@example.com"] {
+            assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
+        }
+    }
+
+    #[test]
+    fn pinned_bucket_grants_emit_one_address_per_bucket() {
+        // two buckets, one member, one role: two maps pinned to their bucket,
+        // two addresses (the pin enters the label), two imports
+        let yaml = r#"
+project:
+  infra:
+    project_id: acme-infra-001
+    import-id: acme-infra-001
+    google_storage_bucket_iam_member:
+      - bucket: acme-logs-001
+        "group:gcp-auditors@example.com":
+          - { role: roles/storage.objectViewer, import-id: "b/acme-logs-001 roles/storage.objectViewer group:gcp-auditors@example.com" }
+      - bucket: acme-state
+        "group:gcp-auditors@example.com":
+          - { role: roles/storage.objectViewer, import-id: "b/acme-state roles/storage.objectViewer group:gcp-auditors@example.com" }
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let reg = super::corpus::registry();
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg, &crate::vocabulary::Vocabulary::default()).unwrap();
+        assert_eq!(text.matches("google_storage_bucket_iam_member {").count(), 2, "{}", text);
+        assert!(text.contains("bucket = \"acme-logs-001\""), "{}", text);
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("pinned estate does not compile: {:?}\n{}", e, text));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs = out.manifest.addresses();
+        assert_eq!(addrs.iter().filter(|a| a.starts_with("google_storage_bucket_iam_member.")).count(), 2, "{:?}", addrs);
+        for id in ["b/acme-logs-001 roles/storage.objectViewer group:gcp-auditors@example.com", "b/acme-state roles/storage.objectViewer group:gcp-auditors@example.com"] {
             assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
         }
     }

@@ -916,7 +916,9 @@ grep -q 'name *= *"corp-logs-001"' tmp/imported-hcl2-hcl/main.tf || fail "the pr
 grep -q 'folder_id *= *google_folder.workloads.name' tmp/imported-hcl2-hcl/main.tf || fail "the project was not nested under its folder"
 grep -q 'resource "google_project_service" "infra_iam_googleapis_com"' tmp/imported-hcl2-hcl/main.tf || fail "the service did not become the project's"
 grep -q 'resource "google_organization_iam_member"' tmp/imported-hcl2-hcl/main.tf || fail "the org grant was not emitted"
-grep -q 'resource "google_storage_bucket_iam_member" "logs_reader"' tmp/imported-hcl2-hcl/main.tf || fail "a bucket grant must translate as a labelled resource, not a member map"
+grep -qE 'bucket += "\$\{\{google_storage_bucket\.logs\.name\}\}"' yaml/imported-hcl2.satz || fail "a bucket grant must translate as the scope-pinned member map:\n$(cat yaml/imported-hcl2.satz)"
+grep -q 'resource "google_storage_bucket_iam_member" "iam_group_gcp_auditors_example_com_' tmp/imported-hcl2-hcl/main.tf || fail "the pinned bucket grant did not emit"
+grep -qE '^ +google_storage_bucket \{' yaml/imported-hcl2.satz || fail "the bucket naming its project by a literal id was not placed under the project"
 grep -q 'bucket *= *"\?\${google_storage_bucket.logs.name}' tmp/imported-hcl2-hcl/main.tf || fail "the verbatim \${...} reference did not survive the round trip"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/imported-hcl2-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)

@@ -177,6 +177,55 @@ fn push_grant(roles: &mut Vec<serde_yaml::Value>, role: &str, import_id: Option<
     });
 }
 
+/// A grant on a scope the map form names in the map (`bucket = …`, language
+/// reference §6.5): one map per scope value under the type key, kept as a
+/// list of maps because a document holds one key per type. The member's
+/// roles join the map for that scope; a new scope opens a new map.
+fn push_pinned_grant(
+    extra: &mut HashMap<String, serde_yaml::Value>,
+    tf_type: &str,
+    pin: &str,
+    scope_value: &str,
+    member: &str,
+    role: &str,
+    import_id: Option<String>,
+) {
+    let maps = extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+    let serde_yaml::Value::Sequence(maps) = maps else { return };
+    let pin_key = serde_yaml::Value::String(pin.to_string());
+    let at = maps.iter().position(|m| m.as_mapping().and_then(|m| m.get(&pin_key)).and_then(|v| v.as_str()) == Some(scope_value));
+    let map = match at {
+        Some(i) => &mut maps[i],
+        None => {
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(pin_key.clone(), serde_yaml::Value::String(scope_value.to_string()));
+            maps.push(serde_yaml::Value::Mapping(m));
+            maps.last_mut().expect("just pushed")
+        }
+    };
+    let Some(map) = map.as_mapping_mut() else { return };
+    let member_key = serde_yaml::Value::String(member.to_string());
+    if !map.contains_key(&member_key) {
+        map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new()));
+    }
+    if let Some(serde_yaml::Value::Sequence(roles)) = map.get_mut(&member_key) {
+        push_grant(roles, role, import_id);
+    }
+}
+
+/// The attribute that names a grant type's scope in the map form, from the
+/// provider schema — `bucket`, `service_account_id` — or `None` for a type
+/// scoped by the organization, the billing account or the node it is written
+/// in, and for one the schema does not single out.
+fn pin_attr(registry: Option<&ResourceRegistry>, tf_type: &str) -> Option<String> {
+    let schema = registry?.find_resource(tf_type)?.1;
+    let required: Vec<&str> = schema.block.attributes.iter().filter(|(_, a)| a.required).map(|(k, _)| k.as_str()).collect();
+    match satz_core::pipeline::grant_form(tf_type, &required) {
+        satz_core::pipeline::GrantForm::Pinned(attr) => Some(attr),
+        _ => None,
+    }
+}
+
 /// The import id of a grant, from its parent's identity — the same
 /// derivation as the `import_id` templates adopt renders:
 /// `<parent> <role> <member>` (`b/<bucket>` for bucket grants, the bare
@@ -615,11 +664,16 @@ impl Discoverer {
     fn add_resource_to_project(&self, p: &mut Project, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) -> Result<(), String> {
         if tf_type.ends_with("_iam_member") {
             let (role, member) = grant_identity(tf_type, tf_name, values)?;
-            let parent = if tf_type == "google_storage_bucket_iam_member" {
-                values["bucket"].as_str().unwrap_or("").to_string()
-            } else {
-                p.project_id.clone()
-            };
+            // a scope the map names in the map (`bucket = …`): one map per scope
+            if let Some(pin) = pin_attr(self.registry.as_ref(), tf_type) {
+                let Some(scope_value) = values[pin.as_str()].as_str().filter(|v| !v.is_empty()) else {
+                    return Err(format!("state: {} `{}` has no `{}`", tf_type, tf_name, pin));
+                };
+                let id = grant_import_id(tf_type, scope_value, &role, &member);
+                push_pinned_grant(&mut p.extra, tf_type, &pin, scope_value, &member, &role, Some(id));
+                return Ok(());
+            }
+            let parent = p.project_id.clone();
             let id = grant_import_id(tf_type, &parent, &role, &member);
             if !p.extra.contains_key(tf_type) { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
@@ -1038,7 +1092,7 @@ impl Discoverer {
              if tf_type == "google_org_policy_policy" {
                  Self::discover_organization_policy(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if asset.iam_policy.is_some() {
-                 Self::discover_iam_policy(tf_type, asset, res_config, &scope, &scope_id, &mut skipped, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
+                 Self::discover_iam_policy(tf_type, asset, res_config, registry, &scope, &scope_id, &mut skipped, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if tf_type == "google_project_service" {
                  Self::discover_google_project_service(tf_type, asset, res_config, registry, &scope_id, &mut project_map, &gcp_id_to_yaml_name);
              } else if let Err(reason) = Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name }) {
@@ -1369,6 +1423,7 @@ impl Discoverer {
          tf_type: &str,
          asset: &Asset,
          res_config: &crate::config::ImportResourceConfig,
+         registry: Option<&ResourceRegistry>,
          scope: &str,
          scope_id: &str,
          skipped: &mut Vec<Skipped>,
@@ -1419,25 +1474,16 @@ impl Discoverer {
                              if let Some(p_yaml) = gcp_id_to_yaml_name.get(scope_id) {
                                  if let Some(p) = project_map.get_mut(p_yaml) {
                                       let project_id = p.project_id.clone();
-                                      if tf_type == "google_storage_bucket_iam_member" {
-                                          let bucket_name = asset.name.split('/').next_back().unwrap_or("unknown-bucket").to_string();
-                                          let member_sanitized = member.replace(":", "_").replace("@", "_").replace(".", "_");
-                                          let role_sanitized = role.replace("roles/", "").replace(".", "_");
-                                          let key = format!("{}-{}-{}", bucket_name, role_sanitized, member_sanitized);
-                                          
-                                          let mut resource_map = serde_yaml::Mapping::new();
-                                          resource_map.insert(serde_yaml::Value::String("bucket".to_string()), serde_yaml::Value::String(bucket_name));
-                                          resource_map.insert(serde_yaml::Value::String("member".to_string()), serde_yaml::Value::String(member.clone()));
-                                          resource_map.insert(serde_yaml::Value::String("role".to_string()), serde_yaml::Value::String(role.clone()));
-                                          resource_map.insert(
-                                              serde_yaml::Value::String("import-id".to_string()),
-                                              serde_yaml::Value::String(grant_import_id(tf_type, resource_map.get("bucket").and_then(|b| b.as_str()).unwrap_or(""), role, member)),
-                                          );
-                                          
-                                          p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-                                          if let Some(serde_yaml::Value::Mapping(type_map)) = p.extra.get_mut(tf_type) {
-                                              type_map.insert(serde_yaml::Value::String(key), serde_yaml::Value::Mapping(resource_map));
-                                          }
+                                      if let Some(pin) = pin_attr(registry, tf_type) {
+                                          // a bucket's grant names the bucket; any other
+                                          // pinned type names its scope by the asset path
+                                          let scope_value = if tf_type == "google_storage_bucket_iam_member" {
+                                              asset.name.split('/').next_back().unwrap_or("unknown-bucket").to_string()
+                                          } else {
+                                              Self::asset_path(asset).to_string()
+                                          };
+                                          let id = grant_import_id(tf_type, &scope_value, role, member);
+                                          push_pinned_grant(&mut p.extra, tf_type, &pin, &scope_value, member, role, Some(id));
                                       } else {
                                           p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
                                       if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
@@ -2435,6 +2481,24 @@ mod shape_tests {
         assert_eq!(names["folders/3"], "satz_preflight_scratch", "every pass-2 lookup follows the rename");
         assert_eq!(names["folders/1"], "infrastructure_1");
         assert_eq!(folders["infrastructure_2"].display_name, "Infrastructure");
+    }
+
+    #[test]
+    fn a_bucket_grant_is_a_pinned_map_per_bucket() {
+        // two buckets, one member, one role: two maps under one key, each
+        // pinned to its bucket, never a labelled `<bucket>-<role>-<member>`
+        let mut extra = HashMap::new();
+        for bucket in ["a", "b", "a"] {
+            push_pinned_grant(&mut extra, "google_storage_bucket_iam_member", "bucket", bucket, "group:x@example.com", "roles/storage.objectViewer", Some(format!("b/{} roles/storage.objectViewer group:x@example.com", bucket)));
+        }
+        push_pinned_grant(&mut extra, "google_storage_bucket_iam_member", "bucket", "a", "group:x@example.com", "roles/storage.admin", None);
+        let serde_yaml::Value::Sequence(maps) = &extra["google_storage_bucket_iam_member"] else { panic!("a list of maps") };
+        assert_eq!(maps.len(), 2, "{:?}", maps);
+        let a = maps[0].as_mapping().unwrap();
+        assert_eq!(a.get("bucket").unwrap().as_str(), Some("a"));
+        let roles = a.get("group:x@example.com").unwrap().as_sequence().unwrap();
+        assert_eq!(roles.len(), 2, "the second grant on the same bucket joins the map, the third is a repeat: {:?}", roles);
+        assert_eq!(maps[1].as_mapping().unwrap().get("bucket").unwrap().as_str(), Some("b"));
     }
 
     #[test]

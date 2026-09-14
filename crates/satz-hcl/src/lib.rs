@@ -95,19 +95,28 @@ pub struct Input {
 pub trait Schema {
     fn has_type(&self, tf_type: &str) -> bool;
     fn has_attr(&self, tf_type: &str, attr: &str) -> bool;
+    /// The type's required attributes — what decides which `*_iam_member`
+    /// types pin their scope in the map (`bucket`, `service_account_id`).
+    fn required_attrs(&self, tf_type: &str) -> Vec<String>;
+}
+
+use satz_core::pipeline::GrantForm;
+
+/// How a grant type is written, by satz-core's one rule over the schema.
+fn grant_form_of(schema: &dyn Schema, tf_type: &str) -> GrantForm {
+    let required = schema.required_attrs(tf_type);
+    let required: Vec<&str> = required.iter().map(String::as_str).collect();
+    satz_core::pipeline::grant_form(tf_type, &required)
+}
+
+/// A grant written as a member map — scoped by the organization, by its node,
+/// or pinned to a scope named in the map.
+fn is_map_form(form: &GrantForm) -> bool {
+    matches!(form, GrantForm::Org | GrantForm::Node | GrantForm::Pinned(_))
 }
 
 const META_BLOCKS: &[&str] = &["dynamic", "provisioner", "connection"];
 const META_ATTRS: &[&str] = &["count", "for_each", "provider", "depends_on"];
-
-/// The `*_iam_member` types Satz spells as a member map (`"member" = [roles…]`).
-/// Deliberately an allow-list, and deliberately stricter than the emitter's own
-/// substring test (`src/emitter.rs`): every other `*_iam_member` — a service
-/// account's, a bucket's — carries its scope in an attribute the map form has
-/// no room for, and is written as a labelled resource instead. Billing is a map
-/// but hoists to its own scope, so it is not derived from HCL here.
-const GRANT_MAP: &[&str] =
-    &["google_organization_iam_member", "google_folder_iam_member", "google_project_iam_member"];
 
 /// Where a translated resource lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,6 +294,9 @@ fn one_pass(
 
     // the provider default project, when the dropped `provider` blocks agree
     let provider_project = provider_default_project(parsed, &consts);
+    // the projects of this input by id: a literal `project = "<id>"` places
+    // under one of them the way a reference does
+    let projects = project_ids(parsed, &consts);
 
     let mut rows: Vec<Row> = Vec::new();
     let mut verbatim: Vec<(String, usize, String)> = Vec::new();
@@ -370,7 +382,7 @@ fn one_pass(
                         uses: Uses::default(),
                         index: Some((list.clone(), element.clone())),
                     };
-                    let c = classify(&tf_type, &label, &without_count, &mut cx, &mut org_ids);
+                    let c = classify(&tf_type, &label, &without_count, &mut cx, &mut org_ids, &projects);
                     // one copy that cannot be written leaves the whole block
                     // wrapped: half an expansion is worse than none
                     c.body.as_ref()?;
@@ -404,7 +416,7 @@ fn one_pass(
                 continue;
             }
             let mut cx = Cx { consts: &consts, schema, uses: Uses::default(), index: None };
-            let classified = classify(&tf_type, &label, block, &mut cx, &mut org_ids);
+            let classified = classify(&tf_type, &label, block, &mut cx, &mut org_ids, &projects);
             resources.push(Res {
                 tf_type,
                 label,
@@ -459,7 +471,7 @@ fn one_pass(
             .collect();
         let mut changed = false;
         for (i, r) in resources.iter_mut().enumerate() {
-            if wrapped_idx.contains(&i) || !derives_label(&r.tf_type) {
+            if wrapped_idx.contains(&i) || !derives_label(&r.tf_type, schema) {
                 continue;
             }
             let addr = format!("{}.{}", r.tf_type, r.label);
@@ -558,7 +570,7 @@ fn one_pass(
     let mut top = base_estate()?;
     for r in &translated {
         if r.place == Place::Top {
-            place_into(&mut top, r, &translated);
+            place_into(&mut top, r, &translated, schema);
         }
     }
 
@@ -741,8 +753,31 @@ fn closure(resources: &mut [Res]) -> BTreeSet<usize> {
 
 /// Types whose translated form does not keep the source label: a project's
 /// services become a bare list, a grant map's entries get a hashed label.
-fn derives_label(tf_type: &str) -> bool {
-    tf_type == "google_project_service" || GRANT_MAP.contains(&tf_type)
+fn derives_label(tf_type: &str, schema: &dyn Schema) -> bool {
+    tf_type == "google_project_service" || is_map_form(&grant_form_of(schema, tf_type))
+}
+
+/// The projects this input declares, by their literal `project_id` — what a
+/// resource naming its project by id (as `gcloud … bulk-export` and
+/// `tofu plan -generate-config-out` write it) is placed under.
+fn project_ids(parsed: &[(&Input, Body)], consts: &Consts) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for (_, body) in parsed {
+        for s in body.iter() {
+            let Some(b) = s.as_block() else { continue };
+            if b.ident.to_string() != "resource" {
+                continue;
+            }
+            let [t, l] = b.labels.as_slice() else { continue };
+            if t.as_str() != "google_project" {
+                continue;
+            }
+            if let Some(id) = attr_string(b, "project_id", consts) {
+                out.insert(id, l.as_str().to_string());
+            }
+        }
+    }
+    out
 }
 
 fn describe_promotion(d: &Decl, consts: &Consts) -> String {
@@ -948,6 +983,9 @@ impl Schema for Everything {
     fn has_attr(&self, _: &str, _: &str) -> bool {
         false
     }
+    fn required_attrs(&self, _: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// One attribute of a block as a literal string, resolving `var.`/`local.`.
@@ -1102,13 +1140,48 @@ fn place_name(p: &Place) -> String {
 
 /// Put `r` into `into` (a folder body, a project body, or the top level),
 /// with its own children placed under it.
-fn place_into(into: &mut serde_yaml::Mapping, r: &Res, all: &[&Res]) {
+/// One grant edge as the member map holds it: the member key and the roles
+/// entry — the bare role, or the object form carrying a `condition`.
+fn grant_edge(body: &serde_yaml::Mapping) -> (serde_yaml::Value, serde_yaml::Value) {
+    let key = |s: &str| serde_yaml::Value::String(s.to_string());
+    // `classify` guarantees a resolvable `member` and `role`; a `condition`
+    // rides along in the object form — dropping it would widen the grant
+    let member = body.get("member").cloned().expect("classified iam member has a member");
+    let role = body.get("role").cloned().expect("classified iam member has a role");
+    let entry = match body.get("condition") {
+        Some(cond) => {
+            let mut o = serde_yaml::Mapping::new();
+            o.insert(key("role"), role);
+            // an HCL block is a list of one object; the grant form takes the object
+            let cond = match cond {
+                serde_yaml::Value::Sequence(items) if items.len() == 1 => items[0].clone(),
+                other => other.clone(),
+            };
+            o.insert(key("condition"), cond);
+            serde_yaml::Value::Mapping(o)
+        }
+        None => role,
+    };
+    (member, entry)
+}
+
+fn push_edge(members: &mut serde_yaml::Mapping, member: serde_yaml::Value, entry: serde_yaml::Value) {
+    let roles = members.entry(member).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+    if let serde_yaml::Value::Sequence(seq) = roles {
+        if !seq.contains(&entry) {
+            seq.push(entry);
+        }
+    }
+}
+
+fn place_into(into: &mut serde_yaml::Mapping, r: &Res, all: &[&Res], schema: &dyn Schema) {
     let mut body = r.body.clone().unwrap_or_default();
     let key = |s: &str| serde_yaml::Value::String(s.to_string());
+    let form = grant_form_of(schema, &r.tf_type);
     match r.tf_type.as_str() {
         "google_folder" => {
             for c in all.iter().filter(|c| c.place == Place::Folder(r.label.clone())) {
-                place_into(&mut body, c, all);
+                place_into(&mut body, c, all, schema);
             }
             let m = into.entry(key("google_folder")).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
             if let serde_yaml::Value::Mapping(m) = m {
@@ -1117,7 +1190,7 @@ fn place_into(into: &mut serde_yaml::Mapping, r: &Res, all: &[&Res]) {
         }
         "google_project" => {
             for c in all.iter().filter(|c| c.place == Place::Project(r.label.clone())) {
-                place_into(&mut body, c, all);
+                place_into(&mut body, c, all, schema);
             }
             let m = into.entry(key("google_project")).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
             if let serde_yaml::Value::Mapping(m) = m {
@@ -1132,33 +1205,33 @@ fn place_into(into: &mut serde_yaml::Mapping, r: &Res, all: &[&Res]) {
                 seq.push(svc);
             }
         }
-        t if GRANT_MAP.contains(&t) => {
-            // `classify` guarantees a resolvable `member` and `role`; a
-            // `condition` rides along in the object form — dropping it would
-            // widen the grant
-            let member = body.get("member").cloned().expect("classified iam member has a member");
-            let role = body.get("role").cloned().expect("classified iam member has a role");
-            let entry = match body.get("condition") {
-                Some(cond) => {
-                    let mut o = serde_yaml::Mapping::new();
-                    o.insert(key("role"), role);
-                    // an HCL block is a list of one object; the grant form takes the object
-                    let cond = match cond {
-                        serde_yaml::Value::Sequence(items) if items.len() == 1 => items[0].clone(),
-                        other => other.clone(),
-                    };
-                    o.insert(key("condition"), cond);
-                    serde_yaml::Value::Mapping(o)
-                }
-                None => role,
-            };
+        t if matches!(form, GrantForm::Org | GrantForm::Node) => {
+            let (member, entry) = grant_edge(&body);
             let m = into.entry(key(t)).or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
             if let serde_yaml::Value::Mapping(m) = m {
-                let roles = m.entry(member).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
-                if let serde_yaml::Value::Sequence(seq) = roles {
-                    if !seq.contains(&entry) {
-                        seq.push(entry);
+                push_edge(m, member, entry);
+            }
+        }
+        t if matches!(form, GrantForm::Pinned(_)) => {
+            // one map per scope value, pinned by the type's scope attribute
+            // (`bucket = …`); the maps travel as a list under the type key
+            let GrantForm::Pinned(attr) = form else { unreachable!("matched a pinned form") };
+            let scope = body.get(attr.as_str()).cloned().expect("classified pinned grant has its scope");
+            let (member, entry) = grant_edge(&body);
+            let maps = into.entry(key(t)).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+            if let serde_yaml::Value::Sequence(maps) = maps {
+                let at = maps.iter().position(|m| m.as_mapping().and_then(|m| m.get(attr.as_str())) == Some(&scope));
+                let map = match at {
+                    Some(i) => &mut maps[i],
+                    None => {
+                        let mut m = serde_yaml::Mapping::new();
+                        m.insert(key(&attr), scope);
+                        maps.push(serde_yaml::Value::Mapping(m));
+                        maps.last_mut().expect("just pushed")
                     }
+                };
+                if let Some(m) = map.as_mapping_mut() {
+                    push_edge(m, member, entry);
                 }
             }
         }
@@ -1259,7 +1332,14 @@ fn wrapped(reason: String) -> Classified {
 
 /// Classify one resource block: translatable (with its body and place) or the
 /// reason it is not.
-fn classify(tf_type: &str, label: &str, block: &Block, cx: &mut Cx, org_ids: &mut BTreeSet<String>) -> Classified {
+fn classify(
+    tf_type: &str,
+    label: &str,
+    block: &Block,
+    cx: &mut Cx,
+    org_ids: &mut BTreeSet<String>,
+    projects: &BTreeMap<String, String>,
+) -> Classified {
     if !cx.schema.has_type(tf_type) {
         return wrapped(format!("`{}` is not in the provider schema", tf_type));
     }
@@ -1307,22 +1387,27 @@ fn classify(tf_type: &str, label: &str, block: &Block, cx: &mut Cx, org_ids: &mu
             _ => None,
         })
     };
-    if GRANT_MAP.contains(&tf_type) {
-        for k in ["member", "role"] {
+    let form = grant_form_of(cx.schema, tf_type);
+    if is_map_form(&form) {
+        let pin = match &form {
+            GrantForm::Pinned(attr) => Some(attr.as_str()),
+            _ => None,
+        };
+        for k in ["member", "role"].into_iter().chain(pin) {
             match resolvable(k, cx) {
                 None => return wrapped(format!("`{}` is missing", k)),
                 Some(Err(why)) => return wrapped(format!("`{}` is {}", k, why)),
                 Some(Ok(_)) => {}
             }
         }
-        // anything beyond member/role/condition and the scope attribute is not
-        // part of Satz's grant form — say so rather than drop it
+        // anything beyond member/role/condition, the scope attribute and the
+        // pin is not part of Satz's grant form — say so rather than drop it
         for s in block.body.iter() {
             let k = match s {
                 Structure::Attribute(a) => a.key.to_string(),
                 Structure::Block(b) => b.ident.to_string(),
             };
-            if !matches!(k.as_str(), "member" | "role" | "condition") && !is_scope_attr(tf_type, &k) {
+            if !matches!(k.as_str(), "member" | "role" | "condition") && !is_scope_attr(tf_type, &k) && Some(k.as_str()) != pin {
                 return wrapped(format!("`{}` has no place in a Satz grant", k));
             }
         }
@@ -1419,13 +1504,17 @@ fn classify(tf_type: &str, label: &str, block: &Block, cx: &mut Cx, org_ids: &mu
         },
         "google_project_iam_member" | "google_project_service" => match scope {
             Some(ScopeRef::Project(p)) => Place::Project(p),
+            // a literal id of a project in this input places the same way
+            Some(ScopeRef::Literal(v)) if projects.contains_key(&v) => Place::Project(projects[&v].clone()),
             _ => return wrapped(format!("`{}` must reference a project in this input", tf_type)),
         },
         _ => match scope {
             Some(ScopeRef::Project(p)) => Place::Project(p),
+            Some(ScopeRef::Literal(v)) if projects.contains_key(&v) => Place::Project(projects[&v].clone()),
             Some(ScopeRef::Literal(v)) => {
-                // a project-scoped resource naming its project by id stays where
-                // it is, with the literal — Satz is position-independent there
+                // a project-scoped resource naming a project this input does
+                // not declare stays where it is, with the literal — Satz is
+                // position-independent there
                 body.insert("project".into(), serde_yaml::Value::String(v));
                 Place::Top
             }
@@ -1936,6 +2025,12 @@ resource "google_storage_bucket" "elsewhere" {
   project  = "acme-other-project"
 }
 
+# a literal project id of a project in this input — what bulk-export writes
+resource "google_service_account" "onboarding" {
+  account_id = "onboarding"
+  project    = "acme-infra-001"
+}
+
 resource "google_storage_bucket" "orphaned" {
   name     = "acme-orphaned"
   location = "EU"
@@ -1983,6 +2078,17 @@ module "vpc" {
                 _ => false,
             }
         }
+        fn required_attrs(&self, t: &str) -> Vec<String> {
+            let attrs: &[&str] = match t {
+                "google_storage_bucket_iam_member" => &["bucket", "role", "member"],
+                "google_service_account_iam_member" => &["service_account_id", "role", "member"],
+                "google_project_iam_member" => &["project", "role", "member"],
+                "google_folder_iam_member" => &["folder", "role", "member"],
+                "google_organization_iam_member" => &["org_id", "role", "member"],
+                _ => &[],
+            };
+            attrs.iter().map(|s| s.to_string()).collect()
+        }
     }
 
     fn one(text: &str) -> Vec<Input> {
@@ -2024,9 +2130,15 @@ module "vpc" {
         assert!(!c.contains("project=\"acme-infra-001\""), "the project reference became placement, not an attribute:\n{}", s);
         assert!(
             c.contains("google_storage_bucket{elsewhere{name=\"acme-elsewhere\"location=\"EU\"project=\"acme-other-project\"}}"),
-            "a literal project stays explicit at the top:\n{}",
+            "a literal id of a project not in this input stays explicit at the top:\n{}",
             s
         );
+        assert!(
+            s.find("        google_service_account {").is_some_and(|i| i > i_infra),
+            "a literal id of a project in this input places under it:\n{}",
+            s
+        );
+        assert!(c.contains("google_service_account{onboarding{account_id=\"onboarding\"}}"), "{}", s);
         assert!(c.contains("google_org_policy_policy{skip_default{"), "{}", s);
         // wrapped, with reasons
         let by = by_what(&imported);
@@ -2041,7 +2153,7 @@ module "vpc" {
             by["resource \"google_storage_bucket\" \"orphaned\""]
         );
         assert!(matches!(by["module \"vpc\""], Action::Wrapped(_)));
-        assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 10);
+        assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 11);
         satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
     }
 
@@ -2050,7 +2162,7 @@ module "vpc" {
         let imported = import(&one(TF), "acme", true, &Known).unwrap();
         assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 0);
         assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Promoted(_))).count(), 0);
-        assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 13);
+        assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 14);
         satz_core::satz::parse(&imported.satz).unwrap();
     }
 
@@ -2292,8 +2404,12 @@ resource "google_storage_bucket_iam_member" "m" {
 "#;
         let imported = import(&one(tf), "acme", false, &Known).unwrap();
         let s = &imported.satz;
-        // a bucket grant is a LABELLED resource, not a member map
-        assert!(squash(s).contains("google_storage_bucket_iam_member{m{"), "{}", s);
+        // a bucket grant is the scope-pinned member map: the bucket beside the members
+        assert!(
+            squash(s).contains("google_storage_bucket_iam_member{bucket=\"${{google_storage_bucket.b.name}}\"\"group:auditors@example.com\"=[\"roles/storage.objectViewer\",]}"),
+            "{}",
+            s
+        );
         assert!(s.contains(r#"bucket = "${{google_storage_bucket.b.name}}""#), "{}", s);
         // the unread list param still renders as a list
         assert!(squash(s).contains("roles=[\"roles/viewer\",\"roles/browser\",]"), "{}", s);
