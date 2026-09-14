@@ -12,6 +12,8 @@ pub struct Discoverer {
     /// Types the run's `--only` / `--exclude` switched off — reported as
     /// "filtered", not "type off".
     pub filtered_types: HashSet<String>,
+    /// What to do with a grant two folders or two projects both hold.
+    pub on_collision: OnCollision,
 }
 
 /// Asset types per ListAssets request. The quota counts requests
@@ -19,6 +21,38 @@ pub struct Discoverer {
 /// time runs out of it long before `--all` is through; the types travel as
 /// query parameters, and a hundred keep the URL near 6 KB.
 const ASSET_TYPES_PER_REQUEST: usize = 100;
+
+/// The label the provider stamps on everything it creates when attribution is
+/// on. It is the provider's, not the estate's: declared, it is a label nobody
+/// chose; left out, the provider puts it back on apply, and a plan that only
+/// adds it is not drift.
+const ATTRIBUTION_LABEL: &str = "goog-terraform-provisioned";
+
+/// What `satz import` does with a grant edge — one member, one role — that two
+/// folders, or two projects, both hold. The map form's emitted label hashes
+/// member and role (`iam_member_label`, deliberately not the node, so labels
+/// never move), so two such edges emit ONE Terraform address and the transpile
+/// refuses. `Error` refuses at import instead, naming the edges and the switch;
+/// `Counter` keeps the first edge in the map form and writes each further one
+/// as a labelled resource under its own node, with a running number in the
+/// label. Import only: a written estate is its author's responsibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OnCollision {
+    #[default]
+    Error,
+    Counter,
+}
+
+impl std::str::FromStr for OnCollision {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "error" => Ok(Self::Error),
+            "counter" => Ok(Self::Counter),
+            other => Err(format!("--on-collision {:?}: one of error, counter", other)),
+        }
+    }
+}
 
 /// Why a resource the source had is not in the written estate. An import is
 /// allowed to be partial; it is not allowed to be silent about it.
@@ -63,6 +97,8 @@ pub struct Discovered {
     pub dropped_attrs: Vec<(String, String)>,
     /// The organization the assets' ancestors name (live shape only).
     pub organization: Option<String>,
+    /// What the import rewrote on the way and says so: one line each.
+    pub notes: Vec<String>,
 }
 
 thread_local! {
@@ -147,12 +183,14 @@ impl Discoverer {
         registry: Option<ResourceRegistry>,
         enabled_types: Option<HashSet<String>>,
         filtered_types: HashSet<String>,
+        on_collision: OnCollision,
     ) -> Self {
         Self {
             state: state_json,
             registry,
             enabled_types,
             filtered_types,
+            on_collision,
         }
     }
 
@@ -302,8 +340,9 @@ impl Discoverer {
             }
         }
         qualify_duplicate_keys(&mut config);
+        let notes = resolve_grant_collisions(&mut config, self.on_collision)?;
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None, notes })
     }
 
     pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>, map: Option<&std::collections::BTreeMap<String, String>>) -> serde_yaml::Value {
@@ -381,7 +420,7 @@ impl Discoverer {
             let label_keys = ["labels", "terraform_labels", "effective_labels"];
             for l_key in label_keys {
                 if let Some(serde_yaml::Value::Mapping(labels)) = map.get_mut(serde_yaml::Value::String(l_key.to_string())) {
-                    labels.remove(serde_yaml::Value::String("goog-terraform-provisioned".to_string()));
+                    labels.remove(serde_yaml::Value::String(ATTRIBUTION_LABEL.to_string()));
                 }
             }
 
@@ -673,6 +712,7 @@ impl Discoverer {
         verbose: bool,
         discovery_config: Option<ImportConfig>,
         registry: Option<ResourceRegistry>,
+        on_collision: OnCollision,
     ) -> Result<Discovered, Box<dyn std::error::Error>> {
         use google_cloud_gax::options::RequestOptionsBuilder;
         let client = crate::gcp::asset_service().await?;
@@ -825,6 +865,7 @@ impl Discoverer {
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
         let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
         qualify_duplicate_keys(&mut config);
+        let notes = resolve_grant_collisions(&mut config, on_collision)?;
         for (tf_type, name) in unscoped {
             skipped.push(Skipped {
                 tf_type,
@@ -833,7 +874,7 @@ impl Discoverer {
             });
         }
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes })
     }
 
     fn construct_config_from_assets(
@@ -1078,15 +1119,8 @@ impl Discoverer {
          let mut deletion_policy = None;  
 
          if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
-             // Extract Labels
              if let Some(l_map) = data.get("labels").and_then(|v| v.as_object()) {
-                 let mut extracted = HashMap::new();
-                 for (k, v) in l_map {
-                     if let Some(s) = v.as_str() {
-                         extracted.insert(k.clone(), s.to_string());
-                     }
-                 }
-                 if !extracted.is_empty() { labels = Some(extracted); }
+                 labels = declared_labels(l_map);
              }
 
              // Extract Tags (assuming 'tags' field which is a list of strings)
@@ -1689,6 +1723,25 @@ impl Discoverer {
     }
 }
 
+/// A project's labels as the estate declares them: the string-valued ones,
+/// minus the provider's attribution label, which `filter_recursive` strips
+/// from every other type for the same reason.
+fn declared_labels(labels: &serde_json::Map<String, serde_json::Value>) -> Option<HashMap<String, String>> {
+    let extracted: HashMap<String, String> = labels
+        .iter()
+        .filter(|(k, _)| k.as_str() != ATTRIBUTION_LABEL)
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+        .collect();
+    if extracted.is_empty() { None } else { Some(extracted) }
+}
+
+/// A type whose map is keyed by MEMBER (`"user:…" = [roles]`) rather than by
+/// address — satz-core's own rule, so the two never drift. Those keys are
+/// never qualified: a member is the same principal in every container.
+fn is_grant_map(tf_type: &str) -> bool {
+    satz_core::pipeline::type_facts(tf_type).0 == satz_core::MergeClass::Grant
+}
+
 /// `role` and `member` of a grant record — both structural: a record without
 /// them is corrupt input, never a placeholder in the estate.
 fn grant_identity(tf_type: &str, tf_name: &str, values: &Value) -> Result<(String, String), String> {
@@ -1713,6 +1766,11 @@ fn grant_identity(tf_type: &str, tf_name: &str, values: &Value) -> Result<(Strin
 /// folder, a folder root whose projects sit in sub-folders the filter dropped)
 /// cannot nest the project, so the project keeps it as an explicit `folder_id`
 /// — re-parenting it to the organization would make `apply` MOVE the project.
+///
+/// A project whose parent IS the organization stays at the top level with no
+/// parent attribute: the emitter derives `org_id` there. It used to fall into
+/// the "outside the sweep" arm and come out as `folder_id = "organizations/…"`,
+/// which the provider refuses.
 fn link_projects_to_folders(
     project_id_to_parent: &HashMap<String, String>,
     gcp_id_to_yaml_name: &HashMap<String, String>,
@@ -1728,6 +1786,9 @@ fn link_projects_to_folders(
             eprintln!("Warning: skipping project '{}' — it has a parent but no discovered resource record.", p_id);
             continue;
         };
+        if !f_id.starts_with("folders/") {
+            continue; // organization root: the emitter derives it
+        }
         match gcp_id_to_yaml_name.get(f_id) {
             Some(f_yaml) => {
                 let Some(folder) = folder_map.get_mut(f_yaml) else {
@@ -1760,7 +1821,9 @@ fn link_projects_to_folders(
 /// Nest each discovered folder under its parent folder, deepest first (depth
 /// walked over the parent map — never inferred from the id) so a child is
 /// always moved before the folder containing it. A folder whose parent is not
-/// in the sweep keeps that parent explicitly, for the same reason as above.
+/// in the sweep keeps that parent explicitly, for the same reason as above. A
+/// folder whose parent is the organization carries none: the top level IS that
+/// parent (language reference §6.6) and the emitter derives it.
 fn link_folders_to_parents(
     folder_id_to_parent: &HashMap<String, String>,
     gcp_id_to_yaml_name: &HashMap<String, String>,
@@ -1789,7 +1852,12 @@ fn link_folders_to_parents(
             continue;
         };
         if !parent_id.starts_with("folders/") {
-            continue; // organization root: the emitter derives it
+            // organization root: the emitter derives it, so the parent the
+            // asset was discovered with must not be written beside it
+            if let Some(root) = folder_map.get_mut(&child_yaml) {
+                root.parent = None;
+            }
+            continue;
         }
         match gcp_id_to_yaml_name.get(parent_id) {
             Some(parent_yaml) => {
@@ -1832,9 +1900,17 @@ fn link_folders_to_parents(
 /// copies inside a folder or project take that container's name as a prefix;
 /// the one at the organisation keeps the plain key. Without this the fold
 /// refuses the imported estate, naming both lines.
+///
+/// A grant map is keyed by member, not by address, and is left alone: one
+/// principal granted on two folders used to come out as
+/// `"folder-<n>-user:x@y"`, a member that exists nowhere, while its import id
+/// still named the real one — the plan imported the binding and then replaced it.
 fn qualify_duplicate_keys(config: &mut Config) {
     fn count(extra: &HashMap<String, serde_yaml::Value>, seen: &mut BTreeMap<String, BTreeMap<String, usize>>) {
         for (tf_type, val) in extra {
+            if is_grant_map(tf_type) {
+                continue;
+            }
             if let serde_yaml::Value::Mapping(m) = val {
                 for k in m.keys().filter_map(|k| k.as_str()) {
                     *seen.entry(tf_type.clone()).or_default().entry(k.to_string()).or_default() += 1;
@@ -1918,9 +1994,178 @@ fn qualify_duplicate_keys(config: &mut Config) {
     }
 }
 
+/// Visit every folder and project of a discovered estate in one fixed order —
+/// folders before projects, siblings by key, a folder before its children —
+/// with the node's path and its resources. The order is what makes "the first
+/// node keeps the map form" reproducible from one run to the next.
+fn visit_nodes(config: &mut Config, f: &mut dyn FnMut(&str, &mut HashMap<String, serde_yaml::Value>)) {
+    fn visit_folder(path: &str, fo: &mut Folder, f: &mut dyn FnMut(&str, &mut HashMap<String, serde_yaml::Value>)) {
+        f(path, &mut fo.extra);
+        if let Some(subs) = fo.folder.as_mut() {
+            let mut keys: Vec<String> = subs.keys().cloned().collect();
+            keys.sort();
+            for k in keys {
+                visit_folder(&format!("{}/{}", path, k), subs.get_mut(&k).expect("key from keys()"), f);
+            }
+        }
+        if let Some(projects) = fo.project.as_mut() {
+            let mut keys: Vec<String> = projects.keys().cloned().collect();
+            keys.sort();
+            for k in keys {
+                f(&format!("{}/{}", path, k), &mut projects.get_mut(&k).expect("key from keys()").extra);
+            }
+        }
+    }
+    if let Some(folders) = config.folder.as_mut() {
+        let mut keys: Vec<String> = folders.keys().cloned().collect();
+        keys.sort();
+        for k in keys {
+            visit_folder(&k, folders.get_mut(&k).expect("key from keys()"), f);
+        }
+    }
+    if let Some(projects) = config.project.as_mut() {
+        let mut keys: Vec<String> = projects.keys().cloned().collect();
+        keys.sort();
+        for k in keys {
+            f(&k, &mut projects.get_mut(&k).expect("key from keys()").extra);
+        }
+    }
+}
+
+fn identifier_from(s: &str) -> String {
+    s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect()
+}
+
+/// The readable label a counted grant is written under, before its number:
+/// the role's last segment and the member's local part
+/// (`folderAdmin_alice` for `roles/resourcemanager.folderAdmin` and
+/// `user:alice@example.com`).
+fn grant_label_base(role: &str, member: &str) -> String {
+    let role_short = role.rsplit(['/', '.']).next().unwrap_or(role);
+    let local = member.split_once(':').map(|(_, v)| v).unwrap_or(member);
+    let local = local.split('@').next().unwrap_or(local);
+    format!("{}_{}", identifier_from(role_short), identifier_from(local))
+}
+
+fn grant_entry_import_id(v: &serde_yaml::Value) -> Option<String> {
+    v.as_mapping().and_then(|m| m.get("import-id")).and_then(|id| id.as_str()).map(String::from)
+}
+
+/// Grant edges that two nodes of the same kind both hold, resolved per
+/// [`OnCollision`]. Returns one note per edge rewritten; `Error` returns the
+/// full list as the error.
+pub fn resolve_grant_collisions(config: &mut Config, mode: OnCollision) -> Result<Vec<String>, String> {
+    type Edge = (String, String, String); // (type, member, role)
+    // pass 1: every edge with the nodes holding it, in visiting order, and
+    // every label already taken per type (a labelled grant is an address)
+    let mut sites: BTreeMap<Edge, Vec<String>> = BTreeMap::new();
+    let mut taken: BTreeSet<(String, String)> = BTreeSet::new();
+    visit_nodes(config, &mut |node, extra| {
+        for (tf_type, val) in extra.iter() {
+            if !is_grant_map(tf_type) {
+                continue;
+            }
+            let Some(m) = val.as_mapping() else { continue };
+            for (k, v) in m {
+                let Some(key) = k.as_str() else { continue };
+                match v {
+                    serde_yaml::Value::Sequence(roles) => {
+                        for r in roles {
+                            if let Some(role) = grant_role(r) {
+                                sites.entry((tf_type.clone(), key.to_string(), role.to_string())).or_default().push(node.to_string());
+                            }
+                        }
+                    }
+                    _ => {
+                        taken.insert((tf_type.clone(), key.to_string()));
+                    }
+                }
+            }
+        }
+    });
+    let colliding: BTreeMap<Edge, Vec<String>> = sites.into_iter().filter(|(_, nodes)| nodes.len() > 1).collect();
+    if colliding.is_empty() {
+        return Ok(Vec::new());
+    }
+    if mode == OnCollision::Error {
+        let mut msg = format!(
+            "import: {} grant(s) held on more than one folder/project would emit one address each — the map form's label is member + role:\n",
+            colliding.len()
+        );
+        for ((tf_type, member, role), nodes) in &colliding {
+            msg.push_str(&format!("  {} {} {} on {}\n", tf_type, member, role, nodes.join(", ")));
+        }
+        msg.push_str(
+            "`--on-collision counter` keeps the first in the map form and writes the others as labelled resources with a running number; or edit the estate by hand",
+        );
+        return Err(msg);
+    }
+    // pass 2: every node but the first gives the edge up to a labelled resource
+    let first_of: BTreeMap<Edge, String> = colliding.into_iter().map(|(e, nodes)| (e, nodes[0].clone())).collect();
+    let mut notes = Vec::new();
+    visit_nodes(config, &mut |node, extra| {
+        for (tf_type, val) in extra.iter_mut() {
+            if !is_grant_map(tf_type) {
+                continue;
+            }
+            let Some(m) = val.as_mapping_mut() else { continue };
+            let mut inserts: Vec<(String, serde_yaml::Mapping)> = Vec::new();
+            let mut emptied: Vec<serde_yaml::Value> = Vec::new();
+            for (k, v) in m.iter_mut() {
+                let (Some(member), serde_yaml::Value::Sequence(roles)) = (k.as_str().map(str::to_string), v) else { continue };
+                let mut moved: Vec<(String, Option<String>)> = Vec::new();
+                roles.retain(|r| {
+                    let Some(role) = grant_role(r) else { return true };
+                    match first_of.get(&(tf_type.clone(), member.clone(), role.to_string())) {
+                        Some(first) if first != node => {
+                            moved.push((role.to_string(), grant_entry_import_id(r)));
+                            false
+                        }
+                        _ => true,
+                    }
+                });
+                for (role, id) in moved {
+                    let base = grant_label_base(&role, &member);
+                    let mut n = 2;
+                    let mut label = format!("{}_{}", base, n);
+                    while !taken.insert((tf_type.clone(), label.clone())) {
+                        n += 1;
+                        label = format!("{}_{}", base, n);
+                    }
+                    let first = &first_of[&(tf_type.clone(), member.clone(), role.clone())];
+                    notes.push(format!(
+                        "import: {} {} on {} is written as {}.{} — {} holds the same grant, and the map form has one address per member and role",
+                        member, role, node, tf_type, label, first
+                    ));
+                    let mut body = serde_yaml::Mapping::new();
+                    if let Some(id) = id {
+                        body.insert("import-id".into(), serde_yaml::Value::String(id));
+                    }
+                    body.insert("role".into(), serde_yaml::Value::String(role));
+                    body.insert("member".into(), serde_yaml::Value::String(member.clone()));
+                    inserts.push((label, body));
+                }
+                if roles.is_empty() {
+                    emptied.push(k.clone());
+                }
+            }
+            for k in emptied {
+                m.remove(k);
+            }
+            for (label, body) in inserts {
+                m.insert(serde_yaml::Value::String(label), serde_yaml::Value::Mapping(body));
+            }
+        }
+    });
+    Ok(notes)
+}
+
 /// The end of every import: what was left out, and why. Never silent — a
 /// partial estate is fine, an unexplained one is not.
 pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbose: bool) {
+    for n in &found.notes {
+        println!("{}", n);
+    }
     let skipped = &found.skipped;
     if !found.dropped_attrs.is_empty() {
         let mut by_type: BTreeMap<&str, usize> = BTreeMap::new();
@@ -2008,6 +2253,42 @@ mod key_tests {
     }
 
     #[test]
+    fn grant_map_members_are_never_qualified() {
+        // a member is the same principal in every container; the key is not
+        // an address, and a prefixed one is a member that exists nowhere
+        fn grants(id: &str) -> Project {
+            let mut members = serde_yaml::Mapping::new();
+            members.insert(
+                serde_yaml::Value::String("user:a@example.com".into()),
+                serde_yaml::Value::Sequence(vec![serde_yaml::Value::String("roles/viewer".into())]),
+            );
+            let mut extra = HashMap::new();
+            extra.insert("google_project_iam_member".to_string(), serde_yaml::Value::Mapping(members));
+            Project { project_id: id.into(), extra, ..Default::default() }
+        }
+        let mut config = Config { project: Some(HashMap::from([
+            ("alpha".to_string(), grants("alpha")),
+            ("beta".to_string(), grants("beta")),
+        ])), ..Default::default() };
+        qualify_duplicate_keys(&mut config);
+        for p in ["alpha", "beta"] {
+            let serde_yaml::Value::Mapping(m) = &config.project.as_ref().unwrap()[p].extra["google_project_iam_member"] else { panic!() };
+            let keys: Vec<&str> = m.keys().filter_map(|k| k.as_str()).collect();
+            assert_eq!(keys, ["user:a@example.com"], "{}", p);
+        }
+    }
+
+    #[test]
+    fn the_attribution_label_is_not_a_declared_label() {
+        let raw: serde_json::Value = serde_json::json!({"env": "prod", "goog-terraform-provisioned": "true"});
+        let labels = declared_labels(raw.as_object().unwrap()).unwrap();
+        assert_eq!(labels.get("env").map(String::as_str), Some("prod"));
+        assert!(!labels.contains_key("goog-terraform-provisioned"));
+        let only: serde_json::Value = serde_json::json!({"goog-terraform-provisioned": "true"});
+        assert_eq!(declared_labels(only.as_object().unwrap()), None, "nothing left is no labels block at all");
+    }
+
+    #[test]
     fn a_key_only_one_project_has_stays_as_it_is() {
         let mut config = Config { project: Some(HashMap::from([
             ("alpha".to_string(), project("alpha", "-default")),
@@ -2016,6 +2297,108 @@ mod key_tests {
         qualify_duplicate_keys(&mut config);
         assert_eq!(keys(&config, "alpha"), ["-default"]);
         assert_eq!(keys(&config, "beta"), ["audit"]);
+    }
+}
+
+#[cfg(test)]
+mod collision_tests {
+    //! One principal granted one role on two folders: the map form's emitted
+    //! label hashes member + role and not the node, so the two edges would emit
+    //! one address. The import says so, or numbers the second on request.
+    use super::*;
+
+    fn folder_with_grant(name: &str, member: &str, roles: Vec<serde_yaml::Value>) -> Folder {
+        let mut members = serde_yaml::Mapping::new();
+        members.insert(serde_yaml::Value::String(member.into()), serde_yaml::Value::Sequence(roles));
+        let mut extra = HashMap::new();
+        extra.insert("google_folder_iam_member".to_string(), serde_yaml::Value::Mapping(members));
+        Folder { display_name: name.into(), extra, ..Default::default() }
+    }
+
+    fn two_folders() -> Config {
+        Config {
+            folder: Some(HashMap::from([
+                ("a".to_string(), folder_with_grant("a", "user:x@example.com", vec![
+                    grant_entry("roles/resourcemanager.folderAdmin", "folders/1 roles/resourcemanager.folderAdmin user:x@example.com"),
+                    grant_entry("roles/browser", "folders/1 roles/browser user:x@example.com"),
+                ])),
+                ("b".to_string(), folder_with_grant("b", "user:x@example.com", vec![
+                    grant_entry("roles/resourcemanager.folderAdmin", "folders/2 roles/resourcemanager.folderAdmin user:x@example.com"),
+                ])),
+            ])),
+            ..Default::default()
+        }
+    }
+
+    fn grants<'a>(config: &'a Config, folder: &str) -> &'a serde_yaml::Mapping {
+        config.folder.as_ref().unwrap()[folder].extra["google_folder_iam_member"].as_mapping().unwrap()
+    }
+
+    #[test]
+    fn the_same_grant_on_two_folders_is_refused_by_default() {
+        let mut config = two_folders();
+        let err = resolve_grant_collisions(&mut config, OnCollision::Error).unwrap_err();
+        assert!(err.contains("google_folder_iam_member user:x@example.com roles/resourcemanager.folderAdmin on a, b"), "{}", err);
+        assert!(err.contains("--on-collision counter"), "{}", err);
+        assert!(!err.contains("roles/browser"), "a role only one folder holds is no collision:\n{}", err);
+    }
+
+    #[test]
+    fn with_counter_the_second_folder_gets_a_labelled_grant() {
+        let mut config = two_folders();
+        let notes = resolve_grant_collisions(&mut config, OnCollision::Counter).unwrap();
+        assert_eq!(notes.len(), 1, "{:?}", notes);
+        assert!(notes[0].contains("google_folder_iam_member.folderAdmin_x_2"), "{}", notes[0]);
+        assert!(notes[0].contains("a holds the same grant"), "{}", notes[0]);
+        // the first node keeps both roles in the map form
+        let a = grants(&config, "a");
+        assert_eq!(a.get("user:x@example.com").unwrap().as_sequence().unwrap().len(), 2);
+        // the second: the member line held nothing else and is gone; the edge
+        // is a labelled resource carrying its own import id
+        let b = grants(&config, "b");
+        assert!(b.get("user:x@example.com").is_none(), "{:?}", b);
+        let labelled = b.get("folderAdmin_x_2").unwrap().as_mapping().unwrap();
+        assert_eq!(labelled.get("role").unwrap().as_str(), Some("roles/resourcemanager.folderAdmin"));
+        assert_eq!(labelled.get("member").unwrap().as_str(), Some("user:x@example.com"));
+        assert_eq!(labelled.get("import-id").unwrap().as_str(), Some("folders/2 roles/resourcemanager.folderAdmin user:x@example.com"));
+    }
+
+    #[test]
+    fn a_third_folder_takes_the_next_number() {
+        let mut config = two_folders();
+        config.folder.as_mut().unwrap().insert("c".to_string(), folder_with_grant("c", "user:x@example.com", vec![
+            grant_entry("roles/resourcemanager.folderAdmin", "folders/3 roles/resourcemanager.folderAdmin user:x@example.com"),
+        ]));
+        let notes = resolve_grant_collisions(&mut config, OnCollision::Counter).unwrap();
+        assert_eq!(notes.len(), 2, "{:?}", notes);
+        assert!(grants(&config, "b").get("folderAdmin_x_2").is_some());
+        assert!(grants(&config, "c").get("folderAdmin_x_3").is_some());
+    }
+
+    #[test]
+    fn a_folder_grant_and_a_project_grant_never_collide() {
+        // different types emit different addresses whatever the member and role
+        let mut config = two_folders();
+        let mut members = serde_yaml::Mapping::new();
+        members.insert(
+            serde_yaml::Value::String("user:x@example.com".into()),
+            serde_yaml::Value::Sequence(vec![serde_yaml::Value::String("roles/browser".into())]),
+        );
+        let mut extra = HashMap::new();
+        extra.insert("google_project_iam_member".to_string(), serde_yaml::Value::Mapping(members));
+        config.project = Some(HashMap::from([("p".to_string(), Project { project_id: "p".into(), extra, ..Default::default() })]));
+        config.folder.as_mut().unwrap().remove("b");
+        assert_eq!(resolve_grant_collisions(&mut config, OnCollision::Error).unwrap(), Vec::<String>::new());
+        assert_eq!(grants(&config, "a").get("user:x@example.com").unwrap().as_sequence().unwrap().len(), 2, "nothing moved");
+    }
+
+    #[test]
+    fn labels_are_readable_identifiers() {
+        assert_eq!(grant_label_base("roles/resourcemanager.folderAdmin", "user:alice.b@example.com"), "folderAdmin_alice_b");
+        assert_eq!(grant_label_base("organizations/1/roles/myRole", "serviceAccount:svc@p.iam.gserviceaccount.com"), "myRole_svc");
+        assert_eq!(grant_label_base("roles/viewer", "allUsers"), "viewer_allUsers");
+        assert_eq!("error".parse::<OnCollision>(), Ok(OnCollision::Error));
+        assert!("hash".parse::<OnCollision>().unwrap_err().contains("one of error, counter"));
     }
 }
 
@@ -2079,6 +2462,36 @@ mod nesting_tests {
     }
 
     #[test]
+    fn a_project_under_the_organisation_is_top_level_without_folder_id() {
+        // it used to take the "outside the sweep" arm and come out as
+        // `folder_id = "organizations/…"`, which the provider refuses
+        let pparents: HashMap<String, String> = [("projects/p1", "organizations/1")]
+            .into_iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let pnames: HashMap<String, String> = [("projects/p1", "p1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut projects: HashMap<String, Project> =
+            [("p1".to_string(), Project { project_id: "p1".into(), ..Default::default() })].into_iter().collect();
+        let mut folders: HashMap<String, Folder> = HashMap::new();
+        link_projects_to_folders(&pparents, &pnames, &mut projects, &mut folders).unwrap();
+        assert!(projects.contains_key("p1"), "the project stays at the top level");
+        assert_eq!(projects["p1"].extra.get("folder_id"), None, "no parent attribute: the emitter derives org_id");
+    }
+
+    #[test]
+    fn a_top_level_folder_carries_no_parent() {
+        // the top level IS the organization parent; written beside it the
+        // estate repeats the organization id the emitter derives
+        let parents: HashMap<String, String> =
+            [("folders/1", "organizations/1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let names: HashMap<String, String> = [("folders/1", "a")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut map: HashMap<String, Folder> =
+            [("a".to_string(), folder_with_parent("a", "organizations/1"))].into_iter().collect();
+        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        assert_eq!(map["a"].parent, None);
+    }
+
+    #[test]
     fn a_parent_outside_the_sweep_stays_explicit() {
         let parents: HashMap<String, String> = [("folders/30000003", "folders/999999999")]
             .into_iter()
@@ -2125,7 +2538,7 @@ mod state_document_tests {
                 { "address": "google_folder.x", "name": "x", "values": {} }
             ] } }
         });
-        let err = Discoverer::new(state, None, None, HashSet::new()).discover().err().expect("no type is not a type");
+        let err = Discoverer::new(state, None, None, HashSet::new(), OnCollision::default()).discover().err().expect("no type is not a type");
         let msg = err.to_string();
         assert!(msg.contains("google_folder.x") && msg.contains("`type`"), "{msg}");
     }
