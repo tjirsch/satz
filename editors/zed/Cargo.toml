@@ -3,7 +3,7 @@ name = "satz_zed"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "MIT"
+license = "Apache-2.0"
 
 # Its own root: the satz workspace above it does not list this crate, and Zed
 # builds it on its own with the wasm32-wasip2 target.
