@@ -1482,6 +1482,14 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"satz_review_pack","arguments":{"pack":"../../presets/organization-budget.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"tmp/refuse.satz"}}}'
 } > tmp/mcp-in.jsonl
+# Satz text carries newlines and quotes, which do not survive a shell-quoted JSON
+# line: python writes this one.
+python3 - >> tmp/mcp-in.jsonl <<'PYEOF'
+import json
+text = 'estate e\n\nparams {\n  a  =  "1"\n}\n'
+print(json.dumps({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
+                  "params": {"name": "satz_fmt", "arguments": {"text": text}}}))
+PYEOF
 # Being ASKED for state is not a report run: satz_report_compliance must not append
 # to the evidence history. Compare the directory across the call rather than testing
 # for its absence — earlier steps create it legitimately.
@@ -1529,13 +1537,18 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_transpile_check", "satz_transpile", "satz_report_compliance",
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
-                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_pack"}, sorted(tools)
+                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_pack", "satz_fmt"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
 found = msgs[11]["result"]["structuredContent"]
 assert any(e["estate"].endswith("smoke.satz") for e in found["estates"]), found
 assert any(e["deployment_mode"] == "local" for e in found["estates"]), found
+# satz_fmt: text in, canonical text out, and satz wrote no file
+fmt = msgs[20]["result"]["structuredContent"]
+assert fmt["changed"] is True, fmt
+assert fmt["formatted"] == 'estate e\n\nparams {\n  a = "1"\n}\n', fmt["formatted"]
+
 opened = msgs[12]["result"]["structuredContent"]
 assert opened["estate"].endswith("smoke.satz"), opened
 assert opened["deployment_mode"] == "local", opened
