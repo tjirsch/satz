@@ -34,6 +34,14 @@ back as `"import-id"`. Pack headers that mention adoption mean that command.
 
 ---
 
+**Writing one:** `satz review-pack <file> --format text --out /dev/stdout` judges a pack
+against everything on this page — it parses, it is formatted, its header opens with a
+sentence the index can print, its version has a changelog row below, it declares no
+membership, it runs no legacy constraint beside its managed replacement, every resource
+type it emits has a row in satz's prerequisite table, and it compiles inside an estate —
+and says what adopting it would cost that estate in roles and APIs. It is the same bar
+this repository's gates hold, reachable without a checkout.
+
 **Per-pack reference:** [`docs/README.md`](docs/README.md) — one page per pack,
 derived from the pack file by `satz doc-packs`: what it does, the
 copy-pasteable `use` block with its params and the params it needs from outside,

@@ -204,7 +204,7 @@ pub(crate) fn header(src: &str, rel: &Path) -> Result<Header, BoxErr> {
 /// The one line the index prints for this pack: the first sentence of the
 /// header. Gated, because a heuristic over prose nobody is required to write is
 /// how the index became a table of file names in the first place.
-fn summary(h: &Header, rel: &Path) -> Result<String, BoxErr> {
+pub(crate) fn summary(h: &Header, rel: &Path) -> Result<String, BoxErr> {
     let at = |msg: &str| -> BoxErr { format!("presets/{}: {}", rel.display(), msg).into() };
     let first: Vec<&String> = h.purpose.iter().take_while(|l| !l.is_empty()).collect();
     if first.is_empty() {

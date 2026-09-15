@@ -879,6 +879,57 @@ assert d["compliance"] == ["cis_4.0_gcp", "cis_5.0_gcp"], d
 assert d["projects"], "no project reached the plan"
 PYEOF
 
+step "review-pack: the library's own bar, as a command, on a good pack and a bad one"
+# A pack every gate in this repository already accepts must clear the command too,
+# or the command is not the same bar.
+"$satz" --config . review-pack "$root/presets/organization-budget.satz" --format text --out tmp/review-good.txt 2>/dev/null \
+  || fail "a shipped pack does not clear its own library's bar:\n$(cat tmp/review-good.txt)"
+grep -q 'the pack clears the bar' tmp/review-good.txt || fail "the review does not say so:\n$(cat tmp/review-good.txt)"
+grep -q 'emits: google_billing_budget' tmp/review-good.txt || fail "the review did not fold the pack into an estate:\n$(cat tmp/review-good.txt)"
+# and it says what adopting it costs — the roles and APIs update-prerequisites writes
+grep -q 'billingbudgets.googleapis.com' tmp/review-good.txt || fail "the review does not say what the pack costs an estate:\n$(cat tmp/review-good.txt)"
+
+# The rules, each broken on purpose: no header, no version, a membership, unformatted.
+mkdir -p tmp/packs
+cat > tmp/packs/bad.satz <<'PACKEOF'
+google_cloud_identity_group {
+  "auditors" {
+    display_name = "Auditors"
+    parent = "customers/{customer_id}"
+    group_key { id = "auditors@{customer_domain}" }
+    labels = { "cloudidentity.googleapis.com/groups.discussion_forum" = "" }
+  }
+}
+
+google_cloud_identity_group_membership {
+  "auditors-first-admin" {
+    group = "auditors"
+    preferred_member_key { id = "{first_admin}@{customer_domain}" }
+    roles = [{ name = "MEMBER" }]
+  }
+}
+PACKEOF
+if "$satz" --config . review-pack tmp/packs/bad.satz --format text --out tmp/review-bad.txt 2>/dev/null; then
+  fail "a pack breaking four rules cleared the bar:\n$(cat tmp/review-bad.txt)"
+fi
+grep -q 'not formatted' tmp/review-bad.txt || fail "the layout rule did not fire:\n$(cat tmp/review-bad.txt)"
+grep -q 'no header comment' tmp/review-bad.txt || fail "the header rule did not fire:\n$(cat tmp/review-bad.txt)"
+grep -q 'no `pack <name> version' tmp/review-bad.txt || fail "the version rule did not fire:\n$(cat tmp/review-bad.txt)"
+grep -q 'presets define groups, humans grant membership' tmp/review-bad.txt || fail "the membership rule did not fire:\n$(cat tmp/review-bad.txt)"
+# the findings are the shape an editor already reads: severity, kind, file, line
+"$satz" --config . review-pack tmp/packs/bad.satz --format json --out tmp/review-bad.json 2>/dev/null || true
+python3 - <<'PYEOF' || fail "review-pack --format json is not the findings shape"
+import json
+r = json.load(open("tmp/review-bad.json"))
+assert r["folded_into"] == "synthetic", r["folded_into"]
+kinds = {f["kind"] for f in r["findings"]}
+assert kinds == {"pack"}, kinds
+errs = [f for f in r["findings"] if f["severity"] == "error"]
+assert len(errs) >= 4, errs
+assert any(f.get("line") for f in errs), "no finding is anchored to a line"
+assert all(f.get("file", "").endswith("bad.satz") for f in r["findings"]), r["findings"]
+PYEOF
+
 step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
 
@@ -1428,6 +1479,7 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"satz_scan_checkov","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_update_prerequisites","arguments":{"estate":"smoke.satz","report_only":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"showcase.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"satz_review_pack","arguments":{"pack":"../../presets/organization-budget.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"tmp/refuse.satz"}}}'
 } > tmp/mcp-in.jsonl
 # Being ASKED for state is not a report run: satz_report_compliance must not append
@@ -1477,7 +1529,7 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_transpile_check", "satz_transpile", "satz_report_compliance",
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
-                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict"}, sorted(tools)
+                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_pack"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.

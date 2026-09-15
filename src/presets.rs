@@ -905,6 +905,28 @@ pub(crate) enum MergeEvent {
     },
 }
 
+/// The legacy → managed constraint pairing Google publishes, as data:
+/// `presets/managed-constraint-equivalents.txt`, refreshed by
+/// `scripts/update_constraint_equivalents.py` and never by hand. One form of a
+/// constraint, never two — a pack that enforces a legacy constraint its managed
+/// replacement covers sets it from two places on an organisation.
+pub(crate) fn constraint_pairs(presets_dir: &Path) -> std::collections::BTreeMap<String, String> {
+    let path = presets_dir.join("managed-constraint-equivalents.txt");
+    let Ok(text) = std::fs::read_to_string(path) else { return Default::default() };
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            match (f.next(), f.next()) {
+                (Some(legacy), Some(managed)) if !legacy.is_empty() && !managed.is_empty() => {
+                    Some((legacy.to_string(), managed.to_string()))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// How many packs each outcome took, in both modes: a `--report-only` run counts
 /// what it WOULD do, so its summary matches the lines above it.
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
