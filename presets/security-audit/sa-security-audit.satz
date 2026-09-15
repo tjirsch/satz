@@ -18,15 +18,15 @@
 // - no API enablement in the seed project (impersonation needs
 //   iamcredentials.googleapis.com — enable it separately)
 // - no service-account keys: access is by token-creator impersonation only
-// - no remediation rights: the role set is deliberately read-only throughout
+// - no remediation rights: every role in the set is read-only
 
 pack sa_security_audit version "1.1"
 
 params {
-  security_audit_sa_project = ""
-  security_audit_sa_name = "sa-security-audit"
+  security_audit_sa_project      = ""
+  security_audit_sa_name         = "sa-security-audit"
   security_audit_sa_display_name = "Security Audit (read-only)"
-  security_audit_auditors_group = "grp-security-auditors"
+  security_audit_auditors_group  = "grp-security-auditors"
 }
 
 // ---- what a customer decides, asked -------------------------------------------
@@ -54,8 +54,8 @@ question security_audit_auditors_group {
 
 google_service_account {
   security_audit {
-    account_id = security_audit_sa_name
-    project = security_audit_sa_project
+    account_id   = security_audit_sa_name
+    project      = security_audit_sa_project
     display_name = security_audit_sa_display_name
   }
 }
@@ -63,7 +63,7 @@ google_service_account {
 google_cloud_identity_group {
   "{security_audit_auditors_group}" {
     display_name = "Security Audit Auditors"
-    description = "Nutzer, die den Security-Audit-Service-Account impersonieren duerfen (Prowler-CLI via ADC, SCC-MCP- und gcloud-Stichproben im Review)"
+    description  = "Nutzer, die den Security-Audit-Service-Account impersonieren duerfen (Prowler-CLI via ADC, SCC-MCP- und gcloud-Stichproben im Review)"
     owner = [
       "{security_audit_sa_name}@{security_audit_sa_project}.iam.gserviceaccount.com",
     ]
@@ -84,4 +84,3 @@ google_organization_iam_member {
     "roles/iam.serviceAccountTokenCreator",
   ]
 }
-

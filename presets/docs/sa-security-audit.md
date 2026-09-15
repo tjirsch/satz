@@ -23,7 +23,7 @@ What this pack does NOT do:
 - no API enablement in the seed project (impersonation needs
 iamcredentials.googleapis.com — enable it separately)
 - no service-account keys: access is by token-creator impersonation only
-- no remediation rights: the role set is deliberately read-only throughout
+- no remediation rights: every role in the set is read-only
 
 ## Use it
 
@@ -97,6 +97,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Impersonation needs `iamcredentials.googleapis.com` enabled in the seed project, and this pack does not enable it — do that separately, or every impersonated call fails with a permission error that names the API.
+
+The auditors group gets TokenCreator on the account rather than the roles themselves: one identity to audit with, and a group whose membership is a human decision.
 
 <!-- notes:end -->

@@ -11,19 +11,18 @@ live organisation must still match.
 Two Cloud Build triggers and a scheduler, in the project that HOSTS the runner:
 
 satz-check       on every push to main — `satz transpile --check <estate>`.
-A language tightening that breaks an estate fails one PR in
-one repo on the day it lands, instead of waiting for a fleet
-sweep to find it.
+A satz release that no longer compiles the estate fails
+the estate's next push.
 satz-compliance  nightly, via Cloud Scheduler — `satz report-compliance
---fail-on <statuses>`. Someone widens an org policy in the
-console at four; the job is red by morning.
+--format markdown --out <file> --fail-on <statuses>`. An
+org policy widened in the console fails the next nightly run.
 
 The runner is a service account of its own. It holds nothing about the
 estate: satz's first act inside the build is to exchange the runner's identity
 for the ESTATE's IaC service account, exactly as it does on a workstation. The
 grant that permits that lives on the estate's account and is the companion
-pack, `ci/verification-runner-grant.satz` — separate on purpose, because in the
-hosted shape the two resources belong to two different parties.
+pack, `ci/verification-runner-grant.satz` — separate because in the hosted
+shape the two resources belong to two different parties.
 
 Where it runs decides who it is for:
 
@@ -43,9 +42,9 @@ watched repository. Whoever controls the build file controls what runs as the
 runner's identity; in the hosted shape that file would sit in a repository the
 MSP does not own. Here the pipeline is defined by whoever applies this pack.
 
-v1 reports through the build's exit code and log. It writes no evidence back
-into the repository — that needs write access to a repo the runner may not
-own, and is a decision for whoever adopts it.
+The runner reports through the build's exit code and log. It writes no
+evidence back into the repository: that needs write access to a repository
+the runner may not own.
 
 Requires the estate's IaC service account to exist (post-init), and, for the
 live nightly run, Cloud Asset Inventory enabled on the estate's infra project
@@ -144,6 +143,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The build steps are inline in the trigger, not in a `cloudbuild.yaml` in the repository — whoever can edit the trigger controls what runs as the runner's identity. A Cloud Source Repositories trigger only watches a repository in its own project, so the runner lives in the project that holds the repository.
+
+The customer-hosted shape uses this pack together with [`ci.verification_runner_grant`](verification-runner-grant.md) in the same estate; in the MSP-hosted shape the runner is in the MSP's project and only the grant is in the customer's estate.
 
 <!-- notes:end -->

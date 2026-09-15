@@ -109,17 +109,65 @@ pub(crate) struct EmitOut {
     /// The emitted resources as structure — built from the same blocks
     /// `main_tf` renders, so consumers never parse the text back.
     pub manifest: crate::manifest::Manifest,
+    /// Per emitted resource that lacks one: the arguments and blocks its schema
+    /// requires and the emitted block does not carry. Checked on what is
+    /// emitted, after every derived attribute is in.
+    pub missing_required: Vec<MissingRequired>,
+}
+
+/// A resource the provider will refuse: required arguments or blocks absent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MissingRequired {
+    pub address: String,
+    pub missing: Vec<String>,
+    /// where the declaring block starts, when it was declared rather than derived
+    pub origin: Option<(String, u32)>,
+}
+
+/// The required top-level arguments and blocks (`min_items` ≥ 1) of `block`'s
+/// resource type that `block` does not carry. Empty when the type is unknown to
+/// the registry: no schema, no verdict.
+pub(crate) fn missing_required(block: &hcl::Block, registry: &crate::schema::ResourceRegistry) -> Vec<String> {
+    let labels: Vec<&str> = block.labels().iter().map(|l| l.as_str()).collect();
+    let [tf_type, _] = labels.as_slice() else { return Vec::new() };
+    let Some((_, schema)) = registry.resources.get(*tf_type) else { return Vec::new() };
+    let have_attrs: std::collections::BTreeSet<&str> = block.body().attributes().map(|a| a.key()).collect();
+    let have_blocks: std::collections::BTreeSet<&str> = block.body().blocks().map(|b| b.identifier()).collect();
+    let mut missing: Vec<String> = schema
+        .block
+        .attributes
+        .iter()
+        .filter(|(k, a)| a.required && !have_attrs.contains(k.as_str()))
+        .map(|(k, _)| k.clone())
+        .chain(
+            schema
+                .block
+                .block_types
+                .iter()
+                .filter(|(k, b)| b.min_items.unwrap_or(0) >= 1 && !have_blocks.contains(k.as_str()))
+                .map(|(k, _)| format!("{} {{ … }}", k)),
+        )
+        .collect();
+    missing.sort();
+    missing
 }
 
 /// A conditional grant edge carries its condition as canonical YAML text. Parse
 /// it back so the emitted label hashes EXACTLY what the walk hashed (the label
 /// is the Terraform address — it must not move for existing state), and so the
-/// `condition { … }` block renders identically.
-fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Option<serde_yaml::Value> {
+/// `condition { … }` block renders identically. A condition that does not parse
+/// is an error, never `None`: dropping it would emit the grant unconditional and
+/// move its address in the same stroke.
+fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Result<Option<serde_yaml::Value>, String> {
     if edge.condition.is_empty() {
-        return None;
+        return Ok(None);
     }
-    serde_yaml::from_str(&edge.condition).ok()
+    serde_yaml::from_str(&edge.condition).map(Some).map_err(|e| {
+        format!(
+            "grant {} → {}: its condition is not readable ({}); refusing to emit the binding without it",
+            edge.member, edge.role, e
+        )
+    })
 }
 
 /// `<type>.<label>` of a resource block.
@@ -130,6 +178,113 @@ fn block_address(b: &hcl::Block) -> Option<String> {
     match b.labels() {
         [t, l] => Some(format!("{}.{}", t.as_str(), l.as_str())),
         _ => None,
+    }
+}
+
+/// Grants and group memberships that name a service account the estate declares
+/// carry its email as a string, not a reference, so tofu would run them beside the
+/// account: on create the API refuses a member that does not exist yet, and on
+/// destroy the account can go first and leave `deleted:serviceAccount:…` bindings
+/// behind. Each one gets a `depends_on` on the account.
+fn order_after_service_accounts(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let project_of = |r: &crate::manifest::EmittedResource| -> Option<String> {
+        r.attrs.get("project").cloned().or_else(|| {
+            let project = r.refs.get("project")?.strip_suffix(".project_id")?;
+            manifest.resources.get(project)?.attrs.get("project_id").cloned()
+        })
+    };
+    let accounts: std::collections::BTreeMap<String, String> = manifest
+        .of_type("google_service_account")
+        .filter_map(|r| {
+            let email = format!("{}@{}.iam.gserviceaccount.com", r.attrs.get("account_id")?, project_of(r)?);
+            Some((email, r.address()))
+        })
+        .collect();
+    if accounts.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address) else { continue };
+        let named = r
+            .attrs
+            .get("member")
+            .and_then(|m| m.strip_prefix("serviceAccount:"))
+            .or_else(|| r.nested.get("preferred_member_key.id").map(String::as_str));
+        let Some(account) = named.and_then(|email| accounts.get(email)) else { continue };
+        add_depends_on(b, account);
+    }
+}
+
+/// A grant on a group the estate declares names it by its email string
+/// (`group:<key>@<domain>`), so tofu would create the grant beside the group:
+/// the IAM API refuses a member that does not exist yet, and on a fresh
+/// organisation the first refusal stops the groups still queued from ever
+/// being created. Each such grant — and a membership whose member key names
+/// such a group — gets a `depends_on` on the group, the way a grant on a
+/// declared service account does; on destroy the grant then goes before the
+/// group, leaving no `deleted:group:…` binding behind.
+fn order_after_groups(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let groups: std::collections::BTreeMap<String, String> = manifest
+        .of_type("google_cloud_identity_group")
+        .filter_map(|r| Some((r.nested.get("group_key.id")?.clone(), r.address())))
+        .collect();
+    if groups.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address) else { continue };
+        let named = r
+            .attrs
+            .get("member")
+            .and_then(|m| m.strip_prefix("group:"))
+            .or_else(|| r.nested.get("preferred_member_key.id").map(String::as_str));
+        let Some(group) = named.and_then(|email| groups.get(email)) else { continue };
+        add_depends_on(b, group);
+    }
+}
+
+/// A policy on a custom constraint names the constraint by its string
+/// (`…/policies/custom.x`), so tofu would create the policy beside the
+/// constraint, and the API refuses a policy on a constraint that does not exist
+/// yet. A policy on a constraint the estate declares gets a `depends_on` on it.
+fn order_after_custom_constraints(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let constraints: std::collections::BTreeMap<String, String> = manifest
+        .of_type("google_org_policy_custom_constraint")
+        .filter_map(|r| Some((r.attrs.get("name")?.clone(), r.address())))
+        .collect();
+    if constraints.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address).filter(|r| r.tf_type == "google_org_policy_policy") else { continue };
+        let Some(constraint) = r.attrs.get("name").and_then(|n| n.rsplit_once("/policies/")).map(|(_, c)| c) else { continue };
+        if let Some(declared) = constraints.get(constraint) {
+            add_depends_on(b, declared);
+        }
+    }
+}
+
+/// Add `address` to the block's `depends_on`, creating the attribute when absent.
+fn add_depends_on(b: &mut hcl::Block, address: &str) {
+    let dep = crate::emit_shared::traversal_expr(address);
+    match b.body.0.iter_mut().find_map(|st| match st {
+        hcl::Structure::Attribute(a) if a.key() == "depends_on" => Some(a),
+        _ => None,
+    }) {
+        Some(existing) => {
+            if let hcl::Expression::Array(items) = &mut existing.expr {
+                if !items.contains(&dep) {
+                    items.push(dep);
+                }
+            }
+        }
+        None => b.body.0.push(hcl::Structure::Attribute(hcl::Attribute::new("depends_on", hcl::Expression::Array(vec![dep])))),
     }
 }
 
@@ -281,7 +436,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             }
             ("google_organization_iam_member", Body::Grant(edges)) => {
                 for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e);
+                    let cond = edge_condition(&e)?;
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -312,10 +467,15 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                         },
                         _ => None,
                     });
-                let fallback = ctx.billing_fallback.as_ref().and_then(|v| v.as_str()).unwrap_or("");
-                let billing_id = pinned.as_deref().unwrap_or(fallback);
+                let fallback = ctx.billing_fallback.as_ref().and_then(|v| v.as_str());
+                let Some(billing_id) = pinned.as_deref().or(fallback) else {
+                    return Err(
+                        "google_billing_account_iam_member: no billing account to bind on — pin `billing_account_id` in the estate or bind the `billing_account_infra` param"
+                            .to_string(),
+                    );
+                };
                 for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e);
+                    let cond = edge_condition(&e)?;
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -377,7 +537,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 let scope_key = pin.as_ref().map(|(_, v)| v.as_str()).unwrap_or("");
                 let parent_expr = crate::emit_shared::parse_expr(parent.as_deref().unwrap_or(""));
                 for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e);
+                    let cond = edge_condition(&e)?;
                     let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), scope_key);
                     let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
                     blocks.push(crate::emit_shared::iam_member_block(
@@ -452,11 +612,31 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
 
+    order_after_service_accounts(&mut blocks);
+    order_after_groups(&mut blocks);
+    order_after_custom_constraints(&mut blocks);
+
     let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
     manifest.attach_imports(&imports);
     for (a, f, l) in &origins {
         manifest.set_origin(a, f, *l);
     }
+    let missing_required: Vec<MissingRequired> = match ctx.registry {
+        Some(registry) => blocks
+            .iter()
+            .filter(|b| b.identifier() == "resource")
+            .filter_map(|b| {
+                let missing = missing_required(b, registry);
+                let address = block_address(b)?;
+                (!missing.is_empty()).then(|| MissingRequired {
+                    origin: manifest.resources.get(&address).and_then(|r| r.origin.clone()),
+                    address,
+                    missing,
+                })
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     let mut body = hcl::Body::builder();
     for b in blocks {
         body = body.add_block(b);
@@ -472,7 +652,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
     let imports_tf = hcl::to_string(&import_body.build()).map_err(|e| e.to_string())?;
-    Ok(EmitOut { main_tf, imports_tf, manifest })
+    Ok(EmitOut { main_tf, imports_tf, manifest, missing_required })
 }
 
 /// google_project + its google_project_service children — mirrors the walk's
@@ -898,5 +1078,274 @@ mod backend_identity_tests {
         let out = providers_tf(&config_with_both_backends(), &env);
         assert!(out.contains(r#"backend "gcs""#), "{}", out);
         assert!(!out.contains("impersonate_service_account"), "{}", out);
+    }
+}
+
+#[cfg(test)]
+mod service_account_order_tests {
+    //! A grant naming a service account by email ran beside the account's
+    //! creation and failed; on destroy it outlived the account.
+    use super::*;
+
+    fn blocks(tf: &str) -> Vec<hcl::Block> {
+        hcl::parse(tf).expect("fixture is valid HCL").blocks().cloned().collect()
+    }
+
+    fn depends_on(b: &hcl::Block) -> Option<String> {
+        b.body().attributes().find(|a| a.key() == "depends_on").map(|a| hcl::format::to_string(a.expr()).unwrap().split_whitespace().collect())
+    }
+
+    #[test]
+    fn grants_and_memberships_naming_a_declared_account_wait_for_it() {
+        let mut bs = blocks(
+            r#"
+resource "google_project" "infra" {
+  project_id = "acme-infra-001"
+}
+resource "google_service_account" "iac" {
+  account_id = "svc-iac-001"
+  project = google_project.infra.project_id
+}
+resource "google_service_account" "runner" {
+  account_id = "satz-runner"
+  project = "acme-infra-001"
+}
+resource "google_organization_iam_member" "iac_viewer" {
+  role = "roles/viewer"
+  member = "serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  org_id = "123456789012"
+}
+resource "google_project_iam_member" "runner_viewer" {
+  role = "roles/viewer"
+  member = "serviceAccount:satz-runner@acme-infra-001.iam.gserviceaccount.com"
+  project = "acme-infra-001"
+  depends_on = [google_project.infra]
+}
+resource "google_organization_iam_member" "elsewhere" {
+  role = "roles/viewer"
+  member = "serviceAccount:other@acme-infra-001.iam.gserviceaccount.com"
+  org_id = "123456789012"
+}
+resource "google_cloud_identity_group_membership" "owner" {
+  group = "groups/x"
+  preferred_member_key {
+    id = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  }
+}
+"#,
+        );
+        order_after_service_accounts(&mut bs);
+        let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
+        // the project reference resolves to the project's id
+        assert_eq!(depends_on(by("iac_viewer")).as_deref(), Some("[google_service_account.iac]"));
+        // an existing depends_on is extended, not replaced
+        assert_eq!(depends_on(by("runner_viewer")).as_deref(), Some("[google_project.infra,google_service_account.runner]"));
+        assert_eq!(depends_on(by("owner")).as_deref(), Some("[google_service_account.iac]"));
+        // an account the estate does not declare orders nothing
+        assert_eq!(depends_on(by("elsewhere")), None);
+        assert_eq!(depends_on(by("iac")), None);
+    }
+
+    #[test]
+    fn grants_and_memberships_naming_a_declared_group_wait_for_it() {
+        // a grant names its group by email; on a fresh organisation the grant
+        // used to run beside the group's creation and the first refusal
+        // stopped the groups still queued
+        let mut bs = blocks(
+            r#"
+resource "google_cloud_identity_group" "gcp_auditors" {
+  display_name = "Auditors"
+  parent = "customers/C0example"
+  group_key {
+    id = "gcp-auditors@example.com"
+  }
+}
+resource "google_organization_iam_member" "auditors_viewer" {
+  role = "roles/viewer"
+  member = "group:gcp-auditors@example.com"
+  org_id = "123456789012"
+}
+resource "google_project_iam_member" "auditors_logs" {
+  role = "roles/logging.viewer"
+  member = "group:gcp-auditors@example.com"
+  project = "acme-infra-001"
+  depends_on = [google_project.infra]
+}
+resource "google_organization_iam_member" "elsewhere" {
+  role = "roles/viewer"
+  member = "group:other@example.com"
+  org_id = "123456789012"
+}
+resource "google_cloud_identity_group_membership" "nested" {
+  group = "groups/x"
+  preferred_member_key {
+    id = "gcp-auditors@example.com"
+  }
+}
+"#,
+        );
+        order_after_groups(&mut bs);
+        let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
+        assert_eq!(depends_on(by("auditors_viewer")).as_deref(), Some("[google_cloud_identity_group.gcp_auditors]"));
+        // an existing depends_on is extended, not replaced
+        assert_eq!(depends_on(by("auditors_logs")).as_deref(), Some("[google_project.infra,google_cloud_identity_group.gcp_auditors]"));
+        // a group nested in another group waits for it too
+        assert_eq!(depends_on(by("nested")).as_deref(), Some("[google_cloud_identity_group.gcp_auditors]"));
+        // a group the estate does not declare orders nothing
+        assert_eq!(depends_on(by("elsewhere")), None);
+        assert_eq!(depends_on(by("gcp_auditors")), None);
+    }
+
+    #[test]
+    fn a_policy_on_a_declared_custom_constraint_waits_for_it() {
+        let mut bs = blocks(
+            r#"
+resource "google_org_policy_custom_constraint" "sql_protection" {
+  name = "custom.cisCloudSqlDeletionProtection"
+  parent = "organizations/123456789012"
+}
+resource "google_org_policy_policy" "sql_protection" {
+  name = "organizations/123456789012/policies/custom.cisCloudSqlDeletionProtection"
+  parent = "organizations/123456789012"
+}
+resource "google_org_policy_policy" "managed" {
+  name = "organizations/123456789012/policies/compute.managed.vmCanIpForward"
+  parent = "organizations/123456789012"
+}
+"#,
+        );
+        order_after_custom_constraints(&mut bs);
+        let by = |label: &str| bs.iter().find(|b| b.labels()[0].as_str() == "google_org_policy_policy" && b.labels()[1].as_str() == label).unwrap();
+        assert_eq!(depends_on(by("sql_protection")).as_deref(), Some("[google_org_policy_custom_constraint.sql_protection]"));
+        assert_eq!(depends_on(by("managed")), None);
+    }
+}
+
+#[cfg(test)]
+mod required_argument_tests {
+    //! A converted estate carried a custom role with no `role_id`: the provider
+    //! requires it, nothing in the compile said so, and `tofu plan` was the first
+    //! to refuse. The check reads what is emitted, so derived arguments count.
+    use super::*;
+
+    fn registry() -> crate::schema::ResourceRegistry {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schemas");
+        crate::schema::ResourceRegistry::load_all(&dir.to_string_lossy()).expect("schema fixture")
+    }
+
+    #[test]
+    fn a_resource_missing_a_required_argument_is_named_and_a_complete_one_is_not() {
+        let body = hcl::parse(
+            r#"
+resource "google_organization_iam_custom_role" "no_id" {
+  org_id      = "123456789012"
+  title       = "Application owner"
+  permissions = ["resourcemanager.projects.get"]
+}
+resource "google_organization_iam_custom_role" "complete" {
+  org_id      = "123456789012"
+  role_id     = "ApplicationOwner"
+  title       = "Application owner"
+  permissions = ["resourcemanager.projects.get"]
+}
+resource "not_a_type_the_registry_knows" "x" {}
+"#,
+        )
+        .unwrap();
+        let reg = registry();
+        let blocks: Vec<&hcl::Block> = body.blocks().collect();
+        assert_eq!(missing_required(blocks[0], &reg), vec!["role_id".to_string()]);
+        assert!(missing_required(blocks[1], &reg).is_empty());
+        // no schema, no verdict
+        assert!(missing_required(blocks[2], &reg).is_empty());
+    }
+}
+
+
+#[cfg(test)]
+mod grant_condition_tests {
+    //! A conditional grant is emitted with its condition or not at all. The
+    //! condition is part of the binding's identity and of its scope: losing it
+    //! would widen the grant and move its address in one stroke.
+
+    use super::*;
+
+    fn edge(condition: &str) -> satz_core::algebra::GrantEdge {
+        satz_core::algebra::GrantEdge {
+            member: "group:gcp-viewers@example.com".into(),
+            role: "roles/viewer".into(),
+            condition: condition.into(),
+            import_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_absent_condition_is_none() {
+        assert_eq!(edge_condition(&edge("")).expect("no condition is not an error"), None);
+    }
+
+    #[test]
+    fn a_canonical_condition_parses_back() {
+        let cond = edge_condition(&edge("expression: request.time < timestamp('2027-01-01T00:00:00Z')\ntitle: expires\n"))
+            .expect("canonical YAML parses")
+            .expect("a condition was given");
+        assert_eq!(cond["title"].as_str(), Some("expires"));
+    }
+
+    #[test]
+    fn a_condition_that_does_not_parse_refuses_the_grant() {
+        let err = edge_condition(&edge("title: [unclosed")).expect_err("must not degrade to an unconditional grant");
+        assert!(err.contains("roles/viewer") && err.contains("condition"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod billing_grant_tests {
+    //! A billing-account grant names the account it binds on, or is refused.
+    //! Neither a pinned `billing_account_id` nor the `billing_account_infra`
+    //! param is required elsewhere, so this was the one place an empty string
+    //! reached the provider as a resource id.
+
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn billing_grant() -> Folded {
+        let addr = satz_core::Address { tf_type: "google_billing_account_iam_member".into(), label: "billing".into() };
+        let edge = satz_core::algebra::GrantEdge {
+            member: "group:gcp-billing-admins@example.com".into(),
+            role: "roles/billing.admin".into(),
+            condition: String::new(),
+            import_id: String::new(),
+        };
+        let entity = satz_core::algebra::Entity {
+            addr: addr.clone(),
+            scope: satz_core::Scope::Billing,
+            body: Body::Grant(BTreeSet::from([edge])),
+            provenance: Vec::new(),
+            node_path: Vec::new(),
+        };
+        Folded { slots: BTreeMap::from([(addr, Slot::Ok(entity))]) }
+    }
+
+    fn ctx(fallback: Option<&str>) -> EmitCtx<'static> {
+        EmitCtx {
+            customer_id: String::new(),
+            customer_domain: String::new(),
+            org_id: String::new(),
+            billing_fallback: fallback.map(serde_yaml::Value::from),
+            registry: None,
+        }
+    }
+
+    #[test]
+    fn no_account_anywhere_is_refused_not_emitted_empty() {
+        let err = emit(&billing_grant(), &ctx(None)).err().expect("an empty billing_account_id must not reach the provider");
+        assert!(err.contains("billing_account_infra") && err.contains("billing_account_id"), "{err}");
+    }
+
+    #[test]
+    fn the_conventional_param_is_the_account() {
+        let out = emit(&billing_grant(), &ctx(Some("example-billing"))).expect("the param supplies the account");
+        assert!(out.main_tf.contains("example-billing"), "{}", out.main_tf);
     }
 }

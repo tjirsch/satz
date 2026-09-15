@@ -1,0 +1,58 @@
+// CIS 4.0 §2.15 / 5.0 §2.16 — Access Approval: Google personnel reach the
+// organisation's content only after someone approves the request.
+//
+//   use "presets/cis-extensions/access-approval.satz" when cis_access_approval
+//
+// Opt-in because it changes every support case: a Google engineer who needs to
+// look at the customer's content waits until someone on the notification list
+// approves. Who that is, is the customer's decision.
+//
+// Access Approval needs Access Transparency enabled for the organisation first.
+// Access Transparency has no provider resource: an organisation administrator
+// switches it on in the Cloud console (IAM & Admin → Settings) before the apply
+// that creates these settings, and the apply fails without it.
+//
+// Deleting these settings switches Access Approval off for the organisation.
+
+pack cis_extensions.access_approval version "1.0"
+
+params {
+  // Who receives approval requests. The pack cannot know; empty blocks the
+  // interview until the customer names at least one address.
+  access_approval_notification_emails = []
+}
+
+question access_approval_notification_emails {
+  prompt   = "Which addresses receive Google's access approval requests?"
+  why      = "Every request by Google personnel to reach the organisation's content waits for an approval from this list. Nobody on it, or an unwatched mailbox, stalls support cases until someone answers."
+  reversal = edit
+  blast    = low
+}
+
+google_organization_access_approval_settings {
+  access_approval {
+    organization_id     = customer_organization_id
+    notification_emails = access_approval_notification_emails
+    enrolled_services = [
+      {
+        cloud_product    = "all"
+        enrollment_level = "BLOCK_ALL"
+      },
+    ]
+  }
+}
+
+claim "cis-gcp" "4.0" "2.15" implements {
+  resources = [
+    "google_organization_access_approval_settings.access_approval",
+  ]
+  interpretation       = "Access Approval covers every supported service at the organisation, so Google personnel reach its content only after an approval."
+  duty_answer_requests = "Someone on the notification list answers each request; an unanswered request is a support case that waits."
+}
+claim "cis-gcp" "5.0" "2.16" implements {
+  resources = [
+    "google_organization_access_approval_settings.access_approval",
+  ]
+  interpretation       = "As for 4.0 §2.15 (5.0 §2.16: its new §2.2 moved the rest of §2 by one)."
+  duty_answer_requests = "Someone on the notification list answers each request; an unanswered request is a support case that waits."
+}

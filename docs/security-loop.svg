@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600" role="img" aria-label="Two spheres over one live organisation. Left, the Satz sphere: estate and packs with deviates claims, transpiled and applied; require and report-compliance judge and verify; a concept-facts export feeds the security concept. Right, the audit sphere: Prowler audits the whole organisation, not only what Satz declared; its OCSF findings and compliance files go to a triage that yields a remediation plan; Claude writes the security concept. Five integration points connect them: catalogs imported from Prowler's compliance files, OCSF findings corroborating the evidence report, the triage feeding the remediation plan back into estate and packs, deviates claims resolving findings as accepted exceptions, and the concept-facts export feeding the concept document.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" width="960" height="640" role="img" aria-label="Two spheres over one live organisation. Left, the Satz sphere: estate and packs with deviates claims, transpiled and applied; require and report-compliance judge and verify; a concept-facts export feeds the security concept. Right, the audit sphere: Prowler audits the whole organisation, not only what Satz declared; its OCSF findings and compliance files go to a triage that yields a remediation plan; Claude writes the security concept. Five integration points connect them: catalogs imported from Prowler's compliance files, OCSF findings corroborating the evidence report, the triage feeding the remediation plan back into estate and packs, deviates claims resolving findings as accepted exceptions, and the concept-facts export feeding the concept document.">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/></marker>
     <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/></marker>
   </defs>
-  <rect x="0" y="0" width="960" height="600" fill="#FFFFFF"/>
+  <rect x="0" y="0" width="960" height="640" fill="#FFFFFF"/>
 
   <!-- spheres -->
   <rect x="20" y="20" width="450" height="440" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
@@ -64,13 +64,12 @@
   <text x="258" y="480" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430">apply</text>
   <line x1="130" y1="290" x2="130" y2="262" stroke="#1B2430" marker-end="url(#a)"/>
   <text x="138" y="280" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430">claims</text>
-  <polyline points="120,518 120,470 100,470 100,262" fill="none" stroke="#1B2430" stroke-dasharray="4 3" marker-end="url(#a)"/>
-  <text x="66" y="470" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">live,</text>
-  <text x="66" y="483" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">by value</text>
+  <polyline points="210,518 210,470 100,470 100,262" fill="none" stroke="#1B2430" stroke-dasharray="4 3" marker-end="url(#a)"/>
+  <text x="94" y="480" text-anchor="end" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">live, by value</text>
   <line x1="250" y1="200" x2="250" y2="172" stroke="#0F766E" stroke-width="1.5" marker-end="url(#aa)"/>
 
   <polyline points="720,518 720,470 720,438" fill="none" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
-  <text x="728" y="470" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430">audits ALL of it</text>
+  <text x="728" y="480" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430">audits ALL of it</text>
   <polyline points="440,543 470,543 470,470 650,470 650,438" fill="none" stroke="#1B2430" stroke-dasharray="4 3" marker-end="url(#a)"/>
   <line x1="720" y1="380" x2="720" y2="352" stroke="#1B2430" marker-end="url(#a)"/>
   <line x1="720" y1="290" x2="720" y2="262" stroke="#1B2430" marker-end="url(#a)"/>
@@ -78,21 +77,21 @@
   <!-- integration points (accent) -->
   <!-- I1 catalogs from compliance files: raw -> require -->
   <polyline points="530,300 485,300 485,215 442,215" fill="none" stroke="#0F766E" stroke-width="1.5" marker-end="url(#aa)"/>
-  <text x="465" y="262" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I1</text>
+  <text x="460" y="233" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I1</text>
   <!-- I2 OCSF corroborates evidence: raw -> report-compliance -->
   <line x1="530" y1="330" x2="442" y2="245" stroke="#0F766E" stroke-width="1.5" marker-end="url(#aa)"/>
-  <text x="500" y="345" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I2</text>
+  <text x="508" y="333" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I2</text>
   <!-- I3 remediation plan -> estate/packs -->
   <line x1="530" y1="240" x2="442" y2="305" stroke="#0F766E" stroke-width="1.5" marker-end="url(#aa)"/>
-  <text x="472" y="288" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I3</text>
+  <text x="451" y="285" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I3</text>
   <!-- I4 deviates -> triage (exceptions) -->
   <line x1="440" y1="340" x2="528" y2="255" stroke="#0F766E" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#aa)"/>
-  <text x="515" y="275" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I4</text>
+  <text x="525" y="282" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I4</text>
   <!-- I5 concept-facts -> concept -->
   <line x1="440" y1="140" x2="528" y2="140" stroke="#0F766E" stroke-width="1.5" marker-end="url(#aa)"/>
-  <text x="485" y="133" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I5</text>
+  <text x="500" y="133" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">I5</text>
 
-  <!-- legend -->
-  <text x="34" y="84" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#0F766E">I1 catalogs from Prowler's compliance files · I2 findings corroborate evidence · I3 remediation plan is input for Satz</text>
-  <text x="34" y="98" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#0F766E">I4 deviates = the exception register · I5 concept facts, deterministic; the prose is Claude's</text>
+  <!-- legend: a row of its own under the live organisation -->
+  <text x="34" y="604" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#0F766E">I1 catalogs from Prowler's compliance files · I2 findings corroborate evidence · I3 remediation plan is input for Satz</text>
+  <text x="34" y="618" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#0F766E">I4 deviates = the exception register · I5 concept facts, deterministic; the prose is Claude's</text>
 </svg>

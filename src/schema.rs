@@ -26,6 +26,9 @@ pub struct AttributeSchema {
     /// `["map","string"]` …
     #[serde(rename = "type", default)]
     pub type_: Option<serde_json::Value>,
+    /// The provider's own words, shown by the language server on hover.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl AttributeSchema {
@@ -42,7 +45,17 @@ pub struct ResourceSchema {
 #[derive(Debug, Deserialize, Clone)]
 pub struct BlockTypeSchema {
     pub min_items: Option<u64>,
+    pub max_items: Option<u64>,
+    pub nesting_mode: Option<String>,
     pub block: BlockSchema,
+}
+
+impl BlockTypeSchema {
+    /// A block that occurs at most once — written `key { … }`, never as a
+    /// list of one.
+    pub fn is_single(&self) -> bool {
+        self.nesting_mode.as_deref() == Some("single") || self.max_items == Some(1)
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -51,6 +64,8 @@ pub struct BlockSchema {
     pub attributes: HashMap<String, AttributeSchema>,
     #[serde(default)]
     pub block_types: HashMap<String, BlockTypeSchema>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl BlockSchema {
@@ -66,7 +81,7 @@ impl BlockSchema {
 
             // Look for value in data using multiple casing strategies if needed
             // The API usually returns camelCase. The schema uses snake_case.
-            let camel_name = Self::snake_to_camel(attr_name);
+            let camel_name = snake_to_camel(attr_name);
             let val = data.get(attr_name).or_else(|| data.get(&camel_name));
 
             if let Some(v) = val {
@@ -114,7 +129,7 @@ impl BlockSchema {
 
         // 2. Handle Nested Blocks
         for (block_name, block_type) in &self.block_types {
-            let camel_name = Self::snake_to_camel(block_name);
+            let camel_name = snake_to_camel(block_name);
             let val = data.get(block_name).or_else(|| data.get(&camel_name));
              
             if let Some(v) = val {
@@ -147,22 +162,24 @@ impl BlockSchema {
 
         map
     }
+}
 
-    fn snake_to_camel(s: &str) -> String {
-        let mut result = String::new();
-        let mut next_cap = false;
-        for c in s.chars() {
-            if c == '_' {
-                next_cap = true;
-            } else if next_cap {
-                result.push(c.to_ascii_uppercase());
-                next_cap = false;
-            } else {
-                result.push(c);
-            }
+/// `snake_case` → `snakeCase`: the attribute names the Discovery Documents and
+/// the live API use, against the provider's underscore form.
+pub(crate) fn snake_to_camel(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut up = false;
+    for c in s.chars() {
+        if c == '_' {
+            up = true;
+        } else if up {
+            out.push(c.to_ascii_uppercase());
+            up = false;
+        } else {
+            out.push(c);
         }
-        result
     }
+    out
 }
 
 pub struct ResourceRegistry {
@@ -200,6 +217,23 @@ impl ResourceRegistry {
             }
         }
         Ok(ResourceRegistry { resources })
+    }
+
+    /// Whether the nested block at `path` (`spec`, `spec/rules/condition`) of
+    /// a resource type is a single block. Unknown type or path: `false` — the
+    /// list form is always valid, the block form only where the schema says.
+    pub fn single_block(&self, tf_type: &str, path: &str) -> bool {
+        let Some((_, schema)) = self.find_resource(tf_type) else { return false };
+        let mut block = &schema.block;
+        let mut segments = path.split('/').peekable();
+        while let Some(seg) = segments.next() {
+            let Some(bt) = block.block_types.get(seg) else { return false };
+            if segments.peek().is_none() {
+                return bt.is_single();
+            }
+            block = &bt.block;
+        }
+        false
     }
 
     pub fn find_resource(&self, key: &str) -> Option<(&str, &ResourceSchema)> {
@@ -373,5 +407,41 @@ mod tests {
         // The exact silent failure from the bug report: asked for beta, got GA.
         assert!(!schema_output_contains_source(&json, "hashicorp/google-beta"));
         assert!(!schema_output_contains_source(&serde_json::json!({}), "hashicorp/google"));
+    }
+}
+
+
+#[cfg(test)]
+mod load_all_tests {
+    //! A missing schema directory is the designed exception: schemas may be
+    //! fetched later, and the registry is empty. A schema file that does not
+    //! parse is an error, and every command that loads the registry propagates
+    //! it rather than running without one — an emitter with no registry drops
+    //! schema-derived detail and says nothing.
+
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("satz-schema-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_missing_directory_is_an_empty_registry() {
+        let dir = scratch("missing");
+        let reg = ResourceRegistry::load_all(dir.to_str().unwrap()).expect("a missing directory is not an error");
+        assert!(reg.resources.is_empty());
+    }
+
+    #[test]
+    fn a_schema_file_that_does_not_parse_is_an_error() {
+        let dir = scratch("malformed");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("google.json"), "{ not json").unwrap();
+        let result = ResourceRegistry::load_all(dir.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        let err = result.err().expect("a broken schema file must not load as an empty registry");
+        assert!(!err.to_string().is_empty());
     }
 }

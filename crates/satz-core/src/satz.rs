@@ -37,7 +37,7 @@
 //! ```
 //!
 //! Identifiers use snake_case; the emitter maps param identifiers to the YAML
-//! dialect's kebab-case anchors (`logsink_project_name` <-> `logsink-project-name`),
+//! dialect's kebab-case anchors (`logsink_bucket_name` <-> `logsink-bucket-name`),
 //! which keeps migrated names identical to the original YAML packs' anchors. Resource
 //! attribute names are 1:1 the Terraform provider names — the registry docs are the
 //! docs.
@@ -282,7 +282,7 @@ pub struct ClaimDecl {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
-enum Tok {
+pub enum Tok {
     Ident(String),
     /// Raw `hcl { … }` body plus its optional `trust` reason.
     Hcl(String, Option<String>),
@@ -294,6 +294,9 @@ enum Tok {
     RBrack,
     Eq,
     Comma,
+    /// Trivia, lexed only for the formatter: a comment, verbatim, and a line end.
+    Comment(String),
+    Newline,
 }
 
 #[derive(Debug)]
@@ -526,30 +529,57 @@ fn try_lex_hcl(b: &[char], after_kw: usize, line: usize) -> Result<Option<LexedH
     Ok(Some(LexedHcl { body, trust, next, line: end_line }))
 }
 
+/// A token with where it sits in the source: `line` (1-based) and the char range
+/// `start..end` into `src.chars()`. Trivia — comments and newlines — is lexed only
+/// on request, for the formatter and the language server, never for the parser.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub tok: Tok,
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
 fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
+    Ok(lex_spanned(src, false)?.into_iter().map(|t| (t.tok, t.line)).collect())
+}
+
+pub fn lex_spanned(src: &str, trivia: bool) -> Result<Vec<Token>, SatzError> {
     let mut toks = Vec::new();
     let b: Vec<char> = src.chars().collect();
     let mut i = 0;
     let mut line = 1;
     while i < b.len() {
         let c = b[i];
-        match c {
+        let start = i;
+        let start_line = line;
+        let tok = match c {
             '\n' => {
                 line += 1;
                 i += 1;
+                if !trivia {
+                    continue;
+                }
+                Tok::Newline
             }
-            ' ' | '\t' | '\r' => i += 1,
+            ' ' | '\t' | '\r' => {
+                i += 1;
+                continue;
+            }
             '/' if b.get(i + 1) == Some(&'/') => {
                 while i < b.len() && b[i] != '\n' {
                     i += 1;
                 }
+                if !trivia {
+                    continue;
+                }
+                Tok::Comment(b[start..i].iter().collect())
             }
             '/' if b.get(i + 1) == Some(&'*') => {
-                let start = line;
                 i += 2;
                 loop {
                     if i >= b.len() {
-                        return Err(SatzError { line: start, msg: "unterminated block comment".into() });
+                        return Err(SatzError { line: start_line, msg: "unterminated block comment".into() });
                     }
                     if b[i] == '*' && b.get(i + 1) == Some(&'/') {
                         i += 2;
@@ -560,40 +590,47 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                     }
                     i += 1;
                 }
+                if !trivia {
+                    continue;
+                }
+                Tok::Comment(b[start..i].iter().collect())
             }
             '#' => {
                 while i < b.len() && b[i] != '\n' {
                     i += 1;
                 }
+                if !trivia {
+                    continue;
+                }
+                Tok::Comment(b[start..i].iter().collect())
             }
             '{' => {
-                toks.push((Tok::LBrace, line));
                 i += 1;
+                Tok::LBrace
             }
             '}' => {
-                toks.push((Tok::RBrace, line));
                 i += 1;
+                Tok::RBrace
             }
             '[' => {
-                toks.push((Tok::LBrack, line));
                 i += 1;
+                Tok::LBrack
             }
             ']' => {
-                toks.push((Tok::RBrack, line));
                 i += 1;
+                Tok::RBrack
             }
             '=' => {
-                toks.push((Tok::Eq, line));
                 i += 1;
+                Tok::Eq
             }
             ',' => {
-                toks.push((Tok::Comma, line));
                 i += 1;
+                Tok::Comma
             }
             '"' => {
                 // Triple-quoted multi-line or normal string; both interpolate {param}.
                 let triple = b.get(i + 1) == Some(&'"') && b.get(i + 2) == Some(&'"');
-                let start_line = line;
                 i += if triple { 3 } else { 1 };
                 let mut parts = Vec::new();
                 let mut lit = String::new();
@@ -666,7 +703,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                 if !lit.is_empty() || parts.is_empty() {
                     parts.push(StrPart::Lit(lit));
                 }
-                toks.push((Tok::Str(parts), start_line));
+                Tok::Str(parts)
             }
             c if c.is_ascii_digit() || (c == '-' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit())) => {
                 let mut n = String::new();
@@ -680,7 +717,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                 if dots > 1 || n.ends_with('.') {
                     return Err(SatzError { line, msg: format!("malformed number `{}`", n) });
                 }
-                toks.push((Tok::Num(n), line));
+                Tok::Num(n)
             }
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut id = String::new();
@@ -688,19 +725,19 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, SatzError> {
                     id.push(b[i]);
                     i += 1;
                 }
-                let _ = c;
                 if id == "hcl" {
                     if let Some(h) = try_lex_hcl(&b, i, line)? {
-                        toks.push((Tok::Hcl(h.body, h.trust), line));
                         i = h.next;
                         line = h.line;
+                        toks.push(Token { tok: Tok::Hcl(h.body, h.trust), line: start_line, start, end: i });
                         continue;
                     }
                 }
-                toks.push((Tok::Ident(id), line));
+                Tok::Ident(id)
             }
             other => return err(line, format!("unexpected character '{}'", other)),
-        }
+        };
+        toks.push(Token { tok, line: start_line, start, end: i });
     }
     Ok(toks)
 }
@@ -881,16 +918,14 @@ impl P {
                     }).collect();
                     decl.interpretation = Some(lit);
                 }
-                Entry::Map { key: Key::Ident(k), name: Some(Key::Str(idp)), body, .. } if k == "duty" => {
-                    // rare form duty "id" { text = "..." } — accept but prefer attr form
-                    let _ = (idp, body);
+                Entry::Map { key: Key::Ident(k), name: Some(Key::Str(_)), .. } if k == "duty" => {
+                    // the block form `duty "id" { text = "..." }` is refused in favour of the attribute
                     return err(line, "duty: write it as an attribute, `duty_<id> = \"text\"`");
                 }
                 Entry::Attr { key: Key::Str(_), .. } => {
                     return err(line, "claim: unexpected string key (a duty is `duty_<id> = \"text\"`)")
                 }
-                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k.starts_with("duty_") || k == "duty" => {
-                    let _ = l;
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k.starts_with("duty_") || k == "duty" => {
                     let text: String = parts.iter().map(|p| match p { StrPart::Lit(s) => s.as_str(), _ => "" }).collect();
                     decl.duties.push((k.trim_start_matches("duty_").replace('_', "-"), text));
                 }

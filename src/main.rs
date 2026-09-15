@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 mod config;
 mod fsx;
 mod schema;
@@ -6,6 +7,7 @@ mod emitter;
 mod manifest;
 mod state_migration;
 mod discovery;
+mod vocabulary;
 mod delta;
 mod align;
 mod scan;
@@ -14,20 +16,31 @@ mod template;
 mod adopt;
 mod bootstrap;
 mod preflight;
+mod day_zero;
+mod init_params;
+mod iac_roles;
 mod gcp;
 mod org_policy;
 mod cloud_identity;
 mod compliance;
 mod questions;
 mod interview;
+mod findings;
+mod lsp;
 mod mcp;
 mod dossier;
 mod presets;
 mod doc_packs;
 mod github;
 mod policy_tree;
+mod prowler;
+mod out;
 
 use clap::{Parser, Subcommand, CommandFactory};
+// the one output vocabulary: what a caller may ask for, and where it goes
+pub(crate) use out::{OutFormat, pdf_from_markdown, write_report};
+// the MCP output schema of `IacRolesReport`; schemars reaches the crate through rmcp
+use rmcp::schemars;
 use clap_complete::Shell as CompletionShell;
 use std::collections::HashMap;
 use std::fs;
@@ -54,7 +67,7 @@ pub struct ToolConfig {
     pub presets_dir: String,
     #[serde(default = "default_tf_tool")]
     pub tf_tool: String,
-    #[serde(default)]
+    #[serde(default = "default_google_providers")]
     google_providers: Vec<String>,
     #[serde(default)]
     aws_providers: Vec<String>,
@@ -73,15 +86,6 @@ pub struct ToolConfig {
 }
 
 impl ToolConfig {
-    pub fn all_providers(&self) -> Vec<String> {
-        let mut providers = Vec::new();
-        providers.extend(self.google_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers.extend(self.aws_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers.extend(self.azure_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers.extend(self.alibaba_providers.iter().map(|p| ToolConfig::parse_provider_string(p).0));
-        providers
-    }
-
     pub fn parsed_providers(&self) -> Vec<(String, String)> {
         let mut providers = Vec::new();
         // default version fallback
@@ -126,7 +130,7 @@ fn default_schema_dir() -> String { "schemas".to_string() }
 fn default_presets_dir() -> String { "presets".to_string() }
 fn default_tf_tool() -> String { "tofu".to_string() }
 fn default_google_providers() -> Vec<String> { vec!["google".to_string(), "google-beta".to_string()] }
-fn default_version() -> String { "7.12.0".to_string() }
+fn default_version() -> String { "7.14.1".to_string() }
 fn default_auto_explode() -> Vec<String> {
     vec![
         "google_project_service".to_string(),
@@ -136,48 +140,9 @@ fn default_auto_explode() -> Vec<String> {
 fn default_validation_level() -> String { "warn".to_string() }
 
 
-/// One output vocabulary for every reporting command. A `String` per command let a
-/// typo fall through to the default renderer silently — `--format jsom` printed
-/// markdown and exited 0. clap rejects an unknown value by name instead, and each
-/// command refuses the formats it cannot produce.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum OutFormat {
-    /// human-readable terminal output
-    #[value(alias = "console")]
-    Text,
-    Markdown,
-    Json,
-    Pdf,
-}
-
-impl OutFormat {
-    fn as_str(self) -> &'static str {
-        match self {
-            OutFormat::Text => "text",
-            OutFormat::Markdown => "markdown",
-            OutFormat::Json => "json",
-            OutFormat::Pdf => "pdf",
-        }
-    }
-
-    /// Refuse a format this command cannot produce, naming what it can — a silent
-    /// fallback to another renderer is how a caller ends up parsing prose.
-    fn require_one_of(self, command: &str, allowed: &[OutFormat]) -> Result<Self, String> {
-        if allowed.contains(&self) {
-            return Ok(self);
-        }
-        Err(format!(
-            "{}: --format {} is not available here; use {}",
-            command,
-            self.as_str(),
-            allowed.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(" or ")
-        ))
-    }
-}
-
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, max_term_width = 110)]
-struct Cli {
+pub(crate) struct Cli {
     /// Project config.toml, or the estate directory containing it
     ///
     /// Every path in the config resolves against the config's own directory,
@@ -232,7 +197,7 @@ static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::At
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "iac-roles"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs"]),
     (
@@ -244,8 +209,8 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
             "adopt-org-policies",
         ],
     ),
-    ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "triage", "remediation-plan"]),
-    ("Tool", &["update-schema", "map-types", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
+    ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "prowler", "triage", "remediation-plan"]),
+    ("Tool", &["update-schema", "map-types", "fmt", "lsp", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
 #[derive(Subcommand)]
@@ -355,11 +320,16 @@ enum Commands {
         /// Initial IaC Admin User (default: first.admin@<domain>)
         #[arg(long)]
         iac_user: Option<String>,
-        /// Derive the missing values from the Application Default Credentials alone: identity → first admin + domain, organizations:search → org id + directory customer id, billing accounts → the single open account
-        ///
-        /// Explicit flags always win; nothing is ever guessed
-        #[arg(long)]
+        /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
+        #[arg(long, hide = true)]
         from_live: bool,
+        /// Overwrite an existing estate instead of merging the params named here into it
+        #[arg(long)]
+        force: bool,
+        /// Ask for what is still unbound: hand the estate to `satz interview` when a
+        /// day-0 param was neither stated nor derivable
+        #[arg(long)]
+        interview: bool,
     },
     /// Bootstrap day-0 infrastructure (folder, project, billing link, core APIs, state bucket) after a permission pre-flight
     Bootstrap {
@@ -377,6 +347,10 @@ enum Commands {
         /// project under it and write the id back into the estate
         #[arg(long)]
         greenfield: bool,
+        /// Never widen the caller's own IAM: report the roles an administrator
+        /// must grant and stop, instead of self-granting them at the scope root
+        #[arg(long)]
+        no_default_grants: bool,
     },
     /// Export the current live Organization Policies to a re-importable YAML preset
     #[command(visible_alias = "export-org-policies")]
@@ -402,12 +376,12 @@ enum Commands {
         /// Organization id override; else read from config
         #[arg(long)]
         customer_organization_id: Option<String>,
-        /// Write the report to this path (else stdout)
-        #[arg(long)]
-        report: Option<PathBuf>,
-        /// Report format: console (default), markdown, json
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        /// Report format: text, markdown or json
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
         ///
         /// Needs roles/cloudasset.viewer on the organization
@@ -427,12 +401,12 @@ enum Commands {
         /// Which policies to include
         #[arg(long, default_value = "active", value_parser = ["active", "inactive", "full"])]
         scope: String,
-        /// Report format: markdown (default), json, pdf (pdf needs pandoc on PATH)
-        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        /// Report format: markdown, json or pdf (pdf needs pandoc on PATH)
+        #[arg(long, value_enum)]
         format: OutFormat,
-        /// Output path (default: <yaml_dir>/<Cxxxx>-orgpolicies-report.<ext>)
-        #[arg(long)]
-        report: Option<PathBuf>,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         /// Inventory declared policies across the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory
         ///
         /// --scope's "available but not set" section stays org-level. Needs
@@ -467,6 +441,14 @@ enum Commands {
         /// (overrides `only` in the import config)
         #[arg(long, value_delimiter = ',')]
         only: Vec<String>,
+        /// Take every type the source can deliver, not only the rows marked
+        /// `import: true` (live: every type with a Cloud Asset Inventory name)
+        #[arg(long)]
+        all: bool,
+        /// Resource types to leave out, comma-separated, `*` wildcards allowed
+        /// (overrides `exclude` in the import config)
+        #[arg(long, value_delimiter = ',')]
+        exclude: Vec<String>,
         /// Output file inside yaml_dir (state/live shapes; default discovered.satz)
         #[arg(long, short)]
         output: Option<PathBuf>,
@@ -490,6 +472,16 @@ enum Commands {
         /// zero-risk form; the estate deploys exactly as the source did)
         #[arg(long)]
         wrap_all: bool,
+        /// state/live shapes: a grant one principal holds on two folders or
+        /// two projects — `error` refuses the import naming them, `counter`
+        /// writes the second and later as labelled resources with a running
+        /// number (the map form emits one address per member and role)
+        #[arg(long, default_value = "error")]
+        on_collision: String,
+        /// state/live shapes: the customer's short name, which no platform
+        /// fact carries — wins over the inference from the names found
+        #[arg(long)]
+        customer_shortname: Option<String>,
     },
 
     /// Migrate state and configuration between local and cloud modes
@@ -506,7 +498,7 @@ enum Commands {
         /// Do not open the documentation site after installing
         #[arg(long)]
         no_open_readme: bool,
-        /// Only check if an update is available; do not install or download README
+        /// Only check if an update is available; do not install
         #[arg(long)]
         check_only: bool,
         /// Skip SHA-256 checksum verification (use only if the release predates sidecar support)
@@ -560,8 +552,11 @@ enum Commands {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// Output format: text or json
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
     },
     /// Evidence report: the goal view joined with LIVE verification (Cloud Asset
     /// Inventory), manual-duty attestations and optional Prowler corroboration —
@@ -571,13 +566,13 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format
-        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        /// Output format: markdown, json or pdf (pdf needs pandoc on PATH)
+        #[arg(long, value_enum)]
         format: OutFormat,
-        /// Report file path (default: evidence/<framework>-latest.md beside config)
-        #[arg(long)]
-        report: Option<PathBuf>,
-        /// Prowler native-JSON findings file to ingest as corroboration
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// Prowler 5 OCSF export to ingest as corroboration (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: Option<PathBuf>,
         /// Run Checkov over hcl_dir (transpile first) and add a column: failed
@@ -604,8 +599,11 @@ enum Commands {
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
         /// Output format: text or json
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
     },
     /// Adopt what already exists: resolve the live ids of the resources this estate declares (folders by name, groups by email, org policies by constraint, everything else by its rule in import-config.yaml) and bring them under management
     ///
@@ -627,6 +625,21 @@ enum Commands {
         /// never had, so they can be imported (mutates the org)
         #[arg(long)]
         activate: bool,
+    },
+    /// The roles the IaC service account needs for the resource types the estate emits, against the roles the estate grants it; --execute writes the missing grants into the estate file
+    ///
+    /// A dry run unless --execute. Exits non-zero while a role is missing.
+    /// Without an estate: the table itself (--format json for scripts/check_iac_roles.py)
+    IacRoles {
+        /// Estate file (.satz, inside yaml_dir if relative); omit to print the table
+        input: Option<String>,
+        /// Write the missing roles into the estate file: into the service account's
+        /// grant list, or a new block at the end of the file
+        #[arg(long)]
+        execute: bool,
+        /// text (default) or json
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
     },
     /// Derive the API→Terraform field map per resource type from the API's Discovery Document and the provider schema, into <presets_dir>/type-map.yaml — what the live import applies so imported resources plan clean
     ///
@@ -656,18 +669,19 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Prowler export (OCSF or legacy JSON)
+        /// Prowler 5 OCSF export (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: PathBuf,
-        /// markdown (default) or json
-        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        /// Output format: markdown or json
+        #[arg(long, value_enum)]
         format: OutFormat,
-        /// Write the plan here instead of stdout
-        #[arg(long)]
-        report: Option<PathBuf>,
-        /// Also print the estate delta the findings imply — `use` lines to add,
-        /// resources to bring under management, and what has nothing to edit.
-        /// Proposed only: satz never writes the estate or the cloud from a finding
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// Add the estate delta the findings imply — `use` lines to add, resources
+        /// to bring under management, and what has nothing to edit — to the report.
+        /// Proposed only: satz never writes the estate or the cloud from a finding.
+        /// Markdown only: the delta is prose, and a JSON caller parses rows
         #[arg(long)]
         fix: bool,
     },
@@ -676,23 +690,26 @@ enum Commands {
     /// Every Prowler FAIL/MANUAL (and Checkov finding) triaged against the
     /// estate's claims, joined per resource, counted, and written under the
     /// estate's evidence/ directory as JSON, CSV and XLSX. The mechanical
-    /// columns are filled; the `[AI]` columns and the Review column are the
-    /// consultant's (or a later model pass's). Offline, deterministic: the
-    /// dossier hash names the run
+    /// columns are filled; the `[Authored]` columns and the Review column are the
+    /// consultant's — written back with `--merge`, or over MCP. Offline and
+    /// deterministic: the dossier hash names the run
     RemediationPlan {
         /// Catalog id, e.g. cis-gcp-4.0
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Prowler export (OCSF or legacy JSON)
+        /// Prowler 5 OCSF export (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: PathBuf,
         /// Also run Checkov over hcl_dir and join its findings
         #[arg(long)]
         checkov: bool,
-        /// Output directory (default: <config dir>/evidence/plan/<framework>-<timestamp>)
-        #[arg(long)]
-        out: Option<PathBuf>,
+        /// Output directory — several files (default: <config dir>/evidence/plan/<framework>-<timestamp>)
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<PathBuf>,
+        /// An authored.json written against this run's dossier: its values fill the [Authored] columns
+        #[arg(long, value_name = "AUTHORED_JSON")]
+        merge: Option<PathBuf>,
     },
     /// Run Checkov over the emitted HCL in hcl_dir and point each finding at the Satz block that declared the resource
     ///
@@ -706,9 +723,9 @@ enum Commands {
     ///
     /// `--check` fails when the pages are behind the packs
     DocPacks {
-        /// Output directory (default: `<presets_dir>/docs`)
-        #[arg(long)]
-        out: Option<PathBuf>,
+        /// Output directory — one page per pack (default: `<presets_dir>/docs`)
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<PathBuf>,
         /// Verify instead of write: exit 1 when a page is behind its pack
         #[arg(long)]
         check: bool,
@@ -733,19 +750,62 @@ enum Commands {
     },
     /// What this estate can be asked: the questions its packs declare, joined with the answers its params already carry
     ///
-    /// Read-only. Each question is `answered`, `defaulted`, or `unasked`, with what
-    /// changing the answer would cost.
+    /// Read-only. Each question is `answered`, `unanswered` or `not-applicable`, and
+    /// `blocking` while no default is possible, with what changing the answer would cost.
     Questions {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: text, json, or markdown — the decisions sheet a human reads
-        /// before an organisation is touched
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        /// Output format: text, json, markdown — the decisions sheet a human reads
+        /// before an organisation is touched — or xlsx, the workbook a customer
+        /// fills in and sends back
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         /// Only the questions the estate has not answered yet — the interview's worklist
         #[arg(long)]
         unanswered: bool,
     },
+    /// The Prowler invocation this estate needs — printed, never run
+    ///
+    /// satz does not run Prowler: the scan spends API quota in every project of the
+    /// estate, and Prowler reads as whoever is logged in rather than as the estate's
+    /// service account. What this answers is which frameworks, which projects, which
+    /// formats and which output path — read from what the estate actually declares.
+    Prowler {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Output format: text, or json for an agent
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
+    },
+    /// Format Satz files in place: indentation, spacing, `=` alignment, list commas
+    ///
+    /// The layout is the corpus's own — two spaces per brace or bracket that spans
+    /// lines, `=` aligned over a run of attributes, every item of a list laid out
+    /// over lines ending in a comma, a construct that spans lines opening at the end
+    /// of its line and closing on a line of its own. The author's line breaks stay;
+    /// strings and `hcl { … }` bodies are verbatim. Meaning never changes: the
+    /// canonical form `check-presets` compares is the same before and after.
+    Fmt {
+        /// Files or directories to format (.satz; a directory is walked, *.diff.satz skipped)
+        paths: Vec<PathBuf>,
+        /// Name the files that are not formatted and exit 1; write nothing
+        #[arg(long)]
+        check: bool,
+        /// Read one file from stdin and write it formatted to stdout
+        #[arg(long, conflicts_with_all = ["check", "paths"])]
+        stdin: bool,
+    },
+    /// The language server behind an editor's Satz support (Language Server Protocol, stdio)
+    ///
+    /// Started by the editor, never by hand. Diagnostics from the parser on every
+    /// change and from the whole pipeline on every open and save — the errors
+    /// `transpile --check` prints, at the file and line they name; completion and
+    /// hover from the provider schema the estate's config.toml points at;
+    /// go-to-definition for `use` paths and params; formatting is `satz fmt`.
+    Lsp,
     /// Answer what the estate's packs ask, one question at a time, writing each answer
     /// into the estate's params. The third way to start an estate: `init` takes every
     /// answer as a flag, an agent asks over MCP, this asks a person at a terminal
@@ -926,8 +986,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .into());
             }
             candidate
-        } else {
+        } else if path.is_file() || matches!(cmd_choice, Commands::Init { .. }) {
+            // `init` writes the file --config names; every other command reads it
             path.clone()
+        } else {
+            return Err(format!("--config {}: no such file or directory", path.display()).into());
         }
     } else {
         let default_config = PathBuf::from("config.toml");
@@ -936,8 +999,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. }
-                | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. } => {
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. }
+                | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
+                | Commands::IacRoles { input: Some(_), .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
                     // those args. "config.toml not found" is baffling then, so name
@@ -950,7 +1014,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
-                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } => {
+                Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Fmt { .. } | Commands::Lsp
+                | Commands::IacRoles { input: None, .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }
@@ -958,9 +1023,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Optional: check for updates per global settings (skip for SelfUpdate and Init)
-    if !matches!(cmd_choice, Commands::SelfUpdate { .. } | Commands::Init { .. } | Commands::Whoami { .. }) {
-        let _ = maybe_check_for_updates(&mut global_settings).await;
+    // Optional: check for updates per global settings — never for the commands that
+    // own stdout as a protocol or that are the update itself.
+    if checks_for_updates(&cmd_choice) {
+        if let Err(e) = maybe_check_for_updates(&mut global_settings).await {
+            eprintln!("⚠️  update check: {}", e);
+        }
     }
 
     // --no-impersonate wins over everything: pinning the process to the plain
@@ -982,6 +1050,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let mut runtime_config = resolved_config(&tool_config, &config_dir);
+    if let Some(level) = &cli.validation {
+        runtime_config.validation_level = level.clone();
+    }
+    if !["warn", "error", "none"].contains(&runtime_config.validation_level.as_str()) {
+        return Err(format!(
+            "validation level `{}`: expected warn, error or none",
+            runtime_config.validation_level
+        )
+        .into());
+    }
 
 
     match cmd_choice {
@@ -1000,10 +1078,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // so and names the converter.
             reject_yaml_estate(&input_path, "transpile")?;
             let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
-            let (main_tf, providers_tf, variables_tf, tfvars, imports_tf) =
-                (&out.main_tf, &out.providers_tf, &out.variables_tf, &out.tfvars, &out.imports_tf);
             if print_variables {
-                println!("{}", tfvars);
+                println!("{}", out.tfvars);
             }
             if check {
                 println!(
@@ -1012,58 +1088,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            let (main_tf, providers_tf, variables_tf, tfvars, imports_tf) =
-                (main_tf.as_str(), providers_tf.as_str(), variables_tf.as_str(), tfvars.as_str(), imports_tf.as_str());
             // --output relocates the emitted HCL; relative to hcl_dir, as before.
             let base_output_path = match &output {
                 Some(o) if Path::new(o).is_absolute() => PathBuf::from(o),
                 Some(o) => PathBuf::from(&runtime_config.hcl_dir).join(o),
                 None => PathBuf::from(&runtime_config.hcl_dir),
             };
-            if !base_output_path.exists() {
-                fsx::create_dir_all(&base_output_path)?;
-            }
-            let imports_path = base_output_path.join("imports.tf");
-            if imports_path.exists() {
-                fsx::remove_file(&imports_path)?;
-            }
-            let write_file = |filename: &str, content: &str| -> std::io::Result<()> {
-                if content.trim().is_empty() {
-                    return Ok(());
-                }
-                let p = base_output_path.join(filename);
-                fsx::write(&p, content)?;
+            for p in write_hcl(&out, &base_output_path, &input)? {
                 println!("Created {}", p.display());
-                Ok(())
-            };
-            // A provenance line, added at WRITE time rather than by the emitter.
-            // The emission itself must not depend on the binary version, or every
-            // release would move every corpus snapshot — and the corpus exists to
-            // show when the OUTPUT changed, not when the version did.
-            //
-            // What it is for: telling at a glance which estates across a fleet were
-            // last emitted by an old satz —
-            //   grep -h "Generated by satz" ~/estates/*/hcl/main.tf | sort -u
-            //
-            // What it is NOT: evidence that an estate still compiles, or that it
-            // still emits the same resources. A language tightening can break an
-            // estate whose stamp looks current, and leave one alone whose stamp is
-            // ancient. Only re-transpiling and comparing answers that. The stamp
-            // says where to look first; the fleet check says what is actually true.
-            //
-            // A comment rather than a value: a block-level comparison strips
-            // comment-only lines, so this never reads as a delta.
-            let stamped = format!(
-                "# Generated by satz v{} — do not edit; re-emit from {}.\n\n{}",
-                env!("CARGO_PKG_VERSION"),
-                input,
-                main_tf
-            );
-            write_file("main.tf", &stamped)?;
-            write_file("providers.tf", providers_tf)?;
-            write_file("variables.tf", variables_tf)?;
-            write_file("terraform.tfvars", tfvars)?;
-            write_file("imports.tf", imports_tf)?;
+            }
             if plan || apply {
                 // Same gate as bootstrap: apply refuses, plan warns.
                 match crate::questions::require_complete(&input_path, &runtime_config, if apply { "apply" } else { "plan" }) {
@@ -1107,6 +1140,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             infra_bucket_name,
             iac_user,
             from_live,
+            force,
+            interview,
         } => {
             let mut final_google = Vec::new();
             let mut final_aws = Vec::new();
@@ -1210,57 +1245,120 @@ Thumbs.db
                 println!("Created {}", gitignore_path.display());
             }
 
-            // 3b. --from-live: derive the missing values from the ADC alone.
-            // Explicit flags always win, and nothing is ever guessed.
-            let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) =
-                if from_live {
-                    let live = crate::gcp::identity::live_defaults(
-                        customer_organization_id.is_none() || customer_id.is_none(),
-                        billing_account_infra.is_none(),
-                    )
-                    .await?;
-                    let customer_domain = customer_domain.or_else(|| Some(live.customer_domain.clone()));
-                    let iac_user =
-                        iac_user.or_else(|| Some(format!("{}@{}", live.first_admin, live.customer_domain)));
-                    let customer_id = customer_id.or_else(|| live.customer_id.clone());
-                    // No organization visible = greenfield: the estate is
-                    // written with an empty id and bootstrap --greenfield
-                    // fills it in.
-                    let customer_organization_id =
-                        customer_organization_id.or_else(|| Some(live.org_id.clone().unwrap_or_default()));
-                    let billing_account_infra = billing_account_infra.or_else(|| live.billing_account.clone());
-                    let customer_shortname = match customer_shortname {
-                        Some(s) => Some(s),
-                        None => Some(crate::gcp::identity::prompt_shortname()?),
-                    };
-                    if customer_id.is_none() {
-                        return Err("no organization (and so no directory customer id) is visible — \
-                                    pass --customer-id explicitly alongside --from-live"
-                            .into());
-                    }
-                    if billing_account_infra.as_deref().unwrap_or("").is_empty() {
-                        return Err("--from-live could not settle on ONE open billing account — \
-                                    pass --billing-account-infra (the visible accounts are listed above)"
-                            .into());
-                    }
-                    if customer_organization_id.as_deref().unwrap_or("").is_empty() {
-                        println!(
-                            "no organization is visible to these credentials — the estate is written \
-                             with an empty customer_organization_id; `satz bootstrap <estate> --greenfield` \
-                             materializes the organization and fills it in"
+            // 3b. What the operator TYPED, before anything is derived: a re-run
+            // merges exactly these into an estate that already exists, and
+            // nothing else, so a value somebody put there by hand survives.
+            let stated = crate::init_params::Stated {
+                customer_id: customer_id.clone(),
+                customer_shortname: customer_shortname.clone(),
+                billing_account_infra: billing_account_infra.clone(),
+                default_region: default_region.clone(),
+                customer_organization_id: customer_organization_id.clone(),
+                customer_domain: customer_domain.clone(),
+                infra_project_name: infra_project_name.clone(),
+                infra_bucket_name: infra_bucket_name.clone(),
+                iac_user: iac_user.clone(),
+            };
+
+            // Derivation from the credentials is the DEFAULT, not a flag: every
+            // value below is sitting in the ADC the operator already
+            // authenticated with. Stated wins, derived fills the rest and says
+            // where it came from, and what nothing can answer stays EMPTY —
+            // never a placeholder. `--from-live` is accepted and ignored.
+            let _ = from_live;
+            let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) = {
+                let need_org = customer_organization_id.is_none() || customer_id.is_none();
+                let need_billing = billing_account_infra.is_none();
+                match crate::gcp::identity::live_defaults(need_org, need_billing, None).await {
+                    Ok(live) => {
+                        let mut note = crate::init_params::Derivations::default();
+                        let customer_domain = note.fill(
+                            "customer_domain",
+                            customer_domain,
+                            Some(live.customer_domain.clone()),
+                            "the ADC identity",
                         );
+                        let iac_user = note.fill(
+                            "first_admin",
+                            iac_user,
+                            Some(format!("{}@{}", live.first_admin, live.customer_domain)),
+                            "the ADC identity",
+                        );
+                        let customer_id =
+                            note.fill("customer_id", customer_id, live.customer_id.clone(), "organizations:search");
+                        // No organization visible is the greenfield case: the id
+                        // stays empty and `bootstrap --greenfield` fills it in.
+                        let customer_organization_id = note.fill(
+                            "customer_organization_id",
+                            customer_organization_id,
+                            live.org_id.clone(),
+                            "organizations:search",
+                        );
+                        let billing_account_infra = note.fill(
+                            "billing_account_infra",
+                            billing_account_infra,
+                            live.billing_account.clone(),
+                            "billingAccounts.list (the one open account)",
+                        );
+                        // nothing on the platform names the customer: it is
+                        // reported as unanswered rather than guessed at
+                        let customer_shortname = note.fill("customer_shortname", customer_shortname, None, "");
+                        note.report();
+                        (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
                     }
-                    (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                } else {
-                    (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                };
+                    Err(why) => {
+                        eprintln!("init: nothing could be derived from the credentials — {}", why);
+                        eprintln!(
+                            "      what you did not pass is written empty; `satz bootstrap` names each one, and \
+                             `satz init` merges them in later."
+                        );
+                        (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
+                    }
+                }
+            };
 
             // 4. Generate the template estate if customer_id provided
             if let Some(c_id) = customer_id {
                 let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", c_id));
-                if !yaml_path.exists() {
+                if yaml_path.exists() && !force {
+                    // A re-run MERGES: it used to print "Template already exists",
+                    // change nothing, and still sign off with "Initialization
+                    // complete" — so a param somebody added to the command line
+                    // never landed and nothing said so.
+                    let src = crate::fsx::read_to_string(&yaml_path)?;
+                    let (merged, log) = crate::init_params::merge(&src, &stated)?;
+                    if log.is_empty() {
+                        println!(
+                            "{} exists and this command named no params to merge into it (`--force` rewrites it).",
+                            yaml_path.display()
+                        );
+                    } else {
+                        for entry in &log {
+                            match entry {
+                                crate::init_params::Merged::Changed { param, from, to } if from.is_empty() => {
+                                    println!("  set     {} = {:?}", param, to)
+                                }
+                                crate::init_params::Merged::Changed { param, from, to } => {
+                                    println!("  changed {} = {:?} (was {:?})", param, to, from)
+                                }
+                                crate::init_params::Merged::Same { param, value } => {
+                                    println!("  kept    {} = {:?}", param, value)
+                                }
+                            }
+                        }
+                        if merged != src {
+                            crate::fsx::write_edited_satz(&yaml_path, &src, &merged)?;
+                        }
+                        println!(
+                            "Merged into {} — every line this command did not name is unchanged.",
+                            yaml_path.display()
+                        );
+                    }
+                } else {
                     let domain = customer_domain.clone().unwrap_or_default();
-                    let resolved_iac_user = iac_user.unwrap_or_else(|| format!("first.admin@{}", domain));
+                    // an admin nobody named stays empty: `first.admin` looked
+                    // like an answer and was not one
+                    let resolved_iac_user = iac_user.unwrap_or_default();
 
                     // The template and the shipped presets both compose members as
                     // `user:{first-admin}@{customer-domain}`, so `first-admin` holds the
@@ -1277,21 +1375,46 @@ Thumbs.db
                         );
                     }
 
+                    // the two names that FOLLOW from the short name, by the
+                    // defaults `presets/estate-core.satz` documents — derived
+                    // when it is known, empty when it is not
+                    let shortname = customer_shortname.clone().unwrap_or_default();
+                    let derive_from_shortname = |given: Option<String>, suffix: &str| -> String {
+                        match given {
+                            Some(v) => v,
+                            None if !shortname.trim().is_empty() => format!("{}{}", shortname.trim(), suffix),
+                            None => String::new(),
+                        }
+                    };
+                    let infra_project_name = derive_from_shortname(infra_project_name, "-infra-001");
+                    let infra_bucket_name = derive_from_shortname(infra_bucket_name, "-infra-001-state");
                     let args = crate::template::TemplateArgs {
                         customer_id: c_id.clone(),
                         shortname: customer_shortname.unwrap_or_default(),
                         billing_id: billing_account_infra.unwrap_or_default(),
                         region: default_region.unwrap_or_else(|| "europe-west3".to_string()),
-                        org_id: customer_organization_id.unwrap_or_else(|| "123456789012".to_string()),
+                        // never a placeholder: unset stays empty, and the
+                        // bootstrap gate refuses it by name
+                        org_id: customer_organization_id.unwrap_or_default(),
                         domain: domain.clone(),
-                        project_id: infra_project_name.unwrap_or_default(),
-                        bucket_id: infra_bucket_name.unwrap_or_default(),
+                        project_id: infra_project_name,
+                        bucket_id: infra_bucket_name,
                         first_admin: first_admin.to_string(),
                     };
                     crate::template::generate_template(&args, &yaml_path)?;
                     println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
-                } else {
-                    println!("Template already exists: {}", yaml_path.display());
+                }
+
+                // A day-0 param is either stated, derived, or ASKED — there is
+                // no fourth state where an estate is simply born incomplete.
+                // Stating it is the flag because the interview is interactive
+                // and a scripted run must not block on it.
+                if interview {
+                    println!();
+                    let stdin = std::io::stdin();
+                    let mut input = stdin.lock();
+                    let mut out = std::io::stdout();
+                    crate::interview::run(&yaml_path, &runtime_config, false, false, &mut input, &mut out)?;
                 }
             }
 
@@ -1329,7 +1452,7 @@ Thumbs.db
                      let (p_name, p_ver) = ToolConfig::parse_provider_string_with_default(&prov, &def_ver);
                      let out = PathBuf::from(format!("{}/{}.json", runtime_config.schema_dir, p_name.split('/').next_back().unwrap_or(&p_name)));
                      println!("Updating schema for {} version {} using {}...", p_name, p_ver, tool);
-                     ResourceRegistry::generate_schema(&tool, &p_name, &p_ver, out.to_str().unwrap())?;
+                     ResourceRegistry::generate_schema(&tool, &p_name, &p_ver, out.to_str().ok_or_else(|| format!("{}: the schema path is not UTF-8", out.display()))?)?;
                  }
             } else {
                  // Use parsed config
@@ -1338,7 +1461,7 @@ Thumbs.db
                       let usage_ver = version.clone().unwrap_or(p_ver);
                       let out = PathBuf::from(format!("{}/{}.json", runtime_config.schema_dir, p_name.split('/').next_back().unwrap_or(&p_name)));
                       println!("Updating schema for {} version {} using {}...", p_name, usage_ver, tool);
-                      ResourceRegistry::generate_schema(&tool, &p_name, &usage_ver, out.to_str().unwrap())?;
+                      ResourceRegistry::generate_schema(&tool, &p_name, &usage_ver, out.to_str().ok_or_else(|| format!("{}: the schema path is not UTF-8", out.display()))?)?;
                  }
             }
             println!("Done.");
@@ -1361,7 +1484,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, output, import_config, gate, kind, fork, into, wrap_all } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, gate, kind, fork, into, wrap_all, on_collision, customer_shortname } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1379,6 +1502,11 @@ Thumbs.db
                 }
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
+                    let on_collision: crate::discovery::OnCollision = on_collision.parse()?;
+                    if all {
+                        let on = cfg.apply_all(shape == "org");
+                        println!("import: --all — {} type(s) switched on beside the table's defaults", on);
+                    }
                     let filter: Vec<String> = if only.is_empty() { cfg.only.clone().unwrap_or_default() } else { only };
                     let mut filtered: std::collections::HashSet<String> = std::collections::HashSet::new();
                     if !filter.is_empty() {
@@ -1392,6 +1520,18 @@ Thumbs.db
                             return Err(format!("import: --only {} matches no enabled type — nothing would be imported", filter.join(",")).into());
                         }
                     }
+                    let leave_out: Vec<String> = if exclude.is_empty() { cfg.exclude.clone().unwrap_or_default() } else { exclude };
+                    if !leave_out.is_empty() {
+                        let off = cfg.apply_exclude(&leave_out);
+                        println!("import: excluding {} — {} type(s) switched off", leave_out.join(","), off.len());
+                        if cli.verbose {
+                            for t in &off { println!("  excluded: {}", t); }
+                        }
+                        filtered.extend(off);
+                        if !cfg.resource_types.values().any(|r| r.import) {
+                            return Err(format!("import: --exclude {} leaves no enabled type — nothing would be imported", leave_out.join(",")).into());
+                        }
+                    }
                     let output = output.unwrap_or_else(|| PathBuf::from("discovered.satz"));
                     if into.is_some() && shape != "org" {
                         return Err("--into applies to the live shape (organizations/…, folders/…, projects/…)".into());
@@ -1401,7 +1541,7 @@ Thumbs.db
                             None | Some("-") => None,
                             Some(p) => Some(PathBuf::from(p)),
                         };
-                        import_state(state_json, output, cfg, filtered, cli.verbose, &tool_config, &runtime_config)
+                        import_state(state_json, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, &tool_config, &runtime_config)
                     } else {
                         // `--into` names an existing estate, and the delta runs
                         // exactly `adopt`'s read path — the same Cloud Asset
@@ -1409,22 +1549,22 @@ Thumbs.db
                         // as the same identity: the estate's service account.
                         // Without `--into` there is no estate to be (the output
                         // is a new file), so discovery stays on the human's ADC,
-                        // like `init --from-live`.
+                        // like `init`.
                         let into_path = into.map(|estate| estate_path(estate, &runtime_config));
                         if let Some(estate) = &into_path {
                             configure_estate_impersonation(estate, &runtime_config)?;
                         }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         match into_path {
-                            Some(estate) => import_delta(&parent, estate, cfg, filtered, cli.verbose, &tool_config, &runtime_config).await,
-                            None => import_org(&parent, output, cfg, filtered, cli.verbose, &runtime_config).await,
+                            Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, &tool_config, &runtime_config).await,
+                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, &runtime_config).await,
                         }
                     }
                 }
                 other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
             }
         }
-        Commands::Bootstrap { estate, dry_run, greenfield } => {
+        Commands::Bootstrap { estate, dry_run, greenfield, no_default_grants } => {
             // Satz-native: no .gen.yaml twin build. The vars table and the
             // declared policy set both come from the fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
@@ -1439,6 +1579,7 @@ Thumbs.db
                 config_path,
                 dry_run,
                 greenfield,
+                no_default_grants,
                 runtime_config,
                 cli.config.clone(),
                 cli.validation.clone(),
@@ -1461,7 +1602,7 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::DiffOrganizationalPolicies { estate, customer_organization_id, report, format, recursive } => {
+        Commands::DiffOrganizationalPolicies { estate, customer_organization_id, out, format, recursive } => {
             let format = format.require_one_of(
                 "diff-organizational-policies",
                 &[OutFormat::Text, OutFormat::Markdown, OutFormat::Json],
@@ -1473,7 +1614,7 @@ Thumbs.db
             crate::org_policy::diff_org_policies(
                 config_path,
                 customer_organization_id,
-                report,
+                &out,
                 format,
                 recursive,
                 runtime_config,
@@ -1481,7 +1622,7 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, report, recursive } => {
+        Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, out, recursive } => {
             let format = format.require_one_of(
                 "report-organizational-policies",
                 &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
@@ -1494,7 +1635,7 @@ Thumbs.db
                 customer_organization_id,
                 scope,
                 format,
-                report,
+                &out,
                 recursive,
                 runtime_config,
             )
@@ -1544,7 +1685,7 @@ Thumbs.db
                     format!("{}deployment_mode{}= \"{}\" // switched by `satz migrate`", &caps[1], &caps[2], target_mode)
                 })
                 .to_string();
-            fsx::write(&input_path, new_content)?;
+            fsx::write_edited_satz(&input_path, &content, &new_content)?;
             println!("Updated estate: {}", input_path.display());
 
             // Transpile
@@ -1590,15 +1731,32 @@ Thumbs.db
             crate::presets::run_get_presets(&runtime_config.presets_dir, &runtime_config, force, pristine_dir).await
         }
         Commands::MergePresets { pristine_dir, estate, report_only, adopt } => {
-            let attention = crate::presets::run_merge_presets(
+            let report = crate::presets::run_merge_presets(
                 &runtime_config.presets_dir, pristine_dir, estate, &tool_config, &runtime_config, report_only, &adopt,
             ).await?;
-            if attention {
+            print!("{}", crate::presets::render_merge(&report));
+            if report.attention {
                 std::process::exit(1);
             }
             Ok(())
         }
-        Commands::Require { framework, input, format } => {
+        Commands::Fmt { paths, check, stdin } => run_fmt(&paths, check, stdin),
+        Commands::Lsp => lsp::run().map_err(|e| e as Box<dyn std::error::Error>),
+        Commands::Prowler { input, format } => {
+            let format = format.require_one_of("prowler", &[OutFormat::Text, OutFormat::Json])?;
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let (manifest, included_claims, org_id) =
+                compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            let today = crate::prowler::today_utc();
+            let plan =
+                crate::prowler::plan(&manifest, &included_claims, org_id.as_deref(), &today);
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&plan)?),
+                _ => print!("{}", crate::prowler::render(&plan)),
+            }
+            Ok(())
+        }
+        Commands::Require { framework, input, format, out } => {
             let format = format.require_one_of("require", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             // This command REPORTS, it does not emit — it needs `main.tf` as a
@@ -1615,16 +1773,17 @@ Thumbs.db
                 &included_claims,
                 &manifest,
             )?;
-            match format {
-                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                _ => print!("{}", crate::compliance::render_require(&report)),
-            }
+            let text = match format {
+                OutFormat::Json => serde_json::to_string_pretty(&report)?,
+                _ => crate::compliance::render_require(&report),
+            };
+            write_report(&out, text.as_bytes(), &format!("{} control(s)", report.controls.len()))?;
             if report.gaps() {
                 std::process::exit(1);
             }
             Ok(())
         }
-        Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov, fail_on } => {
+        Commands::ReportCompliance { framework, input, format, out, prowler, no_live, checkov, fail_on } => {
             let format = format.require_one_of(
                 "report-compliance",
                 &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
@@ -1645,7 +1804,7 @@ Thumbs.db
                 org_id.as_deref(),
                 &config_dir,
                 format,
-                report,
+                &out,
                 prowler,
                 checkov_report.as_ref(),
                 no_live,
@@ -1674,17 +1833,22 @@ Thumbs.db
             )
             .await
         }
-        Commands::Triage { framework, input, prowler, format, report, fix } => {
+        Commands::Triage { framework, input, prowler, format, out, fix } => {
             let format = format.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json])?;
+            if fix && format == OutFormat::Json {
+                return Err("triage --fix renders the estate delta as prose; \
+                            use --format markdown, or read the rows from --format json"
+                    .into());
+            }
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
-            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, report, fix)
+            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, &out, fix)
         }
-        Commands::RemediationPlan { framework, input, prowler, checkov, out } => {
+        Commands::RemediationPlan { framework, input, prowler, checkov, out_dir, merge } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
-            let out = out.unwrap_or_else(|| {
+            let out_dir = out_dir.unwrap_or_else(|| {
                 config_dir.join("evidence").join("plan").join(format!("{}-{}", framework, crate::compliance::chrono_free_timestamp()))
             });
             crate::compliance::run_remediation_dossier(
@@ -1695,13 +1859,14 @@ Thumbs.db
                 &input_path,
                 &prowler,
                 checkov_report.as_ref(),
-                &out,
+                &out_dir,
+                merge.as_deref(),
             )
         }
-        Commands::DocPacks { out, check } => {
+        Commands::DocPacks { out_dir, check } => {
             let presets = PathBuf::from(&runtime_config.presets_dir);
-            let out = out.unwrap_or_else(|| presets.join("docs"));
-            crate::doc_packs::run(&presets, &out, check)
+            let out_dir = out_dir.unwrap_or_else(|| presets.join("docs"));
+            crate::doc_packs::run(&presets, &out_dir, check)
         }
         Commands::RunActions { input, check, execute, only, phase } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -1771,7 +1936,7 @@ Thumbs.db
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
         Commands::HclInit { args } => run_tf(&runtime_config, "init", &args),
-        Commands::CheckPresets { input, pristine_dir, format } => {
+        Commands::CheckPresets { input, pristine_dir, format, out } => {
             let format = format.require_one_of("check-presets", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let report = crate::presets::check_presets_report(
@@ -1781,10 +1946,11 @@ Thumbs.db
                 pristine_dir,
             )
             .await?;
-            match format {
-                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                _ => print!("{}", crate::presets::render_check_presets(&report)),
-            }
+            let text = match format {
+                OutFormat::Json => serde_json::to_string_pretty(&report)?,
+                _ => crate::presets::render_check_presets(&report),
+            };
+            write_report(&out, text.as_bytes(), &format!("{} clean, {} stale", report.summary.clean, report.summary.stale))?;
             if report.summary.drift_in_use {
                 std::process::exit(1);
             }
@@ -1802,11 +1968,24 @@ Thumbs.db
                     )
                     .into());
                 }
+                // creating the file is where the doubled directory becomes permanent:
+                // `yaml/x.satz` lands at `yaml/yaml/x.satz` and nothing looks there again
+                if let Some(bare) = redundant_yaml_dir(&input, &runtime_config.yaml_dir) {
+                    return Err(format!(
+                        "{}: an estate path already resolves inside {}/, so this would create {} — \
+                         pass `{}` instead",
+                        input,
+                        runtime_config.yaml_dir,
+                        input_path.display(),
+                        bare
+                    )
+                    .into());
+                }
                 let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
                 if let Some(dir) = input_path.parent() {
                     crate::fsx::create_dir_all(dir)?;
                 }
-                crate::fsx::write(&input_path, crate::template::skeleton(stem))?;
+                crate::fsx::write_generated_satz(&input_path, &crate::template::skeleton(stem))?;
                 eprintln!("wrote {}", input_path.display());
             }
             let stdin = std::io::stdin();
@@ -1815,19 +1994,31 @@ Thumbs.db
             crate::interview::run(&input_path, &runtime_config, all, accept_defaults, &mut input, &mut out)?;
             Ok(())
         }
-        Commands::Questions { input, format, unanswered } => {
-            let format = format.require_one_of("questions", &[OutFormat::Text, OutFormat::Json, OutFormat::Markdown])?;
+        Commands::Questions { input, format, out, unanswered } => {
+            let format = format.require_one_of(
+                "questions",
+                &[OutFormat::Text, OutFormat::Json, OutFormat::Markdown, OutFormat::Xlsx],
+            )?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let mut report = crate::questions::questions_report(&input_path, &runtime_config)?;
             if unanswered {
                 // The summary stays whole: it describes the estate, not the filter.
                 report.questions.retain(|q| q.state == "unanswered");
             }
-            match format {
-                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                OutFormat::Markdown => print!("{}", crate::questions::render_decisions(&report)),
-                _ => print!("{}", crate::questions::render_questions(&report)),
-            }
+            let bytes = match format {
+                // The workbook is the catalog a customer fills in and sends back: one
+                // format among the others since it stopped being a flag of its own.
+                OutFormat::Xlsx => crate::questions::xlsx(&report)?,
+                OutFormat::Json => serde_json::to_string_pretty(&report)?.into_bytes(),
+                OutFormat::Markdown => crate::questions::render_decisions(&report).into_bytes(),
+                _ => crate::questions::render_questions(&report).into_bytes(),
+            };
+            let what = if format == OutFormat::Xlsx {
+                format!("{} decision(s); the `your answer` column is the customer's", report.questions.len())
+            } else {
+                format!("{} question(s)", report.questions.len())
+            };
+            write_report(&out, &bytes, &what)?;
             Ok(())
         }
         Commands::Mcp { root, allow, self_gated } => {
@@ -1854,6 +2045,22 @@ Thumbs.db
             crate::mcp::serve(root, ceiling, self_gated).await
         }
         Commands::OpenReadme => open_url(DOCS_URL),
+        Commands::IacRoles { input, execute, format } => {
+            let format = format.require_one_of("iac-roles", &[OutFormat::Text, OutFormat::Json])?;
+            match input {
+                None => {
+                    match format {
+                        OutFormat::Json => println!("{}", serde_json::to_string_pretty(&crate::iac_roles::table_json())?),
+                        _ => print!("{}", crate::iac_roles::render_table()),
+                    }
+                    Ok(())
+                }
+                Some(estate) => {
+                    let path = estate_path(PathBuf::from(&estate), &runtime_config);
+                    run_iac_roles(&path, execute, format, &tool_config, &runtime_config)
+                }
+            }
+        }
         Commands::Whoami { input, offline } => {
             // An estate changes the question from "who is the human" to "who
             // does this estate act as". A path that does not resolve has to say
@@ -1870,8 +2077,22 @@ Thumbs.db
                     .into());
                 }
                 configure_estate_impersonation(&path, &runtime_config)?;
+                // Online, the estate's resource types say which permissions to test.
+                // An estate that does not compile still gets its identity answered.
+                let probe = if offline {
+                    None
+                } else {
+                    match iac_probe(&path, &tool_config, &runtime_config) {
+                        Ok(p) => Some(p),
+                        Err(e) => {
+                            eprintln!("note: permissions not tested — the estate does not compile: {}", e);
+                            None
+                        }
+                    }
+                };
+                return crate::gcp::identity::whoami(offline, probe).await;
             }
-            crate::gcp::identity::whoami(offline).await
+            crate::gcp::identity::whoami(offline, None).await
         }
         Commands::Completion { shell, install } => {
             let using_default = shell.is_none();
@@ -1921,6 +2142,10 @@ struct PipelineBOut {
     /// Declared `action`s, arguments resolved. Nothing is emitted for them and
     /// nothing runs them here — `run-actions` is the only thing that does.
     actions: Vec<satz_core::pipeline::ResolvedAction>,
+    /// What the compile found and did not refuse on — the warnings and notes the
+    /// CLI printed — as data, for MCP. An error never reaches here: the compile is
+    /// `Err` instead.
+    findings: Vec<crate::findings::Finding>,
 }
 
 use satz_core::pipeline::ResolvedType;
@@ -1986,23 +2211,21 @@ fn pipeline_b_generate(
         Err(format!("use \"{}\": file not found", p))
     };
     let fe = satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader)?;
-    let mut folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-    // Subtractive override channel: estate suppressions apply before conflict
-    // reporting (suppressing a conflicted address resolves the conflict).
-    satz_core::pipeline::apply_suppressions(&mut folded, &fe.suppressions)?;
-    let conflicts = folded.conflicts();
-    if !conflicts.is_empty() {
-        let mut msg = String::from("composition conflicts:");
-        for c in conflicts {
-            msg.push_str(&format!("\n  {}.{}: {} disagreeing definitions", c.addr.tf_type, c.addr.label, c.candidates.len()));
-            for (_, spans) in &c.candidates {
-                for s in spans {
-                    msg.push_str(&format!("\n    - {}:{}", s.file, s.line));
-                }
-            }
-        }
-        return Err(msg.into());
+    let tail = compile_tail(&fe, &resolver, &registry, tool_config, &runtime_config.validation_level, input_path, &src);
+    // The CLI's two silencers: `--no-action-warnings`, and the `iac-roles` command,
+    // which reports the same finding itself and would otherwise print it twice.
+    let findings: Vec<crate::findings::Finding> = tail
+        .findings
+        .into_iter()
+        .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
+        .filter(|f| !(f.kind == crate::findings::Kind::IacRoles && IAC_ROLES_QUIET.load(std::sync::atomic::Ordering::Relaxed)))
+        .collect();
+    if let Err(message) = crate::findings::render(&findings) {
+        return Err(Box::new(crate::findings::CompileRefusal { message, findings }));
     }
+    let out = tail.out.expect("no error finding, so the emitter ran");
+    let providers_tf = tail.providers_tf.expect("no error finding, so the providers were emitted");
+    let folded = tail.folded;
     let org_policies: Vec<(String, serde_yaml::Value)> = folded
         .slots
         .iter()
@@ -2018,16 +2241,7 @@ fn pipeline_b_generate(
             _ => None,
         })
         .collect();
-    let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-    ctx.registry = Some(&registry);
-    let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
-    check_written_references(&folded, &out.manifest)?;
-    let (provider_sources, provider_versions) = provider_maps(tool_config);
-    let providers_tf = crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions)
-        .map_err(|e| format!("emit_providers: {}", e))?;
-    if !NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
-        crate::actions::warn(&fe.actions);
-    }
+    let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
     // computed before the struct below takes ownership of `fe`'s fields
     let descriptions = question_descriptions(&fe);
     Ok(PipelineBOut {
@@ -2045,9 +2259,641 @@ fn pipeline_b_generate(
         // customer_organization_id; the compliance plane wants None there so it
         // reports "no customer-organization-id" instead of querying org "".
         org_id: Some(ctx.org_id.clone()).filter(|s| !s.is_empty()),
+        findings,
     })
 }
 
+/// Set by `iac-roles`, which reports the same finding itself and would otherwise
+/// print it twice.
+static IAC_ROLES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A pack whose question is answered YES while its `use` line is still commented out —
+/// or missing from the estate altogether.
+///
+/// This is the failure the commented menu makes possible, and it is silent without this
+/// check: the param is bound, `satz questions` reports the estate complete, and the pack
+/// emits nothing because no line uses it. It is also how the library's own additions used
+/// to disappear — a pack shipped after an estate was written had no line in that estate, so
+/// answering its question did nothing at all. `satz merge-presets` writes the line;
+/// `satz interview` uncomments it; this says so when neither has happened.
+/// Two of the conflicting files are a fragment and its own dry-run twin, if they are.
+///
+/// The fold reports one address defined twice and names the files; when those files are
+/// `X.satz` and `X-dry-run.satz` the real fault is a decision, not a composition
+/// accident, and the message says so.
+fn dry_run_pair(files: &[String]) -> Option<(String, String)> {
+    let stem = |f: &str| f.rsplit('/').next().unwrap_or(f).to_string();
+    for f in files {
+        let twin = stem(f);
+        let Some(base) = twin.strip_suffix("-dry-run.satz") else { continue };
+        let want = format!("{}.satz", base);
+        if files.iter().any(|o| stem(o) == want) {
+            return Some((want, twin));
+        }
+    }
+    None
+}
+
+/// Everything the compile checks after the front end, collected rather than
+/// stopped at: the CLI renders it (`findings::render`), the language server maps
+/// it to diagnostics, MCP returns it. `estate_src` is the estate's text as the
+/// caller has it — the editor's buffer or the file — for the checks that read the
+/// estate's own lines to say where.
+pub(crate) struct Tail {
+    pub folded: satz_core::algebra::Folded,
+    /// `None` when an error finding stopped the compile before or at the emitter.
+    pub out: Option<crate::emitter::EmitOut>,
+    pub providers_tf: Option<String>,
+    pub findings: Vec<crate::findings::Finding>,
+}
+
+pub(crate) fn compile_tail(
+    fe: &satz_core::pipeline::FrontEnd,
+    resolver: &EstateResolver,
+    registry: &ResourceRegistry,
+    tool_config: &ToolConfig,
+    level: &str,
+    estate: &Path,
+    estate_src: &str,
+) -> Tail {
+    use crate::findings::{Finding, Kind, Severity};
+    let mut f: Vec<Finding> = Vec::new();
+    // Before the fold, because the fold would refuse the same thing as two disagreeing
+    // definitions of one address and name the files instead of the decision.
+    dry_run_conflict_findings(&fe.env, estate, estate_src, &mut f);
+    if !f.is_empty() {
+        return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, findings: f };
+    }
+    let mut folded = satz_core::pipeline::fold_fragments(resolver, &fe.fragments);
+    // Subtractive override channel: estate suppressions apply before conflict
+    // reporting (suppressing a conflicted address resolves the conflict).
+    if let Err(e) = satz_core::pipeline::apply_suppressions(&mut folded, &fe.suppressions) {
+        f.push(Finding::new(Severity::Error, Kind::Suppression, e.msg).located(e.file, e.line as u32));
+        return Tail { folded, out: None, providers_tf: None, findings: f };
+    }
+    if conflict_findings(&folded, &mut f) {
+        return Tail { folded, out: None, providers_tf: None, findings: f };
+    }
+    let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+    ctx.registry = Some(registry);
+    let out = match crate::emitter::emit(&folded, &ctx) {
+        Ok(o) => o,
+        Err(e) => {
+            f.push(Finding::new(Severity::Error, Kind::Emit, format!("emit: {}", e)));
+            return Tail { folded, out: None, providers_tf: None, findings: f };
+        }
+    };
+    written_reference_findings(&folded, &out.manifest, &mut f);
+    missing_required_findings(&out.missing_required, level, &mut f);
+    iac_role_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
+    unadopted_pack_findings(estate, estate_src, &fe.env, level, &mut f);
+    let (provider_sources, provider_versions) = provider_maps(tool_config);
+    let providers_tf = match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
+            None
+        }
+    };
+    action_findings(&fe.actions, &mut f);
+    hcl_findings(&fe.hcl, &mut f);
+    Tail { folded, out: Some(out), providers_tf, findings: f }
+}
+
+/// A control cannot be measured and enforced at the same time.
+///
+/// A dry-run twin declares the SAME policy address as the fragment it is derived from,
+/// with `dry_run_spec` where that one has `spec`. Both gates true means both fragments
+/// are used, which the ⊕ fold refuses as two disagreeing definitions of one address —
+/// correctly, but naming files rather than the decision behind them. This says what
+/// happened and what to do about it, and it is always an error: there is no reading of
+/// "measure it and enforce it" that the estate could have meant. Its line is the dry
+/// run's `param = true` in the estate.
+fn dry_run_conflict_findings(
+    env: &satz_core::pipeline::Env,
+    estate: &Path,
+    estate_src: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let on = |p: &str| env.get(p).and_then(|v| v.as_bool()) == Some(true);
+    let mut clashes: Vec<(String, &str)> = Vec::new();
+    for (_, gate, _, _) in crate::template::PACK_LINES {
+        let Some(enforcing) = gate.strip_suffix("_dry_run") else { continue };
+        if on(gate) && on(enforcing) {
+            clashes.push((enforcing.to_string(), gate));
+        }
+    }
+    if clashes.is_empty() {
+        return;
+    }
+    let group = format!("{} control(s) asked to be measured and enforced at once:", clashes.len());
+    let label = estate.to_string_lossy().into_owned();
+    for (enforcing, dry) in &clashes {
+        f.push(
+            Finding::new(
+                Severity::Error,
+                Kind::DryRunConflict,
+                format!(
+                    "`{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n     \
+                     Switch one off: `{}` to size the control against this organisation first, `{}` to enforce it now.",
+                    enforcing, dry, dry, enforcing
+                ),
+            )
+            .in_group(&group)
+            .maybe_at(label.clone(), crate::findings::param_line(estate_src, dry)),
+        );
+    }
+}
+
+/// The fold's conflicts, one finding per site so an editor marks every file involved;
+/// a fragment and its dry-run twin get the decision named beside the files.
+fn conflict_findings(folded: &satz_core::algebra::Folded, f: &mut Vec<crate::findings::Finding>) -> bool {
+    use crate::findings::{Finding, Kind, Severity};
+    let conflicts = folded.conflicts();
+    if conflicts.is_empty() {
+        return false;
+    }
+    let mut files: Vec<String> = Vec::new();
+    for c in &conflicts {
+        let sites: Vec<String> =
+            c.candidates.iter().flat_map(|(_, spans)| spans.iter().map(|s| format!("{}:{}", s.file, s.line))).collect();
+        for (_, spans) in &c.candidates {
+            for sp in spans {
+                files.push(sp.file.clone());
+                f.push(
+                    Finding::new(
+                        Severity::Error,
+                        Kind::Conflict,
+                        format!("{}.{}: {} disagreeing definitions — {}", c.addr.tf_type, c.addr.label, c.candidates.len(), sites.join(", ")),
+                    )
+                    .in_group("composition conflicts:")
+                    .located(sp.file.clone(), sp.line),
+                );
+            }
+        }
+    }
+    if let Some(pair) = dry_run_pair(&files) {
+        f.push(
+            Finding::new(
+                Severity::Error,
+                Kind::Conflict,
+                format!(
+                    "`{}` is the dry-run twin of `{}` and declares the same policies with \
+                     `dry_run_spec`.\n  A dry run REPLACES enforcement while it measures — use one or the other, \
+                     never both.",
+                    pair.1, pair.0
+                ),
+            )
+            .in_group("composition conflicts:"),
+        );
+    }
+    true
+}
+
+/// A `"${{…}}"` reference to an address this estate does not emit — at the line that
+/// writes it.
+fn written_reference_findings(
+    folded: &satz_core::algebra::Folded,
+    manifest: &crate::manifest::Manifest,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let emitted = manifest.addresses();
+    for r in satz_core::pipeline::written_references(folded).into_iter().filter(|r| !emitted.contains(&r.address)) {
+        let (tf_type, _) = r.address.split_once('.').unwrap_or((r.address.as_str(), ""));
+        let mut same: Vec<&str> = emitted
+            .iter()
+            .filter_map(|a| a.strip_prefix(tf_type).and_then(|rest| rest.strip_prefix('.')))
+            .collect();
+        same.sort();
+        let hint = if same.is_empty() {
+            format!("no `{}` is emitted here at all", tf_type)
+        } else {
+            format!("emitted `{}` labels: {}", tf_type, same.join(", "))
+        };
+        f.push(
+            Finding::new(
+                Severity::Error,
+                Kind::WrittenReference,
+                format!("{}:{}: {} writes `${{{}}}`\n    {}", r.file, r.line, r.site, r.traversal, hint),
+            )
+            .in_group("references to resources this estate does not emit:")
+            .located(r.file, r.line),
+        );
+    }
+}
+
+/// An emitted resource missing what its schema requires — at the declaring block,
+/// at the validation level: `warn` says so, `error` refuses, `none` skips.
+fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level: &str, f: &mut Vec<crate::findings::Finding>) {
+    use crate::findings::{Finding, Kind, Severity};
+    let Some(sev) = crate::findings::at_level(level) else { return };
+    for m in missing {
+        let at = m.origin.as_ref().map(|(fl, l)| format!(" ({}:{})", fl, l)).unwrap_or_default();
+        let text = format!("{}{}: the provider requires {}", m.address, at, m.missing.join(", "));
+        let mut finding = if sev == Severity::Error {
+            Finding::new(sev, Kind::MissingRequired, text).in_group("required arguments missing:")
+        } else {
+            Finding::new(sev, Kind::MissingRequired, format!("{} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", text))
+        };
+        if let Some((fl, l)) = &m.origin {
+            finding = finding.located(fl.clone(), *l);
+        }
+        f.push(finding);
+    }
+}
+
+/// The roles the estate's resource types need that it does not grant its IaC
+/// service account, at the validation level: `warn` names them and the command
+/// that writes them, `error` refuses, `none` skips. A type the table does not know
+/// is a note, never an error — satz cannot say which role it needs. The line is the
+/// estate's `svc_iac_account` param, the nearest thing the grant has to a site.
+fn iac_role_findings(
+    manifest: &crate::manifest::Manifest,
+    env: &satz_core::pipeline::Env,
+    estate: &Path,
+    estate_src: &str,
+    level: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let Some(sev) = crate::findings::at_level(level) else { return };
+    let get = |k: &str| env.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let Some(sa) = crate::iac_roles::service_account_of(get) else { return };
+    let (needs, unknown) = crate::iac_roles::needs(manifest);
+    let granted = crate::iac_roles::granted(manifest, &sa);
+    let missing = crate::iac_roles::missing(&needs, &granted);
+    let file = estate.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+    if !missing.is_empty() {
+        f.push(
+            Finding::new(
+                sev,
+                Kind::IacRoles,
+                format!(
+                    "the IaC service account {} lacks roles this estate's resource types need — \
+                     `satz iac-roles {} --execute` writes them into the estate:\n  {}",
+                    sa,
+                    file,
+                    crate::iac_roles::describe(&crate::iac_roles::plan(&missing, &granted)).join("\n  ")
+                ),
+            )
+            .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "svc_iac_account")),
+        );
+    }
+    if !granted.owner() && !unknown.is_empty() {
+        f.push(Finding::new(
+            Severity::Note,
+            Kind::IacRoles,
+            format!(
+                "no role is known for {} — grant the one it needs to the IaC service account in the estate",
+                unknown.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+        ));
+    }
+}
+
+/// A pack whose question is answered YES while its `use` line is still commented out —
+/// or missing from the estate altogether.
+///
+/// This is the failure the commented menu makes possible, and it is silent without this
+/// check: the param is bound, `satz questions` reports the estate complete, and the pack
+/// emits nothing because no line uses it. `satz merge-presets` writes the line;
+/// `satz interview` uncomments it; this says so when neither has happened — at the
+/// commented line when there is one.
+fn unadopted_pack_findings(
+    estate: &Path,
+    estate_src: &str,
+    env: &satz_core::pipeline::Env,
+    level: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind};
+    let Some(sev) = crate::findings::at_level(level) else { return };
+    let mut items: Vec<(String, Option<u32>)> = Vec::new();
+    for (path, gate, _, _) in crate::template::PACK_LINES {
+        if gate.is_empty() || env.get(*gate).and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        let needle = format!("use \"{}\"", path);
+        let active = estate_src.lines().map(str::trim).any(|l| l.starts_with("use ") && l.contains(&needle));
+        if active {
+            continue;
+        }
+        match estate_src.lines().position(|l| l.contains(&needle)) {
+            Some(i) => items.push((
+                format!("`{}` is true and `{}` is still commented out — uncomment it, or `satz interview` will", gate, path),
+                Some(i as u32 + 1),
+            )),
+            None => items.push((
+                format!("`{}` is true and this estate has no line for `{}` — run `satz merge-presets` to write it", gate, path),
+                None,
+            )),
+        }
+    }
+    if items.is_empty() {
+        return;
+    }
+    let group = format!(
+        "{} pack(s) this estate asks for but does not use — the answer is bound and nothing emits it:",
+        items.len()
+    );
+    let label = estate.to_string_lossy().into_owned();
+    for (msg, line) in items {
+        f.push(Finding::new(sev, Kind::UnadoptedPack, msg).in_group(&group).maybe_at(label.clone(), line));
+    }
+}
+
+/// Every declared action, at its line: `satz run-actions` will execute it, and the
+/// difference between "my estate declares this" and "a pack I downloaded declares
+/// this" is the whole of the trust story. A `reason` does not downgrade this to a
+/// note — HCL only deploys, an action executes.
+fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<crate::findings::Finding>) {
+    use crate::findings::{Finding, Kind, Severity};
+    for a in actions {
+        f.push(
+            Finding::new(
+                Severity::Warning,
+                Kind::Action,
+                format!(
+                    "action \"{}\" declared in {}:{}{} — `satz run-actions` will execute {}\n  reason: {}",
+                    a.name,
+                    a.file,
+                    a.line,
+                    if a.from_pack { " (from a pack)" } else { "" },
+                    a.run,
+                    a.reason
+                ),
+            )
+            .located(a.file.clone(), a.line as u32),
+        );
+    }
+    if actions.iter().any(|a| a.from_pack) {
+        f.push(Finding::new(
+            Severity::Note,
+            Kind::Action,
+            "--no-pack-actions ignores pack-declared actions, --no-actions disables all execution, \
+             --no-action-warnings silences this.",
+        ));
+    }
+}
+
+/// Every raw `hcl { … }` block, at its line: emitted verbatim, opaque to the
+/// compliance plane — a warning until `hcl trust` says it was reviewed, a note after.
+fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crate::findings::Finding>) {
+    use crate::findings::{Finding, Kind, Severity};
+    for b in blocks {
+        let lines = dedent_hcl(&b.body).lines().count();
+        let finding = match &b.trust {
+            Some(reason) => Finding::new(
+                Severity::Note,
+                Kind::HclPassthrough,
+                format!("raw HCL passthrough at {}:{} ({} lines) — trusted: {}", b.file, b.line, lines, reason),
+            ),
+            None => Finding::new(
+                Severity::Warning,
+                Kind::HclPassthrough,
+                format!(
+                    "raw HCL passthrough at {}:{} ({} lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
+                    b.file, b.line, lines
+                ),
+            ),
+        };
+        f.push(finding.located(b.file.clone(), b.line as u32));
+    }
+}
+
+/// What `whoami <estate>` tests live: the estate's needs, and its organization,
+/// infra project and billing account to test them on.
+pub(crate) fn iac_probe(
+    path: &Path,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<crate::iac_roles::Probe, Box<dyn std::error::Error>> {
+    // whoami reports the permissions live; the compile's own note would repeat them
+    IAC_ROLES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    let out = pipeline_b_generate(path, tool_config, runtime_config)?;
+    let params = estate_param_strings(path, runtime_config)?;
+    let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
+    Ok(crate::iac_roles::Probe {
+        needs: crate::iac_roles::needs(&out.manifest).0,
+        scope_root: get("customer_organization_id").map(|o| crate::org_policy::normalize_parent(&o)),
+        project: get("infra_project_name").map(|p| format!("projects/{}", p)),
+        billing_account: get("billing_account_infra"),
+    })
+}
+
+/// What `iac-roles <estate>` reports.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct IacRolesReport {
+    pub estate: String,
+    pub service_account: String,
+    pub granted: crate::iac_roles::Granted,
+    pub needs: Vec<crate::iac_roles::Need>,
+    pub missing: Vec<crate::iac_roles::Need>,
+    /// the roles `--execute` writes for `missing`
+    pub write: Vec<crate::iac_roles::Pick>,
+    /// emitted types the table has no entry for
+    pub unknown_types: Vec<String>,
+}
+
+/// The estate's params as strings, snake_case — what `{param}` interpolation reads.
+fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
+    Ok(satz_estate_params(path, &runtime_config.include_dirs)?
+        .into_iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.replace('-', "_"), s.to_string())))
+        .collect())
+}
+
+pub(crate) fn iac_roles_report(
+    path: &Path,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<IacRolesReport, Box<dyn std::error::Error>> {
+    let out = pipeline_b_generate(path, tool_config, runtime_config)?;
+    let params = estate_param_strings(path, runtime_config)?;
+    let sa = crate::iac_roles::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
+        format!(
+            "{}: the estate names no IaC service account (svc_iac_account and infra_project_name)",
+            path.display()
+        )
+    })?;
+    let (needs, unknown) = crate::iac_roles::needs(&out.manifest);
+    let granted = crate::iac_roles::granted(&out.manifest, &sa);
+    let missing = crate::iac_roles::missing(&needs, &granted);
+    Ok(IacRolesReport {
+        estate: path.display().to_string(),
+        service_account: sa,
+        unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
+        write: crate::iac_roles::plan(&missing, &granted),
+        granted,
+        needs,
+        missing,
+    })
+}
+
+fn render_iac_roles(r: &IacRolesReport) -> String {
+    let mut out = format!("IaC service account: {}\n", r.service_account);
+    out.push_str(&format!(
+        "the estate grants it {} role(s) at the organization and {} on the billing account; satz's reads and its resource types need {} permission(s)\n",
+        r.granted.organization.len(),
+        r.granted.billing_account.len(),
+        r.needs.iter().filter(|n| n.permission.is_some()).count()
+    ));
+    if r.granted.owner() {
+        out.push_str("roles/owner at the organization meets every organization and project need\n");
+    }
+    if r.missing.is_empty() {
+        out.push_str("missing: none\n");
+    } else {
+        out.push_str("missing:\n");
+        for l in crate::iac_roles::describe(&r.write) {
+            out.push_str(&format!("  {}\n", l));
+        }
+    }
+    let workspace: std::collections::BTreeSet<String> = r
+        .needs
+        .iter()
+        .filter(|n| n.scope == crate::iac_roles::Scope::Workspace)
+        .flat_map(|n| n.reason.iter().map(move |t| format!("{} — {}", t, n.roles[0])))
+        .collect();
+    for w in workspace {
+        out.push_str(&format!("not checked: {} (not an IAM role)\n", w));
+    }
+    if !r.unknown_types.is_empty() {
+        out.push_str(&format!(
+            "no role known for: {} — grant the one it needs in the estate\n",
+            r.unknown_types.join(", ")
+        ));
+    }
+    out
+}
+
+/// `iac-roles <estate>`: the report, and with `--execute` the missing roles
+/// written into the estate file. The edit proves itself — the estate compiles and
+/// nothing is missing afterwards — or the file is restored.
+fn run_iac_roles(
+    path: &Path,
+    execute: bool,
+    format: OutFormat,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    IAC_ROLES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    let report = iac_roles_report(path, tool_config, runtime_config)?;
+    let emit = |r: &IacRolesReport| -> Result<(), Box<dyn std::error::Error>> {
+        match format {
+            OutFormat::Json => println!("{}", serde_json::to_string_pretty(r)?),
+            _ => print!("{}", render_iac_roles(r)),
+        }
+        Ok(())
+    };
+    if !execute || report.missing.is_empty() {
+        emit(&report)?;
+        if !report.missing.is_empty() {
+            let (org, bill) = crate::iac_roles::to_write(&report.write);
+            return Err(format!(
+                "{} role(s) missing — `satz iac-roles {} --execute` writes them into the estate",
+                org.len() + bill.len(),
+                path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let (written, after) = iac_roles_write(path, &report, tool_config, runtime_config)?;
+    for w in &written {
+        println!("wrote {} → {}", w, path.display());
+    }
+    emit(&after)
+}
+
+/// Write the missing roles into the estate and re-check: the grants written, and
+/// the report the edited estate yields. A gap that survives the write, or an
+/// estate that no longer compiles, restores the file and is an error — the
+/// estate is never left half-edited. Prints nothing, so the MCP tool shares it.
+pub(crate) fn iac_roles_write(
+    path: &Path,
+    report: &IacRolesReport,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(Vec<String>, IacRolesReport), Box<dyn std::error::Error>> {
+    let (org, bill) = crate::iac_roles::to_write(&report.write);
+    let params = estate_param_strings(path, runtime_config)?;
+    let before = fsx::read_to_string(path)?;
+    let written = crate::iac_roles::write_grants(path, &params, &report.service_account, &org, &bill)?;
+    let restore = |why: String| -> Box<dyn std::error::Error> {
+        match crate::fsx::write_verbatim(path, &before) {
+            Ok(()) => format!("{} — {} restored", why, path.display()).into(),
+            Err(e) => format!("{} — and restoring {} failed: {}", why, path.display(), e).into(),
+        }
+    };
+    match iac_roles_report(path, tool_config, runtime_config) {
+        Ok(after) if after.missing.is_empty() => Ok((written, after)),
+        Ok(after) => Err(restore(format!(
+            "the grants were written and {} permission(s) are still missing",
+            after.missing.len()
+        ))),
+        Err(e) => Err(restore(format!("the edited estate does not compile ({})", e))),
+    }
+}
+
+/// Write a compile's HCL into `dir`: `main.tf` with its provenance line, the other
+/// files when they are non-empty, and no `imports.tf` left from an earlier run.
+/// Returns the files written. `estate` is what the provenance line names. The CLI
+/// and the MCP `satz_transpile` tool both write through here.
+pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, estate: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    if !dir.exists() {
+        fsx::create_dir_all(dir)?;
+    }
+    let imports_path = dir.join("imports.tf");
+    if imports_path.exists() {
+        fsx::remove_file(&imports_path)?;
+    }
+    // A provenance line, added at WRITE time rather than by the emitter. The
+    // emission itself must not depend on the binary version, or every release
+    // would move every corpus snapshot — and the corpus exists to show when the
+    // OUTPUT changed, not when the version did.
+    //
+    // What it is for: telling at a glance which estates across a fleet were last
+    // emitted by an old satz —
+    //   grep -h "Generated by satz" ~/estates/*/hcl/main.tf | sort -u
+    //
+    // What it is NOT: evidence that an estate still compiles, or that it still
+    // emits the same resources. A language tightening can break an estate whose
+    // stamp looks current, and leave one alone whose stamp is ancient. Only
+    // re-transpiling and comparing answers that. The stamp says where to look
+    // first; the fleet check says what is actually true.
+    //
+    // A comment rather than a value: a block-level comparison strips comment-only
+    // lines, so this never reads as a delta.
+    let stamped = format!(
+        "# Generated by satz v{} — do not edit; re-emit from {}.\n\n{}",
+        env!("CARGO_PKG_VERSION"),
+        estate,
+        out.main_tf
+    );
+    let mut written = Vec::new();
+    for (name, content) in [
+        ("main.tf", stamped.as_str()),
+        ("providers.tf", out.providers_tf.as_str()),
+        ("variables.tf", out.variables_tf.as_str()),
+        ("terraform.tfvars", out.tfvars.as_str()),
+        ("imports.tf", out.imports_tf.as_str()),
+    ] {
+        if content.trim().is_empty() {
+            continue;
+        }
+        let p = dir.join(name);
+        fsx::write(&p, content)?;
+        written.push(p);
+    }
+    Ok(written)
+}
+
+/// Resources the provider will refuse for a missing required argument or block,
+/// reported at the validation level: `error` refuses the compile, `warn` (the
+/// default) prints one warning per resource, `none` says nothing.
 /// `plan -x --config <dir>` puts `--config` inside the pass-through args, where
 /// clap never sees it. Detect that and print the command that would have worked.
 fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
@@ -2080,15 +2926,19 @@ fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
 
 /// Run the configured Terraform tool in the estate's hcl dir.
 ///
-/// A thin wrapper on purpose: the point is not to reimplement `plan`/`apply` but
-/// to make them location-independent like every other command, so
+/// A thin wrapper: the point is not to reimplement `plan`/`apply` but to make
+/// them location-independent like every other command, so
 /// `satz apply --config <estate>` works from anywhere. stdio is inherited, so
 /// apply's approval prompt and the usual coloured output behave normally, and the
 /// tool's own exit code is propagated — a failed plan must fail the caller.
 ///
-/// It deliberately does NOT transpile first: `hcl/` is generated, but coupling
-/// generation to the deploy step would change what `plan` means and hide a diff
-/// the operator should see. Transpile, look, then plan.
+/// The one thing it adds: `plan` and `apply` replace an org policy that the
+/// state holds with rules and the estate now declares reset
+/// (`reset_replacements`, ADR 0011), and say so.
+///
+/// It does NOT transpile first: `hcl/` is generated, but coupling generation to
+/// the deploy step would change what `plan` means and hide a diff the operator
+/// should see. Transpile, look, then plan.
 fn run_tf(
     runtime_config: &ToolConfig,
     subcommand: &str,
@@ -2109,11 +2959,22 @@ fn run_tf(
         )
         .into());
     }
+    let mut args = args.to_vec();
+    if subcommand == "plan" || subcommand == "apply" {
+        for address in reset_replacements_for(runtime_config, hcl_dir, &args)? {
+            eprintln!(
+                "note: {} — the state holds it with rules and the estate declares it reset; \
+                 replacing it (-replace), because the API refuses to switch a policy with rules to reset in place",
+                address
+            );
+            args.push(format!("-replace={}", address));
+        }
+    }
     eprintln!("{} {} (in {})", runtime_config.tf_tool, subcommand, hcl_dir.display());
     let status = std::process::Command::new(&runtime_config.tf_tool)
         .current_dir(hcl_dir)
         .arg(subcommand)
-        .args(args)
+        .args(&args)
         .status()
         .map_err(|e| format!("could not run '{}': {}", runtime_config.tf_tool, e))?;
     match status.code() {
@@ -2123,6 +2984,82 @@ fn run_tf(
         Some(code) => std::process::exit(code),
         None => Err(format!("{} {} was terminated by a signal", runtime_config.tf_tool, subcommand).into()),
     }
+}
+
+/// The org policies `plan` and `apply` replace instead of updating in place: each
+/// one the state holds with rules while the configuration declares it `reset`.
+/// The provider updates such a policy by sending the rules it holds together with
+/// `reset = true`, and the API refuses the pair (`Cannot set PolicyRules if reset
+/// is true`). That is the state after `adopt` moved a legacy twin onto its
+/// `-superseded` address. A replace deletes the policy and creates it reset.
+fn reset_replacements(manifest: &crate::manifest::Manifest, state: &crate::bootstrap::StateIndex) -> Vec<String> {
+    manifest
+        .of_type("google_org_policy_policy")
+        .filter(|r| r.reset && state.holds_rules(&r.address()))
+        .map(|r| r.address())
+        .collect()
+}
+
+/// Flags of `tofu plan`/`apply` that take their value as the next argument when
+/// written without `=`. Every other flag is a switch.
+const TF_VALUE_FLAGS: &[&str] =
+    &["-var", "-var-file", "-target", "-exclude", "-replace", "-lock-timeout", "-parallelism", "-state", "-state-out", "-backup", "-out", "-generate-config-out"];
+
+/// The addresses these arguments already replace, or `None` when satz must not add
+/// `-replace`: a saved plan (a positional argument) cannot take one, and a destroy
+/// or a refresh-only run replaces nothing.
+fn replace_args(args: &[String]) -> Option<std::collections::BTreeSet<String>> {
+    let mut replaced = std::collections::BTreeSet::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let bare = a.trim_start_matches('-');
+        if !a.starts_with('-') {
+            return None;
+        }
+        let (flag, value) = match a.split_once('=') {
+            Some((f, v)) => (format!("-{}", f.trim_start_matches('-')), Some(v.to_string())),
+            None => (format!("-{}", bare), None),
+        };
+        if flag == "-destroy" || flag == "-refresh-only" {
+            return None;
+        }
+        let value = match value {
+            Some(v) => Some(v),
+            None if TF_VALUE_FLAGS.contains(&flag.as_str()) => it.next().cloned(),
+            None => None,
+        };
+        if flag == "-replace" {
+            replaced.extend(value);
+        }
+    }
+    Some(replaced)
+}
+
+/// `reset_replacements` for the estate in `hcl_dir`, minus what the arguments
+/// already replace. The state is read only when the emitted configuration declares
+/// a reset policy at all.
+fn reset_replacements_for(
+    runtime_config: &ToolConfig,
+    hcl_dir: &Path,
+    args: &[String],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let Some(already) = replace_args(args) else {
+        return Ok(Vec::new());
+    };
+    let main_tf = hcl_dir.join("main.tf");
+    let text = match std::fs::read_to_string(&main_tf) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("{}: {}", main_tf.display(), e).into()),
+    };
+    let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
+    let manifest = crate::manifest::Manifest::from_blocks(body.blocks());
+    if !manifest.of_type("google_org_policy_policy").any(|r| r.reset) {
+        return Ok(Vec::new());
+    }
+    let state = crate::bootstrap::state_index(&runtime_config.tf_tool, hcl_dir)
+        .map_err(|e| format!("reading the state for org policies that must be replaced: {}", e))?;
+    Ok(reset_replacements(&manifest, &state).into_iter().filter(|a| !already.contains(a)).collect())
 }
 
 /// satz reads Satz estates. A `.yaml` estate is not an error the user can fix
@@ -2182,14 +3119,29 @@ fn convert_yaml_to_satz(
         .and_then(|s| s.to_str())
         .unwrap_or("converted")
         .replace(['-', '.'], "_");
+    // An include of a LIST is a value, not a pack: inline it before converting.
+    // Targets resolve the way a use-path does — beside the file, then the
+    // include dirs.
+    let include_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let include_dirs = runtime_config.include_dirs.clone();
+    let load = |p: &str| -> Option<String> {
+        std::iter::once(include_base.join(p))
+            .chain(include_dirs.iter().map(|d| Path::new(d).join(p)))
+            .find(|c| c.is_file())
+            .and_then(|c| std::fs::read_to_string(c).ok())
+    };
+    let (src, inlined) = satz_core::migrate::inline_sequence_includes(&src, &load)
+        .map_err(|e| format!("{} ({})", e, src_path.display()))?;
+    for i in &inlined {
+        println!("inlined: {} — an include of a list is a value, not a pack", i);
+    }
     let satz = satz_core::migrate::convert(&src, &kind, &name)
         .map_err(|e| format!("{} ({})", e, src_path.display()))?;
     // The dialect's implicit `google_` prefix is not Satz, so a verbatim
     // copy of the YAML keys would not compile. Schemas decide.
-    let type_registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let satz = satz_core::migrate::normalize_type_keys(&satz, &|t: &str| {
-        type_registry.as_ref().is_some_and(|r| r.resources.contains_key(t))
-    });
+    let type_registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let satz = satz_core::migrate::normalize_type_keys(&satz, &|t: &str| type_registry.resources.contains_key(t));
     // …and point `use` at converted packs, resolved the way the compiler
     // resolves a use-path: beside the file first, then the include dirs.
     let use_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -2227,7 +3179,7 @@ fn convert_yaml_to_satz(
         src_path.with_extension("satz")
     };
 
-    fsx::write(&satz_path, satz.as_bytes())?;
+    fsx::write_generated_satz(&satz_path, &satz)?;
     println!("converted {} -> {}", src_path.display(), satz_path.display());
     if satz.contains("// NEEDS ADOPTION") {
         println!("note: the source used `!import-include` — run `satz adopt` on the converted estate to import what already exists.");
@@ -2285,11 +3237,14 @@ fn convert_yaml_to_satz(
 }
 
 /// The state shape of `satz import`: `tofu show -json` (a file, or run now).
+#[allow(clippy::too_many_arguments)]
 fn import_state(
     state_json: Option<PathBuf>,
     output: PathBuf,
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
+    on_collision: crate::discovery::OnCollision,
+    customer_shortname: Option<&str>,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -2313,12 +3268,16 @@ fn import_state(
         }
         serde_json::from_slice(&out.stdout)?
     };
-    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let type_names: std::collections::HashSet<String> =
-        registry.as_ref().map(|r| r.resources.keys().cloned().collect()).unwrap_or_default();
-    let discoverer = crate::discovery::Discoverer::new(state_val, registry, enabled_types, filtered);
-    let found = discoverer.discover()?;
-    write_imported(&found.config, output, None, &|t| type_names.contains(t), runtime_config)?;
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered, on_collision);
+    let mut found = discoverer.discover()?;
+    let registry = discoverer.registry.as_ref().ok_or("the registry loaded above is gone")?;
+    // the state shape has no ADC: what the data carries, and the flag
+    let org = organization_of(&found.config, None);
+    let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), None, customer_shortname);
+    vocab.apply_billing(&mut found.config);
+    write_imported(&found.config, output, None, registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
     if verbose {
         crate::discovery::Discoverer::print_summary(&found.config);
@@ -2328,25 +3287,39 @@ fn import_state(
 
 /// The live shape of `satz import`: one Cloud Asset Inventory sweep under
 /// `parent` (`organizations/<n>`, `folders/<n>` or `projects/<id>`).
+#[allow(clippy::too_many_arguments)]
 async fn import_org(
     parent: &str,
     output: PathBuf,
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
+    on_collision: crate::discovery::OnCollision,
+    customer_shortname: Option<&str>,
     verbose: bool,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("import: root {}", parent);
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
-    let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let org_hint = cfg.root.as_ref().and_then(|r| r.organization.clone())
         .or_else(|| parent.strip_prefix("organizations/").map(String::from));
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision).await?;
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
-    write_imported(&found.config, output, org_hint.as_deref(), &|t| type_names.contains(t), runtime_config)?;
+    // what the ADC states, the way `init` reads it — the sweep's
+    // organization is the hint, so an identity that sees many is no ambiguity
+    let live = crate::gcp::identity::live_defaults(true, true, org_hint.as_deref()).await?;
+    let facts = crate::vocabulary::LiveFacts {
+        customer_id: live.customer_id.clone(),
+        customer_domain: Some(live.org_display_name.clone().unwrap_or_else(|| live.customer_domain.clone())),
+        first_admin: Some(live.first_admin.clone()),
+        billing_account: live.billing_account.clone(),
+    };
+    let org = organization_of(&found.config, org_hint.as_deref());
+    let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), Some(&facts), customer_shortname);
+    vocab.apply_billing(&mut found.config);
+    write_imported(&found.config, output, org_hint.as_deref(), &registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
     Ok(())
 }
@@ -2355,15 +3328,19 @@ fn write_imported(
     config: &Config,
     output: PathBuf,
     org_hint: Option<&str>,
-    is_type: &dyn Fn(&str) -> bool,
+    registry: &ResourceRegistry,
+    vocab: &crate::vocabulary::Vocabulary,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
-    let text = discovered_to_satz(config, "discovered", org_hint, is_type)?;
+    for line in vocab.report() {
+        println!("{}", line);
+    }
+    let text = discovered_to_satz(config, "discovered", org_hint, registry, vocab)?;
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
-    fsx::write(&final_output, text)?;
+    fsx::write_generated_satz(&final_output, &text)?;
     println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
     Ok(())
 }
@@ -2450,9 +3427,11 @@ fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
 
 /// A discovered `Config` as a Satz estate that compiles as-is: the local
 /// backend the emitter requires, `customer_organization_id` inferred from the
-/// resources (every `organizations/<n>` reference or `org_id` names it), the
-/// data printed by the same printer the yaml import uses, and shorthand
-/// type keys (`folder`, `project`) normalised to provider names.
+/// resources (every `organizations/<n>` reference or `org_id` names it) and
+/// referenced wherever the number was written, the document shaped into the
+/// language's own forms (`satz_core::condense`), printed by the same printer
+/// the yaml import uses, and shorthand type keys (`folder`, `project`)
+/// normalised to provider names.
 ///
 /// Discovery emits plain data — no anchors, tags, includes or nulls — so no
 /// dialect pre-pass is needed; that is what makes the direct route possible.
@@ -2460,25 +3439,37 @@ fn discovered_to_satz(
     config: &Config,
     name: &str,
     org_hint: Option<&str>,
-    is_type: &dyn Fn(&str) -> bool,
+    registry: &ResourceRegistry,
+    vocab: &crate::vocabulary::Vocabulary,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let is_type = |t: &str| registry.resources.contains_key(t);
     let mut top = match serde_yaml::to_value(config)? {
         serde_yaml::Value::Mapping(m) => m,
         other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
     };
     if !top.contains_key(serde_yaml::Value::String("terraform".into())) {
-        let backend: serde_yaml::Value =
+        // the scaffold `init` writes: the local backend for day 0 and, once
+        // the state bucket is known, the gcs one `deployment_mode` switches to
+        let mut backend: serde_yaml::Value =
             serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n")?;
+        if vocab.bindings.iter().any(|b| b.name == "infra_bucket_name") {
+            let mut gcs = serde_yaml::Mapping::new();
+            gcs.insert("bucket".into(), satz_core::migrate::param_ref("infra_bucket_name"));
+            gcs.insert("prefix".into(), serde_yaml::Value::String("hcl/state".into()));
+            if let Some(b) = backend.get_mut("backend").and_then(|b| b.as_mapping_mut()) {
+                b.insert("gcs".into(), serde_yaml::Value::Mapping(gcs));
+            }
+        }
         top.insert(serde_yaml::Value::String("terraform".into()), backend);
     }
     // Root-scoped resources (org IAM, org policies, groups) use the root
     // provider alias, which an estate declares in `providers { … }`; without
     // it `tofu plan` says "Provider configuration not present" (live-run F10).
     if !top.contains_key(serde_yaml::Value::String("providers".into())) {
-        // Org-scoped APIs (Org Policy, Cloud Identity) need a quota project:
-        // the first project the import found stands in, the way the Day-0
-        // template uses the infra project. Review it.
-        let billing = first_project_id(config);
+        // Org-scoped APIs (Org Policy, Cloud Identity) need a quota project
+        // that enables them, the way the Day-0 template uses the infra
+        // project. Review it.
+        let billing = quota_project(config);
         let quota = billing
             .as_deref()
             .map(|p| format!("  project: {p}\n  billing_project: {p}\n"))
@@ -2491,20 +3482,50 @@ fn discovered_to_satz(
             eprintln!("warning: no project among the imported resources — set `billing_project` in the estate's `providers` block by hand (org-scoped APIs need a quota project)");
         }
     }
-    let mut params = Vec::new();
-    match infer_org_id(&serde_yaml::Value::Mapping(top.clone())).or_else(|| org_hint.map(String::from)) {
-        Some(org) => params.push(("customer_organization_id".to_string(), format!("\"{}\"", org))),
-        None => eprintln!(
-            "warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand"
-        ),
+    let org = organization_of(config, org_hint);
+    let mut params = vocab.params();
+    if org.is_none() {
+        eprintln!("warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand");
+    } else if !params.iter().any(|(n, _)| n == satz_core::condense::ORG_PARAM) {
+        params.insert(0, (satz_core::condense::ORG_PARAM.to_string(), format!("\"{}\"", org.clone().unwrap_or_default())));
     }
+    condense_document(&mut top, org.as_deref(), &vocab.substitutions(), registry);
     let header = vec![
-        "Discovered estate — review before use: hierarchy is as found, names are the".to_string(),
-        "Terraform labels, every resource carries its \"import-id\". `satz transpile`, then".to_string(),
-        "`tofu plan` should show imports and no creates.".to_string(),
+        "Discovered estate — review before use: the hierarchy is as found, folders are labelled".to_string(),
+        "by display name, every resource carries its \"import-id\", what the platform owns was".to_string(),
+        "skipped and listed, and the params are bound from what the platform states — a value".to_string(),
+        "marked `// inferred:` names the rule that chose it. `satz transpile`, then `tofu plan`".to_string(),
+        "should show imports and no creates.".to_string(),
     ];
     let satz = satz_core::migrate::convert_value(&top, "estate", name, &params, &header)?;
-    Ok(satz_core::migrate::normalize_type_keys(&satz, is_type))
+    Ok(satz_core::migrate::normalize_type_keys(&satz, &is_type))
+}
+
+/// The organization a discovered estate belongs to: named by its resources
+/// (every `organizations/<n>` reference or `org_id`), else the sweep's hint.
+fn organization_of(config: &Config, org_hint: Option<&str>) -> Option<String> {
+    let top = serde_yaml::to_value(config).ok()?;
+    infer_org_id(&top).or_else(|| org_hint.map(String::from))
+}
+
+/// The shaping pass over a discovered document, answered from the provider
+/// schema: which document keys are resource types (shorthand included), and
+/// which nested blocks occur once.
+fn condense_document(
+    top: &mut serde_yaml::Mapping,
+    organization: Option<&str>,
+    substitutions: &[satz_core::condense::Substitution],
+    registry: &ResourceRegistry,
+) {
+    let type_of = |k: &str| -> Option<String> {
+        if registry.resources.contains_key(k) {
+            return Some(k.to_string());
+        }
+        let prefixed = format!("google_{}", k);
+        registry.resources.contains_key(&prefixed).then_some(prefixed)
+    };
+    let single_block = |tf_type: &str, path: &str| registry.single_block(tf_type, path);
+    satz_core::condense::condense(top, &satz_core::condense::Shaping { type_of: &type_of, single_block: &single_block, organization, substitutions });
 }
 
 /// `satz map-types`: align every selected row's API schema against the
@@ -2527,7 +3548,9 @@ async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: bool, runtime_
     let out_path = Path::new(&runtime_config.presets_dir).join("type-map.yaml");
     let mut existing: std::collections::BTreeMap<String, crate::align::TypeMap> = match fsx::read_to_string(&out_path) {
         Ok(t) => serde_yaml::from_str(&t)?,
-        Err(_) => Default::default(),
+        // no map yet: the first run writes it
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => return Err(format!("{}: {}", out_path.display(), e).into()),
     };
     let (mut mapped, mut skipped) = (0usize, Vec::new());
     for (t, row) in rows {
@@ -2627,18 +3650,22 @@ fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime
         .map(|f| Ok(satz_hcl::Input { path: f.to_string_lossy().into_owned(), text: fsx::read_to_string(f)? }))
         .collect::<Result<_, std::io::Error>>()?;
     let name = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl");
-    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).ok();
-    let imported = satz_hcl::import(&inputs, name, wrap_all, &RegistrySchema(registry.as_ref()))?;
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
+        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
+    let imported = satz_hcl::import(&inputs, name, wrap_all, &RegistrySchema(Some(&registry)))?;
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
-    fsx::write(&final_output, &imported.satz)?;
+    fsx::write_generated_satz(&final_output, &imported.satz)?;
     println!("Wrote {} — review it, then `satz transpile` and `tofu plan` against the source's state: no changes.", final_output.display());
     println!("{}", satz_hcl::summary(&imported.rows));
     for r in &imported.rows {
         match &r.action {
             satz_hcl::Action::Dropped(why) => println!("  dropped    {}:{} {} — {}", r.file, r.line, r.what, why),
+            satz_hcl::Action::Expanded(n) => {
+                println!("  expanded   {}:{} {} — `count` over a promoted list: {} resource(s)", r.file, r.line, r.what, n)
+            }
             satz_hcl::Action::Wrapped(why) if !wrap_all || verbose => println!("  wrapped    {}:{} {} — {}", r.file, r.line, r.what, why),
             satz_hcl::Action::Promoted(what) => println!("  promoted   {}:{} {} — {}", r.file, r.line, r.what, what),
             satz_hcl::Action::Translated if verbose => println!("  translated {}:{} {}", r.file, r.line, r.what),
@@ -2666,14 +3693,23 @@ impl satz_hcl::Schema for RegistrySchema<'_> {
             r.resources.get(tf_type).is_some_and(|s| s.1.block.attributes.contains_key(attr))
         })
     }
+
+    fn required_attrs(&self, tf_type: &str) -> Vec<String> {
+        self.0
+            .and_then(|r| r.resources.get(tf_type))
+            .map(|s| s.1.block.attributes.iter().filter(|(_, a)| a.required).map(|(k, _)| k.clone()).collect())
+            .unwrap_or_default()
+    }
 }
 
 /// The live shape with `--into`: the delta against what the estate declares.
+#[allow(clippy::too_many_arguments)]
 async fn import_delta(
     parent: &str,
     estate: PathBuf,
     cfg: ImportConfig,
     filtered: std::collections::HashSet<String>,
+    on_collision: crate::discovery::OnCollision,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -2710,7 +3746,7 @@ async fn import_delta(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(registry)).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision).await?;
     attach_billing_accounts(&mut found.config).await;
     let top = match serde_yaml::to_value(&found.config)? {
         serde_yaml::Value::Mapping(m) => m,
@@ -2724,6 +3760,7 @@ async fn import_delta(
     // 4. packs + `use` lines
     let yaml_dir = Path::new(&runtime_config.yaml_dir);
     let mut estate_text = fsx::read_to_string(&estate)?;
+    let estate_before = estate_text.clone();
     let mut written: Vec<String> = Vec::new();
     let header = |what: &str| {
         vec![
@@ -2746,9 +3783,11 @@ async fn import_delta(
     }
     if !d.top.is_empty() {
         let name = delta::pack_name(parent, None);
-        let satz = satz_core::migrate::convert_value(&d.top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
+        let mut top = d.top.clone();
+        condense_document(&mut top, found.organization.as_deref(), &[], &registry);
+        let satz = satz_core::migrate::convert_value(&top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-        fsx::write(yaml_dir.join(&name), satz)?;
+        fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
         if let Some(t) = delta::add_use(&estate_text, &name, None)? {
             estate_text = t;
         }
@@ -2760,9 +3799,11 @@ async fn import_delta(
     let mut inserts: Vec<(u32, String)> = Vec::new();
     for (address, children) in &d.under {
         let name = delta::pack_name(parent, Some(address));
-        let satz = satz_core::migrate::convert_value(children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
+        let mut children = children.clone();
+        condense_document(&mut children, found.organization.as_deref(), &[], &registry);
+        let satz = satz_core::migrate::convert_value(&children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
         let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-        fsx::write(yaml_dir.join(&name), satz)?;
+        fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
         let origin = declared.containers.values().find(|(a, _)| a == address).and_then(|(_, o)| o.clone());
         match origin {
             Some((file, line)) if Path::new(&file) == estate.as_path() || Path::new(&file).ends_with(&estate) => {
@@ -2793,7 +3834,7 @@ async fn import_delta(
             println!("  removed {} (nothing left to import under {})", yaml_dir.join(&name).display(), address);
         }
     }
-    fsx::write(&estate, estate_text)?;
+    fsx::write_edited_satz(&estate, &estate_before, &estate_text)?;
 
     // 5. report
     println!();
@@ -2878,10 +3919,30 @@ async fn attach_billing_accounts(config: &mut Config) {
 }
 
 /// The alphabetically first project id in the discovered tree, at any depth.
-fn first_project_id(config: &Config) -> Option<String> {
-    fn walk_folder(f: &crate::config::Folder, out: &mut Vec<String>) {
+/// The APIs an organization-scoped read is billed against: a quota project
+/// without them makes every org policy, service list and contact read fail
+/// with a 403, which is how a live import's `tofu plan` came out as 25 errors
+/// on the test organization.
+const QUOTA_PROJECT_APIS: [&str; 2] = ["orgpolicy.googleapis.com", "serviceusage.googleapis.com"];
+
+/// The project the providers bill organization-scoped calls to: the first
+/// (by id) that enables the APIs those calls need — the day-0 infra project
+/// does — else the first project at all, said so. `None` without a project.
+fn quota_project(config: &Config) -> Option<String> {
+    fn services(p: &crate::config::Project) -> Vec<String> {
+        p.project_service
+            .iter()
+            .flatten()
+            .filter_map(|s| match s {
+                serde_yaml::Value::String(svc) => Some(svc.clone()),
+                serde_yaml::Value::Mapping(m) => m.get("service").and_then(|v| v.as_str()).map(String::from),
+                _ => None,
+            })
+            .collect()
+    }
+    fn walk_folder(f: &crate::config::Folder, out: &mut Vec<(String, Vec<String>)>) {
         if let Some(ps) = &f.project {
-            out.extend(ps.values().map(|p| p.project_id.clone()));
+            out.extend(ps.values().map(|p| (p.project_id.clone(), services(p))));
         }
         if let Some(fs) = &f.folder {
             for sub in fs.values() {
@@ -2889,14 +3950,30 @@ fn first_project_id(config: &Config) -> Option<String> {
             }
         }
     }
-    let mut ids: Vec<String> = config.project.iter().flat_map(|ps| ps.values().map(|p| p.project_id.clone())).collect();
+    let mut projects: Vec<(String, Vec<String>)> =
+        config.project.iter().flat_map(|ps| ps.values().map(|p| (p.project_id.clone(), services(p)))).collect();
     if let Some(fs) = &config.folder {
         for f in fs.values() {
-            walk_folder(f, &mut ids);
+            walk_folder(f, &mut projects);
         }
     }
-    ids.sort();
-    ids.into_iter().next()
+    projects.sort();
+    let able = projects.iter().find(|(_, svcs)| QUOTA_PROJECT_APIS.iter().all(|api| svcs.iter().any(|s| s == api)));
+    match (able, projects.first()) {
+        (Some((id, _)), _) => {
+            println!("import: providers' quota project {} — it enables {}", id, QUOTA_PROJECT_APIS.join(" and "));
+            Some(id.clone())
+        }
+        (None, Some((id, _))) => {
+            println!(
+                "import: providers' quota project {} — no project enables {}; organization-scoped reads may fail with 403 until one does (set `billing_project` in `providers` by hand)",
+                id,
+                QUOTA_PROJECT_APIS.join(" and ")
+            );
+            Some(id.clone())
+        }
+        (None, None) => None,
+    }
 }
 
 /// The first organization number the tree names: an `organizations/<n>`
@@ -2921,6 +3998,47 @@ fn infer_org_id(v: &serde_yaml::Value) -> Option<String> {
     }
 }
 
+/// The adopt dry run, computed: the estate's compile, every declared resource
+/// resolved against the live organisation, the live client (activation needs it),
+/// and what the state already manages. No printing — the CLI and `satz_adopt`
+/// share it. The identity is the caller's: the CLI binds it for the process, the
+/// MCP tool scopes it to the call.
+pub(crate) struct AdoptPlan {
+    pub out: PipelineBOut,
+    pub resolutions: Vec<crate::adopt::Resolution>,
+    pub live: crate::adopt::RealLive,
+    /// What the state already manages, read ONCE and used by both halves of the
+    /// command. The dry run has to know it: `--execute --import` skips those
+    /// addresses, so a table that ranks them as "IMPORT" describes a run that
+    /// will not happen.
+    ///
+    /// Unreadable is a NOTE for the dry run, never a failure — a first adopt has
+    /// no state, and refusing to describe the estate because of that would be
+    /// refusing the only thing a dry run is for. The import path still fails
+    /// fast, because there the imports really would all fail the same way.
+    pub state: Result<crate::bootstrap::StateIndex, String>,
+}
+
+pub(crate) async fn adopt_plan(
+    input_path: &Path,
+    only: Vec<String>,
+    activate: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<AdoptPlan, Box<dyn std::error::Error>> {
+    // Same compile the emitter uses, so the adopted addresses are exactly the
+    // ones `apply` will act on.
+    let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
+    let rules = load_import_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
+        "adoption rules live in <presets_dir>/import-config.yaml — run `satz get-presets` so it exists",
+    )?;
+    let opts = crate::adopt::Options { only: only.into_iter().collect(), activate };
+    let mut live = crate::adopt::RealLive::new(&out.customer_id).await?;
+    let resolutions = crate::adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
+    let state = crate::bootstrap::state_index(&runtime_config.tf_tool, Path::new(&runtime_config.hcl_dir));
+    Ok(AdoptPlan { out, resolutions, live, state })
+}
+
 /// `satz adopt`: compile, resolve every declared resource against the live
 /// org, report, and — only with `--execute` — write the verified ids into the
 /// estate or import them into state now.
@@ -2937,33 +4055,12 @@ async fn run_adopt(
     let input_path = estate_path(PathBuf::from(input), runtime_config);
     reject_yaml_estate(&input_path, "adopt")?;
     configure_estate_impersonation(&input_path, runtime_config)?;
-    // Same compile the emitter uses, so the adopted addresses are exactly the
-    // ones `apply` will act on.
-    let out = pipeline_b_generate(&input_path, tool_config, runtime_config)?;
-    let rules = load_import_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
-        "adoption rules live in <presets_dir>/import-config.yaml — run `satz get-presets` so it exists",
-    )?;
-    let opts = adopt::Options { only: only.into_iter().collect(), activate };
-    let mut live = adopt::RealLive::new(&out.customer_id).await?;
-    let resolutions = adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
-
-    // What the state already manages, read ONCE and used by both halves of the
-    // command. The dry run has to know it: `--execute --import` skips those
-    // addresses, so a table that ranks them as "IMPORT" describes a run that
-    // will not happen.
-    //
-    // Unreadable here is a NOTE, never a failure — a first adopt has no state,
-    // and refusing to describe the estate because of that would be refusing the
-    // only thing a dry run is for. The import path below still fails fast,
-    // because there the imports really would all fail the same way.
-    let state = crate::bootstrap::state_index(
-        &runtime_config.tf_tool,
-        Path::new(&runtime_config.hcl_dir),
-    );
+    let AdoptPlan { out, resolutions, mut live, state } =
+        adopt_plan(&input_path, only, activate, tool_config, runtime_config).await?;
     let in_state = state.clone().unwrap_or_default();
 
     println!("\nadopt {} — {} resources declared\n", input_path.display(), out.manifest.resources.len());
-    print!("{}", adopt::render_table(&resolutions, &in_state));
+    print!("{}", adopt::render_table(&resolutions, &in_state, &out.manifest));
     println!("\n{}", adopt::summary(&resolutions, &in_state));
     if let Err(e) = &state {
         println!(
@@ -3193,50 +4290,11 @@ fn compliance_inputs(
 /// plan time, one cycle later and pointing at generated HCL instead of the
 /// line someone wrote; the one it cannot catch is a typo that happens to name
 /// a different real resource.
-fn check_written_references(
-    folded: &satz_core::algebra::Folded,
-    manifest: &crate::manifest::Manifest,
-) -> Result<(), String> {
-    let emitted = manifest.addresses();
-    let bad: Vec<satz_core::pipeline::WrittenRef> = satz_core::pipeline::written_references(folded)
-        .into_iter()
-        .filter(|r| !emitted.contains(&r.address))
-        .collect();
-    if bad.is_empty() {
-        return Ok(());
-    }
-    let mut msg = String::from("references to resources this estate does not emit:");
-    for r in &bad {
-        msg.push_str(&format!("\n  {}:{}: {} writes `${{{}}}`", r.file, r.line, r.site, r.traversal));
-        let (tf_type, _) = r.address.split_once('.').unwrap_or((r.address.as_str(), ""));
-        let mut same: Vec<&str> = emitted
-            .iter()
-            .filter_map(|a| a.strip_prefix(tf_type).and_then(|rest| rest.strip_prefix('.')))
-            .collect();
-        same.sort();
-        if same.is_empty() {
-            msg.push_str(&format!("\n    no `{}` is emitted here at all", tf_type));
-        } else {
-            msg.push_str(&format!("\n    emitted `{}` labels: {}", tf_type, same.join(", ")));
-        }
-    }
-    Err(msg)
-}
-
+/// The raw blocks appended to main.tf, verbatim; what they mean for the compliance
+/// plane is said by `hcl_findings`.
 fn append_hcl_passthrough(mut main_tf: String, blocks: &[satz_core::pipeline::HclPassthrough]) -> String {
     for b in blocks {
         let body = dedent_hcl(&b.body);
-        let lines = body.lines().count();
-        match &b.trust {
-            Some(reason) => eprintln!(
-                "note: raw HCL passthrough at {}:{} ({} lines) — trusted: {}",
-                b.file, b.line, lines, reason
-            ),
-            None => eprintln!(
-                "warning: raw HCL passthrough at {}:{} ({} lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
-                b.file, b.line, lines
-            ),
-        }
         if !main_tf.ends_with('\n') {
             main_tf.push('\n');
         }
@@ -3381,6 +4439,34 @@ pub(crate) fn estate_param(
         .map(str::to_string)
 }
 
+/// A relative estate path that already names `yaml_dir`, and the bare form it should have
+/// been. Paths resolve INSIDE `yaml_dir`, so `estate_path` joins it a second time: naming it
+/// yourself writes `yaml/yaml/x.satz`, which every later command misses because they all look
+/// in `yaml/`. Returns `None` when the path is absolute, or does not start with the directory.
+fn redundant_yaml_dir(estate: &str, yaml_dir: &str) -> Option<String> {
+    if std::path::Path::new(estate).is_absolute() {
+        return None;
+    }
+    // by component, not by string: the configured directory reaches here as
+    // `./yaml` as often as `yaml`, and a textual prefix misses that
+    let parts = |s: &str| -> Vec<String> {
+        std::path::Path::new(s)
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(x) => Some(x.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+    let dir = parts(yaml_dir);
+    let est = parts(estate);
+    let last = dir.last()?;
+    if est.len() < 2 || &est[0] != last {
+        return None;
+    }
+    Some(est[1..].join("/"))
+}
+
 fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
     if estate.is_absolute() {
         return estate;
@@ -3410,7 +4496,7 @@ fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
 /// THE RULE: post-init, anything that reads or writes a customer's estate runs
 /// as that estate's service account. The exceptions are deliberate and few —
 /// bare `whoami` (it asks about the human; given an estate it binds like
-/// everything else), `bootstrap` and `init --from-live` (no SA exists yet), and
+/// everything else), `bootstrap` and `init` (no SA exists yet), and
 /// `map-types` (no credentials at all). A live command that calls neither this
 /// nor `disable_impersonation` runs as the human by accident, which is what
 /// `the_estate_commands_are_the_ones_that_bind` gates.
@@ -3770,6 +4856,18 @@ async fn check_update_available(client: &reqwest::Client) -> Result<Option<(Stri
 }
 
 /// If global settings say so, run a check-only update check and optionally persist last_update_check (daily).
+/// Whether a command runs the background update check. Not the update itself, not
+/// `init`, not `whoami` — and not the two protocol servers: `mcp` and `lsp` speak
+/// JSON-RPC on stdout and are started by a client, so a network round trip to
+/// GitHub before the first message is a cost with no reader, and the notice would
+/// have nobody to read it but the client's parser.
+fn checks_for_updates(cmd: &Commands) -> bool {
+    !matches!(
+        cmd,
+        Commands::SelfUpdate { .. } | Commands::Init { .. } | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Lsp
+    )
+}
+
 async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Box<dyn std::error::Error>> {
     let freq = settings.self_update_frequency.as_str();
     if freq == "never" {
@@ -3803,10 +4901,12 @@ async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Bo
             .unwrap_or_default()
             .as_secs();
         settings.last_update_check = Some(now.to_string());
-        let _ = save_global_settings(settings);
+        save_global_settings(settings)?;
     }
     if let Some((version, url)) = update {
-        println!("⚠️  Update available: {} (current: {}). Run `satz self-update` to install. {}", version, env!("CARGO_PKG_VERSION"), url);
+        // stderr: stdout is a command's output — the JSON of `--format json`, or the
+        // protocol of `mcp` and `lsp` — and a notice in front of it breaks every reader.
+        eprintln!("⚠️  Update available: {} (current: {}). Run `satz self-update` to install. {}", version, env!("CARGO_PKG_VERSION"), url);
     }
     Ok(())
 }
@@ -3984,11 +5084,96 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
 /// `--html-help`: the documentation site, at the section of the invoked
 /// command when the README has one (`id="cmd-<name>"`, stamped by
 /// `scripts/build-site.py`), else the front page — said, not assumed.
+/// `satz fmt`: every `.satz` under the given paths, rewritten in its canonical
+/// layout — or, with `--check`, named when it is not. `*.diff.satz` files are
+/// unified diffs and are skipped.
+fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if stdin {
+        let mut src = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut src)?;
+        print!("{}", satz_core::fmt::format(&src).map_err(|e| format!("fmt: <stdin>: {}", e))?);
+        return Ok(());
+    }
+    if paths.is_empty() {
+        return Err("fmt: name the files or directories to format (or --stdin)".into());
+    }
+    fn collect(p: &Path, out: &mut Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+        if p.is_dir() {
+            let mut entries: Vec<PathBuf> = std::fs::read_dir(p)?.map(|e| e.map(|e| e.path())).collect::<Result<_, _>>()?;
+            entries.sort();
+            for e in entries {
+                collect(&e, out)?;
+            }
+        } else if p.is_file() {
+            let name = p.to_string_lossy();
+            if name.ends_with(".satz") && !name.ends_with(".diff.satz") {
+                out.push(p.to_path_buf());
+            }
+        } else {
+            return Err(format!("fmt: {}: no such file or directory", p.display()).into());
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    for p in paths {
+        collect(p, &mut files)?;
+    }
+    if files.is_empty() {
+        return Err("fmt: no .satz file under the given paths".into());
+    }
+    let mut errors = Vec::new();
+    let mut changed = Vec::new();
+    for f in &files {
+        let src = std::fs::read_to_string(f)?;
+        match satz_core::fmt::format(&src) {
+            Err(e) => errors.push(format!("{}: {}", f.display(), e)),
+            Ok(out) if out == src => {}
+            Ok(out) => {
+                if !check {
+                    fsx::write_verbatim(f, out)?;
+                }
+                changed.push(f.display().to_string());
+            }
+        }
+    }
+    if check {
+        for c in &changed {
+            println!("{}", c);
+        }
+    } else {
+        for c in &changed {
+            println!("fmt: rewrote {}", c);
+        }
+    }
+    for e in &errors {
+        eprintln!("{}", e);
+    }
+    let unchanged = files.len() - changed.len() - errors.len();
+    if check {
+        if !changed.is_empty() || !errors.is_empty() {
+            return Err(format!(
+                "fmt --check: {} file(s) not formatted, {} with errors, {} formatted — run `satz fmt` on them",
+                changed.len(),
+                errors.len(),
+                unchanged
+            )
+            .into());
+        }
+        println!("fmt --check: OK — {} file(s) formatted", files.len());
+    } else {
+        println!("fmt: {} file(s) rewritten, {} already formatted", changed.len(), unchanged);
+        if !errors.is_empty() {
+            return Err(format!("fmt: {} file(s) could not be formatted", errors.len()).into());
+        }
+    }
+    Ok(())
+}
+
 fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration", "run-actions",
+        "scan-plan", "generate-migration", "run-actions", "iac-roles", "fmt", "lsp",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
@@ -4215,7 +5400,7 @@ mod command_groups {
         ("report-compliance", Identity::EstateSa),
         ("adopt", Identity::EstateSa),
         // Only `--into` names an estate; plain discovery writes a NEW file and so
-        // has no estate to be, exactly like `init --from-live`.
+        // has no estate to be, exactly like `init`.
         ("import", Identity::EstateSa),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
         ("init", Identity::Human("--from-live runs before the estate exists")),
@@ -4228,6 +5413,7 @@ mod command_groups {
         ("map-types", Identity::Human("Discovery documents are public — no credential at all")),
         ("mcp", Identity::PerTool),
         ("transpile", Identity::NoGoogleApi),
+        ("iac-roles", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("plan", Identity::NoGoogleApi),
         ("apply", Identity::NoGoogleApi),
@@ -4240,6 +5426,9 @@ mod command_groups {
         ("check-presets", Identity::NoGoogleApi),
         ("doc-packs", Identity::NoGoogleApi),
         ("require", Identity::NoGoogleApi),
+        ("prowler", Identity::NoGoogleApi),
+        ("fmt", Identity::NoGoogleApi),
+        ("lsp", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),
@@ -4292,6 +5481,24 @@ mod command_groups {
     /// A command that claims the service account and does not bind it runs as the
     /// human — which shows up in no output, no test and no diff, only in an audit
     /// log months later.
+    /// `mcp` and `lsp` own stdout as a protocol and are started by a client; the
+    /// update itself, `init` and `whoami` never checked. Everything else does, and
+    /// hears about it on stderr.
+    #[test]
+    fn the_protocol_servers_never_check_for_updates() {
+        let parse = |args: &[&str]| {
+            let mut argv = vec!["satz"];
+            argv.extend_from_slice(args);
+            Cli::try_parse_from(argv).expect("parses").command.expect("a subcommand")
+        };
+        for args in [&["mcp"][..], &["lsp"], &["self-update"], &["whoami"]] {
+            assert!(!checks_for_updates(&parse(args)), "{args:?} must not check");
+        }
+        for args in [&["questions", "x.satz", "--format", "text", "--out", "q.txt"][..], &["transpile", "x.satz"]] {
+            assert!(checks_for_updates(&parse(args)), "{args:?} checks");
+        }
+    }
+
     #[test]
     fn the_estate_commands_are_the_ones_that_bind() {
         let bound: BTreeSet<&str> = BINDING_SITES.iter().flat_map(|s| s.iter().copied()).collect();
@@ -4482,7 +5689,10 @@ mod corpus {
     }
 
     /// Compile `<case>/main.satz` through the fragment pipeline, the way
-    /// `transpile` does, and return `sorted(main.tf) ---tfvars--- sorted(tfvars)`.
+    /// `transpile` does, and return
+    /// `sorted(main.tf) ---tfvars--- sorted(tfvars) ---imports--- sorted(imports.tf)`:
+    /// an `"import-id"` is emission too, and one written as an interpolation
+    /// must reach `imports.tf` as the literal.
     pub(super) fn run_case(case: &Path) -> String {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let name = case.file_name().unwrap().to_string_lossy().to_string();
@@ -4509,9 +5719,10 @@ mod corpus {
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
         format!(
-            "{}\n---tfvars---\n{}",
+            "{}\n---tfvars---\n{}\n---imports---\n{}",
             sorted_lines(&out.main_tf).join("\n"),
-            sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n")
+            sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n"),
+            sorted_lines(&out.imports_tf).join("\n")
         )
     }
 
@@ -4888,7 +6099,7 @@ mod manifest_gate {
         out
     }
 
-    fn emit_case(case: &Path, reg: &crate::ResourceRegistry) -> (crate::emitter::EmitOut, satz_core::pipeline::FrontEnd) {
+    pub(super) fn emit_case(case: &Path, reg: &crate::ResourceRegistry) -> (crate::emitter::EmitOut, satz_core::pipeline::FrontEnd) {
         let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
         let case_dir = case.to_path_buf();
         let resolver = crate::EstateResolver { registry: reg };
@@ -5027,6 +6238,103 @@ hcl trust "test fixture" {
         assert!(addrs.contains("google_storage_bucket.real"), "{:?}", addrs);
         assert!(!addrs.contains("google_storage_bucket.ghost"), "a passthrough resource is not a witness: {:?}", addrs);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod iac_roles_gate {
+    //! Every resource type the library can emit has a row in the IaC service
+    //! account's role table (`src/iac_roles.rs`). The cases under `tests/iac/`
+    //! together use every pack, each one unconditionally, so a pack added without
+    //! a case, or a pack emitting a type the table does not know, fails here.
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    /// The `use "…"` paths of a case, refusing a `when`: a pack switched off
+    /// emits nothing, and a gate over nothing passes.
+    fn uses(case: &Path, src: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
+            let mut rest = line;
+            while let Some(i) = rest.find("use \"") {
+                let after = &rest[i + 5..];
+                let end = after.find('"').unwrap_or_else(|| panic!("{}: unterminated use: {}", case.display(), line));
+                let tail = after[end + 1..].trim_start();
+                assert!(!tail.starts_with("when"), "{}: `{}` — a gate case uses every pack unconditionally", case.display(), line.trim());
+                out.push(after[..end].to_string());
+                rest = &after[end + 1..];
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_type_the_library_emits_has_a_role() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let reg = super::corpus::registry();
+        let mut used = BTreeSet::new();
+        let mut types = BTreeSet::new();
+        for entry in std::fs::read_dir(root.join("tests/iac")).expect("tests/iac").flatten() {
+            let case = entry.path();
+            let src = std::fs::read_to_string(case.join("main.satz"))
+                .unwrap_or_else(|e| panic!("{}: {}", case.display(), e));
+            used.extend(uses(&case, &src));
+            let (out, _) = super::manifest_gate::emit_case(&case, &reg);
+            let (_, unknown) = crate::iac_roles::needs(&out.manifest);
+            assert!(
+                unknown.is_empty(),
+                "{}: no role known for {:?} — add the type's row to TYPES in src/iac_roles.rs",
+                case.display(),
+                unknown
+            );
+            types.extend(out.manifest.resources.values().map(|r| r.tf_type.clone()));
+        }
+        let packs: BTreeSet<String> = crate::doc_packs::packs(&root.join("presets"))
+            .expect("the preset library")
+            .into_iter()
+            .map(|(p, _, _)| format!("presets/{}", p.to_string_lossy()))
+            .collect();
+        let unused: Vec<&String> = packs.difference(&used).collect();
+        assert!(unused.is_empty(), "packs no case under tests/iac/ uses: {:?}", unused);
+        assert!(types.len() >= 20, "the gate checked only {} types: {:?}", types.len(), types);
+    }
+}
+
+#[cfg(test)]
+mod reset_replace {
+    //! E14's first apply after the 2.7 pass: adopt had moved a legacy twin onto
+    //! its `-superseded` address, the plan updated it in place with its old rules
+    //! and `reset = true`, and the API refused. `plan` and `apply` replace it.
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_policy_holding_rules_and_declared_reset_is_replaced() {
+        let manifest = crate::manifest::Manifest::parse(
+            "resource \"google_org_policy_policy\" \"twin_superseded\" {\n  name = \"a\"\n  spec {\n    reset = true\n  }\n}\n\
+             resource \"google_org_policy_policy\" \"fresh_reset\" {\n  name = \"b\"\n  spec {\n    reset = true\n  }\n}\n\
+             resource \"google_org_policy_policy\" \"enforced\" {\n  name = \"c\"\n  spec {\n    rules {\n      enforce = \"TRUE\"\n    }\n  }\n}\n",
+        );
+        let state = crate::bootstrap::StateIndex::default()
+            .with_rules(&["google_org_policy_policy.twin_superseded", "google_org_policy_policy.enforced"]);
+        // not a reset declaration without rules in the state, and not a policy that keeps its rules
+        assert_eq!(reset_replacements(&manifest, &state), ["google_org_policy_policy.twin_superseded"]);
+    }
+
+    #[test]
+    fn a_saved_plan_a_destroy_and_a_refresh_take_no_replace() {
+        assert_eq!(replace_args(&args(&[])), Some(Default::default()));
+        assert!(replace_args(&args(&["-auto-approve", "-var-file", "x.tfvars", "-parallelism=4"])).is_some());
+        assert_eq!(replace_args(&args(&["plan.tfplan"])), None);
+        assert_eq!(replace_args(&args(&["-auto-approve", "plan.tfplan"])), None);
+        assert_eq!(replace_args(&args(&["-destroy"])), None);
+        assert_eq!(replace_args(&args(&["-refresh-only"])), None);
+        // what the operator already replaces is not added twice, in either form
+        let r = replace_args(&args(&["-replace=google_org_policy_policy.a", "-replace", "google_org_policy_policy.b"])).unwrap();
+        assert_eq!(r.into_iter().collect::<Vec<_>>(), ["google_org_policy_policy.a", "google_org_policy_policy.b"]);
     }
 }
 
@@ -5173,7 +6481,7 @@ mod import_skipped_report {
         let state: serde_json::Value = serde_json::from_str(STATE).unwrap();
         let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
         let filtered = ["google_compute_network"].into_iter().map(String::from).collect();
-        let found = Discoverer::new(state, None, Some(enabled), filtered).discover().unwrap();
+        let found = Discoverer::new(state, None, Some(enabled), filtered, Default::default()).discover().unwrap();
         let mut got: Vec<(String, String, SkipReason)> =
             found.skipped.iter().map(|s| (s.tf_type.clone(), s.what.clone(), s.reason.clone())).collect();
         got.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
@@ -5202,7 +6510,7 @@ mod import_skipped_report {
              "versioning":{"enabled":true}}}
         ]}}}"#).unwrap();
         let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
-        let found = Discoverer::new(state, Some(reg), Some(enabled), Default::default()).discover().unwrap();
+        let found = Discoverer::new(state, Some(reg), Some(enabled), Default::default(), Default::default()).discover().unwrap();
         assert_eq!(found.dropped_attrs, vec![("google_storage_bucket".to_string(), "lifecycle".to_string())]);
         let bucket = &found.config.project.as_ref().unwrap()["infra"].extra["google_storage_bucket"];
         let text = serde_yaml::to_string(bucket).unwrap();
@@ -5235,6 +6543,8 @@ mod init_template {
 
         let reg = super::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
+        // An init estate carries no uncommented pack line: it must compile with no presets
+        // fetched, because `satz bootstrap` is the very next command the operator runs.
         let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
             .unwrap_or_else(|e| panic!("init template does not compile: {:?}\n{}", e, src));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
@@ -5252,12 +6562,44 @@ mod init_template {
         ] {
             assert!(addrs.contains(a), "bootstrap imports {} by name; got {:?}", a, addrs);
         }
+        // The CIS pack claims CIS 5.0 §2.14 (Cloud Asset Inventory enabled) against the
+        // service the scaffold enables here, rather than declaring a second
+        // `google_project_service` for the same API on the same project. That makes the
+        // derived address part of the same contract as the labels above: it is
+        // `<project label>_<service, dots to underscores>`, so renaming the project
+        // label or dropping the service turns a satisfied control into a broken claim
+        // in every estate. Fails here first.
+        assert!(
+            addrs.contains("google_project_service.infra_cloudasset_googleapis_com"),
+            "the CIS pack claims 5.0 §2.14 against this address; got {:?}",
+            addrs
+        );
         assert!(out.imports_tf.contains("google_storage_bucket.state"), "{}", out.imports_tf);
         // the membership emits the bare email (prefix stripped), the org grants keep it
         assert!(out.main_tf.contains("id = \"first.admin@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("member = \"group:svc-iac-users@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("svc-iac-users@example.com"), "{}", out.main_tf);
         assert_eq!(out.manifest.of_type("google_organization_iam_member").count(), 15);
+        // named roles, not owner — and exactly what the template's own resource
+        // types need, so a fresh estate has nothing to add
+        let get = |k: &str| fe.env.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let sa = crate::iac_roles::service_account_of(get).expect("the template names its IaC service account");
+        let granted = crate::iac_roles::granted(&out.manifest, &sa);
+        assert!(!granted.owner(), "the template grants roles/owner");
+        let (needs, unknown) = crate::iac_roles::needs(&out.manifest);
+        assert!(unknown.is_empty(), "the template emits types the role table does not know: {:?}", unknown);
+        let missing = crate::iac_roles::missing(&needs, &granted);
+        assert!(missing.is_empty(), "the template misses roles its own types need: {:?}", crate::iac_roles::describe(&crate::iac_roles::cover(&missing)));
+        // the users group may become the IaC service account, and only that one:
+        // TokenCreator and serviceAccountUser on the account, not on the org
+        assert_eq!(out.manifest.of_type("google_service_account_iam_member").count(), 2);
+        assert!(
+            !out.manifest
+                .of_type("google_organization_iam_member")
+                .any(|r| r.attrs.get("role").map(String::as_str) == Some("roles/iam.serviceAccountTokenCreator")),
+            "TokenCreator is granted at the organization:\n{}",
+            out.main_tf
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -5270,6 +6612,32 @@ mod init_template {
         let out = re_line.replace(src, |c: &regex::Captures| format!("{}deployment_mode{}= \"cloud\" // switched by `satz migrate`", &c[1], &c[2])).to_string();
         assert_eq!(out, "params {\n  deployment_mode          = \"cloud\" // switched by `satz migrate`\n  x = 1\n}\n");
         assert!(re_mode.captures("params { x = 1 }").is_none());
+    }
+}
+
+#[cfg(test)]
+mod estate_paths {
+    //! An estate path resolves inside `yaml_dir`, so naming the directory yourself
+    //! doubles it. Harmless for a file that exists; permanent when one is created.
+    use super::*;
+
+    #[test]
+    fn a_path_that_names_yaml_dir_is_caught_with_the_bare_form() {
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "yaml").as_deref(), Some("SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("yaml/sub/SKEL.satz", "yaml").as_deref(), Some("sub/SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "yaml/").as_deref(), Some("SKEL.satz"));
+        // how it actually arrives with `--config .`, which is what the guard missed first
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "./yaml").as_deref(), Some("SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("./yaml/SKEL.satz", "./yaml").as_deref(), Some("SKEL.satz"));
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "/abs/estate/yaml").as_deref(), Some("SKEL.satz"));
+        // the bare form, another directory, and a path that IS the directory
+        assert_eq!(redundant_yaml_dir("SKEL.satz", "yaml"), None);
+        assert_eq!(redundant_yaml_dir("estates/SKEL.satz", "yaml"), None);
+        assert_eq!(redundant_yaml_dir("yaml", "yaml"), None);
+        // an absolute path is taken as given, and a flat layout has nothing to double
+        assert_eq!(redundant_yaml_dir("/abs/yaml/SKEL.satz", "yaml"), None);
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "."), None);
+        assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", ""), None);
     }
 }
 
@@ -5292,22 +6660,53 @@ folder:
         project_id: acme-infra-001
         name: acme-infra-001
         import-id: acme-infra-001
+        project_service:
+          - service: iam.googleapis.com
+            import-id: acme-infra-001/iam.googleapis.com
 google_storage_bucket:
   state:
     name: acme-state
     location: EU
     import-id: acme-state
+    versioning:
+      - enabled: true
 google_organization_iam_audit_config:
   all:
     org_id: "123456789012"
     service: allServices
+org_policy_policy:
+  compute-managed-requireOsLogin:
+    import-id: organizations/123456789012/policies/compute.managed.requireOsLogin
+    name: compute.managed.requireOsLogin
+    spec:
+      - rules:
+          - enforce: "TRUE"
+google_organization_iam_member:
+  "group:a@example.com":
+    - role: roles/viewer
+      import-id: 123456789012 roles/viewer group:a@example.com
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         let reg = super::corpus::registry();
-        let text = discovered_to_satz(&config, "discovered", None, &|t| reg.resources.contains_key(t)).unwrap();
+        let text = discovered_to_satz(&config, "discovered", None, &reg, &crate::vocabulary::Vocabulary::default()).unwrap();
         assert!(text.contains("customer_organization_id = \"123456789012\""), "{}", text);
         assert!(text.contains("terraform {"), "{}", text);
         assert!(text.contains("google_folder {"), "shorthand keys must be normalised:\n{}", text);
+        // the condensed forms: one line per service and per grant edge, a
+        // single block as a block, the organization referenced not repeated,
+        // a project name equal to its id dropped
+        assert!(text.contains("{ service = \"iam.googleapis.com\" \"import-id\" = \"acme-infra-001/iam.googleapis.com\" },"), "{}", text);
+        assert!(text.contains("{ role = \"roles/viewer\" \"import-id\" = \"{customer_organization_id} roles/viewer group:a@example.com\" },"), "{}", text);
+        assert!(text.contains("spec {\n"), "{}", text);
+        assert!(text.contains("{ enforce = \"TRUE\" },"), "{}", text);
+        assert!(text.contains("versioning {\n"), "{}", text);
+        assert!(text.contains("org_id = customer_organization_id"), "{}", text);
+        assert!(text.contains("\"import-id\" = \"organizations/{customer_organization_id}/policies/compute.managed.requireOsLogin\""), "{}", text);
+        assert!(!text.contains("name = \"acme-infra-001\""), "{}", text);
+        // the file is formatted on the way to disk; the inline forms survive it
+        let formatted = satz_core::fmt::format(&text).unwrap();
+        assert!(formatted.contains("{ service = \"iam.googleapis.com\" \"import-id\" = \"acme-infra-001/iam.googleapis.com\" },"), "{}", formatted);
+        assert!(formatted.contains("{ enforce = \"TRUE\" },"), "{}", formatted);
 
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
@@ -5318,13 +6717,209 @@ google_organization_iam_audit_config:
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         let addrs = out.manifest.addresses();
-        for a in ["google_folder.workloads", "google_project.infra", "google_storage_bucket.state", "google_organization_iam_audit_config.all"] {
+        for a in [
+            "google_folder.workloads",
+            "google_project.infra",
+            "google_storage_bucket.state",
+            "google_organization_iam_audit_config.all",
+            "google_org_policy_policy.compute_managed_requireOsLogin",
+            "google_project_service.infra_iam_googleapis_com",
+        ] {
             assert!(addrs.contains(a), "missing {} in {:?}", a, addrs);
         }
-        for id in ["folders/111", "acme-infra-001", "acme-state"] {
+        for id in [
+            "folders/111",
+            "acme-infra-001",
+            "acme-state",
+            "acme-infra-001/iam.googleapis.com",
+            "organizations/123456789012/policies/compute.managed.requireOsLogin",
+            "123456789012 roles/viewer group:a@example.com",
+        ] {
             assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
         }
+        assert!(out.main_tf.contains("organizations/123456789012/policies/compute.managed.requireOsLogin"), "the bare constraint expands:\n{}", out.main_tf);
+        assert!(out.main_tf.contains("versioning {"), "{}", out.main_tf);
         assert!(!out.main_tf.contains("import-id"));
+    }
+
+    #[test]
+    fn a_counted_grant_emits_its_own_address() {
+        // one principal, one role, two folders: the map form alone emits one
+        // address (its label hashes member + role) and the emitter refuses;
+        // with the counter the second edge is a labelled resource of its own
+        let yaml = r#"
+folder:
+  a:
+    display_name: A
+    import-id: folders/1
+    google_folder_iam_member:
+      "user:x@example.com":
+        - role: roles/resourcemanager.folderAdmin
+          import-id: folders/1 roles/resourcemanager.folderAdmin user:x@example.com
+  b:
+    display_name: B
+    import-id: folders/2
+    google_folder_iam_member:
+      "user:x@example.com":
+        - role: roles/resourcemanager.folderAdmin
+          import-id: folders/2 roles/resourcemanager.folderAdmin user:x@example.com
+"#;
+        let mut config: Config = serde_yaml::from_str(yaml).unwrap();
+        let reg = super::corpus::registry();
+        let notes = crate::discovery::resolve_grant_collisions(&mut config, crate::discovery::OnCollision::Counter).unwrap();
+        assert_eq!(notes.len(), 1, "{:?}", notes);
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg, &crate::vocabulary::Vocabulary::default()).unwrap();
+        assert!(text.contains("folderAdmin_x_2 {"), "{}", text);
+
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("counted estate does not compile: {:?}\n{}", e, text));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs = out.manifest.addresses();
+        assert_eq!(addrs.iter().filter(|a| a.starts_with("google_folder_iam_member.")).count(), 2, "{:?}", addrs);
+        assert!(addrs.contains("google_folder_iam_member.folderAdmin_x_2"), "{:?}", addrs);
+        assert!(out.main_tf.contains("google_folder.b.name"), "the labelled grant inherits its folder from the node:\n{}", out.main_tf);
+        for id in ["folders/1 roles/resourcemanager.folderAdmin user:x@example.com", "folders/2 roles/resourcemanager.folderAdmin user:x@example.com"] {
+            assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
+        }
+    }
+
+    #[test]
+    fn pinned_bucket_grants_emit_one_address_per_bucket() {
+        // two buckets, one member, one role: two maps pinned to their bucket,
+        // two addresses (the pin enters the label), two imports
+        let yaml = r#"
+project:
+  infra:
+    project_id: acme-infra-001
+    import-id: acme-infra-001
+    google_storage_bucket_iam_member:
+      - bucket: acme-logs-001
+        "group:gcp-auditors@example.com":
+          - { role: roles/storage.objectViewer, import-id: "b/acme-logs-001 roles/storage.objectViewer group:gcp-auditors@example.com" }
+      - bucket: acme-state
+        "group:gcp-auditors@example.com":
+          - { role: roles/storage.objectViewer, import-id: "b/acme-state roles/storage.objectViewer group:gcp-auditors@example.com" }
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let reg = super::corpus::registry();
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg, &crate::vocabulary::Vocabulary::default()).unwrap();
+        assert_eq!(text.matches("google_storage_bucket_iam_member {").count(), 2, "{}", text);
+        assert!(text.contains("bucket = \"acme-logs-001\""), "{}", text);
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("pinned estate does not compile: {:?}\n{}", e, text));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        let addrs = out.manifest.addresses();
+        assert_eq!(addrs.iter().filter(|a| a.starts_with("google_storage_bucket_iam_member.")).count(), 2, "{:?}", addrs);
+        for id in ["b/acme-logs-001 roles/storage.objectViewer group:gcp-auditors@example.com", "b/acme-state roles/storage.objectViewer group:gcp-auditors@example.com"] {
+            assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
+        }
+    }
+
+    #[test]
+    fn the_vocabulary_is_bound_in_the_params_and_referenced_in_the_body() {
+        // the day-0 params, inferred from what the sweep found, each marked
+        // with its rule; every literal they name becomes the reference the
+        // library spells, and an interpolated import id still resolves
+        let yaml = r#"
+organization_iam_member:
+  "serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com":
+    - role: roles/resourcemanager.organizationAdmin
+      import-id: 123456789012 roles/resourcemanager.organizationAdmin serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com
+  "user:alice@example.com":
+    - roles/viewer
+folder:
+  infra_folder:
+    display_name: Infrastructure
+    import-id: folders/111
+    project:
+      infra:
+        project_id: acme-infra-001
+        billing_account: 01AA-BB-CC
+        import-id: acme-infra-001
+        google_storage_bucket:
+          state:
+            name: acme-infra-001-state
+            location: EU
+            import-id: acme-infra-001-state
+            versioning:
+              - enabled: true
+project:
+  logs:
+    project_id: acme-logs-001
+    import-id: acme-logs-001
+"#;
+        let mut config: Config = serde_yaml::from_str(yaml).unwrap();
+        let reg = super::corpus::registry();
+        let vocab = crate::vocabulary::Vocabulary::infer(&config, Some("123456789012"), None, None);
+        vocab.apply_billing(&mut config);
+        let text = discovered_to_satz(&config, "discovered", Some("123456789012"), &reg, &vocab).unwrap();
+        assert!(text.contains("customer_shortname = \"acme\" // inferred: the leading token of"), "{}", text);
+        assert!(text.contains("infra_project_name = \"acme-infra-001\" // inferred:"), "{}", text);
+        assert!(text.contains("infra_bucket_name = \"acme-infra-001-state\" // inferred:"), "{}", text);
+        assert!(text.contains("billing_account_infra = \"01AA-BB-CC\" // inferred:"), "{}", text);
+        assert!(text.contains("customer_domain = \"example.com\" // inferred:"), "{}", text);
+        assert!(!text.contains("customer_longname"), "never a placeholder:\n{}", text);
+        assert!(text.contains("display_name = infra_folder_name"), "{}", text);
+        assert!(text.contains("project_id = infra_project_name"), "{}", text);
+        assert!(text.contains("name = infra_bucket_name"), "{}", text);
+        assert!(text.contains("\"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\" = ["), "{}", text);
+        assert!(text.contains("\"import-id\" = \"{customer_organization_id} roles/resourcemanager.organizationAdmin serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\""), "{}", text);
+        assert!(text.contains("project_id = \"{customer_shortname}-logs-001\""), "{}", text);
+        assert!(text.contains("billing_account = \"\""), "a project without an account says so:\n{}", text);
+        assert!(!text.contains("billing_account = \"01AA-BB-CC\""), "the infra project's account is the param:\n{}", text);
+        assert!(text.contains("bucket = infra_bucket_name") && text.contains("prefix = \"hcl/state\""), "the gcs backend beside the local one:\n{}", text);
+
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
+            .unwrap_or_else(|e| panic!("vocabulary estate does not compile: {:?}\n{}", e, text));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+        for id in [
+            "123456789012 roles/resourcemanager.organizationAdmin serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com",
+            "acme-infra-001",
+            "acme-infra-001-state",
+            "acme-logs-001",
+        ] {
+            assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
+        }
+        assert!(out.main_tf.contains("project_id = \"acme-logs-001\""), "{}", out.main_tf);
+    }
+
+    #[test]
+    fn the_quota_project_is_one_that_enables_the_organization_apis() {
+        // alphabetically first is `alpha`, which enables nothing the
+        // organization-scoped reads need; `infra` does
+        let yaml = r#"
+project:
+  alpha:
+    project_id: alpha-001
+    project_service:
+      - compute.googleapis.com
+folder:
+  f:
+    display_name: F
+    project:
+      infra:
+        project_id: infra-001
+        project_service:
+          - { service: orgpolicy.googleapis.com, import-id: infra-001/orgpolicy.googleapis.com }
+          - serviceusage.googleapis.com
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(quota_project(&config).as_deref(), Some("infra-001"));
+        let none: Config = serde_yaml::from_str("project:\n  alpha:\n    project_id: alpha-001\n").unwrap();
+        assert_eq!(quota_project(&none).as_deref(), Some("alpha-001"), "the first project, and the report says why it may fail");
+        assert_eq!(quota_project(&Config::default()), None);
     }
 
     #[test]
@@ -5713,34 +7308,6 @@ mod constraint_equivalents {
 
 
 #[cfg(test)]
-mod out_format_tests {
-    use super::OutFormat;
-
-    /// A format a command cannot produce must be REFUSED, not quietly rendered as
-    /// something else. The old `&str` handlers fell through to the default arm, so
-    /// `--format jsom` printed markdown and exited 0 — a caller parsing that gets
-    /// prose and no error.
-    #[test]
-    fn an_unsupported_format_is_refused_by_name() {
-        let err = OutFormat::Pdf
-            .require_one_of("require", &[OutFormat::Text, OutFormat::Json])
-            .unwrap_err();
-        assert!(err.contains("require:"), "{err}");
-        assert!(err.contains("pdf"), "{err}");
-        assert!(err.contains("text or json"), "names what it can do: {err}");
-    }
-
-    #[test]
-    fn a_supported_format_passes_through() {
-        assert_eq!(
-            OutFormat::Json.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json]).unwrap(),
-            OutFormat::Json
-        );
-    }
-}
-
-
-#[cfg(test)]
 mod agent_guide_tests {
     /// The agent guide is read by something that will act on it. A syntax error in
     /// an example is not a typo there — it is an instruction to write invalid Satz,
@@ -5785,5 +7352,102 @@ mod agent_guide_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod compile_tail_tests {
+    //! The checks after the front end, as findings: each at the line it names, at
+    //! the severity the validation level gives it. What the CLI prints, the server
+    //! shows and MCP returns is this list.
+    use super::*;
+    use crate::findings::{Kind, Severity};
+
+    const ESTATE: &str = r#"estate tail_case
+
+params {
+  customer_organization_id = "123456789012"
+  use_budget               = true
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+// use "presets/organization-budget.satz" when use_budget
+
+google_storage_bucket {
+  no_location {
+    name = "no-location-bucket"
+  }
+  refers {
+    name     = "refers-bucket"
+    location = "EU"
+    labels   = { folder = "${{google_folder.nope.name}}" }
+  }
+}
+
+action "step" {
+  reason = "a step with no resource"
+  run    = "step.sh"
+}
+"#;
+
+    fn tail(level: &str) -> Tail {
+        let reg = super::corpus::registry();
+        let resolver = EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("tail.satz", ESTATE, &resolver, &|p| Err(format!("no {}", p)))
+            .unwrap_or_else(|e| panic!("front-end failed: {}", e));
+        let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        compile_tail(&fe, &resolver, &reg, &cfg, level, Path::new("tail.satz"), ESTATE)
+    }
+
+    fn line_of(needle: &str) -> u32 {
+        ESTATE.lines().position(|l| l.contains(needle)).map(|i| i as u32 + 1).unwrap()
+    }
+
+    #[test]
+    fn a_missing_required_attribute_is_a_warning_at_the_declaring_block() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::MissingRequired).expect("the bucket without a location");
+        assert_eq!(f.severity, Severity::Warning);
+        assert!(f.message.contains("google_storage_bucket.no_location") && f.message.contains("location"), "{}", f.message);
+        assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), Some(line_of("no_location {"))));
+    }
+
+    #[test]
+    fn the_validation_level_turns_it_into_an_error_or_drops_it() {
+        assert_eq!(tail("error").findings.iter().find(|f| f.kind == Kind::MissingRequired).map(|f| f.severity), Some(Severity::Error));
+        assert!(tail("none").findings.iter().all(|f| f.kind != Kind::MissingRequired));
+        assert!(tail("error").findings.iter().find(|f| f.kind == Kind::MissingRequired).unwrap().group.is_some(), "an error is grouped for the CLI");
+    }
+
+    #[test]
+    fn a_reference_to_an_unemitted_address_is_an_error_at_its_line() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::WrittenReference).expect("the folder nobody emits");
+        assert_eq!(f.severity, Severity::Error);
+        assert!(f.message.contains("google_folder.nope.name") && f.message.contains("no `google_folder` is emitted here at all"), "{}", f.message);
+        assert_eq!(f.line, Some(line_of("refers {")), "at the declaring block: a body keeps one site");
+    }
+
+    #[test]
+    fn a_pack_answered_for_but_commented_out_is_found_at_its_line() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::UnadoptedPack).expect("the commented budget line");
+        assert!(f.message.contains("use_budget") && f.message.contains("still commented out"), "{}", f.message);
+        assert_eq!(f.line, Some(line_of("// use \"presets/organization-budget.satz\"")));
+    }
+
+    #[test]
+    fn an_action_is_a_warning_at_its_line_and_the_cli_text_is_the_finding() {
+        let t = tail("warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::Action).expect("the action");
+        assert_eq!((f.severity, f.line), (Severity::Warning, Some(line_of("action \"step\""))));
+        assert!(f.message.starts_with("action \"step\" declared in tail.satz:"), "{}", f.message);
+        // the tail ran to the end: the emitter's output and the providers are there
+        assert!(t.out.is_some() && t.providers_tf.is_some());
     }
 }

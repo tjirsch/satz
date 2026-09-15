@@ -1,8 +1,8 @@
 # satz interview
 
-How an estate gets its answers when nobody arrives with all of them: the questions the
-packs declare, asked one at a time, each answer written into the estate as it is
-given, and a gate that keeps the estate off the organisation until nothing is open.
+The interview asks the questions an estate's packs declare, one at a time, writes each
+answer into the estate as it is given, and keeps the estate off the organisation until
+no question is open.
 
 There are three ways to start an estate, and they end at the same file:
 
@@ -12,14 +12,14 @@ There are three ways to start an estate, and they end at the same file:
 | `satz interview <estate> [--create]` | a person at a terminal | one question at a time, the default in brackets, Enter accepts it |
 | `satz_interview` over MCP | a customer, through an agent | the agent asks in its own words, the human decides, the agent writes the param or passes it as an `answer` |
 
-`init` is for the operator who knows the seventeen values. The other two are for the
-conversation that produces them — and for every question a pack adds later, which
-`init` has no flag for.
+`init` takes ten of the sixteen day-0 values as flags and writes the rest from its
+defaults. The other two ask for all sixteen, and also ask every question a pack adds,
+which `init` has no flag for.
 
 ## What a question is, and what an answer is
 
 A pack that needs a param decided declares a `question` beside it — what to ask, why,
-and what changing the answer later costs ([the language reference](language.md#questions)
+and what changing the answer later costs ([the language reference](language.md#614-question--what-to-ask-and-what-the-answer-costs)
 has the syntax). The estate uses the pack; the questions come with it.
 
 **An answer is a param the estate's own `params {}` binds.** To the pack's default or
@@ -50,9 +50,9 @@ Ask in the pack's order and the derived names arrive as offers.
 
 **Every applicable question must be answered before the estate touches an
 organisation.** `bootstrap` and `transpile --apply` refuse while one is open, naming
-it; `bootstrap --dry-run` and `transpile --plan` warn instead, because looking is how
-you find out. An estate may be transpiled, checked and revised in as many passes as
-it takes — the gate is on the irreversible step.
+it; `bootstrap --dry-run` and `transpile --plan` warn instead. An estate can be
+transpiled, checked and revised any number of times; the gate is on the step that
+changes the organisation.
 
 ```
 bootstrap refused: 3 question(s) unanswered — customer_id (needs a value),
@@ -70,7 +70,7 @@ the estate's params.
 An interview follows the estate file's order, and the skeleton is written so that
 order is a path:
 
-1. **`presets/estate-core.satz`** — the seventeen params `init` writes from its flags,
+1. **`presets/estate-core.satz`** — the sixteen params `init` writes,
    each with its question. Seven have no possible default and block until typed; the
    rest offer one, the two derived names once the short name is in. The pack emits
    nothing. An estate written by `init` does not use it and does not need to: given
@@ -83,8 +83,8 @@ order is a path:
    and five off: budget, SCC enablement, the security-audit account, Defender, the
    verification runner. The map declares the choices and nothing else; the estate
    carries one `use … when` line per choice, in the map's order.
-3. **The CIS baseline**, always — it is what the estate is for. Its ten questions
-   follow the map's, and its seven opt-in extensions are its own questions.
+3. **The CIS baseline**, always. Its thirteen questions
+   follow the map's, and its ten opt-in extensions are its own questions.
 4. **Every pack a choice switched on**, with its own questions: the group names of
    the chosen model, the archive's project and retention, the alert mailbox, and so
    on. Switch a choice and the rest of the interview re-shapes; the report re-reads
@@ -122,16 +122,25 @@ A test keeps the map's params and the skeleton's lines equal.
 satz interview yaml/new-customer.satz --create
 ```
 
-`--create` writes the estate first when it does not exist: an empty `params {}`, the
-`use` lines of the path above, and the same day-0 resources `init` writes — the
-folder, the project, the state bucket, the IaC group and service account. Then the
-interview:
+`--create` writes the estate first when it does not exist: an empty `params {}`, the same
+day-0 resources `init` writes — the folder, the project, the state bucket, the IaC group and
+service account — and every pack's `use` line **commented out**, under the phase that has to
+be finished before that pack can go in.
+
+That is why a fresh estate asks sixteen questions and not fifty-six: day 0 is the scaffold
+alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
+move to the service account, and only then does a pack go in — one at a time, each with its
+own plan. Answering a pack's question `true` uncomments its line; `satz merge-presets` writes
+the line for a pack the library has gained since; and the compile reports a question answered
+`true` whose line is still commented or missing, so the three never drift apart.
+
+Then the interview:
 
 ```
-49 open question(s): 33 have a default, 16 need a value.
-Accept all defaults now and answer only those 16? [Y/n] — n goes through every question
+16 open question(s): 7 have a default, 9 need a value.
+Accept all defaults now and answer only those 9? [Y/n] — n goes through every question
 > y
-  accepted 33 default(s).
+  accepted 7 default(s).
 
 ── estate_core ──
 The questions every estate has to answer on day 0, with the params they answer.
@@ -158,8 +167,12 @@ infra_project_name — The infrastructure project id
   `why`, and the cost of changing the answer later. A one-way door is marked.
 - **Enter** accepts the default in brackets. A `oneof` lists its options numbered,
   the default marked; answer with the number.
-- `skip` leaves a question open and moves on; `q` stops. Nothing is lost: every
-  answer was written when it was given, and the next run asks what is still open.
+- Where a pack recommends a different answer from the one on offer, it says so —
+  `the pack recommends: true`. Enter still takes the offer, and `--accept-defaults`
+  binds the offer, so a pack can recommend a service that costs money without a bulk
+  run switching it on.
+- `skip` leaves a question open and moves on; `q` stops. Every answer is written
+  when it is given, and the next run asks what is still open.
 - `--accept-defaults` skips the opening offer and accepts them; `--all` re-asks
   answered questions too, with the current answer as the default.
 - A typed value takes the shape of what it replaces — a boolean stays a boolean, a
@@ -170,13 +183,13 @@ It ends with where the estate stands, what is still open, and — once `customer
 is bound — the name `init` would have given the file, so the interview can start
 under any name and the file be renamed at the end (`git mv`, and the `estate` line).
 
-The client is line-mode on purpose: it reads stdin, so a piped run drives it in the
-smoke matrix, and satz never calls a model — it presents, the human decides.
+The client is line-mode: it reads stdin, so a piped run drives it in the smoke
+matrix. satz calls no model; the human decides every answer.
 
 ## Through an agent: `satz_interview`
 
-The MCP tool returns the same report an interview needs, and can write both ends of
-it. Its arguments:
+The MCP tool returns the interview's report and can write the estate and the answers.
+Its arguments:
 
 | argument | |
 |---|---|
@@ -189,7 +202,7 @@ it. Its arguments:
 The loop an agent runs:
 
 1. `satz_interview {create: true}` on a new name → every open question of the path —
-   the seventeen day-0 ones, the map's choices, the baseline's ten, the packs the
+   the sixteen day-0 ones, the map's choices, the baseline's ten, the packs the
    defaults switch on — sixteen of them `blocking` until their inputs land, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
    and `default` where one is usable.
 2. Ask the human, in whatever order and words fit the conversation. Offer the
@@ -209,20 +222,35 @@ client with only MCP can close the loop. Either way the record is the estate fil
 Before an organisation is touched, the customer sees what was decided:
 
 ```bash
-satz questions C0example.satz --format markdown > decisions.md
+satz questions C0example.satz --format markdown --out decisions.md
 ```
 
 One table per pack, opened by the pack's description: the question, the answer the
 estate carries (or the default it would accept, or **needs a value**), and what
-changing it later costs. It is the "these are your decisions, shall we start?" page —
-and `satz questions <estate> --unanswered` is the same report cut down to what is
-still open.
+changing it later costs. ### The catalog a customer keeps
+
+`satz questions <estate> --format markdown --out <file>` is the decisions sheet, and it is also the
+document handed over afterwards: every question grouped by pack, with the answer the estate
+carries, whether that answer was **chosen for this estate** or is the **same as the pack's
+default**, WHY the question is asked at all — the pack's own sentence — and what changing it
+later costs in words rather than two enum names.
+
+`--format xlsx` writes the same catalog as a workbook, which is the one format a customer can
+fill in and send back: the `your answer` column is theirs, and `needs an answer` says which
+rows are still waiting. It is a format like the others — one invocation, one rendering, at
+the path `--out` names.
+
+Over MCP, `satz_questions` returns the same data as JSON and an agent renders its own — the
+two file formats are for the human on the other end.
+
+`satz questions <estate> --unanswered --format text --out <file>` is the same report,
+reduced to the open questions.
 
 ## Writing a pack that can be interviewed
 
 A pack is interviewable when every param a customer must decide has a `question`,
 and every question says what it costs to be wrong about. The rules, from the
-[language reference](language.md#questions):
+[language reference](language.md#614-question--what-to-ask-and-what-the-answer-costs):
 
 - A question lives **in the file that declares its param**. Questions are absorbed
   after the `use … when` guard, so a question that gates a pack cannot live in the
@@ -234,8 +262,8 @@ and every question says what it costs to be wrong about. The rules, from the
 - `why` is required wherever satz will refuse or warn — on every `recreate` and every
   `blast = high` — because that is the sentence the interview reads out before a
   one-way door.
-- A param whose value the pack **cannot know** defaults to `""`. That is what makes
-  it `blocking`, which is what makes the interview insist.
+- A param whose value the pack **cannot know** defaults to `""`, so it is
+  `blocking` and the interview requires a typed value.
 - A param **derived** from another interpolates it: `"{customer_shortname}-infra-001"`.
   The interview offers it once the input is answered, resolved. Declare the input's
   question first, so the derived one arrives as an offer rather than a block.
@@ -243,19 +271,16 @@ and every question says what it costs to be wrong about. The rules, from the
 - `recommend` is what the interview shows as advice when it differs from the default;
   the `params` value is what applies.
 
-The pack's header comment is its introduction in the interview — the first paragraph
-is read to the customer when the pack's questions begin. Write it for them.
+The first paragraph of the pack's header comment opens the pack's section of the
+interview. Write it for the customer.
 
 ## What is not built, and why
 
-- **A deferred state.** "We'll decide later" is not recorded; the question stays open
-  and the gate stays closed. A deferred one-way door carried into an apply is a
-  decision nobody made — the rule is the opposite.
-- **A lockfile or a derived file.** The estate is the answer record; a second artefact
-  saying the same thing would be the one readers argue about. Provenance — who
-  accepted, when — is git's.
-- **A full-screen client.** The line-mode interview is testable from a pipe and covers
-  the flow; a richer terminal UI can sit on the same report if the flow turns out to
-  want one.
+- **A deferred state.** "We'll decide later" is not recorded: the question stays open
+  and the gate stays closed, so no apply carries a decision nobody made.
+- **A lockfile or a derived file.** The estate is the answer record; who accepted
+  what, and when, is in git.
+- **A full-screen client.** The line-mode client covers the flow and runs from a
+  pipe; a terminal UI could read the same report.
 
 The reasoning is [ADR 0006](adr/0006-an-answer-is-a-param-the-estate-binds.md).

@@ -1,0 +1,117 @@
+// The organisation's audit logs, on their way to Microsoft Sentinel.
+//
+//   use "presets/integrations/microsoft-sentinel-auditlogs.satz"
+//
+// NEEDS `presets/integrations/microsoft-sentinel.satz`: the connector authenticates
+// through the federation that file creates and reads as the account it creates.
+// Used without it, the compile stops with `unknown param 'sentinel_project_id'`.
+//
+// FOUR RESOURCES, AND EACH ONE IS LOAD-BEARING: an organisation sink that exports
+// the four audit log streams with `include_children`, so every project is covered
+// and a project created tomorrow is covered too; the topic it writes to; the
+// subscription Sentinel pulls from; and two grants — `roles/pubsub.publisher` for
+// the sink's own writer identity, without which the sink exists and delivers
+// nothing, and `roles/pubsub.subscriber` for the Sentinel account on that one
+// subscription.
+//
+// TIGHTER THAN UPSTREAM ON PURPOSE. Microsoft's published configuration grants a
+// project-level custom role carrying `pubsub.subscriptions.consume` and `.get`,
+// which reaches every subscription in the project, including ones this estate did
+// not make. The predefined `roles/pubsub.subscriber` on this subscription alone is
+// the same access where it is needed and none where it is not.
+//
+// THE FILTER IS OR-ONLY. Cloud Logging charges a sink nothing for what it exports,
+// but an `AND`, a `NOT` or a `!=` in an organisation sink's filter narrows it per
+// project in ways that are hard to read back; the audit streams are named as four
+// alternatives, exactly as the archive sink names them. Data access logs are in the
+// list and are the loud half of the volume — Sentinel's own ingestion is charged by
+// the gigabyte, so an estate that does not want them drops that one `log_id`.
+//
+// ONE SOURCE, NOT ALL OF THEM. Microsoft publishes a configuration per log source —
+// VPC flow, firewall, DNS, GKE, Cloud SQL, Compute, IAM, Resource Manager and the
+// rest — each its own topic, subscription and sink. This is the audit-log one,
+// which every customer starts with. Another source is this file with its own
+// names and filter; copy it rather than widening this sink, because a sink is
+// replaced when its filter changes and the replacement drops what was in flight.
+//
+// NO CLAIM. Exporting audit logs to a SIEM does not satisfy a retention control:
+// `monitoring/organization-audit-logsink.satz` is what claims those, and this sink
+// is a copy leaving the organisation, not the archive.
+
+pack integrations.microsoft_sentinel_auditlogs version "1.0"
+
+params {
+  sentinel_auditlogs_topic                = "sentinel-topic"
+  sentinel_auditlogs_subscription         = "sentinel-subscription-auditlogs"
+  sentinel_auditlogs_sink_name            = "audit-logs-organization-sentinel-sink"
+  // The four audit streams, as alternatives. Dropping data_access here is the one
+  // edit an estate makes for cost.
+  sentinel_auditlogs_filter               = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
+  // A week, so a connector that is down over a weekend loses nothing.
+  sentinel_auditlogs_retention            = "604800s"
+  // What Microsoft's connector uses.
+  sentinel_auditlogs_ack_deadline_seconds = 60
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question sentinel_auditlogs_filter {
+  prompt   = "Which audit logs travel to Sentinel — all four streams, or without data access?"
+  why      = "Data Access logs are most of the volume, and Sentinel is charged by the gigabyte ingested: leaving them in buys full visibility of who read what, taking them out cuts the bill and the answer to that question with it. The organisation's own archive keeps whatever this sink drops. Widening it later replaces the sink, and what was in flight at that moment is not re-sent."
+  reversal = recreate
+  blast    = low
+}
+
+// 1) The topic the sink writes into.
+google_pubsub_topic {
+  sentinel_auditlogs {
+    name    = sentinel_auditlogs_topic
+    project = sentinel_project_id
+  }
+}
+
+// 2) The subscription Sentinel pulls from. A topic with no subscription drops
+//    everything it receives, and the connector reads from this one by name.
+google_pubsub_subscription {
+  sentinel_auditlogs {
+    name                       = sentinel_auditlogs_subscription
+    topic                      = "${{google_pubsub_topic.sentinel_auditlogs.name}}"
+    project                    = sentinel_project_id
+    ack_deadline_seconds       = sentinel_auditlogs_ack_deadline_seconds
+    message_retention_duration = sentinel_auditlogs_retention
+    retain_acked_messages      = false
+  }
+}
+
+// 3) The organisation sink. `include_children` is what makes it the organisation's
+//    logs and not one project's.
+google_logging_organization_sink {
+  sentinel_auditlogs {
+    name             = sentinel_auditlogs_sink_name
+    org_id           = customer_organization_id
+    destination      = "pubsub.googleapis.com/projects/{sentinel_project_id}/topics/{sentinel_auditlogs_topic}"
+    filter           = sentinel_auditlogs_filter
+    include_children = true
+  }
+}
+
+// 4) The sink's own writer identity may publish. Google creates that identity with
+//    the sink, so it is read back from the sink rather than written here.
+google_pubsub_topic_iam_member {
+  sentinel_auditlogs_writer {
+    topic   = "${{google_pubsub_topic.sentinel_auditlogs.name}}"
+    project = sentinel_project_id
+    role    = "roles/pubsub.publisher"
+    member  = "${{google_logging_organization_sink.sentinel_auditlogs.writer_identity}}"
+  }
+}
+
+// 5) And Sentinel may read that one subscription.
+google_pubsub_subscription_iam_member {
+  sentinel_auditlogs_reader {
+    subscription = "${{google_pubsub_subscription.sentinel_auditlogs.name}}"
+    project      = sentinel_project_id
+    role         = "roles/pubsub.subscriber"
+    member       = "serviceAccount:${{google_service_account.sentinel.email}}"
+  }
+}

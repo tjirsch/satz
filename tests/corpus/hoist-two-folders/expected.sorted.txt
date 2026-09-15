@@ -2,8 +2,14 @@
     "cloudidentity.googleapis.com/groups.discussion_forum" = ""
     "cloudidentity.googleapis.com/groups.security" = ""
     ]
+    google_cloud_identity_group.log_admins
+    google_cloud_identity_group.log_admins
     id = "log-admins@example.com"
     ignore_changes = [
+  ]
+  ]
+  depends_on = [
+  depends_on = [
   display_name = "A"
   display_name = "B"
   display_name = "Log Admins"
@@ -42,3 +48,4 @@ resource "google_organization_iam_member" "iam_group_log_admins_example_com_482e
 customer-domain = "example.com"
 customer-id = "C01"
 customer-organization-id = "123456789"
+---imports---

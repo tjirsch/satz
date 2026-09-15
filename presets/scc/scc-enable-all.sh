@@ -26,8 +26,9 @@
 #
 # WHAT IT DOES
 #   1. org pass         each service -> ENABLED   at organizations/<ID>, except
-#                                       the two opt-in ones and the multicloud
-#                                       connectors (see OPTIONAL_SERVICES)
+#                                       the multicloud connectors and the two
+#                                       opt-in ones, which --optional decides
+#                                       (leave / enable / disable)
 #   2. descendant sweep each service -> INHERITED at every folder and project
 #                                       under the org, so the org value is the
 #                                       single source of truth and no local
@@ -43,13 +44,14 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------- defaults --
+SKIPPED_MANAGED=()
 ORG=""
 APPLY=0
 DO_ORG=1
 DO_DESCENDANTS=1
 RESET_MODULES=0
 WITH_MULTICLOUD=0
-WITH_OPTIONAL=0
+OPTIONAL="leave"
 SERVICES_OVERRIDE=""
 TARGETS_FILE=""
 QUOTA_PROJECT=""
@@ -109,9 +111,18 @@ Usage: presets/scc/scc-enable-all.sh --organization ORG_ID [options]
   --apply               actually write; without it every call carries
                         validateOnly and nothing changes
   --services "a b c"    use this service list verbatim instead of discovering it
-  --with-optional       also enable WEB_SECURITY_SCANNER (which actively crawls
-                        the customer's web apps) and ARTIFACT_ANALYSIS (billed
-                        per image scan). Everything else is on by default.
+  --optional WHICH      the two opt-in services are WEB_SECURITY_SCANNER, which
+                        actively crawls the customer's web apps, and
+                        ARTIFACT_ANALYSIS, which is billed per image scan.
+                        WHICH says which of them the organization wants:
+                          leave    (default) do not touch either
+                          all      both on
+                          none     both off
+                          A[,B]    the ones named are on, the rest off — so
+                                   `--optional ARTIFACT_ANALYSIS` switches Web
+                                   Security Scanner off, including one somebody
+                                   enabled in the console
+                        Everything else is on by default.
   --with-multicloud     include the AWS/Azure connector services
   --org-only            enable at the org, skip the descendant sweep
   --descendants-only    only sweep folders/projects to INHERITED
@@ -146,7 +157,16 @@ while [[ $# -gt 0 ]]; do
     --apply)              APPLY=1; shift ;;
     --services)           SERVICES_OVERRIDE="${2:-}"; shift 2 ;;
     --with-multicloud)    WITH_MULTICLOUD=1; shift ;;
-    --with-optional)      WITH_OPTIONAL=1; shift ;;
+    --optional)           OPTIONAL="${2:-}"; shift 2
+                          case "$OPTIONAL" in
+                            leave|all|none) ;;
+                            *) for o in ${OPTIONAL//,/ }; do
+                                 case " ${OPTIONAL_SERVICES[*]} " in
+                                   *" $o "*) ;;
+                                   *) echo "error: --optional: '$o' is not an opt-in service (${OPTIONAL_SERVICES[*]}), and the value is not leave, all or none" >&2; exit 2 ;;
+                                 esac
+                               done ;;
+                          esac ;;
     --org-only)           DO_DESCENDANTS=0; shift ;;
     --descendants-only)   DO_ORG=0; shift ;;
     --reset-modules)      RESET_MODULES=1; shift ;;
@@ -232,12 +252,38 @@ diagnose() {
       say "        -> caller lacks securitycentermanagement.securityCenterServices.update"
       say "           (roles/securitycenter.admin at the org, or the settings admin role)" ;;
     *constraint*|*allowedPolicyMemberDomains*|*allowedPolicyMembers*)
-      say "        -> blocked by the CIS §1.1 domain/principal locks: enabling a"
-      say "           service provisions a new SCC service agent and Google's"
-      say "           auto-grant is refused. See the SCC section of presets/README.md" ;;
+      say "        -> blocked by the CIS §1.1 domain/principal locks: Google's role"
+      say "           grant to a service agent was refused. Name the agent in"
+      say "           allowed_policy_member_subjects; see the SCC section of presets/README.md" ;;
     *"not supported"*|*NOT_FOUND*|*"is not enabled"*|*subscription*|*tier*)
       say "        -> service unavailable at this org's SCC tier, or its API is off."
       say "           Tier activation is NOT scriptable here — activate, then re-run." ;;
+  esac
+}
+
+# Does the estate want this opt-in service on? `all` is both, `none` neither, and
+# anything else is the list of the ones it names.
+optional_wanted() {
+  case "$OPTIONAL" in
+    all) return 0 ;;
+    none) return 1 ;;
+  esac
+  local o
+  for o in ${OPTIONAL//,/ }; do
+    [ "$o" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# Does this error say the service is Google's to manage rather than ours? The
+# securitycentermanagement API answers a bare "failed precondition"; the older
+# per-service surface names the reason ("the greenfield GCSB resource"), and both
+# shapes mean the same thing: the state cannot be set and is not wrong.
+google_managed() {
+  case "$1" in
+    *"greenfield GCSB"*|*"cannot update service settings"*) return 0 ;;
+    *FAILED_PRECONDITION*|*"failed precondition"*) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -250,6 +296,14 @@ set_state() {
              "$q" "{\"intendedEnablementState\":\"$state\"}"); then
     say "    ok    $service -> $state"
     OK=$((OK+1))
+  elif google_managed "$err"; then
+    # Google runs this detector for this organisation itself: the service is not
+    # ours to switch, and saying FAIL would make an estate's `run-actions` stop on
+    # a state that is already correct. Measured on a 2026 organisation, where
+    # SECURITY_HEALTH_ANALYTICS answers
+    # "cannot update service settings … for the greenfield GCSB resource".
+    say "    skip  $service (managed by Google for this organisation, not settable here)"
+    SKIPPED_MANAGED+=("$parent $service")
   else
     say "    FAIL  $service -> $state"
     say "        ${err//$'\n'/$'\n'        }"
@@ -385,9 +439,17 @@ if (( DO_ORG )); then
       say "    skip  $s (multicloud connector; pass --with-multicloud to include)"
       continue
     fi
-    if is_optional "$s" && (( ! WITH_OPTIONAL )); then
-      say "    skip  $s (opt-in: active scanning or per-scan cost; --with-optional)"
-      continue
+    if is_optional "$s"; then
+      if [ "$OPTIONAL" = "leave" ]; then
+        say "    skip  $s (opt-in: active scanning or per-scan cost; --optional decides)"
+        continue
+      fi
+      # the estate names the opt-ins it wants; every other opt-in is off, because
+      # one switched on by hand in the console is drift like any other
+      if ! optional_wanted "$s"; then
+        set_state "organizations/$ORG" "$s" DISABLED
+        continue
+      fi
     fi
     if is_not_enableable "$s"; then
       say "    skip  $s (not enableable here; SCC mirrors the underlying service)"
@@ -409,7 +471,7 @@ if (( DO_DESCENDANTS )); then
       say "  $t"
       for s in "${SERVICES[@]}"; do
         if is_multicloud "$s" && (( ! WITH_MULTICLOUD )); then continue; fi
-        if is_optional "$s" && (( ! WITH_OPTIONAL )); then continue; fi
+        if is_optional "$s" && [ "$OPTIONAL" = "leave" ]; then continue; fi
         set_state "$t" "$s" INHERITED
         if (( RESET_MODULES )); then reset_modules "$t" "$s"; fi
       done
@@ -418,7 +480,11 @@ if (( DO_DESCENDANTS )); then
 fi
 
 step "summary"
-say "  ok: $OK   failed: $FAILED"
+say "  ok: $OK   skipped (Google-managed): ${#SKIPPED_MANAGED[@]}   failed: $FAILED"
+if (( ${#SKIPPED_MANAGED[@]} )); then
+  say "  managed by Google for this organisation, nothing to set:"
+  printf '    %s\n' "${SKIPPED_MANAGED[@]}"
+fi
 if (( FAILED )); then
   say "  failed calls:"
   printf '    %s\n' "${FAILURES[@]}"

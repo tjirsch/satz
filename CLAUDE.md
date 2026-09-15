@@ -49,7 +49,13 @@ and in the maintainer's notes. Nothing in this file names a customer.
   (`$NAMES_DENYLIST`) is for, and what review is for.
 - **Release flow:** work commits on `main`; `cargo release patch|minor
   --execute --no-confirm` bumps, tags and pushes; the tag triggers cargo-dist.
-  Release without asking when a discussed solution is releasable (tests +
+  **Minor or patch (2026-09-11, ADR 0010):** a release is a MINOR when the same
+  estate or input, run through the new binary, needs an edit, is refused, or
+  plans differently — a language change, a removed or renamed command or flag,
+  an input format no longer read, an emission change that moves a plan.
+  Everything else is a PATCH. The minor number is how an operator sees that an
+  upgrade brings work; it grants no time to postpone that work — everyone stays
+  on the current version. Release without asking when a discussed solution is releasable (tests +
   clippy green, docs updated). After the release, stop — no polling of the
   GitHub API (unauthenticated: 60 req/h, shared with users' `self-update`).
 - **satz owns no credential.** No OAuth client, no token on disk, no per-estate
@@ -59,7 +65,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   account, derived from `svc_iac_account` + `infra_project_name` exactly as the
   emitter derives the provider's `impersonate_service_account`. The exceptions
   are bare `whoami` (given an estate it binds like everything else, to answer
-  what that estate acts as), `bootstrap`, `init --from-live` and `map-types`, each named with
+  what that estate acts as), `bootstrap`, `init` and `map-types`, each named with
   its reason in `IDENTITIES` (`src/main.rs`), which a test forces every new
   command to join. One command, one identity: the CLI binds it for the process
   and a second, different binding is refused, never ignored. `satz mcp` is
@@ -68,6 +74,14 @@ and in the maintainer's notes. Nothing in this file names a customer.
   mutable global because the server dispatches concurrently, and a target that
   changed under a call in flight is how one customer's tools run as another's
   service account.
+- **What an agent may run is decided per command.** `MCP_PARITY` (`src/mcp.rs`)
+  names every CLI command with the MCP tool that serves it or the reason none
+  does; `cargo test` fails on a command in neither column, on a registered tool
+  the table does not name, and on a tool `docs/mcp.md` does not list. The server
+  sends both halves to the client at initialize — the command behind each tool,
+  and what it will not run with the reason — so an agent asks for `apply` instead
+  of writing HCL by hand. A new tool gets a step in the smoke matrix in the same
+  PR: its `tools/list` assertion is an exact set.
 - **Presets, provenance by suffix:** `X.satz` pristine, upstream-owned, always
   overwritable / `X.local.satz` the user's fork, never touched by updates /
   `X.diff.satz` the current adoption delta, rewritten on every merge. A preset
@@ -86,6 +100,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   test that compiles every corpus case against it.
 - **Memberships stay OUT of presets** — presets define groups, humans grant
   membership.
+- **The IaC service account holds named roles, never `roles/owner`** (ADR 0009). A
+  pack that emits a resource type the role table in `src/iac_roles.rs` has no row for
+  adds the row in the same PR, verified with `scripts/check_iac_roles.py`; a new pack
+  gets a line in one of the `tests/iac/` cases. `iac_roles_gate` fails on either
+  omission.
 - **80% of customisation via params, the rest via `.local` forks** — no
   variable explosion. Names that must be globally unique derive from
   `customer_shortname`.
@@ -96,7 +115,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   converting old estates and packs for as long as legacy orgs exist; that is the whole YAML surface. No new functionality grows a YAML arm, YAML is never
   generated, and a YAML code path that a cleanup breaks is deleted, not
   repaired — the legacy walk, the `.gen.yaml` twin and every YAML command arm
-  are gone since v0.46.14. A conversion is reported as NEEDS-REVIEW where it
+  are gone. A conversion is reported as NEEDS-REVIEW where it
   cannot be proven; migrated estates may need manual edits (an old
   `!import-include` becomes `use` plus `satz adopt`).
   `tests/corpus/yaml-estate/` is the converter's gate: a YAML fixture through
@@ -111,6 +130,15 @@ and in the maintainer's notes. Nothing in this file names a customer.
   only when you built the binary yourself and want that one.
 - **Corpus (`tests/corpus/`) is snapshot-gated:** `UPDATE_CORPUS=1` + review
   the diff.
+- **Every Satz file in the repository is formatted (2026-09-13, ADR 0017).** `satz fmt`
+  is the layout — two-space indent, `=` aligned over a run, list commas — and both
+  `cargo test` (`crates/satz-core/tests/fmt_corpus.rs`) and the smoke matrix fail on a
+  file that is not. Run `satz fmt presets tests` before committing a `.satz` change;
+  the formatter never changes meaning, and the same test proves it. Satz text has
+  three ways to disk, all in `src/fsx.rs`: `write_generated_satz` (composed whole,
+  formatted), `write_edited_satz` (a splice; the author's layout stays, a formatted
+  file stays formatted), `write_verbatim` (bytes satz copies). `fsx::write` refuses a
+  `.satz` path and `clippy.toml` disallows `std::fs::write` outside that module.
 - **Docs ship with the change, in two renderings.** A change to the language,
   a command, a flag or a pack updates `README.md`, `docs/*.md` and
   `presets/README.md` in the same PR (the language reference cites
@@ -121,11 +149,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `SITE_DOCS_EXCLUDED` (with its reason), and the build fails naming any doc in
   neither, so a page reaching the public site is a decision and so is a page not
   reaching it. The MENU is the same kind of decision: `NAV_ORDER` names every
-  page in reading order — `satz`, `language`, `presets`, `workflows`, `mcp`,
-  `examples`, `housekeeping`, `competitive`, `llms` — and a page it does not
-  name fails the build rather than being appended alphabetically. A page title
-  is that menu word after `satz` (`# satz language`, `# satz mcp`; the preset
-  library is `# satz library`) and carries no trailing explanation — what the
+  page in reading order — `satz`, `language`, `library`, `workflows`,
+  `interview`, `mcp`, `examples`, `housekeeping`, `competitive`, `llms` — and a
+  page it does not name fails the build rather than being appended
+  alphabetically. A page title is that menu word after `satz` (`# satz
+  language`, `# satz library`) and carries no trailing explanation — what the
   page IS belongs in its opening line. Published by
   `.github/workflows/pages.yml` on every release tag; nothing is written for
   the site separately, and a doc that is not in the repo is not documentation.
@@ -136,9 +164,12 @@ and in the maintainer's notes. Nothing in this file names a customer.
   changelog edit makes a page stale. The index prints the first sentence of each
   pack's header comment and refuses one that says nothing; a pack the shape does
   not decide how to `use` states its own line in that header.
-  Run it locally before a docs PR: `uv run --with markdown
-  scripts/build-site.py _site` and open `_site/index.html`. `satz open-readme`
-  and the post-install step open that site.
+  The site parses with cmark-gfm, GitHub's own parser (ADR 0008), so it shows
+  what GitHub shows — lists, fences and heading anchors included; a link to an
+  anchor that does not exist fails the build. Run it locally before a docs PR:
+  `uv run scripts/build-site.py _site` (the script declares its dependency) and
+  open `_site/index.html`. `satz open-readme` and the post-install step open
+  that site.
 - **A decision that was not obvious gets an ADR.** `docs/adr/`, MADR form, one
   file per decision, numbered and never renumbered: the context, the options with
   their real trade-offs, what was chosen and what it costs. The bar is "would
@@ -152,6 +183,15 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **Docs are derived from the parser, not from intent.** Every example in
   `docs/language.md` compiles; where the doc and the parser disagree, the
   parser is right and the doc is a bug.
+- **Docs say what satz does, now (2026-09-11).** Facts in the present
+  tense: what a command, statement or pack does and what it refuses. No history —
+  versions, dates, "used to", "since vX", "no longer", how a rule came about;
+  that belongs to the changelogs, the ADRs and git. No interpretation and no
+  warnings or disclaimers around the facts. A reason stays when it is a present
+  fact ("so one apply authenticates as one principal"), not a story. A pitfall
+  is stated as what to do to make it work and what does not work, with the
+  reason — never under a label ("the quota-project trap"), and without
+  rhetoric ("on purpose", "deliberately", "silently fails", "the point").
 - **`Satz` is the language; `satz` is everything else** — the binary, the
   project, the repository. "written in Satz", "a Satz estate", "a Satz
   abstraction"; "satz compiles", "a satz command", "the satz repository". Page
@@ -181,12 +221,13 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - Compliance plane: `require` is text only and judges the DECLARED estate;
   `report-compliance` verifies witnesses through Cloud Asset Inventory and
   compares org policies by VALUE — a policy that exists but is switched off
-  reads NOT ENFORCED, which outranks DRIFTED. `--prowler` reads Prowler's OCSF
-  output (≥ 4) and the legacy JSON; a FAIL on a verified witness makes the row
-  CONTESTED (integration proposal I2).
-- A key repeated inside one body is a parse error naming both lines (was the
-  last known v0 silent-last-wins defect; repeated blocks are a list of
-  objects, resource-type maps may repeat).
+  reads NOT ENFORCED, which outranks DRIFTED. `--prowler` reads the OCSF export
+  of Prowler 5 only — check id from `metadata.event_code`, project from
+  `cloud.account.uid`, the version from `metadata.product.version`, which is
+  checked (an older export is refused by its version); a FAIL on a verified
+  witness makes the row CONTESTED (integration proposal I2).
+- A key repeated inside one body is a parse error naming both lines (repeated
+  blocks are a list of objects, resource-type maps may repeat).
 
 ## Scripts and housekeeping
 
@@ -198,7 +239,7 @@ Its first half lists every file DERIVED from something outside this
 repository — the provider schema fixture, the CAI asset-type list, the
 managed/legacy constraint pairing, the catalogs, the version pins — with what
 refreshes each, what triggers it, and what catches it when nobody remembers.
-Three of them have no automatic check at all, which is the reason the page
+Five of them have no automatic check at all, which is the reason the page
 exists. Anything derived gets a script, else a gate, else a line on that page:
 a file that is out of date while the tests report success is how a compliance
 tool starts lying.

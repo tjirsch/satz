@@ -7,17 +7,17 @@ Source: `presets/estate-core.satz`
 
 The questions every estate has to answer on day 0, with the params they answer.
 
-`satz init` writes these seventeen params from its flags; an INTERVIEW asks for
-them one at a time, and this pack is where the asking lives. Every param below
-has a question, and every question says what changing the answer later costs —
-so an agent can offer a default with a clear conscience where one exists, and
-insist on a value where none is possible.
+`satz init` writes these sixteen params — from its flags where it has one, from
+its defaults otherwise; an INTERVIEW asks for
+them one at a time, from the questions in this pack. Every param below has a
+question, and every question says what changing the answer later costs, so a
+default is offered where one exists and a value is required where none is
+possible.
 
 Two kinds of param, and the interview treats them differently. Seven have NO
 POSSIBLE DEFAULT — the directory customer id, the organisation id, the domain,
 the short name, the display name, the first admin, the billing account: the
-pack can name the question, it cannot guess the answer, and these block until
-typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
+pack cannot know the answer, so these block until a value is typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
 names built from the short name, the folder name, the service account names,
 the region — and accepting one is an answer, recorded by writing it. A derived
 default is offered only once what it derives from is answered.
@@ -155,6 +155,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The skeleton always uses this pack, ahead of [`estate_map`](estate-map.md): these are the values every later question assumes. Seven of the sixteen have no possible default and block until typed; the rest offer one, and a derived default appears only once what it derives from is answered — which is why an interview asks them in this order rather than all at once.
+
+It emits nothing. `satz init` writes the params from its flags where it has one and from its defaults otherwise; `satz interview --create` and the MCP tool ask for them instead.
 
 <!-- notes:end -->

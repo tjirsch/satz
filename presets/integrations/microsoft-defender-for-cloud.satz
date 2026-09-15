@@ -4,7 +4,7 @@
 // no service-account keys leave the estate. Microsoft's portal generates a
 // per-customer Terraform/gcloud script; this pack is that script as Satz, with
 // the customer-specific values as params and Microsoft's own values inlined —
-// they are the same for every customer and are NOT knobs.
+// they are the same for every customer and are not params.
 //
 // This file is the foundation every Defender deployment needs: the management
 // project, its APIs, the workload identity pool, and the auto-provisioner plan
@@ -24,8 +24,7 @@
 // resources at top level, naming the project through `mdc_mgmt_project_id`.
 //
 // NO CLAIM is made here. Defender for Cloud is an external CSPM that READS the
-// estate; it implements no CIS control and contributes to none. A pack that
-// claimed one would be asserting compliance it does not create.
+// estate; it implements no CIS control and contributes to none.
 //
 // BEFORE THE FIRST APPLY, two estate-side prerequisites:
 //   1. The Defender agentless-scanning service account lives in a Microsoft
@@ -57,7 +56,7 @@ params {
   // Default access grants `roles/viewer` plus a five-permission custom role;
   // least privilege enumerates 82 permissions instead. Both true is a fold
   // conflict on the role address, which is the loud failure it should be.
-  mdc_cspm_default_access = false
+  mdc_cspm_default_access  = false
   mdc_cspm_least_privilege = false
 }
 
@@ -94,7 +93,7 @@ question oneof mdc_cspm_access {
   blast    = low
   required = true
   ask_when = mdc_plan_cspm
-  option mdc_cspm_default_access  { label = "Default access — roles/viewer plus a five-permission custom role" why = "Microsoft's default; the smaller surface to reason about." }
+  option mdc_cspm_default_access { label = "Default access — roles/viewer plus a five-permission custom role" why = "Microsoft's default; the smaller surface to reason about." }
   option mdc_cspm_least_privilege { label = "Least privilege — a custom role enumerating 82 permissions instead of viewer" why = "For a customer who will not grant roles/viewer to a third party." }
 }
 

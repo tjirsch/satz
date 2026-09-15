@@ -20,20 +20,20 @@ ONE PROJECT PER USE — no parameterisation
 The labels below (cis_2_5_project_ownership, ...) are fixed, so using this
 pack twice collides on the fold. For a second project, fork it and prefix
 every label and metric `name` (cis_2_5_project_ownership ->
-tenantb_cis_2_5_project_ownership), or — preferably — use the central variant,
-which covers all projects at once:
+tenantb_cis_2_5_project_ownership), or use the central variant, which covers
+all projects at once:
 presets/monitoring/organization-cis-log-alerts-central.satz
 
 ---------------------------------------------------------------------------
-WHY PER PROJECT — and why that is the expensive option
+PER PROJECT, AND WHAT IT COSTS
 ---------------------------------------------------------------------------
 Notification channels are PROJECT resources
 (google_monitoring_notification_channel -> projects.notificationChannels).
 An alert policy can only reference channels living in its OWN project;
 there is no organization-level channel and no cross-project reference.
-So "one channel for everything" is not available: using this pack in
-N projects creates N channels pointing at the same mailbox, N x 8 metrics
-and N x 8 policies. Every new project needs it again, or it silently fails
+So one channel cannot serve every project: using this pack in N projects
+creates N channels pointing at the same mailbox, N x 8 metrics and N x 8
+policies. Every new project needs it again; without it the project fails
 CIS 2.5-2.12.
 
 The cheaper topology: route all projects' logs through an org-level
@@ -55,15 +55,14 @@ WHAT PROWLER CHECKS — and what it does not
 ---------------------------------------------------------------------------
 The checks require (a) a metric whose filter CONTAINS the CIS filter string
 and (b) any alert policy whose condition filter mentions that metric name.
-Whether the policy has a recipient is NEVER checked: an alert policy with
+Whether the policy has a recipient is not checked: an alert policy with
 notification_channels = [] passes CIS and notifies nobody. The channel below
 exists for that reason, not because the benchmark asks for it.
 
 Filter strings must match Prowler's expectation verbatim — they are compared
-by substring. Reformatting or "improving" a filter silently breaks the check
-while leaving the alert working. Source of truth:
+by substring. A reformatted filter fails the check and keeps the alert
+working. The expected strings are in:
 prowler/providers/gcp/services/logging/logging_log_metric_filter_and_alert_for_*
-Validated against prowler master, 2026-08-18.
 
 ---------------------------------------------------------------------------
 PREREQUISITES
@@ -71,7 +70,7 @@ PREREQUISITES
 - logging.googleapis.com and monitoring.googleapis.com enabled in the
 target project (add them to its project_service list).
 - The recipient group must exist in Cloud Identity BEFORE apply; Google
-accepts unverified email channels but they stay unconfirmed and silent.
+accepts unverified email channels but sends nothing to them.
 - Admin Activity audit logs are always on; DATA_READ/DATA_WRITE are not
 needed for these eight filters (they all match activity logs).
 
@@ -80,8 +79,8 @@ grep -c 'google_logging_metric'          hcl/main.tf   # expect 8
 grep -c 'google_monitoring_alert_policy' hcl/main.tf   # expect 8
 grep -A3 'notification_channels'         hcl/main.tf   # reference, not literal
 
-After apply, prove the pipeline works end to end — a metric that never
-increments satisfies the auditor but not the attacker:
+After apply, test the pipeline end to end; the compliance check also passes
+on a metric that never increments:
 gcloud iam roles create cis_probe --project=<p> --permissions=storage.buckets.get --stage=GA
 gcloud iam roles delete cis_probe --project=<p>
 # expect an alert from the 2.7 policy within ~5 minutes
@@ -154,6 +153,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The central pack, [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md), covers every project in the organisation through one org-level sink — this one is for a single project outside that sweep. Using it twice in one estate collides on the fold: for a second project, fork it and prefix every label and metric `name`.
+
+It makes no claims: a per-project pipeline does not discharge an organisation-wide control.
 
 <!-- notes:end -->

@@ -36,7 +36,7 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 
 ## Records
 
-| | decision | status |
+| | what it decides | status |
 |---|---|---|
 | [0001](0001-mcp-identity-is-scoped-to-the-call.md) | the MCP server scopes the identity to each call, not the process | accepted |
 | [0002](0002-superseded-org-policies-replace-by-construction.md) | superseded org policies change address so the plan is a replace | accepted |
@@ -45,3 +45,17 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0005](0005-adopt-moves-a-renamed-block-rather-than-importing-it-again.md) | adopt moves a renamed block rather than importing it again | accepted |
 | [0006](0006-an-answer-is-a-param-the-estate-binds.md) | an answer is a param the estate binds; nothing may be left unanswered | accepted |
 | [0007](0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md) | the estate map is a pack of choices; the estate carries the `use` lines | accepted |
+| [0008](0008-the-site-renders-markdown-with-githubs-parser.md) | the site renders markdown with GitHub's own parser (cmark-gfm) | accepted |
+| [0009](0009-iac-service-account-named-roles.md) | the IaC service account holds named roles, derived from the resource types; `iac-roles` writes them | accepted |
+| [0010](0010-the-minor-version-marks-an-upgrade-that-brings-work.md) | the minor version marks an upgrade that brings estate work; everything else is a patch | accepted |
+| [0011](0011-plan-and-apply-replace-a-policy-switching-to-reset.md) | `satz plan` and `satz apply` replace an org policy the state holds with rules and the estate declares reset | accepted |
+| [0012](0012-the-admin-port-policy-ships-on-and-passes-the-private-ranges.md) | the admin-port policy ships on and passes the private ranges | accepted |
+| [0013](0013-a-claim-asserts-what-its-witness-does.md) | a claim asserts what its witness DOES; an org policy that is switched off discharges nothing | accepted |
+| [0014](0014-a-dry-run-is-a-generated-twin-and-claims-nothing.md) | a dry-run policy is a GENERATED twin of its enforcing fragment and carries no claim | accepted |
+| [0015](0015-an-exemption-is-a-tag-and-the-control-stays-on.md) | an exemption is a tag binding; the control stays enforced and the exemption is reported beside it | accepted |
+| [0016](0016-editor-support-is-a-tree-sitter-grammar-in-its-own-repository.md) | editor support is a tree-sitter grammar in its own repository; the Zed extension lives here and pins one commit of it | accepted |
+| [0017](0017-the-formatter-keeps-the-authors-line-breaks.md) | `satz fmt` works on the token stream and keeps the author's line breaks; alignment is per run, meaning is proven by the canonical form | accepted |
+| [0018](0018-editor-intelligence-comes-from-the-satz-binary.md) | `satz lsp` serves editors from satz's own parser, pipeline and schema; parse per change, pipeline per save; a pack is compiled through the estates that use it | accepted |
+| [0019](0019-an-import-skips-what-the-platform-owns-and-says-so.md) | a live import skips what the platform owns — built-in sinks, service agents' grants, legacy bucket grants, default service accounts, deleted projects — as `skip:` patterns on the import-config row, reported per pattern | accepted |
+| [0020](0020-a-discovered-estate-binds-the-library-s-vocabulary.md) | a discovered estate binds the day-0 vocabulary: derived facts without comment, inferred values with their rule beside them, what nothing states left out and reported; every bound literal referenced the library's way | accepted |
+| [0021](0021-one-format-one-file-one-artefact.md) | a reporting command takes `--format` and `--out`, both required, and writes exactly one artefact at exactly one named path; `xlsx` is a format, `--report` and `--xlsx` are gone, and `iac-roles` and `prowler` keep the console | accepted |

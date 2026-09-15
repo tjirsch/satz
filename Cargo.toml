@@ -1,6 +1,6 @@
 [package]
 name = "satz"
-version = "0.46.102"
+version = "0.57.0"
 edition = "2021"
 authors = ["Thomas Jirsch"]
 description = "Infrastructure with a constitution — proven live. Compiles Satz estates to OpenTofu/Terraform HCL and proves declared controls against the live Google Cloud organisation."
@@ -45,6 +45,11 @@ regex = "1.13"
 google-cloud-asset-v1 = "1.12.0"
 google-cloud-gax = "1.13.0"
 rust_xlsxwriter = "0.99"
+# The language server (`satz lsp`): rust-analyzer's transport — a synchronous
+# loop over stdio, no second runtime — the protocol types, and file URLs.
+lsp-server = "0.10"
+lsp-types = "0.97"
+url = "2"
 
 [dev-dependencies]
 # the workbook test opens the xlsx package; the same zip rust_xlsxwriter writes with

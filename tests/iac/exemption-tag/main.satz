@@ -1,0 +1,94 @@
+// IaC-roles gate, and the worked example of a delegated exemption: the CIS baseline's
+// OWN service-account-key constraint, let out for exactly one principal, by a team that
+// cannot lift anything else.
+//
+// Nothing here forks a pack. The constraint's rules are a param the baseline declares
+// (`cis_sa_key_creation_rules`, defaulting to the plain enforcing rule); this estate
+// rebinds it to the two-rule form naming the `service-account-keys` CLASS, grants that
+// one class to a group, and binds the value to one service account.
+//
+// The three pieces, and why each is where it is:
+//
+//   1. WHICH class a principal may grant — `google_tags_tag_value_iam_member` on the
+//      value. In the estate, so "who may exempt what" is in git rather than a console.
+//   2. WHERE they may apply it — the `createTagBinding` permission on a folder or
+//      project. Also the estate's, because which folder a team owns is the customer's
+//      hierarchy. Not shown here: this fixture has no folder to grant on.
+//   3. WHAT is exempted — the binding itself, one resource, with its owner and reason.
+//
+// What it proves for the compliance plane: the manifest reads the verdict from the
+// UNCONDITIONAL rule and records the conditional one beside it, so a policy that lets one
+// resource out still reads as enforced instead of losing its verdict.
+
+estate iac_exemption_tag
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  customer_shortname       = "acme"
+  customer_longname        = "Acme Corp."
+  infra_folder_name        = "Infrastructure"
+  infra_project_name       = "acme-infra-001"
+  infra_bucket_name        = "acme-infra-001-state"
+  svc_iac_account          = "svc-iac-001"
+  svc_iac_users_group      = "svc-iac-001-users"
+  first_admin              = "admin@example.com"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  logsink_project_id       = "acme-log-001"
+  deployment_engine        = "tofu"
+  deployment_mode          = "local"
+  default_region           = "europe-west3"
+  default_zone             = "europe-west3-a"
+
+  // The exemption, declared where an auditor reads it. The conditional rule turns
+  // enforcement OFF only where the `service-account-keys` value is bound; the
+  // unconditional rule keeps the control on everywhere else.
+  cis_sa_key_creation_rules = [
+    {
+      enforce = "FALSE"
+      condition = {
+        title      = "exempted service accounts"
+        expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exempt_service_account_keys.name}}')"
+      }
+    },
+    {
+      enforce = "TRUE"
+    },
+  ]
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/estate-core.satz"
+
+google_org_policy_policy {
+  use "presets/CIS-GCP-Foundation-4.0.satz"
+}
+
+use "presets/exemptions/exemption-tag.satz"
+
+// (1) WHICH class: the platform team may grant key exemptions, and only key exemptions.
+// Holding this on `service-account-keys` says nothing about public-storage, encryption
+// or any other value — which is the whole reason the values are classes.
+google_tags_tag_value_iam_member {
+  "platform_may_exempt_keys" {
+    tag_value = "${{google_tags_tag_value.exempt_service_account_keys.name}}"
+    role      = "roles/resourcemanager.tagUser"
+    member    = "group:gcp-platform-admins@{customer_domain}"
+  }
+}
+
+// (3) WHAT is exempted: one service account, named, with its owner in the comment.
+google_tags_tag_binding {
+  "svc-legacy-connector" {
+    // Owner: the platform team. Review: the next access review.
+    // Reason: the vendor's connector cannot federate.
+    parent    = "//iam.googleapis.com/projects/acme-infra-001/serviceAccounts/svc-legacy@acme-infra-001.iam.gserviceaccount.com"
+    tag_value = "${{google_tags_tag_value.exempt_service_account_keys.name}}"
+  }
+}

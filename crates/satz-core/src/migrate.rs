@@ -37,7 +37,7 @@ const REF_R: &str = "\u{bb}";
 const USE_L: &str = "\u{ab}U:";  // «U:form|path|cond»
 const USE_K: &str = "\u{ab}UK";  // «UK<n>» — synthetic key for Form A in mappings
 
-fn snake(name: &str) -> String {
+fn ident_from_name(name: &str) -> String {
     name.replace(['-', '.'], "_")
 }
 
@@ -180,7 +180,7 @@ fn pre_pass(src: &str) -> Result<PrePassed, MigrateError> {
                     i = j - 1;
                 }
                 let satz_value = convert_scalar_text(&substitute_aliases(&value_text))?;
-                params.push((snake(&key), satz_value));
+                params.push((ident_from_name(&key), satz_value));
                 i += 1;
                 continue;
             }
@@ -285,7 +285,7 @@ fn convert_scalar_text(text: &str) -> Result<String, MigrateError> {
         return Ok(format!("\"{}\"", format_to_interpolation(&vals)?));
     }
     if let Some(rest) = t.strip_prefix('*') {
-        return Ok(snake(rest));
+        return Ok(ident_from_name(rest));
     }
     let v: serde_yaml::Value =
         serde_yaml::from_str(t).map_err(|e| MigrateError { msg: format!("value '{}': {}", t, e) })?;
@@ -362,7 +362,7 @@ fn format_to_interpolation(vals: &[serde_yaml::Value]) -> Result<String, Migrate
                 serde_yaml::Value::String(s) => match as_ref_name(s) {
                     Some(name) => {
                         out.push('{');
-                        out.push_str(&snake(name));
+                        out.push_str(&ident_from_name(name));
                         out.push('}');
                     }
                     None => out.push_str(&esc(s)),
@@ -418,11 +418,20 @@ fn normalise_conditional_binding(m: &serde_yaml::Mapping) -> serde_yaml::Mapping
     out
 }
 
+/// A value that prints on one line: a scalar, or a tagged value that renders
+/// to a string (`!format`, `!expr`).
+fn is_scalar_like(v: &serde_yaml::Value) -> bool {
+    matches!(
+        v,
+        serde_yaml::Value::String(_) | serde_yaml::Value::Number(_) | serde_yaml::Value::Bool(_) | serde_yaml::Value::Tagged(_)
+    )
+}
+
 /// A scalar Value into a Satz value expression.
 fn scalar_value(v: &serde_yaml::Value) -> Result<String, MigrateError> {
     match v {
         serde_yaml::Value::String(s) => match as_ref_name(s) {
-            Some(name) => Ok(snake(name)),
+            Some(name) => Ok(ident_from_name(name)),
             None => Ok(format!("\"{}\"", esc(s))),
         },
         serde_yaml::Value::Number(n) => Ok(n.to_string()),
@@ -456,7 +465,7 @@ fn value_expr(v: &serde_yaml::Value, indent: usize) -> Result<String, MigrateErr
                             serde_yaml::Value::String(s) => match as_ref_name(s) {
                                 Some(name) => {
                                     out.push('{');
-                                    out.push_str(&snake(name));
+                                    out.push_str(&ident_from_name(name));
                                     out.push('}');
                                 }
                                 None => out.push_str(&esc(s)),
@@ -477,6 +486,19 @@ fn value_expr(v: &serde_yaml::Value, indent: usize) -> Result<String, MigrateErr
                 match item {
                     serde_yaml::Value::Mapping(m) => {
                         let m = normalise_conditional_binding(m);
+                        // an object of scalars is one line — the form adopt
+                        // writes for a grant edge with its import id, and the
+                        // library's `rules = [ { enforce = "TRUE" } ]`; the
+                        // formatter keeps an inline construct inline
+                        if m.values().all(is_scalar_like) {
+                            let mut fields = Vec::new();
+                            for (k, v) in &m {
+                                let (key, _) = key_expr(k)?;
+                                fields.push(format!("{} = {}", key, value_expr(v, indent + 2)?));
+                            }
+                            let _ = writeln!(out, "{}{{ {} }},", pad, fields.join(" "));
+                            continue;
+                        }
                         let _ = writeln!(out, "{}{{", pad);
                         emit_entries(&m, &mut out, indent + 4)?;
                         let _ = writeln!(out, "{}}},", pad);
@@ -499,7 +521,7 @@ fn key_expr(k: &serde_yaml::Value) -> Result<(String, bool), MigrateError> {
     match k {
         serde_yaml::Value::String(s) => {
             if let Some(name) = as_ref_name(s) {
-                return Ok((format!("\"{{{}}}\"", snake(name)), false));
+                return Ok((format!("\"{{{}}}\"", ident_from_name(name)), false));
             }
             let ident_ok = !s.is_empty()
                 && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
@@ -524,7 +546,7 @@ fn is_use_sentinel(v: &serde_yaml::Value) -> Option<(String, String, Option<Stri
     let mut parts = inner.splitn(3, '|');
     let form = parts.next()?.to_string();
     let path = parts.next()?.to_string();
-    let cond = parts.next().filter(|c| !c.is_empty()).map(snake);
+    let cond = parts.next().filter(|c| !c.is_empty()).map(ident_from_name);
     Some((form, path, cond))
 }
 
@@ -626,6 +648,23 @@ fn list_form(key: &str, seq: &[serde_yaml::Value]) -> Result<Option<serde_yaml::
     Ok(Some(out))
 }
 
+/// A grant type carrying a SEQUENCE of maps — one scope-pinned member map per
+/// bucket, service account, … (`google_storage_bucket_iam_member { bucket = "a"
+/// … } google_storage_bucket_iam_member { bucket = "b" … }`): resource-type maps
+/// may repeat, and the document holds one key per type, so the repeats travel
+/// as a list and print as one block each.
+fn repeated_grant_maps<'a>(k: &serde_yaml::Value, v: &'a serde_yaml::Value) -> Option<Vec<&'a serde_yaml::Mapping>> {
+    let key = k.as_str()?;
+    if !key.ends_with("_iam_member") {
+        return None;
+    }
+    let seq = v.as_sequence()?;
+    if seq.is_empty() {
+        return None;
+    }
+    seq.iter().map(|item| item.as_mapping()).collect()
+}
+
 /// The body a key opens as a `{ … }` block, or `None` when the value is an
 /// attribute. A mapping is always a block; a sequence is one only in the
 /// Tier-2 list form (`list_form`), never as a plain list of values.
@@ -667,6 +706,14 @@ fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Res
             }
         }
         let (key, _) = key_expr(k)?;
+        if let Some(maps) = repeated_grant_maps(k, v) {
+            for child in maps {
+                let _ = writeln!(out, "{}{} {{", pad, key);
+                emit_entries(child, out, indent + 2)?;
+                let _ = writeln!(out, "{}}}", pad);
+            }
+            continue;
+        }
         match as_block(k, v)? {
             Some(child) => {
                 let _ = writeln!(out, "{}{} {{", pad, key);
@@ -803,6 +850,96 @@ pub fn retarget_uses(satz: &str, exists: &dyn Fn(&str) -> bool) -> String {
     out
 }
 
+/// Inline every `!include` whose target is a YAML sequence, before conversion.
+///
+/// The dialect includes a file wherever it is written, including in a value
+/// position — `group:x@example.com:` followed by an indented `!include roles.yaml`
+/// gives the member its list of roles. A list is a value, not a fragment, so it
+/// cannot become a `use` of a pack: it is inlined here, at the include's
+/// indentation, and the target's own includes are inlined the same way. A target
+/// that is a mapping stays an include and becomes a `use`. A conditional include
+/// of a list has no Satz form and is refused.
+///
+/// Returns the text and, per inlined include, `path (line n)`.
+pub fn inline_sequence_includes(
+    src: &str,
+    load: &dyn Fn(&str) -> Option<String>,
+) -> Result<(String, Vec<String>), MigrateError> {
+    let mut inlined = Vec::new();
+    let mut text = inline_walk(src, load, 0, &mut inlined)?;
+    if src.ends_with('\n') && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok((text, inlined))
+}
+
+fn is_sequence(text: &str) -> bool {
+    text.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#') && *l != "---")
+        .is_some_and(|l| l == "-" || l.starts_with("- "))
+}
+
+fn inline_walk(
+    src: &str,
+    load: &dyn Fn(&str) -> Option<String>,
+    depth: usize,
+    inlined: &mut Vec<String>,
+) -> Result<String, MigrateError> {
+    if depth > 16 {
+        return err("`!include` nested more than 16 deep — the includes form a cycle");
+    }
+    let path_of = |rest: &str| rest.split(" #").next().unwrap_or("").trim().to_string();
+    let mut out: Vec<String> = Vec::new();
+    for (n, line) in src.lines().enumerate() {
+        let t = line.trim_start();
+        let indent = line.len() - t.len();
+        if t.starts_with('#') {
+            out.push(line.to_string());
+            continue;
+        }
+        let conditional = t.strip_prefix("!include-if ").or_else(|| t.find(": !include-if ").map(|c| &t[c + ": !include-if ".len()..]));
+        if let Some(rest) = conditional {
+            let path = path_of(rest.trim().split_once(' ').map_or("", |(_, p)| p));
+            if load(&path).is_some_and(|x| is_sequence(&x)) {
+                return err(format!(
+                    "line {}: `!include-if` of {} — a list — has no Satz form: `use … when` includes a pack, not a value. Write the list in place, or bind it to a param the condition selects",
+                    n + 1,
+                    path
+                ));
+            }
+            out.push(line.to_string());
+            continue;
+        }
+        // Form A: `!include path` alone on its line; Form B: `key: !include path`
+        let (key, path, child_indent) = if let Some(rest) = t.strip_prefix("!include ") {
+            (None, path_of(rest), indent)
+        } else if let Some(c) = t.find(": !include ") {
+            (Some(&t[..c]), path_of(&t[c + ": !include ".len()..]), indent + 2)
+        } else {
+            out.push(line.to_string());
+            continue;
+        };
+        let Some(target) = load(&path).filter(|x| is_sequence(x)) else {
+            out.push(line.to_string());
+            continue;
+        };
+        let inner = inline_walk(&target, load, depth + 1, inlined)?;
+        if let Some(k) = key {
+            out.push(format!("{}{}:", " ".repeat(indent), k));
+        }
+        for l in inner.lines() {
+            let lt = l.trim();
+            if lt.is_empty() || lt.starts_with('#') || lt == "---" {
+                continue;
+            }
+            out.push(format!("{}{}", " ".repeat(child_indent), l));
+        }
+        inlined.push(format!("{} (line {})", path, n + 1));
+    }
+    Ok(out.join("\n"))
+}
+
 pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, MigrateError> {
     let pre = pre_pass(src)?;
     let doc: serde_yaml::Value = serde_yaml::from_str(&pre.yaml)
@@ -854,7 +991,7 @@ pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, Migr
                 continue;
             }
         }
-        let name_snake = snake(ks);
+        let name_snake = ident_from_name(ks);
         if params.iter().any(|(n, _)| *n == name_snake) {
             return err(format!(
                 "top-level `{}` duplicates the param `{}` from the variables block — convert by hand",
@@ -929,7 +1066,7 @@ pub fn interpolated(template: &str, params: &[&str]) -> serde_yaml::Value {
 /// The Satz param name for an HCL identifier: `-` and `.` become `_`, the same
 /// normalisation every other printed reference gets.
 pub fn param_name(name: &str) -> String {
-    snake(name)
+    ident_from_name(name)
 }
 
 /// A value that prints as a **bare** param reference (`role_id = IAMRoleID`).
@@ -988,7 +1125,7 @@ pub fn convert_value(
     if !header.is_empty() {
         out.push('\n');
     }
-    let _ = writeln!(out, "{} {}\n", kind_keyword, snake(name));
+    let _ = writeln!(out, "{} {}\n", kind_keyword, ident_from_name(name));
 
     if !params.is_empty() {
         out.push_str("params {\n");
@@ -1025,12 +1162,20 @@ pub fn convert_value(
         // promotes params to the root anyway.
         if let (Some(ks), serde_yaml::Value::String(vs)) = (k.as_str(), v) {
             if let Some(refname) = as_ref_name(vs) {
-                if snake(refname) == snake(ks) && param_names.contains(snake(ks).as_str()) {
+                if ident_from_name(refname) == ident_from_name(ks) && param_names.contains(ident_from_name(ks).as_str()) {
                     continue;
                 }
             }
         }
         let (key, is_ident) = key_expr(k)?;
+        if let Some(maps) = repeated_grant_maps(k, v) {
+            for child in maps {
+                let _ = writeln!(out, "{} {{", key);
+                emit_entries(child, &mut out, 2)?;
+                out.push_str("}\n\n");
+            }
+            continue;
+        }
         match as_block(k, v)? {
             Some(child) => {
                 let _ = writeln!(out, "{} {{", key);
@@ -1127,6 +1272,44 @@ mod tests {
         let s = convert(y, "pack", "t").unwrap();
         assert!(s.contains("\"{g}\" {"), "{s}");
         assert!(s.contains("\"group:{g}\" = ["), "{s}");
+    }
+
+    #[test]
+    fn a_value_include_of_a_list_is_inlined_and_a_mapping_stays_a_use() {
+        let load = |p: &str| match p {
+            "roles.yaml" => Some("# the roles\n- roles/viewer\n- roles/browser\n".to_string()),
+            "nested.yaml" => Some("- roles/a\n".to_string()),
+            "deep.yaml" => Some("- roles/deep\n".to_string()),
+            "policies.yaml" => Some("p1:\n  name: x\n".to_string()),
+            _ => None,
+        };
+        // Form A under a key, Form B on the key's line, a mapping target, and an
+        // unknown target left for the converter to report
+        let src = "google_organization_iam_member:\n  group:a@example.com:\n    !include roles.yaml\n  group:b@example.com: !include nested.yaml\n!include policies.yaml\n!include missing.yaml\n";
+        let (text, inlined) = inline_sequence_includes(src, &load).unwrap();
+        assert_eq!(
+            text,
+            "google_organization_iam_member:\n  group:a@example.com:\n    - roles/viewer\n    - roles/browser\n  group:b@example.com:\n    - roles/a\n!include policies.yaml\n!include missing.yaml\n"
+        );
+        assert_eq!(inlined, vec!["roles.yaml (line 3)".to_string(), "nested.yaml (line 4)".to_string()]);
+
+        // the inlined text converts to the member's role list, not a `use`
+        let (text, _) = inline_sequence_includes("google_organization_iam_member:\n  group:a@example.com:\n    !include roles.yaml\n", &load).unwrap();
+        let s = convert(&text, "estate", "t").unwrap();
+        assert!(s.contains("roles/viewer") && s.contains("roles/browser"), "{s}");
+        assert!(!s.contains("use \""), "{s}");
+
+        // an include inside an included list is inlined too
+        let load2 = |p: &str| match p {
+            "outer.yaml" => Some("- roles/outer\n!include deep.yaml\n".to_string()),
+            other => load(other),
+        };
+        let (text, _) = inline_sequence_includes("k:\n  !include outer.yaml\n", &load2).unwrap();
+        assert_eq!(text, "k:\n  - roles/outer\n  - roles/deep\n");
+
+        // a conditional include of a list has no Satz form
+        let e = inline_sequence_includes("k:\n  !include-if want roles.yaml\n", &load).unwrap_err();
+        assert!(e.msg.contains("`!include-if` of roles.yaml"), "{}", e.msg);
     }
 
     #[test]

@@ -15,9 +15,9 @@ durations loses the ability to update them.
 The constraint is a MANAGED one carrying a parameter, not a bare boolean —
 verified against a live organisation's OrgPolicy `ListConstraints`.
 
-It is a `contributes`, deliberately: the control asks for retention
-configured USING BUCKET LOCK, and locking is a one-way door no org policy
-performs. The audit-logsink pack carries the same duty.
+It is a `contributes`, not an `implements`: the control asks for retention
+configured USING BUCKET LOCK, and no org policy locks a bucket. The
+audit-logsink pack carries the same duty.
 
 ## Use it
 
@@ -94,6 +94,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+It constrains EVERY bucket in the organisation, not only the log sink's, so an estate with buckets on other durations loses the ability to update them. The retention LOCK is a human step — the duty on the claim, shared with [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) — and it cannot be undone: validate the pipeline before locking.
 
 <!-- notes:end -->

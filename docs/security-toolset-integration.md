@@ -47,12 +47,13 @@ than the README suggests.
 
 | surface | state |
 |---|---|
-| `report-compliance --prowler <file>` | reads Prowler's **legacy native JSON** only: top-level `status` and `compliance`. Prowler ≥ 4 emits OCSF, where those are `status_code` and `unmapped.compliance` — the parser finds nothing and, by its own "corroboration must never fail the report" contract, silently yields `–` in every row. Counts PASS/FAIL per CIS id; reads no severity, resource, title or remediation. No test covers it. |
+| `prowler <estate>` | prints the invocation this estate needs — the organisation and projects it declares, the frameworks it claims as `--compliance`, `json-ocsf`, and a deterministic path under `evidence/prowler/<UTC date>/`. It runs nothing: the scan spends API quota in every project and reads as the logged-in human, not as the estate's service account. `satz_prowler` serves the same answer over MCP. |
+| `report-compliance --prowler <file>` | reads the **OCSF export of Prowler 5** only (`prowler gcp --output-formats json-ocsf`): check id from `metadata.event_code`, project from `cloud.account.uid`, status from `status_code`, the framework mapping from `unmapped.compliance`, and the version from `metadata.product.version`, which is checked — an older export is refused by its version rather than read as empty. A FAIL on a verified witness makes the row CONTESTED; a FAIL whose check maps to no control of the framework is counted per check beside the table (`prowler_unmapped`). Covered by `mod prowler_ocsf_tests`. |
 | catalogs (`presets/catalogs/*.yaml`) | `title`, `paraphrase`, `automatability`, and — since the ISO cross-walk — `evidence` (another catalog's controls that stand as this one's evidence) and `duties` (the control's own human half). No Prowler check id. `cis-gcp-5.0` is a provisional §2 subset. `iso27001-2022` is the second framework, and it is a cross-walk rather than a second set of claims. |
-| `require` | text only, no JSON. Its "Provides: `<pack>`" hint comes from indexing every claim in the preset library by control id — a real control→pack map, but pack-name only. |
+| `require` | text or JSON (`--format`), and `satz_require` over MCP returns the same value. Its "Provides: `<pack>`" hint comes from indexing every claim in the preset library by control id — a real control→pack map, but pack-name only. |
 | claims at the compliance boundary | `claims_from_frontend` drops pack **version, file and line**; `interpretation` and duty text are parsed but never rendered. |
 | `evidence/<framework>-<ts>.json` | one row per control; `witnesses`, `duties`, `prowler` are **pre-rendered markdown strings**, not structured data. |
-| live matching | six resource types (org sink, log metric, bucket, alert policy, notification channel, org policy) at org scope; address → live id only, never the reverse; no project scoping. |
+| live matching | eight resource types: org sink, log metric, bucket, alert policy, notification channel and org policy from resource data, plus the organization's audit config and a bucket IAM member read from the IAM policy Cloud Asset serves as its own content type. A log metric, an alert policy and a notification channel are scoped by their project (resolved to its number); a bucket by its name; a policy by its path. Address → live id only, never the reverse. |
 | the toolset's own footprint | `presets/security-audit/sa-security-audit.satz` provisions the read-only audit service account and its impersonation group — the auditor is itself a pack. Metric filters in the alerting packs are already written to Prowler's substring expectations. |
 
 Two consequences shape the proposal. First, the evidence side needs an OCSF
@@ -172,11 +173,13 @@ index (§4); the param link in A is I5's `governs`.
 
 ### I6 — The dossier: everything mechanical about the findings, settled first
 
-*Status 2026-09-03: phase 1 shipped as `satz remediation-plan` — the dossier
-and the workbook, offline; the model pass (phase 3 of the design) is next.*
+*Status: shipped as `satz remediation-plan` — the dossier and the workbook,
+offline — and the authored round trip: `--merge <authored.json>` on the command
+line, `satz_remediation_items` and `satz_remediation_annotate` over MCP. The model
+pass is the agent's.*
 
 **What.** `satz remediation-plan <framework> <estate> --prowler <ocsf.json>
-[--checkov] [--out <dir>]` builds the **dossier**: the I3 triage rows joined
+[--checkov] [--out-dir <dir>]` builds the **dossier**: the I3 triage rows joined
 with Checkov findings on the declared address (the one identity both scanners
 share), each item carrying its bucket, normalized severity, control + the
 catalog's paraphrase, the declaring `file:line`, the sources that flagged it,
@@ -194,9 +197,10 @@ byte, and its SHA-256 names the run — `meta.json` carries it, and it is the
 cache key the model pass will use.
 
 **The workbook** is the findings deliverable minus the prose: a `Findings`
-sheet with the mechanical columns filled and the `[AI]` columns (what/why in
-customer language, recommended fix, owner, effort, phase, quick win, risk-
-acceptance candidate) tinted and empty, a `Review` dropdown
+sheet with the mechanical columns filled and the `[Authored]` columns (what/why
+in customer language, recommended fix, owner, effort, phase, quick win, risk-
+acceptance candidate, and who authored them when) tinted — empty until an
+`authored.json` pinned to the dossier's hash fills them — a `Review` dropdown
 (open / accepted / edited / rejected) with reviewer and date, `By control` and
 `By bucket` summaries as live formulas over Findings (edits propagate), an
 empty `Plan phases` sheet the model pass or the consultant fills, and
@@ -207,9 +211,9 @@ priorities in this customer's words, effort, what to accept as risk are
 judgment. But roughly seventy percent of the workbook *is* mechanical, and a
 model given two raw scanner exports re-derives it badly and differently every
 time. The dossier is the structured, triaged, PII-minimized input the model
-gets; it returns structured JSON for the `[AI]` columns and the phases; satz
-renders. Until the model pass exists, the workbook is already the consultant's
-starting point.
+gets; it returns the `[Authored]` values per item, each naming its author, and
+satz renders them beside the mechanical columns without touching `dossier.json`,
+so the hash that names the run stays the hash of what satz computed.
 
 ### I4 — `deviates` is the exception register
 

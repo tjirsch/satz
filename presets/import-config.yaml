@@ -7,28 +7,35 @@
 #     folder: { path: "Shared Services/Prod" }   # or { id: "456789" } — exactly one
 #     project: my-prj
 #   only: [google_folder, google_project, "google_*_iam_member"]
+#   exclude: ["google_*_iam_member"]
+#
+# `import: true` marks the default set; `satz import --all` takes every type the
+# source can deliver instead, `--only` narrows and `--exclude` leaves types out.
+# The rows are the provider's resource types at `provider_version`, refreshed by
+# scripts/update_import_config.py; `cargo test` holds that version to the pin.
 #
 # Per resource type: `import` (taken or not), `asset_type` + `content_type` (how
 # Cloud Asset Inventory names it), attribute `include`/`exclude`, and the
 # adoption rules `satz adopt` reads (`import_id` template, `match_on`,
 # `activate: managed`). Keys are the Terraform provider type names.
+provider_version: 7.14.1
 resource_types:
+  # ListAssets refuses accesscontextmanager.googleapis.com/AccessLevel (RESOURCE)
   google_access_context_manager_access_level:
     description: Access level for Access Context Manager
     import: false
-    asset_type: accesscontextmanager.googleapis.com/AccessLevel
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses accesscontextmanager.googleapis.com/AccessPolicy (RESOURCE)
   google_access_context_manager_access_policy:
     description: Access policy for Access Context Manager
     import: false
-    asset_type: accesscontextmanager.googleapis.com/AccessPolicy
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses accesscontextmanager.googleapis.com/ServicePerimeter (RESOURCE)
   google_access_context_manager_service_perimeter:
     description: Service perimeter for Access Context Manager
     import: false
-    asset_type: accesscontextmanager.googleapis.com/ServicePerimeter
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_active_directory_domain:
@@ -106,18 +113,16 @@ resource_types:
     asset_type: cloudasset.googleapis.com/Feed
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses cloudidentity.googleapis.com/Group (RESOURCE)
   google_cloud_identity_group:
-    match_on: [group_key.id]
     description: Cloud Identity group
     import: false
-    asset_type: cloudidentity.googleapis.com/Group
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses cloudidentity.googleapis.com/Membership (RESOURCE)
   google_cloud_identity_group_membership:
-    match_on: [group, preferred_member_key.id]
     description: Membership in a Cloud Identity group
     import: false
-    asset_type: cloudidentity.googleapis.com/Membership
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_cloud_run_service:
@@ -225,10 +230,10 @@ resource_types:
     asset_type: compute.googleapis.com/GlobalForwardingRule
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses compute.googleapis.com/HaVpnGateway (RESOURCE)
   google_compute_ha_vpn_gateway:
     description: Compute Engine HA VPN gateway
     import: false
-    asset_type: compute.googleapis.com/HaVpnGateway
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_health_check:
@@ -304,10 +309,10 @@ resource_types:
     asset_type: compute.googleapis.com/NetworkEndpointGroup
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses compute.googleapis.com/NetworkPeering (RESOURCE)
   google_compute_network_peering:
     description: Compute Engine network peering
     import: false
-    asset_type: compute.googleapis.com/NetworkPeering
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_node_group:
@@ -340,28 +345,28 @@ resource_types:
     asset_type: compute.googleapis.com/RegionDisk
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses compute.googleapis.com/RegionHealthCheck (RESOURCE)
   google_compute_region_health_check:
     description: Compute Engine regional health check
     import: false
-    asset_type: compute.googleapis.com/RegionHealthCheck
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses compute.googleapis.com/RegionInstanceGroupManager (RESOURCE)
   google_compute_region_instance_group_manager:
     description: Compute Engine regional managed instance group
     import: false
-    asset_type: compute.googleapis.com/RegionInstanceGroupManager
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses compute.googleapis.com/RegionNetworkEndpointGroup (RESOURCE)
   google_compute_region_network_endpoint_group:
     description: Compute Engine regional network endpoint group
     import: false
-    asset_type: compute.googleapis.com/RegionNetworkEndpointGroup
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses compute.googleapis.com/RegionUrlMap (RESOURCE)
   google_compute_region_url_map:
     description: Compute Engine regional URL map
     import: false
-    asset_type: compute.googleapis.com/RegionUrlMap
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_reservation:
@@ -522,10 +527,10 @@ resource_types:
     asset_type: container.googleapis.com/NodePool
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses containerregistry.googleapis.com/Registry (RESOURCE)
   google_container_registry:
     description: Google Container Registry (GCR)
     import: false
-    asset_type: containerregistry.googleapis.com/Registry
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_data_loss_prevention_inspect_template:
@@ -564,10 +569,10 @@ resource_types:
     asset_type: dataproc.googleapis.com/WorkflowTemplate
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses deploymentmanager.googleapis.com/Deployment (RESOURCE)
   google_deployment_manager_deployment:
     description: Deployment Manager deployment
     import: false
-    asset_type: deploymentmanager.googleapis.com/Deployment
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_dialogflow_agent:
@@ -614,10 +619,10 @@ resource_types:
     asset_type: file.googleapis.com/Instance
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses firestore.googleapis.com/Index (RESOURCE)
   google_firestore_index:
     description: Cloud Firestore index
     import: false
-    asset_type: firestore.googleapis.com/Index
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_folder:
@@ -631,18 +636,12 @@ resource_types:
   google_folder_iam_member:
     import_id: "{folder} {role} {member}"
     description: IAM policy for a folder
+    skip: ["serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot-prod.iam.gserviceaccount.com", "serviceAccount:service-*@*-system.iam.gserviceaccount.com", "serviceAccount:*@cloudservices.gserviceaccount.com", "serviceAccount:*-compute@developer.gserviceaccount.com", "serviceAccount:*@appspot.gserviceaccount.com", "deleted:*"]
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Folder
     content_type: IAM_POLICY
     derive_yaml_key_from: name
     exclude: []
-  google_folder_organization_policy:
-    description: Organization policy for a folder
-    import: false
-    asset_type: orgpolicy.googleapis.com/Policy
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-    deprecated: true
   google_gke_backup_backup_plan:
     description: GKE Backup for GKE backup plan
     import: false
@@ -655,24 +654,6 @@ resource_types:
     asset_type: healthcare.googleapis.com/Dataset
     content_type: RESOURCE
     derive_yaml_key_from: name
-  google_iam_role:
-    description: Custom IAM role
-    import: false
-    asset_type: iam.googleapis.com/Role
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-  google_iam_service_account:
-    description: IAM service account
-    import: false
-    asset_type: iam.googleapis.com/ServiceAccount
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-  google_iam_service_account_key:
-    description: IAM service account key
-    import: false
-    asset_type: iam.googleapis.com/ServiceAccountKey
-    content_type: RESOURCE
-    derive_yaml_key_from: name
   google_iam_workload_identity_pool:
     import_id: "projects/{project}/locations/global/workloadIdentityPools/{workload_identity_pool_id}"
     description: IAM workload identity pool
@@ -680,16 +661,16 @@ resource_types:
     asset_type: iam.googleapis.com/WorkloadIdentityPool
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses iap.googleapis.com/Brand (RESOURCE)
   google_iap_brand:
     description: IAP OAuth brand
     import: false
-    asset_type: iap.googleapis.com/Brand
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses iap.googleapis.com/IdentityAwareProxyClient (RESOURCE)
   google_iap_client:
     description: IAP OAuth client
     import: false
-    asset_type: iap.googleapis.com/IdentityAwareProxyClient
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_iap_web_iam_member:
@@ -739,6 +720,7 @@ resource_types:
   google_logging_folder_sink:
     import_id: "folders/{folder}/sinks/{name}"
     description: Cloud Logging sink for a folder
+    skip: ["_Default", "_Required"]
     import: true
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
@@ -753,6 +735,7 @@ resource_types:
   google_logging_organization_sink:
     import_id: "organizations/{org_id}/sinks/{name}"
     description: Cloud Logging sink for an organization
+    skip: ["_Default", "_Required"]
     import: true
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
@@ -760,6 +743,7 @@ resource_types:
   google_logging_project_sink:
     import_id: "projects/{project}/sinks/{name}"
     description: Cloud Logging sink for a project
+    skip: ["_Default", "_Required"]
     import: true
     asset_type: logging.googleapis.com/LogSink
     content_type: RESOURCE
@@ -770,10 +754,10 @@ resource_types:
     asset_type: memcache.googleapis.com/Instance
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses ml.googleapis.com/Model (RESOURCE)
   google_ml_engine_model:
     description: AI Platform (ML Engine) model
     import: false
-    asset_type: ml.googleapis.com/Model
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_monitoring_alert_policy:
@@ -783,10 +767,10 @@ resource_types:
     asset_type: monitoring.googleapis.com/AlertPolicy
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses monitoring.googleapis.com/Service (RESOURCE)
   google_monitoring_custom_service:
     description: Cloud Monitoring custom service
     import: false
-    asset_type: monitoring.googleapis.com/Service
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_monitoring_dashboard:
@@ -795,16 +779,16 @@ resource_types:
     asset_type: monitoring.googleapis.com/Dashboard
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses monitoring.googleapis.com/Group (RESOURCE)
   google_monitoring_group:
     description: Cloud Monitoring group
     import: false
-    asset_type: monitoring.googleapis.com/Group
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses monitoring.googleapis.com/MetricDescriptor (RESOURCE)
   google_monitoring_metric_descriptor:
     description: Cloud Monitoring metric descriptor
     import: false
-    asset_type: monitoring.googleapis.com/MetricDescriptor
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_monitoring_notification_channel:
@@ -812,12 +796,6 @@ resource_types:
     description: Cloud Monitoring notification channel
     import: false
     asset_type: monitoring.googleapis.com/NotificationChannel
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-  google_monitoring_service_level_objective:
-    description: Cloud Monitoring SLO
-    import: false
-    asset_type: monitoring.googleapis.com/ServiceLevelObjective
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_monitoring_uptime_check_config:
@@ -841,18 +819,12 @@ resource_types:
   google_organization_iam_member:
     import_id: "{org_id} {role} {member}"
     description: IAM policy for an organization
+    skip: ["serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot-prod.iam.gserviceaccount.com", "serviceAccount:service-*@*-system.iam.gserviceaccount.com", "serviceAccount:*@cloudservices.gserviceaccount.com", "serviceAccount:*-compute@developer.gserviceaccount.com", "serviceAccount:*@appspot.gserviceaccount.com", "deleted:*"]
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Organization
     content_type: IAM_POLICY
     derive_yaml_key_from: name
     exclude: []
-  google_organization_policy:
-    description: Organization policy for an organization
-    import: false
-    asset_type: orgpolicy.googleapis.com/Policy
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-    deprecated: true
   google_os_config_os_policy_assignment:
     description: OS Config OS policy assignment
     import: false
@@ -889,17 +861,11 @@ resource_types:
   google_project_iam_member:
     import_id: "{project} {role} {member}"
     description: IAM policy for a project
+    skip: ["serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot.iam.gserviceaccount.com", "serviceAccount:service-*@*-robot-prod.iam.gserviceaccount.com", "serviceAccount:service-*@*-system.iam.gserviceaccount.com", "serviceAccount:*@cloudservices.gserviceaccount.com", "serviceAccount:*-compute@developer.gserviceaccount.com", "serviceAccount:*@appspot.gserviceaccount.com", "deleted:*"]
     import: true
     asset_type: cloudresourcemanager.googleapis.com/Project
     content_type: IAM_POLICY
     derive_yaml_key_from: name
-  google_project_organization_policy:
-    description: Organization policy for a project
-    import: false
-    asset_type: orgpolicy.googleapis.com/Policy
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-    deprecated: true
   google_project_service:
     import_id: "{project}/{service}"
     description: Google Cloud service enabled for a project
@@ -908,16 +874,16 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
     exclude: []
+  # ListAssets refuses pubsublite.googleapis.com/Subscription (RESOURCE)
   google_pubsub_lite_subscription:
     description: Pub/Sub Lite subscription
     import: false
-    asset_type: pubsublite.googleapis.com/Subscription
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses pubsublite.googleapis.com/Topic (RESOURCE)
   google_pubsub_lite_topic:
     description: Pub/Sub Lite topic
     import: false
-    asset_type: pubsublite.googleapis.com/Topic
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_pubsub_schema:
@@ -958,10 +924,10 @@ resource_types:
     asset_type: redis.googleapis.com/Instance
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses cloudresourcemanager.googleapis.com/Lien (RESOURCE)
   google_resource_manager_lien:
     description: Resource Manager lien
     import: false
-    asset_type: cloudresourcemanager.googleapis.com/Lien
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_secret_manager_secret:
@@ -989,16 +955,16 @@ resource_types:
     asset_type: servicenetworking.googleapis.com/Connection
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses serviceusage.googleapis.com/ConsumerQuotaOverride (RESOURCE)
   google_service_usage_consumer_quota_override:
     description: Service Usage consumer quota override
     import: false
-    asset_type: serviceusage.googleapis.com/ConsumerQuotaOverride
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses sourcerepo.googleapis.com/Repo (RESOURCE)
   google_sourcerepo_repository:
     description: Cloud Source Repositories repository
     import: false
-    asset_type: sourcerepo.googleapis.com/Repo
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_spanner_database:
@@ -1013,10 +979,10 @@ resource_types:
     asset_type: spanner.googleapis.com/Instance
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses sqladmin.googleapis.com/Database (RESOURCE)
   google_sql_database:
     description: Cloud SQL database
     import: false
-    asset_type: sqladmin.googleapis.com/Database
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_sql_database_instance:
@@ -1026,15 +992,17 @@ resource_types:
     asset_type: sqladmin.googleapis.com/Instance
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses sqladmin.googleapis.com/User (RESOURCE)
   google_sql_user:
     description: Cloud SQL user
     import: false
-    asset_type: sqladmin.googleapis.com/User
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_storage_bucket:
     import_id: "{name}"
     description: Cloud Storage bucket
+    map:
+      lifecycle.rule: lifecycle_rule
     import: true
     asset_type: storage.googleapis.com/Bucket
     content_type: RESOURCE
@@ -1043,26 +1011,21 @@ resource_types:
   google_storage_bucket_iam_member:
     import_id: "b/{bucket} {role} {member}"
     description: IAM policy for a Cloud Storage bucket
+    skip: ["projectEditor:*", "projectOwner:*", "projectViewer:*", "deleted:*"]
     import: true
     asset_type: storage.googleapis.com/Bucket
     content_type: IAM_POLICY
     derive_yaml_key_from: name
+  # ListAssets refuses storage.googleapis.com/Object (RESOURCE)
   google_storage_bucket_object:
     description: Cloud Storage object
     import: false
-    asset_type: storage.googleapis.com/Object
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses storage.googleapis.com/Notification (RESOURCE)
   google_storage_notification:
     description: Cloud Storage Pub/Sub notification
     import: false
-    asset_type: storage.googleapis.com/Notification
-    content_type: RESOURCE
-    derive_yaml_key_from: name
-  google_tpu_node:
-    description: Cloud TPU node
-    import: false
-    asset_type: tpu.googleapis.com/Node
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_vertex_ai_dataset:
@@ -1122,10 +1085,10 @@ resource_types:
     import: false
     content_type: RESOURCE
     derive_yaml_key_from: name
+  # ListAssets refuses accesscontextmanager.googleapis.com/AuthorizedOrgsDesc (RESOURCE)
   google_access_context_manager_authorized_orgs_desc:
     description: Auto-generated entry for google_access_context_manager_authorized_orgs_desc
     import: false
-    asset_type: accesscontextmanager.googleapis.com/AuthorizedOrgsDesc
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_access_context_manager_egress_policy:
@@ -1706,7 +1669,6 @@ resource_types:
     match_on: [display_name]
     description: Auto-generated entry for google_billing_budget
     import: false
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_billing_project_info:
@@ -4199,12 +4161,6 @@ resource_types:
     import: false
     content_type: RESOURCE
     derive_yaml_key_from: name
-  google_notebooks_location:
-    description: Auto-generated entry for google_notebooks_location
-    import: false
-    asset_type: TODO/UNKNOWN
-    content_type: RESOURCE
-    derive_yaml_key_from: name
   google_notebooks_runtime:
     description: Auto-generated entry for google_notebooks_runtime
     import: false
@@ -4737,6 +4693,7 @@ resource_types:
   google_service_account:
     import_id: "projects/{project}/serviceAccounts/{account_id}@{project}.iam.gserviceaccount.com"
     description: Auto-generated entry for google_service_account
+    skip: ["*-compute@developer.gserviceaccount.com", "*@appspot.gserviceaccount.com"]
     import: true
     asset_type: iam.googleapis.com/ServiceAccount
     content_type: RESOURCE
@@ -5144,6 +5101,2260 @@ resource_types:
     derive_yaml_key_from: name
   google_workbench_instance_iam_policy:
     description: Auto-generated entry for google_workbench_instance_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_active_directory_peering:
+    description: Auto-generated entry for google_active_directory_peering
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api:
+    description: Auto-generated entry for google_api_gateway_api
+    import: false
+    asset_type: apigateway.googleapis.com/Api
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api_config:
+    description: Auto-generated entry for google_api_gateway_api_config
+    import: false
+    asset_type: apigateway.googleapis.com/ApiConfig
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api_config_iam_binding:
+    description: Auto-generated entry for google_api_gateway_api_config_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api_config_iam_member:
+    description: Auto-generated entry for google_api_gateway_api_config_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api_config_iam_policy:
+    description: Auto-generated entry for google_api_gateway_api_config_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api_iam_binding:
+    description: Auto-generated entry for google_api_gateway_api_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api_iam_member:
+    description: Auto-generated entry for google_api_gateway_api_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_api_iam_policy:
+    description: Auto-generated entry for google_api_gateway_api_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_gateway:
+    description: Auto-generated entry for google_api_gateway_gateway
+    import: false
+    asset_type: apigateway.googleapis.com/Gateway
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_gateway_iam_binding:
+    description: Auto-generated entry for google_api_gateway_gateway_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_gateway_iam_member:
+    description: Auto-generated entry for google_api_gateway_gateway_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_api_gateway_gateway_iam_policy:
+    description: Auto-generated entry for google_api_gateway_gateway_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_api:
+    description: Auto-generated entry for google_apigee_api
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_api_deployment:
+    description: Auto-generated entry for google_apigee_api_deployment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_api_product:
+    description: Auto-generated entry for google_apigee_api_product
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_app_group:
+    description: Auto-generated entry for google_apigee_app_group
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_control_plane_access:
+    description: Auto-generated entry for google_apigee_control_plane_access
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_developer:
+    description: Auto-generated entry for google_apigee_developer
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_developer_app:
+    description: Auto-generated entry for google_apigee_developer_app
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_dns_zone:
+    description: Auto-generated entry for google_apigee_dns_zone
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_environment_addons_config:
+    description: Auto-generated entry for google_apigee_environment_addons_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_environment_api_revision_deployment:
+    description: Auto-generated entry for google_apigee_environment_api_revision_deployment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  # ListAssets refuses apigee.googleapis.com/SecurityAction (RESOURCE)
+  google_apigee_security_action:
+    description: Auto-generated entry for google_apigee_security_action
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  # ListAssets refuses apigee.googleapis.com/SecurityMonitoringCondition (RESOURCE)
+  google_apigee_security_monitoring_condition:
+    description: Auto-generated entry for google_apigee_security_monitoring_condition
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apigee_security_profile_v2:
+    description: Auto-generated entry for google_apigee_security_profile_v2
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apihub_api_hub_instance:
+    description: Auto-generated entry for google_apihub_api_hub_instance
+    import: false
+    asset_type: apihub.googleapis.com/ApiHubInstance
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apihub_curation:
+    description: Auto-generated entry for google_apihub_curation
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apihub_host_project_registration:
+    description: Auto-generated entry for google_apihub_host_project_registration
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apihub_plugin:
+    description: Auto-generated entry for google_apihub_plugin
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_apihub_plugin_instance:
+    description: Auto-generated entry for google_apihub_plugin_instance
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_artifact_registry_vpcsc_config:
+    description: Auto-generated entry for google_artifact_registry_vpcsc_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_backup_dr_backup_plan:
+    description: Auto-generated entry for google_backup_dr_backup_plan
+    import: false
+    asset_type: backupdr.googleapis.com/BackupPlan
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_backup_dr_backup_plan_association:
+    description: Auto-generated entry for google_backup_dr_backup_plan_association
+    import: false
+    asset_type: backupdr.googleapis.com/BackupPlanAssociation
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_backup_dr_backup_vault:
+    description: Auto-generated entry for google_backup_dr_backup_vault
+    import: false
+    asset_type: backupdr.googleapis.com/BackupVault
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_backup_dr_management_server:
+    description: Auto-generated entry for google_backup_dr_management_server
+    import: false
+    asset_type: backupdr.googleapis.com/ManagementServer
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_backup_dr_service_config:
+    description: Auto-generated entry for google_backup_dr_service_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway:
+    description: Auto-generated entry for google_beyondcorp_security_gateway
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway_application:
+    description: Auto-generated entry for google_beyondcorp_security_gateway_application
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway_application_iam_binding:
+    description: Auto-generated entry for google_beyondcorp_security_gateway_application_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway_application_iam_member:
+    description: Auto-generated entry for google_beyondcorp_security_gateway_application_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway_application_iam_policy:
+    description: Auto-generated entry for google_beyondcorp_security_gateway_application_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway_iam_binding:
+    description: Auto-generated entry for google_beyondcorp_security_gateway_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway_iam_member:
+    description: Auto-generated entry for google_beyondcorp_security_gateway_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_beyondcorp_security_gateway_iam_policy:
+    description: Auto-generated entry for google_beyondcorp_security_gateway_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigquery_analytics_hub_data_exchange_subscription:
+    description: Auto-generated entry for google_bigquery_analytics_hub_data_exchange_subscription
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigquery_analytics_hub_listing_subscription:
+    description: Auto-generated entry for google_bigquery_analytics_hub_listing_subscription
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigquery_datapolicyv2_data_policy:
+    description: Auto-generated entry for google_bigquery_datapolicyv2_data_policy
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigquery_datapolicyv2_data_policy_iam_binding:
+    description: Auto-generated entry for google_bigquery_datapolicyv2_data_policy_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigquery_datapolicyv2_data_policy_iam_member:
+    description: Auto-generated entry for google_bigquery_datapolicyv2_data_policy_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigquery_datapolicyv2_data_policy_iam_policy:
+    description: Auto-generated entry for google_bigquery_datapolicyv2_data_policy_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigquery_row_access_policy:
+    description: Auto-generated entry for google_bigquery_row_access_policy
+    import: false
+    asset_type: bigquery.googleapis.com/RowAccessPolicy
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigtable_logical_view:
+    description: Auto-generated entry for google_bigtable_logical_view
+    import: false
+    asset_type: bigtableadmin.googleapis.com/LogicalView
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigtable_materialized_view:
+    description: Auto-generated entry for google_bigtable_materialized_view
+    import: false
+    asset_type: bigtableadmin.googleapis.com/MaterializedView
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_bigtable_schema_bundle:
+    description: Auto-generated entry for google_bigtable_schema_bundle
+    import: false
+    asset_type: bigtableadmin.googleapis.com/SchemaBundle
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_agent:
+    description: Auto-generated entry for google_ces_agent
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_app:
+    description: Auto-generated entry for google_ces_app
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_app_version:
+    description: Auto-generated entry for google_ces_app_version
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_deployment:
+    description: Auto-generated entry for google_ces_deployment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_example:
+    description: Auto-generated entry for google_ces_example
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_guardrail:
+    description: Auto-generated entry for google_ces_guardrail
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_tool:
+    description: Auto-generated entry for google_ces_tool
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_ces_toolset:
+    description: Auto-generated entry for google_ces_toolset
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_chronicle_data_access_label:
+    description: Auto-generated entry for google_chronicle_data_access_label
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_chronicle_data_access_scope:
+    description: Auto-generated entry for google_chronicle_data_access_scope
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_chronicle_reference_list:
+    description: Auto-generated entry for google_chronicle_reference_list
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_chronicle_retrohunt:
+    description: Auto-generated entry for google_chronicle_retrohunt
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_chronicle_rule:
+    description: Auto-generated entry for google_chronicle_rule
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_chronicle_rule_deployment:
+    description: Auto-generated entry for google_chronicle_rule_deployment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_chronicle_watchlist:
+    description: Auto-generated entry for google_chronicle_watchlist
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_quotas_quota_adjuster_settings:
+    description: Auto-generated entry for google_cloud_quotas_quota_adjuster_settings
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_run_v2_worker_pool:
+    description: Auto-generated entry for google_cloud_run_v2_worker_pool
+    import: false
+    asset_type: run.googleapis.com/WorkerPool
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_run_v2_worker_pool_iam_binding:
+    description: Auto-generated entry for google_cloud_run_v2_worker_pool_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_run_v2_worker_pool_iam_member:
+    description: Auto-generated entry for google_cloud_run_v2_worker_pool_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_run_v2_worker_pool_iam_policy:
+    description: Auto-generated entry for google_cloud_run_v2_worker_pool_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_security_compliance_cloud_control:
+    description: Auto-generated entry for google_cloud_security_compliance_cloud_control
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_security_compliance_framework:
+    description: Auto-generated entry for google_cloud_security_compliance_framework
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_cloud_security_compliance_framework_deployment:
+    description: Auto-generated entry for google_cloud_security_compliance_framework_deployment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_clouddeploy_deploy_policy:
+    description: Auto-generated entry for google_clouddeploy_deploy_policy
+    import: false
+    asset_type: clouddeploy.googleapis.com/DeployPolicy
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_colab_notebook_execution:
+    description: Auto-generated entry for google_colab_notebook_execution
+    import: false
+    asset_type: aiplatform.googleapis.com/NotebookExecutionJob
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_colab_runtime:
+    description: Auto-generated entry for google_colab_runtime
+    import: false
+    asset_type: aiplatform.googleapis.com/NotebookRuntime
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_colab_runtime_template:
+    description: Auto-generated entry for google_colab_runtime_template
+    import: false
+    asset_type: aiplatform.googleapis.com/NotebookRuntimeTemplate
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_colab_runtime_template_iam_binding:
+    description: Auto-generated entry for google_colab_runtime_template_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_colab_runtime_template_iam_member:
+    description: Auto-generated entry for google_colab_runtime_template_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_colab_runtime_template_iam_policy:
+    description: Auto-generated entry for google_colab_runtime_template_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_colab_schedule:
+    description: Auto-generated entry for google_colab_schedule
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_composer_user_workloads_config_map:
+    description: Auto-generated entry for google_composer_user_workloads_config_map
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_composer_user_workloads_secret:
+    description: Auto-generated entry for google_composer_user_workloads_secret
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_backend_bucket_iam_binding:
+    description: Auto-generated entry for google_compute_backend_bucket_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_backend_bucket_iam_member:
+    description: Auto-generated entry for google_compute_backend_bucket_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_backend_bucket_iam_policy:
+    description: Auto-generated entry for google_compute_backend_bucket_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_backend_service_iam_binding:
+    description: Auto-generated entry for google_compute_backend_service_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_backend_service_iam_member:
+    description: Auto-generated entry for google_compute_backend_service_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_backend_service_iam_policy:
+    description: Auto-generated entry for google_compute_backend_service_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_cross_site_network:
+    description: Auto-generated entry for google_compute_cross_site_network
+    import: false
+    asset_type: compute.googleapis.com/CrossSiteNetwork
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_firewall_policy_with_rules:
+    description: Auto-generated entry for google_compute_firewall_policy_with_rules
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_future_reservation:
+    description: Auto-generated entry for google_compute_future_reservation
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instance_from_machine_image:
+    description: Auto-generated entry for google_compute_instance_from_machine_image
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instance_template_iam_binding:
+    description: Auto-generated entry for google_compute_instance_template_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instance_template_iam_member:
+    description: Auto-generated entry for google_compute_instance_template_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instance_template_iam_policy:
+    description: Auto-generated entry for google_compute_instance_template_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instant_snapshot:
+    description: Auto-generated entry for google_compute_instant_snapshot
+    import: false
+    asset_type: compute.googleapis.com/InstantSnapshot
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instant_snapshot_iam_binding:
+    description: Auto-generated entry for google_compute_instant_snapshot_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instant_snapshot_iam_member:
+    description: Auto-generated entry for google_compute_instant_snapshot_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_instant_snapshot_iam_policy:
+    description: Auto-generated entry for google_compute_instant_snapshot_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_interconnect_attachment_group:
+    description: Auto-generated entry for google_compute_interconnect_attachment_group
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_interconnect_group:
+    description: Auto-generated entry for google_compute_interconnect_group
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_machine_image:
+    description: Auto-generated entry for google_compute_machine_image
+    import: false
+    asset_type: compute.googleapis.com/MachineImage
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_machine_image_iam_binding:
+    description: Auto-generated entry for google_compute_machine_image_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_machine_image_iam_member:
+    description: Auto-generated entry for google_compute_machine_image_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_machine_image_iam_policy:
+    description: Auto-generated entry for google_compute_machine_image_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_network_edge_security_service:
+    description: Auto-generated entry for google_compute_network_edge_security_service
+    import: false
+    asset_type: compute.googleapis.com/NetworkEdgeSecurityService
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_network_firewall_policy_packet_mirroring_rule:
+    description: Auto-generated entry for google_compute_network_firewall_policy_packet_mirroring_rule
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_network_firewall_policy_with_rules:
+    description: Auto-generated entry for google_compute_network_firewall_policy_with_rules
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_organization_security_policy:
+    description: Auto-generated entry for google_compute_organization_security_policy
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_organization_security_policy_association:
+    description: Auto-generated entry for google_compute_organization_security_policy_association
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_organization_security_policy_rule:
+    description: Auto-generated entry for google_compute_organization_security_policy_rule
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_preview_feature:
+    description: Auto-generated entry for google_compute_preview_feature
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_backend_service_iam_binding:
+    description: Auto-generated entry for google_compute_region_backend_service_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_backend_service_iam_member:
+    description: Auto-generated entry for google_compute_region_backend_service_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_backend_service_iam_policy:
+    description: Auto-generated entry for google_compute_region_backend_service_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_health_aggregation_policy:
+    description: Auto-generated entry for google_compute_region_health_aggregation_policy
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_health_source:
+    description: Auto-generated entry for google_compute_region_health_source
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_network_firewall_policy_with_rules:
+    description: Auto-generated entry for google_compute_region_network_firewall_policy_with_rules
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_resize_request:
+    description: Auto-generated entry for google_compute_region_resize_request
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_security_policy:
+    description: Auto-generated entry for google_compute_region_security_policy
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_region_security_policy_rule:
+    description: Auto-generated entry for google_compute_region_security_policy_rule
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_resource_policy_attachment:
+    description: Auto-generated entry for google_compute_resource_policy_attachment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_router_route_policy:
+    description: Auto-generated entry for google_compute_router_route_policy
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_snapshot_settings:
+    description: Auto-generated entry for google_compute_snapshot_settings
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_storage_pool:
+    description: Auto-generated entry for google_compute_storage_pool
+    import: false
+    asset_type: compute.googleapis.com/StoragePool
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_storage_pool_iam_binding:
+    description: Auto-generated entry for google_compute_storage_pool_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_storage_pool_iam_member:
+    description: Auto-generated entry for google_compute_storage_pool_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_storage_pool_iam_policy:
+    description: Auto-generated entry for google_compute_storage_pool_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_compute_wire_group:
+    description: Auto-generated entry for google_compute_wire_group
+    import: false
+    asset_type: compute.googleapis.com/WireGroup
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_contact_center_insights_analysis_rule:
+    description: Auto-generated entry for google_contact_center_insights_analysis_rule
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_contact_center_insights_view:
+    description: Auto-generated entry for google_contact_center_insights_view
+    import: false
+    asset_type: contactcenterinsights.googleapis.com/View
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataflow_flex_template_job:
+    description: Auto-generated entry for google_dataflow_flex_template_job
+    import: false
+    asset_type: dataflow.googleapis.com/Job
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataform_repository:
+    description: Auto-generated entry for google_dataform_repository
+    import: false
+    asset_type: dataform.googleapis.com/Repository
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataform_repository_iam_binding:
+    description: Auto-generated entry for google_dataform_repository_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataform_repository_iam_member:
+    description: Auto-generated entry for google_dataform_repository_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataform_repository_iam_policy:
+    description: Auto-generated entry for google_dataform_repository_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataform_repository_release_config:
+    description: Auto-generated entry for google_dataform_repository_release_config
+    import: false
+    asset_type: dataform.googleapis.com/ReleaseConfig
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataform_repository_workflow_config:
+    description: Auto-generated entry for google_dataform_repository_workflow_config
+    import: false
+    asset_type: dataform.googleapis.com/WorkflowConfig
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_entry:
+    description: Auto-generated entry for google_dataplex_entry
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_entry_link:
+    description: Auto-generated entry for google_dataplex_entry_link
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_glossary:
+    description: Auto-generated entry for google_dataplex_glossary
+    import: false
+    asset_type: dataplex.googleapis.com/Glossary
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_glossary_category:
+    description: Auto-generated entry for google_dataplex_glossary_category
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_glossary_iam_binding:
+    description: Auto-generated entry for google_dataplex_glossary_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_glossary_iam_member:
+    description: Auto-generated entry for google_dataplex_glossary_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_glossary_iam_policy:
+    description: Auto-generated entry for google_dataplex_glossary_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataplex_glossary_term:
+    description: Auto-generated entry for google_dataplex_glossary_term
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_gdc_application_environment:
+    description: Auto-generated entry for google_dataproc_gdc_application_environment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_gdc_service_instance:
+    description: Auto-generated entry for google_dataproc_gdc_service_instance
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_gdc_spark_application:
+    description: Auto-generated entry for google_dataproc_gdc_spark_application
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_metastore_database_iam_binding:
+    description: Auto-generated entry for google_dataproc_metastore_database_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_metastore_database_iam_member:
+    description: Auto-generated entry for google_dataproc_metastore_database_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_metastore_database_iam_policy:
+    description: Auto-generated entry for google_dataproc_metastore_database_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_metastore_table_iam_binding:
+    description: Auto-generated entry for google_dataproc_metastore_table_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_metastore_table_iam_member:
+    description: Auto-generated entry for google_dataproc_metastore_table_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_metastore_table_iam_policy:
+    description: Auto-generated entry for google_dataproc_metastore_table_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dataproc_session_template:
+    description: Auto-generated entry for google_dataproc_session_template
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_developer_connect_account_connector:
+    description: Auto-generated entry for google_developer_connect_account_connector
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_developer_connect_connection:
+    description: Auto-generated entry for google_developer_connect_connection
+    import: false
+    asset_type: developerconnect.googleapis.com/Connection
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_developer_connect_git_repository_link:
+    description: Auto-generated entry for google_developer_connect_git_repository_link
+    import: false
+    asset_type: developerconnect.googleapis.com/GitRepositoryLink
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_developer_connect_insights_config:
+    description: Auto-generated entry for google_developer_connect_insights_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_conversation_profile:
+    description: Auto-generated entry for google_dialogflow_conversation_profile
+    import: false
+    asset_type: dialogflow.googleapis.com/ConversationProfile
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_cx_generative_settings:
+    description: Auto-generated entry for google_dialogflow_cx_generative_settings
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_cx_generator:
+    description: Auto-generated entry for google_dialogflow_cx_generator
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_cx_playbook:
+    description: Auto-generated entry for google_dialogflow_cx_playbook
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_cx_tool:
+    description: Auto-generated entry for google_dialogflow_cx_tool
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_encryption_spec:
+    description: Auto-generated entry for google_dialogflow_encryption_spec
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_generator:
+    description: Auto-generated entry for google_dialogflow_generator
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_dialogflow_version:
+    description: Auto-generated entry for google_dialogflow_version
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_acl_config:
+    description: Auto-generated entry for google_discovery_engine_acl_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_assistant:
+    description: Auto-generated entry for google_discovery_engine_assistant
+    import: false
+    asset_type: discoveryengine.googleapis.com/Assistant
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_cmek_config:
+    description: Auto-generated entry for google_discovery_engine_cmek_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_control:
+    description: Auto-generated entry for google_discovery_engine_control
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_data_connector:
+    description: Auto-generated entry for google_discovery_engine_data_connector
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_license_config:
+    description: Auto-generated entry for google_discovery_engine_license_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_recommendation_engine:
+    description: Auto-generated entry for google_discovery_engine_recommendation_engine
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_serving_config:
+    description: Auto-generated entry for google_discovery_engine_serving_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_sitemap:
+    description: Auto-generated entry for google_discovery_engine_sitemap
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_user_store:
+    description: Auto-generated entry for google_discovery_engine_user_store
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_discovery_engine_widget_config:
+    description: Auto-generated entry for google_discovery_engine_widget_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_edgenetwork_interconnect_attachment:
+    description: Auto-generated entry for google_edgenetwork_interconnect_attachment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_eventarc_enrollment:
+    description: Auto-generated entry for google_eventarc_enrollment
+    import: false
+    asset_type: eventarc.googleapis.com/Enrollment
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_eventarc_google_api_source:
+    description: Auto-generated entry for google_eventarc_google_api_source
+    import: false
+    asset_type: eventarc.googleapis.com/GoogleApiSource
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_eventarc_message_bus:
+    description: Auto-generated entry for google_eventarc_message_bus
+    import: false
+    asset_type: eventarc.googleapis.com/MessageBus
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_eventarc_pipeline:
+    description: Auto-generated entry for google_eventarc_pipeline
+    import: false
+    asset_type: eventarc.googleapis.com/Pipeline
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_android_app:
+    description: Auto-generated entry for google_firebase_android_app
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_app_hosting_backend:
+    description: Auto-generated entry for google_firebase_app_hosting_backend
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_app_hosting_build:
+    description: Auto-generated entry for google_firebase_app_hosting_build
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_app_hosting_default_domain:
+    description: Auto-generated entry for google_firebase_app_hosting_default_domain
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_app_hosting_domain:
+    description: Auto-generated entry for google_firebase_app_hosting_domain
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_app_hosting_traffic:
+    description: Auto-generated entry for google_firebase_app_hosting_traffic
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_apple_app:
+    description: Auto-generated entry for google_firebase_apple_app
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_data_connect_service:
+    description: Auto-generated entry for google_firebase_data_connect_service
+    import: false
+    asset_type: firebasedataconnect.googleapis.com/Service
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_database_instance:
+    description: Auto-generated entry for google_firebase_database_instance
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_extensions_instance:
+    description: Auto-generated entry for google_firebase_extensions_instance
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_hosting_channel:
+    description: Auto-generated entry for google_firebase_hosting_channel
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_hosting_custom_domain:
+    description: Auto-generated entry for google_firebase_hosting_custom_domain
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_hosting_release:
+    description: Auto-generated entry for google_firebase_hosting_release
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_hosting_site:
+    description: Auto-generated entry for google_firebase_hosting_site
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_hosting_version:
+    description: Auto-generated entry for google_firebase_hosting_version
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_project:
+    description: Auto-generated entry for google_firebase_project
+    import: false
+    asset_type: firebase.googleapis.com/FirebaseProject
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_storage_bucket:
+    description: Auto-generated entry for google_firebase_storage_bucket
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firebase_web_app:
+    description: Auto-generated entry for google_firebase_web_app
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_firestore_user_creds:
+    description: Auto-generated entry for google_firestore_user_creds
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_folder_service_identity:
+    description: Auto-generated entry for google_folder_service_identity
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_code_repository_index:
+    description: Auto-generated entry for google_gemini_code_repository_index
+    import: false
+    asset_type: cloudaicompanion.googleapis.com/CodeRepositoryIndex
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_code_tools_setting:
+    description: Auto-generated entry for google_gemini_code_tools_setting
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_code_tools_setting_binding:
+    description: Auto-generated entry for google_gemini_code_tools_setting_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_data_sharing_with_google_setting:
+    description: Auto-generated entry for google_gemini_data_sharing_with_google_setting
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_data_sharing_with_google_setting_binding:
+    description: Auto-generated entry for google_gemini_data_sharing_with_google_setting_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_gemini_gcp_enablement_setting:
+    description: Auto-generated entry for google_gemini_gemini_gcp_enablement_setting
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_gemini_gcp_enablement_setting_binding:
+    description: Auto-generated entry for google_gemini_gemini_gcp_enablement_setting_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_logging_setting:
+    description: Auto-generated entry for google_gemini_logging_setting
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_logging_setting_binding:
+    description: Auto-generated entry for google_gemini_logging_setting_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_release_channel_setting:
+    description: Auto-generated entry for google_gemini_release_channel_setting
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_release_channel_setting_binding:
+    description: Auto-generated entry for google_gemini_release_channel_setting_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_repository_group:
+    description: Auto-generated entry for google_gemini_repository_group
+    import: false
+    asset_type: cloudaicompanion.googleapis.com/RepositoryGroup
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_repository_group_iam_binding:
+    description: Auto-generated entry for google_gemini_repository_group_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_repository_group_iam_member:
+    description: Auto-generated entry for google_gemini_repository_group_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gemini_repository_group_iam_policy:
+    description: Auto-generated entry for google_gemini_repository_group_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gke_backup_backup_channel:
+    description: Auto-generated entry for google_gke_backup_backup_channel
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gke_backup_restore_channel:
+    description: Auto-generated entry for google_gke_backup_restore_channel
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gke_hub_membership_rbac_role_binding:
+    description: Auto-generated entry for google_gke_hub_membership_rbac_role_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_gkeonprem_vmware_admin_cluster:
+    description: Auto-generated entry for google_gkeonprem_vmware_admin_cluster
+    import: false
+    asset_type: gkeonprem.googleapis.com/VmwareAdminCluster
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_folders_policy_binding:
+    description: Auto-generated entry for google_iam_folders_policy_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_oauth_client:
+    description: Auto-generated entry for google_iam_oauth_client
+    import: false
+    asset_type: iam.googleapis.com/OauthClient
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_oauth_client_credential:
+    description: Auto-generated entry for google_iam_oauth_client_credential
+    import: false
+    asset_type: iam.googleapis.com/OauthClientCredential
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_organizations_policy_binding:
+    description: Auto-generated entry for google_iam_organizations_policy_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_principal_access_boundary_policy:
+    description: Auto-generated entry for google_iam_principal_access_boundary_policy
+    import: false
+    asset_type: iam.googleapis.com/PrincipalAccessBoundaryPolicy
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_projects_policy_binding:
+    description: Auto-generated entry for google_iam_projects_policy_binding
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workforce_pool_iam_binding:
+    description: Auto-generated entry for google_iam_workforce_pool_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workforce_pool_iam_member:
+    description: Auto-generated entry for google_iam_workforce_pool_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workforce_pool_iam_policy:
+    description: Auto-generated entry for google_iam_workforce_pool_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workforce_pool_provider_key:
+    description: Auto-generated entry for google_iam_workforce_pool_provider_key
+    import: false
+    asset_type: iam.googleapis.com/WorkforcePoolProviderKey
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workforce_pool_provider_scim_tenant:
+    description: Auto-generated entry for google_iam_workforce_pool_provider_scim_tenant
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workforce_pool_provider_scim_token:
+    description: Auto-generated entry for google_iam_workforce_pool_provider_scim_token
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workload_identity_pool_iam_binding:
+    description: Auto-generated entry for google_iam_workload_identity_pool_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workload_identity_pool_iam_member:
+    description: Auto-generated entry for google_iam_workload_identity_pool_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workload_identity_pool_iam_policy:
+    description: Auto-generated entry for google_iam_workload_identity_pool_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workload_identity_pool_managed_identity:
+    description: Auto-generated entry for google_iam_workload_identity_pool_managed_identity
+    import: false
+    asset_type: iam.googleapis.com/WorkloadIdentityPoolManagedIdentity
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iam_workload_identity_pool_namespace:
+    description: Auto-generated entry for google_iam_workload_identity_pool_namespace
+    import: false
+    asset_type: iam.googleapis.com/WorkloadIdentityPoolNamespace
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_settings:
+    description: Auto-generated entry for google_iap_settings
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_cloud_run_service_iam_binding:
+    description: Auto-generated entry for google_iap_web_cloud_run_service_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_cloud_run_service_iam_member:
+    description: Auto-generated entry for google_iap_web_cloud_run_service_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_cloud_run_service_iam_policy:
+    description: Auto-generated entry for google_iap_web_cloud_run_service_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_forwarding_rule_service_iam_binding:
+    description: Auto-generated entry for google_iap_web_forwarding_rule_service_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_forwarding_rule_service_iam_member:
+    description: Auto-generated entry for google_iap_web_forwarding_rule_service_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_forwarding_rule_service_iam_policy:
+    description: Auto-generated entry for google_iap_web_forwarding_rule_service_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_region_forwarding_rule_service_iam_binding:
+    description: Auto-generated entry for google_iap_web_region_forwarding_rule_service_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_region_forwarding_rule_service_iam_member:
+    description: Auto-generated entry for google_iap_web_region_forwarding_rule_service_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_iap_web_region_forwarding_rule_service_iam_policy:
+    description: Auto-generated entry for google_iap_web_region_forwarding_rule_service_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_kms_autokey_config:
+    description: Auto-generated entry for google_kms_autokey_config
+    import: false
+    asset_type: cloudkms.googleapis.com/AutokeyConfig
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_kms_folder_kaj_policy_config:
+    description: Auto-generated entry for google_kms_folder_kaj_policy_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_kms_key_handle:
+    description: Auto-generated entry for google_kms_key_handle
+    import: false
+    asset_type: cloudkms.googleapis.com/KeyHandle
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_kms_organization_kaj_policy_config:
+    description: Auto-generated entry for google_kms_organization_kaj_policy_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_kms_project_kaj_policy_config:
+    description: Auto-generated entry for google_kms_project_kaj_policy_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_lustre_instance:
+    description: Auto-generated entry for google_lustre_instance
+    import: false
+    asset_type: lustre.googleapis.com/Instance
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_managed_kafka_acl:
+    description: Auto-generated entry for google_managed_kafka_acl
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_managed_kafka_cluster:
+    description: Auto-generated entry for google_managed_kafka_cluster
+    import: false
+    asset_type: managedkafka.googleapis.com/Cluster
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_managed_kafka_connect_cluster:
+    description: Auto-generated entry for google_managed_kafka_connect_cluster
+    import: false
+    asset_type: managedkafka.googleapis.com/ConnectCluster
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_managed_kafka_connector:
+    description: Auto-generated entry for google_managed_kafka_connector
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_managed_kafka_topic:
+    description: Auto-generated entry for google_managed_kafka_topic
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_memorystore_instance:
+    description: Auto-generated entry for google_memorystore_instance
+    import: false
+    asset_type: memorystore.googleapis.com/Instance
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_memorystore_instance_desired_user_created_endpoints:
+    description: Auto-generated entry for google_memorystore_instance_desired_user_created_endpoints
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_model_armor_floorsetting:
+    description: Auto-generated entry for google_model_armor_floorsetting
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_model_armor_template:
+    description: Auto-generated entry for google_model_armor_template
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_netapp_host_group:
+    description: Auto-generated entry for google_netapp_host_group
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_netapp_volume_quota_rule:
+    description: Auto-generated entry for google_netapp_volume_quota_rule
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_connectivity_gateway_advertised_route:
+    description: Auto-generated entry for google_network_connectivity_gateway_advertised_route
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_connectivity_group:
+    description: Auto-generated entry for google_network_connectivity_group
+    import: false
+    asset_type: networkconnectivity.googleapis.com/Group
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_management_organization_vpc_flow_logs_config:
+    description: Auto-generated entry for google_network_management_organization_vpc_flow_logs_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_management_vpc_flow_logs_config:
+    description: Auto-generated entry for google_network_management_vpc_flow_logs_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_authorization_policy:
+    description: Auto-generated entry for google_network_security_authorization_policy
+    import: false
+    asset_type: networksecurity.googleapis.com/AuthorizationPolicy
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_authz_policy:
+    description: Auto-generated entry for google_network_security_authz_policy
+    import: false
+    asset_type: networksecurity.googleapis.com/AuthzPolicy
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_backend_authentication_config:
+    description: Auto-generated entry for google_network_security_backend_authentication_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_dns_threat_detector:
+    description: Auto-generated entry for google_network_security_dns_threat_detector
+    import: false
+    asset_type: networksecurity.googleapis.com/DnsThreatDetector
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_intercept_deployment:
+    description: Auto-generated entry for google_network_security_intercept_deployment
+    import: false
+    asset_type: networksecurity.googleapis.com/InterceptDeployment
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_intercept_deployment_group:
+    description: Auto-generated entry for google_network_security_intercept_deployment_group
+    import: false
+    asset_type: networksecurity.googleapis.com/InterceptDeploymentGroup
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_intercept_endpoint_group:
+    description: Auto-generated entry for google_network_security_intercept_endpoint_group
+    import: false
+    asset_type: networksecurity.googleapis.com/InterceptEndpointGroup
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_intercept_endpoint_group_association:
+    description: Auto-generated entry for google_network_security_intercept_endpoint_group_association
+    import: false
+    asset_type: networksecurity.googleapis.com/InterceptEndpointGroupAssociation
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_mirroring_deployment:
+    description: Auto-generated entry for google_network_security_mirroring_deployment
+    import: false
+    asset_type: networksecurity.googleapis.com/MirroringDeployment
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_mirroring_deployment_group:
+    description: Auto-generated entry for google_network_security_mirroring_deployment_group
+    import: false
+    asset_type: networksecurity.googleapis.com/MirroringDeploymentGroup
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_mirroring_endpoint:
+    description: Auto-generated entry for google_network_security_mirroring_endpoint
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_mirroring_endpoint_group:
+    description: Auto-generated entry for google_network_security_mirroring_endpoint_group
+    import: false
+    asset_type: networksecurity.googleapis.com/MirroringEndpointGroup
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_mirroring_endpoint_group_association:
+    description: Auto-generated entry for google_network_security_mirroring_endpoint_group_association
+    import: false
+    asset_type: networksecurity.googleapis.com/MirroringEndpointGroupAssociation
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_sac_attachment:
+    description: Auto-generated entry for google_network_security_sac_attachment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_security_sac_realm:
+    description: Auto-generated entry for google_network_security_sac_realm
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_authz_extension:
+    description: Auto-generated entry for google_network_services_authz_extension
+    import: false
+    asset_type: networkservices.googleapis.com/AuthzExtension
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_endpoint_policy:
+    description: Auto-generated entry for google_network_services_endpoint_policy
+    import: false
+    asset_type: networkservices.googleapis.com/EndpointPolicy
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_grpc_route:
+    description: Auto-generated entry for google_network_services_grpc_route
+    import: false
+    asset_type: networkservices.googleapis.com/GrpcRoute
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_http_route:
+    description: Auto-generated entry for google_network_services_http_route
+    import: false
+    asset_type: networkservices.googleapis.com/HttpRoute
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_lb_edge_extension:
+    description: Auto-generated entry for google_network_services_lb_edge_extension
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_mesh:
+    description: Auto-generated entry for google_network_services_mesh
+    import: false
+    asset_type: networkservices.googleapis.com/Mesh
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_consumer_association:
+    description: Auto-generated entry for google_network_services_multicast_consumer_association
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_domain:
+    description: Auto-generated entry for google_network_services_multicast_domain
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_domain_activation:
+    description: Auto-generated entry for google_network_services_multicast_domain_activation
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_domain_group:
+    description: Auto-generated entry for google_network_services_multicast_domain_group
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_group_consumer_activation:
+    description: Auto-generated entry for google_network_services_multicast_group_consumer_activation
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_group_producer_activation:
+    description: Auto-generated entry for google_network_services_multicast_group_producer_activation
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_group_range:
+    description: Auto-generated entry for google_network_services_multicast_group_range
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_group_range_activation:
+    description: Auto-generated entry for google_network_services_multicast_group_range_activation
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_multicast_producer_association:
+    description: Auto-generated entry for google_network_services_multicast_producer_association
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_service_binding:
+    description: Auto-generated entry for google_network_services_service_binding
+    import: false
+    asset_type: networkservices.googleapis.com/ServiceBinding
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_service_lb_policies:
+    description: Auto-generated entry for google_network_services_service_lb_policies
+    import: false
+    asset_type: networkservices.googleapis.com/ServiceLbPolicy
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_tcp_route:
+    description: Auto-generated entry for google_network_services_tcp_route
+    import: false
+    asset_type: networkservices.googleapis.com/TcpRoute
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_tls_route:
+    description: Auto-generated entry for google_network_services_tls_route
+    import: false
+    asset_type: networkservices.googleapis.com/TlsRoute
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_network_services_wasm_plugin:
+    description: Auto-generated entry for google_network_services_wasm_plugin
+    import: false
+    asset_type: networkservices.googleapis.com/WasmPlugin
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_observability_trace_scope:
+    description: Auto-generated entry for google_observability_trace_scope
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_oracle_database_db_system:
+    description: Auto-generated entry for google_oracle_database_db_system
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_oracle_database_exascale_db_storage_vault:
+    description: Auto-generated entry for google_oracle_database_exascale_db_storage_vault
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_oracle_database_odb_network:
+    description: Auto-generated entry for google_oracle_database_odb_network
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_oracle_database_odb_subnet:
+    description: Auto-generated entry for google_oracle_database_odb_subnet
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_os_config_guest_policies:
+    description: Auto-generated entry for google_os_config_guest_policies
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_os_config_v2_policy_orchestrator:
+    description: Auto-generated entry for google_os_config_v2_policy_orchestrator
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_os_config_v2_policy_orchestrator_for_folder:
+    description: Auto-generated entry for google_os_config_v2_policy_orchestrator_for_folder
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_os_config_v2_policy_orchestrator_for_organization:
+    description: Auto-generated entry for google_os_config_v2_policy_orchestrator_for_organization
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_parallelstore_instance:
+    description: Auto-generated entry for google_parallelstore_instance
+    import: false
+    asset_type: parallelstore.googleapis.com/Instance
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_parameter_manager_parameter:
+    description: Auto-generated entry for google_parameter_manager_parameter
+    import: false
+    asset_type: parametermanager.googleapis.com/Parameter
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_parameter_manager_parameter_version:
+    description: Auto-generated entry for google_parameter_manager_parameter_version
+    import: false
+    asset_type: parametermanager.googleapis.com/ParameterVersion
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_parameter_manager_regional_parameter:
+    description: Auto-generated entry for google_parameter_manager_regional_parameter
+    import: false
+    asset_type: parametermanager.googleapis.com/Parameter
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_parameter_manager_regional_parameter_version:
+    description: Auto-generated entry for google_parameter_manager_regional_parameter_version
+    import: false
+    asset_type: parametermanager.googleapis.com/ParameterVersion
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_privileged_access_manager_settings:
+    description: Auto-generated entry for google_privileged_access_manager_settings
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_project_service_identity:
+    description: Auto-generated entry for google_project_service_identity
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_redis_cluster_user_created_connections:
+    description: Auto-generated entry for google_redis_cluster_user_created_connections
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_resource_manager_capability:
+    description: Auto-generated entry for google_resource_manager_capability
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_runtimeconfig_config:
+    description: Auto-generated entry for google_runtimeconfig_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_runtimeconfig_config_iam_binding:
+    description: Auto-generated entry for google_runtimeconfig_config_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_runtimeconfig_config_iam_member:
+    description: Auto-generated entry for google_runtimeconfig_config_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_runtimeconfig_config_iam_policy:
+    description: Auto-generated entry for google_runtimeconfig_config_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_runtimeconfig_variable:
+    description: Auto-generated entry for google_runtimeconfig_variable
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_saas_runtime_release:
+    description: Auto-generated entry for google_saas_runtime_release
+    import: false
+    asset_type: saasservicemgmt.googleapis.com/Release
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_saas_runtime_rollout_kind:
+    description: Auto-generated entry for google_saas_runtime_rollout_kind
+    import: false
+    asset_type: saasservicemgmt.googleapis.com/RolloutKind
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_saas_runtime_saas:
+    description: Auto-generated entry for google_saas_runtime_saas
+    import: false
+    asset_type: saasservicemgmt.googleapis.com/Saas
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_saas_runtime_tenant:
+    description: Auto-generated entry for google_saas_runtime_tenant
+    import: false
+    asset_type: saasservicemgmt.googleapis.com/Tenant
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_saas_runtime_unit:
+    description: Auto-generated entry for google_saas_runtime_unit
+    import: false
+    asset_type: saasservicemgmt.googleapis.com/Unit
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_saas_runtime_unit_kind:
+    description: Auto-generated entry for google_saas_runtime_unit_kind
+    import: false
+    asset_type: saasservicemgmt.googleapis.com/UnitKind
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_secure_source_manager_hook:
+    description: Auto-generated entry for google_secure_source_manager_hook
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_security_scanner_scan_config:
+    description: Auto-generated entry for google_security_scanner_scan_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_endpoint:
+    description: Auto-generated entry for google_service_directory_endpoint
+    import: false
+    asset_type: servicedirectory.googleapis.com/Endpoint
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_namespace:
+    description: Auto-generated entry for google_service_directory_namespace
+    import: false
+    asset_type: servicedirectory.googleapis.com/Namespace
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_namespace_iam_binding:
+    description: Auto-generated entry for google_service_directory_namespace_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_namespace_iam_member:
+    description: Auto-generated entry for google_service_directory_namespace_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_namespace_iam_policy:
+    description: Auto-generated entry for google_service_directory_namespace_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_service:
+    description: Auto-generated entry for google_service_directory_service
+    import: false
+    asset_type: servicedirectory.googleapis.com/Service
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_service_iam_binding:
+    description: Auto-generated entry for google_service_directory_service_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_service_iam_member:
+    description: Auto-generated entry for google_service_directory_service_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_service_directory_service_iam_policy:
+    description: Auto-generated entry for google_service_directory_service_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_spanner_instance_partition:
+    description: Auto-generated entry for google_spanner_instance_partition
+    import: false
+    asset_type: spanner.googleapis.com/InstancePartition
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_storage_anywhere_cache:
+    description: Auto-generated entry for google_storage_anywhere_cache
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_storage_batch_operations_job:
+    description: Auto-generated entry for google_storage_batch_operations_job
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_storage_control_folder_intelligence_config:
+    description: Auto-generated entry for google_storage_control_folder_intelligence_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_storage_control_organization_intelligence_config:
+    description: Auto-generated entry for google_storage_control_organization_intelligence_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_storage_control_project_intelligence_config:
+    description: Auto-generated entry for google_storage_control_project_intelligence_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_storage_folder:
+    description: Auto-generated entry for google_storage_folder
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_storage_insights_dataset_config:
+    description: Auto-generated entry for google_storage_insights_dataset_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_tpu_v2_queued_resource:
+    description: Auto-generated entry for google_tpu_v2_queued_resource
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_tpu_v2_vm:
+    description: Auto-generated entry for google_tpu_v2_vm
+    import: false
+    asset_type: tpu.googleapis.com/Node
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_cache_config:
+    description: Auto-generated entry for google_vertex_ai_cache_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_endpoint_iam_binding:
+    description: Auto-generated entry for google_vertex_ai_endpoint_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_endpoint_iam_member:
+    description: Auto-generated entry for google_vertex_ai_endpoint_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_endpoint_iam_policy:
+    description: Auto-generated entry for google_vertex_ai_endpoint_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_endpoint_with_model_garden_deployment:
+    description: Auto-generated entry for google_vertex_ai_endpoint_with_model_garden_deployment
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_group_iam_binding:
+    description: Auto-generated entry for google_vertex_ai_feature_group_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_group_iam_member:
+    description: Auto-generated entry for google_vertex_ai_feature_group_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_group_iam_policy:
+    description: Auto-generated entry for google_vertex_ai_feature_group_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_online_store_featureview_iam_binding:
+    description: Auto-generated entry for google_vertex_ai_feature_online_store_featureview_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_online_store_featureview_iam_member:
+    description: Auto-generated entry for google_vertex_ai_feature_online_store_featureview_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_online_store_featureview_iam_policy:
+    description: Auto-generated entry for google_vertex_ai_feature_online_store_featureview_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_online_store_iam_binding:
+    description: Auto-generated entry for google_vertex_ai_feature_online_store_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_online_store_iam_member:
+    description: Auto-generated entry for google_vertex_ai_feature_online_store_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_feature_online_store_iam_policy:
+    description: Auto-generated entry for google_vertex_ai_feature_online_store_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_featurestore_entitytype_iam_binding:
+    description: Auto-generated entry for google_vertex_ai_featurestore_entitytype_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_featurestore_entitytype_iam_member:
+    description: Auto-generated entry for google_vertex_ai_featurestore_entitytype_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_featurestore_entitytype_iam_policy:
+    description: Auto-generated entry for google_vertex_ai_featurestore_entitytype_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_featurestore_iam_binding:
+    description: Auto-generated entry for google_vertex_ai_featurestore_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_featurestore_iam_member:
+    description: Auto-generated entry for google_vertex_ai_featurestore_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_featurestore_iam_policy:
+    description: Auto-generated entry for google_vertex_ai_featurestore_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_metadata_store:
+    description: Auto-generated entry for google_vertex_ai_metadata_store
+    import: false
+    asset_type: aiplatform.googleapis.com/MetadataStore
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_rag_engine_config:
+    description: Auto-generated entry for google_vertex_ai_rag_engine_config
+    import: false
+    asset_type: TODO/UNKNOWN
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_vertex_ai_reasoning_engine:
+    description: Auto-generated entry for google_vertex_ai_reasoning_engine
+    import: false
+    asset_type: aiplatform.googleapis.com/ReasoningEngine
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation:
+    description: Auto-generated entry for google_workstations_workstation
+    import: false
+    asset_type: workstations.googleapis.com/Workstation
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_cluster:
+    description: Auto-generated entry for google_workstations_workstation_cluster
+    import: false
+    asset_type: workstations.googleapis.com/WorkstationCluster
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_config:
+    description: Auto-generated entry for google_workstations_workstation_config
+    import: false
+    asset_type: workstations.googleapis.com/WorkstationConfig
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_config_iam_binding:
+    description: Auto-generated entry for google_workstations_workstation_config_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_config_iam_member:
+    description: Auto-generated entry for google_workstations_workstation_config_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_config_iam_policy:
+    description: Auto-generated entry for google_workstations_workstation_config_iam_policy
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_iam_binding:
+    description: Auto-generated entry for google_workstations_workstation_iam_binding
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_iam_member:
+    description: Auto-generated entry for google_workstations_workstation_iam_member
+    import: false
+    content_type: RESOURCE
+    derive_yaml_key_from: name
+  google_workstations_workstation_iam_policy:
+    description: Auto-generated entry for google_workstations_workstation_iam_policy
     import: false
     content_type: RESOURCE
     derive_yaml_key_from: name

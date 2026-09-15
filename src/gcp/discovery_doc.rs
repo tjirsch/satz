@@ -43,7 +43,7 @@ pub(crate) async fn document(client: &reqwest::Client, cache_dir: &Path, service
         .ok_or_else(|| format!("no Discovery Document listed for API `{}`", service))?;
     let doc: serde_json::Value = client.get(url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
     std::fs::create_dir_all(cache_dir).map_err(|e| e.to_string())?;
-    std::fs::write(&cache, serde_json::to_string(&doc).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    crate::fsx::write(&cache, serde_json::to_string(&doc).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     Ok(doc)
 }
 

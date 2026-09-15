@@ -1,8 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["cmarkgfm>=2025.10.22"]
+# ///
 """Render the documentation site: every Markdown page the repo keeps, as
 self-contained themed HTML, into one output directory (GitHub Pages).
 
-    uv run --with markdown scripts/build-site.py [_site]
+    uv run scripts/build-site.py [_site]
 
 Pages: README.md → index.html, docs/*.md → docs/<name>.html,
 presets/README.md → presets/index.html. Links between the Markdown files are
@@ -11,6 +15,7 @@ every page gets the same navigation bar. The Markdown stays the source GitHub
 shows — one text, two renderings. Rendering itself is `build-satz-doc.py`.
 """
 
+import posixpath
 import re
 import shutil
 import sys
@@ -65,7 +70,7 @@ PAGES: list[tuple[Path, str, str]] = []  # (source md, output relative path, nav
 PAGES.append((ROOT / "README.md", "index.html", "satz"))
 for stem in SITE_DOCS:
     PAGES.append((ROOT / "docs" / f"{stem}.md", f"docs/{stem}.html", stem))
-PAGES.append((ROOT / "presets/README.md", "presets/index.html", "presets"))
+PAGES.append((ROOT / "presets/README.md", "presets/index.html", "library"))
 PACK_PAGES: list[
     tuple[Path, str]
 ] = []  # derived per-pack pages: rendered, linked from the index, not in the nav
@@ -82,7 +87,7 @@ for md in sorted((ROOT / "presets/docs").glob("*.md")):
 NAV_ORDER = [
     "satz",
     "language",
-    "presets",
+    "library",
     "workflows",
     "interview",
     "mcp",
@@ -126,9 +131,12 @@ TOC_CSS = """
   /* Long pages are the point — the reference is meant to be read straight
      through — so the answer to navigating them is a contents column beside the
      text, not shorter pages. */
-  .page { display: grid; grid-template-columns: 15.5rem minmax(0, 74ch); gap: 0 3rem;
+  /* The text column is 74ch plus half of the page's width beyond the contents
+     column, the gap and 74ch, so the empty space on each side is half what a fixed
+     74ch left (9.25rem is half of the contents column and the gap). */
+  .page { display: grid; grid-template-columns: 15.5rem minmax(0, calc(50% + 37ch - 9.25rem)); gap: 0 3rem;
     justify-content: center; align-items: start; }
-  .page > main { margin: 0; }
+  .page > main { margin: 0; max-width: none; }
   details.toc { position: sticky; top: 4.4rem; margin: 84px 0 0; font-size: .9rem;
     max-height: calc(100vh - 6rem); overflow-y: auto; overscroll-behavior: contain; }
   details.toc summary { font-weight: 600; color: var(--ink-2); cursor: pointer; margin-bottom: .6rem;
@@ -146,7 +154,7 @@ TOC_CSS = """
   /* Narrow: the contents become a collapsed block above the text (the script
      closes it on load), so a long list never buries the page it describes. */
   @media (max-width: 1180px) {
-    .page { grid-template-columns: minmax(0, 74ch); }
+    .page { grid-template-columns: minmax(0, calc(50% + 37ch)); }
     details.toc { position: static; max-height: none; overflow: visible; margin: 28px 0 0; }
   }
   @media print { details.toc { display: none; } }
@@ -295,16 +303,12 @@ SEARCH_JS = """
 """
 
 
-def strip_tags(html: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
-
-
 def index_entries(title: str, rel: str, body: str) -> list[dict]:
     """One entry per page plus one per h1–h3: heading, anchor and a short
     excerpt of the text that follows — what the search box looks through."""
     entries = []
     parts = re.split(r"(<h[123][^>]*>.*?</h[123]>)", body, flags=re.S)
-    lead = strip_tags(parts[0])[:180]
+    lead = doc.plain_text(parts[0])[:180]
     entries.append({"t": title, "p": rel, "a": "", "h": title, "x": lead})
     for i in range(1, len(parts), 2):
         m = re.match(
@@ -312,8 +316,8 @@ def index_entries(title: str, rel: str, body: str) -> list[dict]:
         )
         if not m:
             continue
-        heading = strip_tags(m.group(3))
-        follow = strip_tags(parts[i + 1] if i + 1 < len(parts) else "")[:180]
+        heading = doc.plain_text(m.group(3))
+        follow = doc.plain_text(parts[i + 1] if i + 1 < len(parts) else "")[:180]
         entries.append(
             {"t": title, "p": rel, "a": m.group(2), "h": heading, "x": follow}
         )
@@ -326,14 +330,15 @@ def command_anchors(body: str) -> str:
     The rendered heading keeps its own generated id as a nested anchor."""
 
     def repl(m: "re.Match[str]") -> str:
-        level, attrs, inner = m.group(1), m.group(2), m.group(3)
+        level, attrs, slug, inner = m.group(1), m.group(2), m.group(3), m.group(4)
         cmds = re.findall(r"<code>([a-z][a-z0-9-]*)</code>", inner)
         if not cmds:
             return m.group(0)
-        return f'<h{level}{attrs} id="cmd-{cmds[0]}">{inner}</h{level}>'
+        keep = f'<a id="{slug}"></a>' if slug else ""
+        return f'<h{level}{attrs} id="cmd-{cmds[0]}">{keep}{inner}</h{level}>'
 
     return re.sub(
-        r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="[^"]*")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>',
+        r'<h([23])((?:\s+(?!id=)[a-z-]+="[^"]*")*)(?:\s+id="([^"]*)")?>(.*?\(<code>[a-z][a-z0-9-]*</code>\).*?)</h\1>',
         repl,
         body,
     )
@@ -359,7 +364,7 @@ def toc_html(body: str) -> str:
         return ""
     items = []
     for level, anchor, inner in heads:
-        label = html_escape(strip_tags(inner))
+        label = html_escape(doc.plain_text(inner))
         items.append(f'<a class="lvl{level}" href="#{anchor}">{label}</a>')
     return (
         '<details class="toc" open><summary>On this page</summary><nav>'
@@ -375,12 +380,16 @@ def html_escape(text: str) -> str:
 def rewrite_links(body: str, src_rel: Path) -> str:
     """`docs/x.md` / `../README.md` / `#anchor` links → the rendered twins.
 
-    A link to a doc the site does not publish is sent to GitHub rather than left
-    as a `.md` href that 404s: the file is still there, it is simply not a page.
+    A link to a repository file the site does not publish (an excluded doc, an
+    ADR) is sent to GitHub rather than left as a `.md` href that 404s: the file
+    is still there, it is simply not a page. A link to a file that does not exist,
+    or that leaves the repository, fails the build naming it. Paths resolve
+    against the repository, never the working directory: smoke builds from
+    `tests/smoke`.
     """
     targets = {str(src.relative_to(ROOT)): rel for src, rel, _ in PAGES}
     targets.update({str(src.relative_to(ROOT)): rel for src, rel in PACK_PAGES})
-    excluded = {f"docs/{stem}.md" for stem in SITE_DOCS_EXCLUDED}
+    broken: list[str] = []
 
     def repl(m: "re.Match[str]") -> str:
         href = m.group(1)
@@ -389,21 +398,46 @@ def rewrite_links(body: str, src_rel: Path) -> str:
         path, _, frag = href.partition("#")
         if not path.endswith(".md"):
             return m.group(0)
-        target = (
-            (src_rel.parent / path).resolve().relative_to(ROOT.resolve())
-            if not path.startswith("/")
-            else Path(path.lstrip("/"))
-        )
-        html = targets.get(str(target))
-        if not html:
-            if str(target) in excluded:
-                return f'href="{GITHUB_BLOB}{target}{"#" + frag if frag else ""}"'
-            return m.group(0)
+        anchor = f"#{frag}" if frag else ""
+        if path.startswith("/"):
+            target = Path(path.lstrip("/"))
+        else:
+            resolved = (ROOT / src_rel.parent / path).resolve()
+            if not resolved.is_relative_to(ROOT.resolve()):
+                broken.append(f"  {href} leaves the repository")
+                return m.group(0)
+            target = resolved.relative_to(ROOT.resolve())
+        page = targets.get(str(target))
+        if page is None:
+            if not (ROOT / target).is_file():
+                broken.append(f"  {href} names {target}, which does not exist")
+                return m.group(0)
+            return f'href="{GITHUB_BLOB}{target.as_posix()}{anchor}"'
         here = Path(targets[str(src_rel)]).parent
-        rel = Path(*([".."] * len(here.parts))) / html if here.parts else Path(html)
-        return f'href="{rel.as_posix()}{"#" + frag if frag else ""}"'
+        rel = Path(*([".."] * len(here.parts))) / page if here.parts else Path(page)
+        return f'href="{rel.as_posix()}{anchor}"'
 
-    return re.sub(r'href="([^"]+)"', repl, body)
+    body = re.sub(r'href="([^"]+)"', repl, body)
+    if broken:
+        raise SystemExit(
+            f"build-site: {src_rel} links to nothing:\n" + "\n".join(broken)
+        )
+    return body
+
+
+def dead_anchors(pages: dict[str, str]) -> list[str]:
+    """Every `page.html#anchor` link between pages of the site whose target page
+    carries no such id. Heading ids are GitHub's (ADR 0008), so an anchor that
+    lands here lands on GitHub too, and one that does not is dead in both."""
+    ids = {rel: set(re.findall(r'\bid="([^"]+)"', page)) for rel, page in pages.items()}
+    dead = []
+    for rel, page in pages.items():
+        here = posixpath.dirname(rel)
+        for target, frag in re.findall(r'href="([^"#:]*)#([^"]+)"', page):
+            to = posixpath.normpath(posixpath.join(here, target)) if target else rel
+            if to in ids and frag not in ids[to]:
+                dead.append(f"  {rel}: #{frag} is not an anchor of {to}")
+    return dead
 
 
 def main() -> None:
@@ -411,25 +445,16 @@ def main() -> None:
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True)
     index: list[dict] = []
+    pages: dict[str, str] = {}
     for src, rel, _label in PAGES + [(s, r, "") for s, r in PACK_PAGES]:
-        text = src.read_text(encoding="utf-8")
-        m = re.search(r"^# (.+)$", text, re.M)
-        title = m.group(1).strip() if m else src.stem
         doc.MD = src  # the renderer inlines SVGs relative to the source
-        body = doc.markdown.markdown(
-            text, extensions=["tables", "fenced_code", "toc"], output_format="html5"
-        )
-        body = body.replace("<table>", '<div class="tablewrap"><table>').replace(
-            "</table>", "</table></div>"
-        )
-        body = doc.inline_images(body)
+        body = doc.render(src.read_text(encoding="utf-8"))
+        title = doc.page_title(body, src.relative_to(ROOT))
         body = rewrite_links(body, src.relative_to(ROOT))
         body = command_anchors(body)
         index.extend(index_entries(title, rel, body))
-        out = OUT / rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            doc.HEAD.format(title=title)
+        pages[rel] = (
+            doc.head(title)
             + "<style>"
             + doc.CSS
             + NAV_CSS
@@ -440,9 +465,17 @@ def main() -> None:
             + toc_html(body)
             + "<main>\n"
             + body
-            + "\n</main>\n</div>\n",
-            encoding="utf-8",
+            + "\n</main>\n</div>\n"
         )
+    dead = dead_anchors(pages)
+    if dead:
+        raise SystemExit(
+            "build-site: links to anchors that do not exist:\n" + "\n".join(dead)
+        )
+    for rel, page in pages.items():
+        out = OUT / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(page, encoding="utf-8")
         print(f"wrote {out.relative_to(OUT)} ({out.stat().st_size} bytes)")
     import json
 

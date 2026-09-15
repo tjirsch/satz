@@ -7,8 +7,8 @@ Source: `presets/security-group-models/s1-group-permissions.satz`
 
 Organization-level role grants for the five S1 admin groups.
 
-The groups themselves are `s1_group_definitions`; memberships are deliberately
-not here — presets define groups, humans grant membership.
+The groups themselves are `s1_group_definitions`; memberships are not here —
+presets define groups, humans grant membership.
 
 ## Use it
 
@@ -52,6 +52,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The other half of the split spelling; the groups themselves are [`s1_group_definitions`](s1-group-definitions.md), and the one-file alternative is [`s1_security_groups`](s1-security-groups.md).
+
+`roles/cloudasset.viewer` sits beside the reviewer roles because `roles/iam.securityReviewer` does not carry `cloudasset.assets.searchAllResources`, which is what `report-compliance` reads the live estate with. Without it the report marks every witness unverifiable.
 
 <!-- notes:end -->

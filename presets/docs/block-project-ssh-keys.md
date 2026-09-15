@@ -65,6 +65,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Google still marks this managed constraint PREVIEW, and there is no legacy form to fall back to. Project-wide SSH keys are a common break-glass path: check what uses them, and have OS Login or per-instance keys working first.
 
 <!-- notes:end -->

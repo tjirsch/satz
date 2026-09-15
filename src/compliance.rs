@@ -114,6 +114,12 @@ pub(crate) enum Goal {
     /// A pack was included and claims this control, but declared witnesses are not
     /// in the emitted estate — a broken lemma, worse than unmet.
     ClaimBroken { missing: Vec<String>, pack: String },
+    /// The witnesses are all emitted, and they do not do what the claim says. An
+    /// `implements` whose policy carries `enforce = "FALSE"` or `reset = true` discharges
+    /// nothing; a `deviates` whose policy is fully enforcing discloses a non-conformance
+    /// that is not there. Worse than a missing witness, because the estate reads as
+    /// compliant and is not — and nothing but a live report would have said so.
+    ClaimContradicted { inert: Vec<(String, String)>, pack: String, coverage: String },
     /// An included pack or the estate declares a DELIBERATE non-conformance with
     /// a stated reason. Disclosed as a finding, never counted as a gap: a `.local`
     /// fork exists precisely so a customer can decline a control on purpose, and
@@ -135,6 +141,100 @@ pub(crate) enum Goal {
 // Pure layer: goal resolution
 // ---------------------------------------------------------------------------
 
+/// What an org policy in the estate actually does, for the claims that name it.
+///
+/// `Enforcing` and `Inert` are only ever decided where the manifest is sure: a block
+/// declaring exactly one `enforce`, or declaring `reset = true`. A list constraint
+/// (`allowed_values` / `denied_values`) and a multi-rule policy both yield `Unknown`,
+/// and an unknown witness is never contradicted — the manifest's own rule, that no
+/// verdict beats a wrong one, is the rule here too.
+/// One claim caught contradicting itself: its inert witnesses with the reason each
+/// is inert, the pack that made the claim, and the coverage word it used — which
+/// decides which way round the contradiction reads.
+type Contradiction = (Vec<(String, String)>, String, String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PolicyEffect {
+    Enforcing,
+    Inert,
+    Unknown,
+}
+
+/// Read the effect of every org policy the estate emits, by address.
+///
+/// Only `google_org_policy_policy` is judged. Every other witness type — a sink, a
+/// bucket, a custom constraint — is `Unknown`: their existence IS their effect, which is
+/// what the witness check already tests.
+pub(crate) fn policy_effects(manifest: &Manifest) -> BTreeMap<String, (PolicyEffect, String)> {
+    let mut out = BTreeMap::new();
+    for (addr, r) in &manifest.resources {
+        if r.tf_type != "google_org_policy_policy" {
+            continue;
+        }
+        let v = if r.reset {
+            (PolicyEffect::Inert, "declared off with `reset = true`".to_string())
+        } else if r.dry_run && r.enforce.is_none() {
+            // A dry run measures: Google logs what the rule WOULD have blocked and
+            // blocks nothing. It is the honest way to size a breaking control before
+            // enforcing it, and it discharges no control while it runs.
+            (
+                PolicyEffect::Inert,
+                "declared as a dry run (`dry_run_spec`): it logs what it would block and blocks nothing"
+                    .to_string(),
+            )
+        } else {
+            match r.enforce {
+                Some(true) => (PolicyEffect::Enforcing, "enforced".to_string()),
+                Some(false) => (PolicyEffect::Inert, "declared with `enforce = \"FALSE\"`".to_string()),
+                None => (PolicyEffect::Unknown, "a list constraint or several rules — no single verdict".to_string()),
+            }
+        };
+        out.insert(addr.clone(), v);
+    }
+    out
+}
+
+/// Every conditional rule the estate declares, by policy address.
+///
+/// A tag-conditional exemption is a rule saying "enforced everywhere except where this
+/// tag is bound". It does not decide the verdict — the unconditional rule does — and it
+/// is what an auditor must see beside it: the control is on, and here is who is let out.
+/// `report-compliance` has shown the LIVE ones since the conditional-rule work; this is
+/// the same fact read from the estate, so a review can happen before an apply.
+pub(crate) fn declared_exemptions(manifest: &Manifest) -> BTreeMap<String, Vec<String>> {
+    manifest
+        .resources
+        .iter()
+        .filter(|(_, r)| r.tf_type == "google_org_policy_policy" && !r.conditional.is_empty())
+        .map(|(addr, r)| (addr.clone(), r.conditional.clone()))
+        .collect()
+}
+
+/// The witnesses of one claim that contradict what it says, with why.
+///
+/// `implements` is contradicted by an inert policy: the control is not discharged.
+/// `deviates` is contradicted by an enforcing one: the estate discloses a
+/// non-conformance it does not have, which misleads an auditor in the other direction.
+/// `contributes` asserts nothing about the value — it says "a necessary part", and a part
+/// may well be a policy some other claim switches on.
+fn contradictions(
+    c: &Claim,
+    effects: &BTreeMap<String, (PolicyEffect, String)>,
+) -> Vec<(String, String)> {
+    let want = match c.coverage.as_str() {
+        "implements" => PolicyEffect::Inert,
+        "deviates" => PolicyEffect::Enforcing,
+        _ => return Vec::new(),
+    };
+    c.resources
+        .iter()
+        .filter_map(|r| match effects.get(r) {
+            Some((e, why)) if *e == want => Some((r.clone(), why.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Resolve every catalog control against the claims of included packs and the
 /// emitted resource addresses. `library_claims` = claims of ALL packs in the
 /// preset library (for remediation suggestions only); `included_claims` = the
@@ -146,6 +246,7 @@ pub(crate) fn resolve_goals(
     library_claims: &[(String, Claim)], // (pack, claim)
     included_claims: &[(String, Claim)], // (pack, claim) — actually included
     emitted: &BTreeSet<String>,
+    effects: &BTreeMap<String, (PolicyEffect, String)>, // what each policy actually does
 ) -> BTreeMap<String, Goal> {
     let mut goals = BTreeMap::new();
 
@@ -228,6 +329,25 @@ pub(crate) fn resolve_goals(
                 goals.insert(id.clone(), Goal::ClaimBroken { missing, pack });
                 continue;
             }
+            // A disclosed non-conformance whose policy is in fact enforcing discloses
+            // something that is not there — as misleading as a false `implements`, in
+            // the other direction, and the reader has no way to notice.
+            let mut against: Vec<(String, String)> = Vec::new();
+            let mut by = String::new();
+            for (pack, c) in &deviations {
+                let x = contradictions(c, effects);
+                if !x.is_empty() && by.is_empty() {
+                    by = (*pack).clone();
+                }
+                against.extend(x);
+            }
+            if !against.is_empty() {
+                goals.insert(
+                    id.clone(),
+                    Goal::ClaimContradicted { inert: against, pack: by, coverage: "deviates".into() },
+                );
+                continue;
+            }
             let mut open_duties: Vec<String> = deviations
                 .iter()
                 .flat_map(|(_, c)| c.manual_duties.iter().map(|d| d.id.clone()))
@@ -247,6 +367,7 @@ pub(crate) fn resolve_goals(
         let mut open_duties = control.duties.clone();
         let mut has_implements = false;
         let mut broken: Option<(Vec<String>, String)> = None;
+        let mut contradicted: Option<Contradiction> = None;
 
         for (pack, claim) in &included {
             let missing: Vec<String> = claim
@@ -259,6 +380,11 @@ pub(crate) fn resolve_goals(
                 broken = Some((missing, pack.clone()));
                 continue;
             }
+            let inert = contradictions(claim, effects);
+            if !inert.is_empty() {
+                contradicted = Some((inert, pack.clone(), claim.coverage.clone()));
+                continue;
+            }
             witnesses.extend(claim.resources.iter().cloned());
             open_duties.extend(claim.manual_duties.iter().map(|d| d.id.clone()));
             if claim.coverage == "implements" {
@@ -266,7 +392,9 @@ pub(crate) fn resolve_goals(
             }
         }
 
-        let goal = if witnesses.is_empty() && open_duties.is_empty() {
+        let goal = if let Some((inert, pack, coverage)) = contradicted {
+            Goal::ClaimContradicted { inert, pack, coverage }
+        } else if witnesses.is_empty() && open_duties.is_empty() {
             match broken {
                 Some((missing, pack)) => Goal::ClaimBroken { missing, pack },
                 None => Goal::Unmet { providers: Vec::new() },
@@ -334,6 +462,7 @@ pub(crate) fn fold_cross_walk(
         let mut open_duties: Vec<String> = control.duties.clone();
         let mut reasons: Vec<(String, String)> = Vec::new();
         let mut broken: Option<(Vec<String>, String)> = None;
+        let mut contradicted: Option<Contradiction> = None;
         let mut seen = 0usize;
         let mut satisfied = 0usize;
         let mut evidenced = 0usize;
@@ -362,6 +491,10 @@ pub(crate) fn fold_cross_walk(
                     Goal::ClaimBroken { missing, pack } => {
                         broken.get_or_insert_with(|| (missing.clone(), pack.clone()));
                     }
+                    Goal::ClaimContradicted { inert, pack, coverage } => {
+                        contradicted
+                            .get_or_insert_with(|| (inert.clone(), pack.clone(), coverage.clone()));
+                    }
                     Goal::Unmet { .. } | Goal::Organizational | Goal::Inherited => {}
                 }
             }
@@ -372,7 +505,9 @@ pub(crate) fn fold_cross_walk(
         open_duties.sort();
         open_duties.dedup();
 
-        let folded = if !reasons.is_empty() {
+        let folded = if let Some((inert, pack, coverage)) = contradicted {
+            Goal::ClaimContradicted { inert, pack, coverage }
+        } else if !reasons.is_empty() {
             Goal::Deviation { reasons, witnesses, open_duties }
         } else if let Some((missing, pack)) = broken {
             Goal::ClaimBroken { missing, pack }
@@ -395,8 +530,9 @@ pub(crate) fn resolve_goals_cross_walked(
     library_claims: &[(String, Claim)],
     included_claims: &[(String, Claim)],
     emitted: &BTreeSet<String>,
+    effects: &BTreeMap<String, (PolicyEffect, String)>,
 ) -> BTreeMap<String, Goal> {
-    let mut goals = resolve_goals(catalog, library_claims, included_claims, emitted);
+    let mut goals = resolve_goals(catalog, library_claims, included_claims, emitted, effects);
     let sources = cross_walk_sources(catalog);
     if sources.is_empty() {
         return goals;
@@ -407,7 +543,7 @@ pub(crate) fn resolve_goals_cross_walked(
         let file = key.replace('/', "-");
         match load_catalog(presets_dir, &file) {
             Ok(src) => {
-                source_goals.insert(key, resolve_goals(&src, library_claims, included_claims, emitted));
+                source_goals.insert(key, resolve_goals(&src, library_claims, included_claims, emitted, effects));
             }
             Err(e) => {
                 eprintln!("warning: cross-walk source `{}` could not be read ({}) — the controls it evidences read as unmet", key, e);
@@ -526,7 +662,8 @@ fn load_library_view(presets_dir: &str) -> Result<Vec<(String, Claim)>, BoxErr> 
 pub(crate) struct ControlRow {
     pub id: String,
     pub title: String,
-    /// satisfied | partial | broken | deviation | unmet | organizational | inherited
+    /// satisfied | partial | broken | contradicted | deviation | unmet | organizational
+    /// | inherited
     pub verdict: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub witnesses: Vec<String>,
@@ -539,6 +676,17 @@ pub(crate) struct ControlRow {
     pub missing: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub pack: Option<String>,
+    /// (address, why) for witnesses that do not do what the claim says
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub inert: Vec<(String, String)>,
+    /// the coverage word the contradicted claim used: `implements` or `deviates`
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub coverage: String,
+    /// Conditional rules the control's witnesses declare — a tag-conditional exemption
+    /// is one. The control is enforced AND something is let out, and both are facts an
+    /// auditor reads together.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub exemptions: Vec<String>,
     /// (pack, reason) for a declared deviation
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub reasons: Vec<(String, String)>,
@@ -553,6 +701,7 @@ pub(crate) struct RequireSummary {
     pub deviations: usize,
     pub unmet: usize,
     pub broken: usize,
+    pub contradicted: usize,
     pub organizational: usize,
     pub inherited: usize,
 }
@@ -570,7 +719,7 @@ impl RequireReport {
     /// The gate: an unmet technical control or a claim whose witnesses vanished.
     /// A deviation is a disclosed decision and does not fail it.
     pub(crate) fn gaps(&self) -> bool {
-        self.summary.unmet > 0 || self.summary.broken > 0
+        self.summary.unmet > 0 || self.summary.broken > 0 || self.summary.contradicted > 0
     }
 }
 
@@ -585,7 +734,10 @@ pub(crate) fn require_report(
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let exempted = declared_exemptions(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
 
     let mut summary = RequireSummary::default();
     let mut controls = Vec::with_capacity(goals.len());
@@ -602,6 +754,9 @@ pub(crate) fn require_report(
             providers: Vec::new(),
             missing: Vec::new(),
             pack: None,
+            inert: Vec::new(),
+            coverage: String::new(),
+            exemptions: Vec::new(),
             reasons: Vec::new(),
             contributes_only: false,
         };
@@ -623,6 +778,13 @@ pub(crate) fn require_report(
                 row.missing = missing.clone();
                 row.pack = Some(pack.clone());
             }
+            Goal::ClaimContradicted { inert, pack, coverage } => {
+                summary.contradicted += 1;
+                row.verdict = "contradicted";
+                row.inert = inert.clone();
+                row.pack = Some(pack.clone());
+                row.coverage = coverage.clone();
+            }
             Goal::Deviation { reasons, open_duties, .. } => {
                 summary.deviations += 1;
                 row.verdict = "deviation";
@@ -643,6 +805,16 @@ pub(crate) fn require_report(
                 row.verdict = "inherited";
             }
         }
+        // An exemption belongs to the control its policy witnesses, whatever the
+        // verdict: a satisfied control that lets one resource out is exactly the case
+        // this has to be legible for.
+        if !exempted.is_empty() {
+            for w in row.witnesses.iter().chain(row.missing.iter()) {
+                if let Some(lines) = exempted.get(w) {
+                    row.exemptions.extend(lines.iter().map(|l| format!("{w}: {l}")));
+                }
+            }
+        }
         controls.push(row);
     }
     controls.sort_by_cached_key(|c| control_order(&c.id));
@@ -659,7 +831,9 @@ pub(crate) fn require_report(
 /// Render the goal view for a terminal. Takes the report and NOTHING else.
 pub(crate) fn render_require(r: &RequireReport) -> String {
     let mut out = format!("\nrequire {} {} — goal view for {}\n\n", r.catalog, r.version, r.estate);
+    let mut exempted = 0usize;
     for c in &r.controls {
+        exempted += usize::from(!c.exemptions.is_empty());
         let line = match c.verdict {
             "satisfied" => {
                 format!("  ✓ {:5} {:45} — {}", c.id, c.title, c.witnesses.join(", "))
@@ -683,6 +857,21 @@ pub(crate) fn render_require(r: &RequireReport) -> String {
                 c.pack.as_deref().unwrap_or(""),
                 c.missing.join(", ")
             ),
+            "contradicted" => {
+                let what = if c.coverage == "deviates" {
+                    "declares a deviation and its witnesses enforce the control"
+                } else {
+                    "claims it and its witnesses do nothing"
+                };
+                format!(
+                    "  ‼ {:5} {:45} — pack {} {}: {}",
+                    c.id,
+                    c.title,
+                    c.pack.as_deref().unwrap_or(""),
+                    what,
+                    c.inert.iter().map(|(a, w)| format!("{a} ({w})")).collect::<Vec<_>>().join(", ")
+                )
+            }
             "deviation" => {
                 let why = c
                     .reasons
@@ -710,14 +899,33 @@ pub(crate) fn render_require(r: &RequireReport) -> String {
         };
         out.push_str(&line);
         out.push('\n');
+        // An exemption is not a footnote: the control is enforced AND something is
+        // let out, and the second half is the half nobody goes looking for.
+        for e in &c.exemptions {
+            out.push_str(&format!("      ↳ exempted: {}\n", e));
+        }
     }
 
     let s = &r.summary;
     out.push_str(&format!(
-        "\n{} satisfied, {} partial, {} deviation(s), {} unmet, {} broken claim(s). \
+        "\n{} satisfied, {} partial, {} deviation(s), {} unmet, {} broken claim(s), \
+         {} contradicted claim(s). \
          Goal view judges the DECLARED estate; live verification is the evidence report.\n",
-        s.satisfied, s.partial, s.deviations, s.unmet, s.broken
+        s.satisfied, s.partial, s.deviations, s.unmet, s.broken, s.contradicted
     ));
+    if exempted > 0 {
+        out.push_str(&format!(
+            "{} control(s) carry a conditional exemption — enforced, with named resources let out. \
+             `satz report-compliance` lists what each one is bound to on the organisation.\n",
+            exempted
+        ));
+    }
+    if s.contradicted > 0 {
+        out.push_str(
+            "A contradicted claim is the worst verdict here: the witness exists, so the row would \
+             otherwise read as met, and the policy behind it does nothing.\n",
+        );
+    }
     if s.deviations > 0 {
         out.push_str(
             "Deviations are disclosed decisions with a stated reason, not gaps — they do not fail this gate.\n",
@@ -744,6 +952,9 @@ mod tests {
             providers: Vec::new(),
             missing: Vec::new(),
             pack: None,
+            inert: Vec::new(),
+            coverage: String::new(),
+            exemptions: Vec::new(),
             reasons: Vec::new(),
             contributes_only: false,
         }
@@ -776,7 +987,7 @@ mod tests {
             estate: "e.satz".into(),
             controls: vec![sat, part, contributes, cross_walk, broken, dev, unmet, bare,
                            row("1.9", "organizational"), row("2.0", "inherited")],
-            summary: RequireSummary { satisfied: 1, partial: 3, deviations: 1, unmet: 2, broken: 1, organizational: 1, inherited: 1 },
+            summary: RequireSummary { satisfied: 1, partial: 3, deviations: 1, unmet: 2, broken: 1, contradicted: 0, organizational: 1, inherited: 1 },
         };
         let out = render_require(&r);
 
@@ -813,6 +1024,147 @@ mod tests {
         r.summary.unmet = 0;
         r.summary.broken = 1;
         assert!(r.gaps());
+        r.summary.broken = 0;
+        r.summary.contradicted = 1;
+        assert!(r.gaps(), "a claim its own policy contradicts must fail the gate");
+    }
+
+    // --- R7: a claim asserts what its witness does, not only that it exists ---------
+
+    #[test]
+    fn an_implements_claim_whose_policy_is_inert_is_contradicted() {
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+
+        // The witness is emitted, so the pre-R7 verdict was "satisfied".
+        let ok = resolve_goals(&catalog(), &lib, &lib, &emitted, &no_effects());
+        assert!(matches!(ok["2.1"], Goal::Satisfied { .. }));
+
+        let off = effects(&[("google_org_policy_policy.p", PolicyEffect::Inert)]);
+        let goals = resolve_goals(&catalog(), &lib, &lib, &emitted, &off);
+        let Goal::ClaimContradicted { inert, pack, coverage } = &goals["2.1"] else {
+            panic!("expected a contradicted claim, got {:?}", goals["2.1"]);
+        };
+        assert_eq!(pack, "baseline");
+        assert_eq!(coverage, "implements", "the verdict says which way round the contradiction runs");
+        assert_eq!(inert.len(), 1);
+        assert_eq!(inert[0].0, "google_org_policy_policy.p");
+    }
+
+    #[test]
+    fn a_deviation_whose_policy_enforces_is_contradicted() {
+        let mut dev = claim("baseline", "2.1", "deviates", &["google_org_policy_policy.p"], &[]);
+        dev.1.reason = "the workload needs it".into();
+        let lib = vec![dev];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+
+        let on = effects(&[("google_org_policy_policy.p", PolicyEffect::Enforcing)]);
+        assert!(
+            matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &on)["2.1"], Goal::ClaimContradicted { .. }),
+            "a disclosed non-conformance whose policy enforces discloses something that is not there"
+        );
+
+        // The other direction is the normal case and stays a deviation.
+        let off = effects(&[("google_org_policy_policy.p", PolicyEffect::Inert)]);
+        assert!(matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &off)["2.1"], Goal::Deviation { .. }));
+    }
+
+    #[test]
+    fn contributes_asserts_nothing_about_the_value() {
+        // A contributing witness is "a necessary part" — the part may well be a policy
+        // another claim switches on, so an inert one is not a contradiction.
+        let lib = vec![claim("ext", "2.3", "contributes", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        let off = effects(&[("google_org_policy_policy.p", PolicyEffect::Inert)]);
+        assert!(matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &off)["2.3"], Goal::Partial { .. }));
+    }
+
+    #[test]
+    fn an_exemption_leaves_the_verdict_intact_and_is_reported_beside_it() {
+        // The point of the tag route: the control stays ON while one resource is let
+        // out. R7 must still judge it — an exempted policy whose unconditional rule is
+        // switched off is as contradicted as any other.
+        let mut m = Manifest::default();
+        let policy = |enforce: Option<bool>| crate::manifest::EmittedResource {
+            tf_type: "google_org_policy_policy".into(),
+            label: "p".into(),
+            attrs: Default::default(),
+            refs: Default::default(),
+            nested: Default::default(),
+            nested_all: Default::default(),
+            enforce,
+            reset: false,
+            dry_run: false,
+            conditional: vec!["enforce OFF where exempted service accounts".to_string()],
+            import_id: None,
+            origin: None,
+        };
+        m.resources.insert("google_org_policy_policy.p".to_string(), policy(Some(true)));
+
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        assert!(
+            matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &policy_effects(&m))["2.1"], Goal::Satisfied { .. }),
+            "an exemption does not unmake the control"
+        );
+        assert_eq!(
+            declared_exemptions(&m)["google_org_policy_policy.p"],
+            vec!["enforce OFF where exempted service accounts".to_string()],
+            "and it is reported beside the verdict, never instead of it"
+        );
+
+        // The same policy with its unconditional rule off is still caught.
+        m.resources.insert("google_org_policy_policy.p".to_string(), policy(Some(false)));
+        assert!(matches!(
+            resolve_goals(&catalog(), &lib, &lib, &emitted, &policy_effects(&m))["2.1"],
+            Goal::ClaimContradicted { .. }
+        ));
+    }
+
+    #[test]
+    fn a_dry_run_policy_discharges_nothing() {
+        // The manifest reads `enforce` from `spec` alone, so a dry-run-only policy
+        // arrives here with enforce: None and dry_run: true. It is inert while it
+        // measures, and a claim over it is contradicted — which is why a generated
+        // dry-run fragment carries no claim.
+        let mut m = Manifest::default();
+        m.resources.insert(
+            "google_org_policy_policy.p".to_string(),
+            crate::manifest::EmittedResource {
+                tf_type: "google_org_policy_policy".into(),
+                label: "p".into(),
+                attrs: Default::default(),
+                refs: Default::default(),
+                nested: Default::default(),
+                nested_all: Default::default(),
+                enforce: None,
+                reset: false,
+                dry_run: true,
+                conditional: Vec::new(),
+                import_id: None,
+                origin: None,
+            },
+        );
+        let effects = policy_effects(&m);
+        let (effect, why) = &effects["google_org_policy_policy.p"];
+        assert_eq!(*effect, PolicyEffect::Inert);
+        assert!(why.contains("dry run"), "the reason must say what it is: {why}");
+
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        assert!(matches!(
+            resolve_goals(&catalog(), &lib, &lib, &emitted, &effects)["2.1"],
+            Goal::ClaimContradicted { .. }
+        ));
+    }
+
+    #[test]
+    fn an_unknown_effect_is_never_a_contradiction() {
+        // A list constraint leaves no single enforce behind. No verdict beats a wrong one.
+        let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
+        let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
+        let unknown = effects(&[("google_org_policy_policy.p", PolicyEffect::Unknown)]);
+        assert!(matches!(resolve_goals(&catalog(), &lib, &lib, &emitted, &unknown)["2.1"], Goal::Satisfied { .. }));
     }
 
     use super::*;
@@ -830,6 +1182,16 @@ controls:
 "#,
         )
         .unwrap()
+    }
+
+    /// No policy has a readable effect — every witness is judged on existence alone,
+    /// which is what every test written before R7 assumes.
+    fn no_effects() -> BTreeMap<String, (PolicyEffect, String)> {
+        BTreeMap::new()
+    }
+
+    fn effects(pairs: &[(&str, PolicyEffect)]) -> BTreeMap<String, (PolicyEffect, String)> {
+        pairs.iter().map(|(a, e)| (a.to_string(), (*e, "because the test says so".to_string()))).collect()
     }
 
     fn claim(pack: &str, control: &str, coverage: &str, resources: &[&str], duties: &[&str]) -> (String, Claim) {
@@ -863,7 +1225,7 @@ controls:
             lib.iter().filter(|(p, _)| p == "logsink").cloned().collect();
         let emitted: BTreeSet<String> = ["a.b".to_string()].into();
 
-        let goals = resolve_goals(&catalog(), &lib, &included, &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &included, &emitted, &no_effects());
         assert!(matches!(goals["2.1"], Goal::Satisfied { .. }));
         // 2.3: included, witnesses present, but contributes-only with an open duty
         assert!(matches!(goals["2.3"], Goal::Partial { .. }));
@@ -907,7 +1269,7 @@ controls:
     #[test]
     fn a_cross_walk_folds_the_verdicts_of_the_catalog_it_reads_through() {
         let iso = cross_walk_catalog();
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         // 7.x is the provider's, decided without consulting anything
         assert!(matches!(goals["A.7.1"], Goal::Inherited));
         // a duty on the control itself, with no evidence at all, is partial —
@@ -942,7 +1304,7 @@ controls:
         let iso = cross_walk_catalog();
 
         // one source unmet: partial, not satisfied
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         let partial = BTreeMap::from([(
             "cis-gcp/4.0".to_string(),
             BTreeMap::from([
@@ -954,7 +1316,7 @@ controls:
         assert!(matches!(goals["A.8.20"], Goal::Partial { .. }), "{:?}", goals["A.8.20"]);
 
         // a deviation below surfaces as a deviation above, with its reason
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         let deviated = BTreeMap::from([(
             "cis-gcp/4.0".to_string(),
             BTreeMap::from([
@@ -976,7 +1338,7 @@ controls:
         }
 
         // a broken claim below is broken above too
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         let broken = BTreeMap::from([(
             "cis-gcp/4.0".to_string(),
             BTreeMap::from([(
@@ -988,7 +1350,7 @@ controls:
         assert!(matches!(goals["A.8.20"], Goal::ClaimBroken { .. }), "{:?}", goals["A.8.20"]);
 
         // nothing to read through at all: unmet, not silently satisfied
-        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new());
+        let mut goals = resolve_goals(&iso, &[], &[], &BTreeSet::new(), &no_effects());
         fold_cross_walk(&iso, &mut goals, &BTreeMap::new());
         assert!(matches!(goals["A.8.20"], Goal::Unmet { .. }), "{:?}", goals["A.8.20"]);
     }
@@ -1013,7 +1375,7 @@ controls:
                 }],
             },
         );
-        let goals = resolve_goals(&catalog(), std::slice::from_ref(&claim), std::slice::from_ref(&claim), &BTreeSet::new());
+        let goals = resolve_goals(&catalog(), std::slice::from_ref(&claim), std::slice::from_ref(&claim), &BTreeSet::new(), &no_effects());
         match &goals["2.1"] {
             Goal::Partial { witnesses, open_duties, .. } => {
                 assert!(witnesses.is_empty());
@@ -1032,11 +1394,11 @@ controls:
                 "spec":{"rules":[{"enforce":true}],"etag":"x"}}"#,
         )
         .unwrap();
-        assert_eq!(live_enforcement(&on), Some(true));
+        assert_eq!(live_enforcement(&on).map(|e| e.enforce), Some(true));
 
         let off: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":false}]}}"#).unwrap();
-        assert_eq!(live_enforcement(&off), Some(false));
+        assert_eq!(live_enforcement(&off).map(|e| e.enforce), Some(false));
 
         // legacy list constraint — no enforce field at all
         let listy: serde_json::Value = serde_json::from_str(
@@ -1045,10 +1407,29 @@ controls:
         .unwrap();
         assert_eq!(live_enforcement(&listy), None);
 
-        // several rules: ambiguous, so no verdict rather than a wrong one
+        // two unconditional rules: ambiguous, so no verdict rather than a wrong one
         let many: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":true},{"enforce":false}]}}"#).unwrap();
         assert_eq!(live_enforcement(&many), None);
+
+        // a tag-conditional exemption ahead of the unconditional rule: the
+        // unconditional rule is the verdict, the exemption is reported beside it
+        let lifted: serde_json::Value = serde_json::from_str(
+            r#"{"spec":{"rules":[
+                {"enforce":false,"condition":{"expression":"resource.matchTagId('tagKeys/1', 'tagValues/2')","title":"key-exempt service accounts"}},
+                {"enforce":true}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            live_enforcement(&lifted),
+            Some(LiveEnforcement { enforce: true, conditional: vec!["enforce OFF where key-exempt service accounts".into()] })
+        );
+        // a condition with no title is named by its expression
+        let untitled: serde_json::Value = serde_json::from_str(
+            r#"{"spec":{"rules":[{"enforce":true},{"enforce":false,"condition":{"expression":"resource.matchTag('1/k', 'v')"}}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(live_enforcement(&untitled).unwrap().conditional, vec!["enforce OFF where resource.matchTag('1/k', 'v')".to_string()]);
 
         assert_eq!(live_enforcement(&serde_json::Value::Null), None);
     }
@@ -1073,7 +1454,7 @@ resource "google_org_policy_policy" "os_login" {
         let live: serde_json::Value =
             serde_json::from_str(r#"{"spec":{"rules":[{"enforce":false}]}}"#).unwrap();
         let want = declared.get("google_org_policy_policy.os_login").copied();
-        let got = live_enforcement(&live);
+        let got = live_enforcement(&live).map(|e| e.enforce);
         assert_eq!(want, Some(true));
         assert_eq!(got, Some(false));
         assert_ne!(want, got, "this divergence is what the report must surface");
@@ -1091,7 +1472,7 @@ resource "google_org_policy_policy" "os_login" {
         let lib = vec![dev.clone()];
         let emitted: BTreeSet<String> = ["audit.policy".to_string()].into();
 
-        let goals = resolve_goals(&catalog(), &lib, &[dev], &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &[dev], &emitted, &no_effects());
         match &goals["2.1"] {
             Goal::Deviation { reasons, witnesses, open_duties } => {
                 assert_eq!(reasons[0].1, "service X needs metadata SSH keys");
@@ -1113,7 +1494,7 @@ resource "google_org_policy_policy" "os_login" {
         let included = vec![packclaim.clone(), dev];
         let emitted: BTreeSet<String> = BTreeSet::new(); // suppressed → not emitted
 
-        let goals = resolve_goals(&catalog(), &[packclaim], &included, &emitted);
+        let goals = resolve_goals(&catalog(), &[packclaim], &included, &emitted, &no_effects());
         assert!(
             matches!(goals["2.1"], Goal::Deviation { .. }),
             "a reasoned deviation must not report as a broken claim, got {:?}",
@@ -1128,7 +1509,7 @@ resource "google_org_policy_policy" "os_login" {
     fn a_deviation_whose_declared_witness_vanished_breaks() {
         let mut dev = claim("cis_fork", "2.1", "deviates", &["audit.policy"], &[]);
         dev.1.reason = "not enforcing on purpose".into();
-        let goals = resolve_goals(&catalog(), &[dev.clone()], &[dev], &BTreeSet::new());
+        let goals = resolve_goals(&catalog(), &[dev.clone()], &[dev], &BTreeSet::new(), &no_effects());
         assert!(matches!(goals["2.1"], Goal::ClaimBroken { .. }), "got {:?}", goals["2.1"]);
     }
 
@@ -1147,7 +1528,7 @@ resource "google_org_policy_policy" "os_login" {
         let included = vec![fork];
         let emitted: BTreeSet<String> = ["audit.fork".to_string()].into();
 
-        let goals = resolve_goals(&catalog(), &lib, &included, &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &included, &emitted, &no_effects());
         match &goals["2.1"] {
             Goal::Satisfied { witnesses } => assert_eq!(witnesses, &vec!["audit.fork".to_string()]),
             g => panic!("expected Satisfied by the fork's own witness, got {:?}", g),
@@ -1161,7 +1542,7 @@ resource "google_org_policy_policy" "os_login" {
         let lib = vec![claim("logsink", "2.1", "implements", &["gone.away"], &[])];
         let included = lib.clone();
         let emitted: BTreeSet<String> = BTreeSet::new();
-        let goals = resolve_goals(&catalog(), &lib, &included, &emitted);
+        let goals = resolve_goals(&catalog(), &lib, &included, &emitted, &no_effects());
         match &goals["2.1"] {
             Goal::ClaimBroken { missing, pack } => {
                 assert_eq!(missing, &vec!["gone.away".to_string()]);
@@ -1224,6 +1605,9 @@ pub(crate) fn responsibility_of(goal: &Goal) -> &'static str {
         Goal::Satisfied { .. } | Goal::Partial { .. } => "satz-managed",
         // satz claims it and its witnesses are missing — satz's problem.
         Goal::ClaimBroken { .. } => "satz-managed",
+        // The witnesses are there and they do nothing. Also satz's problem, and a
+        // worse one: the row would otherwise read as discharged.
+        Goal::ClaimContradicted { .. } => "satz-managed",
         // Nobody has taken it. Not the same as "the customer's": saying so
         // would quietly assign work no one agreed to.
         Goal::Unmet { .. } => "unassigned",
@@ -1260,12 +1644,12 @@ fn witness_facts(
     goal_witnesses(goal)
         .iter()
         .map(|w| {
-            let (state, live_id, detail) = match live.get(w) {
-                Some(LiveState::Verified(id)) => ("verified", Some(id.clone()), None),
-                Some(LiveState::Missing) => ("missing", None, None),
-                Some(LiveState::Diverged(d)) => ("diverged", None, Some(d.clone())),
-                Some(LiveState::Unverifiable(why)) => ("unverifiable", None, Some(why.clone())),
-                None => ("not-checked", None, None),
+            let (state, live_id, detail, conditional) = match live.get(w) {
+                Some(LiveState::Verified { id, conditional }) => ("verified", Some(id.clone()), None, conditional.clone()),
+                Some(LiveState::Missing) => ("missing", None, None, Vec::new()),
+                Some(LiveState::Diverged(d)) => ("diverged", None, Some(d.clone()), Vec::new()),
+                Some(LiveState::Unverifiable(why)) => ("unverifiable", None, Some(why.clone()), Vec::new()),
+                None => ("not-checked", None, None, Vec::new()),
             };
             let declared_at = manifest
                 .resources
@@ -1277,6 +1661,7 @@ fn witness_facts(
                 "state": state,
                 "live_id": live_id,
                 "detail": detail,
+                "conditional": conditional,
                 "declared_at": declared_at,
             })
         })
@@ -1307,8 +1692,10 @@ fn estate_commit(estate: &Path) -> Option<serde_json::Value> {
 /// Live verification result for one witness address.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) enum LiveState {
-    /// Found in the live estate (the live identifier that matched).
-    Verified(String),
+    /// Found in the live estate: the live identifier that matched, and — for an
+    /// org policy — its conditional rules, each an exemption or a tightening for
+    /// a tagged part of the hierarchy that the unconditional verdict does not show.
+    Verified { id: String, conditional: Vec<String> },
     /// The declared estate emits it, but the live estate does not contain it.
     Missing,
     /// Present live, but not doing what the estate declares — an org policy that
@@ -1455,21 +1842,144 @@ enum WitnessScope {
     Path,
 }
 
-fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessScope)> {
+fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessScope, LiveContent)> {
+    use LiveContent::{IamPolicy, Resource};
     match tf_type {
-        "google_logging_organization_sink" => Some(("logging.googleapis.com/LogSink", "name", WitnessScope::Organization)),
-        "google_logging_metric" => Some(("logging.googleapis.com/LogMetric", "name", WitnessScope::Project)),
-        "google_storage_bucket" => Some(("storage.googleapis.com/Bucket", "name", WitnessScope::Global)),
-        "google_monitoring_alert_policy" => Some(("monitoring.googleapis.com/AlertPolicy", "display_name", WitnessScope::Project)),
+        "google_logging_organization_sink" => {
+            Some(("logging.googleapis.com/LogSink", "name", WitnessScope::Organization, Resource))
+        }
+        "google_logging_metric" => Some(("logging.googleapis.com/LogMetric", "name", WitnessScope::Project, Resource)),
+        "google_storage_bucket" => Some(("storage.googleapis.com/Bucket", "name", WitnessScope::Global, Resource)),
+        "google_monitoring_alert_policy" => {
+            Some(("monitoring.googleapis.com/AlertPolicy", "display_name", WitnessScope::Project, Resource))
+        }
         "google_monitoring_notification_channel" => {
-            Some(("monitoring.googleapis.com/NotificationChannel", "display_name", WitnessScope::Project))
+            Some(("monitoring.googleapis.com/NotificationChannel", "display_name", WitnessScope::Project, Resource))
         }
         // The emitted `name` is `organizations/<org>/policies/<constraint>`, which
         // is exactly the CAI asset name minus its `//service/` prefix.
-        "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name", WitnessScope::Path)),
+        "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name", WitnessScope::Path, Resource)),
+        // These two live in an IAM policy, not in resource data: the audit config
+        // is the organisation's own policy, the member is a binding on the bucket.
+        "google_organization_iam_audit_config" => Some((
+            "cloudresourcemanager.googleapis.com/Organization",
+            "org_id",
+            WitnessScope::Organization,
+            IamPolicy,
+        )),
+        "google_storage_bucket_iam_member" => {
+            Some(("storage.googleapis.com/Bucket", "bucket", WitnessScope::Global, IamPolicy))
+        }
         _ => None,
     }
 }
+
+/// What a witness is compared against live: the asset's resource data, or the
+/// IAM policy set on it. Cloud Asset Inventory serves them as two content
+/// types, so a type needing both is fetched twice.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum LiveContent {
+    Resource,
+    IamPolicy,
+}
+
+/// The audit log type as the estate spells it. The asset client renders the
+/// proto enum as its NUMBER (`google.iam.v1.AuditLogConfig.LogType`), so a live
+/// policy says `2` where the estate says `DATA_WRITE`.
+fn log_type_name(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    match v.as_i64()? {
+        1 => Some("ADMIN_READ".into()),
+        2 => Some("DATA_WRITE".into()),
+        3 => Some("DATA_READ".into()),
+        _ => None,
+    }
+}
+
+/// Does the live organisation audit the declared service with every declared
+/// log type? `Ok(())` when it does; `Err` says what is missing, for the row.
+fn audit_config_state(policy: &serde_json::Value, service: &str, want: &[String]) -> Result<(), String> {
+    let configs = policy.get("auditConfigs").and_then(|c| c.as_array()).map(|a| a.as_slice()).unwrap_or(&[]);
+    let Some(mine) = configs.iter().find(|c| c.get("service").and_then(|s| s.as_str()) == Some(service)) else {
+        return Err(format!("no audit config for service `{}` in the live organization policy", service));
+    };
+    let live: Vec<String> = mine
+        .get("auditLogConfigs")
+        .and_then(|c| c.as_array())
+        .map(|a| a.iter().filter_map(|c| c.get("logType").and_then(log_type_name)).collect())
+        .unwrap_or_default();
+    let missing: Vec<&str> = want.iter().map(String::as_str).filter(|t| !live.iter().any(|l| l == t)).collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "service `{}` is audited for {} live, and the estate declares {} — missing {}",
+            service,
+            if live.is_empty() { "nothing".to_string() } else { live.join(", ") },
+            want.join(", "),
+            missing.join(", ")
+        ))
+    }
+}
+
+/// Does the live bucket policy bind `member` to `role`? `Ok(())` when it does.
+fn bucket_binding_state(policy: &serde_json::Value, role: &str, member: &str) -> Result<(), String> {
+    let bindings = policy.get("bindings").and_then(|b| b.as_array()).map(|a| a.as_slice()).unwrap_or(&[]);
+    let Some(mine) = bindings.iter().find(|b| b.get("role").and_then(|r| r.as_str()) == Some(role)) else {
+        return Err(format!("the live bucket policy has no binding for {}", role));
+    };
+    let members: Vec<&str> =
+        mine.get("members").and_then(|m| m.as_array()).map(|a| a.iter().filter_map(|m| m.as_str()).collect()).unwrap_or_default();
+    if members.contains(&member) {
+        Ok(())
+    } else {
+        let bound = if members.is_empty() { "nobody".to_string() } else { members.join(", ") };
+        Err(format!("{} is bound to {} live, not to {}", role, bound, member))
+    }
+}
+
+/// The member a bucket binding grants to, as a live value. A literal `member`
+/// answers itself; an interpolated one is a reference to another witness, and
+/// the value is read from THAT witness's live asset — a sink's writer identity
+/// is issued by Google and exists nowhere in the estate.
+#[allow(clippy::too_many_arguments)]
+fn declared_member(
+    w: &str,
+    manifest: &Manifest,
+    inventory: &Inventory,
+    attrs: &BTreeMap<String, BTreeMap<String, String>>,
+    org_id: &str,
+    numbers: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let r = manifest.resources.get(w).ok_or_else(|| format!("{} is not in the emission manifest", w))?;
+    if let Some(m) = r.attrs.get("member") {
+        if !crate::manifest::has_interpolation(m) {
+            return Ok(m.clone());
+        }
+    }
+    let traversal = r.refs.get("member").ok_or_else(|| "no `member` attribute to check the binding against".to_string())?;
+    let (target, field) =
+        traversal.rsplit_once('.').ok_or_else(|| format!("`member` reference `{}` names no attribute", traversal))?;
+    if field != "writer_identity" {
+        return Err(format!("`member` follows {} — only a sink's writer identity is read live", traversal));
+    }
+    let target_type = target.split('.').next().unwrap_or("");
+    let (at, attr, scope, content) =
+        live_matcher(target_type).ok_or_else(|| format!("no live check for {}, which `member` follows", target_type))?;
+    let key = expected_key(target, attr, scope, attrs, manifest, org_id, numbers)?;
+    let asset = inventory
+        .get(&(at.to_string(), content))
+        .and_then(|ids| ids.get(&key))
+        .ok_or_else(|| format!("{} is not live, so its writer identity cannot be read", target))?;
+    asset
+        .get("writerIdentity")
+        .and_then(|i| i.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("the live {} carries no writerIdentity", target))
+}
+
 
 /// The inventory key a live asset is filed under, per scope: its CAI path
 /// (`projects/<number>/metrics/<name>`, `organizations/<org>/sinks/<name>`,
@@ -1508,6 +2018,9 @@ fn expected_key(
             let org = a.get("org_id").map(|o| o.trim_start_matches("organizations/").to_string()).unwrap_or_else(|| org_id.to_string());
             let collection = match tf_type {
                 "google_logging_organization_sink" => "sinks",
+                // the audit config IS the organisation's policy, not a resource
+                // filed under the organisation
+                "google_organization_iam_audit_config" => return Ok(format!("organizations/{}", org)),
                 other => return Err(format!("no organization-scoped path rule for {}", other)),
             };
             Ok(format!("organizations/{}/{}/{}", org, collection, id))
@@ -1569,9 +2082,9 @@ async fn project_numbers(ids: &BTreeSet<String>) -> Result<BTreeMap<String, Stri
 /// The data used to be discarded, which capped live verification at "does a
 /// resource with this identifier exist". For an org policy that is not the
 /// control: a policy with enforcement OFF exists just as much as one with it on.
-type Inventory = BTreeMap<String, BTreeMap<String, serde_json::Value>>;
+type Inventory = BTreeMap<(String, LiveContent), BTreeMap<String, serde_json::Value>>;
 
-async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<Inventory, BoxErr> {
+async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String, LiveContent)>) -> Result<Inventory, BoxErr> {
     use google_cloud_asset_v1::model::ContentType;
     use google_cloud_gax::options::RequestOptionsBuilder;
     let client = crate::gcp::asset_service().await?;
@@ -1581,14 +2094,17 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
     // answered `report-organizational-policies` and refused `report-compliance`.
     let quota_project = crate::org_policy::resolve_quota_project();
     let mut out: Inventory = BTreeMap::new();
-    for at in asset_types {
+    for (at, content) in asset_types {
         let mut ids: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         use google_cloud_gax::paginator::ItemPaginator as _;
         let mut builder = client
             .list_assets()
             .set_parent(format!("organizations/{}", org_id))
             .set_asset_types(vec![at.clone()])
-            .set_content_type(ContentType::Resource)
+            .set_content_type(match content {
+                LiveContent::Resource => ContentType::Resource,
+                LiveContent::IamPolicy => ContentType::IamPolicy,
+            })
             .set_page_size(1000);
         if let Some(qp) = &quota_project {
             builder = builder.with_quota_project(qp);
@@ -1596,12 +2112,23 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
         let mut stream = builder.by_item();
         while let Some(asset) = stream.next().await {
             let asset: google_cloud_asset_v1::model::Asset = asset?;
-            let data = asset
-                .resource
-                .as_ref()
-                .and_then(|r| r.data.as_ref())
-                .and_then(|d| serde_json::to_value(d).ok())
-                .unwrap_or(serde_json::Value::Null);
+            // An asset without the requested content is `Null`: a witness with
+            // nothing to compare. Content that cannot be serialised is an error —
+            // evidence that cannot be read is not evidence of anything.
+            let data = match content {
+                LiveContent::Resource => match asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
+                    Some(d) => serde_json::to_value(d)
+                        .map_err(|e| format!("{}: the live resource data is not readable as JSON: {}", asset.name, e))?,
+                    None => serde_json::Value::Null,
+                },
+                // the policy set ON the asset: the organisation's audit configs,
+                // a bucket's bindings
+                LiveContent::IamPolicy => match asset.iam_policy.as_ref() {
+                    Some(p) => serde_json::to_value(p)
+                        .map_err(|e| format!("{}: the live IAM policy is not readable as JSON: {}", asset.name, e))?,
+                    None => serde_json::Value::Null,
+                },
+            };
             // scoped keys only: the bare terminal segment and the bare
             // displayName used to be keys too, and a same-named resource in
             // another project verified the witness
@@ -1609,19 +2136,46 @@ async fn live_inventory(org_id: &str, asset_types: &BTreeSet<String>) -> Result<
                 ids.insert(k, data.clone());
             }
         }
-        out.insert(at.clone(), ids);
+        out.insert((at.clone(), *content), ids);
     }
     Ok(out)
 }
 
-/// The single `enforce` value the LIVE policy carries, if it carries exactly one.
+/// What a LIVE boolean policy enforces: the verdict of its one unconditional
+/// rule, and its conditional rules — a tag-conditional `enforce: false` exempts
+/// the tagged resources while the unconditional rule stays the policy's verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiveEnforcement {
+    pub enforce: bool,
+    /// one line per conditional rule: what it sets, and where (its condition's
+    /// title, else its expression)
+    pub conditional: Vec<String>,
+}
+
 /// Shape (verified against the Org Policy API): `spec.rules[].enforce` as a JSON
-/// bool — note the live form is a boolean while HCL spells it "TRUE"/"FALSE".
-pub(crate) fn live_enforcement(data: &serde_json::Value) -> Option<bool> {
+/// bool — the live form is a boolean while HCL spells it "TRUE"/"FALSE" — and
+/// `spec.rules[].condition` on a conditional rule. No verdict unless exactly one
+/// rule is unconditional.
+pub(crate) fn live_enforcement(data: &serde_json::Value) -> Option<LiveEnforcement> {
     let rules = data.get("spec")?.get("rules")?.as_array()?;
-    let mut found: Vec<bool> = rules.iter().filter_map(|r| r.get("enforce")?.as_bool()).collect();
-    match found.len() {
-        1 => found.pop(),
+    let mut unconditional = Vec::new();
+    let mut conditional = Vec::new();
+    for r in rules {
+        let Some(enforce) = r.get("enforce").and_then(|e| e.as_bool()) else { continue };
+        match r.get("condition").filter(|c| !c.is_null()) {
+            None => unconditional.push(enforce),
+            Some(c) => {
+                let text = |k: &str| c.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty());
+                conditional.push(format!(
+                    "enforce {} where {}",
+                    if enforce { "ON" } else { "OFF" },
+                    text("title").or_else(|| text("expression")).unwrap_or("a condition")
+                ));
+            }
+        }
+    }
+    match unconditional.as_slice() {
+        [enforce] => Some(LiveEnforcement { enforce: *enforce, conditional }),
         _ => None,
     }
 }
@@ -1662,72 +2216,139 @@ pub(crate) struct ProwlerFinding {
     pub risk: String,
 }
 
-/// Prowler ingest, OCSF (Prowler ≥ 4) and the legacy native JSON: per
-/// catalog control, the findings whose compliance mapping references this
-/// framework. Unknown shapes are skipped — corroboration must never fail
-/// the report.
+/// A Prowler export, read: the Prowler version that wrote it, the compliance
+/// frameworks its findings are mapped to, and — per catalog control — the
+/// findings whose mapping references the requested framework.
+#[derive(Debug, Default)]
+pub(crate) struct ProwlerExport {
+    /// `metadata.product.version`, the distinct values joined — one scan
+    /// writes one; an export merged from several runs may carry more.
+    pub version: String,
+    /// every framework key seen in `unmapped.compliance` (`CIS-4.0`, …)
+    pub frameworks: BTreeSet<String>,
+    pub by_control: BTreeMap<String, Vec<ProwlerFinding>>,
+    /// FAIL findings per check that map to no control of the requested
+    /// framework — no compliance mapping at all, or none for this framework.
+    /// No row of a report holds them.
+    pub unmapped_fails: BTreeMap<String, usize>,
+}
+
+impl ProwlerExport {
+    /// The export has to say something about the framework it is joined with;
+    /// an empty join means the wrong framework or the wrong file.
+    fn require_mapping(&self, path: &Path, catalog: &Catalog) -> Result<(), BoxErr> {
+        if self.by_control.is_empty() {
+            return Err(format!(
+                "no finding in {} (Prowler {}) maps to {} {} — the export's compliance keys are: {}",
+                path.display(),
+                self.version,
+                catalog.catalog,
+                catalog.version,
+                self.frameworks.iter().cloned().collect::<Vec<_>>().join(", ")
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+/// Read a Prowler export from disk — `prowler gcp --output-formats json-ocsf`.
+pub(crate) fn read_prowler(path: &Path, catalog_name: &str, catalog_version: &str) -> Result<ProwlerExport, BoxErr> {
+    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(path)?)
+        .map_err(|e| format!("{}: prowler json does not parse: {}", path.display(), e))?;
+    ingest_prowler(&raw, catalog_name, catalog_version).map_err(|e| format!("{}: {}", path.display(), e).into())
+}
+
+/// Prowler ingest: the OCSF export of Prowler 5, the only shape read. Every
+/// finding must name Prowler ≥ 5 in `metadata.product`; any other file is
+/// refused, because the older shapes keep the check id and the project in other
+/// fields and every join on them comes out wrong.
 ///
-/// OCSF: `status_code`, `severity`, `unmapped.compliance`,
-/// `unmapped.check_id`, `resources[0].uid`, `cloud.project.uid`.
-/// Legacy: `status` / `Status`, `compliance` / `Compliance`, `check_id`.
+/// Read per finding: `metadata.event_code` (the check id),
+/// `metadata.product.version`, `status_code`, `severity`,
+/// `unmapped.compliance` (`{"CIS-5.0": ["2.13"], …}`), `resources[0].uid`,
+/// `cloud.account.uid` (the project id on GCP), `finding_info.title`,
+/// `remediation.desc`, `risk_details`.
 pub(crate) fn ingest_prowler(
     raw: &serde_json::Value,
     catalog_name: &str,
     catalog_version: &str,
-) -> BTreeMap<String, Vec<ProwlerFinding>> {
-    let mut out: BTreeMap<String, Vec<ProwlerFinding>> = BTreeMap::new();
-    let Some(findings) = raw.as_array() else { return out };
-    let fw_needle = format!(
-        "{}_{}",
-        catalog_name.replace("-gcp", ""),
-        catalog_version
-    ); // "cis_4.0" matches prowler's "cis_4.0_gcp"
+) -> Result<ProwlerExport, String> {
+    const RERUN: &str = "satz reads the OCSF export of Prowler 5 (`prowler gcp --output-formats json-ocsf`)";
+    let findings = raw
+        .as_array()
+        .ok_or_else(|| format!("not a Prowler OCSF export — expected a JSON array of findings; {}", RERUN))?;
+    if findings.is_empty() {
+        return Err(format!("contains no findings; {}", RERUN));
+    }
+    // `CIS-4.0`, `cis_4.0_gcp` and `CIS-4.0-GCP` are one framework
+    let norm = |x: &str| x.to_lowercase().replace(['-', '_'], ".");
+    let needle = norm(&format!("{}-{}", catalog_name.replace("-gcp", ""), catalog_version));
     let text = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).unwrap_or("").to_string();
-    for f in findings {
-        let unmapped = f.get("unmapped");
-        let status = text(f.get("status_code").or_else(|| f.get("status")).or_else(|| f.get("Status")));
-        let compliance = unmapped
-            .and_then(|u| u.get("compliance"))
-            .or_else(|| f.get("compliance"))
-            .or_else(|| f.get("Compliance"));
-        let Some(map) = compliance.and_then(|c| c.as_object()) else { continue };
+    let mut export = ProwlerExport::default();
+    let mut versions = BTreeSet::new();
+    for (i, f) in findings.iter().enumerate() {
+        let n = i + 1;
+        let metadata = f.get("metadata");
+        let product = metadata.and_then(|m| m.get("product"));
+        let version = text(product.and_then(|p| p.get("version")));
+        if !text(product.and_then(|p| p.get("name"))).eq_ignore_ascii_case("prowler") || version.is_empty() {
+            return Err(format!(
+                "finding {} names no Prowler version in metadata.product — not an OCSF export of Prowler 5; {}",
+                n, RERUN
+            ));
+        }
+        if !version.split('.').next().and_then(|m| m.parse::<u32>().ok()).is_some_and(|major| major >= 5) {
+            return Err(format!(
+                "written by Prowler {} (finding {}); {} — upgrade Prowler and re-run the scan",
+                version, n, RERUN
+            ));
+        }
+        let check = text(metadata.and_then(|m| m.get("event_code")));
+        if check.is_empty() {
+            return Err(format!("finding {} has no metadata.event_code, the check id Prowler 5 writes; {}", n, RERUN));
+        }
+        versions.insert(version);
+        let status = text(f.get("status_code"));
+        let Some(map) = f.get("unmapped").and_then(|u| u.get("compliance")).and_then(|c| c.as_object()) else {
+            if status == "FAIL" {
+                *export.unmapped_fails.entry(check).or_default() += 1;
+            }
+            continue;
+        };
         let finding = ProwlerFinding {
-            check: text(unmapped.and_then(|u| u.get("check_id")).or_else(|| f.get("check_id")).or_else(|| f.get("CheckID"))),
-            status: status.clone(),
-            severity: text(f.get("severity").or_else(|| f.get("Severity"))),
+            check,
+            status,
+            severity: text(f.get("severity")),
             resource: text(
                 f.get("resources")
                     .and_then(|r| r.as_array())
                     .and_then(|a| a.first())
-                    .and_then(|r| r.get("uid").or_else(|| r.get("name")))
-                    .or_else(|| f.get("resource_id"))
-                    .or_else(|| f.get("ResourceId")),
+                    .and_then(|r| r.get("uid").or_else(|| r.get("name"))),
             ),
-            project: text(f.get("cloud").and_then(|c| c.get("project")).and_then(|p| p.get("uid")).or_else(|| f.get("project_id"))),
-            // OCSF: finding_info.title, remediation.desc, risk_details;
-            // legacy: CheckTitle, Remediation.Recommendation.Text, Risk
-            title: text(f.get("finding_info").and_then(|i| i.get("title")).or_else(|| f.get("CheckTitle"))),
-            remediation: text(
-                f.get("remediation")
-                    .and_then(|r| r.get("desc"))
-                    .or_else(|| f.get("Remediation").and_then(|r| r.get("Recommendation")).and_then(|r| r.get("Text"))),
-            ),
-            risk: text(f.get("risk_details").or_else(|| f.get("Risk"))),
+            project: text(f.get("cloud").and_then(|c| c.get("account")).and_then(|a| a.get("uid"))),
+            title: text(f.get("finding_info").and_then(|i| i.get("title"))),
+            remediation: text(f.get("remediation").and_then(|r| r.get("desc"))),
+            risk: text(f.get("risk_details")),
         };
+        let mut mapped = false;
         for (fw, controls) in map {
-            // legacy `cis_4.0_gcp`, OCSF `CIS-4.0-GCP`: same framework, two spellings
-            let norm = |x: &str| x.to_lowercase().replace(['-', '_'], ".");
-            if !norm(fw).contains(&norm(&fw_needle)) {
+            export.frameworks.insert(fw.clone());
+            let key = norm(fw);
+            if key != needle && !key.starts_with(&format!("{}.", needle)) {
                 continue;
             }
-            if let Some(list) = controls.as_array() {
-                for c in list.iter().filter_map(|c| c.as_str()) {
-                    out.entry(c.to_string()).or_default().push(finding.clone());
-                }
+            for c in controls.as_array().into_iter().flatten().filter_map(|c| c.as_str()) {
+                mapped = true;
+                export.by_control.entry(c.to_string()).or_default().push(finding.clone());
             }
         }
+        if !mapped && finding.status == "FAIL" {
+            *export.unmapped_fails.entry(finding.check.clone()).or_default() += 1;
+        }
     }
-    out
+    export.version = versions.into_iter().collect::<Vec<_>>().join(", ");
+    Ok(export)
 }
 
 /// The combined verdict of a control's row and Prowler's findings on it
@@ -1792,7 +2413,9 @@ pub(crate) async fn report_compliance_evidence(
         .unwrap_or_default();
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
     let attrs = manifest.witness_attrs();
 
     // ---- live verification (degrades to Unverifiable, never fails the report) ----
@@ -1807,7 +2430,7 @@ pub(crate) async fn report_compliance_evidence(
     let mut outcome = LiveOutcome::Skipped;
     if !no_live {
         // Which asset types do the satisfied/partial witnesses need?
-        let mut needed: BTreeSet<String> = BTreeSet::new();
+        let mut needed: BTreeSet<(String, LiveContent)> = BTreeSet::new();
         let mut needed_projects: BTreeSet<String> = BTreeSet::new();
         for goal in goals.values() {
             let ws = match goal {
@@ -1821,8 +2444,8 @@ pub(crate) async fn report_compliance_evidence(
             };
             for w in ws {
                 if let Some(tf_type) = w.split('.').next() {
-                    if let Some((at, _, scope)) = live_matcher(tf_type) {
-                        needed.insert(at.to_string());
+                    if let Some((at, _, scope, content)) = live_matcher(tf_type) {
+                        needed.insert((at.to_string(), content));
                         if scope == WitnessScope::Project {
                             if let Some(p) = witness_project(w, manifest) {
                                 needed_projects.insert(p);
@@ -1889,10 +2512,10 @@ pub(crate) async fn report_compliance_evidence(
                 let tf_type = w.split('.').next().unwrap_or("");
                 let state = match live_matcher(tf_type) {
                     None => LiveState::Unverifiable(format!(
-                        "no live check for {} yet (org IAM auditConfig etc. — roadmap)",
+                        "no live check for {} yet — Cloud Asset Inventory serves no witness for it",
                         tf_type
                     )),
-                    Some((at, attr, scope)) => {
+                    Some((at, attr, scope, content)) => {
                         let key = expected_key(w, attr, scope, &attrs, manifest, org_id.unwrap_or(""), &numbers);
                         match (&inventory, key) {
                             (None, _) => LiveState::Unverifiable(
@@ -1900,34 +2523,67 @@ pub(crate) async fn report_compliance_evidence(
                                 else { "live inventory unavailable".into() },
                             ),
                             (Some(_), Err(why)) => LiveState::Unverifiable(why),
-                            (Some(inv), Ok(id)) => match inv.get(at).and_then(|ids| ids.get(&id)) {
+                            (Some(inv), Ok(id)) => match inv.get(&(at.to_string(), content)).and_then(|ids| ids.get(&id)) {
                                 None => LiveState::Missing,
+                                Some(data) if content == LiveContent::IamPolicy => {
+                                    let r = manifest.resources.get(w);
+                                    match tf_type {
+                                        "google_organization_iam_audit_config" => {
+                                            let service = r.and_then(|r| r.attrs.get("service")).cloned().unwrap_or_default();
+                                            let want = r
+                                                .and_then(|r| r.nested_all.get("audit_log_config.log_type"))
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            if want.is_empty() {
+                                                LiveState::Unverifiable(
+                                                    "no audit_log_config log types are declared, so there is nothing to compare".into(),
+                                                )
+                                            } else {
+                                                match audit_config_state(data, &service, &want) {
+                                                    Ok(()) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
+                                                    Err(why) => LiveState::Diverged(why),
+                                                }
+                                            }
+                                        }
+                                        "google_storage_bucket_iam_member" => {
+                                            let role = r.and_then(|r| r.attrs.get("role")).cloned().unwrap_or_default();
+                                            match declared_member(w, manifest, inv, &attrs, org_id.unwrap_or(""), &numbers) {
+                                                Err(why) => LiveState::Unverifiable(why),
+                                                Ok(member) => match bucket_binding_state(data, &role, &member) {
+                                                    Ok(()) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
+                                                    Err(why) => LiveState::Diverged(why),
+                                                },
+                                            }
+                                        }
+                                        other => LiveState::Unverifiable(format!("no IAM-policy check for {}", other)),
+                                    }
+                                }
                                 Some(data) => {
                                     // Existence is not the control. For an org
                                     // policy, compare what the estate DECLARES
                                     // against what the live policy actually does.
                                     match (declared.get(w).copied(), live_enforcement(data)) {
-                                        (Some(want), Some(got)) if want != got => {
+                                        (Some(want), Some(got)) if want != got.enforce => {
                                             LiveState::Diverged(format!(
                                                 "declared enforce = {}, live policy has enforcement {}",
                                                 if want { "TRUE" } else { "FALSE" },
-                                                if got { "ON" } else { "OFF" }
+                                                if got.enforce { "ON" } else { "OFF" }
                                             ))
                                         }
-                                        (Some(_), Some(_)) => LiveState::Verified(id.clone()),
+                                        (Some(_), Some(got)) => LiveState::Verified { id: id.clone(), conditional: got.conditional },
                                         // We declare an enforcement value but could
                                         // not read the live one. Reporting "verified"
                                         // here would be the exact dishonesty this
                                         // check exists to remove — existence is not
                                         // the control. Say we could not check.
                                         (Some(_), None) => LiveState::Unverifiable(
-                                            "policy exists, but its live enforcement could not be read"
+                                            "policy exists, but its live enforcement could not be read: it has no single unconditional rule"
                                                 .into(),
                                         ),
                                         // Nothing enforcement-shaped was declared
                                         // (list constraints, non-policy types):
                                         // existence IS the whole claim.
-                                        (None, _) => LiveState::Verified(id.clone()),
+                                        (None, _) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
                                     }
                                 }
                             },
@@ -1952,19 +2608,23 @@ pub(crate) async fn report_compliance_evidence(
             Attestations::default()
         }
     };
-    let prowler: BTreeMap<String, Vec<ProwlerFinding>> = match prowler_path {
+    let prowler_export = match &prowler_path {
         Some(p) => {
-            let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(&p)?)
-                .map_err(|e| format!("prowler json does not parse: {}", e))?;
-            ingest_prowler(&raw, &catalog.catalog, &catalog.version)
+            let export = read_prowler(p, &catalog.catalog, &catalog.version)?;
+            export.require_mapping(p, &catalog)?;
+            Some(export)
         }
-        None => BTreeMap::new(),
+        None => None,
     };
+    let prowler_version = prowler_export.as_ref().map(|e| e.version.clone());
+    let prowler_unmapped: BTreeMap<String, usize> =
+        prowler_export.as_ref().map(|e| e.unmapped_fails.clone()).unwrap_or_default();
+    let prowler: BTreeMap<String, Vec<ProwlerFinding>> = prowler_export.map(|e| e.by_control).unwrap_or_default();
 
     // ---- render ----
     let mut md = String::new();
     md.push_str(&format!(
-        "# Evidence report — {} {}\n\nEstate: `{}` · run: {} · live verification: {}\n\n\
+        "# Evidence report — {} {}\n\nEstate: `{}` · run: {} · live verification: {}{}\n\n\
          > This report states **check semantics** (\"a resource with these properties was \
          verified at this time\"), never legal conformity. Satisfaction = claims ∧ manual \
          duties ∧ attestations.\n\n\
@@ -1975,6 +2635,7 @@ pub(crate) async fn report_compliance_evidence(
         input.display(),
         verified_at,
         outcome.describe(),
+        prowler_version.as_deref().map(|v| format!(" · Prowler {}", v)).unwrap_or_default(),
     ));
 
     let mut json_rows = Vec::new();
@@ -2030,7 +2691,11 @@ pub(crate) async fn report_compliance_evidence(
                 let mut first_unver = String::new();
                 for w in witnesses {
                     match live.get(w) {
-                        Some(LiveState::Verified(idn)) => { n_verified += 1; wcells.push(format!("`{}` → ✓ `{}`", w, idn)) }
+                        Some(LiveState::Verified { id: idn, conditional }) => {
+                            n_verified += 1;
+                            let rules = if conditional.is_empty() { String::new() } else { format!(" · conditional rules: {}", conditional.join("; ")) };
+                            wcells.push(format!("`{}` → ✓ `{}`{}", w, idn, rules))
+                        }
                         Some(LiveState::Missing) => { any_missing = true; wcells.push(format!("`{}` → **✗ not live**", w)); }
                         Some(LiveState::Diverged(d)) => { any_diverged = true; wcells.push(format!("`{}` → **✗ {}**", w, d)); }
                         Some(LiveState::Unverifiable(r)) => { any_unver = true; if first_unver.is_empty() { first_unver = r.clone(); } wcells.push(format!("`{}` → – ({})", w, r)); }
@@ -2077,6 +2742,22 @@ pub(crate) async fn report_compliance_evidence(
                 format!("pack `{}` declares missing witnesses: {}", pack, missing.join(", ")),
                 "–".into(),
             ),
+            // The live column cannot soften this: the estate itself says the
+            // policy does nothing, before anyone asks the organisation.
+            Goal::ClaimContradicted { inert, pack, coverage } => (
+                "**CONTRADICTED CLAIM**".into(),
+                format!(
+                    "pack `{}` {}: {}",
+                    pack,
+                    if coverage == "deviates" {
+                        "declares a deviation and its witnesses enforce the control"
+                    } else {
+                        "claims this control and its witnesses do not do it"
+                    },
+                    inert.iter().map(|(a, w)| format!("`{a}` {w}")).collect::<Vec<_>>().join(", ")
+                ),
+                "–".into(),
+            ),
             Goal::Unmet { providers } => (
                 "**unmet**".into(),
                 if providers.is_empty() { "no providing pack in library".into() }
@@ -2090,7 +2771,7 @@ pub(crate) async fn report_compliance_evidence(
             Goal::Satisfied { witnesses } | Goal::Partial { witnesses, .. } => witnesses
                 .iter()
                 .filter_map(|w| match live.get(w) {
-                    Some(LiveState::Verified(idn)) => Some(idn.clone()),
+                    Some(LiveState::Verified { id: idn, .. }) => Some(idn.clone()),
                     _ => None,
                 })
                 .collect(),
@@ -2155,11 +2836,16 @@ pub(crate) async fn report_compliance_evidence(
         }));
     }
 
+    md.push_str(&render_unmapped(&catalog, &prowler_unmapped));
+
     let evidence = serde_json::json!({
         "framework": catalog.catalog, "version": catalog.version,
         "estate": input.display().to_string(), "verified_at": verified_at,
         "live": outcome.verified(), "live_status": outcome.id(),
         "warnings": warnings, "estate_commit": estate_commit(input),
+        "prowler_version": prowler_version,
+        // FAIL findings per Prowler check that map to no control of this framework
+        "prowler_unmapped": prowler_unmapped,
         "rows": json_rows,
     });
 
@@ -2180,7 +2866,7 @@ pub(crate) async fn run_report_compliance(
     org_id: Option<&str>,
     config_dir: &Path,
     format: crate::OutFormat,
-    report_path: Option<PathBuf>,
+    out: &Path,
     prowler_path: Option<PathBuf>,
     checkov: Option<&crate::scan::Report>,
     no_live: bool,
@@ -2210,16 +2896,13 @@ pub(crate) async fn run_report_compliance(
         crate::fsx::write(&hist, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
     }
 
-    let out_path = report_path.unwrap_or_else(|| hist_dir.join(format!("{}-latest.md", framework)));
+    let what = format!("{} control(s)", json_rows.len());
     match format {
-        crate::OutFormat::Json => println!("{}", serde_json::to_string_pretty(&evidence)?),
-        _ => {
-            crate::fsx::write(&out_path, md.as_bytes())?;
-            println!("Wrote evidence report to {} (history: {})", out_path.display(), hist.display());
-            if format == crate::OutFormat::Pdf {
-                crate::org_policy::try_pandoc_pdf(&out_path);
-            }
+        crate::OutFormat::Json => {
+            crate::write_report(out, serde_json::to_string_pretty(&evidence)?.as_bytes(), &what)?
         }
+        crate::OutFormat::Pdf => crate::pdf_from_markdown(&md, out, &what)?,
+        _ => crate::write_report(out, md.as_bytes(), &format!("{what} (history: {})", hist.display()))?,
     }
     // the report is written whatever the verdicts; the EXIT CODE is the gate,
     // opted into per status so CI can fail on what the operator decides
@@ -2265,46 +2948,95 @@ pub(crate) fn chrono_free_timestamp() -> String {
 
 #[cfg(test)]
 mod prowler_ocsf_tests {
-    //! Prowler ≥ 4 emits OCSF; the parser used to read the legacy shape only
-    //! and, by its own "never fail the report" contract, silently yielded
-    //! `–` in every row (integration proposal I2).
+    //! Prowler 5 writes the check id to `metadata.event_code`, its own version to
+    //! `metadata.product.version` and the project to `cloud.account.uid`. That is
+    //! the one shape read; every other one is refused by name.
     use super::*;
 
-    const OCSF: &str = r#"[
-      {"status_code":"FAIL","severity":"High","finding_info":{"uid":"1","title":"Bucket is public"},
-       "unmapped":{"check_id":"storage_bucket_public_access","compliance":{"CIS-4.0-GCP":["5.1"]}},
-       "resources":[{"uid":"//storage.googleapis.com/corp-audit-logs","name":"corp-audit-logs","type":"bucket"}],
-       "cloud":{"project":{"uid":"corp-log-infra-001"}}},
-      {"status_code":"PASS","severity":"Medium","finding_info":{"uid":"2","title":"UBLA on"},
-       "unmapped":{"check_id":"storage_bucket_uniform_access","compliance":{"CIS-4.0-GCP":["5.2"]}},
-       "resources":[{"uid":"//storage.googleapis.com/corp-audit-logs"}],
-       "cloud":{"project":{"uid":"corp-log-infra-001"}}},
-      {"status_code":"MANUAL","severity":"Low","unmapped":{"check_id":"iam_manual","compliance":{"CIS-4.0-GCP":["1.1"]}}}
-    ]"#;
+    fn finding(version: &str, check: &str, status: &str, compliance: &str, resource: &str) -> String {
+        format!(
+            r#"{{"status_code":"{status}","severity":"High",
+               "metadata":{{"event_code":"{check}","product":{{"name":"Prowler","uid":"prowler","vendor_name":"Prowler","version":"{version}"}}}},
+               "finding_info":{{"uid":"u-{check}","title":"title of {check}"}},
+               "remediation":{{"desc":"fix {check}"}},
+               "risk_details":"risk of {check}",
+               "unmapped":{{"compliance":{compliance}}},
+               "resources":[{{"uid":"{resource}","name":"n"}}],
+               "cloud":{{"account":{{"uid":"corp-infra-001"}}}}}}"#
+        )
+    }
 
-    #[test]
-    fn ocsf_findings_map_to_controls_with_their_resource() {
-        let raw: serde_json::Value = serde_json::from_str(OCSF).unwrap();
-        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
-        assert_eq!(by["5.1"].len(), 1);
-        assert_eq!(by["5.1"][0].status, "FAIL");
-        assert_eq!(by["5.1"][0].check, "storage_bucket_public_access");
-        assert_eq!(by["5.1"][0].resource, "//storage.googleapis.com/corp-audit-logs");
-        assert_eq!(by["5.1"][0].project, "corp-log-infra-001");
-        assert_eq!(by["1.1"][0].status, "MANUAL");
+    fn export(version: &str) -> String {
+        format!(
+            "[{},{},{}]",
+            finding(version, "storage_bucket_public_access", "FAIL", r#"{"CIS-4.0":["5.1"],"CIS-5.0":["5.1"]}"#, "//storage.googleapis.com/corp-audit-logs"),
+            finding(version, "storage_bucket_uniform_access", "PASS", r#"{"CIS-4.0":["5.2"]}"#, "//storage.googleapis.com/corp-audit-logs"),
+            finding(version, "iam_manual", "MANUAL", r#"{"CIS-4.0":["1.1"]}"#, ""),
+        )
+    }
+
+    fn read(json: &str, version: &str) -> Result<ProwlerExport, String> {
+        ingest_prowler(&serde_json::from_str(json).unwrap(), "cis-gcp", version)
     }
 
     #[test]
-    fn legacy_shape_still_reads() {
-        let raw: serde_json::Value = serde_json::from_str(r#"[{"status":"PASS","compliance":{"cis_4.0_gcp":["3.1"]},"check_id":"x"}]"#).unwrap();
-        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
-        assert_eq!(by["3.1"][0].status, "PASS");
+    fn prowler5_findings_map_to_controls_with_check_project_and_version() {
+        let e = read(&export("5.42.0"), "4.0").unwrap();
+        assert_eq!(e.version, "5.42.0");
+        assert_eq!(e.frameworks, ["CIS-4.0", "CIS-5.0"].into_iter().map(String::from).collect::<BTreeSet<String>>());
+        let f = &e.by_control["5.1"][0];
+        assert_eq!(f.check, "storage_bucket_public_access");
+        assert_eq!(f.status, "FAIL");
+        assert_eq!(f.project, "corp-infra-001");
+        assert_eq!(f.resource, "//storage.googleapis.com/corp-audit-logs");
+        assert_eq!((f.title.as_str(), f.remediation.as_str(), f.risk.as_str()),
+            ("title of storage_bucket_public_access", "fix storage_bucket_public_access", "risk of storage_bucket_public_access"));
+        assert_eq!(e.by_control.keys().cloned().collect::<Vec<_>>(), ["1.1", "5.1", "5.2"]);
+        // the same export joined with 5.0 sees only what Prowler mapped to 5.0
+        let five = read(&export("5.42.0"), "5.0").unwrap();
+        assert_eq!(five.by_control.keys().cloned().collect::<Vec<_>>(), ["5.1"]);
     }
 
     #[test]
-    fn a_fail_on_a_verified_witness_is_contested_elsewhere_it_is_unmanaged() {
-        let raw: serde_json::Value = serde_json::from_str(OCSF).unwrap();
-        let by = ingest_prowler(&raw, "cis-gcp", "4.0");
+    fn fails_outside_the_framework_are_counted_not_dropped() {
+        let json = format!(
+            "[{},{},{},{},{}]",
+            finding("5.42.0", "storage_bucket_public_access", "FAIL", r#"{"CIS-4.0":["5.1"]}"#, "r1"),
+            // mapped, but only to another framework
+            finding("5.42.0", "compute_loadbalancer_logging", "FAIL", r#"{"CIS-5.0":["2.17"]}"#, "r2"),
+            finding("5.42.0", "compute_loadbalancer_logging", "FAIL", r#"{"CIS-5.0":["2.17"]}"#, "r3"),
+            // no compliance mapping at all
+            finding("5.42.0", "logging_sink_created", "FAIL", "{}", "r4").replace(r#""unmapped":{"compliance":{}},"#, ""),
+            // a PASS outside the framework is not a finding anyone has to act on
+            finding("5.42.0", "iam_something", "PASS", r#"{"CIS-5.0":["1.2"]}"#, "r5"),
+        );
+        let e = read(&json, "4.0").unwrap();
+        assert_eq!(
+            e.unmapped_fails.iter().map(|(c, n)| (c.as_str(), *n)).collect::<Vec<_>>(),
+            [("compute_loadbalancer_logging", 2), ("logging_sink_created", 1)]
+        );
+        let catalog: Catalog = serde_yaml::from_str("catalog: cis-gcp\nversion: \"4.0\"\ncontrols: {}\n").unwrap();
+        let md = render_unmapped(&catalog, &e.unmapped_fails);
+        assert!(md.contains("## Prowler checks outside cis-gcp 4.0 (3 FAIL finding(s))"), "{md}");
+        assert!(md.contains("| compute_loadbalancer_logging | 2 |"), "{md}");
+        assert!(render_unmapped(&catalog, &BTreeMap::new()).is_empty());
+    }
+
+    #[test]
+    fn older_prowler_and_other_shapes_are_refused_by_name() {
+        let four = read(&export("4.6.1"), "4.0").unwrap_err();
+        assert!(four.contains("written by Prowler 4.6.1") && four.contains("upgrade Prowler"), "{four}");
+        let legacy = read(r#"[{"status":"PASS","compliance":{"cis_4.0_gcp":["3.1"]},"check_id":"x"}]"#, "4.0").unwrap_err();
+        assert!(legacy.contains("names no Prowler version"), "{legacy}");
+        let no_check = read(&export("5.42.0").replace(r#""event_code":"iam_manual","#, ""), "4.0").unwrap_err();
+        assert!(no_check.contains("finding 3 has no metadata.event_code"), "{no_check}");
+        assert!(read("[]", "4.0").unwrap_err().contains("contains no findings"));
+        assert!(read(r#"{"findings":[]}"#, "4.0").unwrap_err().contains("expected a JSON array"));
+    }
+
+    #[test]
+    fn a_fail_on_a_verified_witness_contests_the_row() {
+        let by = read(&export("5.42.0"), "4.0").unwrap().by_control;
         let on_witness = prowler_verdict(&by["5.1"], &["storage.googleapis.com/corp-audit-logs".to_string()], true);
         assert!(on_witness.contains("CONTESTED"), "{}", on_witness);
         let elsewhere = prowler_verdict(&by["5.1"], &["storage.googleapis.com/other-bucket".to_string()], true);
@@ -2501,7 +3233,7 @@ fn declared_address(resource: &str, attrs: &BTreeMap<String, BTreeMap<String, St
         .iter()
         .filter(|(addr, a)| {
             let tf_type = addr.split('.').next().unwrap_or("");
-            let key = live_matcher(tf_type).map(|(_, attr, _)| attr).unwrap_or("name");
+            let key = live_matcher(tf_type).map(|(_, attr, _, _)| attr).unwrap_or("name");
             a.get(key).is_some_and(|v| segment_match(v))
         })
         .map(|(addr, _)| addr)
@@ -2561,6 +3293,25 @@ pub(crate) fn triage(
     rows
 }
 
+/// The Prowler FAIL findings that map to no control of the framework, as a
+/// Markdown section — empty when there are none.
+pub(crate) fn render_unmapped(catalog: &Catalog, unmapped: &BTreeMap<String, usize>) -> String {
+    if unmapped.is_empty() {
+        return String::new();
+    }
+    let total: usize = unmapped.values().sum();
+    let mut md = format!(
+        "\n## Prowler checks outside {} {} ({} FAIL finding(s))\n\n\
+         Prowler maps these checks to no control of this framework, so no row above holds their findings.\n\n\
+         | Check | FAIL findings |\n|---|---|\n",
+        catalog.catalog, catalog.version, total
+    );
+    for (check, n) in unmapped {
+        md.push_str(&format!("| {} | {} |\n", check, n));
+    }
+    md
+}
+
 pub(crate) fn render_triage(catalog: &Catalog, rows: &[TriageRow]) -> String {
     let mut md = format!("# Triage — {} {}\n\n", catalog.catalog, catalog.version);
     md.push_str("Every Prowler FAIL (and MANUAL) sorted into the bucket that says who fixes it and how. This is the skeleton of the remediation plan; the concrete steps, ordering and side effects are yours.\n");
@@ -2584,6 +3335,14 @@ pub(crate) fn render_triage(catalog: &Catalog, rows: &[TriageRow]) -> String {
 
 /// The `triage` command.
 #[allow(clippy::too_many_arguments)]
+/// What `triage_rows` computes: the rows, and the FAIL findings per check that
+/// map to no control of the framework.
+pub(crate) struct Triage {
+    pub catalog: Catalog,
+    pub rows: Vec<TriageRow>,
+    pub unmapped: BTreeMap<String, usize>,
+}
+
 /// The triage rows, computed. No printing, no files — so the same verdicts serve
 /// the terminal, `--format json` and the MCP tool.
 pub(crate) fn triage_rows(
@@ -2592,20 +3351,18 @@ pub(crate) fn triage_rows(
     included_claims: &[(String, Claim)],
     manifest: &Manifest,
     prowler_path: &Path,
-) -> Result<(Catalog, Vec<TriageRow>), BoxErr> {
+) -> Result<Triage, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
     let attrs = manifest.witness_attrs();
-    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
-        .map_err(|e| format!("prowler json does not parse: {}", e))?;
-    let findings = ingest_prowler(&raw, &catalog.catalog, &catalog.version);
-    if findings.is_empty() {
-        return Err(format!("no finding in {} maps to {} {} — is this the right framework and a Prowler export (OCSF or legacy JSON)?", prowler_path.display(), catalog.catalog, catalog.version).into());
-    }
-    let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
-    Ok((catalog, rows))
+    let export = read_prowler(prowler_path, &catalog.catalog, &catalog.version)?;
+    export.require_mapping(prowler_path, &catalog)?;
+    let rows = triage(&catalog, &goals, &export.by_control, &attrs, manifest);
+    Ok(Triage { catalog, rows, unmapped: export.unmapped_fails })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2616,49 +3373,55 @@ pub(crate) fn run_triage(
     manifest: &Manifest,
     prowler_path: &Path,
     format: crate::OutFormat,
-    report_path: Option<PathBuf>,
+    out: &Path,
     fix: bool,
 ) -> Result<(), BoxErr> {
-    let (catalog, rows) = triage_rows(framework, presets_dir, included_claims, manifest, prowler_path)?;
+    let Triage { catalog, rows, unmapped } = triage_rows(framework, presets_dir, included_claims, manifest, prowler_path)?;
 
+    // `--fix` belongs IN the report: the delta is what the operator acts on, and a
+    // second rendering on the console is one nobody asked for.
     let text = match format {
         crate::OutFormat::Json => serde_json::to_string_pretty(&rows)?,
-        _ => render_triage(&catalog, &rows),
+        _ => {
+            let mut t = render_triage(&catalog, &rows) + &render_unmapped(&catalog, &unmapped);
+            if fix {
+                t.push('\n');
+                t.push_str(&fix_plan(&rows, presets_dir));
+            }
+            t
+        }
     };
-    match report_path {
-        Some(p) => {
-            if let Some(d) = p.parent() {
-                crate::fsx::create_dir_all(d)?;
-            }
-            crate::fsx::write(&p, &text)?;
-            println!("Wrote {}", p.display());
-            if fix {
-                // To stdout even when the table went to a file: the delta is what
-                // the operator acts on now, and burying it in the report is how
-                // it goes unread.
-                println!("{}", fix_plan(&rows, presets_dir));
-            }
-        }
-        None => {
-            print!("{}", text);
-            if fix {
-                println!("{}", fix_plan(&rows, presets_dir));
-            }
-        }
-    }
+    crate::write_report(out, text.as_bytes(), &format!("{} finding(s)", rows.len()))?;
     let counts: BTreeMap<String, usize> = rows.iter().fold(BTreeMap::new(), |mut m, r| {
         *m.entry(format!("{:?}", r.bucket)).or_default() += 1;
         m
     });
-    eprintln!("triage: {}", counts.iter().map(|(b, n)| format!("{} {}", n, b)).collect::<Vec<_>>().join(", "));
+    let outside: usize = unmapped.values().sum();
+    eprintln!(
+        "triage: {}{}",
+        counts.iter().map(|(b, n)| format!("{} {}", n, b)).collect::<Vec<_>>().join(", "),
+        if outside == 0 { String::new() } else { format!("; {} FAIL finding(s) map to no control of this framework", outside) }
+    );
     Ok(())
 }
 
-/// The `remediation-plan` command, phase 1: the dossier and its renderings,
-/// offline. Writes `dossier.json`, `findings.csv`, `findings.xlsx` and
-/// `meta.json` into `out`.
+/// A remediation run, computed: the dossier, its hash, and the facts about the
+/// inputs its renderings name. No files — the CLI and the MCP tools share it.
+pub(crate) struct RemediationRun {
+    pub dossier: crate::dossier::Dossier,
+    pub hash: String,
+    pub framework: String,
+    pub estate: String,
+    pub prowler_export: String,
+    pub prowler_version: String,
+    pub prowler_unmapped: BTreeMap<String, usize>,
+    /// `v<version> — <n> findings`, or `None` when Checkov did not run
+    pub checkov: Option<String>,
+}
+
+/// The dossier for an estate and a Prowler export (and optionally a Checkov run).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_remediation_dossier(
+pub(crate) fn remediation_run(
     framework: &str,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
@@ -2666,20 +3429,18 @@ pub(crate) fn run_remediation_dossier(
     estate_path: &Path,
     prowler_path: &Path,
     checkov: Option<&crate::scan::Report>,
-    out: &Path,
-) -> Result<(), BoxErr> {
+) -> Result<RemediationRun, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     let library_claims = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
-    let goals = resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted);
+    let effects = policy_effects(manifest);
+    let goals =
+        resolve_goals_cross_walked(presets_dir, &catalog, &library_claims, included_claims, &emitted, &effects);
     let attrs = manifest.witness_attrs();
-    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(prowler_path)?)
-        .map_err(|e| format!("prowler json does not parse: {}", e))?;
-    let findings = ingest_prowler(&raw, &catalog.catalog, &catalog.version);
-    if findings.is_empty() {
-        return Err(format!("no finding in {} maps to {} {} — is this the right framework and a Prowler export (OCSF or legacy JSON)?", prowler_path.display(), catalog.catalog, catalog.version).into());
-    }
-    let rows = triage(&catalog, &goals, &findings, &attrs, manifest);
+    let export = read_prowler(prowler_path, &catalog.catalog, &catalog.version)?;
+    export.require_mapping(prowler_path, &catalog)?;
+    let findings = &export.by_control;
+    let rows = triage(&catalog, &goals, findings, &attrs, manifest);
     // Prowler's own title / remediation / risk per check id — the dossier
     // carries them beside satz's paraphrase and plan.
     let mut prowler_text: BTreeMap<String, (String, String, String)> = BTreeMap::new();
@@ -2707,33 +3468,117 @@ pub(crate) fn run_remediation_dossier(
         declared_at: &declared_at,
     });
     let hash = dossier.hash();
+    Ok(RemediationRun {
+        dossier,
+        hash,
+        framework: framework.to_string(),
+        estate,
+        prowler_export: prowler_path.display().to_string(),
+        prowler_version: export.version.clone(),
+        prowler_unmapped: export.unmapped_fails,
+        checkov: checkov.map(|r| format!("v{} — {} findings", r.version, r.findings.len())),
+    })
+}
 
+/// Read an `authored.json`.
+pub(crate) fn read_authored(path: &Path) -> Result<crate::dossier::Authored, BoxErr> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    serde_json::from_str(&text).map_err(|e| format!("{}: not an authored file ({})", path.display(), e).into())
+}
+
+/// Write a run into `out`: `dossier.json`, `findings.csv`, `findings.xlsx` and
+/// `meta.json`, and — when `authored` is given, already checked against the run —
+/// `authored.json` beside them, with its values in the `[Authored]` columns.
+pub(crate) fn write_remediation(
+    run: &RemediationRun,
+    out: &Path,
+    authored: Option<&crate::dossier::Authored>,
+) -> Result<Vec<PathBuf>, BoxErr> {
     crate::fsx::create_dir_all(out)?;
-    crate::fsx::write(out.join("dossier.json"), dossier.json())?;
-    crate::fsx::write(out.join("findings.csv"), crate::dossier::csv(&dossier))?;
+    let mut written = Vec::new();
+    let mut put = |name: &str, bytes: &[u8]| -> Result<(), BoxErr> {
+        let p = out.join(name);
+        crate::fsx::write(&p, bytes).map_err(|e| e.to_string())?;
+        written.push(p);
+        Ok(())
+    };
+    put("dossier.json", run.dossier.json().as_bytes())?;
+    put("findings.csv", crate::dossier::csv(&run.dossier, authored).as_bytes())?;
+    let authors: BTreeSet<&str> = authored.map(|a| a.items.values().map(|i| i.authored_by.as_str()).collect()).unwrap_or_default();
     let provenance = vec![
         ("satz".to_string(), env!("CARGO_PKG_VERSION").to_string()),
-        ("framework".to_string(), framework.to_string()),
-        ("estate".to_string(), estate.clone()),
-        ("prowler export".to_string(), prowler_path.display().to_string()),
-        ("checkov".to_string(), checkov.map(|r| format!("v{} — {} findings", r.version, r.findings.len())).unwrap_or_else(|| "not run".to_string())),
-        ("dossier sha256".to_string(), hash.clone()),
+        ("framework".to_string(), run.framework.clone()),
+        ("estate".to_string(), run.estate.clone()),
+        ("prowler export".to_string(), run.prowler_export.clone()),
+        ("prowler".to_string(), run.prowler_version.clone()),
+        (
+            "prowler outside the framework".to_string(),
+            if run.prowler_unmapped.is_empty() {
+                "none".to_string()
+            } else {
+                run.prowler_unmapped.iter().map(|(c, n)| format!("{} ({})", c, n)).collect::<Vec<_>>().join(", ")
+            },
+        ),
+        ("checkov".to_string(), run.checkov.clone().unwrap_or_else(|| "not run".to_string())),
+        ("dossier sha256".to_string(), run.hash.clone()),
         ("generated".to_string(), chrono_free_timestamp()),
-        ("[AI] columns".to_string(), "empty — authored by a later model pass or by hand; Review column: open / accepted / edited / rejected".to_string()),
+        (
+            "[Authored] columns".to_string(),
+            match authored {
+                Some(a) => format!(
+                    "{} item(s) from authored.json, by {}; Review column: open / accepted / edited / rejected",
+                    a.items.len(),
+                    authors.iter().cloned().collect::<Vec<_>>().join(", ")
+                ),
+                None => "empty — written by a model or by hand into authored.json, merged with --merge; Review column: open / accepted / edited / rejected".to_string(),
+            },
+        ),
     ];
-    let xlsx = crate::dossier::xlsx(&dossier, &provenance)?;
-    std::fs::write(out.join("findings.xlsx"), xlsx).map_err(|e| format!("{}: {}", out.join("findings.xlsx").display(), e))?;
+    put("findings.xlsx", &crate::dossier::xlsx(&run.dossier, &provenance, authored)?)?;
+    if let Some(a) = authored {
+        put("authored.json", serde_json::to_string_pretty(a)?.as_bytes())?;
+    }
     let meta = serde_json::json!({
         "satz": env!("CARGO_PKG_VERSION"),
-        "framework": framework,
-        "estate": estate,
-        "dossier_sha256": hash,
+        "framework": run.framework,
+        "estate": run.estate,
+        "dossier_sha256": run.hash,
         "generated": chrono_free_timestamp(),
-        "summary": dossier.summary,
+        "summary": run.dossier.summary,
+        "prowler_unmapped": run.prowler_unmapped,
+        "authored_items": authored.map(|a| a.items.len()).unwrap_or(0),
+        "authored_by": authors,
     });
-    crate::fsx::write(out.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
+    put("meta.json", serde_json::to_string_pretty(&meta)?.as_bytes())?;
+    Ok(written)
+}
 
-    let s = &dossier.summary;
+/// The `remediation-plan` command: the dossier and its renderings, offline, and
+/// with `--merge` the authored values rendered beside them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_remediation_dossier(
+    framework: &str,
+    presets_dir: &str,
+    included_claims: &[(String, Claim)],
+    manifest: &Manifest,
+    estate_path: &Path,
+    prowler_path: &Path,
+    checkov: Option<&crate::scan::Report>,
+    out: &Path,
+    merge: Option<&Path>,
+) -> Result<(), BoxErr> {
+    let run = remediation_run(framework, presets_dir, included_claims, manifest, estate_path, prowler_path, checkov)?;
+    let authored = match merge {
+        Some(p) => {
+            let a = read_authored(p)?;
+            crate::dossier::check_authored(&run.dossier, &run.hash, &a).map_err(|e| format!("{}: {}", p.display(), e))?;
+            Some(a)
+        }
+        None => None,
+    };
+    write_remediation(&run, out, authored.as_ref())?;
+
+    let s = &run.dossier.summary;
     println!(
         "remediation-plan: {} finding(s) — {}; {} corroborated by both scanners, {} declared (apply fixes them)",
         s.items,
@@ -2741,7 +3586,15 @@ pub(crate) fn run_remediation_dossier(
         s.corroborated,
         s.declared_apply_fixes
     );
-    println!("Wrote {} (dossier.json, findings.csv, findings.xlsx, meta.json) — dossier sha256 {}", out.display(), &hash[..12]);
+    if let Some(a) = &authored {
+        println!("remediation-plan: {} authored item(s) rendered into the [Authored] columns", a.items.len());
+    }
+    println!(
+        "Wrote {} (dossier.json, findings.csv, findings.xlsx, meta.json{}) — dossier sha256 {}",
+        out.display(),
+        if authored.is_some() { ", authored.json" } else { "" },
+        &run.hash[..12]
+    );
     Ok(())
 }
 
@@ -2973,6 +3826,165 @@ mod fix_plan_tests {
 }
 
 #[cfg(test)]
+mod iam_witness_tests {
+    //! The audit config and the bucket binding are not resources: they live in
+    //! an IAM policy, and existence is not the control there either.
+    use super::*;
+
+    fn org_policy(service: &str, types: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "auditConfigs": [{
+                "service": service,
+                "auditLogConfigs": types.iter().map(|t| serde_json::json!({"logType": t})).collect::<Vec<_>>(),
+            }]
+        })
+    }
+
+    #[test]
+    fn every_declared_log_type_must_be_audited_live() {
+        let want = ["ADMIN_READ".to_string(), "DATA_READ".to_string(), "DATA_WRITE".to_string()];
+        let full = org_policy("allServices", &["DATA_WRITE", "ADMIN_READ", "DATA_READ"]);
+        assert!(audit_config_state(&full, "allServices", &want).is_ok(), "order does not matter");
+
+        let partial = org_policy("allServices", &["ADMIN_READ"]);
+        let why = audit_config_state(&partial, "allServices", &want).unwrap_err();
+        assert!(why.contains("missing DATA_READ, DATA_WRITE"), "{}", why);
+
+        let other = org_policy("storage.googleapis.com", &["ADMIN_READ", "DATA_READ", "DATA_WRITE"]);
+        let why = audit_config_state(&other, "allServices", &want).unwrap_err();
+        assert!(why.contains("no audit config for service `allServices`"), "{}", why);
+    }
+
+    /// The asset client renders the proto enum as its number, so a live policy
+    /// that audits everything reads `1, 2, 3`. Read as names, that org audits
+    /// nothing and the row would say the estate's three types are missing.
+    #[test]
+    fn a_log_type_arrives_as_the_proto_enums_number() {
+        let want = ["ADMIN_READ".to_string(), "DATA_READ".to_string(), "DATA_WRITE".to_string()];
+        let live = serde_json::json!({
+            "auditConfigs": [{"service": "allServices", "auditLogConfigs": [{"logType": 2}, {"logType": 3}, {"logType": 1}]}]
+        });
+        assert!(audit_config_state(&live, "allServices", &want).is_ok());
+        let partial = serde_json::json!({
+            "auditConfigs": [{"service": "allServices", "auditLogConfigs": [{"logType": 1}]}]
+        });
+        let why = audit_config_state(&partial, "allServices", &want).unwrap_err();
+        assert!(why.contains("audited for ADMIN_READ live"), "{}", why);
+    }
+
+    #[test]
+    fn the_binding_must_name_the_declared_member() {
+        let policy = serde_json::json!({
+            "bindings": [
+                {"role": "roles/storage.legacyBucketReader", "members": ["projectViewer:p"]},
+                {"role": "roles/storage.objectCreator", "members": ["serviceAccount:sink@example.iam.gserviceaccount.com"]},
+            ]
+        });
+        assert!(bucket_binding_state(&policy, "roles/storage.objectCreator", "serviceAccount:sink@example.iam.gserviceaccount.com").is_ok());
+
+        let why = bucket_binding_state(&policy, "roles/storage.objectCreator", "serviceAccount:other@example.iam.gserviceaccount.com")
+            .unwrap_err();
+        assert!(why.contains("not to serviceAccount:other@"), "{}", why);
+
+        let why = bucket_binding_state(&policy, "roles/storage.admin", "serviceAccount:sink@example.iam.gserviceaccount.com").unwrap_err();
+        assert!(why.contains("no binding for roles/storage.admin"), "{}", why);
+    }
+
+    /// The member is the sink's writer identity, which Google issues: it is in
+    /// no estate file, so it is read from the live sink the reference names.
+    #[test]
+    fn an_interpolated_member_is_read_from_the_witness_it_follows() {
+        let mut manifest = Manifest::default();
+        manifest.resources.insert(
+            "google_storage_bucket_iam_member.w".to_string(),
+            crate::manifest::EmittedResource {
+                tf_type: "google_storage_bucket_iam_member".into(),
+                label: "w".into(),
+                attrs: BTreeMap::from([
+                    ("bucket".to_string(), "audit-logs".to_string()),
+                    ("role".to_string(), "roles/storage.objectCreator".to_string()),
+                ]),
+                refs: BTreeMap::from([(
+                    "member".to_string(),
+                    "google_logging_organization_sink.s.writer_identity".to_string(),
+                )]),
+                nested: BTreeMap::new(),
+                nested_all: BTreeMap::new(),
+                enforce: None,
+                reset: false,
+                dry_run: false,
+                conditional: Vec::new(),
+                import_id: None,
+                origin: None,
+            },
+        );
+        manifest.resources.insert(
+            "google_logging_organization_sink.s".to_string(),
+            crate::manifest::EmittedResource {
+                tf_type: "google_logging_organization_sink".into(),
+                label: "s".into(),
+                attrs: BTreeMap::from([
+                    ("name".to_string(), "org-audit".to_string()),
+                    ("org_id".to_string(), "1".to_string()),
+                ]),
+                refs: BTreeMap::new(),
+                nested: BTreeMap::new(),
+                nested_all: BTreeMap::new(),
+                enforce: None,
+                reset: false,
+                dry_run: false,
+                conditional: Vec::new(),
+                import_id: None,
+                origin: None,
+            },
+        );
+        let attrs = manifest.witness_attrs();
+        let mut inventory: Inventory = BTreeMap::new();
+        inventory.insert(
+            ("logging.googleapis.com/LogSink".to_string(), LiveContent::Resource),
+            BTreeMap::from([(
+                "organizations/1/sinks/org-audit".to_string(),
+                serde_json::json!({"writerIdentity": "serviceAccount:sink@example.iam.gserviceaccount.com"}),
+            )]),
+        );
+        let member = declared_member(
+            "google_storage_bucket_iam_member.w",
+            &manifest,
+            &inventory,
+            &attrs,
+            "1",
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(member, "serviceAccount:sink@example.iam.gserviceaccount.com");
+
+        // and without the live sink there is no verdict, not a guess
+        let why = declared_member(
+            "google_storage_bucket_iam_member.w",
+            &manifest,
+            &BTreeMap::new(),
+            &attrs,
+            "1",
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+        assert!(why.contains("is not live"), "{}", why);
+    }
+
+    /// Both types are checked against the organisation's or the bucket's IAM
+    /// policy, which Cloud Asset serves as its own content type.
+    #[test]
+    fn the_two_iam_witnesses_ask_for_policy_content() {
+        for t in ["google_organization_iam_audit_config", "google_storage_bucket_iam_member"] {
+            let (_, _, _, content) = live_matcher(t).expect(t);
+            assert_eq!(content, LiveContent::IamPolicy, "{}", t);
+        }
+        let (_, _, _, content) = live_matcher("google_storage_bucket").unwrap();
+        assert_eq!(content, LiveContent::Resource, "the bucket itself is resource data");
+    }
+}
+
+#[cfg(test)]
 mod evidence_facts_tests {
     //! The evidence report is read by an agent building an audit list, not only
     //! by a human reading a table. It used to hand that agent the human's copy:
@@ -3023,7 +4035,10 @@ mod evidence_facts_tests {
     #[test]
     fn a_witness_carries_its_live_state_and_the_line_that_declares_it() {
         let mut live = BTreeMap::new();
-        live.insert("google_org_policy_policy.a".to_string(), LiveState::Verified("organizations/1/policies/x".into()));
+        live.insert(
+            "google_org_policy_policy.a".to_string(),
+            LiveState::Verified { id: "organizations/1/policies/x".into(), conditional: Vec::new() },
+        );
         live.insert("google_org_policy_policy.b".to_string(), LiveState::Unverifiable("no live check".into()));
 
         let mut manifest = Manifest::default();
@@ -3035,7 +4050,11 @@ mod evidence_facts_tests {
                 attrs: BTreeMap::new(),
                 refs: BTreeMap::new(),
                 nested: BTreeMap::new(),
+                nested_all: BTreeMap::new(),
                 enforce: None,
+                reset: false,
+                dry_run: false,
+                conditional: Vec::new(),
                 import_id: None,
                 origin: Some(("presets/x.satz".to_string(), 12)),
             },

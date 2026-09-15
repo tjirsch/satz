@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" width="960" height="640" role="img" aria-label="Five steps left to right, each shown twice: once as satz commands in a terminal, once as satz studio, the desktop app. Steps 1 to 3 run as the logged-in user with a local state file; steps 4 and 5 run as the IaC service account with the state in the bucket. Step 1, write the estate: satz init with the day-0 values, or satz interview --create, which asks them one at a time; in studio the skeleton is created with that command, opened, and the Interview view asks the day-0 questions. Step 2, bootstrap: satz bootstrap runs the pre-flight on the scope root and the billing account, then creates the folder, project, billing link, APIs and state bucket; studio shows the command line to copy or open in the terminal and never runs it inside the app. Step 3, apply as yourself: transpile, plan, apply as your credentials, which creates the identity layer; studio runs transpile and plan itself and hands apply to the terminal. Step 4, switch to the service account: satz migrate --mode cloud rewrites deployment_mode, migrates the state into the bucket and makes provider and backend impersonate the service account; plan reads No changes and whoami names the account; in studio migrate runs in the terminal and the runs-as chip shows the account. Step 5, add packs one at a time: uncomment a pack's use line or answer its question in satz interview, merge-presets writes the line for a pack the library gained, then transpile, plan and apply per pack; in studio the Map view enables packs and switches, the Interview view asks the questions a pack brings, transpile and plan run in the app and apply in the terminal.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/>
+    </marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="640" fill="#FFFFFF"/>
+
+  <!-- ===== who runs, where the state is ===== -->
+  <rect x="34" y="20" width="528" height="34" rx="6" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="298" y="35" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" letter-spacing="1" fill="#1B2430" font-weight="500">STEPS 1–3 · AS THE LOGGED-IN USER (ADC)</text>
+  <text x="298" y="48" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">deployment_mode = local · the state is a file in hcl/</text>
+  <rect x="574" y="20" width="348" height="34" rx="6" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="748" y="35" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" letter-spacing="1" fill="#0F766E" font-weight="500">STEPS 4–5 · AS THE IAC SERVICE ACCOUNT</text>
+  <text x="748" y="48" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">deployment_mode = cloud · the state is in the bucket</text>
+
+  <!-- ===== step headers ===== -->
+  <rect x="34" y="72" width="168" height="44" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="118" y="90" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" fill="#1B2430" font-weight="500">1 · write the estate</text>
+  <text x="118" y="106" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">asked one at a time, or given</text>
+  <rect x="214" y="72" width="168" height="44" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="298" y="90" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" fill="#1B2430" font-weight="500">2 · bootstrap</text>
+  <text x="298" y="106" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">folder, project, bucket</text>
+  <rect x="394" y="72" width="168" height="44" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="478" y="90" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" fill="#1B2430" font-weight="500">3 · apply as yourself</text>
+  <text x="478" y="106" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the identity layer is created</text>
+  <rect x="574" y="72" width="168" height="44" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="658" y="90" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" fill="#0F766E" font-weight="500">4 · switch to the SA</text>
+  <text x="658" y="106" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">state and identity move</text>
+  <rect x="754" y="72" width="168" height="44" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="838" y="90" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" fill="#0F766E" font-weight="500">5 · add packs</text>
+  <text x="838" y="106" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">one pack per plan and apply</text>
+  <line x1="202" y1="94" x2="212" y2="94" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="382" y1="94" x2="392" y2="94" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="562" y1="94" x2="572" y2="94" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+  <line x1="742" y1="94" x2="752" y2="94" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+
+  <!-- ===== lane: satz ===== -->
+  <rect x="20" y="132" width="920" height="232" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="152" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">SATZ</text>
+  <text x="76" y="152" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">in the terminal</text>
+
+  <rect x="34" y="164" width="168" height="188" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="44" y="184" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz init …</text>
+  <text x="44" y="198" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the day-0 values as flags</text>
+  <text x="44" y="218" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">— or —</text>
+  <text x="44" y="238" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz interview x.satz</text>
+  <text x="44" y="252" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">  --create</text>
+  <text x="44" y="268" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">asks the 16 questions one</text>
+  <text x="44" y="282" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">at a time; every pack line</text>
+  <text x="44" y="296" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">is written, commented,</text>
+  <text x="44" y="310" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">under its phase</text>
+
+  <rect x="214" y="164" width="168" height="188" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="224" y="184" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz bootstrap x.satz</text>
+  <text x="224" y="200" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">pre-flight: the permissions</text>
+  <text x="224" y="214" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">on the scope root and the</text>
+  <text x="224" y="228" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">billing account, first</text>
+  <text x="224" y="246" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">then: folder · project ·</text>
+  <text x="224" y="260" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">billing link · APIs · state</text>
+  <text x="224" y="274" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">bucket; transpile + import</text>
+  <text x="224" y="296" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">… --dry-run</text>
+  <text x="224" y="310" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the same, read-only</text>
+
+  <rect x="394" y="164" width="168" height="188" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="404" y="184" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz transpile x.satz</text>
+  <text x="404" y="200" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz plan</text>
+  <text x="404" y="216" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz apply</text>
+  <text x="404" y="238" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">as your own credentials;</text>
+  <text x="404" y="252" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">this apply creates the</text>
+  <text x="404" y="266" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">identity layer: the groups,</text>
+  <text x="404" y="280" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the IaC service account</text>
+  <text x="404" y="294" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">and its named roles</text>
+
+  <rect x="574" y="164" width="168" height="188" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="584" y="184" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">satz migrate x.satz</text>
+  <text x="584" y="198" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">  --mode cloud</text>
+  <text x="584" y="216" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">deployment_mode = cloud,</text>
+  <text x="584" y="230" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">tofu init -migrate-state:</text>
+  <text x="584" y="244" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the state moves into the</text>
+  <text x="584" y="258" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">bucket; provider and</text>
+  <text x="584" y="272" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">backend impersonate the SA</text>
+  <text x="584" y="294" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz plan → No changes</text>
+  <text x="584" y="310" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz whoami x.satz</text>
+  <text x="584" y="324" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">names the account it ran as</text>
+
+  <rect x="754" y="164" width="168" height="188" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="764" y="184" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">uncomment a pack's use line,</text>
+  <text x="764" y="198" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">or answer its question:</text>
+  <text x="764" y="216" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">satz interview x.satz</text>
+  <text x="764" y="236" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz merge-presets</text>
+  <text x="764" y="250" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">writes the line for a pack</text>
+  <text x="764" y="264" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the library gained since</text>
+  <text x="764" y="286" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz transpile x.satz</text>
+  <text x="764" y="300" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#1B2430" font-weight="500">satz plan · satz apply</text>
+  <text x="764" y="316" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">one pack per apply, as the</text>
+  <text x="764" y="330" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">service account</text>
+
+  <!-- ===== lane: satz studio ===== -->
+  <rect x="20" y="380" width="920" height="224" rx="6" fill="#EEF1F3" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="34" y="400" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#0F766E" font-weight="500">SATZ STUDIO</text>
+  <text x="128" y="400" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#0F766E">the desktop app — it drives the same satz binary; what it does not run itself, it hands to the terminal</text>
+
+  <rect x="34" y="412" width="168" height="180" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="44" y="432" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the skeleton is written in</text>
+  <text x="44" y="446" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the terminal, then:</text>
+  <text x="44" y="466" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Estates</text>
+  <text x="44" y="480" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">open the estate's folder</text>
+  <text x="44" y="500" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Interview</text>
+  <text x="44" y="514" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the 16 day-0 questions one</text>
+  <text x="44" y="528" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">at a time — why, reversal,</text>
+  <text x="44" y="542" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">blast — accept the defaults</text>
+  <text x="44" y="556" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">in one click; satz's own</text>
+  <text x="44" y="570" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">writer binds each answer</text>
+
+  <rect x="214" y="412" width="168" height="180" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="224" y="432" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Commands → bootstrap</text>
+  <text x="224" y="448" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the command line with its</text>
+  <text x="224" y="462" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">arguments, to copy or to</text>
+  <text x="224" y="476" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">open in the terminal</text>
+  <text x="224" y="498" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">bootstrap never runs inside</text>
+  <text x="224" y="512" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the app: it creates as the</text>
+  <text x="224" y="526" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">human, after its pre-flight</text>
+
+  <rect x="394" y="412" width="168" height="180" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="404" y="432" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Commands → transpile,</text>
+  <text x="404" y="446" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">plan</text>
+  <text x="404" y="462" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">run in the app, the log</text>
+  <text x="404" y="476" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">streamed as it comes</text>
+  <text x="404" y="498" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Commands → apply</text>
+  <text x="404" y="512" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">in the terminal, with its</text>
+  <text x="404" y="526" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">approval prompt</text>
+  <text x="404" y="548" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Diagnostics</text>
+  <text x="404" y="562" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the compile's findings, at</text>
+  <text x="404" y="576" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the file and line they name</text>
+
+  <rect x="574" y="412" width="168" height="180" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="584" y="432" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">in the terminal:</text>
+  <text x="584" y="448" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">satz migrate x.satz</text>
+  <text x="584" y="462" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">  --mode cloud</text>
+  <text x="584" y="486" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">top bar · runs-as chip</text>
+  <text x="584" y="502" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the service account, from</text>
+  <text x="584" y="516" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">here on: the app reads it</text>
+  <text x="584" y="530" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">through satz_whoami on</text>
+  <text x="584" y="544" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">every reload</text>
+
+  <rect x="754" y="412" width="168" height="180" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="764" y="432" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Map</text>
+  <text x="764" y="446" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">Enable a pack · its switches</text>
+  <text x="764" y="460" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">and oneof · Absent → merge-</text>
+  <text x="764" y="474" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">presets writes its line</text>
+  <text x="764" y="496" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Interview</text>
+  <text x="764" y="510" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the questions a pack brings</text>
+  <text x="764" y="532" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Commands → transpile,</text>
+  <text x="764" y="546" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">plan</text>
+  <text x="764" y="562" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">in the app; apply in the</text>
+  <text x="764" y="576" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">terminal, one pack at a time</text>
+
+  <text x="34" y="626" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">Every step ends with a plan that reads No changes before the next begins. Studio needs satz on the PATH at its minimum version; an older one is refused.</text>
+</svg>

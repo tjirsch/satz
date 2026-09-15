@@ -3,8 +3,15 @@
 //! `google_project.infra`, `google_storage_bucket.state` — so those labels are
 //! a contract, not a style). Written in Satz: a new customer's first file must
 //! be one every command accepts.
+//!
+//! The contract reaches further than `bootstrap` now: the CIS pack claims CIS 5.0
+//! §2.14 (Cloud Asset Inventory enabled) against
+//! `google_project_service.infra_cloudasset_googleapis_com`, which the emitter derives
+//! from the `infra` project label and the service name below. Renaming the label, or
+//! dropping `cloudasset.googleapis.com` from that list, turns a control every estate
+//! satisfies into a broken claim. `the_generated_estate_compiles_and_carries_bootstraps_labels`
+//! holds both.
 
-use std::fs;
 use std::path::Path;
 
 pub struct TemplateArgs {
@@ -70,31 +77,45 @@ google_cloud_identity_group {
     id           = "{svc_iac_users_group}@{customer_domain}"
     display_name = "Service Account IaC Users"
     description  = "Service account users allowed to impersonate the IaC service account"
-    owner        = [ "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" ]
-    member       = [ "user:{first_admin}@{customer_domain}" ]
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+    member       = ["user:{first_admin}@{customer_domain}"]
   }
 }
 
 google_organization_iam_member {
-  // the service account needs the Groups Admin role in the Workspace console as well
+  // The IaC service account: read on every project (import, adopt, reports), and
+  // the roles this estate's resource types need — `satz iac-roles` adds the ones
+  // further packs bring. Granted at the organization, so every folder and project
+  // inherits them, hand-made ones included. The Groups Admin role in the Workspace
+  // admin console is needed as well; it is not an IAM role.
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
-    "roles/billing.user",
-    "roles/billing.projectManager",
-    "roles/iam.organizationRoleAdmin",
-    "roles/orgpolicy.policyAdmin",
-    "roles/owner",
-    "roles/resourcemanager.folderAdmin",
+    "roles/viewer",
+    "roles/browser",
+    "roles/iam.securityReviewer",
+    "roles/cloudasset.viewer",
+    "roles/serviceusage.serviceUsageConsumer",
     "roles/resourcemanager.organizationAdmin",
-    "roles/resourcemanager.projectIamAdmin",
+    "roles/orgpolicy.policyAdmin",
+    "roles/resourcemanager.folderAdmin",
     "roles/resourcemanager.projectCreator",
-    "roles/iam.serviceAccountAdmin",
+    "roles/resourcemanager.projectMover",
+    "roles/billing.projectManager",
     "roles/serviceusage.serviceUsageAdmin",
+    "roles/iam.serviceAccountAdmin",
+    "roles/storage.admin",
+  ]
+  "group:{svc_iac_users_group}@{customer_domain}" = [
     "roles/serviceusage.serviceUsageConsumer",
   ]
+}
+
+// The users group may become the IaC service account — that account only, not
+// every service account in the organization.
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.provisioner.name}}"
   "group:{svc_iac_users_group}@{customer_domain}" = [
     "roles/iam.serviceAccountTokenCreator",
     "roles/iam.serviceAccountUser",
-    "roles/serviceusage.serviceUsageConsumer",
   ]
 }
 
@@ -135,10 +156,14 @@ google_folder {
             public_access_prevention    = "enforced"
             uniform_bucket_level_access = true
             lifecycle_rule = [
-              { action { type = "Delete" }
-                condition { num_newer_versions = 100 with_state = "ARCHIVED" } },
-              { action { type = "Delete" }
-                condition { days_since_noncurrent_time = 365 } },
+              {
+                action { type = "Delete" }
+                condition { num_newer_versions = 100 with_state = "ARCHIVED" }
+              },
+              {
+                action { type = "Delete" }
+                condition { days_since_noncurrent_time = 365 }
+              },
             ]
           }
         }
@@ -154,29 +179,354 @@ google_folder {
 }
 "#;
 
-/// The estate an INTERVIEW starts from: every question open, nothing decided.
+/// Every pack line an estate can carry, the param that gates it, and the PHASE that has to
+/// be finished before it can go in — in the order they can be adopted.
 ///
-/// The day-0 params and their questions come from `presets/estate-core.satz`;
-/// which packs make up the estate is `presets/estate-map.satz`, whose every
-/// choice is one `use … when` line here, in the map's order — a pack switched
-/// on brings its own questions with it. The CIS baseline is not a choice. The
-/// resources are the scaffold `init` writes, with the logging packs placed in
-/// the infrastructure folder beside the infrastructure project. Answering a
-/// question is adding its param to `params {}`; the file is complete when
-/// `satz questions` says so, and until then `bootstrap` and `transpile --apply`
-/// refuse it.
-pub(crate) fn skeleton(stem: &str) -> String {
-    let scaffold = SCAFFOLD.replacen(
-        "    display_name = infra_folder_name\n",
-        "    display_name = infra_folder_name\n\
-         \x20   use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink\n\
-         \x20   use \"presets/monitoring/organization-cis-log-alerts-central.satz\" when use_central_alerts\n",
-        1,
+/// One table, two writers, so they cannot disagree: `skeleton` writes the whole menu when
+/// an estate is created, and `merge-presets` appends the line for a pack the library has
+/// gained since (before this table, nobody wrote that line — the map would declare a new
+/// choice, `satz questions` would ask it, and answering yes did nothing at all, silently).
+/// A hand-written line lands somewhere different every time; a written one is uniform.
+///
+/// A phase repeated on consecutive rows is printed once, so the menu reads as blocks. A map
+/// choice with no row here fails `the_map_and_the_skeleton_stay_equal`, which is what keeps
+/// a new pack from reaching the library without anyone saying when it can be adopted.
+///
+/// The fourth column is WHERE the line belongs: empty for the top-level menu, else the block
+/// path it sits inside (`google_folder.infra` for a pack scoped to the infra folder,
+/// `google_essential_contacts_contact` for one that is a resource map's content). Both writers
+/// read it — the skeleton places the line as it composes the file, `merge-presets` splices it
+/// into the named block of an estate that has none. Before the column the three nested packs
+/// were hardcoded in the skeleton and in no table, so `merge-presets` could not add them and
+/// `unadopted_pack_findings` could not report them missing: a map choice defaulting to true
+/// emitted nothing and said nothing.
+pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
+    (
+        "presets/estate-map.satz",
+        "",
+        "once the estate runs as the service account — the map, which declares the questions\n\
+         // every line below is gated on. This is the one to uncomment first.",
+        "",
+    ),
+    (
+        "presets/security-group-models/s1-security-groups.satz",
+        "security_model_s1",
+        "once the map is in — the security-group model, whose groups later grants name.\n\
+         // Exactly one of the two.",
+        "",
+    ),
+    ("presets/security-group-models/s2-security-groups.satz", "security_model_s2", "", ""),
+    (
+        "presets/billing-account-permissions.satz",
+        "use_billing_permissions",
+        "once the groups exist — this grants to the model's billing-admins group by name, so\n\
+         // the grant has nothing to land on until they are applied",
+        "",
+    ),
+    (
+        "presets/organization-budget.satz",
+        "use_budget",
+        "once the estate runs as the service account — these three stand alone",
+        "",
+    ),
+    ("presets/security-audit/sa-security-audit.satz", "use_security_audit_sa", "", ""),
+    ("presets/scc/scc-service-enablement.satz", "use_scc_enablement", "", ""),
+    (
+        "presets/essential-contacts-organization.satz",
+        "use_essential_contacts",
+        "once the estate runs as the service account — one contact for Google's notices",
+        "google_essential_contacts_contact",
+    ),
+    (
+        "presets/monitoring/organization-audit-logsink.satz",
+        "use_audit_logsink",
+        "once the estate runs as the service account — the audit archive, which every later\n\
+         // logging pack points at",
+        "google_folder.infra_folder",
+    ),
+    (
+        "presets/monitoring/organization-cis-log-alerts-central.satz",
+        "use_central_alerts",
+        "once the archive exists — the alert project defaults to the logsink's, so this does\n\
+         // not compile without it",
+        "google_folder.infra_folder",
+    ),
+    (
+        "presets/cis-extensions/block-project-ssh-keys.satz",
+        "cis_block_project_ssh_keys",
+        "once the CIS baseline is in — its extensions are gated on params the baseline\n\
+         // declares, so they do not compile without it. Each restricts what may be created;\n\
+         // two are on by default (DNS query logging, and the admin ports closed to the\n\
+         // internet).",
+        "",
+    ),
+    ("presets/cis-extensions/shielded-vm.satz", "cis_require_shielded_vm", "", ""),
+    ("presets/cis-extensions/dns-logging.satz", "cis_dns_logging", "", ""),
+    ("presets/cis-extensions/confidential-computing.satz", "cis_confidential_computing", "", ""),
+    ("presets/cis-extensions/cloud-sql.satz", "cis_cloud_sql_hardening", "", ""),
+    ("presets/cis-extensions/cmek.satz", "cis_cmek_required", "", ""),
+    ("presets/cis-extensions/api-key-services.satz", "cis_api_key_services", "", ""),
+    ("presets/cis-extensions/bucket-retention.satz", "cis_bucket_retention", "", ""),
+    ("presets/cis-extensions/access-approval.satz", "cis_access_approval", "", ""),
+    ("presets/cis-extensions/internet-ssh-rdp.satz", "cis_block_internet_ssh_rdp", "", ""),
+    (
+        "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz",
+        "cis_cloud_sql_iam_and_deletion_protection",
+        "",
+        "",
+    ),
+    (
+        "presets/cis-extensions/api-key-services-dry-run.satz",
+        "cis_api_key_services_dry_run",
+        "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the\n\
+         // same policy with `dry_run_spec`: Google logs every action it would have blocked and\n\
+         // blocks none, so the violation count sizes the control against this organisation\n\
+         // before it bites. Nothing is enforced while it runs.",
+        "",
+    ),
+    (
+        "presets/cis-extensions/block-project-ssh-keys-dry-run.satz",
+        "cis_block_project_ssh_keys_dry_run",
+        "",
+        "",
+    ),
+    ("presets/cis-extensions/bucket-retention-dry-run.satz", "cis_bucket_retention_dry_run", "", ""),
+    ("presets/cis-extensions/cloud-sql-dry-run.satz", "cis_cloud_sql_hardening_dry_run", "", ""),
+    (
+        "presets/cis-extensions/cloud-sql-iam-and-deletion-protection-dry-run.satz",
+        "cis_cloud_sql_iam_and_deletion_protection_dry_run",
+        "",
+        "",
+    ),
+    (
+        "presets/cis-extensions/confidential-computing-dry-run.satz",
+        "cis_confidential_computing_dry_run",
+        "",
+        "",
+    ),
+    (
+        "presets/scc/scc-notifications.satz",
+        "use_scc_notifications",
+        "once Security Command Center is switched on — findings have to exist before anything\n\
+         // can carry them",
+        "",
+    ),
+    ("presets/scc/scc-export.satz", "use_scc_export", "", ""),
+    (
+        "presets/scc/scc-findings-siem.satz",
+        "use_scc_findings_siem",
+        "once the findings topic exists — this reads from it",
+        "",
+    ),
+    (
+        "presets/scc/scc-findings-mail.satz",
+        "use_scc_findings_mail",
+        "once the central alerts are in as well — the mailbox defaults to their address",
+        "",
+    ),
+    (
+        "presets/integrations/microsoft-defender-for-cloud.satz",
+        "use_defender",
+        "once the estate runs as the service account — Defender's plan fragments are added by\n\
+         // hand once this line is in; see that pack's header",
+        "",
+    ),
+    (
+        "presets/integrations/microsoft-sentinel.satz",
+        "use_sentinel",
+        "once the audit archive exists — Sentinel's project defaults to the logsink's",
+        "",
+    ),
+    (
+        "presets/integrations/microsoft-sentinel-auditlogs.satz",
+        "use_sentinel_auditlogs",
+        "once Sentinel's federation is in — these read as the account it creates",
+        "",
+    ),
+    ("presets/integrations/microsoft-sentinel-network-logs.satz", "use_sentinel_network_logs", "", ""),
+    (
+        "presets/ci/verification-runner.satz",
+        "use_verification_runner",
+        "once the estate runs as the service account — the runner, then the grant that trusts\n\
+         // it by naming the runner's own account",
+        "",
+    ),
+    ("presets/ci/verification-runner-grant.satz", "use_verification_runner", "", ""),
+    (
+        "presets/exemptions/exemption-tag.satz",
+        "use_exemption_tag",
+        "any time after the organisation policies — it creates the tag an exemption is bound to\n\
+         // and exempts nothing on its own. The BINDING that lets one resource out, and the\n\
+         // condition on the constraint that honours it, are the estate's to write; the pack's\n\
+         // header shows both",
+        "",
+    ),
+];
+
+/// The commented menu, as the skeleton writes it: one line per pack, a phase comment above
+/// each group, and the whole thing inert until a line is uncommented.
+pub(crate) fn pack_menu() -> String {
+    let mut out = String::from(
+        "// ---- the packs, each under the phase that comes before it ----------------------\n\
+         //\n\
+         // Day 0 is the scaffold alone. Bootstrap it, apply it, then `satz migrate --mode cloud`\n\
+         // so the state and the identity move to the IaC service account — and only then does a\n\
+         // pack go in, one at a time, each with its own plan and apply. That is why every line\n\
+         // below is commented out: an estate that used four packs on day 0 could not be applied\n\
+         // until somebody had answered for packs nobody had chosen yet.\n\
+         //\n\
+         // Uncomment a line to add its pack. `satz interview` does it when that pack's question\n\
+         // is answered yes, and `satz merge-presets` adds the line for a pack the library has\n\
+         // gained since — so the list here stays the library's, not one person's memory of it.\n\
+         // Whichever writes it, the compile reports a question answered true whose line is still\n\
+         // commented, so the two never drift apart.\n",
     );
-    debug_assert!(scaffold != SCAFFOLD, "the folder anchor the skeleton hangs the logging packs on is gone");
-    format!(
+    // a pack scoped to a block is written into that block, not into this list
+    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| at.is_empty()) {
+        let _ = at;
+        if !phase.is_empty() {
+            out.push_str(&format!("\n// {}\n", phase));
+        }
+        out.push_str(&pack_line(path, gate));
+        out.push('\n');
+    }
+    out
+}
+
+/// Insert `line` (and its `//` phase comment, when given) as the first content of the block
+/// `at` names — `google_folder.infra` is `infra { … }` inside `google_folder { … }`. The
+/// indentation is the block's plus two, so the result is already in the canonical layout.
+///
+/// `None` when the estate has no such block: the caller reports that rather than writing the
+/// line somewhere it does not belong. A `use` at the top level is valid anywhere, but one of
+/// THESE packs is scoped by the block it sits in, so the wrong place is the wrong estate.
+///
+/// Both writers call this — the skeleton as it composes a new file, `merge-presets` on an
+/// estate that has no line for the pack — so a nested pack lands in one place, not two.
+pub(crate) fn insert_into_block(src: &str, at: &str, line: &str, phase: &str) -> Option<String> {
+    let mut depth_wanted = 0usize;
+    let mut open_at: Option<(usize, usize)> = None; // (byte after the opening line, indent)
+    let segments: Vec<&str> = at.split('.').collect();
+    let mut i = 0usize;
+    let mut depth = 0usize;
+    for raw in src.split_inclusive('\n') {
+        let start = i;
+        i += raw.len();
+        let trimmed = raw.trim();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        // a block this line opens: `<name> {` or `"<name>" {`
+        if depth == depth_wanted && depth_wanted < segments.len() {
+            let want = segments[depth_wanted];
+            let opens = trimmed
+                .strip_suffix('{')
+                .map(str::trim_end)
+                .is_some_and(|n| n == want || n.trim_matches('"') == want);
+            if opens {
+                depth_wanted += 1;
+                depth += 1;
+                if depth_wanted == segments.len() {
+                    let indent = raw.len() - raw.trim_start().len();
+                    open_at = Some((start + raw.len(), indent));
+                    break;
+                }
+                continue;
+            }
+        }
+        depth += trimmed.matches('{').count();
+        depth = depth.saturating_sub(trimmed.matches('}').count());
+    }
+    let (mut at_byte, indent) = open_at?;
+    // past the block's own attributes, comments and any pack line already there,
+    // and stop at its first child block: a line lands where the skeleton wrote
+    // it, and a second line for the same block lands after the first, so the
+    // table's order is the file's order
+    for raw in src[at_byte..].split_inclusive('\n') {
+        let t = raw.trim();
+        let is_own = t.is_empty()
+            || t.starts_with("//")
+            || (!t.ends_with('{') && !t.starts_with('}') && !t.starts_with(']'));
+        if !is_own {
+            break;
+        }
+        at_byte += raw.len();
+    }
+    let pad = " ".repeat(indent + 2);
+    let mut insert = String::new();
+    for l in phase.lines().filter(|l| !l.trim().is_empty()) {
+        // the phase text carries its own `//` continuations; the first line has none
+        let l = l.trim_start();
+        insert.push_str(&pad);
+        if l.starts_with("//") {
+            insert.push_str(l);
+        } else {
+            insert.push_str("// ");
+            insert.push_str(l);
+        }
+        insert.push('\n');
+    }
+    insert.push_str(&pad);
+    insert.push_str(line);
+    insert.push('\n');
+    let mut out = String::with_capacity(src.len() + insert.len());
+    out.push_str(&src[..at_byte]);
+    out.push_str(&insert);
+    out.push_str(&src[at_byte..]);
+    Some(out)
+}
+
+/// The block a single-segment placement names, written whole with its line inside — for an
+/// estate that has no such block at all. Only a resource-type map is created this way
+/// (`google_essential_contacts_contact`): it is content, and an empty one emits nothing. A
+/// nested path names structure the estate owns (`google_folder.infra_folder`), and a missing
+/// folder is reported, never invented.
+pub(crate) fn block_stub(at: &str, line: &str, phase: &str) -> Option<String> {
+    if at.contains('.') {
+        return None;
+    }
+    let mut out = String::new();
+    for l in phase.lines().filter(|l| !l.trim().is_empty()) {
+        let l = l.trim_start();
+        out.push_str(if l.starts_with("//") { "" } else { "// " });
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str(&format!("{} {{\n  {}\n}}\n", at, line));
+    Some(out)
+}
+
+/// One commented line, exactly as both writers must write it.
+pub(crate) fn pack_line(path: &str, gate: &str) -> String {
+    if gate.is_empty() {
+        format!("// use \"{}\"", path)
+    } else {
+        format!("// use \"{}\" when {}", path, gate)
+    }
+}
+
+/// The estate an INTERVIEW starts from: the day-0 scaffold, and every pack commented out.
+///
+/// The day-0 params and their questions come from `presets/estate-core.satz`, and that is
+/// the only `use` the file starts with — sixteen questions, all of them about the estate
+/// itself. Every pack line is written COMMENTED, under the phase that has to be finished
+/// before it can go in, because the real order of work is: bootstrap, apply, move the
+/// state and the identity to the service account with `satz migrate`, and only then add
+/// packs one at a time. A day-0 file that already used four packs could not be applied
+/// until somebody answered for packs they had not chosen yet.
+///
+/// Uncommenting a line is what adds its pack. `satz interview` does it when the pack's
+/// question is answered yes; an operator or an agent can do it by hand. Whichever writes
+/// it, the compile is what keeps them honest: a pack's question answered true while its
+/// line is still commented is reported, never silently ignored.
+///
+/// `presets/estate-map.satz` is the line to uncomment first — it is what declares the
+/// questions the other lines are gated on.
+pub(crate) fn skeleton(stem: &str) -> String {
+    let scaffold = SCAFFOLD;
+    let composed = format!(
         r#"// Written for an interview: a question is open until its param is bound below.
-// `satz questions {stem}.satz --unanswered` lists what is still to decide;
+// `satz questions {stem}.satz --unanswered --format text --out /dev/stdout` lists what is still to decide;
 // bootstrap and apply refuse until nothing is.
 
 estate {estate}
@@ -184,45 +534,35 @@ estate {estate}
 params {{
 }}
 
-// The day-0 params with their questions, then the map: which packs, as questions.
+// The day-0 params and their questions. The only pack the file starts with: sixteen
+// questions, every one of them about the estate itself.
 use "presets/estate-core.satz"
-use "presets/estate-map.satz"
 
-// The CIS baseline is not a choice — it is what the estate is for. Its opt-in
-// extensions are the baseline pack's own questions.
+{menu}
+// The CIS baseline. Not a choice — it is what the estate is for — but it is also thirty
+// organisation policies, so it goes in deliberately, after the switch to the service
+// account, with its own plan read before it is applied.
 google_org_policy_policy {{
-  use "presets/CIS-GCP-Foundation-4.0.satz"
+  // use "presets/CIS-GCP-Foundation-4.0.satz"
 }}
-use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
-use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
-use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
-use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
-use "presets/cis-extensions/cmek.satz" when cis_cmek_required
-use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
-use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
-
-// The map's choices, one line each. The audit archive and the central alerts are
-// in the infrastructure folder below, beside the infrastructure project.
-use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
-use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
-use "presets/billing-account-permissions.satz" when use_billing_permissions
-use "presets/organization-budget.satz" when use_budget
-use "presets/scc/scc-service-enablement.satz" when use_scc_enablement
-use "presets/security-audit/sa-security-audit.satz" when use_security_audit_sa
-use "presets/ci/verification-runner.satz" when use_verification_runner
-use "presets/ci/verification-runner-grant.satz" when use_verification_runner
-// Defender's plan fragments are added by hand once this is true — see that pack's header.
-use "presets/integrations/microsoft-defender-for-cloud.satz" when use_defender
 
 google_essential_contacts_contact {{
-  use "presets/essential-contacts-organization.satz" when use_essential_contacts
 }}
 
 {scaffold}"#,
         stem = stem,
         estate = estate_name(stem),
         scaffold = scaffold,
-    )
+        menu = pack_menu(),
+    );
+    // the packs scoped to a block go into that block, from the same table
+    // `merge-presets` reads, so a nested pack has one writer and not two
+    let mut out = composed;
+    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| !at.is_empty()) {
+        out = insert_into_block(&out, at, &pack_line(path, gate), phase)
+            .unwrap_or_else(|| panic!("the skeleton has no `{}` block for {}", at, path));
+    }
+    out
 }
 
 pub fn generate_template(args: &TemplateArgs, output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -251,8 +591,25 @@ params {{
   default_zone             = "{region}-a"
 }}
 
+// The day-0 params and their questions. Every value above is already answered, so this
+// estate needs nothing from it to bootstrap — uncomment it after `satz get-presets` and
+// `satz questions` reads from it like an interview-built estate.
+// use "presets/estate-core.satz"
+
+{menu}
+// The CIS baseline. Not a choice — it is what the estate is for — but it is also thirty
+// organisation policies, so it goes in deliberately, after the switch to the service
+// account, with its own plan read before it is applied.
+google_org_policy_policy {{
+  // use "presets/CIS-GCP-Foundation-4.0.satz"
+}}
+
+google_essential_contacts_contact {{
+}}
+
 {scaffold}"#,
         scaffold = SCAFFOLD,
+        menu = pack_menu(),
         estate = estate_name(&args.customer_id),
         customer_id = args.customer_id,
         project_id = args.project_id,
@@ -265,7 +622,15 @@ params {{
         region = args.region,
     );
 
-    fs::write(output_path, content)?;
+    // the packs scoped to a block, from the same table — so `init` and
+    // `interview --create` produce one shape and a pack is adoptable from
+    // either door
+    let mut content = content;
+    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| !at.is_empty()) {
+        content = insert_into_block(&content, at, &pack_line(path, gate), phase)
+            .ok_or_else(|| format!("the init estate has no `{}` block for {}", at, path))?;
+    }
+    crate::fsx::write_generated_satz(output_path, &content)?;
     Ok(())
 }
 
@@ -295,23 +660,100 @@ pub(crate) mod tests {
         }
     }
 
+    /// The templates are canonical at the source: what `init` and the interview write
+    /// is what the formatter would write, so the source reads as the file does. A
+    /// failure here is fixed in the template, never in the test.
+    #[test]
+    fn the_skeleton_is_in_the_canonical_layout() {
+        let sk = skeleton("acme");
+        assert_eq!(satz_core::fmt::format(&sk).unwrap(), sk, "template::skeleton is not formatted");
+    }
+
+    #[test]
+    fn the_init_estate_is_in_the_canonical_layout() {
+        let dir = scratch("canon");
+        let path = dir.join("C0example.satz");
+        generate_template(&args("first.admin", "example.com"), &path).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(satz_core::fmt::format(&out).unwrap(), out);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only a `use` line gates a pack. Prose in a comment may say the word "when" and
+    /// mean nothing by it, so the scan reads the lines that are lines.
+    fn use_lines(src: &str) -> impl Iterator<Item = &str> {
+        src.lines().map(str::trim).filter(|l| l.starts_with("use ") || l.starts_with("// use "))
+    }
+
+    #[test]
+    fn a_placed_line_lands_in_its_block_and_a_second_one_after_the_first() {
+        // the block's own attributes first, then the pack lines in table order,
+        // then the block's children — where the skeleton used to write them by hand
+        let src = "google_folder {\n  infra_folder {\n    display_name = infra_folder_name\n    google_project {\n      infra {\n      }\n    }\n  }\n}\n";
+        let one = insert_into_block(src, "google_folder.infra_folder", "// use \"a.satz\" when a", "first").unwrap();
+        let two = insert_into_block(&one, "google_folder.infra_folder", "// use \"b.satz\" when b", "").unwrap();
+        let at = |s: &str, needle: &str| two.lines().position(|l| l.contains(needle)).unwrap_or_else(|| panic!("{} not in {}", needle, s));
+        assert!(at(&two, "display_name") < at(&two, "a.satz"), "{}", two);
+        assert!(at(&two, "a.satz") < at(&two, "b.satz"), "table order is file order:\n{}", two);
+        assert!(at(&two, "b.satz") < at(&two, "google_project"), "before the block's children:\n{}", two);
+        assert!(two.contains("    // first\n"), "the phase comment rides along, at the line's indent:\n{}", two);
+        // a block the estate does not have
+        assert_eq!(insert_into_block(src, "google_essential_contacts_contact", "// use \"c.satz\"", ""), None);
+        // …which a resource-type map answers by being written whole, and a folder does not
+        assert!(block_stub("google_essential_contacts_contact", "// use \"c.satz\"", "why")
+            .is_some_and(|s| s.contains("google_essential_contacts_contact {\n  // use \"c.satz\"\n}\n") && s.starts_with("// why")));
+        assert_eq!(block_stub("google_folder.infra_folder", "// use \"c.satz\"", ""), None, "a folder is the estate's own structure");
+    }
+
     #[test]
     fn the_skeleton_carries_one_use_line_per_choice_the_map_declares() {
-        // Two places for one list — the map declares the choices, the skeleton
-        // carries their `use … when` lines. This is what keeps them equal.
+        // Two places for one list — the map declares the choices, the skeleton carries their
+        // `use … when` lines. This is what keeps them equal.
         let map = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/presets/estate-map.satz")).unwrap();
         let map = satz_core::satz::parse(&map).unwrap();
         let sk = skeleton("x");
         for (name, _, _) in &map.params {
-            assert!(sk.contains(&format!(" when {}\n", name)), "the map declares `{}` and the skeleton has no `use … when {}`", name, name);
+            assert!(
+                use_lines(&sk).any(|l| l.ends_with(&format!(" when {}", name))),
+                "the map declares `{}` and the skeleton has no `use … when {}`",
+                name,
+                name
+            );
         }
-        for line in sk.lines().filter(|l| l.contains(" when ")) {
+        for line in use_lines(&sk).filter(|l| l.contains(" when ")) {
             let param = line.rsplit(" when ").next().unwrap().trim();
             let declared = map.params.iter().any(|(n, _, _)| n == param) || param.starts_with("cis_");
             assert!(declared, "the skeleton gates a pack on `{}`, which neither the map nor the CIS baseline declares", param);
         }
         assert!(sk.contains("use \"presets/estate-map.satz\"\n"));
-        assert!(sk.contains("    use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink\n"), "the logging packs sit in the infrastructure folder");
+        assert!(
+            sk.contains("    // use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink\n"),
+            "the logging packs sit in the infrastructure folder, commented like every other pack"
+        );
+    }
+
+    #[test]
+    fn every_map_choice_has_a_phase_and_the_menu_is_inert() {
+        // The table is what `merge-presets` inserts from, so a pack the library gains without
+        // a row would be a pack nobody can adopt — the map would ask for it and no line would
+        // ever be written. This is that gate.
+        let map = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/presets/estate-map.satz")).unwrap();
+        let map = satz_core::satz::parse(&map).unwrap();
+        // No exceptions. A pack whose line lives inside a block carries that block in its
+        // fourth column; it used to be hardcoded in the skeleton and absent from this table,
+        // which is exactly how `use_audit_logsink` could be true with no line anywhere and
+        // nothing — not merge-presets, not the unadopted-pack check — say so.
+        let gated: Vec<&str> = PACK_LINES.iter().map(|(_, gate, _, _)| *gate).collect();
+        for (name, _, _) in &map.params {
+            assert!(gated.contains(&name.as_str()), "the map declares `{}` and PACK_LINES has no row saying when it can be adopted", name);
+        }
+        // and the menu enforces nothing until a line is uncommented
+        let sk = skeleton("x");
+        for line in use_lines(&sk).filter(|l| !l.contains("estate-core")) {
+            assert!(line.starts_with("// use "), "a pack line in a fresh skeleton must be commented: {}", line);
+        }
+        // the day-0 pack is the exception: it is not in the menu at all
+        assert!(sk.contains("\nuse \"presets/estate-core.satz\"\n"), "estate-core is the one pack a day-0 file uses");
     }
 
     #[test]
@@ -322,7 +764,7 @@ pub(crate) mod tests {
         let path = dir.join("out.satz");
         generate_template(&args("first.admin", "example.com"), &path).unwrap();
         let out = std::fs::read_to_string(&path).unwrap();
-        assert!(out.contains(r#"member       = [ "user:{first_admin}@{customer_domain}" ]"#), "{out}");
+        assert!(out.contains(r#"member       = ["user:{first_admin}@{customer_domain}"]"#), "{out}");
         assert!(!out.contains("first.admin@example.com"), "{out}");
         assert!(out.contains(r#"first_admin              = "first.admin""#), "{out}");
         assert!(out.contains(r#"customer_domain          = "example.com""#), "{out}");

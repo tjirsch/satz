@@ -3,8 +3,7 @@
 Two kinds of example. First the **register of identifiers** every example in this
 repository is allowed to use — a rule the privacy gate enforces on every commit.
 Then **worked estates**: real files in this repository, transpiled by
-`scripts/smoke.sh` on every push, so an example here cannot describe a language the
-compiler no longer speaks.
+`scripts/smoke.sh` on every push, so each one compiles with the current binary.
 
 ## Example customers
 
@@ -46,6 +45,7 @@ in `ALLOW_GUID` in the gate.
 
 | identifier | what it is |
 |---|---|
+| `2041288c-b303-4ca0-9076-9612db3beeb2` | **Microsoft Sentinel's application id.** The audience the GCP connector's tokens carry (`api://<id>`), published in Microsoft's connector documentation and in its own Terraform; identical for every customer. |
 | `33e01921-4d64-4f8c-a055-5bdaffd5e33d` | **Microsoft's commercial-cloud tenant.** The `sts.windows.net/<tenant>` issuer every Defender for Cloud and Sentinel connector federates from — published in Microsoft's connector documentation for AWS and GCP alike, identical for every customer. It is *not* the customer's tenant, which is why it is allowed. |
 | `d17a7d74-7e73-4e7d-bd41-8d9525e86cab` | Defender for Cloud's auto-provisioner application id, the `api://…` audience of the auto-provisioner OIDC provider. |
 | `6e81e733-9e7f-474a-85f0-385c097f7f52` | Defender for Cloud's CSPM application id, the audience of the CSPM provider. |
@@ -55,12 +55,16 @@ customer — a tenant id that appears in the customer's generated script is thei
 the vendor's, and belongs in a param. Then add it to `ALLOW_GUID` and to this table
 in the same commit. A GUID the gate does not know is assumed to identify a customer.
 
-### Legacy fixture placeholders
+### Other placeholders
 
-`corp-infra-001` and `corp-log-infra-001` are project ids in the smoke estate and the
-corpus fixtures, from before this page existed. They are fictional and allowed, but
-they are not a fifth customer: **new examples use the four above.** The same applies
-to the directory ids `C01234567` and `C0abcd123`.
+These fictional values appear in existing files and are allowed there. They are not
+a fifth customer: **new examples use the four above.**
+
+- project ids `corp-infra-001` and `corp-log-infra-001` (the smoke estate and the
+  corpus fixtures);
+- directory ids `C01234567` (README and tests) and `C0abcd123` (one test);
+- billing placeholders `A12345-B67890-C12345` and `123456-123456-123456` (README and
+  a preset).
 
 ### What the gate cannot see
 
@@ -71,15 +75,15 @@ Two things cover that gap:
 
 - **Review.** The rule is that no customer, company or person is named in a tracked
   file. The gate cannot check it; the author can.
-- **The local denylist.** `$NAMES_DENYLIST` (or
-  `~/Documents/thomas01/satz-core-history-rewrite/denylist.txt`) holds one extended
-  regex per line — real customer names, project names, internal words. It is never
+- **The local denylist.** `$NAMES_DENYLIST` names a file outside the repository that
+  holds one extended regex per line — real customer names, project names, internal
+  words. It is never
   committed, so CI stays structural while the pre-commit hook on the maintainer's
   machine knows the actual words to refuse. Anything that is a name rather than a
   shape belongs there.
 
-**Which one to use.** Customer A for any single-estate example — it is the
-one the existing docs already use. B, C, D only when an example needs a
+**Which one to use.** Customer A for any single-estate example. B, C, D only
+when an example needs a
 second, third or fourth organisation (cross-org grants, a fleet table, a
 partner directory). Customer A's separate contacts domain and Customer D's
 subdomain exist so that "the org and the contacts live on different domains"
@@ -90,11 +94,6 @@ worklists) use opaque codenames and never a domain, id or
 path beyond `~/estates/E0n`. The mapping to real customers lives outside the
 repository.
 
-**Legacy placeholders, allowed but not to be spread further:** `C01234567`
-(the README's original example directory id, also in older tests),
-`C0abcd123` (one test), `A12345-B67890-C12345` and `123456-123456-123456`
-(billing placeholders in README and a preset). New text uses the table.
-
 **Domains.** Only IANA-reserved names (`example.com/org/net`, and the
 `.example`, `.test`, `.invalid`, `.localhost` TLDs) and the vendor hosts the
 project genuinely references (`googleapis.com`, `gserviceaccount.com`,
@@ -102,15 +101,21 @@ project genuinely references (`googleapis.com`, `gserviceaccount.com`,
 `windows.net`, `microsoft.com`, `microsoftonline.com` — a workload-identity
 federation example cannot avoid naming the issuer it federates, and
 `sts.windows.net` is Microsoft's, not a customer's) may appear anywhere. Any
-other domain fails the gate — including plausible-looking ones: the obvious
-"fictional" company domains are real, registered businesses.
+other domain fails the gate, including ones that look fictional: most such
+domains are registered by real businesses.
+
+One entry is not a host at all: `google.cloud` is the package name of Google's own
+audit protobufs, as it appears in a Cloud Logging filter
+(`type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo`). The gate reads it as
+a `.cloud` domain because that is what the shape says; it is identical for every
+customer, so it is allowed by exact name.
 
 **Commit identity.** Every commit's author and committer must be the
 maintainer's address or a GitHub noreply address
 (`<id>+<user>@users.noreply.github.com` — enable "keep my email address
 private" in GitHub settings). Employer or customer addresses are rejected by
-the pre-commit hook and by CI on every push and pull request. This is not
-about one person: no contributor's affiliation belongs in a public history.
+the pre-commit hook and by CI on every push and pull request, so no
+contributor's affiliation reaches the public history.
 
 **Other allowed identities:** `noreply@anthropic.com` (Claude's co-author
 trailer), `*.iam.gserviceaccount.com` service accounts built from the values
@@ -126,9 +131,8 @@ value here first, in the same commit.
 ## The smallest estate that compiles
 
 An estate is a name and a `params` block. Nothing else is required: a file that
-declares no resources emits an empty configuration, which is the right answer
-rather than an error. `tests/smoke/yaml/greenfield.satz` is the smallest one this
-repository keeps:
+declares no resources emits an empty configuration, not an error.
+`tests/smoke/yaml/greenfield.satz` is the smallest one this repository keeps:
 
 ```
 estate greenfield_fixture
@@ -145,20 +149,18 @@ params {
 }
 ```
 
-It exists to pin one behaviour: `customer_organization_id` is deliberately empty,
-which is the state of a tenant whose Google Cloud organization does not exist yet.
-`satz bootstrap` must answer that with the greenfield path — `--greenfield`, or
-`init --from-live` — and not with a bare "missing org id". See
-[from nothing to applied](workflows.md#from-nothing-to-applied).
+Its `customer_organization_id` is empty: the state of a tenant whose Google Cloud
+organization does not exist yet. `satz bootstrap` answers that with the greenfield
+path — `--greenfield`, or `satz init` re-run with the id — rather than a bare "missing org
+id". See [from nothing to applied](workflows.md#from-nothing-to-applied).
 
 ## A working estate, end to end
 
 `tests/smoke/yaml/smoke.satz` is the fixture every estate-consuming command runs
-against in CI, so it is the closest thing here to a real customer estate that
-anyone can read. In about a hundred lines it carries:
+against in CI. In about a hundred lines it carries:
 
 - **params** — the sixteen an estate normally binds, including a param defined in
-  terms of another (`cis_central_bucket_project = logsink_project_name`);
+  terms of another (`cis_central_bucket_project = logsink_project_id`);
 - **`terraform` and `providers` blocks**, which become `providers.tf` and the
   backend;
 - **three pristine packs**, each in the position its shape calls for: the contacts
@@ -171,15 +173,14 @@ anyone can read. In about a hundred lines it carries:
   storage bucket — the hierarchy from which scope attributes are derived rather
   than repeated.
 
-Read it next to [the language reference](language.md); it is the shortest route
-from the reference's constructs to a file that produces HCL.
+Read it next to [the language reference](language.md): it uses the reference's
+constructs in one file that produces HCL.
 
 ## Every feature in one file
 
-`tests/smoke/yaml/showcase.satz` is the reference's own corpus. Rather than carry
-loose snippets that drift, [`docs/language.md`](language.md) cites this file by
-section, and `scripts/smoke.sh` transpiles it on every push — so an example in the
-reference is an example that compiled this morning.
+`tests/smoke/yaml/showcase.satz` is the reference's own corpus:
+[`docs/language.md`](language.md) cites this file by section, and
+`scripts/smoke.sh` transpiles it on every push.
 
 It is annotated in place and walks, in order: params and the `question` blocks that
 say what to ask before one can be filled (including a `oneof` exclusive choice);
@@ -188,9 +189,8 @@ the estate configuration blocks; `use` in all three positions (top level, `as`, 
 grant without forking the pack; a group, its member and the `"import-id"` of one
 that already exists; IAM grants with a conditional role; the folder → project →
 resource hierarchy; `hcl { }` raw passthrough; an `action`, the deployment step
-that has no provider resource; and the `claim` blocks that say what the estate
-proves and what it declines on purpose.
+that has no provider resource; and the `claim` blocks that say which controls the
+estate implements and which it declines.
 
-**Adding a feature to the language means adding it here first.** The reference
-cites this file, so a construct without a line in the showcase has no example that
-CI keeps honest.
+**A new language feature gets its example here first**: the reference cites this
+file, and CI compiles it.

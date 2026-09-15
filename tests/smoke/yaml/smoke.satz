@@ -7,22 +7,22 @@ estate smoke
 
 params {
   customer_organization_id = "123456789012"
-  customer_id = "C0TEST"
-  customer_domain = "example.com"
-  customer_shortname = "corp"
-  customer_longname = "Example Corp"
-  infra_folder_name = "Infrastructure"
-  infra_project_name = "corp-infra-001"
-  infra_bucket_name = "corp-infra-001-state"
-  svc_iac_account = "svc-iac-001"
-  svc_iac_users_group = "svc-iac-001-users"
-  first_admin = "admin@example.com"
-  billing_account_infra = "01AA-BB-CC"
-  logsink_project_name = "corp-log-infra-001"
-  deployment_engine = "tofu"
-  deployment_mode = "local"
-  default_region = "europe-west3"
-  default_zone = "europe-west3-a"
+  customer_id              = "C0TEST"
+  customer_domain          = "example.com"
+  customer_shortname       = "corp"
+  customer_longname        = "Example Corp"
+  infra_folder_name        = "Infrastructure"
+  infra_project_name       = "corp-infra-001"
+  infra_bucket_name        = "corp-infra-001-state"
+  svc_iac_account          = "svc-iac-001"
+  svc_iac_users_group      = "svc-iac-001-users"
+  first_admin              = "admin@example.com"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  logsink_project_id       = "corp-log-infra-001"
+  deployment_engine        = "tofu"
+  deployment_mode          = "local"
+  default_region           = "europe-west3"
+  default_zone             = "europe-west3-a"
 }
 
 terraform {
@@ -33,18 +33,18 @@ terraform {
 
 providers {
   google {
-    alias = "google"
-    project = infra_project_name
-    region = default_region
+    alias                 = "google"
+    project               = infra_project_name
+    region                = default_region
     user_project_override = true
-    billing_project = infra_project_name
+    billing_project       = infra_project_name
   }
   "google-beta" {
-    alias = "google-beta"
-    project = infra_project_name
-    region = default_region
+    alias                 = "google-beta"
+    project               = infra_project_name
+    region                = default_region
     user_project_override = true
-    billing_project = infra_project_name
+    billing_project       = infra_project_name
   }
 }
 
@@ -69,6 +69,21 @@ google_organization_iam_member {
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
     "roles/resourcemanager.organizationAdmin",
     "roles/orgpolicy.policyAdmin",
+    "roles/billing.projectManager",
+    "roles/browser",
+    "roles/cloudasset.viewer",
+    "roles/essentialcontacts.admin",
+    "roles/iam.securityReviewer",
+    "roles/logging.configWriter",
+    "roles/monitoring.alertPolicyEditor",
+    "roles/monitoring.notificationChannelEditor",
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectMover",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/serviceusage.serviceUsageConsumer",
+    "roles/storage.admin",
+    "roles/viewer",
   ]
   "group:{svc_iac_users_group}@{customer_domain}" = [
     "roles/iam.serviceAccountTokenCreator",
@@ -80,17 +95,20 @@ google_folder {
     display_name = infra_folder_name
     google_project {
       infra {
-        name = "corp-IaC"
-        project_id = infra_project_name
+        name            = "corp-IaC"
+        project_id      = infra_project_name
         billing_account = billing_account_infra
         project_service = [
+          // The CIS pack claims CIS 5.0 §2.14 against this one, and `report-compliance`
+          // reads the organisation through it — `satz init` puts it in every estate.
+          "cloudasset.googleapis.com",
           "cloudresourcemanager.googleapis.com",
           "iam.googleapis.com",
         ]
         google_storage_bucket {
           state {
-            name = infra_bucket_name
-            location = "EU"
+            name                        = infra_bucket_name
+            location                    = "EU"
             uniform_bucket_level_access = true
             versioning {
               enabled = true
@@ -105,4 +123,12 @@ google_folder {
     use "presets/monitoring/organization-audit-logsink.satz"
     use "presets/monitoring/organization-cis-log-alerts-central.satz"
   }
+}
+
+// The IaC service account's roles for this estate's resource types (`satz iac-roles`).
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/billing.admin",
+  ]
 }

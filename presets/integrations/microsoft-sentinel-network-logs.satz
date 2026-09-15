@@ -1,0 +1,233 @@
+// The four network log streams, on their way to Microsoft Sentinel.
+//
+//   use "presets/integrations/microsoft-sentinel-network-logs.satz"
+//
+// NEEDS `presets/integrations/microsoft-sentinel.satz`: the connector reads as the
+// account that file creates. Used without it, the compile stops with
+// `unknown param 'sentinel_project_id'`.
+//
+// WHY ALL FOUR, AND WHY ON BY DEFAULT. VPC flow logs, firewall rules logging, DNS
+// query logging and Cloud NAT logging are separate log streams, not filters over the
+// audit log, and each one is EMPTY until somebody enables that feature — flow logs per
+// subnet, firewall logging per rule, DNS logging per policy, NAT logging per gateway.
+// Cloud Logging charges nothing to route log entries and an idle subscription moves no
+// bytes, so a sink for a feature nobody enabled costs nothing. What switching these off
+// buys is therefore nothing; what it costs is the day somebody enables flow logs and
+// finds that Sentinel was not watching. The volume once a feature IS on is real, and it
+// lands on Sentinel's ingestion bill rather than on Google's routing — an estate that
+// wants one stream out uses `suppress` on that sink, topic and subscription.
+//
+// FIVE RESOURCES PER STREAM, and the two grants are the ones that get forgotten: the
+// organisation sink (`include_children`, so a project created tomorrow is covered), its
+// topic, the subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's
+// own writer identity — without which the sink exists and delivers nothing — and
+// `roles/pubsub.subscriber` for the connector on that one subscription.
+//
+// EACH FILTER SELECTS ONE STREAM AND NOTHING ELSE — `log_id` where Google publishes
+// the log name (flow logs, firewall, NAT) and the documented resource type for DNS
+// queries, whose log name Google does not publish. Microsoft's published configurations mix each stream
+// with the audit records of the same service (`protoPayload.serviceName=…`) — those
+// records already leave through `microsoft-sentinel-auditlogs.satz`, so carrying them
+// again would export and bill the same entries twice.
+//
+// SUBSCRIPTION NAMES ARE MICROSOFT'S, because the Sentinel connector is configured with
+// them on the Azure side. The TOPIC names are not: Microsoft's firewall setup names its
+// topic `sentinel-topic`, the same name its audit setup creates, and two setups creating
+// one topic is a collision. Each stream here has its own topic.
+//
+// NO CLAIM. A copy of a log leaving the organisation satisfies no control; the archive
+// (`monitoring/organization-audit-logsink.satz`) is what claims the logging controls.
+// Note also that nothing here ENABLES flow logs, firewall logging, DNS logging or NAT
+// logging — this carries them once they are on. Enforcing them is a separate decision.
+
+pack integrations.microsoft_sentinel_network_logs version "1.0"
+
+params {
+  // A week, so a connector down over a weekend loses nothing, and Microsoft's own
+  // acknowledgement deadline.
+  sentinel_network_retention            = "604800s"
+  sentinel_network_ack_deadline_seconds = 60
+}
+
+// ---- 1) VPC flow logs -----------------------------------------------------------
+
+google_pubsub_topic {
+  sentinel_vpcflow {
+    name    = "sentinel-vpcflow-topic"
+    project = sentinel_project_id
+  }
+}
+
+google_pubsub_subscription {
+  sentinel_vpcflow {
+    name                       = "sentinel-subscription-vpcflowlogs"
+    topic                      = "${{google_pubsub_topic.sentinel_vpcflow.name}}"
+    project                    = sentinel_project_id
+    ack_deadline_seconds       = sentinel_network_ack_deadline_seconds
+    message_retention_duration = sentinel_network_retention
+    retain_acked_messages      = false
+  }
+}
+
+google_logging_organization_sink {
+  sentinel_vpcflow {
+    name             = "vpc-flow-logs-organization-sentinel-sink"
+    org_id           = customer_organization_id
+    destination      = "pubsub.googleapis.com/projects/{sentinel_project_id}/topics/sentinel-vpcflow-topic"
+    filter           = "log_id(\"compute.googleapis.com/vpc_flows\")"
+    include_children = true
+  }
+}
+
+// ---- 2) Firewall rules logging --------------------------------------------------
+
+google_pubsub_topic {
+  sentinel_firewall {
+    name    = "sentinel-firewall-topic"
+    project = sentinel_project_id
+  }
+}
+
+google_pubsub_subscription {
+  sentinel_firewall {
+    name                       = "sentinel-subscription-firewalllogs"
+    topic                      = "${{google_pubsub_topic.sentinel_firewall.name}}"
+    project                    = sentinel_project_id
+    ack_deadline_seconds       = sentinel_network_ack_deadline_seconds
+    message_retention_duration = sentinel_network_retention
+    retain_acked_messages      = false
+  }
+}
+
+google_logging_organization_sink {
+  sentinel_firewall {
+    name             = "firewall-logs-organization-sentinel-sink"
+    org_id           = customer_organization_id
+    destination      = "pubsub.googleapis.com/projects/{sentinel_project_id}/topics/sentinel-firewall-topic"
+    filter           = "log_id(\"compute.googleapis.com/firewall\")"
+    include_children = true
+  }
+}
+
+// ---- 3) DNS query logging -------------------------------------------------------
+
+google_pubsub_topic {
+  sentinel_dns {
+    name    = "sentinel-dns-topic"
+    project = sentinel_project_id
+  }
+}
+
+google_pubsub_subscription {
+  sentinel_dns {
+    name                       = "sentinel-subscription-DNSlogs"
+    topic                      = "${{google_pubsub_topic.sentinel_dns.name}}"
+    project                    = sentinel_project_id
+    ack_deadline_seconds       = sentinel_network_ack_deadline_seconds
+    message_retention_duration = sentinel_network_retention
+    retain_acked_messages      = false
+  }
+}
+
+google_logging_organization_sink {
+  sentinel_dns {
+    name             = "dns-logs-organization-sentinel-sink"
+    org_id           = customer_organization_id
+    destination      = "pubsub.googleapis.com/projects/{sentinel_project_id}/topics/sentinel-dns-topic"
+    // The resource type, not a log_id: Google documents `dns_query` as the type its
+    // query records carry and does not publish the log name, so this is the selector
+    // that can be verified. It matches query records only, never DNS admin audit.
+    filter           = "resource.type=\"dns_query\""
+    include_children = true
+  }
+}
+
+// ---- 4) Cloud NAT logging -------------------------------------------------------
+
+google_pubsub_topic {
+  sentinel_nat {
+    name    = "sentinel-nat-topic"
+    project = sentinel_project_id
+  }
+}
+
+google_pubsub_subscription {
+  sentinel_nat {
+    name                       = "sentinel-subscription-natlogs"
+    topic                      = "${{google_pubsub_topic.sentinel_nat.name}}"
+    project                    = sentinel_project_id
+    ack_deadline_seconds       = sentinel_network_ack_deadline_seconds
+    message_retention_duration = sentinel_network_retention
+    retain_acked_messages      = false
+  }
+}
+
+google_logging_organization_sink {
+  sentinel_nat {
+    name             = "nat-logs-organization-sentinel-sink"
+    org_id           = customer_organization_id
+    destination      = "pubsub.googleapis.com/projects/{sentinel_project_id}/topics/sentinel-nat-topic"
+    filter           = "log_id(\"compute.googleapis.com/nat_flows\")"
+    include_children = true
+  }
+}
+
+// ---- the grants, one pair per stream --------------------------------------------
+// Non-authoritative on purpose: Microsoft's own configurations grant publisher with
+// `google_project_iam_binding`, which is authoritative for the whole role in the
+// project — the second source applied REMOVES the first sink's writer identity and
+// delivery stops without an error. Four streams would have broken three of them.
+
+google_pubsub_topic_iam_member {
+  sentinel_vpcflow_writer {
+    topic   = "${{google_pubsub_topic.sentinel_vpcflow.name}}"
+    project = sentinel_project_id
+    role    = "roles/pubsub.publisher"
+    member  = "${{google_logging_organization_sink.sentinel_vpcflow.writer_identity}}"
+  }
+  sentinel_firewall_writer {
+    topic   = "${{google_pubsub_topic.sentinel_firewall.name}}"
+    project = sentinel_project_id
+    role    = "roles/pubsub.publisher"
+    member  = "${{google_logging_organization_sink.sentinel_firewall.writer_identity}}"
+  }
+  sentinel_dns_writer {
+    topic   = "${{google_pubsub_topic.sentinel_dns.name}}"
+    project = sentinel_project_id
+    role    = "roles/pubsub.publisher"
+    member  = "${{google_logging_organization_sink.sentinel_dns.writer_identity}}"
+  }
+  sentinel_nat_writer {
+    topic   = "${{google_pubsub_topic.sentinel_nat.name}}"
+    project = sentinel_project_id
+    role    = "roles/pubsub.publisher"
+    member  = "${{google_logging_organization_sink.sentinel_nat.writer_identity}}"
+  }
+}
+
+google_pubsub_subscription_iam_member {
+  sentinel_vpcflow_reader {
+    subscription = "${{google_pubsub_subscription.sentinel_vpcflow.name}}"
+    project      = sentinel_project_id
+    role         = "roles/pubsub.subscriber"
+    member       = "serviceAccount:${{google_service_account.sentinel.email}}"
+  }
+  sentinel_firewall_reader {
+    subscription = "${{google_pubsub_subscription.sentinel_firewall.name}}"
+    project      = sentinel_project_id
+    role         = "roles/pubsub.subscriber"
+    member       = "serviceAccount:${{google_service_account.sentinel.email}}"
+  }
+  sentinel_dns_reader {
+    subscription = "${{google_pubsub_subscription.sentinel_dns.name}}"
+    project      = sentinel_project_id
+    role         = "roles/pubsub.subscriber"
+    member       = "serviceAccount:${{google_service_account.sentinel.email}}"
+  }
+  sentinel_nat_reader {
+    subscription = "${{google_pubsub_subscription.sentinel_nat.name}}"
+    project      = sentinel_project_id
+    role         = "roles/pubsub.subscriber"
+    member       = "serviceAccount:${{google_service_account.sentinel.email}}"
+  }
+}

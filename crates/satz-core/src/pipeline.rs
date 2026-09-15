@@ -137,6 +137,11 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
     // Params may reference each other regardless of declaration order — the same
     // dependency-ordered resolution the YAML emitter uses.
     for (name, v, line) in satz::sort_params_by_deps(&file.params) {
+        // Before anything else: a param a release renamed stops the compile here,
+        // whether it is the estate's own binding or a fork's default.
+        if let Some(e) = renamed_param(name, file_name, *line) {
+            return Err(e);
+        }
         if env.contains_key(name) {
             continue; // the using document's binding wins (Default < Set)
         }
@@ -443,6 +448,32 @@ pub fn apply_suppressions(
         }
     }
     Ok(())
+}
+
+/// Params a release renamed, and what they are called now. A renamed param is a
+/// HARD ERROR wherever it is declared, because the failure it prevents is silent:
+/// nothing refuses a param no pack reads, so an estate left on the old name keeps
+/// compiling and the pack quietly uses its own default — a different project, a
+/// different bucket, an orphaned archive. Every entry stays for one release line and
+/// is removed when the fleet is past it; the rule that everyone is on the current
+/// version is what makes removal safe.
+pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[(
+    "logsink_project_name",
+    "logsink_project_id",
+    "it is the project id, and the project's display name is now `logsink_project_display_name`",
+)];
+
+/// `Some(error)` if this param name was renamed. Declared anywhere — an estate, a
+/// `.local` fork, a pack — it stops the compile and names the replacement.
+pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<PipelineError> {
+    RENAMED_PARAMS.iter().find(|(from, _, _)| *from == name).map(|(_, to, why)| PipelineError {
+        file: file.to_string(),
+        line,
+        msg: format!(
+            "param `{}` was renamed to `{}` — {}. Rename it here; a param no pack reads is not an error, so leaving it would silently take the new param's default instead.",
+            name, to, why
+        ),
+    })
 }
 
 /// Compile an estate source to per-file fragments plus the estate environment.
@@ -834,6 +865,43 @@ pub fn type_facts(tf_type: &str) -> (crate::MergeClass, crate::Scope) {
     }
 }
 
+/// How a `*_iam_member` type is written in the member-map form
+/// (`"member" = [roles…]`, language reference §6.5): scoped by the estate's
+/// organization, by its billing account, by the folder/project it is written
+/// in, or PINNED — the type's one required attribute that is neither `role`
+/// nor `member` names its scope in the map (`bucket = …`,
+/// `service_account_id = …`). `Labelled` is a grant type whose scope the
+/// schema does not single out; it is written as a labelled resource. The one
+/// rule every importer and the delta consult, so none of them keeps its own
+/// allow-list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantForm {
+    NotAGrant,
+    Org,
+    Billing,
+    Node,
+    Pinned(String),
+    Labelled,
+}
+
+pub fn grant_form(tf_type: &str, required_attrs: &[&str]) -> GrantForm {
+    if !tf_type.ends_with("_iam_member") {
+        return GrantForm::NotAGrant;
+    }
+    match tf_type {
+        "google_organization_iam_member" => GrantForm::Org,
+        "google_billing_account_iam_member" => GrantForm::Billing,
+        t if scoped_by_node(t) => GrantForm::Node,
+        _ => {
+            let pins: Vec<&str> = required_attrs.iter().copied().filter(|a| !matches!(*a, "role" | "member" | "condition")).collect();
+            match pins.as_slice() {
+                [one] => GrantForm::Pinned((*one).to_string()),
+                _ => GrantForm::Labelled,
+            }
+        }
+    }
+}
+
 /// One fragment per source file, recursively over `use`. `load` maps a use-path
 /// to source text (the bin supplies file access; this module stays pure).
 pub fn fragments_from_source(
@@ -940,6 +1008,9 @@ impl Walk<'_> {
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
         for (name, v, line) in satz::sort_params_by_deps(&file.params) {
+            if let Some(e) = renamed_param(name, file_name, *line) {
+                return Err(e);
+            }
             if self.genv.contains_key(name) {
                 continue;
             }
@@ -1514,9 +1585,9 @@ fn insert_grant(
     for r in list {
         let (role, condition, import_id) = match r {
             serde_yaml::Value::String(s) => (s, String::new(), String::new()),
-            // Conditional binding. Satz writes `{ role = "…", condition = { … } }`;
-            // the legacy YAML dialect puts the role in the key with a null value
-            // (`- roles/x:` followed by a sibling `condition:`). Both are accepted.
+            // Conditional binding: `{ role = "…", condition = { … } }`. The YAML
+            // dialect's null-valued role key is rewritten to this form by the
+            // converter, so it is the only spelling the fold reads.
             // The condition is part of the binding's IDENTITY — the emitted label
             // hashes it — so it travels with the edge through the fold.
             serde_yaml::Value::Mapping(m) => {
@@ -1547,9 +1618,6 @@ fn insert_grant(
                                 None => return perr(file_name, line, format!("grant: `role` must be a string, got {:?}", v)),
                             }
                         }
-                        // the legacy dialect's null-valued role key beside a
-                        // `condition` — the ONLY other key accepted
-                        other if v.is_null() && role.is_empty() => role = other.to_string(),
                         other => {
                             return perr(
                                 file_name,
@@ -1647,6 +1715,20 @@ pub fn fold_fragments(table: &dyn TypeTable, frags: &[Fragment]) -> Folded {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_renamed_param_is_refused_by_name_wherever_it_is_declared() {
+        // The failure this prevents is silent: nothing refuses a param no pack reads,
+        // so an estate left on the old name would compile and quietly take the new
+        // param's default — a different project, and an archive nobody writes to.
+        let err = renamed_param("logsink_project_name", "e.satz", 3).expect("the old name is refused");
+        assert!(err.msg.contains("logsink_project_id"), "the error names the new param: {}", err.msg);
+        assert!(err.msg.contains("logsink_project_display_name"), "and where the display name went: {}", err.msg);
+        assert!(err.msg.contains("silently"), "and why it is an error at all: {}", err.msg);
+        assert_eq!((err.file.as_str(), err.line), ("e.satz", 3), "with the line to edit");
+        assert!(renamed_param("logsink_project_id", "e.satz", 3).is_none(), "the new name is fine");
+        assert!(renamed_param("customer_shortname", "e.satz", 3).is_none(), "and so is every other param");
+    }
 
     #[test]
     fn a_required_choice_nobody_is_asked_is_not_a_missing_answer() {
@@ -2018,9 +2100,8 @@ google_org_policy_policy {
 
     #[test]
     fn conditional_grants_carry_their_condition_through_the_fold() {
-        // Both spellings must produce the same edge: Satz's explicit
-        // `{ role = …, condition = … }` and the legacy YAML dialect's
-        // null-valued role key with a sibling `condition:`.
+        // The explicit `{ role = …, condition = … }` object folds to one edge
+        // carrying its condition; the plain role beside it is a second edge.
         let satz_form = concat!(
             "estate e\n",
             "params { customer_organization_id = \"1\" }\n",

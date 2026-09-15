@@ -39,13 +39,22 @@ If you have an idea for a new feature or improvement, please create a new issue 
 1.  Ensure you have Rust installed (latest stable version recommended).
 2.  Clone the repository.
 3.  Run `cargo build` to verify the build.
-4.  Run `cargo test` to run the test suite.
+4.  Run `cargo test --workspace --locked` to run the test suite.
+5.  CI runs four jobs on every push and pull request, and a pull request
+    merges only when all four pass: the privacy gate (`scripts/check-names.sh`,
+    see below), the grammar parse (`scripts/check-grammar.sh`: every Satz file
+    parses with the pinned tree-sitter grammar), `checks` (`cargo clippy
+    --workspace --all-targets -- -D warnings`, where a warning is a failure,
+    and `cargo test --workspace --locked`), and the smoke matrix
+    (`scripts/smoke.sh`, which runs every estate-consuming command end to end
+    against `tests/smoke/`). Run them before opening a pull request.
 
 ## Coding Standards
 
 -   Follow standard Rust idioms and best practices.
 -   Use `cargo fmt` to format your code before committing.
--   Use `cargo clippy` to catch common mistakes and improve code quality.
+-   `cargo clippy --workspace --all-targets -- -D warnings` must be clean;
+    CI denies warnings.
 
 ## Decisions
 
@@ -65,9 +74,14 @@ neutral — it names nobody — and rejects:
 
 - identifiers that are not one of the documented example values in
   `docs/examples.md`: Google Workspace directory ids (`C0…`),
-  organisation / project / folder numbers, billing accounts;
-- e-mail addresses and domains that are neither IANA-reserved
-  (`example.com`, `.example`, `.test`, …) nor a known vendor host;
+  organisation / project / folder numbers, billing accounts, GUIDs and
+  their dashless 32-hex form, project ids in `projects/…`, `project = …`
+  and `--project`;
+- e-mail addresses, domains that are neither IANA-reserved
+  (`example.com`, `.example`, `.test`, …) nor a known vendor host,
+  repository URLs and checkout paths;
+- local files, if they are ever staged: `CLAUDE.local.md`, `*.local.md`,
+  `.claude/`, `attestations.yaml`, `evidence/`;
 - commits whose author or committer is not a GitHub noreply address
   (`<id>+<user>@users.noreply.github.com` — enable "keep my email address
   private" in your GitHub settings) or the maintainer's address.

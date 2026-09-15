@@ -11,7 +11,7 @@ Defender onboards a GCP organization through workload identity federation:
 no service-account keys leave the estate. Microsoft's portal generates a
 per-customer Terraform/gcloud script; this pack is that script as Satz, with
 the customer-specific values as params and Microsoft's own values inlined —
-they are the same for every customer and are NOT knobs.
+they are the same for every customer and are not params.
 
 This file is the foundation every Defender deployment needs: the management
 project, its APIs, the workload identity pool, and the auto-provisioner plan
@@ -30,8 +30,7 @@ project and its complete API list, and each plan fragment declares its own
 resources at top level, naming the project through `mdc_mgmt_project_id`.
 
 NO CLAIM is made here. Defender for Cloud is an external CSPM that READS the
-estate; it implements no CIS control and contributes to none. A pack that
-claimed one would be asserting compliance it does not create.
+estate; it implements no CIS control and contributes to none.
 
 BEFORE THE FIRST APPLY, two estate-side prerequisites:
 1. The Defender agentless-scanning service account lives in a Microsoft
@@ -123,6 +122,10 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The scanning service account belongs to a Microsoft-owned project, so it must be in the CIS pack's `allowed_policy_member_subjects` BEFORE any grant to it is applied — otherwise the domain-restriction policy refuses the grant and the connector never finishes.
+
+This is the foundation: the project, the workload identity pool and the CSPM plan's `oneof`. The plan fragments themselves are added to the estate by hand — [`…cspm`](microsoft-defender-for-cloud-cspm.md) with one of the two role fragments.
+
+Defender reads the estate; it makes no claims, and nothing here is a compliance witness.
 
 <!-- notes:end -->

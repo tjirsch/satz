@@ -84,8 +84,35 @@ fn is_container_key(k: &str) -> bool {
     matches!(k, "folder" | "project" | "google_folder" | "google_project")
 }
 
+/// Every `*_iam_member` key holds grant maps: member → roles, as one map
+/// (scoped by the node) or as a list of maps each pinned to its scope
+/// (`bucket = …`) — the same rule the importer writes by (`grant_form`).
 fn is_grant_map_key(k: &str) -> bool {
-    k.ends_with("_iam_member") && k != "google_storage_bucket_iam_member" && k != "storage_bucket_iam_member"
+    k.ends_with("_iam_member")
+}
+
+/// Subtract the declared grant edges from one member map; `true` when the
+/// map holds no member line any more.
+fn prune_members(members: &mut serde_yaml::Mapping, declared: &Declared, delta: &mut Delta) -> bool {
+    let member_keys: Vec<serde_yaml::Value> = members.keys().cloned().collect();
+    for mk in member_keys {
+        if let Some(serde_yaml::Value::Sequence(roles)) = members.get_mut(&mk) {
+            roles.retain(|r| match import_id_of(r).and_then(|id| declared.ids.get(&id).map(|a| (id, a.clone()))) {
+                Some((id, address)) => {
+                    delta.already.push((id, address));
+                    false
+                }
+                None => {
+                    delta.new += 1;
+                    true
+                }
+            });
+            if roles.is_empty() {
+                members.remove(&mk);
+            }
+        }
+    }
+    !members.values().any(|v| matches!(v, serde_yaml::Value::Sequence(_)))
 }
 
 /// Subtract the declared ids from a discovered document (the `Config` as YAML).
@@ -165,28 +192,23 @@ fn prune(map: &mut serde_yaml::Mapping, declared: &Declared, project_ctx: Option
             continue;
         }
         if is_grant_map_key(&k) {
-            if let serde_yaml::Value::Mapping(members) = value {
-                let member_keys: Vec<serde_yaml::Value> = members.keys().cloned().collect();
-                for mk in member_keys {
-                    if let Some(serde_yaml::Value::Sequence(roles)) = members.get_mut(&mk) {
-                        roles.retain(|r| match import_id_of(r).and_then(|id| declared.ids.get(&id).map(|a| (id, a.clone()))) {
-                            Some((id, address)) => {
-                                delta.already.push((id, address));
-                                false
-                            }
-                            None => {
-                                delta.new += 1;
-                                true
-                            }
-                        });
-                        if roles.is_empty() {
-                            members.remove(&mk);
-                        }
+            match value {
+                serde_yaml::Value::Mapping(members) => {
+                    if prune_members(members, declared, delta) {
+                        map.remove(&key);
                     }
                 }
-                if members.is_empty() {
-                    map.remove(&key);
+                // pinned maps: one per scope; a map left with only its pin goes
+                serde_yaml::Value::Sequence(maps) => {
+                    maps.retain_mut(|m| match m.as_mapping_mut() {
+                        Some(members) => !prune_members(members, declared, delta),
+                        None => true,
+                    });
+                    if maps.is_empty() {
+                        map.remove(&key);
+                    }
                 }
+                _ => {}
             }
             continue;
         }
@@ -265,7 +287,7 @@ pub(crate) fn add_use(estate_text: &str, pack: &str, after_line: Option<u32>) ->
             lines.push(use_line);
         }
         Some(n) => {
-            let idx = n as usize - 1;
+            let idx = (n as usize).checked_sub(1).ok_or_else(|| format!("line {} is not a line of the estate", n))?;
             let decl = lines.get(idx).ok_or_else(|| format!("line {} is past the end of the estate", n))?;
             if !decl.trim_end().ends_with('{') {
                 return Err(format!("line {} does not open a block: {}", n, decl.trim()));
@@ -345,6 +367,40 @@ mod tests {
             d.containers.insert(id.to_string(), (a.to_string(), Some(("main.satz".into(), *line))));
         }
         d
+    }
+
+    #[test]
+    fn a_declared_edge_leaves_its_pinned_map_and_an_emptied_map_goes() {
+        let top = y(r#"
+project:
+  p:
+    import-id: p
+    project_id: p
+    google_storage_bucket_iam_member:
+      - bucket: a
+        "group:x@example.com":
+          - { role: roles/storage.objectViewer, import-id: "b/a roles/storage.objectViewer group:x@example.com" }
+          - { role: roles/storage.admin, import-id: "b/a roles/storage.admin group:x@example.com" }
+      - bucket: b
+        "group:x@example.com":
+          - { role: roles/storage.objectViewer, import-id: "b/b roles/storage.objectViewer group:x@example.com" }
+"#);
+        let d = subtract(
+            top,
+            &declared(
+                &[
+                    ("b/a roles/storage.objectViewer group:x@example.com", "google_storage_bucket_iam_member.x1"),
+                    ("b/b roles/storage.objectViewer group:x@example.com", "google_storage_bucket_iam_member.x2"),
+                ],
+                &[("p", "google_project.p", 3)],
+            ),
+        );
+        assert_eq!(d.already.len(), 3, "{:?}", d.already);
+        assert_eq!(d.new, 1);
+        let under = d.under.get("google_project.p").expect("the residue sits under the declared project");
+        let maps = under.get("google_storage_bucket_iam_member").and_then(|v| v.as_sequence()).expect("one map left");
+        assert_eq!(maps.len(), 1, "bucket b's map is emptied and gone: {:?}", maps);
+        assert_eq!(maps[0].as_mapping().unwrap().get("bucket").unwrap().as_str(), Some("a"));
     }
 
     #[test]

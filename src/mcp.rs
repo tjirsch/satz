@@ -60,13 +60,10 @@ pub(crate) enum Group {
     Read,
     /// writes files inside the estate
     Write,
-    /// Runs an external tool, or changes a live organisation. Grantable today
-    /// (`--allow exec`) but claimed by no tool yet, deliberately: an exec tool
-    /// must CAPTURE its child's output. `tofu` and Checkov inherit stdio from
-    /// the CLI, and here stdout is the protocol — a child writing to it is a
-    /// corrupt JSON-RPC stream, not interleaved logs. That plumbing comes with
-    /// the first exec tool rather than being hurried in beside the transport.
-    #[allow(dead_code)]
+    /// Runs an external tool (Checkov), or changes a live organisation. An exec
+    /// tool captures its child's output and gives it no stdin: here stdout is the
+    /// protocol and stdin the request stream, so a child inheriting either
+    /// corrupts the JSON-RPC session.
     Exec,
 }
 
@@ -157,6 +154,96 @@ struct Ctx {
     /// what `satz_open` last opened; nothing until a client opens something
     open: Mutex<Option<Open>>,
 }
+
+/// How each CLI command reaches an agent: the MCP tool(s) that serve it, or the
+/// reason it is not served. Exposing a command over MCP is a decision, and so is
+/// not exposing one — `mcp_parity_is_decided` fails on a command this table does
+/// not name, the way `IDENTITIES` fails on a command that declares no identity.
+pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
+    // --- served -------------------------------------------------------------
+    ("transpile", Parity::Tools(&["satz_transpile", "satz_transpile_check"])),
+    ("require", Parity::Tools(&["satz_require"])),
+    ("report-compliance", Parity::Tools(&["satz_report_compliance"])),
+    ("questions", Parity::Tools(&["satz_questions"])),
+    ("interview", Parity::Tools(&["satz_interview"])),
+    ("triage", Parity::Tools(&["satz_triage"])),
+    ("prowler", Parity::Tools(&["satz_prowler"])),
+    ("remediation-plan", Parity::Tools(&["satz_remediation_items", "satz_remediation_annotate"])),
+    ("scan", Parity::Tools(&["satz_scan_checkov"])),
+    ("check-presets", Parity::Tools(&["satz_check_presets"])),
+    ("get-presets", Parity::Tools(&["satz_get_presets"])),
+    ("adopt", Parity::Tools(&["satz_adopt"])),
+    ("iac-roles", Parity::Tools(&["satz_iac_roles"])),
+    ("whoami", Parity::Tools(&["satz_whoami"])),
+    ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
+    // --- not served ---------------------------------------------------------
+    ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
+    ("fmt", Parity::Off("it rewrites files on disk; an agent writes Satz the guide's way and `satz_transpile_check` judges it")),
+    ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; `--from-live` runs as the human, before there is an estate")),
+    ("bootstrap", Parity::Off("day 0: it creates the folder, project and state bucket as the human, after an interactive pre-flight")),
+    ("plan", Parity::Off("it hands stdio to the tool; an agent runs tofu itself")),
+    ("apply", Parity::Off("it hands stdio to the tool, approval prompt included")),
+    ("hcl-init", Parity::Off("it hands stdio to the tool")),
+    ("import", Parity::Off("the live sweep runs for minutes and rewrites the estate; there is no report to return yet")),
+    ("adopt-org-policies", Parity::Off("the alias also imports and activates; `satz_adopt` serves the resolution, the writing half stays with the human")),
+    ("run-actions", Parity::Off("it runs the estate's deployment steps against the organisation")),
+    ("export-organizational-policies", Parity::Off("it writes a preset from a live organisation; `satz_report_compliance` answers what an agent asks of live policy")),
+    ("diff-organizational-policies", Parity::Off("the compliance plane compares policies by value over MCP; the specialist diff is a console report")),
+    ("report-organizational-policies", Parity::Off("a rendered human report (markdown, PDF)")),
+    ("migrate", Parity::Off("a one-off switch of deployment_mode — an estate edit")),
+    ("update-schema", Parity::Off("it refreshes the provider schema cache: environment setup, not estate work")),
+    ("map-types", Parity::Off("it derives type-map.yaml from the Discovery Documents — a maintainer refresh of shipped data")),
+    ("scan-plan", Parity::Off("plan-JSON plumbing for a tofu workflow MCP does not drive")),
+    ("generate-migration", Parity::Off("it writes a state-mv script for a human to read and run")),
+    ("doc-packs", Parity::Off("it regenerates the pack pages in the repository; `--check` is a repository gate")),
+    ("self-update", Parity::Off("it replaces the binary")),
+    ("completion", Parity::Off("a shell affordance")),
+    ("open-readme", Parity::Off("it opens a browser")),
+    ("help", Parity::Off("clap prints it")),
+    ("mcp", Parity::Off("this is the server")),
+];
+
+/// The satz command each tool stands for, so an agent that knows the CLI can
+/// find the tool for what it wants: `transpile -> satz_transpile,
+/// satz_transpile_check; require -> satz_require; …`.
+fn served_by() -> String {
+    let mut rows: Vec<String> = MCP_PARITY
+        .iter()
+        .filter_map(|(c, p)| match p {
+            Parity::Tools(ts) => Some(format!("{} -> {}", c, ts.join(", "))),
+            Parity::Off(_) => None,
+        })
+        .collect();
+    rows.sort();
+    rows.join("; ")
+}
+
+/// The commands an agent cannot run here, each with the reason: an agent that
+/// knows what is missing asks for it instead of improvising a way around it
+/// (writing HCL by hand because `apply` is absent, say). The terminal's own
+/// affordances are left out — nothing an agent would reach for.
+fn not_served() -> String {
+    let mut rows: Vec<String> = MCP_PARITY
+        .iter()
+        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "fmt" | "lsp"))
+        .filter_map(|(c, p)| match p {
+            Parity::Off(why) => Some(format!("{} ({})", c, why)),
+            Parity::Tools(_) => None,
+        })
+        .collect();
+    rows.sort();
+    rows.join("; ")
+}
+
+/// A command's MCP exposure: the tools that serve it, or why none does.
+pub(crate) enum Parity {
+    Tools(&'static [&'static str]),
+    Off(&'static str),
+}
+
+/// Tools with no CLI command behind them: the session and capability plumbing
+/// MCP needs and a terminal does not.
+pub(crate) const MCP_ONLY: &[&str] = &["satz_open", "satz_estates", "satz_restrict"];
 
 #[derive(Clone)]
 pub(crate) struct SatzMcp {
@@ -284,8 +371,158 @@ pub(crate) struct TriageArgs {
     pub estate: Option<String>,
     /// Catalog id, e.g. `cis-gcp-4.0`
     pub framework: String,
-    /// Prowler export (OCSF or legacy JSON), a path under the server's root
+    /// Prowler 5 OCSF export (`--output-formats json-ocsf`), a path under the server's root
     pub prowler: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct RemediationArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Catalog id, e.g. `cis-gcp-4.0`
+    pub framework: String,
+    /// Prowler 5 OCSF export (`--output-formats json-ocsf`), a path under the server's root
+    pub prowler: String,
+    /// Also run Checkov over hcl_dir and join its findings — needs the 'exec'
+    /// capability. It changes the dossier and its hash: author and render with the
+    /// same choice.
+    #[serde(default)]
+    pub checkov: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct AnnotateArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Catalog id, e.g. `cis-gcp-4.0`
+    pub framework: String,
+    /// Prowler 5 OCSF export, a path under the server's root — the one the items came from
+    pub prowler: String,
+    /// Whether the items were built with Checkov joined (needs 'exec' when true)
+    #[serde(default)]
+    pub checkov: bool,
+    /// The run directory to write into, a path under the server's root; created when absent
+    pub out: String,
+    /// The dossier sha256 the values were written against, from `satz_remediation_items`
+    pub dossier_sha256: String,
+    /// Authored values per item id (`F-0001`). `authored_by` and `authored_at` are
+    /// mandatory on every entry.
+    pub items: BTreeMap<String, crate::dossier::AuthoredItem>,
+}
+
+/// The dossier's items: the worklist for the `[Authored]` columns.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct RemediationItems {
+    pub framework: String,
+    pub estate: String,
+    /// What authored values must name to be accepted.
+    pub dossier_sha256: String,
+    pub summary: crate::dossier::Summary,
+    pub items: Vec<crate::dossier::Item>,
+    /// FAIL findings per Prowler check that map to no control of the framework
+    pub prowler_unmapped: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct AnnotateReport {
+    pub out: String,
+    pub dossier_sha256: String,
+    /// authored items on file after this call
+    pub authored_items: usize,
+    pub written: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct AdoptArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Resource types to adopt, e.g. `google_org_policy_policy`; empty means all
+    #[serde(default)]
+    pub only: Vec<String>,
+    /// Write the verified ids into the estate as `"import-id"` — needs 'write'
+    #[serde(default)]
+    pub execute: bool,
+}
+
+/// What `satz_adopt` found, and with `execute` what it wrote.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct AdoptReport {
+    pub estate: String,
+    pub declared: usize,
+    pub rows: Vec<crate::adopt::AdoptRow>,
+    /// The counts line: to import, to move, already managed, …
+    pub summary: String,
+    /// Rows that did not answer — failed, unresolvable, ambiguous, no rule.
+    /// `execute` is refused while any exist.
+    pub unanswered: usize,
+    /// Live objects the estate declares under two addresses. `execute` is
+    /// refused while any exist.
+    pub move_conflicts: Vec<MoveConflict>,
+    /// The state could not be read, so no row says "already managed".
+    pub state_note: Option<String>,
+    /// With `execute`: the `"import-id"` lines written into the estate.
+    pub written: Vec<String>,
+    pub hints: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MoveConflict {
+    pub address: String,
+    /// the address the estate still declares for the same live object
+    pub also_declared: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct GetPresetsArgs {
+    /// Overwrite packs the estate uses when upstream changed them; without it
+    /// they are refused and left alone
+    #[serde(default)]
+    pub force: bool,
+    /// A pristine library under the server's root to copy from instead of downloading
+    #[serde(default)]
+    pub pristine_dir: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct MergePresetsArgs {
+    /// A pristine library under the server's root to compare against instead of
+    /// downloading upstream
+    #[serde(default)]
+    pub pristine_dir: Option<String>,
+    /// The estate whose `use` graph decides which packs are protected; the open
+    /// estate when omitted
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Report what would happen and write nothing
+    #[serde(default)]
+    pub report_only: bool,
+    /// Take upstream in place for these pack stems instead of forking them —
+    /// `all` for every pack that is merely behind
+    #[serde(default)]
+    pub adopt: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct IacRolesArgs {
+    /// The estate to check; the open estate when omitted
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Write the missing roles into the estate file and re-check
+    #[serde(default)]
+    pub execute: bool,
+}
+
+/// The roles an estate's IaC service account needs against the ones it grants,
+/// and — with `execute` — the grants written into the estate.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct IacRolesResult {
+    pub report: crate::IacRolesReport,
+    /// the grant lines `execute` wrote; empty without it, and empty when
+    /// nothing was missing
+    pub written: Vec<String>,
 }
 
 /// What a compile produced. The addresses are the estate's emitted resources —
@@ -294,6 +531,38 @@ pub(crate) struct TriageArgs {
 pub(crate) struct CompileSummary {
     pub estate: String,
     pub addresses: Vec<String>,
+    /// the files `satz_transpile` wrote; empty for a check
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub written: Vec<String>,
+    /// what the compile found and did not refuse on — the warnings and notes the
+    /// CLI prints — as data, each at the file and line it names; empty when there is
+    /// nothing to say
+    pub findings: Vec<crate::findings::Finding>,
+}
+
+/// Checkov over the estate's emitted HCL: the counts, and each failed check with
+/// the Satz block that declared the resource.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ScanReport {
+    pub estate: String,
+    pub hcl_dir: String,
+    pub checkov_version: String,
+    pub passed: u64,
+    pub failed: u64,
+    pub skipped: u64,
+    pub resource_count: u64,
+    pub findings: Vec<ScanFinding>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ScanFinding {
+    pub check_id: String,
+    pub check_name: String,
+    /// Terraform address, `google_storage_bucket.audit_logs`
+    pub resource: String,
+    /// the Satz file and line that declared the resource, when the compile knows it
+    pub declared_at: Option<String>,
+    pub guideline: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -394,6 +663,25 @@ const DOCS: &[Doc] = &[
 /// retry the former and give up on the latter.
 fn refused(msg: String) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(msg)])
+}
+
+/// A refusal that also hands over what the compile found, so a client can show
+/// each error at its own line instead of parsing the text. The text is the one
+/// `refused` carries; the structure is a `CompileSummary` with nothing emitted,
+/// so it conforms to the schema the tool publishes.
+fn refused_with_findings(msg: String, estate: &std::path::Path, e: &(dyn std::error::Error + 'static)) -> CallToolResult {
+    let findings = crate::findings::refusal_findings(e);
+    let mut result = refused(msg);
+    if !findings.is_empty() {
+        let summary = CompileSummary {
+            estate: estate.display().to_string(),
+            addresses: Vec::new(),
+            written: Vec::new(),
+            findings,
+        };
+        result.structured_content = serde_json::to_value(summary).ok();
+    }
+    result
 }
 
 /// Every `config.toml` under `root`, depth-limited and blind to the directories
@@ -534,7 +822,11 @@ impl SatzMcp {
         let resolved = p
             .canonicalize()
             .map_err(|e| refused(format!("{}: {}", p.display(), e)))?;
-        let root = self.ctx.root.canonicalize().unwrap_or_else(|_| self.ctx.root.clone());
+        let root = self
+            .ctx
+            .root
+            .canonicalize()
+            .map_err(|e| refused(format!("server root {}: {}", self.ctx.root.display(), e)))?;
         if !resolved.starts_with(&root) {
             return Err(refused(format!(
                 "{} is outside the server's root ({}) — refused",
@@ -692,8 +984,10 @@ impl SatzMcp {
         name = "satz_questions",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::questions::QuestionsReport>(),
         description = "What this estate can be asked: every question its packs declare, joined with the \
-                       answers its params already carry, and what changing each answer would cost. \
-                       Offline and schema-free.",
+                       answers its params already carry, why each is asked, and what changing each answer \
+                       would cost. This is the catalog's data — an agent renders its own; the CLI's \
+                       `--format markdown` and `--format xlsx` write the two a human is handed. Offline and \
+                       schema-free.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn questions(
@@ -759,7 +1053,7 @@ impl SatzMcp {
                 return Ok(Err(r));
             }
             let stem = named.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
-            if let Err(e) = crate::fsx::write(&named, crate::template::skeleton(stem)) {
+            if let Err(e) = crate::fsx::write_generated_satz(&named, &crate::template::skeleton(stem)) {
                 return Ok(Err(refused(format!("{}: {}", named.display(), e))));
             }
             created = true;
@@ -831,9 +1125,37 @@ impl SatzMcp {
             &manifest,
             &prowler,
         ) {
-            Ok((_catalog, rows)) => Ok(Ok(Json(rows))),
+            Ok(t) => Ok(Ok(Json(t.rows))),
             Err(e) => Ok(Err(refused(format!("triage: {}", e)))),
         }
+    }
+
+    #[tool(
+        name = "satz_prowler",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::prowler::ProwlerPlan>(),
+        description = "The Prowler invocation THIS estate needs: which frameworks, which projects, \
+                       which output path — read from what the estate declares. It PRINTS the command; \
+                       satz never runs Prowler, and neither does this tool. Run the command yourself, \
+                       then feed its export to satz_report_compliance.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn prowler(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<crate::prowler::ProwlerPlan>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let (manifest, claims, org) = match self.inputs(&open, &estate) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let today = crate::prowler::today_utc();
+        Ok(Ok(Json(crate::prowler::plan(&manifest, &claims, org.as_deref(), &today))))
     }
 
     #[tool(
@@ -858,8 +1180,14 @@ impl SatzMcp {
             Ok(out) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
+                written: Vec::new(),
+                findings: out.findings,
             }))),
-            Err(e) => Ok(Err(refused(format!("transpile --check: {}", e)))),
+            Err(e) => Ok(Err(refused_with_findings(
+                format!("transpile --check: {}", e),
+                &estate,
+                e.as_ref(),
+            ))),
         }
     }
 
@@ -913,13 +1241,402 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
-            Ok(out) => Ok(Ok(Json(CompileSummary {
+        let out = match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
+            Ok(out) => out,
+            Err(e) => {
+                return Ok(Err(refused_with_findings(format!("transpile: {}", e), &estate, e.as_ref())));
+            }
+        };
+        // The directory, or the part of it that exists, must be inside the root.
+        let dir = PathBuf::from(&open.runtime.hcl_dir);
+        let existing = dir.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| dir.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let label = estate.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        match crate::write_hcl(&out, &dir, &label) {
+            Ok(written) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
+                written: written.iter().map(|p| p.display().to_string()).collect(),
+                findings: out.findings.clone(),
             }))),
             Err(e) => Ok(Err(refused(format!("transpile: {}", e)))),
         }
+    }
+
+    /// The dossier for a remediation tool: the estate's compile, the Prowler export,
+    /// and Checkov when asked for (which needs 'exec').
+    async fn remediation(
+        &self,
+        estate: Option<&str>,
+        framework: &str,
+        prowler: &str,
+        checkov: bool,
+    ) -> Result<crate::compliance::RemediationRun, CallToolResult> {
+        if checkov {
+            self.permits(Group::Exec)?;
+        }
+        let (open, estate) = self.target(estate)?;
+        let prowler = self.file(prowler)?;
+        let (manifest, claims, _org) = self.inputs(&open, &estate)?;
+        let report = if checkov {
+            let dir = self.confine(PathBuf::from(&open.runtime.hcl_dir))?;
+            match tokio::task::spawn_blocking(move || crate::scan::run(&dir)).await {
+                Ok(Ok(r)) => Some(r),
+                Ok(Err(e)) => return Err(refused(format!("checkov: {}", e))),
+                Err(e) => return Err(refused(format!("checkov did not finish: {}", e))),
+            }
+        } else {
+            None
+        };
+        crate::compliance::remediation_run(framework, &open.runtime.presets_dir, &claims, &manifest, &estate, &prowler, report.as_ref())
+            .map_err(|e| refused(format!("remediation: {}", e)))
+    }
+
+    #[tool(
+        name = "satz_remediation_items",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<RemediationItems>(),
+        description = "The remediation dossier's items for an estate and a Prowler export: every finding \
+                       triaged, deduplicated and joined per (control, resource), with the dossier sha256 \
+                       authored values must name. The worklist for the [Authored] columns — write them back \
+                       with satz_remediation_annotate. Offline; `checkov: true` joins a Checkov run and needs 'exec'.",
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn remediation_items(
+        &self,
+        Parameters(args): Parameters<RemediationArgs>,
+    ) -> Result<Result<Json<RemediationItems>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov).await {
+            Ok(r) => r,
+            Err(r) => return Ok(Err(r)),
+        };
+        Ok(Ok(Json(RemediationItems {
+            framework: run.framework,
+            estate: run.estate,
+            dossier_sha256: run.hash,
+            summary: run.dossier.summary,
+            items: run.dossier.items,
+            prowler_unmapped: run.prowler_unmapped,
+        })))
+    }
+
+    #[tool(
+        name = "satz_remediation_annotate",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<AnnotateReport>(),
+        description = "Write authored values for dossier items into <out>/authored.json — merged per item id \
+                       with what is on file — and render the run there: dossier.json, findings.csv, \
+                       findings.xlsx with the [Authored] columns filled, meta.json. Refused when dossier_sha256 \
+                       is not the current dossier's, an id is unknown, or an entry lacks authored_by or \
+                       authored_at. Needs the 'write' capability.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn remediation_annotate(
+        &self,
+        Parameters(args): Parameters<AnnotateArgs>,
+    ) -> Result<Result<Json<AnnotateReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov).await {
+            Ok(r) => r,
+            Err(r) => return Ok(Err(r)),
+        };
+        let out = self.ctx.root.join(&args.out);
+        let existing = out.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| out.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let on_file = out.join("authored.json");
+        let mut authored = if on_file.is_file() {
+            match crate::compliance::read_authored(&on_file) {
+                Ok(a) => a,
+                Err(e) => return Ok(Err(refused(e.to_string()))),
+            }
+        } else {
+            crate::dossier::Authored::default()
+        };
+        let new = crate::dossier::Authored { dossier_sha256: args.dossier_sha256, items: args.items };
+        if let Err(e) = authored.merge(new) {
+            return Ok(Err(refused(format!("{}: {}", on_file.display(), e))));
+        }
+        if let Err(e) = crate::dossier::check_authored(&run.dossier, &run.hash, &authored) {
+            return Ok(Err(refused(e)));
+        }
+        match crate::compliance::write_remediation(&run, &out, Some(&authored)) {
+            Ok(written) => Ok(Ok(Json(AnnotateReport {
+                out: out.display().to_string(),
+                dossier_sha256: run.hash,
+                authored_items: authored.items.len(),
+                written: written.iter().map(|p| p.display().to_string()).collect(),
+            }))),
+            Err(e) => Ok(Err(refused(format!("remediation: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_adopt",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<AdoptReport>(),
+        description = "Resolve every resource the estate declares against the LIVE organisation — natural-key \
+                       lookups and the import-config rules — and say per resource whether it would be imported, \
+                       moved in the state, is already managed, or cannot be resolved. With `execute` (needs \
+                       'write') it writes the verified ids into the estate as \"import-id\". Running `tofu \
+                       import`, a state move or activating a managed constraint stays on the command line \
+                       (`satz adopt --execute --import`). Runs as the estate's service account.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn adopt(
+        &self,
+        Parameters(args): Parameters<AdoptArgs>,
+    ) -> Result<Result<Json<AdoptReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(if args.execute { Group::Write } else { Group::Read }) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        // The lookups read the live organisation as THIS estate's service account,
+        // for the duration of this call only.
+        let plan = match crate::gcp::with_identity(
+            Self::identity_of(&open),
+            crate::adopt_plan(&estate, args.only, false, &open.tool, &open.runtime),
+        )
+        .await
+        {
+            Ok(p) => p,
+            Err(e) => return Ok(Err(refused(format!("adopt: {}", e)))),
+        };
+        let in_state = plan.state.clone().unwrap_or_default();
+        let unanswered = crate::adopt::unanswered(&plan.resolutions, &in_state);
+        let conflicts = crate::adopt::move_conflicts(&plan.resolutions, &in_state);
+        let mut report = AdoptReport {
+            estate: estate.display().to_string(),
+            declared: plan.out.manifest.resources.len(),
+            rows: crate::adopt::rows(&plan.resolutions, &in_state, &plan.out.manifest),
+            summary: crate::adopt::summary(&plan.resolutions, &in_state),
+            unanswered,
+            move_conflicts: conflicts
+                .iter()
+                .map(|(address, also)| MoveConflict { address: address.clone(), also_declared: also.clone() })
+                .collect(),
+            state_note: plan.state.as_ref().err().map(|e| {
+                format!(
+                    "the state could not be read ({}), so nothing is marked as already managed",
+                    e.lines().next().unwrap_or("(no output)")
+                )
+            }),
+            written: Vec::new(),
+            hints: Vec::new(),
+        };
+        if args.execute {
+            if unanswered > 0 || !conflicts.is_empty() {
+                return Ok(Err(refused(format!(
+                    "adopt: {} row(s) did not answer and {} live object(s) are declared twice — nothing was written; \
+                     run without `execute` to see the rows",
+                    unanswered,
+                    conflicts.len()
+                ))));
+            }
+            match crate::adopt::write_import_ids(&plan.resolutions, Some(std::path::Path::new(&open.runtime.presets_dir))) {
+                Ok((written, hints)) => {
+                    report.written = written;
+                    report.hints = hints;
+                }
+                Err(e) => return Ok(Err(refused(format!("adopt: {}", e)))),
+            }
+        }
+        Ok(Ok(Json(report)))
+    }
+
+    #[tool(
+        name = "satz_merge_presets",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::presets::MergeReport>(),
+        description = "Reconcile the estate's preset library with upstream: install what is missing, take doc \
+                       and format changes silently, and for a pack the estate USES that changed semantically \
+                       fork it to `X.local.satz` and repoint the estate — proving the repoint by transpile \
+                       identity. `adopt` takes upstream in place for the packs named (`all` for every pack \
+                       merely behind) and reports the emission delta instead. `report_only` writes nothing. \
+                       The answer is the run as events in walk order, plus the counts and `attention`, which \
+                       is what the command exits non-zero on. Needs the 'write' capability; `report_only` \
+                       still needs it, because the walk fetches upstream.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn merge_presets(
+        &self,
+        Parameters(args): Parameters<MergePresetsArgs>,
+    ) -> Result<Result<Json<crate::presets::MergeReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let presets = PathBuf::from(&open.runtime.presets_dir);
+        let existing = presets.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| presets.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let pristine = match args.pristine_dir.as_deref().map(|p| self.file(p)).transpose() {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::presets::run_merge_presets(
+            &open.runtime.presets_dir,
+            pristine,
+            Some(estate),
+            &open.tool,
+            &open.runtime,
+            args.report_only,
+            &args.adopt,
+        )
+        .await
+        {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("merge-presets: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_get_presets",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::presets::GetPresetsReport>(),
+        description = "Fetch the upstream preset library into the open estate's presets_dir: missing files \
+                       installed, identical ones left, changed ones the estate does not use refreshed. A pack \
+                       the estate USES that upstream changed is refused — merge-presets forks or adopts it — \
+                       unless `force`. Needs the 'write' capability.",
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn get_presets(
+        &self,
+        Parameters(args): Parameters<GetPresetsArgs>,
+    ) -> Result<Result<Json<crate::presets::GetPresetsReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let (open, _estate) = match self.target(None) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let presets = PathBuf::from(&open.runtime.presets_dir);
+        let existing = presets.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| presets.clone());
+        if let Err(r) = self.confine(existing) {
+            return Ok(Err(r));
+        }
+        let pristine = match args.pristine_dir.as_deref().map(|p| self.file(p)).transpose() {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::presets::get_presets(&open.runtime.presets_dir, &open.runtime, args.force, pristine).await {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("get-presets: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_iac_roles",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<IacRolesResult>(),
+        description = "The roles the estate's IaC service account needs for the resource types the estate \
+                       emits, against the roles the estate grants it: `missing` is the gap, `write` the fewest \
+                       roles that close it, `unknown_types` the emitted types the role table has no row for. \
+                       Offline. With `execute` the missing roles are written into the estate file and the \
+                       estate is re-checked — a gap that survives the write restores the file. Reading needs \
+                       'read', `execute` needs 'write'.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn iac_roles(
+        &self,
+        Parameters(args): Parameters<IacRolesArgs>,
+    ) -> Result<Result<Json<IacRolesResult>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        if args.execute {
+            if let Err(r) = self.permits(Group::Write) {
+                return Ok(Err(r));
+            }
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let report = match crate::iac_roles_report(&estate, &open.tool, &open.runtime) {
+            Ok(r) => r,
+            Err(e) => return Ok(Err(refused(format!("iac-roles: {}", e)))),
+        };
+        if !args.execute || report.missing.is_empty() {
+            return Ok(Ok(Json(IacRolesResult { report, written: Vec::new() })));
+        }
+        match crate::iac_roles_write(&estate, &report, &open.tool, &open.runtime) {
+            Ok((written, after)) => Ok(Ok(Json(IacRolesResult { report: after, written }))),
+            Err(e) => Ok(Err(refused(format!("iac-roles --execute: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_scan_checkov",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ScanReport>(),
+        description = "Run Checkov over the estate's emitted HCL (the hcl_dir satz_transpile writes) and return \
+                       every failed check with the Satz block that declared the resource. Scans what is written: \
+                       transpile first. Needs the 'exec' capability — it runs an external tool (checkov on PATH, \
+                       else uvx checkov).",
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn scan_checkov(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<ScanReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Exec) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let dir = match self.confine(PathBuf::from(&open.runtime.hcl_dir)) {
+            Ok(d) => d,
+            Err(r) => return Ok(Err(r)),
+        };
+        // The compile says which Satz block declared each resource; the scan is of
+        // the files on disk.
+        let manifest = match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
+            Ok(out) => out.manifest,
+            Err(e) => return Ok(Err(refused(format!("scan: {}", e)))),
+        };
+        let scan_dir = dir.clone();
+        let report = match tokio::task::spawn_blocking(move || crate::scan::run(&scan_dir)).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Ok(Err(refused(format!("scan: {}", e)))),
+            Err(e) => return Ok(Err(refused(format!("scan: Checkov did not finish: {}", e)))),
+        };
+        let findings = report
+            .findings
+            .iter()
+            .map(|f| ScanFinding {
+                check_id: f.check_id.clone(),
+                check_name: f.check_name.clone(),
+                resource: f.resource.clone(),
+                declared_at: manifest
+                    .resources
+                    .get(&f.resource)
+                    .and_then(|r| r.origin.as_ref())
+                    .map(|(file, line)| format!("{}:{}", file, line)),
+                guideline: f.guideline.clone(),
+            })
+            .collect();
+        Ok(Ok(Json(ScanReport {
+            estate: estate.display().to_string(),
+            hcl_dir: dir.display().to_string(),
+            checkov_version: report.version,
+            passed: report.passed,
+            failed: report.failed,
+            skipped: report.skipped,
+            resource_count: report.resource_count,
+            findings,
+        })))
     }
 
     #[tool(
@@ -1001,10 +1718,13 @@ impl SatzMcp {
         // that estate's live tools RUN as — so it is answered inside the same
         // scope they use, not merely described.
         let scoped = match self.ctx.open.lock().expect("the open lock is never poisoned").clone() {
-            Some(open) if args.estate.is_none() => Some(Self::identity_of(&open)),
+            Some(open) if args.estate.is_none() => {
+                let estate = open.estate.clone();
+                Some((Self::identity_of(&open), open, estate))
+            }
             Some(_) => match self.target(args.estate.as_deref()) {
                 Ok((open, estate)) => {
-                    Some(crate::estate_impersonation_target(&estate, &open.runtime))
+                    Some((crate::estate_impersonation_target(&estate, &open.runtime), open, estate))
                 }
                 Err(r) => return Ok(Err(r)),
             },
@@ -1013,10 +1733,17 @@ impl SatzMcp {
             None => None,
         };
         let report = match scoped {
-            Some(sa) => {
-                crate::gcp::with_identity(sa, crate::gcp::identity::whoami_report(args.offline)).await
+            Some((sa, open, estate)) => {
+                // Online, the estate's resource types say which permissions to test;
+                // an estate that does not compile still gets its identity answered.
+                let probe = if args.offline {
+                    None
+                } else {
+                    crate::iac_probe(&estate, &open.tool, &open.runtime).ok()
+                };
+                crate::gcp::with_identity(sa, crate::gcp::identity::whoami_report(args.offline, probe)).await
             }
-            None => crate::gcp::identity::whoami_report(args.offline).await,
+            None => crate::gcp::identity::whoami_report(args.offline, None).await,
         };
         match report {
             Ok(report) => Ok(Ok(Json(report))),
@@ -1114,7 +1841,14 @@ impl ServerHandler for SatzMcp {
              language reference and `satz://presets` describes the shipped packs.\n\n\
              After every edit, call satz_transpile_check before saying you are done. Never edit \
              the generated hcl/ directory, and never invent an id — resolve it with adopt or ask.\n\n\
+             The satz command behind each tool: {}. These have no command behind them — they are \
+             this session's own plumbing: {}.\n\n\
+             These satz commands are NOT available here, by decision — ask the human to run one \
+             rather than working around it: {}.\n\n\
              Capability level in force: '{}'.",
+            served_by(),
+            MCP_ONLY.join(", "),
+            not_served(),
             self.ceiling.describe()
         ));
         info
@@ -1251,6 +1985,30 @@ mod tests {
         assert!(start < end, "the announce path is no longer one contiguous region");
         regions.push(("src/gcp/identity.rs (announce path)", &identity[start..end]));
 
+        // `satz_check_presets` downloads the pristine library and compares; the
+        // download counted itself on stdout once, which corrupted the stream.
+        regions.push(("src/github.rs", include_str!("github.rs")));
+        let presets = include_str!("presets.rs");
+        let start = presets
+            .find("async fn pristine_source")
+            .expect("pristine_source moved — re-point this gate");
+        let end = presets
+            .find("pub(crate) async fn check_presets_report")
+            .and_then(|at| presets[at..].find("\n}\n").map(|e| at + e))
+            .expect("check_presets_report moved — re-point this gate");
+        regions.push(("src/presets.rs (the check-presets path)", &presets[start..end]));
+
+        // `satz_get_presets` and `satz_adopt` reach these in full.
+        let start = presets.find("pub(crate) async fn get_presets").expect("get_presets moved — re-point this gate");
+        let end = presets.find("/// What `get-presets` did to the library.").expect("GetPresetsReport moved — re-point this gate");
+        regions.push(("src/presets.rs (get_presets)", &presets[start..end]));
+        let adopt = include_str!("adopt.rs");
+        regions.push(("src/adopt.rs", adopt.split("#[cfg(test)]").next().unwrap_or(adopt)));
+        let main = include_str!("main.rs");
+        let start = main.find("pub(crate) async fn adopt_plan").expect("adopt_plan moved — re-point this gate");
+        let end = main[start..].find("\n}\n").map(|e| start + e).expect("adopt_plan has no end");
+        regions.push(("src/main.rs (adopt_plan)", &main[start..end]));
+
         for (what, src) in regions {
             for line in src.lines() {
                 let code = line
@@ -1292,5 +2050,101 @@ mod tests {
             );
             assert!(d.body().len() < d.text.len(), "{}: the trim removed nothing", d.uri);
         }
+    }
+}
+
+#[cfg(test)]
+mod parity_tests {
+    //! An agent's reach over satz is a decision per command, and the three
+    //! places that record it — this table, the registered tools, and the
+    //! documented tool list — must agree.
+    use super::*;
+    use clap::CommandFactory;
+    use std::collections::BTreeSet;
+
+    fn table_tools() -> BTreeSet<&'static str> {
+        MCP_PARITY
+            .iter()
+            .flat_map(|(_, p)| match p {
+                Parity::Tools(ts) => ts.to_vec(),
+                Parity::Off(_) => Vec::new(),
+            })
+            .chain(MCP_ONLY.iter().copied())
+            .collect()
+    }
+
+    fn registered() -> BTreeSet<String> {
+        SatzMcp::tool_router().list_all().into_iter().map(|t| t.name.to_string()).collect()
+    }
+
+    #[test]
+    fn mcp_parity_is_decided() {
+        let mut cmd = crate::Cli::command();
+        cmd.build(); // `help` is generated here
+        let cli: BTreeSet<&str> = cmd.get_subcommands().filter(|c| !c.is_hide_set()).map(|c| c.get_name()).collect();
+        let table: BTreeSet<&str> = MCP_PARITY.iter().map(|(c, _)| *c).collect();
+        let undecided: Vec<_> = cli.difference(&table).collect();
+        let unknown: Vec<_> = table.difference(&cli).collect();
+        assert!(
+            undecided.is_empty(),
+            "these commands are in no MCP_PARITY row, so whether an agent can run them is undecided: \
+             {undecided:?} — give each one a tool or the reason it has none (src/mcp.rs)"
+        );
+        assert!(unknown.is_empty(), "MCP_PARITY names commands the CLI does not have: {unknown:?}");
+        assert_eq!(MCP_PARITY.len(), table.len(), "a command has two MCP_PARITY rows");
+    }
+
+    #[test]
+    fn every_tool_is_named_by_the_table() {
+        let registered = registered();
+        let table = table_tools();
+        let missing: Vec<_> = registered.iter().filter(|t| !table.contains(t.as_str())).collect();
+        let stale: Vec<_> = table.iter().filter(|t| !registered.contains(**t)).collect();
+        assert!(
+            missing.is_empty(),
+            "these tools are served but no MCP_PARITY row (or MCP_ONLY) names them: {missing:?} — \
+             a tool an agent can call must say which command it serves"
+        );
+        assert!(stale.is_empty(), "MCP_PARITY names tools that are not registered: {stale:?}");
+    }
+
+    /// The instructions are where an agent learns what it cannot do here; a
+    /// table nothing renders would drift from the server it describes.
+    #[test]
+    fn the_instructions_name_the_tools_and_what_is_missing() {
+        let served = served_by();
+        assert!(served.contains("transpile -> satz_transpile, satz_transpile_check"), "{served}");
+        assert!(served.contains("iac-roles -> satz_iac_roles"), "{served}");
+        let off = not_served();
+        assert!(off.contains("apply (it hands stdio to the tool"), "{off}");
+        assert!(off.contains("bootstrap (day 0"), "{off}");
+        assert!(!off.contains("completion"), "the shell affordances are noise here: {off}");
+        for (c, p) in MCP_PARITY {
+            if let Parity::Off(why) = p {
+                assert!(!why.is_empty(), "{c} is not served and says no reason");
+                assert!(why.starts_with(|ch: char| ch.is_lowercase() || ch == '`'), "{c}: {why}");
+            }
+        }
+    }
+
+    /// docs/mcp.md is the tool list a client's author reads. Nothing compared it
+    /// to the server, so a tool could ship undocumented, or a removed one could
+    /// stay on the page.
+    #[test]
+    fn the_docs_name_every_tool() {
+        let doc = include_str!("../docs/mcp.md");
+        let documented: BTreeSet<String> = doc
+            .lines()
+            .filter(|l| l.trim_start().starts_with("| `satz_"))
+            .filter_map(|l| l.split('`').nth(1).map(str::to_string))
+            .collect();
+        let registered = registered();
+        let undocumented: Vec<_> = registered.difference(&documented).collect();
+        let gone: Vec<_> = documented.difference(&registered).collect();
+        assert!(
+            undocumented.is_empty(),
+            "these tools are served and docs/mcp.md's table does not list them: {undocumented:?}"
+        );
+        assert!(gone.is_empty(), "docs/mcp.md lists tools the server does not serve: {gone:?}");
     }
 }

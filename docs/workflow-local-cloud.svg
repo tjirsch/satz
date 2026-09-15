@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" width="960" height="430" role="img" aria-label="Two panels. Left, deployment_mode local, steps 1 to 3: the logged-in user's Application Default Credentials, then satz transpile writing hcl with provider blocks that impersonate nobody, then tofu plan and apply running as the user, which creates the groups, the IaC service account and its roles, then the state as a local file in hcl. Between the panels, satz migrate --mode cloud: it rewrites deployment_mode, runs tofu init -migrate-state, and re-emits the provider blocks and the gcs backend with impersonate_service_account. Right, deployment_mode cloud, from step 4: the logged-in user's credentials impersonate the IaC service account, tofu plan and apply run as that account with the provider and the backend both impersonating it, and the state lives in the GCS bucket, read and written as the service account. Footer: satz whoami prints which of the two a run uses; in satz studio the top bar's runs-as chip shows it, and migrate itself runs in the terminal.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/>
+    </marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="430" fill="#FFFFFF"/>
+
+  <!-- ===== local ===== -->
+  <rect x="20" y="20" width="380" height="360" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">DEPLOYMENT_MODE = LOCAL</text>
+  <text x="34" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">steps 1–3: as yourself</text>
+
+  <rect x="40" y="76" width="340" height="56" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="210" y="98" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">the logged-in user</text>
+  <text x="210" y="116" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">Application Default Credentials, gcloud's</text>
+  <line x1="210" y1="132" x2="210" y2="150" stroke="#1B2430" marker-end="url(#arr)"/>
+
+  <rect x="40" y="152" width="340" height="56" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="210" y="174" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">satz transpile → hcl/</text>
+  <text x="210" y="192" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">provider blocks with no impersonation</text>
+  <line x1="210" y1="208" x2="210" y2="226" stroke="#1B2430" marker-end="url(#arr)"/>
+
+  <rect x="40" y="228" width="340" height="70" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="210" y="250" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">satz plan · satz apply</text>
+  <text x="210" y="268" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">tofu runs as the user; this apply creates the identity layer:</text>
+  <text x="210" y="282" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the groups, the IaC service account, its named roles</text>
+  <line x1="210" y1="298" x2="210" y2="316" stroke="#1B2430" marker-end="url(#arr)"/>
+
+  <rect x="40" y="318" width="340" height="48" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="210" y="338" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">state: a file in hcl/</text>
+  <text x="210" y="355" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">on this machine only</text>
+
+  <!-- ===== the switch ===== -->
+  <line x1="400" y1="200" x2="558" y2="200" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+  <text x="480" y="140" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" fill="#0F766E" font-weight="500">satz migrate x.satz</text>
+  <text x="480" y="155" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" fill="#0F766E" font-weight="500">--mode cloud</text>
+  <text x="480" y="175" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">deployment_mode = cloud</text>
+  <text x="480" y="189" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">rewritten in the estate</text>
+  <text x="480" y="218" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">tofu init -migrate-state</text>
+  <text x="480" y="232" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">moves the state</text>
+  <text x="480" y="252" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">providers and backend</text>
+  <text x="480" y="266" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">re-emitted with</text>
+  <text x="480" y="280" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430" opacity="0.9">impersonate_</text>
+  <text x="480" y="293" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430" opacity="0.9">service_account</text>
+
+  <!-- ===== cloud ===== -->
+  <rect x="560" y="20" width="380" height="360" rx="6" fill="#EEF1F3" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="574" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#0F766E" font-weight="500">DEPLOYMENT_MODE = CLOUD</text>
+  <text x="574" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#0F766E">from step 4: as the service account</text>
+
+  <rect x="580" y="76" width="340" height="56" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="750" y="98" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">the logged-in user</text>
+  <text x="750" y="116" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the same credentials — now only to impersonate</text>
+  <line x1="750" y1="132" x2="750" y2="150" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+
+  <rect x="580" y="152" width="340" height="56" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="750" y="174" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#0F766E" font-weight="500">the IaC service account</text>
+  <text x="750" y="192" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">svc_iac_account in infra_project_name</text>
+  <line x1="750" y1="208" x2="750" y2="226" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+
+  <rect x="580" y="228" width="340" height="70" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="750" y="250" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#0F766E" font-weight="500">satz plan · satz apply</text>
+  <text x="750" y="268" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">tofu runs as the service account: every provider block</text>
+  <text x="750" y="282" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">and the gcs backend carry impersonate_service_account</text>
+  <line x1="750" y1="298" x2="750" y2="316" stroke="#0F766E" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+
+  <rect x="580" y="318" width="340" height="48" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="750" y="338" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#0F766E" font-weight="500">state: the GCS bucket</text>
+  <text x="750" y="355" text-anchor="middle" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">read and written as the service account, never as the human</text>
+
+  <text x="34" y="404" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">satz whoami x.satz prints which of the two a run uses. In satz studio the top bar's runs-as chip shows it; migrate itself runs in the terminal.</text>
+  <text x="34" y="420" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">After the switch, tofu refuses the next command until re-initialised; migrate runs tofu init -reconfigure itself.</text>
+</svg>

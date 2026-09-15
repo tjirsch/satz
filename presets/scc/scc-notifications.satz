@@ -1,0 +1,106 @@
+// Security Command Center findings, published to a Pub/Sub topic as they are
+// raised — the piece downstream of enablement that every customer needs.
+//
+//   use "presets/scc/scc-notifications.satz"
+//
+// A NOTIFICATION IS A CHAIN, NOT A RESOURCE. Three things have to line up, and
+// two of them are outside the notification config itself:
+//
+//   1. a Pub/Sub topic findings are published to;
+//   2. SCC's notification service agent holding
+//      `roles/securitycenter.notificationServiceAgent` on THAT topic — without
+//      the grant the config is created and never publishes;
+//   3. the notification config, which names the organisation, the topic and the
+//      filter that decides which findings travel.
+//
+// The publisher is `service-org-<organisation id>@gcp-sa-scc-notification.iam.gserviceaccount.com`
+// — the identity the config reports in its own `serviceAccount` field, not the
+// `security-center-api` agent SCC activation creates. Security Command Center
+// adds this binding itself when the config is created; the estate declares it
+// anyway, because an access the estate depends on belongs in the estate, and
+// `_iam_member` is not authoritative, so both writing it converge.
+//
+// A domain-restricted organisation permits it: `iam.managed.allowedPolicyMembers`
+// does not apply to Google-managed service agents (verified on a live
+// organisation with that policy enforcing and this agent in no subject list).
+//
+// The **v2** resource is deliberate: the v1 notification API answers "This API
+// is no longer available" on a live organisation.
+//
+// WHAT THIS DOES NOT COVER. Enabling the detectors, which has no provider
+// resource at all: `presets/scc/scc-service-enablement.satz`, an action. Use
+// both — findings nobody raises are findings nobody publishes. Who reads the
+// topic is the customer's: `presets/scc/scc-findings-mail.satz` subscribes to it
+// and mails an address for an organisation that has no SIEM, and
+// `presets/scc/scc-export.satz` keeps the findings in BigQuery. Not covered at
+// all: mute configs, custom modules and Security Posture.
+//
+// NO CLAIM. No catalog control covers Security Command Center, so this pack
+// witnesses nothing and `report-compliance` says nothing about it.
+
+pack scc_notifications version "1.2"
+
+params {
+  // The subscriber a customer attaches is theirs; the topic is the contract.
+  scc_notification_topic_name  = "{customer_shortname}-scc-findings"
+  scc_notification_project     = infra_project_name
+  scc_notification_config_id   = "satz-findings"
+  scc_notification_description = "Active findings at HIGH and CRITICAL, published by Security Command Center"
+  // SCC's own filter language, not Cloud Logging's. `state="ACTIVE"` excludes
+  // findings someone has already resolved; the severity pair is what a duty
+  // roster can answer without drowning.
+  scc_notification_filter      = "state=\"ACTIVE\" AND (severity=\"HIGH\" OR severity=\"CRITICAL\")"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question scc_notification_project {
+  prompt   = "Which project holds the topic the findings are published to?"
+  why      = "Whoever can read the topic reads every finding in the organisation, including the ones that name a misconfiguration nobody has fixed yet. The infrastructure project keeps it with the other operational plumbing; a separate security project keeps it away from whoever administers workloads. Moving it later is a new topic, and a subscriber has to be repointed."
+  reversal = recreate
+  blast    = high
+}
+
+question scc_notification_filter {
+  prompt   = "Which findings travel — everything, or only what somebody would act on tonight?"
+  why      = "Written in Security Command Center's filter language, not Cloud Logging's. Too wide and the topic is noise nobody reads; too narrow and a real finding never leaves the console. The default is active findings at HIGH and CRITICAL, which is what a duty roster can answer. Widening it later is an edit, and the findings already raised are not re-sent."
+  reversal = edit
+  blast    = low
+}
+
+// 1) The topic. It lands in the project the estate names. Nothing here subscribes
+//    to it: an estate whose customer has no SIEM adds `scc-findings-mail.satz`,
+//    which does subscribe and mails an address.
+google_pubsub_topic {
+  scc_findings {
+    name    = scc_notification_topic_name
+    project = scc_notification_project
+  }
+}
+
+// 2) The grant that makes the chain work. Without it the notification config
+//    exists, reports no error, and publishes nothing.
+google_pubsub_topic_iam_member {
+  scc_findings_publisher {
+    topic   = "${{google_pubsub_topic.scc_findings.name}}"
+    project = scc_notification_project
+    role    = "roles/securitycenter.notificationServiceAgent"
+    member  = "serviceAccount:service-org-{customer_organization_id}@gcp-sa-scc-notification.iam.gserviceaccount.com"
+  }
+}
+
+// 3) The config itself. `location` is global: SCC's v2 API keeps organisation
+//    notification configs there, and a regional value is refused.
+google_scc_v2_organization_notification_config {
+  scc_findings {
+    config_id    = scc_notification_config_id
+    organization = customer_organization_id
+    location     = "global"
+    description  = scc_notification_description
+    pubsub_topic = "${{google_pubsub_topic.scc_findings.id}}"
+
+    streaming_config {
+      filter = scc_notification_filter
+    }
+  }
+}

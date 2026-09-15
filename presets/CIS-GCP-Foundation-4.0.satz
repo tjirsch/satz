@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.7"
+pack CIS_GCP_Foundation_4_0 version "2.13"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -20,13 +20,84 @@ params {
   // fragment from presets/cis-extensions/ — see presets/README.md. Constraint
   // names and shapes were verified against a live organisation's OrgPolicy
   // ListConstraints, not transcribed from documentation.
-  cis_block_project_ssh_keys = false
-  cis_require_shielded_vm    = false
-  cis_confidential_computing = false
-  cis_cloud_sql_hardening    = false
-  cis_cmek_required          = false
-  cis_api_key_services       = false
-  cis_bucket_retention       = false
+  cis_block_project_ssh_keys                = false
+  cis_require_shielded_vm                   = false
+  cis_confidential_computing                = false
+  cis_cloud_sql_hardening                   = false
+  cis_cmek_required                         = false
+  cis_api_key_services                      = false
+  cis_bucket_retention                      = false
+  cis_access_approval                       = false
+  cis_cloud_sql_iam_and_deletion_protection = false
+
+  // ---- the rules of iam.managed.disableServiceAccountKeyCreation, so ONE principal
+  // can be let out without the control coming off for a whole folder.
+  //
+  // The default is the control, enforced, and an estate that says nothing emits exactly
+  // what it emitted before this param existed. To exempt, `use
+  // "presets/exemptions/exemption-tag.satz"`, bind the tag value to the one service
+  // account, and rebind this to the two-rule form — the conditional rule turns
+  // enforcement OFF only where the tag value is bound, the unconditional rule keeps it
+  // on everywhere else:
+  //
+  //   cis_sa_key_creation_rules = [
+  //     {
+  //       enforce = "FALSE"
+  //       condition = {
+  //         title      = "exempted service accounts"
+  //         expression = "resource.matchTagId('${{google_tags_tag_key.exemption.name}}', '${{google_tags_tag_value.exempt_service_account_keys.name}}')"
+  //       }
+  //     },
+  //     { enforce = "TRUE" },
+  //   ]
+  //
+  // `require` then reads the control as SATISFIED — the unconditional rule decides —
+  // and prints the exemption under it, so the row says both things at once. Before
+  // binding one, ask whether the consumer needs a key at all: a workload in Google
+  // Cloud, a Cloud Run service and external CI can all federate instead.
+  //
+  // This is the only constraint here whose rules are a param. The rest are written in
+  // place, because a param per constraint would put forty list-of-object blocks into
+  // every estate's terraform.tfvars for a case nobody has. Another constraint earns one
+  // the same way this did: a real organisation that needed it.
+  cis_sa_key_creation_rules = [
+    {
+      enforce = "TRUE"
+    },
+  ]
+
+  // ---- DRY RUN: measure a control against this organisation before enforcing it.
+  // A dry-run policy carries `dry_run_spec` instead of `spec`: Google evaluates
+  // every rule, writes a violation to the audit log for each action it WOULD have
+  // blocked, and blocks nothing. So "will this break us?" is answered in the
+  // organisation's own numbers instead of in an outage. Turn one on INSTEAD of its
+  // enforcing flag - both at once declares the same policy twice and is refused -
+  // read the violations in Cloud Logging (`protoPayload.metadata."@type"` =
+  // `type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo`), then promote by
+  // swapping the two. Nothing is enforced while a dry run runs, so the control
+  // reports as unmet, which is the truth. Only these six constraints support it: the
+  // legacy ones (Shielded VM, both CMEK list constraints) have no dry-run form,
+  // Access Approval is not an org policy, and the two on-by-default extensions have
+  // nothing to size.
+  cis_api_key_services_dry_run                      = false
+  cis_block_project_ssh_keys_dry_run                = false
+  cis_bucket_retention_dry_run                      = false
+  cis_cloud_sql_hardening_dry_run                   = false
+  cis_confidential_computing_dry_run                = false
+  cis_cloud_sql_iam_and_deletion_protection_dry_run = false
+
+  // The two extensions that are ON by default. The rest of the list restricts what a
+  // customer may create and waits to be asked for; these two are what an organisation
+  // is expected to have already. `cis_dns_logging` makes a RECORD of name resolution,
+  // which nothing reconstructs afterwards. `cis_block_internet_ssh_rdp` closes the two
+  // administrative ports to the INTERNET — not to the private ranges, which its own
+  // pass list carries — and CIS 3.6 and 3.7 ask for exactly that. Switching either off
+  // is a decision, so the estate that does it writes a `deviates` claim, whose `reason`
+  // is mandatory and reaches the compliance report. (VPC flow logs need no flag: the
+  // baseline already enforces `compute.requireVpcFlowLogs`, which applies a minimum
+  // logging level to every subnet rather than refusing it.)
+  cis_dns_logging            = true
+  cis_block_internet_ssh_rdp = true
 
   // CIS §2 resource locations (gcp.resourceLocations): where resources may be
   // created. The default is the two multi-region groups this baseline has always
@@ -110,8 +181,8 @@ params {
   // essentialcontacts.managed.allowedContactDomains: the DOMAINS whose
   // addresses may be set as essential contacts (each entry `@domain`).
   // Default = the customer's own domain. Some customers keep contacts on a
-  // different domain, or on several — a LIST param since v2.2, so neither
-  // case forks the pack.
+  // different domain, or on several; the param is a list, so neither case
+  // forks the pack.
   essential_contacts_allowed_domains = [
     "@{customer_domain}",
   ]
@@ -119,7 +190,7 @@ params {
 
 // ---- what a customer decides, asked -------------------------------------------
 // Questions only where the pack cannot know the answer or being wrong is
-// expensive: the seven opt-in controls (each can break a workload that was
+// expensive: the ten opt-in controls (each can break a workload that was
 // legitimate the day before) and the three lists that say WHO and WHERE. The
 // technical defaults — protocol-forwarding schemes, the contacts domain derived
 // from the customer's — are not decisions and are not asked.
@@ -152,6 +223,48 @@ question cis_cloud_sql_hardening {
   blast    = high
 }
 
+question cis_api_key_services_dry_run {
+  prompt   = "Measure first: run 'API keys restricted to the services an application needs' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_api_key_services, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_api_key_services on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_block_project_ssh_keys_dry_run {
+  prompt   = "Measure first: run 'project-wide SSH keys blocked on VM instances' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_block_project_ssh_keys, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_block_project_ssh_keys on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_bucket_retention_dry_run {
+  prompt   = "Measure first: run 'bucket retention durations constrained organisation-wide' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_bucket_retention, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_bucket_retention on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_cloud_sql_hardening_dry_run {
+  prompt   = "Measure first: run 'Cloud SQL public IPs and authorized networks restricted' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_hardening, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_hardening on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_confidential_computing_dry_run {
+  prompt   = "Measure first: run 'Confidential Computing required on instances' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_confidential_computing, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_confidential_computing on."
+  reversal = edit
+  blast    = none
+}
+
+question cis_cloud_sql_iam_and_deletion_protection_dry_run {
+  prompt   = "Measure first: run 'Cloud SQL IAM authentication and deletion protection required' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_iam_and_deletion_protection, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_iam_and_deletion_protection on."
+  reversal = edit
+  blast    = none
+}
+
 question cis_cmek_required {
   prompt   = "Require customer-managed encryption keys for new resources (CIS 7.2, 7.3, 8.1)?"
   why      = "The most disruptive control in the set: every new resource of a listed service must be created with a CMEK, so the key rings, the keys and the grants have to exist first — and the pack cannot know which projects may supply keys."
@@ -169,6 +282,34 @@ question cis_api_key_services {
 question cis_bucket_retention {
   prompt   = "Constrain bucket retention durations organisation-wide (CIS 4.0 §2.3 / 5.0 §2.4)?"
   why      = "It constrains EVERY bucket, not only the log sink's: once set, a bucket may carry a retention policy only if its duration is in the list, so buckets on other durations can no longer be updated."
+  reversal = edit
+  blast    = low
+}
+
+question cis_access_approval {
+  prompt   = "Require an approval before Google personnel reach the organisation's content (Access Approval, CIS 4.0 §2.15 / 5.0 §2.16)?"
+  why      = "Every support case that needs to look at the customer's content then waits for someone on the notification list to approve, and Access Transparency has to be switched on for the organisation first, in the console."
+  reversal = edit
+  blast    = low
+}
+
+question cis_block_internet_ssh_rdp {
+  prompt   = "Deny SSH and RDP from the internet across the whole organisation (CIS 3.6, 3.7)?"
+  why      = "On by default, because an organisation that has not closed ports 22 and 3389 to the internet is one scan away from the finding it will be asked about. A hierarchical firewall policy on the organisation is read before every VPC rule: a session reaching an instance from a PUBLIC address on either port ends the moment the policy attaches. Internal administration is not touched — the pass list carries the three private blocks as well as Google's IAP range — so what breaks is a bastion with an external IP, which needs its range listed or its access moved to IAP. Every rule logs, which is what fills the firewall half of a SIEM. Answering no is a deviation and needs a reason an auditor will read."
+  reversal = edit
+  blast    = high
+}
+
+question cis_cloud_sql_iam_and_deletion_protection {
+  prompt   = "Require IAM database authentication and deletion protection on Cloud SQL (CIS 5.0 §6.6, §6.9)?"
+  why      = "Every Cloud SQL create and update in the organisation must then carry both settings; tooling that creates instances without them fails, and an existing instance that lacks one is refused its next update until that update adds it."
+  reversal = edit
+  blast    = high
+}
+
+question cis_dns_logging {
+  prompt   = "Require Cloud DNS policies to log queries (CIS 5.0 §2.13)?"
+  why      = "On by default: DNS query logs are how a compromised host asking for its command-and-control domain becomes visible, and they are small beside flow logs — one entry per query, no sampling knob. What it enforces is only half the control: a DNS policy that exists must have logging on, because no org policy can require that a network HAS a policy at all. The other half is verified live — report-compliance names the networks without one. What it breaks: creating or updating a DNS policy with logging off is refused. Answering no is a deviation and needs a reason."
   reversal = edit
   blast    = low
 }
@@ -198,7 +339,7 @@ question allowed_policy_member_subjects {
 // the baseline: nothing routine reaches a VM this way, and the exemption path
 // is a tag condition rather than switching the constraint off.
 "compute-managed-disableSerialPortAccess" {
-  name = "compute.managed.disableSerialPortAccess"
+  name   = "compute.managed.disableSerialPortAccess"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -209,20 +350,22 @@ question allowed_policy_member_subjects {
   }
 }
 
+// The one constraint in this baseline whose rules are a PARAM rather than written
+// here, because it is the one an organisation actually has to let a single principal
+// out of — Google ships their own built-in exemption tag for exactly this constraint.
+// The default below is the plain enforcing rule, so an estate that says nothing gets
+// what it got before. See `cis_sa_key_creation_rules` in this pack's params for the
+// exempting form, and `presets/exemptions/exemption-tag.satz` for the tag it names.
 "iam-managed-disableServiceAccountKeyCreation" {
-  name = "iam.managed.disableServiceAccountKeyCreation"
+  name   = "iam.managed.disableServiceAccountKeyCreation"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+    rules = cis_sa_key_creation_rules
   }
 }
 
 "iam-managed-disableServiceAccountKeyUpload" {
-  name = "iam.managed.disableServiceAccountKeyUpload"
+  name   = "iam.managed.disableServiceAccountKeyUpload"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -234,7 +377,7 @@ question allowed_policy_member_subjects {
 }
 
 "iam-managed-preventPrivilegedBasicRolesForDefaultServiceAccounts" {
-  name = "iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts"
+  name   = "iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -246,7 +389,7 @@ question allowed_policy_member_subjects {
 }
 
 "iam-automaticIamGrantsForDefaultServiceAccounts" {
-  name = "iam.automaticIamGrantsForDefaultServiceAccounts"
+  name   = "iam.automaticIamGrantsForDefaultServiceAccounts"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -258,7 +401,7 @@ question allowed_policy_member_subjects {
 }
 
 "storage-uniformBucketLevelAccess" {
-  name = "storage.uniformBucketLevelAccess"
+  name   = "storage.uniformBucketLevelAccess"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -270,7 +413,7 @@ question allowed_policy_member_subjects {
 }
 
 "compute-setNewProjectDefaultToZonalDNSOnly" {
-  name = "compute.setNewProjectDefaultToZonalDNSOnly"
+  name   = "compute.setNewProjectDefaultToZonalDNSOnly"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -288,7 +431,7 @@ question allowed_policy_member_subjects {
 // configured through `parameters` — the legacy form's `allowed_values` has no
 // meaning here.
 "compute-managed-restrictProtocolForwardingCreationForTypes" {
-  name = "compute.managed.restrictProtocolForwardingCreationForTypes"
+  name   = "compute.managed.restrictProtocolForwardingCreationForTypes"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -303,7 +446,7 @@ question allowed_policy_member_subjects {
 }
 
 "compute-skipDefaultNetworkCreation" {
-  name = "compute.skipDefaultNetworkCreation"
+  name   = "compute.skipDefaultNetworkCreation"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -315,7 +458,7 @@ question allowed_policy_member_subjects {
 }
 
 "gcp-resourceLocations" {
-  name = "gcp.resourceLocations"
+  name   = "gcp.resourceLocations"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -329,7 +472,7 @@ question allowed_policy_member_subjects {
 }
 
 "compute-managed-requireOsLogin" {
-  name = "compute.managed.requireOsLogin"
+  name   = "compute.managed.requireOsLogin"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -341,7 +484,7 @@ question allowed_policy_member_subjects {
 }
 
 "gcp-detailedAuditLoggingMode" {
-  name = "gcp.detailedAuditLoggingMode"
+  name   = "gcp.detailedAuditLoggingMode"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -353,7 +496,7 @@ question allowed_policy_member_subjects {
 }
 
 "iam-disableAuditLoggingExemption" {
-  name = "iam.disableAuditLoggingExemption"
+  name   = "iam.disableAuditLoggingExemption"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -365,7 +508,7 @@ question allowed_policy_member_subjects {
 }
 
 "compute-requireVpcFlowLogs" {
-  name = "compute.requireVpcFlowLogs"
+  name   = "compute.requireVpcFlowLogs"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -383,7 +526,7 @@ question allowed_policy_member_subjects {
 }
 
 "storage-publicAccessPrevention" {
-  name = "storage.publicAccessPrevention"
+  name   = "storage.publicAccessPrevention"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -395,7 +538,7 @@ question allowed_policy_member_subjects {
 }
 
 "compute-managed-vmCanIpForward" {
-  name = "compute.managed.vmCanIpForward"
+  name   = "compute.managed.vmCanIpForward"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -407,7 +550,7 @@ question allowed_policy_member_subjects {
 }
 
 "compute-managed-vmExternalIpAccess" {
-  name = "compute.managed.vmExternalIpAccess"
+  name   = "compute.managed.vmExternalIpAccess"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -419,7 +562,7 @@ question allowed_policy_member_subjects {
 }
 
 "essentialcontacts-managed-allowedContactDomains" {
-  name = "essentialcontacts.managed.allowedContactDomains"
+  name   = "essentialcontacts.managed.allowedContactDomains"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
@@ -434,14 +577,14 @@ question allowed_policy_member_subjects {
 }
 
 "iam-managed-allowedPolicyMembers" {
-  name = "iam.managed.allowedPolicyMembers"
+  name   = "iam.managed.allowedPolicyMembers"
   parent = "organizations/{customer_organization_id}"
   spec {
     rules = [
       {
         enforce = "TRUE"
         parameters = {
-          allowedPrincipalSets = allowed_policy_member_principal_sets
+          allowedPrincipalSets  = allowed_policy_member_principal_sets
           allowedMemberSubjects = allowed_policy_member_subjects
         }
       },
@@ -508,7 +651,7 @@ question allowed_policy_member_subjects {
 // declares no equivalence between these two names, so the pairing is ours; the
 // reasoning is in the claim's duty_legacy_superseded.
 "iam-allowedPolicyMemberDomains-superseded" {
-  name = "iam.allowedPolicyMemberDomains"
+  name   = "iam.allowedPolicyMemberDomains"
   parent = "organizations/{customer_organization_id}"
   spec {
     reset = true
@@ -517,7 +660,7 @@ question allowed_policy_member_subjects {
 
 // Superseded by compute.managed.requireOsLogin.
 "compute-requireOsLogin-superseded" {
-  name = "compute.requireOsLogin"
+  name   = "compute.requireOsLogin"
   parent = "organizations/{customer_organization_id}"
   spec {
     reset = true
@@ -526,7 +669,7 @@ question allowed_policy_member_subjects {
 
 // Superseded by essentialcontacts.managed.allowedContactDomains.
 "essentialcontacts-allowedContactDomains-superseded" {
-  name = "essentialcontacts.allowedContactDomains"
+  name   = "essentialcontacts.allowedContactDomains"
   parent = "organizations/{customer_organization_id}"
   spec {
     reset = true
@@ -535,7 +678,7 @@ question allowed_policy_member_subjects {
 
 // Superseded by iam.managed.disableServiceAccountKeyCreation.
 "iam-disableServiceAccountKeyCreation-superseded" {
-  name = "iam.disableServiceAccountKeyCreation"
+  name   = "iam.disableServiceAccountKeyCreation"
   parent = "organizations/{customer_organization_id}"
   spec {
     reset = true
@@ -544,7 +687,7 @@ question allowed_policy_member_subjects {
 
 // Superseded by iam.managed.disableServiceAccountKeyUpload.
 "iam-disableServiceAccountKeyUpload-superseded" {
-  name = "iam.disableServiceAccountKeyUpload"
+  name   = "iam.disableServiceAccountKeyUpload"
   parent = "organizations/{customer_organization_id}"
   spec {
     reset = true
@@ -556,7 +699,7 @@ question allowed_policy_member_subjects {
 // REPLACE, never an in-place update — see the section note above for why the API
 // refuses the in-place form.
 "compute-restrictProtocolForwardingCreationForTypes-superseded" {
-  name = "compute.restrictProtocolForwardingCreationForTypes"
+  name   = "compute.restrictProtocolForwardingCreationForTypes"
   parent = "organizations/{customer_organization_id}"
   spec {
     reset = true
@@ -584,7 +727,7 @@ claim "cis-gcp" "5.0" "1.1.4" implements {
     "google_org_policy_policy.storage_publicAccessPrevention",
     "google_org_policy_policy.storage_uniformBucketLevelAccess",
   ]
-  interpretation = "The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it."
+  interpretation       = "The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it."
   duty_review_baseline = "The baseline is a decision, not a default — re-read it when the organisation adds a workload class the current constraints were not chosen for."
 }
 
@@ -592,17 +735,17 @@ claim "cis-gcp" "4.0" "1.1" implements {
   resources = [
     "google_org_policy_policy.iam_managed_allowedPolicyMembers",
   ]
-  interpretation = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded."
+  interpretation         = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded."
   duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organisation goes on enforcing, unseen by the apply."
-  duty_review_allowlist = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
+  duty_review_allowlist  = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
 }
 claim "cis-gcp" "5.0" "1.2" implements {
   resources = [
     "google_org_policy_policy.iam_managed_allowedPolicyMembers",
   ]
-  interpretation = "As for 4.0 §1.1 — 5.0 §1.2 (5.0 inserted a new §1.1 'Organization resources' subsection, shifting the former 1.x up by one)."
+  interpretation         = "As for 4.0 §1.1 — 5.0 §1.2 (5.0 inserted a new §1.1 'Organization resources' subsection, shifting the former 1.x up by one)."
   duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten — see the 4.0 claim for why running it would weaken rather than strengthen the control."
-  duty_review_allowlist = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
+  duty_review_allowlist  = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
 }
 
 claim "cis-gcp" "4.0" "1.4" implements {
@@ -633,20 +776,20 @@ claim "cis-gcp" "5.0" "1.6" implements {
   interpretation = "As for 4.0 §1.5 — 5.0 §1.6."
 }
 claim "cis-gcp" "4.0" "1.5" contributes {
-  resources = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
+  resources      = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
   interpretation = "Also disables the automatic Editor grant to default service accounts at project creation."
 }
 claim "cis-gcp" "5.0" "1.6" contributes {
-  resources = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
+  resources      = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
   interpretation = "As for 4.0 §1.5 — 5.0 §1.6."
 }
 
 claim "cis-gcp" "4.0" "1.16" contributes {
-  resources = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
+  resources      = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
   interpretation = "Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim."
 }
 claim "cis-gcp" "5.0" "1.17" contributes {
-  resources = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
+  resources      = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
   interpretation = "As for 4.0 §1.16 — 5.0 §1.17."
 }
 
@@ -665,78 +808,101 @@ claim "cis-gcp" "5.0" "2.1" contributes {
   interpretation = "As for 4.0 §2.1 (5.0 §2.1, unchanged)."
 }
 
+// The one control in this pack whose witness is not an org policy, and not the pack's
+// own resource either: the SCAFFOLD enables the Cloud Asset API in every estate's
+// infrastructure project (`project_service` on `google_project.infra`), so the estate
+// already satisfies 5.0 §2.14 and said nothing about it — the last technical control of
+// CIS 5.0 with no claim anywhere in the library.
+//
+// The pack does NOT declare its own `google_project_service` for the API. Two resources
+// enabling one API on one project is a duplicate Terraform resource, not a merge.
+//
+// The address depends on the scaffold's labels, which are a contract rather than a
+// style: `google_project.infra` is what `bootstrap` imports by name, and the emitter
+// derives `google_project_service.<project label>_<service, dots to underscores>` from
+// it. `init_template::the_generated_estate_compiles_and_carries_bootstraps_labels` holds
+// that address, so renaming the label breaks a test rather than this claim. An estate
+// whose infrastructure project carries a different label reports this control as a
+// BROKEN CLAIM, which is the correct signal: the witness named here is not in it.
+claim "cis-gcp" "5.0" "2.14" implements {
+  resources = [
+    "google_project_service.infra_cloudasset_googleapis_com",
+  ]
+  interpretation = "The Cloud Asset API is enabled in the estate's infrastructure project, which is what makes the organisation's inventory and its history queryable — and is what `report-compliance` itself reads through to verify every other control live."
+}
+
 claim "cis-gcp" "4.0" "3.1" implements {
-  resources = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
+  resources      = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
   interpretation = "New projects are created without the auto-mode default VPC and its permissive firewall rules."
 }
 claim "cis-gcp" "5.0" "3.1" implements {
-  resources = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
+  resources      = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
   interpretation = "As for 4.0 §3.1 (5.0 §3.1, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "3.8" implements {
-  resources = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
+  resources      = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
   interpretation = "Subnets must enable VPC Flow Logs."
 }
 claim "cis-gcp" "5.0" "3.10" implements {
-  resources = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
+  resources      = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
   interpretation = "As for 4.0 §3.8 — 5.0 §3.10 (5.0 inserted 3.8 VPC Service Controls and 3.9 Private Service Connect)."
 }
 
 claim "cis-gcp" "4.0" "4.5" implements {
-  resources = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
+  resources      = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
   interpretation = "The serial-port-enable metadata key cannot be set to true, so no VM exposes an interactive serial console."
 }
 claim "cis-gcp" "5.0" "4.5" implements {
-  resources = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
+  resources      = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
   interpretation = "As for 4.0 §4.5 (5.0 §4.5, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "4.4" implements {
-  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
-  interpretation = "OS Login is required, so VM SSH access is governed by IAM rather than metadata keys."
+  resources         = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  interpretation    = "OS Login is required, so VM SSH access is governed by IAM rather than metadata keys."
   duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
 }
 claim "cis-gcp" "5.0" "4.4" implements {
-  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
-  interpretation = "As for 4.0 §4.4 (5.0 §4.4, unchanged)."
+  resources         = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  interpretation    = "As for 4.0 §4.4 (5.0 §4.4, unchanged)."
   duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
 }
 
 claim "cis-gcp" "4.0" "4.6" implements {
-  resources = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
-  interpretation = "Instances may not enable IP forwarding."
+  resources       = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
+  interpretation  = "Instances may not enable IP forwarding."
   duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
 }
 claim "cis-gcp" "5.0" "4.6" implements {
-  resources = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
-  interpretation = "As for 4.0 §4.6 (5.0 §4.6, unchanged)."
+  resources       = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
+  interpretation  = "As for 4.0 §4.6 (5.0 §4.6, unchanged)."
   duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
 }
 
 claim "cis-gcp" "4.0" "4.9" implements {
-  resources = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
+  resources      = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
   interpretation = "Compute instances may not be given external IP addresses."
 }
 claim "cis-gcp" "5.0" "4.9" implements {
-  resources = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
+  resources      = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
   interpretation = "As for 4.0 §4.9 (5.0 §4.9, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "5.1" implements {
-  resources = ["google_org_policy_policy.storage_publicAccessPrevention"]
+  resources      = ["google_org_policy_policy.storage_publicAccessPrevention"]
   interpretation = "Public access prevention is enforced, so buckets cannot be exposed to allUsers or allAuthenticatedUsers."
 }
 claim "cis-gcp" "5.0" "5.1" implements {
-  resources = ["google_org_policy_policy.storage_publicAccessPrevention"]
+  resources      = ["google_org_policy_policy.storage_publicAccessPrevention"]
   interpretation = "As for 4.0 §5.1 (5.0 §5.1, unchanged)."
 }
 
 claim "cis-gcp" "4.0" "5.2" implements {
-  resources = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
+  resources      = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
   interpretation = "Uniform bucket-level access disables object ACLs; bucket access is governed by IAM alone."
 }
 claim "cis-gcp" "5.0" "5.2" implements {
-  resources = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
+  resources      = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
   interpretation = "As for 4.0 §5.2 (5.0 §5.2, unchanged)."
 }

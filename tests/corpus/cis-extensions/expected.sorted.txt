@@ -6,6 +6,22 @@
           "in:eu-locations",
           "in:us-locations"
           "under:organizations/123456789"
+        "22"
+        "22"
+        "22"
+        "22"
+        "22",
+        "22",
+        "22",
+        "22",
+        "3389"
+        "3389"
+        "3389"
+        "3389"
+        "3389"
+        "3389"
+        "3389"
+        "3389"
         ]
         ]
         ]
@@ -14,6 +30,26 @@
         allowed_values = [
         allowed_values = [
         denied_values = [
+      "0.0.0.0/0"
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16"
+      "2600:2d00:1:7::/64",
+      "35.235.240.0/20",
+      "::/0"
+      "fc00::/7"
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
+      ]
       enforce = "TRUE"
       enforce = "TRUE"
       enforce = "TRUE"
@@ -38,11 +74,38 @@
       enforce = "TRUE"
       enforce = "TRUE"
       enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      ip_protocol = "sctp"
+      ip_protocol = "sctp"
+      ip_protocol = "sctp"
+      ip_protocol = "sctp"
+      ip_protocol = "tcp"
+      ip_protocol = "tcp"
+      ip_protocol = "tcp"
+      ip_protocol = "tcp"
+      ip_protocol = "udp"
+      ip_protocol = "udp"
+      ip_protocol = "udp"
+      ip_protocol = "udp"
       parameters = "{\"allowedDomains\":[\"@example.com\"]}"
       parameters = "{\"allowedPrincipalSets\":[\"//cloudresourcemanager.googleapis.com/organizations/123456789\"],\"allowedMemberSubjects\":[\"serviceAccount:service-org-123456789@security-center-api.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-csc-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-dspm-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-ee-hpsa.iam.gserviceaccount.com\",\"serviceAccount:service-org-123456789@gcp-sa-ktd-hpsa.iam.gserviceaccount.com\"]}"
       parameters = "{\"allowedRetentionPeriods\":[\"34560000\"]}"
       parameters = "{\"allowedSchemes\":[\"INTERNAL\"]}"
       parameters = "{\"allowedServices\":[\"storage.googleapis.com\"]}"
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
+      ports = [
       values {
       values {
       values {
@@ -51,6 +114,37 @@
       }
       }
       }
+    "CREATE",
+    "CREATE",
+    "CREATE",
+    "UPDATE"
+    "UPDATE"
+    "UPDATE"
+    "dns.googleapis.com/Policy"
+    "security@example.com"
+    "sqladmin.googleapis.com/Instance"
+    "sqladmin.googleapis.com/Instance"
+    ]
+    ]
+    ]
+    ]
+    cloud_product = "all"
+    enrollment_level = "BLOCK_ALL"
+    google_org_policy_custom_constraint.cis_dns_logging
+    google_org_policy_custom_constraint.cis_sql_deletion_protection
+    google_org_policy_custom_constraint.cis_sql_iam_authentication
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
+    layer4_configs {
     reset = true
     reset = true
     reset = true
@@ -88,6 +182,13 @@
     rules {
     rules {
     rules {
+    rules {
+    rules {
+    rules {
+    src_ip_ranges = [
+    src_ip_ranges = [
+    src_ip_ranges = [
+    src_ip_ranges = [
     }
     }
     }
@@ -116,6 +217,79 @@
     }
     }
     }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  action = "deny"
+  action = "deny"
+  action = "goto_next"
+  action = "goto_next"
+  action_type = "ALLOW"
+  action_type = "ALLOW"
+  action_type = "ALLOW"
+  attachment_target = "organizations/123456789"
+  condition = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
+  condition = "resource.enableLogging == true"
+  condition = "resource.settings.deletionProtectionEnabled == true"
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  description = "CIS 3.6/3.7: SSH and RDP from the internet denied, listed ranges passed to the VPC rules"
+  description = "CIS 5.0 2.13, the enforceable half. A Cloud DNS policy carries enableLogging = true. It cannot require that a network HAS a policy — that half is verified live."
+  description = "CIS 5.0 6.6. PostgreSQL and MySQL instances carry the IAM authentication flag set to on; SQL Server instances pass."
+  description = "CIS 5.0 6.9. Instances are created and kept with deletion protection enabled."
+  description = "SSH and RDP from the IPv4 internet: denied"
+  description = "SSH and RDP from the IPv6 internet: denied"
+  description = "SSH and RDP from the listed IPv4 ranges: the VPC firewall rules decide"
+  description = "SSH and RDP from the listed IPv6 ranges: the VPC firewall rules decide"
+  direction = "INGRESS"
+  direction = "INGRESS"
+  direction = "INGRESS"
+  direction = "INGRESS"
+  display_name = "Cloud DNS: a policy that exists logs queries"
+  display_name = "Cloud SQL: IAM database authentication on"
+  display_name = "Cloud SQL: deletion protection on"
+  enable_logging = true
+  enable_logging = true
+  enrolled_services {
+  firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.id}"
+  firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
+  firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
+  firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
+  firewall_policy = "${google_compute_firewall_policy.cis_admin_ports.name}"
+  match {
+  match {
+  match {
+  match {
+  method_types = [
+  method_types = [
+  method_types = [
+  name = "cis-internet-admin-ports"
+  name = "custom.cisCloudSqlDeletionProtection"
+  name = "custom.cisCloudSqlIamAuthentication"
+  name = "custom.cisDnsPolicyLogging"
   name = "organizations/123456789/policies/compute.managed.blockProjectSshKeys"
   name = "organizations/123456789/policies/compute.managed.disableSerialPortAccess"
   name = "organizations/123456789/policies/compute.managed.requireOsLogin"
@@ -129,6 +303,9 @@
   name = "organizations/123456789/policies/compute.restrictProtocolForwardingCreationForTypes"
   name = "organizations/123456789/policies/compute.setNewProjectDefaultToZonalDNSOnly"
   name = "organizations/123456789/policies/compute.skipDefaultNetworkCreation"
+  name = "organizations/123456789/policies/custom.cisCloudSqlDeletionProtection"
+  name = "organizations/123456789/policies/custom.cisCloudSqlIamAuthentication"
+  name = "organizations/123456789/policies/custom.cisDnsPolicyLogging"
   name = "organizations/123456789/policies/essentialcontacts.allowedContactDomains"
   name = "organizations/123456789/policies/essentialcontacts.managed.allowedContactDomains"
   name = "organizations/123456789/policies/gcp.detailedAuditLoggingMode"
@@ -153,6 +330,8 @@
   name = "organizations/123456789/policies/storage.publicAccessPrevention"
   name = "organizations/123456789/policies/storage.retentionPolicySeconds"
   name = "organizations/123456789/policies/storage.uniformBucketLevelAccess"
+  notification_emails = [
+  organization_id = "123456789"
   parent = "organizations/123456789"
   parent = "organizations/123456789"
   parent = "organizations/123456789"
@@ -190,6 +369,17 @@
   parent = "organizations/123456789"
   parent = "organizations/123456789"
   parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  priority = 1000
+  priority = 1001
+  priority = 1002
+  priority = 1003
   provider = google.google
   provider = google.google
   provider = google.google
@@ -227,6 +417,26 @@
   provider = google.google
   provider = google.google
   provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  resource_types = [
+  resource_types = [
+  resource_types = [
+  short_name = "cis-internet-admin-ports"
+  spec {
+  spec {
+  spec {
   spec {
   spec {
   spec {
@@ -301,6 +511,23 @@
   }
   }
   }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+resource "google_compute_firewall_policy" "cis_admin_ports" {
+resource "google_compute_firewall_policy_association" "cis_admin_ports" {
+resource "google_compute_firewall_policy_rule" "cis_admin_ports_internet_ipv4" {
+resource "google_compute_firewall_policy_rule" "cis_admin_ports_internet_ipv6" {
+resource "google_compute_firewall_policy_rule" "cis_admin_ports_listed" {
+resource "google_compute_firewall_policy_rule" "cis_admin_ports_listed_ipv6" {
+resource "google_org_policy_custom_constraint" "cis_dns_logging" {
+resource "google_org_policy_custom_constraint" "cis_sql_deletion_protection" {
+resource "google_org_policy_custom_constraint" "cis_sql_iam_authentication" {
 resource "google_org_policy_policy" "compute_managed_blockProjectSshKeys" {
 resource "google_org_policy_policy" "compute_managed_disableSerialPortAccess" {
 resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
@@ -314,6 +541,9 @@ resource "google_org_policy_policy" "compute_requireVpcFlowLogs" {
 resource "google_org_policy_policy" "compute_restrictProtocolForwardingCreationForTypes_superseded" {
 resource "google_org_policy_policy" "compute_setNewProjectDefaultToZonalDNSOnly" {
 resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
+resource "google_org_policy_policy" "custom_cisCloudSqlDeletionProtection" {
+resource "google_org_policy_policy" "custom_cisCloudSqlIamAuthentication" {
+resource "google_org_policy_policy" "custom_cisDnsPolicyLogging" {
 resource "google_org_policy_policy" "essentialcontacts_allowedContactDomains_superseded" {
 resource "google_org_policy_policy" "essentialcontacts_managed_allowedContactDomains" {
 resource "google_org_policy_policy" "gcp_detailedAuditLoggingMode" {
@@ -338,6 +568,20 @@ resource "google_org_policy_policy" "storage_managed_retentionPolicySeconds" {
 resource "google_org_policy_policy" "storage_publicAccessPrevention" {
 resource "google_org_policy_policy" "storage_retentionPolicySeconds" {
 resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
+resource "google_organization_access_approval_settings" "access_approval" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
 }
 }
 }
@@ -376,14 +620,22 @@ resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
 }
 }
 ---tfvars---
+    "enforce" = "TRUE"
   "//cloudresourcemanager.googleapis.com/organizations/123456789"
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16"
+  "2600:2d00:1:7::/64",
   "34560000"
+  "35.235.240.0/20",
   "@example.com"
   "INTERNAL"
   "bigquery.googleapis.com",
   "dataproc.googleapis.com"
+  "fc00::/7"
   "in:eu-locations",
   "in:us-locations"
+  "security@example.com"
   "serviceAccount:service-org-123456789@gcp-sa-csc-hpsa.iam.gserviceaccount.com",
   "serviceAccount:service-org-123456789@gcp-sa-dspm-hpsa.iam.gserviceaccount.com",
   "serviceAccount:service-org-123456789@gcp-sa-ee-hpsa.iam.gserviceaccount.com",
@@ -391,6 +643,8 @@ resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
   "serviceAccount:service-org-123456789@security-center-api.iam.gserviceaccount.com",
   "storage.googleapis.com"
   "under:organizations/123456789"
+  {
+  }
 ]
 ]
 ]
@@ -400,6 +654,13 @@ resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
 ]
 ]
 ]
+]
+]
+]
+]
+access-approval-notification-emails = [
+admin-port-source-ranges = [
+admin-port-source-ranges-ipv6 = [
 allowed-api-key-services = [
 allowed-bucket-retention-seconds = [
 allowed-policy-member-principal-sets = [
@@ -407,15 +668,27 @@ allowed-policy-member-subjects = [
 allowed-protocol-forwarding-schemes = [
 allowed-resource-locations = [
 billing-account-infra = "01AA-BB-CC"
+cis-access-approval = true
 cis-api-key-services = true
+cis-api-key-services-dry-run = false
+cis-block-internet-ssh-rdp = true
 cis-block-project-ssh-keys = true
+cis-block-project-ssh-keys-dry-run = false
 cis-bucket-retention = true
+cis-bucket-retention-dry-run = false
 cis-cloud-sql-hardening = true
+cis-cloud-sql-hardening-dry-run = false
+cis-cloud-sql-iam-and-deletion-protection = true
+cis-cloud-sql-iam-and-deletion-protection-dry-run = false
 cis-cmek-required = true
 cis-confidential-computing = true
+cis-confidential-computing-dry-run = false
+cis-dns-logging = true
 cis-require-shielded-vm = true
+cis-sa-key-creation-rules = [
 cmek-allowed-key-projects = [
 cmek-required-services = [
 customer-domain = "example.com"
 customer-organization-id = "123456789"
 essential-contacts-allowed-domains = [
+---imports---

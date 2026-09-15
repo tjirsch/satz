@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet, BTreeMap, BTreeSet};
 use serde_json::Value;
 use crate::config::{Config, ImportConfig, Folder, Project};
 use crate::schema::{ResourceRegistry, ResourceSchema, BlockSchema};
@@ -9,9 +9,49 @@ pub struct Discoverer {
     pub state: Value,
     pub registry: Option<ResourceRegistry>,
     pub enabled_types: Option<HashSet<String>>,
-    /// Types the run's `--only` / `only:` switched off — reported as
+    /// Types the run's `--only` / `--exclude` switched off — reported as
     /// "filtered", not "type off".
     pub filtered_types: HashSet<String>,
+    /// What to do with a grant two folders or two projects both hold.
+    pub on_collision: OnCollision,
+}
+
+/// Asset types per ListAssets request. The quota counts requests
+/// ("ListAssets Requests per minute"), so a sweep that asks for one type at a
+/// time runs out of it long before `--all` is through; the types travel as
+/// query parameters, and a hundred keep the URL near 6 KB.
+const ASSET_TYPES_PER_REQUEST: usize = 100;
+
+/// The label the provider stamps on everything it creates when attribution is
+/// on. It is the provider's, not the estate's: declared, it is a label nobody
+/// chose; left out, the provider puts it back on apply, and a plan that only
+/// adds it is not drift.
+const ATTRIBUTION_LABEL: &str = "goog-terraform-provisioned";
+
+/// What `satz import` does with a grant edge — one member, one role — that two
+/// folders, or two projects, both hold. The map form's emitted label hashes
+/// member and role (`iam_member_label`, deliberately not the node, so labels
+/// never move), so two such edges emit ONE Terraform address and the transpile
+/// refuses. `Error` refuses at import instead, naming the edges and the switch;
+/// `Counter` keeps the first edge in the map form and writes each further one
+/// as a labelled resource under its own node, with a running number in the
+/// label. Import only: a written estate is its author's responsibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OnCollision {
+    #[default]
+    Error,
+    Counter,
+}
+
+impl std::str::FromStr for OnCollision {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "error" => Ok(Self::Error),
+            "counter" => Ok(Self::Counter),
+            other => Err(format!("--on-collision {:?}: one of error, counter", other)),
+        }
+    }
 }
 
 /// Why a resource the source had is not in the written estate. An import is
@@ -20,24 +60,59 @@ pub struct Discoverer {
 pub enum SkipReason {
     /// `import: false` in the import config.
     TypeOff,
-    /// Switched off by `--only` / `only:` for this run.
+    /// Switched off by `--only` / `--exclude` (`only:` / `exclude:`) for this run.
     Filtered,
     /// The source had it, but no import-config row maps it (detail says what
     /// was missing).
     Unmapped(String),
     /// Its project/folder is not in the imported tree, so it has no place.
     ParentNotFound(String),
+    /// The platform's, not the estate's: matched a `skip:` pattern on the
+    /// import-config row (the built-in `_Default` sink, a service agent's
+    /// grant, a Compute default service account). The pattern is named so
+    /// the operator can lift it from a copy of the table.
+    PlatformOwned(String),
+    /// A project Cloud Asset still lists but that is no longer ACTIVE — a
+    /// deleted project stays visible for 30 days and nothing can be managed
+    /// in it.
+    NotActive(String),
 }
 
 impl std::fmt::Display for SkipReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SkipReason::TypeOff => write!(f, "type off (import: false)"),
-            SkipReason::Filtered => write!(f, "filtered by --only"),
+            SkipReason::Filtered => write!(f, "filtered by --only/--exclude"),
             SkipReason::Unmapped(d) => write!(f, "unmapped: {}", d),
             SkipReason::ParentNotFound(p) => write!(f, "parent not imported: {}", p),
+            SkipReason::PlatformOwned(p) => write!(f, "platform-owned: matches skip pattern `{}` on its import-config row", p),
+            SkipReason::NotActive(s) => write!(f, "project is {}, not ACTIVE (Cloud Asset lists a deleted project for 30 days)", s),
         }
     }
+}
+
+/// The `skip:` pattern on the row that matches `what`, if one does.
+fn skip_pattern(res_config: &crate::config::ImportResourceConfig, what: &str) -> Option<String> {
+    res_config.skip.iter().flatten().find(|p| crate::config::glob_match(p, what)).cloned()
+}
+
+/// The `skip:` pattern a RESOURCE asset matches by what it is called: the
+/// last segment of its asset name (`_Default` for a sink), or its `email`,
+/// `name` or `displayName` in the asset data — Cloud Asset names a service
+/// account by its numeric unique id, and the email that says it is the
+/// Compute default account is data.
+fn platform_owned(res_config: &crate::config::ImportResourceConfig, asset: &Asset) -> Option<String> {
+    res_config.skip.as_ref()?;
+    let natural = asset.name.rsplit('/').next().unwrap_or(&asset.name).to_string();
+    let mut candidates = vec![natural];
+    if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
+        for key in ["email", "name", "displayName"] {
+            if let Some(v) = data.get(key).and_then(|v| v.as_str()) {
+                candidates.push(v.to_string());
+            }
+        }
+    }
+    candidates.iter().find_map(|c| skip_pattern(res_config, c))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +132,8 @@ pub struct Discovered {
     pub dropped_attrs: Vec<(String, String)>,
     /// The organization the assets' ancestors name (live shape only).
     pub organization: Option<String>,
+    /// What the import rewrote on the way and says so: one line each.
+    pub notes: Vec<String>,
 }
 
 thread_local! {
@@ -100,6 +177,55 @@ fn push_grant(roles: &mut Vec<serde_yaml::Value>, role: &str, import_id: Option<
     });
 }
 
+/// A grant on a scope the map form names in the map (`bucket = …`, language
+/// reference §6.5): one map per scope value under the type key, kept as a
+/// list of maps because a document holds one key per type. The member's
+/// roles join the map for that scope; a new scope opens a new map.
+fn push_pinned_grant(
+    extra: &mut HashMap<String, serde_yaml::Value>,
+    tf_type: &str,
+    pin: &str,
+    scope_value: &str,
+    member: &str,
+    role: &str,
+    import_id: Option<String>,
+) {
+    let maps = extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+    let serde_yaml::Value::Sequence(maps) = maps else { return };
+    let pin_key = serde_yaml::Value::String(pin.to_string());
+    let at = maps.iter().position(|m| m.as_mapping().and_then(|m| m.get(&pin_key)).and_then(|v| v.as_str()) == Some(scope_value));
+    let map = match at {
+        Some(i) => &mut maps[i],
+        None => {
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(pin_key.clone(), serde_yaml::Value::String(scope_value.to_string()));
+            maps.push(serde_yaml::Value::Mapping(m));
+            maps.last_mut().expect("just pushed")
+        }
+    };
+    let Some(map) = map.as_mapping_mut() else { return };
+    let member_key = serde_yaml::Value::String(member.to_string());
+    if !map.contains_key(&member_key) {
+        map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new()));
+    }
+    if let Some(serde_yaml::Value::Sequence(roles)) = map.get_mut(&member_key) {
+        push_grant(roles, role, import_id);
+    }
+}
+
+/// The attribute that names a grant type's scope in the map form, from the
+/// provider schema — `bucket`, `service_account_id` — or `None` for a type
+/// scoped by the organization, the billing account or the node it is written
+/// in, and for one the schema does not single out.
+fn pin_attr(registry: Option<&ResourceRegistry>, tf_type: &str) -> Option<String> {
+    let schema = registry?.find_resource(tf_type)?.1;
+    let required: Vec<&str> = schema.block.attributes.iter().filter(|(_, a)| a.required).map(|(k, _)| k.as_str()).collect();
+    match satz_core::pipeline::grant_form(tf_type, &required) {
+        satz_core::pipeline::GrantForm::Pinned(attr) => Some(attr),
+        _ => None,
+    }
+}
+
 /// The import id of a grant, from its parent's identity — the same
 /// derivation as the `import_id` templates adopt renders:
 /// `<parent> <role> <member>` (`b/<bucket>` for bucket grants, the bare
@@ -130,7 +256,7 @@ struct Sinks<'a> {
 }
 
 impl Discoverer {
-    pub fn sanitize_yaml_key(s: &str) -> String {
+    pub fn sanitize_asset_key(s: &str) -> String {
         s.to_lowercase()
             .replace(|c: char| !c.is_alphanumeric() && c != '-', "-")
             .replace(['_', ' ', '.'], "-")
@@ -141,12 +267,14 @@ impl Discoverer {
         registry: Option<ResourceRegistry>,
         enabled_types: Option<HashSet<String>>,
         filtered_types: HashSet<String>,
+        on_collision: OnCollision,
     ) -> Self {
         Self {
             state: state_json,
             registry,
             enabled_types,
             filtered_types,
+            on_collision,
         }
     }
 
@@ -178,9 +306,11 @@ impl Discoverer {
 
         if !all_resources.is_empty() {
             for res in all_resources {
-                let tf_type = res["type"].as_str().unwrap_or("");
+                let tf_type = res["type"]
+                    .as_str()
+                    .ok_or_else(|| format!("state: resource {} has no `type`", res["address"].as_str().unwrap_or("(no address)")))?;
                 let values = &res["values"];
-                let tf_name = res["name"].as_str().unwrap_or("");
+                let tf_name = res["name"].as_str().ok_or_else(|| format!("state: a {} has no `name`", tf_type))?;
                 
                 if !self.is_type_enabled(tf_type) {
                     let reason = if self.filtered_types.contains(tf_type) { SkipReason::Filtered } else { SkipReason::TypeOff };
@@ -191,7 +321,10 @@ impl Discoverer {
                 match tf_type {
                     "google_folder" => {
                         let display_name = values["display_name"].as_str().unwrap_or(tf_name).to_string();
-                        let gcp_id = values["name"].as_str().unwrap_or("").to_string(); 
+                        let gcp_id = values["name"]
+                            .as_str()
+                            .ok_or_else(|| format!("state: google_folder {} has no `name`", tf_name))?
+                            .to_string(); 
                         let parent = values["parent"].as_str().unwrap_or("");
 
                         let yaml_key = if tf_name.is_empty() {
@@ -213,7 +346,10 @@ impl Discoverer {
                         }
                     }
                     "google_project" => {
-                        let project_id = values["project_id"].as_str().unwrap_or("").to_string();
+                        let project_id = values["project_id"]
+                            .as_str()
+                            .ok_or_else(|| format!("state: google_project {} has no `project_id`", tf_name))?
+                            .to_string();
                         let display_name = values["name"].as_str().map(|s| s.to_string());
                         let folder_id = values["folder_id"].as_str().unwrap_or("");
 
@@ -255,9 +391,11 @@ impl Discoverer {
         if !project_map.is_empty() { config.project = Some(project_map); }
 
         for res in orphan_resources {
-            let tf_type = res["type"].as_str().unwrap_or("");
+            let tf_type = res["type"]
+                .as_str()
+                .ok_or_else(|| format!("state: resource {} has no `type`", res["address"].as_str().unwrap_or("(no address)")))?;
             let values = &res["values"];
-            let tf_name = res["name"].as_str().unwrap_or("");
+            let tf_name = res["name"].as_str().ok_or_else(|| format!("state: a {} has no `name`", tf_type))?;
             let schema = self.registry.as_ref().and_then(|r| r.find_resource(tf_type)).map(|(_, s)| s);
 
             if let Some(p_id) = values["project"].as_str() {
@@ -285,8 +423,10 @@ impl Discoverer {
                 self.add_resource_to_config(&mut config, tf_type, tf_name, values, schema)?;
             }
         }
+        qualify_duplicate_keys(&mut config);
+        let notes = resolve_grant_collisions(&mut config, self.on_collision)?;
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None, notes })
     }
 
     pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>, map: Option<&std::collections::BTreeMap<String, String>>) -> serde_yaml::Value {
@@ -328,13 +468,17 @@ impl Discoverer {
         }
 
         if tf_type == "google_project_service" {
+            // a `project_service` entry: the bare service, or the documented
+            // object form `{ service = "…" "import-id" = "…" }` (language
+            // reference §6.7) when it carries more — service first
             if let serde_yaml::Value::Mapping(mut map) = yaml_val {
                 if let Some(serde_yaml::Value::String(service)) = map.remove(serde_yaml::Value::String("service".to_string())) {
                     if map.is_empty() {
                         return serde_yaml::Value::String(service);
                     } else {
                         let mut new_map = serde_yaml::Mapping::new();
-                        new_map.insert(serde_yaml::Value::String(service), serde_yaml::Value::Mapping(map));
+                        new_map.insert("service".into(), serde_yaml::Value::String(service));
+                        new_map.extend(map);
                         return serde_yaml::Value::Mapping(new_map);
                     }
                 }
@@ -364,7 +508,7 @@ impl Discoverer {
             let label_keys = ["labels", "terraform_labels", "effective_labels"];
             for l_key in label_keys {
                 if let Some(serde_yaml::Value::Mapping(labels)) = map.get_mut(serde_yaml::Value::String(l_key.to_string())) {
-                    labels.remove(serde_yaml::Value::String("goog-terraform-provisioned".to_string()));
+                    labels.remove(serde_yaml::Value::String(ATTRIBUTION_LABEL.to_string()));
                 }
             }
 
@@ -520,11 +664,16 @@ impl Discoverer {
     fn add_resource_to_project(&self, p: &mut Project, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) -> Result<(), String> {
         if tf_type.ends_with("_iam_member") {
             let (role, member) = grant_identity(tf_type, tf_name, values)?;
-            let parent = if tf_type == "google_storage_bucket_iam_member" {
-                values["bucket"].as_str().unwrap_or("").to_string()
-            } else {
-                p.project_id.clone()
-            };
+            // a scope the map names in the map (`bucket = …`): one map per scope
+            if let Some(pin) = pin_attr(self.registry.as_ref(), tf_type) {
+                let Some(scope_value) = values[pin.as_str()].as_str().filter(|v| !v.is_empty()) else {
+                    return Err(format!("state: {} `{}` has no `{}`", tf_type, tf_name, pin));
+                };
+                let id = grant_import_id(tf_type, scope_value, &role, &member);
+                push_pinned_grant(&mut p.extra, tf_type, &pin, scope_value, &member, &role, Some(id));
+                return Ok(());
+            }
+            let parent = p.project_id.clone();
             let id = grant_import_id(tf_type, &parent, &role, &member);
             if !p.extra.contains_key(tf_type) { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
@@ -649,12 +798,14 @@ impl Discoverer {
     }
 
     /// `parent` is any Cloud Asset Inventory scope: `organizations/<n>`,
-    /// `folders/<n>` or `projects/<id>`.
+    /// `folders/<n>` or `projects/<id>`. The enabled types are fetched
+    /// `ASSET_TYPES_PER_REQUEST` at a time.
     pub async fn discover_from_org(
         parent: &str,
         verbose: bool,
         discovery_config: Option<ImportConfig>,
-        registry: Option<ResourceRegistry>,
+        registry: Option<&ResourceRegistry>,
+        on_collision: OnCollision,
     ) -> Result<Discovered, Box<dyn std::error::Error>> {
         use google_cloud_gax::options::RequestOptionsBuilder;
         let client = crate::gcp::asset_service().await?;
@@ -708,24 +859,22 @@ impl Discoverer {
 
         for (ctype_int, asset_types) in type_map {
             let ctype = ContentType::from(ctype_int as i32);
-            for asset_type in asset_types {
-                 let asset_types_vec = vec![asset_type.clone()];
-                 
-                 let display_type = if asset_type.starts_with("cloudresourcemanager.googleapis.com/") {
-                        asset_type.trim_start_matches("cloudresourcemanager.googleapis.com/").to_string()
-                    } else if asset_type.starts_with("orgpolicy.googleapis.com/") {
-                        asset_type.trim_start_matches("orgpolicy.googleapis.com/").to_string()
-                    } else {
-                        asset_type.split('/').next_back().unwrap_or(&asset_type).to_string()
-                    };
-                 
-                 println!("Fetching assets for type: {} (Content: {:?})", display_type, ctype);
+            let asset_types: Vec<String> = asset_types.into_iter().collect();
+            for batch in asset_types.chunks(ASSET_TYPES_PER_REQUEST) {
+                 println!("Fetching assets: {} type(s) (Content: {:?})", batch.len(), ctype);
+                 if verbose {
+                     for t in batch { println!("  {}", t); }
+                 }
+                 let what = match batch {
+                     [one] => one.clone(),
+                     _ => format!("{} type(s) {} … {}", batch.len(), batch[0], batch[batch.len() - 1]),
+                 };
 
                  // Same quota project every other Cloud Asset sweep sends; without
                  // it a credential with no default quota project is refused.
                  let mut builder = client.list_assets()
                     .set_parent(parent.to_string())
-                    .set_asset_types(asset_types_vec)
+                    .set_asset_types(batch.to_vec())
                     .set_content_type(ctype.clone())
                     .set_page_size(1000);
                  if let Some(qp) = &quota_project {
@@ -770,8 +919,8 @@ impl Discoverer {
                              all_assets.push(asset);
                          },
                          Err(e) => {
-                             eprintln!("Error fetching asset type '{}': {}", asset_type, e);
-                             fetch_errors.push(format!("{}: {}", asset_type, e));
+                             eprintln!("Error fetching {}: {}", what, e);
+                             fetch_errors.push(format!("{}: {}", what, e));
                              break;
                          }
                      }
@@ -783,7 +932,9 @@ impl Discoverer {
         // missing whole types, and the plan would then propose to create them.
         if !fetch_errors.is_empty() {
             return Err(format!(
-                "import aborted — {} asset type(s) could not be fetched, nothing written:\n  {}",
+                "import aborted — {} request(s) failed, nothing written:\n  {}\n\
+                 An asset type ListAssets refuses is named in the message: leave its row out with \
+                 --exclude, and correct the table with scripts/update_import_config.py --probe.",
                 fetch_errors.len(),
                 fetch_errors.join("\n  ")
             )
@@ -805,7 +956,9 @@ impl Discoverer {
         }
 
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
-        let (config, mut skipped) = Self::construct_config_from_assets(all_assets, registry.as_ref(), discovery_config.as_ref())?;
+        let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry, discovery_config.as_ref())?;
+        qualify_duplicate_keys(&mut config);
+        let notes = resolve_grant_collisions(&mut config, on_collision)?;
         for (tf_type, name) in unscoped {
             skipped.push(Skipped {
                 tf_type,
@@ -814,7 +967,7 @@ impl Discoverer {
             });
         }
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes })
     }
 
     fn construct_config_from_assets(
@@ -824,7 +977,6 @@ impl Discoverer {
     ) -> Result<(Config, Vec<Skipped>), String> {
         let mut config = Config::default();
         let mut skipped: Vec<Skipped> = Vec::new();
-        let mut deprecated_seen = HashSet::new();
         let mut folder_map: HashMap<String, Folder> = HashMap::new(); 
         let mut project_map: HashMap<String, Project> = HashMap::new();
         let mut folder_id_to_parent: HashMap<String, String> = HashMap::new();
@@ -867,9 +1019,12 @@ impl Discoverer {
              if tf_type == "google_folder" {
                  Self::discover_google_folder(asset, res_config, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
              } else if tf_type == "google_project" {
-                 Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name);
+                 if let Err(reason) = Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name) {
+                     skipped.push(Skipped { tf_type: tf_type.clone(), what: asset.name.clone(), reason });
+                 }
              }
         }
+        label_folders_by_display_name(&mut folder_map, &mut gcp_id_to_yaml_name);
 
         // Pass 2: Process all other resources (IAM, Policies, Services, Generic)
         for asset in &assets {
@@ -934,14 +1089,10 @@ impl Discoverer {
                  continue;
              };
 
-             if res_config.deprecated == Some(true) {
-                 deprecated_seen.insert(tf_type.to_string());
-             }
-
-             if tf_type.contains("organization_policy") || tf_type == "google_org_policy_policy" {
+             if tf_type == "google_org_policy_policy" {
                  Self::discover_organization_policy(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if asset.iam_policy.is_some() {
-                 Self::discover_iam_policy(tf_type, asset, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
+                 Self::discover_iam_policy(tf_type, asset, res_config, registry, &scope, &scope_id, &mut skipped, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if tf_type == "google_project_service" {
                  Self::discover_google_project_service(tf_type, asset, res_config, registry, &scope_id, &mut project_map, &gcp_id_to_yaml_name);
              } else if let Err(reason) = Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name }) {
@@ -955,10 +1106,6 @@ impl Discoverer {
         if !folder_map.is_empty() { config.folder = Some(folder_map); }
         if !project_map.is_empty() { config.project = Some(project_map); }
         
-        for deprecated_type in deprecated_seen {
-            eprintln!("Warning: Resource type '{}' is deprecated.", deprecated_type);
-        }
-
         Ok((config, skipped))
     }
 
@@ -1022,23 +1169,33 @@ impl Discoverer {
           }
     }
 
+    /// A project that is no longer ACTIVE is skipped with its state: Cloud
+    /// Asset lists a deleted project for 30 days, nothing in it can be
+    /// managed, and one chosen as the providers' quota project fails every
+    /// organization-scoped read.
     fn discover_google_project(
         asset: &Asset,
         res_config: &crate::config::ImportResourceConfig,
         project_map: &mut HashMap<String, Project>,
         project_id_to_parent: &mut HashMap<String, String>,
         gcp_id_to_yaml_name: &mut HashMap<String, String>,
-    ) {
-         let name = &asset.name; 
+    ) -> Result<(), SkipReason> {
+         let name = &asset.name;
+         if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
+             let state = data.get("lifecycleState").or_else(|| data.get("state")).and_then(|v| v.as_str());
+             if let Some(state) = state.filter(|s| *s != "ACTIVE") {
+                 return Err(SkipReason::NotActive(state.to_string()));
+             }
+         }
          let yaml_key_raw = if let Some(field) = &res_config.derive_yaml_key_from {
               if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
                    data.get(field).and_then(|v| v.as_str()).unwrap_or(name).to_string()
               } else { name.clone() }
          } else { name.clone() };
-         let yaml_key = Self::sanitize_yaml_key(&yaml_key_raw);
+         let yaml_key = Self::sanitize_asset_key(&yaml_key_raw);
 
          let parts: Vec<&str> = name.split("/projects/").collect();
-         if parts.len() < 2 { return; }
+         if parts.len() < 2 { return Ok(()); }
          let project_id_prefix = parts[1];
          
          let project_id = if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
@@ -1068,15 +1225,8 @@ impl Discoverer {
          let mut deletion_policy = None;  
 
          if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
-             // Extract Labels
              if let Some(l_map) = data.get("labels").and_then(|v| v.as_object()) {
-                 let mut extracted = HashMap::new();
-                 for (k, v) in l_map {
-                     if let Some(s) = v.as_str() {
-                         extracted.insert(k.clone(), s.to_string());
-                     }
-                 }
-                 if !extracted.is_empty() { labels = Some(extracted); }
+                 labels = declared_labels(l_map);
              }
 
              // Extract Tags (assuming 'tags' field which is a list of strings)
@@ -1126,6 +1276,7 @@ impl Discoverer {
                     }
                }
           }
+          Ok(())
     }
 
     fn discover_google_project_service(
@@ -1160,26 +1311,23 @@ impl Discoverer {
           if let Some(p_yaml) = gcp_id_to_yaml_name.get(scope_id) {
                if let Some(p) = project_map.get_mut(p_yaml) {
                     // The service's import id is `<project>/<service>` (adopt's
-                    // rule), in the `{ "<service>": { "import-id": … } }` form the
-                    // emitter reads (`filter_values` collapsed a bare service to a
-                    // string).
+                    // rule), in the documented object form
+                    // `{ service = "…" "import-id" = "…" }` (language reference
+                    // §6.7), which the printer writes on one line;
+                    // `filter_values` gave a bare service as a string and one
+                    // with more attributes as `{ service, … }`.
                     let id = serde_yaml::Value::String(format!("{}/{}", p.project_id, service_name));
-                    let resource_val = match resource_val {
-                        serde_yaml::Value::String(svc) => {
-                            let mut attrs = serde_yaml::Mapping::new();
-                            attrs.insert("import-id".into(), id);
-                            let mut m = serde_yaml::Mapping::new();
-                            m.insert(serde_yaml::Value::String(svc), serde_yaml::Value::Mapping(attrs));
-                            serde_yaml::Value::Mapping(m)
-                        }
-                        serde_yaml::Value::Mapping(mut m) => {
-                            if let Some((_, serde_yaml::Value::Mapping(attrs))) = m.iter_mut().next() {
-                                attrs.insert("import-id".into(), id);
+                    let mut entry = serde_yaml::Mapping::new();
+                    entry.insert("service".into(), serde_yaml::Value::String(service_name.clone()));
+                    entry.insert("import-id".into(), id);
+                    if let serde_yaml::Value::Mapping(m) = resource_val {
+                        for (k, v) in m {
+                            if k.as_str() != Some("service") {
+                                entry.insert(k, v);
                             }
-                            serde_yaml::Value::Mapping(m)
                         }
-                        other => other,
-                    };
+                    }
+                    let resource_val = serde_yaml::Value::Mapping(entry);
                     if p.project_service.is_none() { p.project_service = Some(Vec::new()); }
                     p.project_service.as_mut().unwrap().push(resource_val);
                }
@@ -1198,21 +1346,18 @@ impl Discoverer {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
           let name = &asset.name;
           
-          let raw_key = if let Some(field) = &res_config.derive_yaml_key_from {
-              if field == "name" {
-                   if name.contains("/policies/") {
-                        name.split("/policies/").last().unwrap_or(name)
-                   } else {
-                        name
-                   }
-              } else {
-                   name // Fallback
-              }
-          } else { name };
-          
-          let sanitized_key = Self::sanitize_yaml_key(raw_key);
+          // The constraint is the policy's identity. Its address is the
+          // library's spelling — dots to dashes, case kept
+          // (`compute-managed-vmExternalIpAccess`) — so a pack that later
+          // carries the same policy replaces this block by address.
+          let constraint = name.rsplit("/policies/").next().unwrap_or(name);
+          let sanitized_key = if res_config.derive_yaml_key_from.as_deref() == Some("name") && name.contains("/policies/") {
+              constraint.replace('.', "-")
+          } else {
+              Self::sanitize_asset_key(name)
+          };
           let mut resource_val = serde_yaml::Mapping::new();
-          
+
           if let Some(reg) = registry {
                 if let Some((_, schema)) = reg.find_resource(tf_type) {
                      if let Some(map) = Self::process_organization_policy_family(tf_type, asset, schema, name, scope_id) {
@@ -1222,16 +1367,19 @@ impl Discoverer {
           }
 
           if !resource_val.is_empty() {
-                    let import_id_val = resource_val.get(serde_yaml::Value::String("name".to_string())).cloned();
-
-                    if let Some(val) = import_id_val {
-                         let old_map = std::mem::replace(&mut resource_val, serde_yaml::Mapping::new());
-                         
-                         resource_val.insert(serde_yaml::Value::String("import-id".to_string()), val);
-                         
-                         for (k, v) in old_map {
-                              resource_val.insert(k, v);
-                         }
+                    // the import id is the full resource name; the block's
+                    // `name` is the bare constraint the emitter expands
+                    // (transformation 9), and `parent` is the enclosing scope
+                    let import_id = name.find("organizations/").or_else(|| name.find("folders/")).or_else(|| name.find("projects/")).map(|i| name[i..].to_string());
+                    let old_map = std::mem::replace(&mut resource_val, serde_yaml::Mapping::new());
+                    if let Some(id) = import_id {
+                        resource_val.insert(serde_yaml::Value::String("import-id".to_string()), serde_yaml::Value::String(id));
+                    }
+                    for (k, v) in old_map {
+                        if k.as_str() == Some("parent") {
+                            continue;
+                        }
+                        resource_val.insert(k, v);
                     }
                }
           
@@ -1243,9 +1391,6 @@ impl Discoverer {
               if tf_type == "google_org_policy_policy" {
                    if config.org_policy_policy.is_none() { config.org_policy_policy = Some(HashMap::new()); }
                    config.org_policy_policy.as_mut().unwrap().insert(sanitized_key.clone(), policy_map_val);
-              } else if tf_type == "google_organization_policy" {
-                   if config.google_organization_policy.is_none() { config.google_organization_policy = Some(HashMap::new()); }
-                   config.google_organization_policy.as_mut().unwrap().insert(sanitized_key.clone(), policy_map_val);
               } else {
                    config.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
                    if let Some(serde_yaml::Value::Mapping(m)) = config.extra.get_mut(tf_type) {
@@ -1273,19 +1418,37 @@ impl Discoverer {
           }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn discover_iam_policy(
          tf_type: &str,
          asset: &Asset,
+         res_config: &crate::config::ImportResourceConfig,
+         registry: Option<&ResourceRegistry>,
          scope: &str,
          scope_id: &str,
+         skipped: &mut Vec<Skipped>,
          sinks: Sinks<'_>,
     ) {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
+         // a grant on a folder/project that is not in the tree (skipped, or
+         // outside the sweep) has no place — say so, per policy
+         if scope != "organization" && !gcp_id_to_yaml_name.contains_key(scope_id) {
+             skipped.push(Skipped { tf_type: tf_type.to_string(), what: asset.name.clone(), reason: SkipReason::ParentNotFound(scope_id.to_string()) });
+             return;
+         }
          if let Some(iam) = &asset.iam_policy {
              for binding in &iam.bindings {
                  if !binding.members.is_empty() {
                      for member in &binding.members {
                          let role = &binding.role;
+                         if let Some(pattern) = skip_pattern(res_config, member) {
+                             skipped.push(Skipped {
+                                 tf_type: tf_type.to_string(),
+                                 what: format!("{} {} on {}", member, role, scope_id),
+                                 reason: SkipReason::PlatformOwned(pattern),
+                             });
+                             continue;
+                         }
                          if scope == "organization" {
                              if tf_type == "google_organization_iam_member" {
                                  if config.organization_iam_member.is_none() { config.organization_iam_member = Some(HashMap::new()); }
@@ -1311,25 +1474,16 @@ impl Discoverer {
                              if let Some(p_yaml) = gcp_id_to_yaml_name.get(scope_id) {
                                  if let Some(p) = project_map.get_mut(p_yaml) {
                                       let project_id = p.project_id.clone();
-                                      if tf_type == "google_storage_bucket_iam_member" {
-                                          let bucket_name = asset.name.split('/').next_back().unwrap_or("unknown-bucket").to_string();
-                                          let member_sanitized = member.replace(":", "_").replace("@", "_").replace(".", "_");
-                                          let role_sanitized = role.replace("roles/", "").replace(".", "_");
-                                          let key = format!("{}-{}-{}", bucket_name, role_sanitized, member_sanitized);
-                                          
-                                          let mut resource_map = serde_yaml::Mapping::new();
-                                          resource_map.insert(serde_yaml::Value::String("bucket".to_string()), serde_yaml::Value::String(bucket_name));
-                                          resource_map.insert(serde_yaml::Value::String("member".to_string()), serde_yaml::Value::String(member.clone()));
-                                          resource_map.insert(serde_yaml::Value::String("role".to_string()), serde_yaml::Value::String(role.clone()));
-                                          resource_map.insert(
-                                              serde_yaml::Value::String("import-id".to_string()),
-                                              serde_yaml::Value::String(grant_import_id(tf_type, resource_map.get("bucket").and_then(|b| b.as_str()).unwrap_or(""), role, member)),
-                                          );
-                                          
-                                          p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-                                          if let Some(serde_yaml::Value::Mapping(type_map)) = p.extra.get_mut(tf_type) {
-                                              type_map.insert(serde_yaml::Value::String(key), serde_yaml::Value::Mapping(resource_map));
-                                          }
+                                      if let Some(pin) = pin_attr(registry, tf_type) {
+                                          // a bucket's grant names the bucket; any other
+                                          // pinned type names its scope by the asset path
+                                          let scope_value = if tf_type == "google_storage_bucket_iam_member" {
+                                              asset.name.split('/').next_back().unwrap_or("unknown-bucket").to_string()
+                                          } else {
+                                              Self::asset_path(asset).to_string()
+                                          };
+                                          let id = grant_import_id(tf_type, &scope_value, role, member);
+                                          push_pinned_grant(&mut p.extra, tf_type, &pin, &scope_value, member, role, Some(id));
                                       } else {
                                           p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
                                       if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
@@ -1363,13 +1517,17 @@ impl Discoverer {
     ) -> Result<(), SkipReason> {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
           let name = &asset.name;
+          // the platform's own: the built-in sinks, a default service account
+          if let Some(pattern) = platform_owned(res_config, asset) {
+              return Err(SkipReason::PlatformOwned(pattern));
+          }
           let raw_key = if let Some(field) = &res_config.derive_yaml_key_from {
                if let Some(data) = asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
                     data.get(field).and_then(|v| v.as_str()).unwrap_or(name).to_string()
                } else { name.clone() }
           } else { name.clone() };
           
-          let sanitized_key = Self::sanitize_yaml_key(&raw_key.to_string());
+          let sanitized_key = Self::sanitize_asset_key(&raw_key.to_string());
           
           let mut resource_val = serde_yaml::Mapping::new();
           
@@ -1550,7 +1708,6 @@ impl Discoverer {
         
         // Count Org Level
         if let Some(map) = &config.org_policy_policy { *stats.entry("google_org_policy_policy".to_string()).or_insert(0) += map.len(); }
-        if let Some(map) = &config.google_organization_policy { *stats.entry("google_organization_policy".to_string()).or_insert(0) += map.len(); }
         if let Some(map) = &config.organization_iam_member { *stats.entry("google_organization_iam_member".to_string()).or_insert(0) += map.len(); }
         for (k, v) in &config.extra {
              if let serde_yaml::Value::Mapping(m) = v {
@@ -1614,11 +1771,6 @@ impl Discoverer {
     }
 
     fn process_organization_policy_family(tf_type: &str, asset: &Asset, schema: &ResourceSchema, name: &str, _scope_id: &str) -> Option<serde_yaml::Mapping> {
-         // Derive 'constraint'
-         let constraint = if name.contains("/policies/") {
-              name.split("/policies/").last().unwrap_or(name)
-         } else { name };
-
          // Extract data to a mutable map to inject missing fields
          let mut data_map = if let Some(r) = &asset.resource {
              if let Some(d) = &r.data {
@@ -1640,58 +1792,19 @@ impl Discoverer {
              // 'name' argument is the full resource name: organizations/{org_id}/policies/{constraint_name}
              // 'parent' argument is the parent resource: organizations/{org_id}
              
-             // Check if 'name' is present, if not inject it from asset name (stripped of service prefix)
-             if !data_map.contains_key("name") {
-                 // Asset name: //orgpolicy.googleapis.com/organizations/...
-                 // We want: organizations/...
-                 let relative_name = if let Some(idx) = name.find("organizations/") {
-                     &name[idx..]
-                 } else if let Some(idx) = name.find("folders/") {
-                     &name[idx..]
-                 } else if let Some(idx) = name.find("projects/") {
-                     &name[idx..]
-                 } else {
-                     name // Fallback
-                 };
-                 data_map.insert("name".to_string(), serde_json::Value::String(relative_name.to_string()));
-             }
-             
-             // Inject 'parent' if not present
-             if !data_map.contains_key("parent") {
-                  let parent = if let Some(idx) = scope_part.find("organizations/") {
-                     &scope_part[idx..]
-                 } else if let Some(idx) = scope_part.find("folders/") {
-                     &scope_part[idx..]
-                 } else if let Some(idx) = scope_part.find("projects/") {
-                     &scope_part[idx..]
-                 } else {
-                     "" 
-                 };
-                 if !parent.is_empty() {
-                    data_map.insert("parent".to_string(), serde_json::Value::String(parent.to_string()));
-                 }
-             }
+             // `name` is the bare constraint (`compute.managed.requireOsLogin`):
+             // the emitter expands it to the full resource name under the
+             // enclosing scope (language reference, transformation 9), and
+             // derives `parent` from that scope, so neither is written
+             let constraint = name.rsplit("/policies/").next().unwrap_or(name);
+             data_map.insert("name".to_string(), serde_json::Value::String(constraint.to_string()));
+             data_map.remove("parent");
+             let _ = scope_part;
 
          } else {
-             // Legacy types
-             data_map.insert("constraint".to_string(), serde_json::Value::String(constraint.to_string()));
-
-             if tf_type == "google_organization_policy" {
-                 if let Some(pos) = scope_part.find("organizations/") {
-                     let id = &scope_part[pos+"organizations/".len()..];
-                     data_map.insert("org_id".to_string(), serde_json::Value::String(id.to_string()));
-                 }
-             } else if tf_type == "google_folder_organization_policy" {
-                 if let Some(pos) = scope_part.find("folders/") {
-                     let id = &scope_part[pos+"folders/".len()..];
-                     data_map.insert("folder".to_string(), serde_json::Value::String(id.to_string()));
-                 }
-             } else if tf_type == "google_project_organization_policy" {
-                 if let Some(pos) = scope_part.find("projects/") {
-                     let id = &scope_part[pos+"projects/".len()..];
-                     data_map.insert("project".to_string(), serde_json::Value::String(id.to_string()));
-                 }
-             }
+             // the caller dispatches on the type, and this is the only org-policy
+             // type the importer reads
+             unreachable!("process_organization_policy_family called for {}", tf_type);
          }
 
          let extracted = schema.block.extract_attributes(&data_map, tf_type, name);
@@ -1702,6 +1815,82 @@ impl Discoverer {
              Some(extracted)
          }
     }
+}
+
+/// The label a discovered folder is written under: its display name as an
+/// identifier (`Infrastructure` → `infrastructure`, `satz-preflight scratch`
+/// → `satz_preflight_scratch`), the folder number appended only where two
+/// folders share a display name. Discovery keys folders `folder-<n>` while
+/// the sweep runs (unique by construction, and what every pass-2 lookup
+/// resolves by), so the renaming is one pass over both maps once every
+/// folder is known. The `"import-id"` still carries `folders/<n>`.
+fn label_folders_by_display_name(folder_map: &mut HashMap<String, Folder>, gcp_id_to_yaml_name: &mut HashMap<String, String>) {
+    fn identifier(display_name: &str) -> String {
+        let mut out: String = display_name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        while out.contains("__") {
+            out = out.replace("__", "_");
+        }
+        let out = out.trim_matches('_').to_string();
+        if out.is_empty() || out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            format!("folder_{}", out)
+        } else {
+            out
+        }
+    }
+    let mut keys: Vec<String> = folder_map.keys().cloned().collect();
+    keys.sort();
+    let mut by_label: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for key in &keys {
+        by_label.entry(identifier(&folder_map[key].display_name)).or_default().push(key.clone());
+    }
+    let mut renames: Vec<(String, String)> = Vec::new();
+    for (label, olds) in by_label {
+        let unique = olds.len() == 1;
+        for old in olds {
+            let new = if unique {
+                label.clone()
+            } else {
+                format!("{}_{}", label, old.trim_start_matches("folder-"))
+            };
+            renames.push((old, new));
+        }
+    }
+    for (old, new) in renames {
+        if old == new {
+            continue;
+        }
+        if let Some(f) = folder_map.remove(&old) {
+            folder_map.insert(new.clone(), f);
+        }
+        for v in gcp_id_to_yaml_name.values_mut() {
+            if *v == old {
+                *v = new.clone();
+            }
+        }
+    }
+}
+
+/// A project's labels as the estate declares them: the string-valued ones,
+/// minus the provider's attribution label, which `filter_recursive` strips
+/// from every other type for the same reason.
+fn declared_labels(labels: &serde_json::Map<String, serde_json::Value>) -> Option<HashMap<String, String>> {
+    let extracted: HashMap<String, String> = labels
+        .iter()
+        .filter(|(k, _)| k.as_str() != ATTRIBUTION_LABEL)
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+        .collect();
+    if extracted.is_empty() { None } else { Some(extracted) }
+}
+
+/// A type whose map is keyed by MEMBER (`"user:…" = [roles]`) rather than by
+/// address — satz-core's own rule, so the two never drift. Those keys are
+/// never qualified: a member is the same principal in every container.
+fn is_grant_map(tf_type: &str) -> bool {
+    satz_core::pipeline::type_facts(tf_type).0 == satz_core::MergeClass::Grant
 }
 
 /// `role` and `member` of a grant record — both structural: a record without
@@ -1728,6 +1917,11 @@ fn grant_identity(tf_type: &str, tf_name: &str, values: &Value) -> Result<(Strin
 /// folder, a folder root whose projects sit in sub-folders the filter dropped)
 /// cannot nest the project, so the project keeps it as an explicit `folder_id`
 /// — re-parenting it to the organization would make `apply` MOVE the project.
+///
+/// A project whose parent IS the organization stays at the top level with no
+/// parent attribute: the emitter derives `org_id` there. It used to fall into
+/// the "outside the sweep" arm and come out as `folder_id = "organizations/…"`,
+/// which the provider refuses.
 fn link_projects_to_folders(
     project_id_to_parent: &HashMap<String, String>,
     gcp_id_to_yaml_name: &HashMap<String, String>,
@@ -1743,6 +1937,9 @@ fn link_projects_to_folders(
             eprintln!("Warning: skipping project '{}' — it has a parent but no discovered resource record.", p_id);
             continue;
         };
+        if !f_id.starts_with("folders/") {
+            continue; // organization root: the emitter derives it
+        }
         match gcp_id_to_yaml_name.get(f_id) {
             Some(f_yaml) => {
                 let Some(folder) = folder_map.get_mut(f_yaml) else {
@@ -1775,7 +1972,9 @@ fn link_projects_to_folders(
 /// Nest each discovered folder under its parent folder, deepest first (depth
 /// walked over the parent map — never inferred from the id) so a child is
 /// always moved before the folder containing it. A folder whose parent is not
-/// in the sweep keeps that parent explicitly, for the same reason as above.
+/// in the sweep keeps that parent explicitly, for the same reason as above. A
+/// folder whose parent is the organization carries none: the top level IS that
+/// parent (language reference §6.6) and the emitter derives it.
 fn link_folders_to_parents(
     folder_id_to_parent: &HashMap<String, String>,
     gcp_id_to_yaml_name: &HashMap<String, String>,
@@ -1804,13 +2003,21 @@ fn link_folders_to_parents(
             continue;
         };
         if !parent_id.starts_with("folders/") {
-            continue; // organization root: the emitter derives it
+            // organization root: the emitter derives it, so the parent the
+            // asset was discovered with must not be written beside it
+            if let Some(root) = folder_map.get_mut(&child_yaml) {
+                root.parent = None;
+            }
+            continue;
         }
         match gcp_id_to_yaml_name.get(parent_id) {
             Some(parent_yaml) => {
-                let Some(child_folder) = folder_map.remove(&child_yaml) else {
+                let Some(mut child_folder) = folder_map.remove(&child_yaml) else {
                     return Err(format!("import: folder {} ({}) has a parent but no record to move", child_id, child_yaml));
                 };
+                // the nesting IS the parent; declared beside it, the emitter
+                // refuses the folder
+                child_folder.parent = None;
                 let Some(parent_folder) = folder_map.get_mut(parent_yaml) else {
                     return Err(format!(
                         "import: folder {} ({}) is the parent of {} but is not at the top level any more — nesting order is broken",
@@ -1838,9 +2045,278 @@ fn link_folders_to_parents(
     Ok(())
 }
 
+/// A Satz address is `<type>.<key>` across the whole estate, and two projects
+/// hold resources of the same name all the time (every project has a
+/// `_Default` log sink). Where one key is used by a type more than once, the
+/// copies inside a folder or project take that container's name as a prefix;
+/// the one at the organisation keeps the plain key. Without this the fold
+/// refuses the imported estate, naming both lines.
+///
+/// A grant map is keyed by member, not by address, and is left alone: one
+/// principal granted on two folders used to come out as
+/// `"folder-<n>-user:x@y"`, a member that exists nowhere, while its import id
+/// still named the real one — the plan imported the binding and then replaced it.
+fn qualify_duplicate_keys(config: &mut Config) {
+    fn count(extra: &HashMap<String, serde_yaml::Value>, seen: &mut BTreeMap<String, BTreeMap<String, usize>>) {
+        for (tf_type, val) in extra {
+            if is_grant_map(tf_type) {
+                continue;
+            }
+            if let serde_yaml::Value::Mapping(m) = val {
+                for k in m.keys().filter_map(|k| k.as_str()) {
+                    *seen.entry(tf_type.clone()).or_default().entry(k.to_string()).or_default() += 1;
+                }
+            }
+        }
+    }
+    fn count_folder(f: &Folder, seen: &mut BTreeMap<String, BTreeMap<String, usize>>) {
+        count(&f.extra, seen);
+        for sub in f.folder.iter().flat_map(|m| m.values()) {
+            count_folder(sub, seen);
+        }
+        for p in f.project.iter().flat_map(|m| m.values()) {
+            count(&p.extra, seen);
+        }
+    }
+    fn qualify(
+        extra: &mut HashMap<String, serde_yaml::Value>,
+        container: &str,
+        seen: &BTreeMap<String, BTreeMap<String, usize>>,
+        taken: &mut BTreeMap<String, BTreeSet<String>>,
+    ) {
+        for (tf_type, val) in extra.iter_mut() {
+            let Some(dupes) = seen.get(tf_type) else { continue };
+            let serde_yaml::Value::Mapping(m) = val else { continue };
+            let keys: Vec<String> = m.keys().filter_map(|k| k.as_str()).map(str::to_string).collect();
+            for key in keys {
+                if dupes.get(&key).copied().unwrap_or(0) < 2 {
+                    continue;
+                }
+                let used = taken.entry(tf_type.clone()).or_default();
+                let mut name = format!("{}-{}", container, key);
+                let mut n = 2;
+                while used.contains(&name) || dupes.contains_key(&name) {
+                    name = format!("{}-{}-{}", container, key, n);
+                    n += 1;
+                }
+                used.insert(name.clone());
+                if let Some(v) = m.remove(serde_yaml::Value::String(key)) {
+                    m.insert(serde_yaml::Value::String(name), v);
+                }
+            }
+        }
+    }
+    fn qualify_folder(
+        f: &mut Folder,
+        label: &str,
+        seen: &BTreeMap<String, BTreeMap<String, usize>>,
+        taken: &mut BTreeMap<String, BTreeSet<String>>,
+    ) {
+        qualify(&mut f.extra, label, seen, taken);
+        for (name, sub) in f.folder.iter_mut().flat_map(|m| m.iter_mut()) {
+            let name = name.clone();
+            qualify_folder(sub, &name, seen, taken);
+        }
+        for (name, p) in f.project.iter_mut().flat_map(|m| m.iter_mut()) {
+            let name = name.clone();
+            qualify(&mut p.extra, &name, seen, taken);
+        }
+    }
+
+    let mut seen: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    count(&config.extra, &mut seen);
+    for f in config.folder.iter().flat_map(|m| m.values()) {
+        count_folder(f, &mut seen);
+    }
+    for p in config.project.iter().flat_map(|m| m.values()) {
+        count(&p.extra, &mut seen);
+    }
+    if !seen.values().any(|keys| keys.values().any(|n| *n > 1)) {
+        return;
+    }
+    let mut taken: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (name, f) in config.folder.iter_mut().flat_map(|m| m.iter_mut()) {
+        let name = name.clone();
+        qualify_folder(f, &name, &seen, &mut taken);
+    }
+    for (name, p) in config.project.iter_mut().flat_map(|m| m.iter_mut()) {
+        let name = name.clone();
+        qualify(&mut p.extra, &name, &seen, &mut taken);
+    }
+}
+
+/// Visit every folder and project of a discovered estate in one fixed order —
+/// folders before projects, siblings by key, a folder before its children —
+/// with the node's path and its resources. The order is what makes "the first
+/// node keeps the map form" reproducible from one run to the next.
+fn visit_nodes(config: &mut Config, f: &mut dyn FnMut(&str, &mut HashMap<String, serde_yaml::Value>)) {
+    fn visit_folder(path: &str, fo: &mut Folder, f: &mut dyn FnMut(&str, &mut HashMap<String, serde_yaml::Value>)) {
+        f(path, &mut fo.extra);
+        if let Some(subs) = fo.folder.as_mut() {
+            let mut keys: Vec<String> = subs.keys().cloned().collect();
+            keys.sort();
+            for k in keys {
+                visit_folder(&format!("{}/{}", path, k), subs.get_mut(&k).expect("key from keys()"), f);
+            }
+        }
+        if let Some(projects) = fo.project.as_mut() {
+            let mut keys: Vec<String> = projects.keys().cloned().collect();
+            keys.sort();
+            for k in keys {
+                f(&format!("{}/{}", path, k), &mut projects.get_mut(&k).expect("key from keys()").extra);
+            }
+        }
+    }
+    if let Some(folders) = config.folder.as_mut() {
+        let mut keys: Vec<String> = folders.keys().cloned().collect();
+        keys.sort();
+        for k in keys {
+            visit_folder(&k, folders.get_mut(&k).expect("key from keys()"), f);
+        }
+    }
+    if let Some(projects) = config.project.as_mut() {
+        let mut keys: Vec<String> = projects.keys().cloned().collect();
+        keys.sort();
+        for k in keys {
+            f(&k, &mut projects.get_mut(&k).expect("key from keys()").extra);
+        }
+    }
+}
+
+fn identifier_from(s: &str) -> String {
+    s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect()
+}
+
+/// The readable label a counted grant is written under, before its number:
+/// the role's last segment and the member's local part
+/// (`folderAdmin_alice` for `roles/resourcemanager.folderAdmin` and
+/// `user:alice@example.com`).
+fn grant_label_base(role: &str, member: &str) -> String {
+    let role_short = role.rsplit(['/', '.']).next().unwrap_or(role);
+    let local = member.split_once(':').map(|(_, v)| v).unwrap_or(member);
+    let local = local.split('@').next().unwrap_or(local);
+    format!("{}_{}", identifier_from(role_short), identifier_from(local))
+}
+
+fn grant_entry_import_id(v: &serde_yaml::Value) -> Option<String> {
+    v.as_mapping().and_then(|m| m.get("import-id")).and_then(|id| id.as_str()).map(String::from)
+}
+
+/// Grant edges that two nodes of the same kind both hold, resolved per
+/// [`OnCollision`]. Returns one note per edge rewritten; `Error` returns the
+/// full list as the error.
+pub fn resolve_grant_collisions(config: &mut Config, mode: OnCollision) -> Result<Vec<String>, String> {
+    type Edge = (String, String, String); // (type, member, role)
+    // pass 1: every edge with the nodes holding it, in visiting order, and
+    // every label already taken per type (a labelled grant is an address)
+    let mut sites: BTreeMap<Edge, Vec<String>> = BTreeMap::new();
+    let mut taken: BTreeSet<(String, String)> = BTreeSet::new();
+    visit_nodes(config, &mut |node, extra| {
+        for (tf_type, val) in extra.iter() {
+            if !is_grant_map(tf_type) {
+                continue;
+            }
+            let Some(m) = val.as_mapping() else { continue };
+            for (k, v) in m {
+                let Some(key) = k.as_str() else { continue };
+                match v {
+                    serde_yaml::Value::Sequence(roles) => {
+                        for r in roles {
+                            if let Some(role) = grant_role(r) {
+                                sites.entry((tf_type.clone(), key.to_string(), role.to_string())).or_default().push(node.to_string());
+                            }
+                        }
+                    }
+                    _ => {
+                        taken.insert((tf_type.clone(), key.to_string()));
+                    }
+                }
+            }
+        }
+    });
+    let colliding: BTreeMap<Edge, Vec<String>> = sites.into_iter().filter(|(_, nodes)| nodes.len() > 1).collect();
+    if colliding.is_empty() {
+        return Ok(Vec::new());
+    }
+    if mode == OnCollision::Error {
+        let mut msg = format!(
+            "import: {} grant(s) held on more than one folder/project would emit one address each — the map form's label is member + role:\n",
+            colliding.len()
+        );
+        for ((tf_type, member, role), nodes) in &colliding {
+            msg.push_str(&format!("  {} {} {} on {}\n", tf_type, member, role, nodes.join(", ")));
+        }
+        msg.push_str(
+            "`--on-collision counter` keeps the first in the map form and writes the others as labelled resources with a running number; or edit the estate by hand",
+        );
+        return Err(msg);
+    }
+    // pass 2: every node but the first gives the edge up to a labelled resource
+    let first_of: BTreeMap<Edge, String> = colliding.into_iter().map(|(e, nodes)| (e, nodes[0].clone())).collect();
+    let mut notes = Vec::new();
+    visit_nodes(config, &mut |node, extra| {
+        for (tf_type, val) in extra.iter_mut() {
+            if !is_grant_map(tf_type) {
+                continue;
+            }
+            let Some(m) = val.as_mapping_mut() else { continue };
+            let mut inserts: Vec<(String, serde_yaml::Mapping)> = Vec::new();
+            let mut emptied: Vec<serde_yaml::Value> = Vec::new();
+            for (k, v) in m.iter_mut() {
+                let (Some(member), serde_yaml::Value::Sequence(roles)) = (k.as_str().map(str::to_string), v) else { continue };
+                let mut moved: Vec<(String, Option<String>)> = Vec::new();
+                roles.retain(|r| {
+                    let Some(role) = grant_role(r) else { return true };
+                    match first_of.get(&(tf_type.clone(), member.clone(), role.to_string())) {
+                        Some(first) if first != node => {
+                            moved.push((role.to_string(), grant_entry_import_id(r)));
+                            false
+                        }
+                        _ => true,
+                    }
+                });
+                for (role, id) in moved {
+                    let base = grant_label_base(&role, &member);
+                    let mut n = 2;
+                    let mut label = format!("{}_{}", base, n);
+                    while !taken.insert((tf_type.clone(), label.clone())) {
+                        n += 1;
+                        label = format!("{}_{}", base, n);
+                    }
+                    let first = &first_of[&(tf_type.clone(), member.clone(), role.clone())];
+                    notes.push(format!(
+                        "import: {} {} on {} is written as {}.{} — {} holds the same grant, and the map form has one address per member and role",
+                        member, role, node, tf_type, label, first
+                    ));
+                    let mut body = serde_yaml::Mapping::new();
+                    if let Some(id) = id {
+                        body.insert("import-id".into(), serde_yaml::Value::String(id));
+                    }
+                    body.insert("role".into(), serde_yaml::Value::String(role));
+                    body.insert("member".into(), serde_yaml::Value::String(member.clone()));
+                    inserts.push((label, body));
+                }
+                if roles.is_empty() {
+                    emptied.push(k.clone());
+                }
+            }
+            for k in emptied {
+                m.remove(k);
+            }
+            for (label, body) in inserts {
+                m.insert(serde_yaml::Value::String(label), serde_yaml::Value::Mapping(body));
+            }
+        }
+    });
+    Ok(notes)
+}
+
 /// The end of every import: what was left out, and why. Never silent — a
 /// partial estate is fine, an unexplained one is not.
 pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbose: bool) {
+    for n in &found.notes {
+        println!("{}", n);
+    }
     let skipped = &found.skipped;
     if !found.dropped_attrs.is_empty() {
         let mut by_type: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1865,7 +2341,7 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
     if !filtered_off.is_empty() && !skipped.iter().any(|s| s.reason == SkipReason::Filtered) {
         // live shape: filtered types are never fetched, so they have no
         // per-resource rows — say so at the type level
-        by_reason.insert(format!("type(s) filtered by --only, not fetched ({})", {
+        by_reason.insert(format!("type(s) filtered by --only/--exclude, not fetched ({})", {
             let mut v: Vec<&str> = filtered_off.iter().map(String::as_str).collect();
             v.sort();
             v.join(", ")
@@ -1874,9 +2350,12 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
     for s in skipped {
         let key = match &s.reason {
             SkipReason::TypeOff => "type off (import: false)".to_string(),
-            SkipReason::Filtered => "filtered by --only".to_string(),
+            SkipReason::Filtered => "filtered by --only/--exclude".to_string(),
             SkipReason::Unmapped(_) => "unmapped (no import-config row fits)".to_string(),
             SkipReason::ParentNotFound(_) => "parent not imported".to_string(),
+            // one line per pattern: the operator sees what each one took
+            SkipReason::PlatformOwned(p) => format!("platform-owned, skip pattern `{}`", p),
+            SkipReason::NotActive(s) => format!("project not ACTIVE ({})", s),
         };
         *by_reason.entry(key).or_default() += 1;
     }
@@ -1891,7 +2370,256 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
             println!("  - {} {} — {}", s.tf_type, s.what, s.reason);
         }
     } else {
-        println!("  (--verbose lists every one; `import: false` rows and `--only` are the levers)");
+        println!("  (--verbose lists every one; `import: false` rows, `--all`, `--only` and `--exclude` are the levers)");
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    //! Two projects hold a resource of the same name — every project has a
+    //! `_Default` log sink — and a Satz address is `<type>.<key>` across the
+    //! estate, so the imported keys must not collide.
+    use super::*;
+
+    fn project(id: &str, sink: &str) -> Project {
+        let mut sinks = serde_yaml::Mapping::new();
+        sinks.insert(serde_yaml::Value::String(sink.into()), serde_yaml::Value::String("body".into()));
+        let mut extra = HashMap::new();
+        extra.insert("google_logging_project_sink".to_string(), serde_yaml::Value::Mapping(sinks));
+        Project { project_id: id.into(), extra, ..Default::default() }
+    }
+
+    fn keys(config: &Config, project: &str) -> Vec<String> {
+        let p = &config.project.as_ref().unwrap()[project];
+        let serde_yaml::Value::Mapping(m) = &p.extra["google_logging_project_sink"] else { panic!() };
+        m.keys().filter_map(|k| k.as_str()).map(str::to_string).collect()
+    }
+
+    #[test]
+    fn a_key_two_projects_share_takes_the_project_as_prefix() {
+        let mut config = Config { project: Some(HashMap::from([
+            ("alpha".to_string(), project("alpha", "-default")),
+            ("beta".to_string(), project("beta", "-default")),
+        ])), ..Default::default() };
+        qualify_duplicate_keys(&mut config);
+        assert_eq!(keys(&config, "alpha"), ["alpha--default"]);
+        assert_eq!(keys(&config, "beta"), ["beta--default"]);
+    }
+
+    #[test]
+    fn grant_map_members_are_never_qualified() {
+        // a member is the same principal in every container; the key is not
+        // an address, and a prefixed one is a member that exists nowhere
+        fn grants(id: &str) -> Project {
+            let mut members = serde_yaml::Mapping::new();
+            members.insert(
+                serde_yaml::Value::String("user:a@example.com".into()),
+                serde_yaml::Value::Sequence(vec![serde_yaml::Value::String("roles/viewer".into())]),
+            );
+            let mut extra = HashMap::new();
+            extra.insert("google_project_iam_member".to_string(), serde_yaml::Value::Mapping(members));
+            Project { project_id: id.into(), extra, ..Default::default() }
+        }
+        let mut config = Config { project: Some(HashMap::from([
+            ("alpha".to_string(), grants("alpha")),
+            ("beta".to_string(), grants("beta")),
+        ])), ..Default::default() };
+        qualify_duplicate_keys(&mut config);
+        for p in ["alpha", "beta"] {
+            let serde_yaml::Value::Mapping(m) = &config.project.as_ref().unwrap()[p].extra["google_project_iam_member"] else { panic!() };
+            let keys: Vec<&str> = m.keys().filter_map(|k| k.as_str()).collect();
+            assert_eq!(keys, ["user:a@example.com"], "{}", p);
+        }
+    }
+
+    #[test]
+    fn the_attribution_label_is_not_a_declared_label() {
+        let raw: serde_json::Value = serde_json::json!({"env": "prod", "goog-terraform-provisioned": "true"});
+        let labels = declared_labels(raw.as_object().unwrap()).unwrap();
+        assert_eq!(labels.get("env").map(String::as_str), Some("prod"));
+        assert!(!labels.contains_key("goog-terraform-provisioned"));
+        let only: serde_json::Value = serde_json::json!({"goog-terraform-provisioned": "true"});
+        assert_eq!(declared_labels(only.as_object().unwrap()), None, "nothing left is no labels block at all");
+    }
+
+    #[test]
+    fn a_key_only_one_project_has_stays_as_it_is() {
+        let mut config = Config { project: Some(HashMap::from([
+            ("alpha".to_string(), project("alpha", "-default")),
+            ("beta".to_string(), project("beta", "audit")),
+        ])), ..Default::default() };
+        qualify_duplicate_keys(&mut config);
+        assert_eq!(keys(&config, "alpha"), ["-default"]);
+        assert_eq!(keys(&config, "beta"), ["audit"]);
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    //! The forms the live shape writes: folders labelled by display name,
+    //! the platform's own resources skipped under the pattern that matched.
+    use super::*;
+
+    #[test]
+    fn folders_are_labelled_by_display_name_and_numbered_only_on_collision() {
+        let mut folders: HashMap<String, Folder> = HashMap::from([
+            ("folder-1".to_string(), Folder { display_name: "Infrastructure".into(), ..Default::default() }),
+            ("folder-2".to_string(), Folder { display_name: "Infrastructure".into(), ..Default::default() }),
+            ("folder-3".to_string(), Folder { display_name: "satz-preflight scratch".into(), ..Default::default() }),
+            ("folder-4".to_string(), Folder { display_name: "2024 archive".into(), ..Default::default() }),
+        ]);
+        let mut names: HashMap<String, String> = HashMap::from([
+            ("folders/1".to_string(), "folder-1".to_string()),
+            ("folders/2".to_string(), "folder-2".to_string()),
+            ("folders/3".to_string(), "folder-3".to_string()),
+            ("folders/4".to_string(), "folder-4".to_string()),
+        ]);
+        label_folders_by_display_name(&mut folders, &mut names);
+        let mut keys: Vec<&String> = folders.keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["folder_2024_archive", "infrastructure_1", "infrastructure_2", "satz_preflight_scratch"]);
+        assert_eq!(names["folders/3"], "satz_preflight_scratch", "every pass-2 lookup follows the rename");
+        assert_eq!(names["folders/1"], "infrastructure_1");
+        assert_eq!(folders["infrastructure_2"].display_name, "Infrastructure");
+    }
+
+    #[test]
+    fn a_bucket_grant_is_a_pinned_map_per_bucket() {
+        // two buckets, one member, one role: two maps under one key, each
+        // pinned to its bucket, never a labelled `<bucket>-<role>-<member>`
+        let mut extra = HashMap::new();
+        for bucket in ["a", "b", "a"] {
+            push_pinned_grant(&mut extra, "google_storage_bucket_iam_member", "bucket", bucket, "group:x@example.com", "roles/storage.objectViewer", Some(format!("b/{} roles/storage.objectViewer group:x@example.com", bucket)));
+        }
+        push_pinned_grant(&mut extra, "google_storage_bucket_iam_member", "bucket", "a", "group:x@example.com", "roles/storage.admin", None);
+        let serde_yaml::Value::Sequence(maps) = &extra["google_storage_bucket_iam_member"] else { panic!("a list of maps") };
+        assert_eq!(maps.len(), 2, "{:?}", maps);
+        let a = maps[0].as_mapping().unwrap();
+        assert_eq!(a.get("bucket").unwrap().as_str(), Some("a"));
+        let roles = a.get("group:x@example.com").unwrap().as_sequence().unwrap();
+        assert_eq!(roles.len(), 2, "the second grant on the same bucket joins the map, the third is a repeat: {:?}", roles);
+        assert_eq!(maps[1].as_mapping().unwrap().get("bucket").unwrap().as_str(), Some("b"));
+    }
+
+    #[test]
+    fn a_skip_pattern_names_what_it_matched_and_the_row_refuses_a_typo() {
+        let row: crate::config::ImportResourceConfig = serde_yaml::from_str(
+            "description: x\nimport: true\nskip: [\"_Default\", \"serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com\"]\n",
+        )
+        .unwrap();
+        assert_eq!(skip_pattern(&row, "_Default").as_deref(), Some("_Default"));
+        assert_eq!(
+            skip_pattern(&row, "serviceAccount:service-123@gcp-sa-ktd.iam.gserviceaccount.com").as_deref(),
+            Some("serviceAccount:service-*@gcp-sa-*.iam.gserviceaccount.com")
+        );
+        assert_eq!(skip_pattern(&row, "serviceAccount:svc-iac-001@acme-infra.iam.gserviceaccount.com"), None);
+        assert_eq!(skip_pattern(&row, "audit-sink"), None);
+        let typo: Result<crate::config::ImportResourceConfig, _> = serde_yaml::from_str("description: x\nimport: true\nskp: []\n");
+        assert!(typo.is_err(), "an unknown key on a row is refused, never ignored");
+        assert!(SkipReason::PlatformOwned("_Default".into()).to_string().contains("skip pattern `_Default`"));
+        assert!(SkipReason::NotActive("DELETE_REQUESTED".into()).to_string().contains("DELETE_REQUESTED, not ACTIVE"));
+    }
+}
+
+#[cfg(test)]
+mod collision_tests {
+    //! One principal granted one role on two folders: the map form's emitted
+    //! label hashes member + role and not the node, so the two edges would emit
+    //! one address. The import says so, or numbers the second on request.
+    use super::*;
+
+    fn folder_with_grant(name: &str, member: &str, roles: Vec<serde_yaml::Value>) -> Folder {
+        let mut members = serde_yaml::Mapping::new();
+        members.insert(serde_yaml::Value::String(member.into()), serde_yaml::Value::Sequence(roles));
+        let mut extra = HashMap::new();
+        extra.insert("google_folder_iam_member".to_string(), serde_yaml::Value::Mapping(members));
+        Folder { display_name: name.into(), extra, ..Default::default() }
+    }
+
+    fn two_folders() -> Config {
+        Config {
+            folder: Some(HashMap::from([
+                ("a".to_string(), folder_with_grant("a", "user:x@example.com", vec![
+                    grant_entry("roles/resourcemanager.folderAdmin", "folders/1 roles/resourcemanager.folderAdmin user:x@example.com"),
+                    grant_entry("roles/browser", "folders/1 roles/browser user:x@example.com"),
+                ])),
+                ("b".to_string(), folder_with_grant("b", "user:x@example.com", vec![
+                    grant_entry("roles/resourcemanager.folderAdmin", "folders/2 roles/resourcemanager.folderAdmin user:x@example.com"),
+                ])),
+            ])),
+            ..Default::default()
+        }
+    }
+
+    fn grants<'a>(config: &'a Config, folder: &str) -> &'a serde_yaml::Mapping {
+        config.folder.as_ref().unwrap()[folder].extra["google_folder_iam_member"].as_mapping().unwrap()
+    }
+
+    #[test]
+    fn the_same_grant_on_two_folders_is_refused_by_default() {
+        let mut config = two_folders();
+        let err = resolve_grant_collisions(&mut config, OnCollision::Error).unwrap_err();
+        assert!(err.contains("google_folder_iam_member user:x@example.com roles/resourcemanager.folderAdmin on a, b"), "{}", err);
+        assert!(err.contains("--on-collision counter"), "{}", err);
+        assert!(!err.contains("roles/browser"), "a role only one folder holds is no collision:\n{}", err);
+    }
+
+    #[test]
+    fn with_counter_the_second_folder_gets_a_labelled_grant() {
+        let mut config = two_folders();
+        let notes = resolve_grant_collisions(&mut config, OnCollision::Counter).unwrap();
+        assert_eq!(notes.len(), 1, "{:?}", notes);
+        assert!(notes[0].contains("google_folder_iam_member.folderAdmin_x_2"), "{}", notes[0]);
+        assert!(notes[0].contains("a holds the same grant"), "{}", notes[0]);
+        // the first node keeps both roles in the map form
+        let a = grants(&config, "a");
+        assert_eq!(a.get("user:x@example.com").unwrap().as_sequence().unwrap().len(), 2);
+        // the second: the member line held nothing else and is gone; the edge
+        // is a labelled resource carrying its own import id
+        let b = grants(&config, "b");
+        assert!(b.get("user:x@example.com").is_none(), "{:?}", b);
+        let labelled = b.get("folderAdmin_x_2").unwrap().as_mapping().unwrap();
+        assert_eq!(labelled.get("role").unwrap().as_str(), Some("roles/resourcemanager.folderAdmin"));
+        assert_eq!(labelled.get("member").unwrap().as_str(), Some("user:x@example.com"));
+        assert_eq!(labelled.get("import-id").unwrap().as_str(), Some("folders/2 roles/resourcemanager.folderAdmin user:x@example.com"));
+    }
+
+    #[test]
+    fn a_third_folder_takes_the_next_number() {
+        let mut config = two_folders();
+        config.folder.as_mut().unwrap().insert("c".to_string(), folder_with_grant("c", "user:x@example.com", vec![
+            grant_entry("roles/resourcemanager.folderAdmin", "folders/3 roles/resourcemanager.folderAdmin user:x@example.com"),
+        ]));
+        let notes = resolve_grant_collisions(&mut config, OnCollision::Counter).unwrap();
+        assert_eq!(notes.len(), 2, "{:?}", notes);
+        assert!(grants(&config, "b").get("folderAdmin_x_2").is_some());
+        assert!(grants(&config, "c").get("folderAdmin_x_3").is_some());
+    }
+
+    #[test]
+    fn a_folder_grant_and_a_project_grant_never_collide() {
+        // different types emit different addresses whatever the member and role
+        let mut config = two_folders();
+        let mut members = serde_yaml::Mapping::new();
+        members.insert(
+            serde_yaml::Value::String("user:x@example.com".into()),
+            serde_yaml::Value::Sequence(vec![serde_yaml::Value::String("roles/browser".into())]),
+        );
+        let mut extra = HashMap::new();
+        extra.insert("google_project_iam_member".to_string(), serde_yaml::Value::Mapping(members));
+        config.project = Some(HashMap::from([("p".to_string(), Project { project_id: "p".into(), extra, ..Default::default() })]));
+        config.folder.as_mut().unwrap().remove("b");
+        assert_eq!(resolve_grant_collisions(&mut config, OnCollision::Error).unwrap(), Vec::<String>::new());
+        assert_eq!(grants(&config, "a").get("user:x@example.com").unwrap().as_sequence().unwrap().len(), 2, "nothing moved");
+    }
+
+    #[test]
+    fn labels_are_readable_identifiers() {
+        assert_eq!(grant_label_base("roles/resourcemanager.folderAdmin", "user:alice.b@example.com"), "folderAdmin_alice_b");
+        assert_eq!(grant_label_base("organizations/1/roles/myRole", "serviceAccount:svc@p.iam.gserviceaccount.com"), "myRole_svc");
+        assert_eq!(grant_label_base("roles/viewer", "allUsers"), "viewer_allUsers");
+        assert_eq!("error".parse::<OnCollision>(), Ok(OnCollision::Error));
+        assert!("hash".parse::<OnCollision>().unwrap_err().contains("one of error, counter"));
     }
 }
 
@@ -1904,6 +2632,10 @@ mod nesting_tests {
 
     fn folder(name: &str) -> Folder {
         Folder { import_id: None, display_name: name.into(), parent: None, folder: None, project: None, extra: HashMap::new() }
+    }
+
+    fn folder_with_parent(name: &str, parent: &str) -> Folder {
+        Folder { parent: Some(parent.into()), ..folder(name) }
     }
 
     #[test]
@@ -1930,6 +2662,54 @@ mod nesting_tests {
         assert_eq!(map.keys().collect::<Vec<_>>(), vec!["a"]);
         let b = &map["a"].folder.as_ref().unwrap()["b"];
         assert!(b.folder.as_ref().unwrap().contains_key("c"), "c nests under b under a");
+    }
+
+    #[test]
+    fn a_nested_folder_drops_the_parent_it_was_discovered_with() {
+        // the nesting is the parent; declared beside it the emitter refuses the
+        // folder, so a live import of nested folders would not compile
+        let parents: HashMap<String, String> =
+            [("folders/2", "folders/1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let names: HashMap<String, String> =
+            [("folders/1", "a"), ("folders/2", "b")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut map: HashMap<String, Folder> = [
+            ("a".to_string(), folder("a")),
+            ("b".to_string(), folder_with_parent("b", "folders/1")),
+        ]
+        .into_iter()
+        .collect();
+        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        assert_eq!(map["a"].folder.as_ref().unwrap()["b"].parent, None);
+    }
+
+    #[test]
+    fn a_project_under_the_organisation_is_top_level_without_folder_id() {
+        // it used to take the "outside the sweep" arm and come out as
+        // `folder_id = "organizations/…"`, which the provider refuses
+        let pparents: HashMap<String, String> = [("projects/p1", "organizations/1")]
+            .into_iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let pnames: HashMap<String, String> = [("projects/p1", "p1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut projects: HashMap<String, Project> =
+            [("p1".to_string(), Project { project_id: "p1".into(), ..Default::default() })].into_iter().collect();
+        let mut folders: HashMap<String, Folder> = HashMap::new();
+        link_projects_to_folders(&pparents, &pnames, &mut projects, &mut folders).unwrap();
+        assert!(projects.contains_key("p1"), "the project stays at the top level");
+        assert_eq!(projects["p1"].extra.get("folder_id"), None, "no parent attribute: the emitter derives org_id");
+    }
+
+    #[test]
+    fn a_top_level_folder_carries_no_parent() {
+        // the top level IS the organization parent; written beside it the
+        // estate repeats the organization id the emitter derives
+        let parents: HashMap<String, String> =
+            [("folders/1", "organizations/1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let names: HashMap<String, String> = [("folders/1", "a")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut map: HashMap<String, Folder> =
+            [("a".to_string(), folder_with_parent("a", "organizations/1"))].into_iter().collect();
+        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        assert_eq!(map["a"].parent, None);
     }
 
     #[test]
@@ -1962,5 +2742,25 @@ mod nesting_tests {
         let v: serde_json::Value = serde_json::json!({"member": "user:a@example.com"});
         let err = grant_identity("google_project_iam_member", "x", &v).unwrap_err();
         assert!(err.contains("has no `role`"), "{}", err);
+    }
+}
+
+
+#[cfg(test)]
+mod state_document_tests {
+    //! A `tofu show -json` entry without `type` or `name` is a broken document,
+    //! not a resource of type "" that the operator turned off.
+    use super::*;
+
+    #[test]
+    fn a_resource_without_a_type_is_refused() {
+        let state = serde_json::json!({
+            "values": { "root_module": { "resources": [
+                { "address": "google_folder.x", "name": "x", "values": {} }
+            ] } }
+        });
+        let err = Discoverer::new(state, None, None, HashSet::new(), OnCollision::default()).discover().err().expect("no type is not a type");
+        let msg = err.to_string();
+        assert!(msg.contains("google_folder.x") && msg.contains("`type`"), "{msg}");
     }
 }

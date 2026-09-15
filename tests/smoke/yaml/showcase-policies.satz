@@ -3,11 +3,15 @@
 // estate, one is the subject of its `deviates` claim.
 pack showcase_policies version "1.0"
 
+// The estate declares a deviation on this control, so the policy it names must
+// not enforce — a `deviates` claim over an enforcing policy discloses a
+// non-conformance the estate does not have, and `require` reads it as a
+// contradicted claim (ADR 0013).
 "compute-managed-requireOsLogin" {
   name   = "compute.managed.requireOsLogin"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [ { enforce = "TRUE" } ]
+    rules = [{ enforce = "FALSE" }]
   }
 }
 
@@ -15,7 +19,7 @@ pack showcase_policies version "1.0"
   name   = "compute.managed.vmExternalIpAccess"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [ { enforce = "TRUE" } ]
+    rules = [{ enforce = "TRUE" }]
   }
 }
 
@@ -23,6 +27,6 @@ pack showcase_policies version "1.0"
   name   = "iam.managed.disableServiceAccountKeyCreation"
   parent = "organizations/{customer_organization_id}"
   spec {
-    rules = [ { enforce = "TRUE" } ]
+    rules = [{ enforce = "TRUE" }]
   }
 }

@@ -22,6 +22,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rmcp::schemars;
+
 use crate::config::ImportConfig;
 use crate::manifest::{EmittedResource, Manifest};
 
@@ -417,7 +419,7 @@ fn match_scope(r: &EmittedResource, manifest: &Manifest, resolved_ids: &BTreeMap
 fn data_at(data: &serde_json::Value, dotted: &str) -> Option<String> {
     let mut cur = data;
     for part in dotted.split('.') {
-        let camel = snake_to_camel(part);
+        let camel = crate::schema::snake_to_camel(part);
         cur = cur.get(&camel).or_else(|| cur.get(part))?;
     }
     match cur {
@@ -426,22 +428,6 @@ fn data_at(data: &serde_json::Value, dotted: &str) -> Option<String> {
         serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
-}
-
-fn snake_to_camel(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut up = false;
-    for c in s.chars() {
-        if c == '_' {
-            up = true;
-        } else if up {
-            out.push(c.to_ascii_uppercase());
-            up = false;
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 async fn resolve_folder<L: Live>(
@@ -645,31 +631,59 @@ pub(crate) fn move_conflicts(
         .collect()
 }
 
-pub(crate) fn render_table(
+/// One row of the adopt table: what adopt found for a declared resource and what
+/// it would do. The table renders these; `satz_adopt` returns them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct AdoptRow {
+    pub address: String,
+    /// `IMPORT`, `MOVE`, `adopted`, `on apply`, `AMBIGUOUS`, `FAILED`, …
+    pub verdict: String,
+    pub detail: String,
+    /// what the live lookup matched on, when it matched on a natural key
+    pub matched_on: Option<String>,
+    /// the address the same live object is managed under, for a MOVE
+    pub move_from: Option<String>,
+    /// a second line the row carries
+    pub note: Option<String>,
+    /// the Satz file and line that declared the resource
+    pub declared_at: Option<String>,
+}
+
+/// The rows of the adopt table, one per declared resource adopt says something
+/// about: already managed, moved, or its resolution.
+pub(crate) fn rows(
     resolutions: &[Resolution],
     in_state: &crate::bootstrap::StateIndex,
-) -> String {
-    let mut s = String::new();
-    let w = resolutions.iter().map(|r| r.address.len()).max().unwrap_or(20).min(72);
+    manifest: &crate::manifest::Manifest,
+) -> Vec<AdoptRow> {
+    let row = |r: &Resolution, verdict: &str, detail: String| AdoptRow {
+        address: r.address.clone(),
+        verdict: verdict.to_string(),
+        detail,
+        matched_on: None,
+        move_from: None,
+        note: None,
+        declared_at: r.origin.as_ref().map(|(f, l)| format!("{}:{}", f, l)),
+    };
+    let mut out = Vec::new();
     for r in resolutions {
         if in_state.manages(&r.address) {
             // The same words the import path prints, so the dry run and the run
             // are recognisably the same statement.
-            s.push_str(&format!(
-                "  {:w$}  {:30}  {}\n",
-                r.address, "already managed in the state", "skipped",
-                w = w
-            ));
+            out.push(row(r, "already managed in the state", "skipped".into()));
             continue;
         }
         if let Some(old) = moved_from(r, in_state) {
             // Said before the outcome, because the outcome is "IMPORT" and
             // importing is precisely the wrong move here.
-            s.push_str(&format!(
-                "  {:w$}  {:30}  in state as {} — the same live object, so `state mv`, not an import\n",
-                r.address, "MOVE", old,
-                w = w
-            ));
+            let mut moved = row(r, "MOVE", format!("in state as {} — the same live object, so `state mv`, not an import", old));
+            moved.move_from = Some(old.to_string());
+            // After the move the state holds its rules under an address the
+            // estate declares reset, which the API refuses as an update.
+            if in_state.holds_rules(old) && manifest.resources.get(&r.address).is_some_and(|m| m.reset) {
+                moved.note = Some("holds rules and is declared reset — `satz plan` and `satz apply` replace it".into());
+            }
+            out.push(moved);
             continue;
         }
         let (verdict, detail) = match &r.outcome {
@@ -686,9 +700,29 @@ pub(crate) fn render_table(
             Outcome::Failed(e) => ("FAILED", e.clone()),
             Outcome::Skipped => continue,
         };
-        s.push_str(&format!("  {:w$}  {:30}  {}\n", r.address, verdict, detail, w = w));
+        let mut resolved = row(r, verdict, detail);
         if !r.natural_key.is_empty() && !matches!(r.outcome, Outcome::Resolved { verified: false, .. } | Outcome::AlreadyAdopted(_)) {
-            s.push_str(&format!("  {:w$}  {:30}  matched on: {}\n", "", "", r.natural_key, w = w));
+            resolved.matched_on = Some(r.natural_key.clone());
+        }
+        out.push(resolved);
+    }
+    out
+}
+
+pub(crate) fn render_table(
+    resolutions: &[Resolution],
+    in_state: &crate::bootstrap::StateIndex,
+    manifest: &crate::manifest::Manifest,
+) -> String {
+    let mut s = String::new();
+    let w = resolutions.iter().map(|r| r.address.len()).max().unwrap_or(20).min(72);
+    for row in rows(resolutions, in_state, manifest) {
+        s.push_str(&format!("  {:w$}  {:30}  {}\n", row.address, row.verdict, row.detail, w = w));
+        if let Some(note) = &row.note {
+            s.push_str(&format!("  {:w$}  {:30}  {}\n", "", "", note, w = w));
+        }
+        if let Some(m) = &row.matched_on {
+            s.push_str(&format!("  {:w$}  {:30}  matched on: {}\n", "", "", m, w = w));
         }
     }
     s
@@ -780,7 +814,10 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
         // bottom-up so earlier line numbers stay valid
         edits.sort_by_key(|a| std::cmp::Reverse(a.0));
         for (line, address, id, (tf_type, natural_key)) in edits {
-            let idx = line as usize - 1;
+            let Some(idx) = (line as usize).checked_sub(1) else {
+                hints.push(format!("{}: {}:0 is not a line", address, file));
+                continue;
+            };
             let Some(decl) = lines.get(idx) else {
                 hints.push(format!("{}: {}:{} is past the end of the file", address, file, line));
                 continue;
@@ -817,7 +854,7 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
         if text.ends_with('\n') {
             out.push('\n');
         }
-        std::fs::write(&file, out).map_err(|e| format!("{}: {}", file, e))?;
+        crate::fsx::write_edited_satz(&file, &text, &out).map_err(|e| format!("{}: {}", file, e))?;
     }
     Ok((written, hints))
 }
@@ -1085,12 +1122,12 @@ mod tests {
                 ImportResourceConfig {
                     description: String::new(),
                     import: false,
+                    skip: None,
                     asset_type: on.map(|_| format!("test.googleapis.com/{}", t)),
                     content_type: None,
                     exclude: None,
                     include: None,
                     derive_yaml_key_from: None,
-                    deprecated: None,
                     import_id: template.map(|s| s.to_string()),
                     match_on: on.map(|v| v.iter().map(|s| s.to_string()).collect()),
                     activate: None,
@@ -1099,7 +1136,7 @@ mod tests {
                 },
             );
         }
-        ImportConfig { root: None, only: None, resource_types }
+        ImportConfig { provider_version: None, root: None, only: None, exclude: None, resource_types }
     }
 
     const MAIN_TF: &str = r#"
@@ -1394,7 +1431,7 @@ import {
         ];
         let (written, hints) = write_import_ids(&rs, Some(&presets)).unwrap();
         let text = std::fs::read_to_string(&tmp).unwrap();
-        assert_eq!(text, "google_folder {\n  workloads {\n    \"import-id\" = \"folders/111\"\n    display_name = \"Workloads\"\n  }\n  one { display_name = \"x\" }\n}\n");
+        assert_eq!(text, "google_folder {\n  workloads {\n    \"import-id\"  = \"folders/111\"\n    display_name = \"Workloads\"\n  }\n  one { display_name = \"x\" }\n}\n", "written after the declaring line, and the formatted file stays formatted");
         assert_eq!(written.len(), 1);
         assert_eq!(hints.len(), 3, "{:?}", hints);
         assert!(hints.iter().any(|h| h.contains("google_folder.one") && h.contains("by hand")));
@@ -1486,7 +1523,7 @@ mod state_aware_tests {
     #[test]
     fn a_managed_address_is_reported_as_skipped_not_as_an_import() {
         let rs = three();
-        let table = render_table(&rs, &managed(&["google_org_policy_policy.a"]));
+        let table = render_table(&rs, &managed(&["google_org_policy_policy.a"]), &crate::manifest::Manifest::default());
         let a = table.lines().find(|l| l.contains(".a ")).unwrap_or_default();
         // The same words the import path prints, so the dry run and the run are
         // recognisably the same statement.
@@ -1548,10 +1585,28 @@ mod state_aware_tests {
         let (rs, state) = renamed();
         assert_eq!(moved_from(&rs[0], &state), Some(OLD));
 
-        let table = render_table(&rs, &state);
+        let table = render_table(&rs, &state, &crate::manifest::Manifest::default());
         assert!(table.contains("MOVE"), "{}", table);
         assert!(table.contains(OLD), "the row names the address to move FROM: {}", table);
         assert!(!table.contains("IMPORT"), "importing it is the defect: {}", table);
+        assert!(!table.contains("declared reset"), "{}", table);
+        // the rows the table renders are what satz_adopt returns
+        let r = crate::adopt::rows(&rs, &state, &crate::manifest::Manifest::default());
+        assert_eq!((r[0].verdict.as_str(), r[0].move_from.as_deref()), ("MOVE", Some(OLD)));
+        assert_eq!(r[0].matched_on, None);
+    }
+
+    /// The move carries the old rules to an address declared reset: the row says
+    /// the next plan replaces it, as `satz plan` and `satz apply` do.
+    #[test]
+    fn a_move_onto_a_reset_declaration_says_it_will_be_replaced() {
+        let (rs, state) = renamed();
+        let state = state.with_rules(&[OLD]);
+        let manifest = crate::manifest::Manifest::parse(
+            "resource \"google_org_policy_policy\" \"compute_restrictProtocolForwarding_superseded\" {\n  name = \"x\"\n  spec {\n    reset = true\n  }\n}\n",
+        );
+        let table = render_table(&rs, &state, &manifest);
+        assert!(table.contains("holds rules and is declared reset"), "{}", table);
     }
 
     #[test]
@@ -1569,7 +1624,7 @@ mod state_aware_tests {
         let rs = vec![res(NEW, Outcome::Resolved { id: LIVE_ID.into(), verified: true })];
         let state = crate::bootstrap::StateIndex::from_objects(&[(NEW, "google_org_policy_policy", LIVE_ID)]);
         assert_eq!(moved_from(&rs[0], &state), None);
-        assert!(render_table(&rs, &state).contains("already managed in the state"));
+        assert!(render_table(&rs, &state, &crate::manifest::Manifest::default()).contains("already managed in the state"));
     }
 
     /// Sameness is proven by an exact match on type AND id. Anything less would

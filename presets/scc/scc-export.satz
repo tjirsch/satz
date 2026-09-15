@@ -1,0 +1,113 @@
+// Security Command Center findings, exported to BigQuery as they are raised —
+// where findings are KEPT, as opposed to where they are sent.
+//
+//   use "presets/scc/scc-export.satz"
+//
+// A notification tells somebody now; an export answers "what did this
+// organisation look like in March". Both read the same findings, and an estate
+// usually wants both: `presets/scc/scc-notifications.satz` is the other half.
+//
+// FOUR RESOURCES, AND THE ORDER MATTERS. The dataset's project needs the BigQuery
+// API, so the pack enables it and takes the dataset's project THROUGH that
+// resource — otherwise the two race on a first apply and the dataset loses.
+// Even then the first apply can fail with "The project … has not enabled
+// BigQuery": the API is on, and BigQuery's own control plane is a minute behind.
+// Run the apply again; it is the same estate either way.
+//
+// The exporting identity is
+// `service-org-<organisation>@gcp-sa-scc-notification.iam.gserviceaccount.com` —
+// the same agent that publishes notifications, and the `principal` the export
+// reports. Security Command Center grants it WRITER on the dataset itself when
+// the export is created; the estate declares the grant anyway, because an access
+// the estate depends on belongs in the estate, and a non-authoritative
+// `_iam_member` converges with what Google wrote.
+//
+// The dataset's location is a data-residency decision and cannot be changed
+// afterwards. Where the CIS pack enforces `gcp.resourceLocations`, a location
+// outside the allowed list is refused at apply — the default follows the estate's
+// own default region, which that list already permits.
+//
+// CHANGING ONE AFTERWARDS. The export's own fields do not update in place: the
+// provider sends `name` with the update and the API refuses it. A new description,
+// dataset or filter is applied by replacing the export —
+// `satz apply -replace=google_scc_v2_organization_scc_big_query_export.<label>` —
+// which keeps the dataset and everything already in it.
+//
+// NO CLAIM. No catalog control covers Security Command Center, so this pack
+// witnesses nothing.
+
+pack scc_export version "1.1"
+
+params {
+  scc_export_project     = infra_project_name
+  scc_export_dataset_id  = "{customer_shortname}_scc_findings"
+  scc_export_location    = default_region
+  scc_export_id          = "satz-findings"
+  scc_export_description = "Security Command Center findings, exported continuously"
+  // Wider than the notification filter on purpose: an export is the record, and a
+  // finding nobody paged about is still one an auditor asks about later.
+  scc_export_filter      = "state=\"ACTIVE\""
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question scc_export_project {
+  prompt   = "The project that holds the BigQuery dataset of findings"
+  why      = "Whoever can read the dataset can read every finding the organisation has ever raised, including the ones still unfixed. It is also where the BigQuery bill lands."
+  reversal = recreate
+  blast    = high
+}
+
+question scc_export_location {
+  prompt   = "Where the findings dataset lives (a BigQuery location, e.g. europe-west3 or EU)"
+  why      = "A dataset's location cannot change: moving it means a new dataset and copying the history. Findings describe the estate's weaknesses, so where they are stored is a data-residency decision. Where the CIS pack enforces allowed resource locations, a location outside that list is refused."
+  reversal = recreate
+  blast    = high
+}
+
+// 1) The API, in the dataset's project. The dataset takes its project from here,
+//    so the enablement is ordered first rather than racing it.
+google_project_service {
+  scc_export_bigquery {
+    project = scc_export_project
+    service = "bigquery.googleapis.com"
+  }
+}
+
+// 2) The dataset. `delete_contents_on_destroy` stays false: removing the pack from
+//    an estate must not silently delete the finding history.
+google_bigquery_dataset {
+  scc_findings {
+    dataset_id                 = scc_export_dataset_id
+    project                    = "${{google_project_service.scc_export_bigquery.project}}"
+    location                   = scc_export_location
+    description                = scc_export_description
+    delete_contents_on_destroy = false
+  }
+}
+
+// 3) The exporting agent's access to that dataset.
+google_bigquery_dataset_iam_member {
+  scc_findings_writer {
+    dataset_id = "${{google_bigquery_dataset.scc_findings.dataset_id}}"
+    project    = scc_export_project
+    role       = "roles/bigquery.dataEditor"
+    member     = "serviceAccount:service-org-{customer_organization_id}@gcp-sa-scc-notification.iam.gserviceaccount.com"
+  }
+}
+
+// 4) The export itself, at the global location SCC keeps organisation exports in.
+google_scc_v2_organization_scc_big_query_export {
+  scc_findings {
+    big_query_export_id = scc_export_id
+    organization        = customer_organization_id
+    location            = "global"
+    // The server assigns this and the provider reads it back. Left out of the
+    // config, every plan proposes to null it and the API refuses the update with
+    // "Field name is immutable" — a diff that never applies and never goes away.
+    name                = "organizations/{customer_organization_id}/locations/global/bigQueryExports/{scc_export_id}"
+    dataset             = "projects/${{google_bigquery_dataset.scc_findings.project}}/datasets/${{google_bigquery_dataset.scc_findings.dataset_id}}"
+    description         = scc_export_description
+    filter              = scc_export_filter
+  }
+}

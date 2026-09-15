@@ -503,9 +503,7 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
                 res_name
             ))?;
 
-        let has_parent = attrs.contains_key(serde_yaml::Value::String("parent".to_string()));
-        let (resolved_parent_expr, resolved_parent_str) = if has_parent {
-            let v = attrs.get(serde_yaml::Value::String("parent".to_string())).unwrap();
+        let (resolved_parent_expr, resolved_parent_str) = if let Some(v) = attrs.get(serde_yaml::Value::String("parent".to_string())) {
             (render_value_r(resolve, v), v.as_str().map(|s| s.to_string()))
         } else if let Some(p_ref) = ctx.project_ref.as_ref().or(ctx.folder_ref.as_ref()).or(ctx.org_ref.as_ref()) {
             (Some(parse_expr(p_ref)), Some(p_ref.clone()))

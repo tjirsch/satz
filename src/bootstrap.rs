@@ -273,7 +273,7 @@ fn write_param_value(estate: &Path, param: &str, value: &str) -> Result<(), Stri
     let text =
         std::fs::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let rewritten = rewrite_param_line(&text, param, value)?;
-    std::fs::write(estate, rewritten).map_err(|e| format!("{}: {}", estate.display(), e))
+    crate::fsx::write_edited_satz(estate, &text, &rewritten).map_err(|e| e.to_string())
 }
 
 /// The pure half of the write-back, pinned by tests. Preserves the line's
@@ -328,6 +328,9 @@ pub(crate) struct StateIndex {
     /// `(type, live id)` → the address managing it. Keyed by type as well as
     /// id because an id is only unique within its type.
     by_object: std::collections::BTreeMap<(String, String), String>,
+    /// Org policies whose state holds rules and no `reset`. Switching one of
+    /// these to `reset = true` in place is refused by the API.
+    holding_rules: std::collections::BTreeSet<String>,
 }
 
 impl StateIndex {
@@ -340,6 +343,17 @@ impl StateIndex {
     /// guessing here would move the wrong resource.
     pub(crate) fn address_of(&self, tf_type: &str, id: &str) -> Option<&str> {
         self.by_object.get(&(tf_type.to_string(), id.to_string())).map(String::as_str)
+    }
+
+    /// Whether the state holds this org policy with rules and not reset.
+    pub(crate) fn holds_rules(&self, address: &str) -> bool {
+        self.holding_rules.contains(address)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_rules(mut self, addresses: &[&str]) -> Self {
+        self.holding_rules.extend(addresses.iter().map(|a| a.to_string()));
+        self
     }
 
     #[cfg(test)]
@@ -396,6 +410,14 @@ fn index_module(module: &serde_json::Value, idx: &mut StateIndex) {
             // nor moved, so indexing it could only produce a wrong match.
             if res.get("mode").and_then(|m| m.as_str()) == Some("data") {
                 continue;
+            }
+            if res.get("type").and_then(|t| t.as_str()) == Some("google_org_policy_policy") {
+                let spec = res.get("values").and_then(|v| v.get("spec")).and_then(|s| s.get(0));
+                let reset = spec.and_then(|s| s.get("reset")).and_then(|r| r.as_bool()) == Some(true);
+                let rules = spec.and_then(|s| s.get("rules")).and_then(|r| r.as_array()).is_some_and(|r| !r.is_empty());
+                if rules && !reset {
+                    idx.holding_rules.insert(address.to_string());
+                }
             }
             let (Some(tf_type), Some(id)) = (
                 res.get("type").and_then(|t| t.as_str()),
@@ -490,10 +512,12 @@ fn load_bootstrap_yaml(
     Ok((Value::Mapping(with_block), Value::Mapping(flat)))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn bootstrap(
     config_file: PathBuf,
     dry_run: bool,
     greenfield: bool,
+    no_default_grants: bool,
     runtime_config: crate::ToolConfig,
     cli_config: Option<PathBuf>,
     cli_validation: Option<String>,
@@ -571,6 +595,24 @@ pub async fn bootstrap(
     println!("Bucket:          {}", bucket_name);
     println!("Service Account: {}.iam.gserviceaccount.com", sa_name);
     println!("----------------------");
+
+    // The gate, before a credential is asked for: an empty or malformed param
+    // used to reach Google inside a URL and come back as an HTML 404, and a
+    // plausible-but-wrong organisation id used to produce an ordinary-looking
+    // pre-flight against somebody else's organisation.
+    if let Err(detail) = crate::day_zero::gate(&crate::day_zero::DayZero {
+        shortname: &sn,
+        organization_id: oid_val.trim(),
+        greenfield,
+        billing_account: &bid,
+        project_id: &project_id,
+        bucket_name: &bucket_name,
+    }) {
+        // printed, not returned: `main` renders a returned error with `Debug`,
+        // which escapes the newlines into one unreadable line
+        eprintln!("\n{}", detail);
+        return Err("the estate is not ready to bootstrap (the params are listed above)".into());
+    }
 
     if dry_run {
         println!("Dry run: nothing will be created; the identity check and permission pre-flight are read-only.");
@@ -658,6 +700,10 @@ pub async fn bootstrap(
             .into());
         }
         let customer_id = lookup_str(&["customer-id"]);
+        // The org-scope pre-flight needs the organization, which the parentless
+        // create below brings into being; the billing half does not, so it runs
+        // before anything exists.
+        crate::preflight::billing(&client, &token, &bid).await?;
         resolve_greenfield_parent(&client, &token, &config_file, &project_id, customer_id.as_deref(), dry_run).await?
     } else {
         parent
@@ -669,6 +715,9 @@ pub async fn bootstrap(
     let infra_folder_name = lookup_str(&["infra-folder-name"]).filter(|s| !s.is_empty());
     let infra_folder_name = infra_folder_name.as_deref();
     let principal = resolved_identity.as_ref().map(|(email, _)| email.as_str());
+    // the estate binds the directory customer id as well: the pre-flight cross-checks
+    // the two, so an organisation that is not this customer's is named as that
+    let estate_customer_id = lookup_str(&["customer-id"]);
     crate::preflight::run(
         &client,
         &token,
@@ -676,6 +725,8 @@ pub async fn bootstrap(
         infra_folder_name.is_some(),
         &bid,
         principal,
+        estate_customer_id.as_deref(),
+        no_default_grants,
         dry_run,
     )
     .await?;
@@ -1060,6 +1111,24 @@ mod tests {
         // object, so a resource resolving to the same id must not match it.
         assert!(idx.manages("data.google_project.lookup"));
         assert_eq!(idx.address_of("google_project", "projects/bolt-infra-001"), None);
+    }
+
+    #[test]
+    fn state_json_names_the_org_policies_that_hold_rules() {
+        let idx = parse_state_json(
+            r#"{"values": {"root_module": {"resources": [
+              {"address": "google_org_policy_policy.ruled", "mode": "managed", "type": "google_org_policy_policy",
+               "values": {"id": "organizations/1/policies/a", "spec": [{"reset": false, "rules": [{"enforce": "TRUE"}]}]}},
+              {"address": "google_org_policy_policy.reset", "mode": "managed", "type": "google_org_policy_policy",
+               "values": {"id": "organizations/1/policies/b", "spec": [{"reset": true, "rules": []}]}},
+              {"address": "google_org_policy_policy.empty", "mode": "managed", "type": "google_org_policy_policy",
+               "values": {"id": "organizations/1/policies/c", "spec": [{"reset": false, "rules": []}]}}
+            ]}}}"#,
+        )
+        .unwrap();
+        assert!(idx.holds_rules("google_org_policy_policy.ruled"));
+        assert!(!idx.holds_rules("google_org_policy_policy.reset"));
+        assert!(!idx.holds_rules("google_org_policy_policy.empty"));
     }
 
     #[test]

@@ -13,12 +13,12 @@ pack cis_extensions.confidential_computing version "1.0"
 
 google_org_policy_policy {
   "compute-managed-restrictNonConfidentialComputing" {
-    name = "compute.managed.restrictNonConfidentialComputing"
+    name   = "compute.managed.restrictNonConfidentialComputing"
     parent = "organizations/{customer_organization_id}"
     spec {
       rules = [
         {
-        enforce = "TRUE"
+          enforce = "TRUE"
         },
       ]
     }
@@ -37,4 +37,3 @@ claim "cis-gcp" "5.0" "4.11" implements {
   ]
   interpretation = "As for 4.0 §4.11 (5.0 §4.11, unchanged)."
 }
-

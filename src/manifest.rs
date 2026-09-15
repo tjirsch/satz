@@ -31,10 +31,27 @@ pub(crate) struct EmittedResource {
     /// `preferred_member_key.id`); first occurrence wins. Adoption's natural
     /// keys for groups and memberships live one level down.
     pub nested: BTreeMap<String, String>,
-    /// The single `enforce` the block declares anywhere in its body, when it
-    /// declares exactly one. Several, none, or a list constraint yield `None`:
-    /// no verdict is better than a wrong one.
+    /// Every value a repeated nested attribute carries, in emission order
+    /// (`audit_log_config.log_type` → ADMIN_READ, DATA_READ, DATA_WRITE).
+    /// `nested` keeps the first for natural keys; a live check that compares a
+    /// declared SET against the live one needs them all.
+    pub nested_all: BTreeMap<String, Vec<String>>,
+    /// The single `enforce` the block's `spec` declares, when it declares exactly
+    /// one. Several, none, or a list constraint yield `None`: no verdict is better
+    /// than a wrong one. A `dry_run_spec` is not read here — see `dry_run`.
     pub enforce: Option<bool>,
+    /// An org policy whose `spec` declares `reset = true`: the constraint is
+    /// declared off, back to Google's default.
+    pub reset: bool,
+    /// The policy declares a `dry_run_spec`: Google evaluates the rule, writes a
+    /// violation to the audit log for every action it WOULD have blocked, and
+    /// blocks nothing. Never a witness that a control is enforced.
+    pub dry_run: bool,
+    /// The conditional rules of the policy's `spec`, one line each, in emission
+    /// order — a tag-conditional exemption is one of these. They do not decide the
+    /// verdict (`enforce` does, from the unconditional rule) and they are what an
+    /// auditor has to see beside it: the control is on, and here is who is let out.
+    pub conditional: Vec<String>,
     /// The `import { to id }` block emitted for this resource, if any — i.e.
     /// the estate already adopted it.
     pub import_id: Option<String>,
@@ -169,26 +186,47 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         }
     }
     let mut nested = BTreeMap::new();
+    let mut nested_all: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for nb in b.body().blocks() {
         for a in nb.body().attributes() {
             if let Some(v) = string_value(a.expr()) {
-                nested.entry(format!("{}.{}", nb.identifier(), a.key())).or_insert(v);
+                let key = format!("{}.{}", nb.identifier(), a.key());
+                nested_all.entry(key.clone()).or_default().push(v.clone());
+                nested.entry(key).or_insert(v);
             }
         }
     }
-    let mut found = Vec::new();
-    collect_enforce(b.body(), &mut found);
-    let enforce = match found.as_slice() {
+    // `enforce` is read from `spec` ALONE, and from its UNCONDITIONAL rules alone.
+    //
+    // A `dry_run_spec` carries the same attribute and means the opposite: Google
+    // evaluates the rule, logs what it would have blocked, and blocks nothing.
+    //
+    // A CONDITIONAL rule is an exemption — "enforced everywhere except where this tag
+    // is bound" — and is not a second opinion about the control. Counting it would
+    // leave two `enforce` values and no verdict at all, so a policy would go blind to
+    // the compliance plane the moment it let one resource out. This is the same rule
+    // `live_enforcement` applies to a policy read back from the organisation, so the
+    // declared and the live side now answer the question the same way.
+    let (mut found, conditional) = spec_rules(b.body());
+    let enforce = match found.as_mut_slice() {
         [only] => Some(*only),
         _ => None,
     };
+    let reset = b.body().blocks().filter(|nb| nb.identifier() == "spec").any(|spec| {
+        spec.body().attributes().any(|a| a.key() == "reset" && matches!(a.expr(), hcl::Expression::Bool(true)))
+    });
+    let dry_run = b.body().blocks().any(|nb| nb.identifier() == "dry_run_spec");
     Some(EmittedResource {
         tf_type: tf_type.to_string(),
         label: label.to_string(),
         attrs,
         refs,
         nested,
+        nested_all,
         enforce,
+        reset,
+        dry_run,
+        conditional,
         import_id: None,
         origin: None,
     })
@@ -236,27 +274,161 @@ fn string_value(expr: &hcl::Expression) -> Option<String> {
     }
 }
 
-/// Every `enforce = "TRUE"|"FALSE"` at any depth of the body, in document order.
-fn collect_enforce(body: &hcl::Body, out: &mut Vec<bool>) {
-    for a in body.attributes() {
-        if a.key() == "enforce" {
-            if let Some(v) = string_value(a.expr()) {
-                match v.to_ascii_uppercase().as_str() {
-                    "TRUE" => out.push(true),
-                    "FALSE" => out.push(false),
-                    _ => {}
+/// The `spec` rules of an org policy, split into what decides the verdict and what
+/// does not: the unconditional rules' `enforce` values, and one line per conditional
+/// rule saying what it exempts.
+///
+/// A conditional rule's line prefers its `title`, then its `expression`, mirroring
+/// what `live_enforcement` renders for a policy read back from the organisation — the
+/// two sides of the same question should read the same way.
+fn spec_rules(body: &hcl::Body) -> (Vec<bool>, Vec<String>) {
+    let (mut unconditional, mut conditional) = (Vec::new(), Vec::new());
+    for spec in body.blocks().filter(|nb| nb.identifier() == "spec") {
+        for rule in spec.body().blocks().filter(|rb| rb.identifier() == "rules") {
+            let cond = rule.body().blocks().find(|cb| cb.identifier() == "condition");
+            let enforce = {
+                let mut found = Vec::new();
+                for a in rule.body().attributes() {
+                    if a.key() == "enforce" {
+                        if let Some(v) = string_value(a.expr()) {
+                            match v.to_ascii_uppercase().as_str() {
+                                "TRUE" => found.push(true),
+                                "FALSE" => found.push(false),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                found
+            };
+            match cond {
+                None => unconditional.extend(enforce),
+                Some(c) => {
+                    let text = |k: &str| {
+                        c.body()
+                            .attributes()
+                            .find(|a| a.key() == k)
+                            .and_then(|a| string_value(a.expr()))
+                            .filter(|v| !v.is_empty())
+                    };
+                    let what = text("title")
+                        .or_else(|| text("expression"))
+                        .unwrap_or_else(|| "a condition".to_string());
+                    let on_off = match enforce.as_slice() {
+                        [true] => "enforce ON",
+                        [false] => "enforce OFF",
+                        _ => "enforce unstated",
+                    };
+                    conditional.push(format!("{} where {}", on_off, what));
                 }
             }
         }
     }
-    for b in body.blocks() {
-        collect_enforce(b.body(), out);
-    }
+    (unconditional, conditional)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A body carrying both a `spec` and a `dry_run_spec` used to collapse to no
+    /// verdict at all, because the enforce scan walked the whole body and found two
+    /// `enforce` attributes. Worse, a dry-run-ONLY policy read as enforcing. Both are
+    /// how a policy that blocks nothing would satisfy a claim that says it does.
+    /// A tag-conditional exemption adds a SECOND rule carrying its own `enforce`.
+    /// Counting it leaves two values and no verdict, so a policy would go blind to the
+    /// compliance plane the moment it let one resource out — the opposite of what an
+    /// exemption is for, which is keeping the control on.
+    #[test]
+    fn a_conditional_rule_is_an_exemption_not_a_second_opinion() {
+        let body: hcl::Body = hcl::from_str(r#"
+resource "google_org_policy_policy" "p" {
+  spec {
+    rules {
+      enforce = "FALSE"
+      condition {
+        title      = "exempted service accounts"
+        expression = "resource.matchTagId('tagKeys/1', 'tagValues/2')"
+      }
+    }
+    rules {
+      enforce = "TRUE"
+    }
+  }
+}
+"#).expect("parses");
+        let b = body.blocks().next().expect("one block").clone();
+        let r = resource_from_block(&b).expect("a resource");
+
+        assert_eq!(r.enforce, Some(true), "the unconditional rule decides");
+        assert_eq!(r.conditional.len(), 1);
+        assert_eq!(r.conditional[0], "enforce OFF where exempted service accounts");
+        assert!(!r.dry_run);
+    }
+
+    /// With no title, the expression stands in — the same fallback a live policy's
+    /// conditional rules use, so the declared and the live side read alike.
+    #[test]
+    fn a_condition_without_a_title_is_named_by_its_expression() {
+        let body: hcl::Body = hcl::from_str(r#"
+resource "google_org_policy_policy" "p" {
+  spec {
+    rules {
+      enforce = "FALSE"
+      condition {
+        expression = "resource.matchTagId('tagKeys/1', 'tagValues/2')"
+      }
+    }
+    rules { enforce = "TRUE" }
+  }
+}
+"#).expect("parses");
+        let b = body.blocks().next().expect("one block").clone();
+        let r = resource_from_block(&b).expect("a resource");
+        assert_eq!(r.conditional[0], "enforce OFF where resource.matchTagId('tagKeys/1', 'tagValues/2')");
+    }
+
+    #[test]
+    fn enforce_is_read_from_spec_and_never_from_a_dry_run() {
+        let one = |hcl_src: &str| {
+            let body: hcl::Body = hcl::from_str(hcl_src).expect("parses");
+            let b = body.blocks().next().expect("one block").clone();
+            resource_from_block(&b).expect("a resource")
+        };
+
+        let dry = one(r#"
+resource "google_org_policy_policy" "p" {
+  dry_run_spec {
+    rules { enforce = "TRUE" }
+  }
+}
+"#);
+        assert_eq!(dry.enforce, None, "a dry run declares no enforcement");
+        assert!(dry.dry_run);
+
+        let both = one(r#"
+resource "google_org_policy_policy" "p" {
+  spec {
+    rules { enforce = "TRUE" }
+  }
+  dry_run_spec {
+    rules { enforce = "FALSE" }
+  }
+}
+"#);
+        assert_eq!(both.enforce, Some(true), "the spec decides; the dry run is not a second opinion");
+        assert!(both.dry_run);
+
+        let plain = one(r#"
+resource "google_org_policy_policy" "p" {
+  spec {
+    rules { enforce = "FALSE" }
+  }
+}
+"#);
+        assert_eq!(plain.enforce, Some(false));
+        assert!(!plain.dry_run);
+    }
 
     #[test]
     fn addresses_come_from_resource_blocks_only() {

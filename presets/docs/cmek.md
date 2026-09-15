@@ -7,8 +7,8 @@ Source: `presets/cis-extensions/cmek.satz`
 
 CIS 7.2, 7.3 and 8.1 — customer-managed encryption keys.
 
-Opt-in because it is the most disruptive control in this set: once a service
-is listed, every NEW resource of that service must be created with a CMEK, so
+Opt-in because once a service is listed, every NEW resource of that service
+must be created with a CMEK, so
 the key rings, the keys and the grants have to exist first. It also needs a
 decision the pack cannot make — which projects may supply keys.
 
@@ -105,6 +105,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The key rings, the keys and the grants to the services' agents have to exist before a service is listed here: from then on every NEW resource of that service must be created with a CMEK, and one that cannot reach its key does not start.
 
 <!-- notes:end -->

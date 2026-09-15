@@ -11,11 +11,11 @@ The 82 permissions Microsoft's script enumerates when least privilege is on,
 in place of the five that ride on `roles/viewer`. Use this OR the default
 fragment, never both — both define this role address.
 
-Note: Microsoft's generated script still grants `roles/viewer` to the CSPM
-service account in this mode, which makes the enumeration moot. If the point
-of choosing least privilege is to drop viewer, the estate must say so:
+Microsoft's generated script also grants `roles/viewer` to the CSPM service
+account in this mode, and viewer covers the enumerated permissions. To drop
+viewer, the estate suppresses the grant:
 suppress google_organization_iam_member "serviceAccount:microsoft-defender-cspm@<project>.iam.gserviceaccount.com" role "roles/viewer"
-The pack does not do it silently, because the script does not.
+The pack keeps the grant because the script makes it.
 
 ## Use it
 
@@ -59,6 +59,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Use this OR [the default role](microsoft-defender-for-cloud-cspm-role-default.md), never both — both define the same custom-role address.
+
+`roles/viewer` already covers all 82 permissions, so dropping viewer is the point: the estate suppresses that grant. The pack keeps it because Microsoft's script makes it, and a `suppress` in the estate is what removes it.
 
 <!-- notes:end -->

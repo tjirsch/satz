@@ -64,6 +64,8 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The CSPM plan's own fragment, added by hand beside the foundation pack ([`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md)) which owns the project and the pool it uses.
+
+It needs exactly one role fragment: [the default five-permission role](microsoft-defender-for-cloud-cspm-role-default.md) or [the 82-permission least-privilege role](microsoft-defender-for-cloud-cspm-role-least-privilege.md).
 
 <!-- notes:end -->

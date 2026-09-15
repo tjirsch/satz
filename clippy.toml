@@ -1,0 +1,6 @@
+# Satz text has three ways to disk and no fourth, all in src/fsx.rs; every other
+# file satz writes goes through fsx::write, which refuses a .satz path. Test
+# builds may write fixtures directly (the allow is at the top of src/main.rs).
+disallowed-methods = [
+    { path = "std::fs::write", reason = "write files through src/fsx.rs: write, write_generated_satz, write_edited_satz or write_verbatim" },
+]

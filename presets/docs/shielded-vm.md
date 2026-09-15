@@ -10,7 +10,7 @@ CIS 4.8 — Shielded VM.
 Opt-in because not every image supports Shielded VM; an org with custom or older
 images will fail instance creation until those images are rebuilt. This is
 also the one constraint here with NO managed form and no dry-run support, so
-it cannot be rehearsed before it bites.
+it cannot be tested in dry-run mode before it is enforced.
 
 The constraint name and its shape were verified against a live
 organisation's OrgPolicy `ListConstraints`, not transcribed.
@@ -66,6 +66,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+The one constraint in this set with no managed form and no dry-run support: it cannot be rehearsed before it is enforced. Check that every image in use supports Shielded VM first — an older or custom image fails instance creation from the moment it is on.
 
 <!-- notes:end -->

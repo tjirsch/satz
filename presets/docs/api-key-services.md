@@ -14,8 +14,8 @@ allowed services first, then enforce.
 The constraint is a MANAGED one carrying a parameter, not a bare boolean —
 verified against a live organisation's OrgPolicy `ListConstraints`. It blocks
 creating an API key bound to a service account unless the key's API targets
-are non-empty and limited to `allowed_api_key_services`, which is exactly
-what the control asks for.
+are non-empty and limited to `allowed_api_key_services`, which is what the
+control asks for.
 
 ## Use it
 
@@ -89,6 +89,6 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-_No notes yet._
+Narrow the API targets of every key in use BEFORE this is enforced: a key that today calls anything stops working the moment it is. The allowed-services param has no default for the same reason — the pack cannot know which services a customer's keys call.
 
 <!-- notes:end -->

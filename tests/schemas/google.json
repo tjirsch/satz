@@ -3,6 +3,490 @@
   "provider_schemas": {
     "registry.opentofu.org/hashicorp/google": {
       "resource_schemas": {
+        "google_bigquery_dataset": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "creation_time": {
+                "type": "number",
+                "description": "The time when this dataset was created, in milliseconds since the\nepoch.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "dataset_id": {
+                "type": "string",
+                "description": "A unique ID for this dataset, without the project name. The ID\nmust contain only letters (a-z, A-Z), numbers (0-9), or\nunderscores (_). The maximum length is 1,024 characters.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "default_collation": {
+                "type": "string",
+                "description": "Defines the default collation specification of future tables created\nin the dataset. If a table is created in this dataset without table-level\ndefault collation, then the table inherits the dataset default collation,\nwhich is applied to the string fields that do not have explicit collation\nspecified. A change to this field affects only tables created afterwards,\nand does not alter the existing tables.\n\nThe following values are supported:\n- 'und:ci': undetermined locale, case insensitive.\n- '': empty string. Default to case-sensitive behavior.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "default_partition_expiration_ms": {
+                "type": "number",
+                "description": "The default partition expiration for all partitioned tables in\nthe dataset, in milliseconds.\nOnce this property is set, all newly-created partitioned tables in\nthe dataset will have an 'expirationMs' property in the 'timePartitioning'\nsettings set to this value, and changing the value will only\naffect new tables, not existing ones. The storage in a partition will\nhave an expiration time of its partition time plus this value.\nSetting this property overrides the use of 'defaultTableExpirationMs'\nfor partitioned tables: only one of 'defaultTableExpirationMs' and\n'defaultPartitionExpirationMs' will be used for any new partitioned\ntable. If you provide an explicit 'timePartitioning.expirationMs' when\ncreating or updating a partitioned table, that value takes precedence\nover the default partition expiration time indicated by this property.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "default_table_expiration_ms": {
+                "type": "number",
+                "description": "The default lifetime of all tables in the dataset, in milliseconds.\nThe minimum value is 3600000 milliseconds (one hour).\nOnce this property is set, all newly-created tables in the dataset\nwill have an 'expirationTime' property set to the creation time plus\nthe value in this property, and changing the value will only affect\nnew tables, not existing ones. When the 'expirationTime' for a given\ntable is reached, that table will be deleted automatically.\nIf a table's 'expirationTime' is modified or removed before the\ntable expires, or if you provide an explicit 'expirationTime' when\ncreating a table, that value takes precedence over the default\nexpiration time indicated by this property.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "delete_contents_on_destroy": {
+                "type": "bool",
+                "description": "If set to 'true', delete all the tables in the\ndataset when destroying the resource; otherwise,\ndestroying the resource will fail if tables are present.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "description": {
+                "type": "string",
+                "description": "A user-friendly description of the dataset",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "effective_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "All of labels (key/value pairs) present on the resource in GCP, including the labels configured through Terraform, other clients and services.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "etag": {
+                "type": "string",
+                "description": "A hash of the resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "friendly_name": {
+                "type": "string",
+                "description": "A descriptive name for the dataset",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "is_case_insensitive": {
+                "type": "bool",
+                "description": "TRUE if the dataset and its table names are case-insensitive, otherwise FALSE.\nBy default, this is FALSE, which means the dataset and its table names are\ncase-sensitive. This field does not affect routine references.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The labels associated with this dataset. You can use these to\norganize and group your datasets.\n\n\n**Note**: This field is non-authoritative, and will only manage the labels present in your configuration.\nPlease refer to the field 'effective_labels' for all of the labels present on the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "last_modified_time": {
+                "type": "number",
+                "description": "The date when this dataset or any of its tables was last modified, in\nmilliseconds since the epoch.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "location": {
+                "type": "string",
+                "description": "The geographic location where the dataset should reside.\nSee [official docs](https://cloud.google.com/bigquery/docs/dataset-locations).\nThere are two types of locations, regional or multi-regional. A regional\nlocation is a specific geographic place, such as Tokyo, and a multi-regional\nlocation is a large geographic area, such as the United States, that\ncontains at least two geographic places.\nThe default value is multi-regional location 'US'.\nChanging this forces a new resource to be created.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "max_time_travel_hours": {
+                "type": "string",
+                "description": "Defines the time travel window in hours. The value can be from 48 to 168 hours (2 to 7 days).",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "resource_tags": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The tags attached to this table. Tag keys are globally unique. Tag key is expected to be\nin the namespaced format, for example \"123456789012/environment\" where 123456789012 is the\nID of the parent organization or project resource for this tag key. Tag value is expected\nto be the short name, for example \"Production\". See [Tag definitions](https://cloud.google.com/iam/docs/tags-access-control#definitions)\nfor more details.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "self_link": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "storage_billing_model": {
+                "type": "string",
+                "description": "Specifies the storage billing model for the dataset.\nSet this flag value to LOGICAL to use logical bytes for storage billing,\nor to PHYSICAL to use physical bytes instead.\n\nLOGICAL is the default if this flag isn't specified.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "terraform_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The combination of labels configured directly on the resource\n and default labels configured on the provider.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "access": {
+                "nesting_mode": "set",
+                "block": {
+                  "attributes": {
+                    "domain": {
+                      "type": "string",
+                      "description": "A domain to grant access to. Any users signed in with the\ndomain specified will be granted the specified access",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "group_by_email": {
+                      "type": "string",
+                      "description": "An email address of a Google Group to grant access to.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "iam_member": {
+                      "type": "string",
+                      "description": "Some other type of member that appears in the IAM Policy but isn't a user,\ngroup, domain, or special group. For example: 'allUsers'",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "role": {
+                      "type": "string",
+                      "description": "Describes the rights granted to the user specified by the other\nmember of the access object. Basic, predefined, and custom roles\nare supported. Predefined roles that have equivalent basic roles\nare swapped by the API to their basic counterparts. See\n[official docs](https://cloud.google.com/bigquery/docs/access-control).",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "special_group": {
+                      "type": "string",
+                      "description": "A special group to grant access to. Possible values include:\n* 'projectOwners': Owners of the enclosing project.\n* 'projectReaders': Readers of the enclosing project.\n* 'projectWriters': Writers of the enclosing project.\n* 'allAuthenticatedUsers': All authenticated BigQuery users.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "user_by_email": {
+                      "type": "string",
+                      "description": "An email address of a user to grant access to. For example:\nfred@example.com",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "condition": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "description": {
+                            "type": "string",
+                            "description": "Description of the expression. This is a longer text which describes the expression,\ne.g. when hovered over it in a UI.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "expression": {
+                            "type": "string",
+                            "description": "Textual representation of an expression in Common Expression Language syntax.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "location": {
+                            "type": "string",
+                            "description": "String indicating the location of the expression for error reporting, e.g. a file\nname and a position in the file.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "title": {
+                            "type": "string",
+                            "description": "Title for the expression, i.e. a short string describing its purpose.\nThis can be used e.g. in UIs which allow to enter the expression.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Condition for the binding. If CEL expression in this field is true, this\naccess binding will be considered.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "dataset": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "target_types": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description": "Which resources in the dataset this entry applies to. Currently, only views are supported,\nbut additional target types may be added in the future. Possible values: VIEWS",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "block_types": {
+                          "dataset": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "dataset_id": {
+                                  "type": "string",
+                                  "description": "The ID of the dataset containing this table.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "project_id": {
+                                  "type": "string",
+                                  "description": "The ID of the project containing this table.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                }
+                              },
+                              "description": "The dataset this entry applies to",
+                              "description_kind": "plain"
+                            },
+                            "min_items": 1,
+                            "max_items": 1
+                          }
+                        },
+                        "description": "Grants all resources of particular types in a particular dataset read access to the current dataset.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "routine": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "dataset_id": {
+                            "type": "string",
+                            "description": "The ID of the dataset containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "project_id": {
+                            "type": "string",
+                            "description": "The ID of the project containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "routine_id": {
+                            "type": "string",
+                            "description": "The ID of the routine. The ID must contain only letters (a-z,\nA-Z), numbers (0-9), or underscores (_). The maximum length\nis 256 characters.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "A routine from a different dataset to grant access to. Queries\nexecuted against that routine will have read access to tables in\nthis dataset. The role field is not required when this field is\nset. If that routine is updated by any user, access to the routine\nneeds to be granted again via an update operation.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "view": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "dataset_id": {
+                            "type": "string",
+                            "description": "The ID of the dataset containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "project_id": {
+                            "type": "string",
+                            "description": "The ID of the project containing this table.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "table_id": {
+                            "type": "string",
+                            "description": "The ID of the table. The ID must contain only letters (a-z,\nA-Z), numbers (0-9), or underscores (_). The maximum length\nis 1,024 characters.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "A view from a different dataset to grant access to. Queries\nexecuted against that view will have read access to tables in\nthis dataset. The role field is not required when this field is\nset. If that view is updated by any user, access to the view\nneeds to be granted again via an update operation.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "An array of objects that define dataset access for one or more entities.",
+                  "description_kind": "plain"
+                }
+              },
+              "default_encryption_configuration": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "kms_key_name": {
+                      "type": "string",
+                      "description": "Describes the Cloud KMS encryption key that will be used to protect destination\nBigQuery table. The BigQuery Service Account associated with your project requires\naccess to this encryption key.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "The default encryption key for all tables in the dataset. Once this property is set,\nall newly-created partitioned tables in the dataset will have encryption key set to\nthis value, unless table creation request (or query) overrides the key.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "external_catalog_dataset_options": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "default_storage_location_uri": {
+                      "type": "string",
+                      "description": "The storage location URI for all tables in the dataset. Equivalent to hive metastore's\ndatabase locationUri. Maximum length of 1024 characters.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "parameters": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "A map of key value pairs defining the parameters and properties of the open source schema.\nMaximum size of 2Mib.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Options defining open source compatible datasets living in the BigQuery catalog. Contains\nmetadata of open source database, schema or namespace represented by the current dataset.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "external_dataset_reference": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "connection": {
+                      "type": "string",
+                      "description": "The connection id that is used to access the externalSource.\nFormat: projects/{projectId}/locations/{locationId}/connections/{connectionId}",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "external_source": {
+                      "type": "string",
+                      "description": "External source that backs this dataset.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "Information about the external metadata storage where the dataset is defined.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_bigquery_dataset_iam_member": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "dataset_id": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "etag": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "member": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "role": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "condition": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "description": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "expression": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "title": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_billing_account_iam_member": {
           "version": 0,
           "block": {
@@ -2247,6 +2731,467 @@
             "description_kind": "plain"
           }
         },
+        "google_compute_firewall_policy": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description of this resource. Provide this property when you create the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "fingerprint": {
+                "type": "string",
+                "description": "Fingerprint of the resource. This field is used internally during updates of this resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "firewall_policy_id": {
+                "type": "string",
+                "description": "The unique identifier for the resource. This identifier is defined by the server.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the resource. It is a numeric ID allocated by GCP which uniquely identifies the Firewall Policy.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "The parent of the firewall policy.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "rule_tuple_count": {
+                "type": "number",
+                "description": "Total count of all firewall policy rule tuples. A firewall policy can not exceed a set number of tuples.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link": {
+                "type": "string",
+                "description": "Server-defined URL for the resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link_with_id": {
+                "type": "string",
+                "description": "Server-defined URL for this resource with the resource id.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "User-provided name of the Organization firewall policy. The name should be unique in the organization in which the firewall policy is created.\nThis field is not applicable to network firewall policies. This name must be set on creation and cannot be changed. The name must be 1-63 characters long, and comply with RFC1035.\nSpecifically, the name must be 1-63 characters long and match the regular expression [a-z]([-a-z0-9]*[a-z0-9])? which means the first character must be a lowercase letter, and all following characters must be a dash, lowercase letter, or digit, except the last character, which cannot be a dash.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_firewall_policy_association": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "attachment_target": {
+                "type": "string",
+                "description": "The target that the firewall policy is attached to.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "firewall_policy": {
+                "type": "string",
+                "description": "The firewall policy of the resource.\n\nThis field can be updated to refer to a different Firewall Policy, which will create a new association from that new\nfirewall policy with the flag to override the existing attachmentTarget's policy association.\n\n**Note** Due to potential risks with this operation it is *highly* recommended to use the 'create_before_destroy' life cycle option\non your exisiting firewall policy so as to prevent a situation where your attachment target has no associated policy.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name for an association.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "The short name of the firewall policy of the association.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_firewall_policy_rule": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "action": {
+                "type": "string",
+                "description": "The Action to perform when the client connection triggers the rule. Valid actions are \"allow\", \"deny\", \"goto_next\" and \"apply_security_profile_group\".",
+                "description_kind": "plain",
+                "required": true
+              },
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description for this resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "direction": {
+                "type": "string",
+                "description": "The direction in which this rule applies. Possible values: [\"INGRESS\", \"EGRESS\"]",
+                "description_kind": "plain",
+                "required": true
+              },
+              "disabled": {
+                "type": "bool",
+                "description": "Denotes whether the firewall policy rule is disabled.\nWhen set to true, the firewall policy rule is not enforced and traffic behaves as if it did not exist.\nIf this is unspecified, the firewall policy rule will be enabled.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "enable_logging": {
+                "type": "bool",
+                "description": "Denotes whether to enable logging for a particular rule.\nIf logging is enabled, logs will be exported to the configured export destination in Stackdriver.\nLogs may be exported to BigQuery or Pub/Sub.\nNote: you cannot enable logging on \"goto_next\" rules.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "firewall_policy": {
+                "type": "string",
+                "description": "The firewall policy of the resource.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "kind": {
+                "type": "string",
+                "description": "Type of the resource. Always 'compute#firewallPolicyRule' for firewall policy rules",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "priority": {
+                "type": "number",
+                "description": "An integer indicating the priority of a rule in the list.\nThe priority must be a positive value between 0 and 2147483647.\nRules are evaluated from highest to lowest priority where 0 is the highest priority and 2147483647 is the lowest prority.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "rule_tuple_count": {
+                "type": "number",
+                "description": "Calculation of the complexity of a single firewall policy rule.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "security_profile_group": {
+                "type": "string",
+                "description": "A fully-qualified URL of a SecurityProfile resource instance.\nExample: https://networksecurity.googleapis.com/v1/projects/{project}/locations/{location}/securityProfileGroups/my-security-profile-group\nMust be specified if action = 'apply_security_profile_group' and cannot be specified for other actions.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "target_resources": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of network resource URLs to which this rule applies.\nThis field allows you to control which network's VMs get this rule.\nIf this field is left blank, all VMs within the organization will receive the rule.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "target_service_accounts": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of service accounts indicating the sets of instances that are applied with this rule.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "tls_inspect": {
+                "type": "bool",
+                "description": "Boolean flag indicating if the traffic should be TLS decrypted.\nCan be set only if action = 'apply_security_profile_group' and cannot be set for other actions.",
+                "description_kind": "plain",
+                "optional": true
+              }
+            },
+            "block_types": {
+              "match": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "dest_address_groups": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Address groups which should be matched against the traffic destination. Maximum number of destination address groups is 10.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_fqdns": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Fully Qualified Domain Name (FQDN) which should be matched against traffic destination. Maximum number of destination fqdn allowed is 100.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_ip_ranges": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "CIDR IP address range. Maximum number of destination CIDR IP ranges allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_region_codes": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Region codes whose IP addresses will be used to match for destination of traffic. Should be specified as 2 letter country code defined as per ISO 3166 alpha-2 country codes. ex.\"US\" Maximum number of dest region codes allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_threat_intelligences": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Names of Network Threat Intelligence lists. The IPs in these lists will be matched against traffic destination.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_address_groups": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Address groups which should be matched against the traffic source. Maximum number of source address groups is 10.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_fqdns": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Fully Qualified Domain Name (FQDN) which should be matched against traffic source. Maximum number of source fqdn allowed is 100.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_ip_ranges": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "CIDR IP address range. Maximum number of source CIDR IP ranges allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_region_codes": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Region codes whose IP addresses will be used to match for source of traffic. Should be specified as 2 letter country code defined as per ISO 3166 alpha-2 country codes. ex.\"US\" Maximum number of source region codes allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_threat_intelligences": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Names of Network Threat Intelligence lists. The IPs in these lists will be matched against traffic source.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "layer4_configs": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "ip_protocol": {
+                            "type": "string",
+                            "description": "The IP protocol to which this rule applies. The protocol type is required when creating a firewall rule.\nThis value can either be one of the following well known protocol strings (tcp, udp, icmp, esp, ah, ipip, sctp), or the IP protocol number.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "ports": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description": "An optional list of ports to which this rule applies. This field is only applicable for UDP or TCP protocol. Each entry must be either an integer or a range. If not specified, this rule applies to connections through any port.\nExample inputs include: [\"22\"], [\"80\",\"443\"], and [\"12345-12349\"].",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Pairs of IP protocols and ports that the rule should match.",
+                        "description_kind": "plain"
+                      },
+                      "min_items": 1
+                    },
+                    "src_secure_tags": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "name": {
+                            "type": "string",
+                            "description": "Name of the secure tag, created with TagManager's TagValue API.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "State of the secure tag, either EFFECTIVE or INEFFECTIVE. A secure tag is INEFFECTIVE when it is deleted or its network is deleted.",
+                            "description_kind": "plain",
+                            "computed": true
+                          }
+                        },
+                        "description": "List of secure tag values, which should be matched at the source of the traffic. For INGRESS rule, if all the srcSecureTag are INEFFECTIVE, and there is no srcIpRange, this rule will be ignored. Maximum number of source tag values allowed is 256.",
+                        "description_kind": "plain"
+                      }
+                    }
+                  },
+                  "description": "A match condition that incoming traffic is evaluated against. If it evaluates to true, the corresponding 'action' is enforced.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1,
+                "max_items": 1
+              },
+              "target_secure_tags": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "name": {
+                      "type": "string",
+                      "description": "Name of the secure tag, created with TagManager's TagValue API.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "state": {
+                      "type": "string",
+                      "description": "State of the secure tag, either EFFECTIVE or INEFFECTIVE. A secure tag is INEFFECTIVE when it is deleted or its network is deleted.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "A list of secure tags that controls which instances the firewall rule applies to.\nIf targetSecureTag are specified, then the firewall rule applies only to instances in the VPC network that have one of those EFFECTIVE secure tags, if all the targetSecureTag are in INEFFECTIVE state, then this rule will be ignored.\ntargetSecureTag may not be set at the same time as targetServiceAccounts. If neither targetServiceAccounts nor targetSecureTag are specified, the firewall rule applies to all instances on the specified network. Maximum number of target secure tags allowed is 256.",
+                  "description_kind": "plain"
+                }
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_essential_contacts_contact": {
           "version": 0,
           "block": {
@@ -4295,6 +5240,105 @@
             "description_kind": "plain"
           }
         },
+        "google_org_policy_custom_constraint": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "action_type": {
+                "type": "string",
+                "description": "The action to take if the condition is met. Possible values: [\"ALLOW\", \"DENY\"]",
+                "description_kind": "plain",
+                "required": true
+              },
+              "condition": {
+                "type": "string",
+                "description": "A CEL condition that refers to a supported service resource, for example 'resource.management.autoUpgrade == false'. For details about CEL usage, see [Common Expression Language](https://cloud.google.com/resource-manager/docs/organization-policy/creating-managing-custom-constraints#common_expression_language).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "description": {
+                "type": "string",
+                "description": "A human-friendly description of the constraint to display as an error message when the policy is violated.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "display_name": {
+                "type": "string",
+                "description": "A human-friendly name for the constraint.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "method_types": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of RESTful methods for which to enforce the constraint. Can be 'CREATE', 'UPDATE', or both. Not all Google Cloud services support both methods. To see supported methods for each service, find the service in [Supported services](https://cloud.google.com/resource-manager/docs/organization-policy/custom-constraint-supported-services).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Immutable. The name of the custom constraint. This is unique within the organization.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "The parent of the resource, an organization. Format should be 'organizations/{organization_id}'.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "resource_types": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "Immutable. The fully qualified name of the Google Cloud REST resource containing the object and field you want to restrict. For example, 'container.googleapis.com/NodePool'.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "Output only. The timestamp representing when the constraint was last updated.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_org_policy_policy": {
           "version": 0,
           "block": {
@@ -4590,6 +5634,113 @@
                   "description_kind": "plain"
                 },
                 "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_organization_access_approval_settings": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "active_key_version": {
+                "type": "string",
+                "description": "The asymmetric crypto key version to use for signing approval requests.\nEmpty active_key_version indicates that a Google-managed key should be used for signing.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "ancestor_has_active_key_version": {
+                "type": "bool",
+                "description": "This field will always be unset for the organization since organizations do not have ancestors.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "enrolled_ancestor": {
+                "type": "bool",
+                "description": "This field will always be unset for the organization since organizations do not have ancestors.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "invalid_key_version": {
+                "type": "bool",
+                "description": "If the field is true, that indicates that there is some configuration issue with the active_key_version\nconfigured on this Organization (e.g. it doesn't exist or the Access Approval service account doesn't have the\ncorrect permissions on it, etc.).",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The resource name of the settings. Format is \"organizations/{organization_id}/accessApprovalSettings\"",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "notification_emails": {
+                "type": [
+                  "set",
+                  "string"
+                ],
+                "description": "A list of email addresses to which notifications relating to approval requests should be sent.\nNotifications relating to a resource will be sent to all emails in the settings of ancestor\nresources of that resource. A maximum of 50 email addresses are allowed.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "organization_id": {
+                "type": "string",
+                "description": "ID of the organization of the access approval settings.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "enrolled_services": {
+                "nesting_mode": "set",
+                "block": {
+                  "attributes": {
+                    "cloud_product": {
+                      "type": "string",
+                      "description": "The product for which Access Approval will be enrolled. Allowed values are listed (case-sensitive):\n  all\n  appengine.googleapis.com\n  bigquery.googleapis.com\n  bigtable.googleapis.com\n  cloudkms.googleapis.com\n  compute.googleapis.com\n  dataflow.googleapis.com\n  iam.googleapis.com\n  pubsub.googleapis.com\n  storage.googleapis.com",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "enrollment_level": {
+                      "type": "string",
+                      "description": "The enrollment level of the service. Default value: \"BLOCK_ALL\" Possible values: [\"BLOCK_ALL\"]",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "A list of Google Cloud Services for which the given resource has Access Approval enrolled.\nAccess requests for the resource given by name against any of these services contained here will be required\nto have explicit approval. Enrollment can be done for individual services.\n\nA maximum of 10 enrolled services will be enforced, to be expanded as the set of supported services is expanded.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1
               },
               "timeouts": {
                 "nesting_mode": "single",
@@ -5039,6 +6190,1204 @@
                       "optional": true
                     },
                     "read": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_pubsub_subscription": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "ack_deadline_seconds": {
+                "type": "number",
+                "description": "This value is the maximum time after a subscriber receives a message\nbefore the subscriber should acknowledge the message. After message\ndelivery but before the ack deadline expires and before the message is\nacknowledged, it is an outstanding message and will not be delivered\nagain during that time (on a best-effort basis).\n\nFor pull subscriptions, this value is used as the initial value for\nthe ack deadline. To override this value for a given message, call\nsubscriptions.modifyAckDeadline with the corresponding ackId if using\npull. The minimum custom deadline you can specify is 10 seconds. The\nmaximum custom deadline you can specify is 600 seconds (10 minutes).\nIf this parameter is 0, a default value of 10 seconds is used.\n\nFor push delivery, this value is also used to set the request timeout\nfor the call to the push endpoint.\n\nIf the subscriber never acknowledges the message, the Pub/Sub system\nwill eventually redeliver the message.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "effective_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "All of labels (key/value pairs) present on the resource in GCP, including the labels configured through Terraform, other clients and services.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "enable_exactly_once_delivery": {
+                "type": "bool",
+                "description": "If 'true', Pub/Sub provides the following guarantees for the delivery\nof a message with a given value of messageId on this Subscriptions':\n\n- The message sent to a subscriber is guaranteed not to be resent before the message's acknowledgement deadline expires.\n\n- An acknowledged message will not be resent to a subscriber.\n\nNote that subscribers may still receive multiple copies of a message when 'enable_exactly_once_delivery'\nis true if the message was published multiple times by a publisher client. These copies are considered distinct by Pub/Sub and have distinct messageId values",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "enable_message_ordering": {
+                "type": "bool",
+                "description": "If 'true', messages published with the same orderingKey in PubsubMessage will be delivered to\nthe subscribers in the order in which they are received by the Pub/Sub system. Otherwise, they\nmay be delivered in any order.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "filter": {
+                "type": "string",
+                "description": "The subscription only delivers the messages that match the filter.\nPub/Sub automatically acknowledges the messages that don't match the filter. You can filter messages\nby their attributes. The maximum length of a filter is 256 bytes. After creating the subscription,\nyou can't modify the filter.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "A set of key/value label pairs to assign to this Subscription.\n\n\n**Note**: This field is non-authoritative, and will only manage the labels present in your configuration.\nPlease refer to the field 'effective_labels' for all of the labels present on the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "message_retention_duration": {
+                "type": "string",
+                "description": "How long to retain unacknowledged messages in the subscription's\nbacklog, from the moment a message is published. If\nretain_acked_messages is true, then this also configures the retention\nof acknowledged messages, and thus configures how far back in time a\nsubscriptions.seek can be done. Defaults to 7 days. Cannot be more\nthan 31 days ('\"2678400s\"') or less than 10 minutes ('\"600s\"').\n\nA duration in seconds with up to nine fractional digits, terminated\nby 's'. Example: '\"600.5s\"'.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the subscription.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "retain_acked_messages": {
+                "type": "bool",
+                "description": "Indicates whether to retain acknowledged messages. If 'true', then\nmessages are not expunged from the subscription's backlog, even if\nthey are acknowledged, until they fall out of the\nmessageRetentionDuration window.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "tags": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "Input only. Resource manager tags to be bound to the subscription. Tag\nkeys and values have the same definition as resource manager tags. Keys\nmust be in the format tagKeys/{tag_key_id}, and values are in the format\ntagValues/456. The field is ignored when empty. The field is immutable and\ncauses resource replacement when mutated. This field is only set at create\ntime and modifying this field after creation will trigger recreation. To\napply tags to an existing resource, see the 'google_tags_tag_value'\nresource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "terraform_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The combination of labels configured directly on the resource\n and default labels configured on the provider.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "topic": {
+                "type": "string",
+                "description": "A reference to a Topic resource, of the form projects/{project}/topics/{{name}}\n(as in the id property of a google_pubsub_topic), or just a topic name if\nthe topic is in the same project as the subscription.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "bigquery_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "drop_unknown_fields": {
+                      "type": "bool",
+                      "description": "When true and use_topic_schema or use_table_schema is true, any fields that are a part of the topic schema or message schema that\nare not part of the BigQuery table schema are dropped when writing to BigQuery. Otherwise, the schemas must be kept in sync\nand any messages with extra fields are not written and remain in the subscription's backlog.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "service_account_email": {
+                      "type": "string",
+                      "description": "The service account to use to write to BigQuery. If not specified, the Pub/Sub\n[service agent](https://cloud.google.com/iam/docs/service-agents),\nservice-{project_number}@gcp-sa-pubsub.iam.gserviceaccount.com, is used.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "table": {
+                      "type": "string",
+                      "description": "The name of the table to which to write data, of the form {projectId}.{datasetId}.{tableId}",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "use_table_schema": {
+                      "type": "bool",
+                      "description": "When true, use the BigQuery table's schema as the columns to write to in BigQuery. Messages\nmust be published in JSON format. Only one of use_topic_schema and use_table_schema can be set.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "use_topic_schema": {
+                      "type": "bool",
+                      "description": "When true, use the topic's schema as the columns to write to in BigQuery, if it exists.\nOnly one of use_topic_schema and use_table_schema can be set.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "write_metadata": {
+                      "type": "bool",
+                      "description": "When true, write the subscription name, messageId, publishTime, attributes, and orderingKey to additional columns in the table.\nThe subscription name, messageId, and publishTime fields are put in their own columns while all other message properties (other than data) are written to a JSON object in the attributes column.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "If delivery to BigQuery is used with this subscription, this field is used to configure it.\nEither pushConfig, bigQueryConfig or cloudStorageConfig can be set, but not combined.\nIf all three are empty, then the subscriber will pull and ack messages using API methods.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "cloud_storage_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "bucket": {
+                      "type": "string",
+                      "description": "User-provided name for the Cloud Storage bucket. The bucket must be created by the user. The bucket name must be without any prefix like \"gs://\".",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "filename_datetime_format": {
+                      "type": "string",
+                      "description": "User-provided format string specifying how to represent datetimes in Cloud Storage filenames.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "filename_prefix": {
+                      "type": "string",
+                      "description": "User-provided prefix for Cloud Storage filename.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "filename_suffix": {
+                      "type": "string",
+                      "description": "User-provided suffix for Cloud Storage filename. Must not end in \"/\".",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "max_bytes": {
+                      "type": "number",
+                      "description": "The maximum bytes that can be written to a Cloud Storage file before a new file is created. Min 1 KB, max 10 GiB.\nThe maxBytes limit may be exceeded in cases where messages are larger than the limit.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "max_duration": {
+                      "type": "string",
+                      "description": "The maximum duration that can elapse before a new Cloud Storage file is created. Min 1 minute, max 10 minutes, default 5 minutes.\nMay not exceed the subscription's acknowledgement deadline.\nA duration in seconds with up to nine fractional digits, ending with 's'. Example: \"3.5s\".",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "max_messages": {
+                      "type": "number",
+                      "description": "The maximum messages that can be written to a Cloud Storage file before a new file is created. Min 1000 messages.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "service_account_email": {
+                      "type": "string",
+                      "description": "The service account to use to write to Cloud Storage. If not specified, the Pub/Sub\n[service agent](https://cloud.google.com/iam/docs/service-agents),\nservice-{project_number}@gcp-sa-pubsub.iam.gserviceaccount.com, is used.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "state": {
+                      "type": "string",
+                      "description": "An output-only field that indicates whether or not the subscription can receive messages.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "block_types": {
+                    "avro_config": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "use_topic_schema": {
+                            "type": "bool",
+                            "description": "When true, the output Cloud Storage file will be serialized using the topic schema, if it exists.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "write_metadata": {
+                            "type": "bool",
+                            "description": "When true, write the subscription name, messageId, publishTime, attributes, and orderingKey as additional fields in the output.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "If set, message data will be written to Cloud Storage in Avro format.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "If delivery to Cloud Storage is used with this subscription, this field is used to configure it.\nEither pushConfig, bigQueryConfig or cloudStorageConfig can be set, but not combined.\nIf all three are empty, then the subscriber will pull and ack messages using API methods.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "dead_letter_policy": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "dead_letter_topic": {
+                      "type": "string",
+                      "description": "The name of the topic to which dead letter messages should be published.\nFormat is 'projects/{project}/topics/{topic}'.\n\nThe Cloud Pub/Sub service account associated with the enclosing subscription's\nparent project (i.e.,\nservice-{project_number}@gcp-sa-pubsub.iam.gserviceaccount.com) must have\npermission to Publish() to this topic.\n\nThe operation will fail if the topic does not exist.\nUsers should ensure that there is a subscription attached to this topic\nsince messages published to a topic with no subscriptions are lost.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "max_delivery_attempts": {
+                      "type": "number",
+                      "description": "The maximum number of delivery attempts for any message. The value must be\nbetween 5 and 100.\n\nThe number of delivery attempts is defined as 1 + (the sum of number of\nNACKs and number of times the acknowledgement deadline has been exceeded for the message).\n\nA NACK is any call to ModifyAckDeadline with a 0 deadline. Note that\nclient libraries may automatically extend ack_deadlines.\n\nThis field will be honored on a best effort basis.\n\nIf this parameter is 0, a default value of 5 is used.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "A policy that specifies the conditions for dead lettering messages in\nthis subscription. If dead_letter_policy is not set, dead lettering\nis disabled.\n\nThe Cloud Pub/Sub service account associated with this subscription's\nparent project (i.e.,\nservice-{project_number}@gcp-sa-pubsub.iam.gserviceaccount.com) must have\npermission to Acknowledge() messages on this subscription.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "expiration_policy": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "ttl": {
+                      "type": "string",
+                      "description": "Specifies the \"time-to-live\" duration for an associated resource. The\nresource expires if it is not active for a period of ttl.\nIf ttl is set to \"\", the associated resource never expires.\nA duration in seconds with up to nine fractional digits, terminated by 's'.\nExample - \"3.5s\".",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "A policy that specifies the conditions for this subscription's expiration.\nA subscription is considered active as long as any connected subscriber\nis successfully consuming messages from the subscription or is issuing\noperations on the subscription. If expirationPolicy is not set, a default\npolicy with ttl of 31 days will be used.  If it is set but ttl is \"\", the\nresource never expires.  The minimum allowed value for expirationPolicy.ttl\nis 1 day.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "message_transforms": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "disabled": {
+                      "type": "bool",
+                      "description": "Controls whether or not to use this transform. If not set or 'false',\nthe transform will be applied to messages. Default: 'true'.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "javascript_udf": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "code": {
+                            "type": "string",
+                            "description": "JavaScript code that contains a function 'function_name' with the\nfollowing signature:\n'''\n  /**\n  * Transforms a Pub/Sub message.\n  *\n  * @return {(Object<string, (string | Object<string, string>)>|null)} - To\n  * filter a message, return 'null'. To transform a message return a map\n  * with the following keys:\n  *   - (required) 'data' : {string}\n  *   - (optional) 'attributes' : {Object<string, string>}\n  * Returning empty 'attributes' will remove all attributes from the\n  * message.\n  *\n  * @param  {(Object<string, (string | Object<string, string>)>} Pub/Sub\n  * message. Keys:\n  *   - (required) 'data' : {string}\n  *   - (required) 'attributes' : {Object<string, string>}\n  *\n  * @param  {Object<string, any>} metadata - Pub/Sub message metadata.\n  * Keys:\n  *   - (required) 'message_id'  : {string}\n  *   - (optional) 'publish_time': {string} YYYY-MM-DDTHH:MM:SSZ format\n  *   - (optional) 'ordering_key': {string}\n  */\n  function <function_name>(message, metadata) {\n  }\n'''",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "function_name": {
+                            "type": "string",
+                            "description": "Name of the JavaScript function that should be applied to Pub/Sub messages.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Javascript User Defined Function. If multiple Javascript UDFs are specified on a resource,\neach one must have a unique 'function_name'.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "Transforms to be applied to messages published to the topic. Transforms are applied in the\norder specified.",
+                  "description_kind": "plain"
+                }
+              },
+              "push_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "attributes": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "Endpoint configuration attributes.\n\nEvery endpoint has a set of API supported attributes that can\nbe used to control different aspects of the message delivery.\n\nThe currently supported attribute is x-goog-version, which you\ncan use to change the format of the pushed message. This\nattribute indicates the version of the data expected by\nthe endpoint. This controls the shape of the pushed message\n(i.e., its fields and metadata). The endpoint version is\nbased on the version of the Pub/Sub API.\n\nIf not present during the subscriptions.create call,\nit will default to the version of the API used to make\nsuch call. If not present during a subscriptions.modifyPushConfig\ncall, its value will not be changed. subscriptions.get\ncalls will always return a valid version, even if the\nsubscription was created without this attribute.\n\nThe possible values for this attribute are:\n\n- v1beta1: uses the push format defined in the v1beta1 Pub/Sub API.\n- v1 or v1beta2: uses the push format defined in the v1 Pub/Sub API.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "push_endpoint": {
+                      "type": "string",
+                      "description": "A URL locating the endpoint to which messages should be pushed.\nFor example, a Webhook endpoint might use\n\"https://example.com/push\".",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "block_types": {
+                    "no_wrapper": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "write_metadata": {
+                            "type": "bool",
+                            "description": "When true, writes the Pub/Sub message metadata to\n'x-goog-pubsub-<KEY>:<VAL>' headers of the HTTP request. Writes the\nPub/Sub message attributes to '<KEY>:<VAL>' headers of the HTTP request.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "When set, the payload to the push endpoint is not wrapped.Sets the\n'data' field as the HTTP body for delivery.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "oidc_token": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "audience": {
+                            "type": "string",
+                            "description": "Audience to be used when generating OIDC token. The audience claim\nidentifies the recipients that the JWT is intended for. The audience\nvalue is a single case-sensitive string. Having multiple values (array)\nfor the audience field is not supported. More info about the OIDC JWT\ntoken audience here: https://tools.ietf.org/html/rfc7519#section-4.1.3\nNote: if not specified, the Push endpoint URL will be used.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "service_account_email": {
+                            "type": "string",
+                            "description": "Service account email to be used for generating the OIDC token.\nThe caller (for subscriptions.create, subscriptions.patch, and\nsubscriptions.modifyPushConfig RPCs) must have the\niam.serviceAccounts.actAs permission for the service account.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "If specified, Pub/Sub will generate and attach an OIDC JWT token as\nan Authorization header in the HTTP request for every pushed message.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "If push delivery is used with this subscription, this field is used to\nconfigure it. An empty pushConfig signifies that the subscriber will\npull and ack messages using API methods.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "retry_policy": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "maximum_backoff": {
+                      "type": "string",
+                      "description": "The maximum delay between consecutive deliveries of a given message. Value should be between 0 and 600 seconds. Defaults to 600 seconds.\nA duration in seconds with up to nine fractional digits, terminated by 's'. Example: \"3.5s\".",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "minimum_backoff": {
+                      "type": "string",
+                      "description": "The minimum delay between consecutive deliveries of a given message. Value should be between 0 and 600 seconds. Defaults to 10 seconds.\nA duration in seconds with up to nine fractional digits, terminated by 's'. Example: \"3.5s\".",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    }
+                  },
+                  "description": "A policy that specifies how Pub/Sub retries message delivery for this subscription.\n\nIf not set, the default retry policy is applied. This generally implies that messages will be retried as soon as possible for healthy subscribers.\nRetryPolicy will be triggered on NACKs or acknowledgement deadline exceeded events for a given message",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_pubsub_subscription_iam_member": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "etag": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "member": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "role": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "subscription": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "condition": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "description": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "expression": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "title": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_pubsub_topic": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "effective_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "All of labels (key/value pairs) present on the resource in GCP, including the labels configured through Terraform, other clients and services.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "kms_key_name": {
+                "type": "string",
+                "description": "The resource name of the Cloud KMS CryptoKey to be used to protect access\nto messages published on this topic. Your project's PubSub service account\n('service-{{PROJECT_NUMBER}}@gcp-sa-pubsub.iam.gserviceaccount.com') must have\n'roles/cloudkms.cryptoKeyEncrypterDecrypter' to use this feature.\nThe expected format is 'projects/*/locations/*/keyRings/*/cryptoKeys/*'",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "A set of key/value label pairs to assign to this Topic.\n\n\n**Note**: This field is non-authoritative, and will only manage the labels present in your configuration.\nPlease refer to the field 'effective_labels' for all of the labels present on the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "message_retention_duration": {
+                "type": "string",
+                "description": "Indicates the minimum duration to retain a message after it is published\nto the topic. If this field is set, messages published to the topic in\nthe last messageRetentionDuration are always available to subscribers.\nFor instance, it allows any attached subscription to seek to a timestamp\nthat is up to messageRetentionDuration in the past. If this field is not\nset, message retention is controlled by settings on individual subscriptions.\nThe rotation period has the format of a decimal number, followed by the\nletter 's' (seconds). Cannot be more than 31 days or less than 10 minutes.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the topic.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "tags": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "Input only. Resource manager tags to be bound to the topic. Tag keys and\nvalues have the same definition as resource manager tags. Keys must be in\nthe format tagKeys/{tag_key_id}, and values are in the format\ntagValues/456. The field is ignored when empty. The field is immutable and\ncauses resource replacement when mutated. This field is only set at create\ntime and modifying this field after creation will trigger recreation. To\napply tags to an existing resource, see the 'google_tags_tag_value'\nresource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "terraform_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The combination of labels configured directly on the resource\n and default labels configured on the provider.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "ingestion_data_source_settings": {
+                "nesting_mode": "list",
+                "block": {
+                  "block_types": {
+                    "aws_kinesis": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "aws_role_arn": {
+                            "type": "string",
+                            "description": "AWS role ARN to be used for Federated Identity authentication with\nKinesis. Check the Pub/Sub docs for how to set up this role and the\nrequired permissions that need to be attached to it.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "consumer_arn": {
+                            "type": "string",
+                            "description": "The Kinesis consumer ARN to used for ingestion in\nEnhanced Fan-Out mode. The consumer must be already\ncreated and ready to be used.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "gcp_service_account": {
+                            "type": "string",
+                            "description": "The GCP service account to be used for Federated Identity authentication\nwith Kinesis (via a 'AssumeRoleWithWebIdentity' call for the provided\nrole). The 'awsRoleArn' must be set up with 'accounts.google.com:sub'\nequals to this service account number.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "stream_arn": {
+                            "type": "string",
+                            "description": "The Kinesis stream ARN to ingest data from.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Settings for ingestion from Amazon Kinesis Data Streams.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "aws_msk": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "aws_role_arn": {
+                            "type": "string",
+                            "description": "AWS role ARN to be used for Federated Identity authentication with\nMSK. Check the Pub/Sub docs for how to set up this role and the\nrequired permissions that need to be attached to it.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "cluster_arn": {
+                            "type": "string",
+                            "description": "ARN that uniquely identifies the MSK cluster.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "gcp_service_account": {
+                            "type": "string",
+                            "description": "The GCP service account to be used for Federated Identity authentication\nwith MSK (via a 'AssumeRoleWithWebIdentity' call for the provided\nrole). The 'awsRoleArn' must be set up with 'accounts.google.com:sub'\nequals to this service account number.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "topic": {
+                            "type": "string",
+                            "description": "The name of the MSK topic that Pub/Sub will import from.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Settings for ingestion from Amazon Managed Streaming for Apache Kafka.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "azure_event_hubs": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "client_id": {
+                            "type": "string",
+                            "description": "The Azure event hub client ID to use for ingestion.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "event_hub": {
+                            "type": "string",
+                            "description": "The Azure event hub to ingest data from.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "gcp_service_account": {
+                            "type": "string",
+                            "description": "The GCP service account to be used for Federated Identity authentication\nwith Azure (via a 'AssumeRoleWithWebIdentity' call for the provided\nrole).",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "namespace": {
+                            "type": "string",
+                            "description": "The Azure event hub namespace to ingest data from.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "resource_group": {
+                            "type": "string",
+                            "description": "The name of the resource group within an Azure subscription.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "subscription_id": {
+                            "type": "string",
+                            "description": "The Azure event hub subscription ID to use for ingestion.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "tenant_id": {
+                            "type": "string",
+                            "description": "The Azure event hub tenant ID to use for ingestion.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Settings for ingestion from Azure Event Hubs.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "cloud_storage": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "bucket": {
+                            "type": "string",
+                            "description": "Cloud Storage bucket. The bucket name must be without any\nprefix like \"gs://\". See the bucket naming requirements:\nhttps://cloud.google.com/storage/docs/buckets#naming.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "match_glob": {
+                            "type": "string",
+                            "description": "Glob pattern used to match objects that will be ingested. If unset, all\nobjects will be ingested. See the supported patterns:\nhttps://cloud.google.com/storage/docs/json_api/v1/objects/list#list-objects-and-prefixes-using-glob",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "minimum_object_create_time": {
+                            "type": "string",
+                            "description": "The timestamp set in RFC3339 text format. If set, only objects with a\nlarger or equal timestamp will be ingested. Unset by default, meaning\nall objects will be ingested.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "block_types": {
+                          "avro_format": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "description": "Configuration for reading Cloud Storage data in Avro binary format. The\nbytes of each object will be set to the 'data' field of a Pub/Sub message.",
+                              "description_kind": "plain"
+                            },
+                            "max_items": 1
+                          },
+                          "pubsub_avro_format": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "description": "Configuration for reading Cloud Storage data written via Cloud Storage\nsubscriptions(See https://cloud.google.com/pubsub/docs/cloudstorage). The\ndata and attributes fields of the originally exported Pub/Sub message\nwill be restored when publishing.",
+                              "description_kind": "plain"
+                            },
+                            "max_items": 1
+                          },
+                          "text_format": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "delimiter": {
+                                  "type": "string",
+                                  "description": "The delimiter to use when using the 'text' format. Each line of text as\nspecified by the delimiter will be set to the 'data' field of a Pub/Sub\nmessage. When unset, '\\n' is used.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                }
+                              },
+                              "description": "Configuration for reading Cloud Storage data in text format. Each line of\ntext as specified by the delimiter will be set to the 'data' field of a\nPub/Sub message.",
+                              "description_kind": "plain"
+                            },
+                            "max_items": 1
+                          }
+                        },
+                        "description": "Settings for ingestion from Cloud Storage.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "confluent_cloud": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "bootstrap_server": {
+                            "type": "string",
+                            "description": "The Confluent Cloud bootstrap server. The format is url:port.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "cluster_id": {
+                            "type": "string",
+                            "description": "The Confluent Cloud cluster ID.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "gcp_service_account": {
+                            "type": "string",
+                            "description": "The GCP service account to be used for Federated Identity authentication\nwith Confluent Cloud.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "identity_pool_id": {
+                            "type": "string",
+                            "description": "Identity pool ID to be used for Federated Identity authentication with Confluent Cloud.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "topic": {
+                            "type": "string",
+                            "description": "Name of the Confluent Cloud topic that Pub/Sub will import from.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Settings for ingestion from Confluent Cloud.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "platform_logs_settings": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "severity": {
+                            "type": "string",
+                            "description": "The minimum severity level of Platform Logs that will be written. If unspecified,\nno Platform Logs will be written. Default value: \"SEVERITY_UNSPECIFIED\" Possible values: [\"SEVERITY_UNSPECIFIED\", \"DISABLED\", \"DEBUG\", \"INFO\", \"WARNING\", \"ERROR\"]",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Settings for Platform Logs regarding ingestion to Pub/Sub. If unset,\nno Platform Logs will be generated.'",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "Settings for ingestion from a data source into this topic.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "message_storage_policy": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "allowed_persistence_regions": {
+                      "type": [
+                        "set",
+                        "string"
+                      ],
+                      "description": "A list of IDs of GCP regions where messages that are published to\nthe topic may be persisted in storage. Messages published by\npublishers running in non-allowed GCP regions (or running outside\nof GCP altogether) will be routed for storage in one of the\nallowed regions. An empty list means that no regions are allowed,\nand is not a valid configuration.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "enforce_in_transit": {
+                      "type": "bool",
+                      "description": "If true, 'allowedPersistenceRegions' is also used to enforce in-transit\nguarantees for messages. That is, Pub/Sub will fail topics.publish\noperations on this topic and subscribe operations on any subscription\nattached to this topic in any region that is not in 'allowedPersistenceRegions'.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Policy constraining the set of Google Cloud Platform regions where\nmessages published to the topic may be stored. If not present, then no\nconstraints are in effect.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "message_transforms": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "disabled": {
+                      "type": "bool",
+                      "description": "Controls whether or not to use this transform. If not set or 'false',\nthe transform will be applied to messages. Default: 'true'.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "javascript_udf": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "code": {
+                            "type": "string",
+                            "description": "JavaScript code that contains a function 'function_name' with the\nfollowing signature:\n'''\n  /**\n  * Transforms a Pub/Sub message.\n  *\n  * @return {(Object<string, (string | Object<string, string>)>|null)} - To\n  * filter a message, return 'null'. To transform a message return a map\n  * with the following keys:\n  *   - (required) 'data' : {string}\n  *   - (optional) 'attributes' : {Object<string, string>}\n  * Returning empty 'attributes' will remove all attributes from the\n  * message.\n  *\n  * @param  {(Object<string, (string | Object<string, string>)>} Pub/Sub\n  * message. Keys:\n  *   - (required) 'data' : {string}\n  *   - (required) 'attributes' : {Object<string, string>}\n  *\n  * @param  {Object<string, any>} metadata - Pub/Sub message metadata.\n  * Keys:\n  *   - (required) 'message_id'  : {string}\n  *   - (optional) 'publish_time': {string} YYYY-MM-DDTHH:MM:SSZ format\n  *   - (optional) 'ordering_key': {string}\n  */\n  function <function_name>(message, metadata) {\n  }\n'''",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "function_name": {
+                            "type": "string",
+                            "description": "Name of the JavaScript function that should be applied to Pub/Sub messages.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Javascript User Defined Function. If multiple Javascript UDFs are specified on a resource,\neach one must have a unique 'function_name'.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "Transforms to be applied to messages published to the topic. Transforms are applied in the\norder specified.",
+                  "description_kind": "plain"
+                }
+              },
+              "schema_settings": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "encoding": {
+                      "type": "string",
+                      "description": "The encoding of messages validated against schema. Default value: \"ENCODING_UNSPECIFIED\" Possible values: [\"ENCODING_UNSPECIFIED\", \"JSON\", \"BINARY\"]",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "schema": {
+                      "type": "string",
+                      "description": "The name of the schema that messages published should be\nvalidated against. Format is projects/{project}/schemas/{schema}.\nThe value of this field will be _deleted-schema_\nif the schema has been deleted.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "Settings for validating messages published against a schema.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_pubsub_topic_iam_member": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "etag": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "member": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "role": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "topic": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "condition": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "description": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "expression": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "title": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_scc_v2_organization_notification_config": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "config_id": {
+                "type": "string",
+                "description": "This must be unique within the organization.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "description": {
+                "type": "string",
+                "description": "The description of the notification config (max of 1024 characters).",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "location": {
+                "type": "string",
+                "description": "location Id is provided by organization. If not provided, Use global as default.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The resource name of this notification config, in the format\n'organizations/{{organization}}/notificationConfigs/{{config_id}}'.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "organization": {
+                "type": "string",
+                "description": "The organization whose Cloud Security Command Center the Notification\nConfig lives in.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "pubsub_topic": {
+                "type": "string",
+                "description": "The Pub/Sub topic to send notifications to. Its format is\n\"projects/[project_id]/topics/[topic]\".",
+                "description_kind": "plain",
+                "required": true
+              },
+              "service_account": {
+                "type": "string",
+                "description": "The service account that needs \"pubsub.topics.publish\" permission to\npublish to the Pub/Sub topic.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "streaming_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "filter": {
+                      "type": "string",
+                      "description": "Expression that defines the filter to apply across create/update\nevents of assets or findings as specified by the event type. The\nexpression is a list of zero or more restrictions combined via\nlogical operators AND and OR. Parentheses are supported, and OR\nhas higher precedence than AND.\n\nRestrictions have the form <field> <operator> <value> and may have\na - character in front of them to indicate negation. The fields\nmap to those defined in the corresponding resource.\n\nThe supported operators are:\n\n* = for all value types.\n* >, <, >=, <= for integer values.\n* :, meaning substring matching, for strings.\n\nThe supported value types are:\n\n* string literals in quotes.\n* integer literals without quotes.\n* boolean literals true and false without quotes.\n\nSee\n[Filtering notifications](https://cloud.google.com/security-command-center/docs/how-to-api-filter-notifications)\nfor information on how to write a filter.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "The config for triggering streaming-based notifications.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1,
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_scc_v2_organization_scc_big_query_export": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "big_query_export_id": {
+                "type": "string",
+                "description": "This must be unique within the organization.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "create_time": {
+                "type": "string",
+                "description": "The time at which the BigQuery export was created. This field is set by the server and will be ignored if provided on export on creation.\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits.\nExamples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "dataset": {
+                "type": "string",
+                "description": "The dataset to write findings' updates to.\nIts format is \"projects/[projectId]/datasets/[bigquery_dataset_id]\".\nBigQuery Dataset unique ID must contain only letters (a-z, A-Z), numbers (0-9), or underscores (_).",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "description": {
+                "type": "string",
+                "description": "The description of the notification config (max of 1024 characters).",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "filter": {
+                "type": "string",
+                "description": "Expression that defines the filter to apply across create/update\nevents of findings. The\nexpression is a list of zero or more restrictions combined via\nlogical operators AND and OR. Parentheses are supported, and OR\nhas higher precedence than AND.\n\nRestrictions have the form <field> <operator> <value> and may have\na - character in front of them to indicate negation. The fields\nmap to those defined in the corresponding resource.\n\nThe supported operators are:\n\n* = for all value types.\n* >, <, >=, <= for integer values.\n* :, meaning substring matching, for strings.\n\nThe supported value types are:\n\n* string literals in quotes.\n* integer literals without quotes.\n* boolean literals true and false without quotes.\n\nSee\n[Filtering notifications](https://cloud.google.com/security-command-center/docs/how-to-api-filter-notifications)\nfor information on how to write a filter.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "location": {
+                "type": "string",
+                "description": "location Id is provided by organization. If not provided, Use global as default.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "most_recent_editor": {
+                "type": "string",
+                "description": "Email address of the user who last edited the BigQuery export.\nThis field is set by the server and will be ignored if provided on export creation or update.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The resource name of this export, in the format\n'organizations/{{organization}}/locations/{{location}}/bigQueryExports/{{big_query_export_id}}'.\nThis field is provided in responses, and is ignored when provided in create requests.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "organization": {
+                "type": "string",
+                "description": "The organization whose Cloud Security Command Center the Big Query Export\nConfig lives in.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "principal": {
+                "type": "string",
+                "description": "The service account that needs permission to create table and upload data to the BigQuery dataset.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "The most recent time at which the BigQuery export was updated. This field is set by the server and will be ignored if provided on export creation or update.\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits.\nExamples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
                       "type": "string",
                       "description_kind": "plain",
                       "optional": true
@@ -5878,6 +8227,295 @@
                   },
                   "description_kind": "plain"
                 }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_tags_tag_binding": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The generated id for the TagBinding. This is a string of the form: 'tagBindings/{full-resource-name}/{tag-value-name}'",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "The full resource name of the resource the TagValue is bound to. E.g. //cloudresourcemanager.googleapis.com/projects/123",
+                "description_kind": "plain",
+                "required": true
+              },
+              "tag_value": {
+                "type": "string",
+                "description": "The TagValue of the TagBinding. Must be of the form tagValues/456.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_tags_tag_key": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "create_time": {
+                "type": "string",
+                "description": "Output only. Creation time.\n\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "User-assigned description of the TagKey. Must not exceed 256 characters.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The generated numeric id for the TagKey.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "namespaced_name": {
+                "type": "string",
+                "description": "Output only. Namespaced name of the TagKey.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "Input only. The resource name of the new TagKey's parent. Must be of the form organizations/{org_id} or projects/{project_id_or_number}.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "purpose": {
+                "type": "string",
+                "description": "Optional. A purpose cannot be changed once set.\n\nA purpose denotes that this Tag is intended for use in policies of a specific policy engine, and will involve that policy engine in management operations involving this Tag. Possible values: [\"GCE_FIREWALL\", \"DATA_GOVERNANCE\"]",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "purpose_data": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "Optional. Purpose data cannot be changed once set.\n\nPurpose data corresponds to the policy system that the tag is intended for. For example, the GCE_FIREWALL purpose expects data in the following format: 'network = \"<project-name>/<vpc-name>\"'.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "Input only. The user friendly name for a TagKey. The short name should be unique for TagKeys within the same tag namespace.\n\nThe short name can have a maximum length of 256 characters. The permitted character set for the shortName includes all UTF-8 encoded Unicode characters except single quotes ('), double quotes (\"), backslashes (\\\\), and forward slashes (/).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "Output only. Update time.\n\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_tags_tag_value": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "create_time": {
+                "type": "string",
+                "description": "Output only. Creation time.\n\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "User-assigned description of the TagValue. Must not exceed 256 characters.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The generated numeric id for the TagValue.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "namespaced_name": {
+                "type": "string",
+                "description": "Output only. Namespaced name of the TagValue. Will be in the format {parentNamespace}/{tagKeyShortName}/{shortName}.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "parent": {
+                "type": "string",
+                "description": "Input only. The resource name of the new TagValue's parent. Must be of the form tagKeys/{tag_key_id}.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "Input only. User-assigned short name for TagValue. The short name should be unique for TagValues within the same parent TagKey.\n\nThe short name can have a maximum length of 256 characters. The permitted character set for the shortName includes all UTF-8 encoded Unicode characters except single quotes ('), double quotes (\"), backslashes (\\\\), and forward slashes (/).",
+                "description_kind": "plain",
+                "required": true
+              },
+              "update_time": {
+                "type": "string",
+                "description": "Output only. Update time.\nA timestamp in RFC3339 UTC \"Zulu\" format, with nanosecond resolution and up to nine fractional digits. Examples: \"2014-10-02T15:01:23Z\" and \"2014-10-02T15:01:23.045123456Z\".",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_tags_tag_value_iam_member": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "etag": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "member": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "role": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              },
+              "tag_value": {
+                "type": "string",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "condition": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "description": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "expression": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "title": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "max_items": 1
               }
             },
             "description_kind": "plain"

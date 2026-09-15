@@ -191,6 +191,10 @@ pub(crate) struct WhoamiReport {
     /// true when the answer came from the file alone, without minting a token
     pub offline: bool,
     pub note: Option<String>,
+    /// Given an estate, online: the permissions its resource types need, tested
+    /// with the credential its live commands run as.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<crate::iac_roles::PermissionCheck>,
 }
 
 /// Whether the credential can reach the project it names as its quota project.
@@ -226,7 +230,10 @@ pub(crate) async fn check_quota_project(
 /// they drifted: only the tool knew that a bound estate changes the answer, so
 /// `satz whoami` could not be asked the question the tool could answer. One
 /// resolver, two renderings — the divergence cannot come back.
-pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
+pub(crate) async fn whoami_report(
+    offline: bool,
+    probe: Option<crate::iac_roles::Probe>,
+) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
     let file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
     let kind_name = |k: &CredKind| match k {
         CredKind::UserAdc => "user-adc",
@@ -267,6 +274,7 @@ pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn
             quota_project: quota.map(|id| QuotaProject { id, reachable: None, error: None }),
             offline: true,
             note,
+            permissions: None,
         });
     }
 
@@ -310,12 +318,20 @@ pub(crate) async fn whoami_report(offline: bool) -> Result<WhoamiReport, Box<dyn
         }
     };
 
+    // The estate's permissions last: they are tested as the identity its live
+    // commands run as, which the two checks above just proved it can become.
+    let permissions = match probe {
+        Some(p) => Some(crate::iac_roles::test_live(&p).await),
+        None => None,
+    };
+
     Ok(WhoamiReport {
         adc: Credential { account: info.email, kind: kind_name(&info.kind), file },
         estate,
         quota_project,
         offline: false,
         note: None,
+        permissions,
     })
 }
 
@@ -328,14 +344,15 @@ pub(crate) fn project_of(sa: &str) -> Option<&str> {
 
 /// The terminal rendering of `whoami_report` — the same answer `satz_whoami`
 /// returns as data.
-pub(crate) async fn whoami(offline: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let r = whoami_report(offline).await?;
+pub(crate) async fn whoami(offline: bool, probe: Option<crate::iac_roles::Probe>) -> Result<(), Box<dyn std::error::Error>> {
+    let r = whoami_report(offline, probe).await?;
     println!("{}", render_whoami(&r));
     // A credential that cannot become the estate's account, or a quota project
     // nothing can reach, makes every later command fail. `whoami` is the command
     // an operator runs to find that out, so it says so in its exit code too.
     let broken = r.estate.as_ref().is_some_and(|e| e.may_impersonate == Some(false))
-        || r.quota_project.as_ref().is_some_and(|q| q.reachable == Some(false));
+        || r.quota_project.as_ref().is_some_and(|q| q.reachable == Some(false))
+        || r.permissions.as_ref().is_some_and(|p| !p.missing.is_empty());
     if broken {
         return Err("the credentials cannot do what this estate needs — see above".into());
     }
@@ -406,6 +423,19 @@ pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
             }
         }
     }
+    if let Some(p) = &r.permissions {
+        if p.missing.is_empty() {
+            out.push_str(&format!("\npermissions: {} tested for this estate's resource types — all held", p.tested));
+        } else {
+            out.push_str(&format!("\npermissions: {} of {} tested are MISSING:", p.missing.len(), p.tested));
+            for line in crate::iac_roles::describe(&crate::iac_roles::cover(&p.missing)) {
+                out.push_str(&format!("\n  {}", line));
+            }
+        }
+        for n in &p.not_tested {
+            out.push_str(&format!("\n  not tested: {}", brief(n)));
+        }
+    }
     if let Some(n) = &r.note {
         out.push_str(&format!("\nnote: {}", n));
     }
@@ -419,6 +449,9 @@ pub(crate) struct LiveDefaults {
     pub(crate) customer_domain: String,
     /// Bare organization number — `None` on a greenfield tenant.
     pub(crate) org_id: Option<String>,
+    /// The organization's display name — its primary domain, which is the
+    /// customer's domain even when the identity's differs.
+    pub(crate) org_display_name: Option<String>,
     /// The directory customer id (`C0…`).
     pub(crate) customer_id: Option<String>,
     /// Bare billing account id — only when exactly ONE open account is
@@ -431,9 +464,12 @@ pub(crate) struct LiveDefaults {
 /// `billingAccounts.list` → the single open account. Ambiguity is an error or
 /// a named gap, never a guess — and only what is actually MISSING is queried,
 /// so explicit flags keep working on accounts that see many organizations.
+/// `org_hint` names the organization the caller already knows (an import's
+/// sweep root): among many visible ones, that one is taken.
 pub(crate) async fn live_defaults(
     need_org: bool,
     need_billing: bool,
+    org_hint: Option<&str>,
 ) -> Result<LiveDefaults, String> {
     let token = crate::gcp::access_token().await?;
     let info = credential_info(&token).await;
@@ -448,23 +484,32 @@ pub(crate) async fn live_defaults(
     };
 
     let client = reqwest::Client::new();
-    let (org_id, customer_id) = if !need_org {
+    let (org_id, customer_id, org_display_name) = if !need_org {
         // Both values arrived as flags — no search, no ambiguity to trip on.
-        (None, None)
+        (None, None, None)
     } else {
         let orgs = crate::gcp::resourcemanager::search_organizations(&client, &token)
             .await
             .map_err(|e| format!("could not search organizations: {}", e))?;
-        match orgs.as_slice() {
-            [] => (None, None),
-            [one] => (
+        let facts = |one: &serde_json::Value| {
+            (
                 one.get("name")
                     .and_then(|n| n.as_str())
                     .and_then(|n| n.strip_prefix("organizations/"))
                     .map(str::to_string),
                 one.get("directoryCustomerId").and_then(|c| c.as_str()).map(str::to_string),
-            ),
-            many => {
+                one.get("displayName").and_then(|d| d.as_str()).map(str::to_string),
+            )
+        };
+        let hinted = org_hint.and_then(|h| {
+            let h = h.trim_start_matches("organizations/");
+            orgs.iter().find(|o| o.get("name").and_then(|n| n.as_str()) == Some(&format!("organizations/{}", h)))
+        });
+        match (hinted, orgs.as_slice()) {
+            (Some(one), _) => facts(one),
+            (None, []) => (None, None, None),
+            (None, [one]) => facts(one),
+            (None, many) => {
                 return Err(format!(
                     "{} organizations are visible to {} — pass --customer-organization-id and \
                      --customer-id explicitly: {}",
@@ -524,31 +569,10 @@ pub(crate) async fn live_defaults(
         first_admin: local.to_string(),
         customer_domain: domain.to_string(),
         org_id,
+        org_display_name,
         customer_id,
         billing_account,
     })
-}
-
-/// Ask for the one value that cannot be derived. Interactive terminals only;
-/// a scripted run must pass --customer-shortname.
-pub(crate) fn prompt_shortname() -> Result<String, String> {
-    use std::io::{BufRead, IsTerminal, Write};
-    if !std::io::stdin().is_terminal() {
-        return Err(
-            "--from-live needs --customer-shortname when not run interactively (every name \
-             derives from it)"
-                .to_string(),
-        );
-    }
-    print!("customer_shortname (every derived name builds on it, e.g. acme): ");
-    std::io::stdout().flush().map_err(|e| e.to_string())?;
-    let mut s = String::new();
-    std::io::stdin().lock().read_line(&mut s).map_err(|e| e.to_string())?;
-    let s = s.trim().to_string();
-    if s.is_empty() {
-        return Err("customer_shortname must not be empty".to_string());
-    }
-    Ok(s)
 }
 
 /// How the ADC identity was established, so an unexpected result can be
@@ -796,7 +820,30 @@ mod whoami_render_tests {
             quota_project: None,
             offline: false,
             note: None,
+            permissions: None,
         }
+    }
+
+    #[test]
+    fn the_estates_permissions_are_named_with_the_role_that_carries_them() {
+        use crate::iac_roles::{Need, PermissionCheck, Scope};
+        let mut r = report();
+        r.permissions = Some(PermissionCheck {
+            tested: 3,
+            missing: vec![Need {
+                reason: vec!["google_cloudbuild_trigger".into()],
+                permission: Some("cloudbuild.builds.create".into()),
+                roles: vec!["roles/cloudbuild.builds.editor".into()],
+                scope: Scope::Project,
+            }],
+            not_tested: vec!["Groups Admin (Google Workspace admin console) — not an IAM role".into()],
+        });
+        let s = render_whoami(&r);
+        assert!(s.contains("permissions: 1 of 3 tested are MISSING:"), "{s}");
+        assert!(s.contains("roles/cloudbuild.builds.editor at the organization — for google_cloudbuild_trigger"), "{s}");
+        assert!(s.contains("not tested: Groups Admin"), "{s}");
+        r.permissions = Some(PermissionCheck { tested: 18, ..Default::default() });
+        assert!(render_whoami(&r).contains("permissions: 18 tested for this estate's resource types — all held"));
     }
 
     #[test]

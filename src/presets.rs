@@ -25,8 +25,14 @@ type BoxErr = Box<dyn std::error::Error>;
 /// the fetch is cached for the life of the process, so a second caller inside
 /// one run costs no API quota. That quota is 60 requests/hour unauthenticated
 /// and shared with `self-update`, which is why every request is worth counting.
+///
+/// A source that holds no pack is an error, never an empty comparison: against
+/// nothing, every command would report "nothing to do" and exit 0.
 async fn pristine_source(pristine_dir: Option<PathBuf>) -> Result<PathBuf, BoxErr> {
     if let Some(dir) = pristine_dir {
+        if !holds_a_pack(&dir) {
+            return Err(format!("--pristine-dir {}: holds no .satz pack — pass the presets/ directory of a satz checkout", dir.display()).into());
+        }
         return Ok(dir);
     }
     if let Some(cached) = DOWNLOADED.get() {
@@ -35,12 +41,56 @@ async fn pristine_source(pristine_dir: Option<PathBuf>) -> Result<PathBuf, BoxEr
     let tmp = std::env::temp_dir().join(format!("satz-pristine-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let n = crate::github::download_presets(&tmp).await?;
-    println!("Fetched {n} upstream preset file(s).");
+    if !holds_a_pack(&tmp) {
+        return Err(format!(
+            "fetched {n} upstream file(s) from {} and not one .satz pack — nothing to compare against{}",
+            crate::github::REPO,
+            crate::github::PRISTINE_HINT
+        )
+        .into());
+    }
+    // stderr: `satz_check_presets` reaches this, and over MCP stdout is the protocol
+    eprintln!("Fetched {n} upstream preset file(s).");
     let _ = DOWNLOADED.set(tmp.clone());
     Ok(tmp)
 }
 
+/// Whether a directory tree holds at least one `.satz` file.
+fn holds_a_pack(dir: &Path) -> bool {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "satz") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 static DOWNLOADED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+mod pristine_source_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_pristine_dir_without_a_pack_is_refused() {
+        let dir = std::env::temp_dir().join(format!("satz-empty-pristine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/README.md"), "no packs here").unwrap();
+        let err = pristine_source(Some(dir.clone())).await.unwrap_err().to_string();
+        assert!(err.contains("holds no .satz pack"), "{err}");
+        std::fs::write(dir.join("x.satz"), "pack x version \"1.0\"\n").unwrap();
+        assert_eq!(pristine_source(Some(dir.clone())).await.unwrap(), dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Pure layer
@@ -608,6 +658,20 @@ pub(crate) async fn check_presets_report(
 // get-presets: populate and refresh, without ever changing a live org by accident
 // ---------------------------------------------------------------------------
 
+/// Write an upstream file into the local library. A `.sh` that a pack binds as an
+/// `action` is executed directly (`Command::new`), so it has to arrive executable
+/// — installed without the bit, the action fails with a permission error naming a
+/// file that is right there.
+fn install(path: &Path, contents: &str) -> Result<(), BoxErr> {
+    crate::fsx::write_verbatim(path, contents.as_bytes())?;
+    #[cfg(unix)]
+    if path.extension().is_some_and(|e| e == "sh") {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
 /// Fetch the upstream library into `presets_dir`.
 ///
 /// This used to overwrite every pristine-named file unconditionally, with no
@@ -622,12 +686,13 @@ pub(crate) async fn check_presets_report(
 ///   actually appropriate; `--force` overrides, after listing what it will change
 ///
 /// `X.local.*` files have no upstream counterpart, so nothing here can touch them.
-pub(crate) async fn run_get_presets(
+pub(crate) async fn get_presets(
     presets_dir: &str,
     runtime_config: &crate::ToolConfig,
     force: bool,
     pristine_dir: Option<PathBuf>,
-) -> Result<(), BoxErr> {
+) -> Result<GetPresetsReport, BoxErr> {
+    let mut report = GetPresetsReport::default();
     let local_base = PathBuf::from(presets_dir);
     crate::fsx::create_dir_all(&local_base)?;
 
@@ -648,7 +713,7 @@ pub(crate) async fn run_get_presets(
                 }
             }
         }
-        None => println!("note: no estate found in '{}' — nothing to protect, refreshing everything", runtime_config.yaml_dir),
+        None => report.no_estate = true,
     }
 
     let mut files = Vec::new();
@@ -662,8 +727,10 @@ pub(crate) async fn run_get_presets(
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
             // the library is more than packs: docs, the import config and
-            // catalogs (.yaml), the CAI asset-type list (.txt)
-            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") {
+            // catalogs (.yaml), the CAI asset-type list (.txt) — and the script a
+            // pack binds as an `action`, without which that pack is an action that
+            // cannot find what it runs
+            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") || name.ends_with(".sh") {
                 extra.push(p.strip_prefix(&tmp)?.to_path_buf());
             }
         }
@@ -672,38 +739,94 @@ pub(crate) async fn run_get_presets(
     files.sort();
     files.dedup();
 
-    let (mut installed, mut current, mut refreshed, mut refused) = (0usize, 0usize, 0usize, 0usize);
     for rel in &files {
         let up = crate::fsx::read_to_string(tmp.join(rel))?;
         let lo_path = local_base.join(rel);
         if !lo_path.exists() {
             if let Some(parent) = lo_path.parent() { crate::fsx::create_dir_all(parent)?; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
-            installed += 1;
+            install(&lo_path, &up)?;
+            report.installed.push(rel.display().to_string());
             continue;
         }
         let lo = crate::fsx::read_to_string(&lo_path)?;
-        if lo == up { current += 1; continue; }
+        if lo == up { report.current += 1; continue; }
 
         let stem = pack_stem(rel).unwrap_or_else(|| rel.clone());
+        let changed = InUsePreset {
+            file: rel.display().to_string(),
+            stem: stem.file_name().unwrap_or_default().to_string_lossy().to_string(),
+            local_version: pack_version(&lo),
+            upstream_version: pack_version(&up),
+        };
         let in_use = used_stems.contains(&stem);
         if in_use && !force {
-            let (v_lo, v_up) = (pack_version(&lo), pack_version(&up));
-            println!("  REFUSED {}: the estate uses it and upstream moved {}", rel.display(), version_arrow(&v_lo, &v_up));
-            println!("    `merge-presets` (forks it, keeps your content) or");
-            println!("    `merge-presets --adopt {}` (upgrades it in place), or --force to overwrite anyway.", stem.file_name().unwrap_or_default().to_string_lossy());
-            refused += 1;
+            report.refused.push(changed);
             continue;
         }
         if in_use {
-            let (v_lo, v_up) = (pack_version(&lo), pack_version(&up));
-            println!("  --force overwrote IN-USE {} ({}) — re-transpile and read the plan", rel.display(), version_arrow(&v_lo, &v_up));
+            report.forced.push(changed);
         }
-        crate::fsx::write(&lo_path, up.as_bytes())?;
-        refreshed += 1;
+        install(&lo_path, &up)?;
+        report.refreshed.push(rel.display().to_string());
     }
-    println!("\nget-presets: {installed} installed, {current} already current, {refreshed} refreshed, {refused} refused.");
-    if refused > 0 {
+    Ok(report)
+}
+
+/// What `get-presets` did to the library.
+#[derive(Debug, Default, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct GetPresetsReport {
+    /// No estate was found beside the config: nothing to protect, everything refreshed.
+    pub no_estate: bool,
+    /// Files that were missing locally.
+    pub installed: Vec<String>,
+    /// Files identical to upstream.
+    pub current: usize,
+    /// Files that differed and the estate does not use (or `force`), overwritten.
+    pub refreshed: Vec<String>,
+    /// Packs the estate uses that upstream changed: left alone. `merge-presets`
+    /// forks them, `merge-presets --adopt <stem>` upgrades them in place.
+    pub refused: Vec<InUsePreset>,
+    /// Packs the estate uses, overwritten because `force` was given: re-transpile
+    /// and read the plan.
+    pub forced: Vec<InUsePreset>,
+}
+
+/// A pack the estate uses that upstream changed.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct InUsePreset {
+    pub file: String,
+    pub stem: String,
+    pub local_version: Option<String>,
+    pub upstream_version: Option<String>,
+}
+
+/// `get-presets`: fetch the upstream library and say what changed.
+pub(crate) async fn run_get_presets(
+    presets_dir: &str,
+    runtime_config: &crate::ToolConfig,
+    force: bool,
+    pristine_dir: Option<PathBuf>,
+) -> Result<(), BoxErr> {
+    let r = get_presets(presets_dir, runtime_config, force, pristine_dir).await?;
+    if r.no_estate {
+        println!("note: no estate found in '{}' — nothing to protect, refreshing everything", runtime_config.yaml_dir);
+    }
+    for p in &r.refused {
+        println!("  REFUSED {}: the estate uses it and upstream moved {}", p.file, version_arrow(&p.local_version, &p.upstream_version));
+        println!("    `merge-presets` (forks it, keeps your content) or");
+        println!("    `merge-presets --adopt {}` (upgrades it in place), or --force to overwrite anyway.", p.stem);
+    }
+    for p in &r.forced {
+        println!("  --force overwrote IN-USE {} ({}) — re-transpile and read the plan", p.file, version_arrow(&p.local_version, &p.upstream_version));
+    }
+    println!(
+        "\nget-presets: {} installed, {} already current, {} refreshed, {} refused.",
+        r.installed.len(),
+        r.current,
+        r.refreshed.len(),
+        r.refused.len()
+    );
+    if !r.refused.is_empty() {
         println!("Refused files are packs this estate deploys — changing them changes the org.");
     }
     Ok(())
@@ -712,6 +835,211 @@ pub(crate) async fn run_get_presets(
 // ---------------------------------------------------------------------------
 // merge-presets: the reconciling update flow (fork + ledger, base-aware)
 // ---------------------------------------------------------------------------
+
+/// What a merge run did to one pack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum MergeAction {
+    /// the library did not have it
+    Installed,
+    /// byte-identical to upstream
+    Current,
+    /// docs and data upstream owns — nothing to fork
+    ArtifactUpdated,
+    /// same canonical form: comments or formatting only
+    DocOnly,
+    /// changed, and the estate does not use it
+    UnusedOverwritten,
+    /// `--adopt`: upstream taken in place, the estate keeps the pristine name
+    AdoptedInPlace,
+    /// changed and used: forked to `X.local.satz`, the estate repointed
+    ForkedAndRepointed,
+    /// a fork was already there: pristine re-tracked, the delta refreshed
+    ForkDiffRefreshed,
+    /// needs a fork+repoint, which cannot share a run with `--adopt`
+    Deferred,
+    /// left untouched, with a reason
+    Refused,
+    /// `--adopt all` met a local EDIT at the same version, not staleness
+    SkippedEdited,
+}
+
+/// One line of a merge run, in the walk's own order. The CLI renders these; the
+/// MCP tool returns them. One source, so what an agent reads and what a human
+/// reads cannot drift apart.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub(crate) enum MergeEvent {
+    Pack {
+        /// path under presets_dir
+        file: String,
+        action: MergeAction,
+        /// the fork this outcome names, where it names one
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fork: Option<String>,
+        /// the adoption delta this outcome names, where it names one
+        #[serde(skip_serializing_if = "Option::is_none")]
+        diff: Option<String>,
+        /// `2.7 -> 2.8`, where both versions are known
+        #[serde(skip_serializing_if = "Option::is_none")]
+        versions: Option<String>,
+        /// why, for a refusal
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// upstream changed a pack's content without moving its version
+    Warning { file: String, text: String },
+    /// something the run had to say that is not about one pack
+    Note { text: String },
+    /// what an adoption changes in the emission
+    EmissionDelta { lines: Vec<String> },
+}
+
+/// How many packs each outcome took, in both modes: a `--report-only` run counts
+/// what it WOULD do, so its summary matches the lines above it.
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MergeCounts {
+    pub installed: usize,
+    pub current: usize,
+    pub artifacts_updated: usize,
+    pub doc_only: usize,
+    pub unused_overwritten: usize,
+    pub adopted_in_place: usize,
+    pub forked_and_repointed: usize,
+    pub fork_diffs_refreshed: usize,
+    pub deferred: usize,
+    pub refused: usize,
+    pub skipped_edited: usize,
+}
+
+/// A merge run as a value.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MergeReport {
+    /// nothing was written
+    pub report_only: bool,
+    pub events: Vec<MergeEvent>,
+    pub counts: MergeCounts,
+    /// something here needs a human: `merge-presets` exits non-zero
+    pub attention: bool,
+}
+
+impl MergeReport {
+    fn counted(events: Vec<MergeEvent>, report_only: bool, attention: bool) -> Self {
+        let mut counts = MergeCounts::default();
+        for e in &events {
+            if let MergeEvent::Pack { action, .. } = e {
+                let n = match action {
+                    MergeAction::Installed => &mut counts.installed,
+                    MergeAction::Current => &mut counts.current,
+                    MergeAction::ArtifactUpdated => &mut counts.artifacts_updated,
+                    MergeAction::DocOnly => &mut counts.doc_only,
+                    MergeAction::UnusedOverwritten => &mut counts.unused_overwritten,
+                    MergeAction::AdoptedInPlace => &mut counts.adopted_in_place,
+                    MergeAction::ForkedAndRepointed => &mut counts.forked_and_repointed,
+                    MergeAction::ForkDiffRefreshed => &mut counts.fork_diffs_refreshed,
+                    MergeAction::Deferred => &mut counts.deferred,
+                    MergeAction::Refused => &mut counts.refused,
+                    MergeAction::SkippedEdited => &mut counts.skipped_edited,
+                };
+                *n += 1;
+            }
+        }
+        Self { report_only, events, counts, attention }
+    }
+}
+
+/// The run as a human reads it — what the walk used to print as it went.
+pub(crate) fn render_merge(r: &MergeReport) -> String {
+    let mut out = String::new();
+    let dry = r.report_only;
+    for e in &r.events {
+        match e {
+            MergeEvent::Note { text } => out.push_str(&format!("{}\n", text)),
+            MergeEvent::Warning { file, text } => out.push_str(&format!("  WARNING {}: {}\n", file, text)),
+            MergeEvent::EmissionDelta { lines } => {
+                out.push_str("\n  emission delta after adoption:\n");
+                for l in lines {
+                    out.push_str(&format!("{}\n", l));
+                }
+                out.push_str("  hcl/ on disk is NOT regenerated by this command — run `satz transpile`,\n");
+                out.push_str("  read `git diff hcl/main.tf`, then `tofu plan` before applying.\n");
+            }
+            MergeEvent::Pack { file, action, fork, diff, versions, reason } => {
+                let arrow = versions.clone().unwrap_or_default();
+                let line = match (action, dry) {
+                    (MergeAction::Installed, true) => Some(format!("  would install {}", file)),
+                    (MergeAction::ArtifactUpdated, true) => Some(format!("  would update artifact {}", file)),
+                    (MergeAction::DocOnly, true) => Some(format!("  would update {} (doc/format only)", file)),
+                    (MergeAction::Installed | MergeAction::ArtifactUpdated | MergeAction::DocOnly | MergeAction::Current, _) => None,
+                    (MergeAction::UnusedOverwritten, true) => {
+                        Some(format!("  would overwrite unused {} (differs; git history keeps it if tracked)", file))
+                    }
+                    (MergeAction::UnusedOverwritten, false) => {
+                        Some(format!("  overwrote unused {} (differed; git history keeps it if tracked)", file))
+                    }
+                    (MergeAction::ForkDiffRefreshed, true) => {
+                        Some(format!("  would update {} (fork {} present)", file, fork.clone().unwrap_or_default()))
+                    }
+                    (MergeAction::ForkDiffRefreshed, false) => Some(format!(
+                        "  fork {}: upstream moved {} — review {}",
+                        pack_stem(std::path::Path::new(file)).unwrap_or_else(|| PathBuf::from(file)).display(),
+                        arrow,
+                        diff.clone().unwrap_or_default()
+                    )),
+                    (MergeAction::AdoptedInPlace, true) => Some(format!("  would adopt {} in place ({})", file, arrow)),
+                    (MergeAction::AdoptedInPlace, false) => {
+                        Some(format!("  adopted {} in place ({}) — the estate keeps using the pristine name", file, arrow))
+                    }
+                    (MergeAction::ForkedAndRepointed, true) => Some(format!(
+                        "  would fork {} -> {} and repoint the estate (upstream {})",
+                        file,
+                        fork.clone().unwrap_or_default(),
+                        arrow
+                    )),
+                    (MergeAction::ForkedAndRepointed, false) => Some(format!(
+                        "  forked {} -> {} (upstream {}); estate repointed — adoption delta in {}",
+                        file,
+                        fork.clone().unwrap_or_default(),
+                        arrow,
+                        diff.clone().unwrap_or_default()
+                    )),
+                    (MergeAction::Deferred, _) => Some(format!(
+                        "  DEFERRED {}: needs a fork+repoint, which cannot share a run with --adopt (the repoint proves itself by transpile identity). Re-run `merge-presets` without --adopt.",
+                        file
+                    )),
+                    (MergeAction::SkippedEdited, _) => Some(format!(
+                        "  --adopt all SKIPPED {}: same version as upstream but different content — that is a local EDIT, not staleness. Name it explicitly to overwrite it.",
+                        file
+                    )),
+                    (MergeAction::Refused, _) => {
+                        Some(format!("  REFUSED {}: {}", file, reason.clone().unwrap_or_default()))
+                    }
+                };
+                if let Some(l) = line {
+                    out.push_str(&l);
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    let c = &r.counts;
+    out.push_str(&format!(
+        "\nmerge-presets: {} installed, {} current, {} artifacts updated, {} doc-only, {} unused overwritten, \
+         {} adopted in place, {} forked+repointed, {} fork diffs refreshed, {} deferred, {} refused, {} skipped (local edits).\n",
+        c.installed,
+        c.current,
+        c.artifacts_updated,
+        c.doc_only,
+        c.unused_overwritten,
+        c.adopted_in_place,
+        c.forked_and_repointed,
+        c.fork_diffs_refreshed,
+        c.deferred,
+        c.refused,
+        c.skipped_edited
+    ));
+    out
+}
 
 /// The reconciling update — provenance by suffix, no snapshots:
 ///
@@ -735,7 +1063,8 @@ pub(crate) async fn run_merge_presets(
     runtime_config: &crate::ToolConfig,
     report_only: bool,
     adopt: &[String],
-) -> Result<bool, BoxErr> {
+) -> Result<MergeReport, BoxErr> {
+    let mut events: Vec<MergeEvent> = Vec::new();
     let local_base = PathBuf::from(presets_dir);
     crate::fsx::create_dir_all(&local_base)?;
     // Adoption and auto-forking cannot share a run. The fork+repoint proves
@@ -750,7 +1079,9 @@ pub(crate) async fn run_merge_presets(
     let old_base = local_base.join(".base");
     if old_base.exists() && !report_only {
         std::fs::remove_dir_all(&old_base)?;
-        println!("note: removed obsolete {} (snapshots retired — pristine names are upstream-owned)", old_base.display());
+        events.push(MergeEvent::Note {
+            text: format!("note: removed obsolete {} (snapshots retired — pristine names are upstream-owned)", old_base.display()),
+        });
     }
 
     // ---- estate context: which pack stems are actually included -------------
@@ -768,7 +1099,12 @@ pub(crate) async fn run_merge_presets(
             }
         }
     } else {
-        println!("note: no estate found in '{}' — used-preset protection inactive; changed presets are reported, not forked", runtime_config.yaml_dir);
+        events.push(MergeEvent::Note {
+            text: format!(
+                "note: no estate found in '{}' — used-preset protection inactive; changed presets are reported, not forked",
+                runtime_config.yaml_dir
+            ),
+        });
     }
 
     // baseline for the self-verifying estate edit
@@ -795,18 +1131,25 @@ pub(crate) async fn run_merge_presets(
             if name.ends_with(".local.satz") || name.ends_with(".diff.satz") {
                 return Err(format!("merge-presets: {} is a local fork/delta inside the pristine dir — upstream carries pristine packs only", p.display()).into());
             }
-            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") {
+            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") || name.ends_with(".sh") {
                 upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
             }
         }
     }
     upstream_files.sort();
     upstream_files.dedup();
-    let (mut installed, mut current, mut doc_only, mut artifacts, mut unused_over, mut forked, mut refreshed, mut refused) =
-        (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut adopted = 0usize;
-    let mut deferred = 0usize;
     let mut needs_attention = false;
+    // one place builds a pack's event, so an outcome cannot be recorded with one
+    // spelling here and another there
+    let pack = |action: MergeAction, rel: &Path| MergeEvent::Pack {
+        file: rel.display().to_string(),
+        action,
+        fork: None,
+        diff: None,
+        versions: None,
+        reason: None,
+    };
     // rollback journal for the estate edit: (path, previous content) + created files
     let mut journal: Vec<(PathBuf, String)> = Vec::new();
     let mut created: Vec<PathBuf> = Vec::new();
@@ -819,23 +1162,26 @@ pub(crate) async fn run_merge_presets(
         let up = crate::fsx::read_to_string(&up_path)?;
 
         if !lo_path.exists() {
-            if report_only { println!("  would install {}", rel.display()); continue; }
+            events.push(pack(MergeAction::Installed, rel));
+            if report_only { continue; }
             if let Some(parent) = lo_path.parent() { crate::fsx::create_dir_all(parent)?; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
-            installed += 1;
+            install(&lo_path, &up)?;
             continue;
         }
         let lo = crate::fsx::read_to_string(&lo_path)?;
-        if lo == up { current += 1; continue; }
+        if lo == up {
+            events.push(pack(MergeAction::Current, rel));
+            continue;
+        }
 
         let fname = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
         // docs and data (catalogs, import-config) are artifacts: upstream
         // owns them, nothing to fork
         let is_artifact = fname.ends_with(".md") || fname.ends_with(".yaml");
         if is_artifact {
-            if report_only { println!("  would update artifact {}", rel.display()); continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
-            artifacts += 1;
+            events.push(pack(MergeAction::ArtifactUpdated, rel));
+            if report_only { continue; }
+            install(&lo_path, &up)?;
             continue;
         }
 
@@ -846,16 +1192,22 @@ pub(crate) async fn run_merge_presets(
             _ => false,
         };
         if sem_equal {
-            if report_only { println!("  would update {} (doc/format only)", rel.display()); continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
-            doc_only += 1;
+            events.push(pack(MergeAction::DocOnly, rel));
+            if report_only { continue; }
+            install(&lo_path, &up)?;
             continue;
         }
 
         // version hygiene cross-check (packs carry in-file versions)
-        let (v_lo, v_up) = (satz_version(&lo), satz_version(&up));
+        let (v_lo, v_up) = (
+            satz_version(&lo_path.display().to_string(), &lo)?,
+            satz_version(&format!("upstream {}", lo_path.display()), &up)?,
+        );
         if v_lo.is_some() && v_lo == v_up {
-            println!("  WARNING {}: content changed semantically but the pack version did not — upstream release-hygiene bug", rel.display());
+            events.push(MergeEvent::Warning {
+                file: rel.display().to_string(),
+                text: "content changed semantically but the pack version did not — upstream release-hygiene bug".to_string(),
+            });
             needs_attention = true;
         }
 
@@ -867,20 +1219,24 @@ pub(crate) async fn run_merge_presets(
 
         if fork_path.exists() {
             // existing fork: pristine tracks upstream, diff refreshed below
-            if report_only { println!("  would update {} (fork {} present)", rel.display(), fork_rel.display()); continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
-            refreshed += 1;
-            println!("  fork {}: upstream moved {} — review {}", stem.display(),
-                version_arrow(&v_lo, &v_up), diff_path.display());
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::ForkDiffRefreshed,
+                fork: Some(fork_rel.display().to_string()),
+                diff: Some(diff_path.display().to_string()),
+                versions: Some(version_arrow(&v_lo, &v_up)),
+                reason: None,
+            });
             needs_attention = true;
+            if report_only { continue; }
+            install(&lo_path, &up)?;
             continue;
         }
 
         if !used {
-            if report_only { println!("  would overwrite unused {} (differs; git history keeps it if tracked)", rel.display()); continue; }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
-            unused_over += 1;
-            println!("  overwrote unused {} (differed; git history keeps it if tracked)", rel.display());
+            events.push(pack(MergeAction::UnusedOverwritten, rel));
+            if report_only { continue; }
+            install(&lo_path, &up)?;
             continue;
         }
 
@@ -892,40 +1248,56 @@ pub(crate) async fn run_merge_presets(
         let behind = v_lo.is_some() && v_up.is_some() && v_lo != v_up;
         let choice = adopt_choice(adopt, &stem_name, &stem, behind);
         if choice == AdoptChoice::SkipEdited {
-            println!("  --adopt all SKIPPED {}: same version as upstream but different content — that is a local EDIT, not staleness. Name it explicitly to overwrite it.", rel.display());
+            events.push(pack(MergeAction::SkippedEdited, rel));
             needs_attention = true;
             continue;
         }
         if choice == AdoptChoice::Adopt {
-            if report_only {
-                println!("  would adopt {} in place ({})", rel.display(), version_arrow(&v_lo, &v_up));
-                adopted += 1;
-                needs_attention = true;
-                continue;
-            }
-            crate::fsx::write(&lo_path, up.as_bytes())?;
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::AdoptedInPlace,
+                fork: None,
+                diff: None,
+                versions: Some(version_arrow(&v_lo, &v_up)),
+                reason: None,
+            });
             adopted += 1;
             needs_attention = true;
-            println!("  adopted {} in place ({}) — the estate keeps using the pristine name", rel.display(), version_arrow(&v_lo, &v_up));
+            if report_only { continue; }
+            install(&lo_path, &up)?;
             continue;
         }
         if adopting {
-            println!("  DEFERRED {}: needs a fork+repoint, which cannot share a run with --adopt (the repoint proves itself by transpile identity). Re-run `merge-presets` without --adopt.", rel.display());
-            deferred += 1;
+            events.push(pack(MergeAction::Deferred, rel));
             needs_attention = true;
             continue;
         }
 
         // USED + semantically changed + no fork -> auto-fork + repoint
         if report_only {
-            println!("  would fork {} -> {} and repoint the estate (upstream {})",
-                rel.display(), fork_rel.display(), version_arrow(&v_lo, &v_up));
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::ForkedAndRepointed,
+                fork: Some(fork_rel.display().to_string()),
+                diff: Some(diff_path.display().to_string()),
+                versions: Some(version_arrow(&v_lo, &v_up)),
+                reason: None,
+            });
             needs_attention = true;
             continue;
         }
         if estate_dirty {
-            println!("  REFUSED {}: estate file has uncommitted changes — commit/stash it so the repoint stays an isolated edit (pack left untouched)", rel.display());
-            refused += 1;
+            events.push(MergeEvent::Pack {
+                file: rel.display().to_string(),
+                action: MergeAction::Refused,
+                fork: None,
+                diff: None,
+                versions: None,
+                reason: Some(
+                    "estate file has uncommitted changes — commit/stash it so the repoint stays an isolated edit (pack left untouched)"
+                        .to_string(),
+                ),
+            });
             needs_attention = true;
             continue; // pristine NOT updated either: the estate still deploys the old content
         }
@@ -936,28 +1308,66 @@ pub(crate) async fn run_merge_presets(
                 if journal.iter().all(|(p, _)| p != &est) {
                     journal.push((est.clone(), est_text.clone()));
                 }
-                crate::fsx::write(&fork_path, lo.as_bytes())?;
+                crate::fsx::write_verbatim(&fork_path, lo.as_bytes())?;
                 created.push(fork_path.clone());
                 journal.push((lo_path.clone(), lo.clone()));
-                crate::fsx::write(&lo_path, up.as_bytes())?;
-                crate::fsx::write(&est, new_text.as_bytes())?;
+                install(&lo_path, &up)?;
+                crate::fsx::write_edited_satz(&est, &est_text, &new_text)?;
                 estate_edited = true;
-                forked += 1;
-                println!("  forked {} -> {} (upstream {}); estate repointed — adoption delta in {}",
-                    rel.display(), fork_rel.display(), version_arrow(&v_lo, &v_up), diff_path.display());
+                events.push(MergeEvent::Pack {
+                    file: rel.display().to_string(),
+                    action: MergeAction::ForkedAndRepointed,
+                    fork: Some(fork_rel.display().to_string()),
+                    diff: Some(diff_path.display().to_string()),
+                    versions: Some(version_arrow(&v_lo, &v_up)),
+                    reason: None,
+                });
                 needs_attention = true;
             }
             None => {
-                println!("  REFUSED {}: could not locate the estate `use` for this pack (used via another pack?) — fork it by hand", rel.display());
-                refused += 1;
+                events.push(MergeEvent::Pack {
+                    file: rel.display().to_string(),
+                    action: MergeAction::Refused,
+                    fork: None,
+                    diff: None,
+                    versions: None,
+                    reason: Some(
+                        "could not locate the estate `use` for this pack (used via another pack?) — fork it by hand".to_string(),
+                    ),
+                });
                 needs_attention = true;
             }
         }
     }
 
+    // The line for a pack the library has and this estate does not. A pack shipped after an
+    // estate was written has no `use` line there, so its question is inert — this is what
+    // closes that, and it writes every line the same way, which a person does not.
+    if !report_only {
+        match estate.as_deref().map(adopt_pack_lines).unwrap_or_else(|| Ok(Vec::new())) {
+            Ok(added) if !added.is_empty() => {
+                for (path, phase) in &added {
+                    events.push(MergeEvent::Note {
+                        text: format!("  wrote a commented `use` line for {} ({})", path, phase),
+                    });
+                }
+                events.push(MergeEvent::Note {
+                    text: format!(
+                        "  {} pack line(s) added, commented — uncomment one, or answer its question, to use it",
+                        added.len()
+                    ),
+                });
+            }
+            Ok(_) => {}
+            Err(e) => events.push(MergeEvent::Note { text: format!("  could not write the new pack lines: {}", e) }),
+        }
+    }
+
     // refresh every fork's adoption delta (idempotent)
     if !report_only {
-        refresh_adoption_diffs(&local_base)?;
+        for removed in refresh_adoption_diffs(&local_base)? {
+            events.push(MergeEvent::Note { text: format!("  removed orphaned {} (fork adopted)", removed.display()) });
+        }
     }
 
     // Adoption changes what the estate emits — that is the point, so there is no
@@ -965,10 +1375,9 @@ pub(crate) async fn run_merge_presets(
     if adopted > 0 && !report_only {
         if let (Some(est), Some(before)) = (estate.clone(), baseline.clone()) {
             let after = crate::transpile_sorted_b(&est, tool_config, runtime_config)?;
-            println!("\n  emission delta after adoption:");
-            print!("{}", emission_delta(&before, &after));
-            println!("  hcl/ on disk is NOT regenerated by this command — run `satz transpile`,");
-            println!("  read `git diff hcl/main.tf`, then `tofu plan` before applying.");
+            events.push(MergeEvent::EmissionDelta {
+                lines: emission_delta(&before, &after).lines().map(str::to_string).collect(),
+            });
         }
     }
 
@@ -977,7 +1386,7 @@ pub(crate) async fn run_merge_presets(
         let est = estate.clone().unwrap();
         let rollback = |journal: &Vec<(PathBuf, String)>, created: &Vec<PathBuf>| -> Result<(), BoxErr> {
             for p in created { let _ = std::fs::remove_file(p); }
-            for (p, content) in journal.iter().rev() { crate::fsx::write(p, content.as_bytes())?; }
+            for (p, content) in journal.iter().rev() { crate::fsx::write_verbatim(p, content.as_bytes())?; }
             Ok(())
         };
         // a repoint that does not even transpile is rolled back the same way
@@ -993,13 +1402,10 @@ pub(crate) async fn run_merge_presets(
             rollback(&journal, &created)?;
             return Err("merge-presets: estate repoint changed the transpiled output — rolled back everything (this should be impossible; please report)".into());
         }
-        println!("  estate repoint verified: transpiled output identical.");
+        events.push(MergeEvent::Note { text: "  estate repoint verified: transpiled output identical.".to_string() });
     }
 
-    println!(
-        "\nmerge-presets: {installed} installed, {current} current, {artifacts} artifacts updated, {doc_only} doc-only, {unused_over} unused overwritten, {adopted} adopted in place, {forked} forked+repointed, {refreshed} fork diffs refreshed, {deferred} deferred, {refused} refused."
-    );
-    Ok(needs_attention)
+    Ok(MergeReport::counted(events, report_only, needs_attention))
 }
 
 /// What `--adopt` says about one pack.
@@ -1095,8 +1501,10 @@ fn pack_stem(rel: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(stem))
 }
 
-fn satz_version(src: &str) -> Option<String> {
-    satz_core::satz::parse(src).ok().and_then(|f| f.version)
+/// The `version` a pack states, or the parse error. A pack that does not parse
+/// has no version to compare, and "content changed" would hide that.
+fn satz_version(what: &str, src: &str) -> Result<Option<String>, String> {
+    satz_core::satz::parse(src).map(|f| f.version).map_err(|e| format!("{}:{}: {}", what, e.line, e.msg))
 }
 
 fn version_arrow(a: &Option<String>, b: &Option<String>) -> String {
@@ -1128,6 +1536,76 @@ fn is_git_dirty(path: &Path) -> Result<bool, String> {
 
 /// Repoint every estate `use "..."` that resolves to `target` at `fork_rel`
 /// (written with the same path prefix style the estate already uses).
+/// Append a commented `use` line for every pack in `PACK_LINES` the estate has no line for,
+/// each under the phase comment the skeleton would have written. Returns what was added.
+///
+/// Appends rather than inserts: a `use` at root level is valid anywhere in the file, and
+/// appending cannot damage a structure somebody has since rearranged. The phase is what says
+/// where it belongs in the sequence, which is the part that matters.
+fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
+    let src = crate::fsx::read_to_string(estate)?;
+    let mut added: Vec<(String, String)> = Vec::new();
+    let mut block = String::new();
+    let mut nested = src.clone();
+    for (path, gate, phase, at) in crate::template::PACK_LINES {
+        if src.contains(&format!("use \"{}\"", path)) {
+            continue;
+        }
+        // the phase text carries its own `//` continuations; the first line is the summary
+        let summary = phase.lines().next().unwrap_or("").trim().to_string();
+        let summary = if summary.is_empty() { "with the group above".to_string() } else { summary };
+        // a pack scoped to a block belongs IN that block: appended at the top
+        // level it would be scoped to the organisation instead
+        if !at.is_empty() {
+            match crate::template::insert_into_block(&nested, at, &crate::template::pack_line(path, gate), phase) {
+                Some(next) => {
+                    nested = next;
+                    added.push((path.to_string(), format!("{} (in `{}`)", summary, at)));
+                }
+                // no such block: a resource-type map is content and is written
+                // whole; a folder is the estate's own structure and is reported
+                None => match crate::template::block_stub(at, &crate::template::pack_line(path, gate), phase) {
+                    Some(stub) => {
+                        block.push('\n');
+                        block.push_str(&stub);
+                        added.push((path.to_string(), format!("{} (in a new `{}` block)", summary, at)));
+                    }
+                    None => println!(
+                        "  {} needs a `{}` block and this estate has none — add the block, then re-run",
+                        path, at
+                    ),
+                },
+            }
+            continue;
+        }
+        if !phase.is_empty() {
+            block.push_str(&format!("\n// {}\n", phase));
+        }
+        block.push_str(&crate::template::pack_line(path, gate));
+        block.push('\n');
+        added.push((path.to_string(), summary));
+    }
+    if added.is_empty() {
+        return Ok(added);
+    }
+    let mut out = nested;
+    // the header belongs to the appended group; a run that only placed nested
+    // lines has nothing to append and must not write an empty section
+    if !block.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(
+            "\n// ---- packs the library gained since this estate was written -------------------\n\
+             // Written by `satz merge-presets`, commented like every other pack line. Uncomment one\n\
+             // to use it, or answer its question and `satz interview` will.\n",
+        );
+        out.push_str(&block);
+    }
+    crate::fsx::write_edited_satz(estate, &src, &out)?;
+    Ok(added)
+}
+
 fn rewrite_estate_uses(
     text: &str,
     estate: &Path,
@@ -1167,7 +1645,8 @@ fn rewrite_estate_uses(
 
 /// Every `X.local.*` gets `X.diff.satz` = the CURRENT adoption delta against the
 /// pristine file. Idempotent; rewritten (not appended) on every run.
-fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
+fn refresh_adoption_diffs(local_base: &Path) -> Result<Vec<PathBuf>, BoxErr> {
+    let mut removed = Vec::new();
     let mut stack = vec![local_base.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -1184,7 +1663,7 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
                 let has_fork = p.with_file_name(format!("{}.local.satz", stem_name)).exists();
                 if !has_fork {
                     let _ = std::fs::remove_file(&p);
-                    println!("  removed orphaned {} (fork adopted)", p.display());
+                    removed.push(p.clone());
                 }
                 continue;
             }
@@ -1193,7 +1672,10 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
             if !pristine.exists() { continue; }
             let fork_text = crate::fsx::read_to_string(&p)?;
             let pris_text = crate::fsx::read_to_string(&pristine)?;
-            let (v_l, v_u) = (satz_version(&fork_text), satz_version(&pris_text));
+            let (v_l, v_u) = (
+                satz_version(&p.display().to_string(), &fork_text)?,
+                satz_version(&pristine.display().to_string(), &pris_text)?,
+            );
             let diff_path = p.with_file_name(format!("{}.diff.satz", stem_name));
             let body = text_diff(&fork_text, &pris_text);
             let content = format!(
@@ -1206,14 +1688,14 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<(), BoxErr> {
             }
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
 /// Unified diff via git (battle-tested); falls back to a full old/new dump.
 fn text_diff(old: &str, new: &str) -> String {
     let tmp = std::env::temp_dir();
     let (fo, fn_) = (tmp.join(format!("mp_old_{}", std::process::id())), tmp.join(format!("mp_new_{}", std::process::id())));
-    if std::fs::write(&fo, old).is_ok() && std::fs::write(&fn_, new).is_ok() {
+    if crate::fsx::write(&fo, old).is_ok() && crate::fsx::write(&fn_, new).is_ok() {
         if let Ok(out) = std::process::Command::new("git")
             .args(["diff", "--no-index", "--no-color", "--unified=3"])
             .arg(&fo).arg(&fn_)
@@ -1465,4 +1947,96 @@ params {
         assert_eq!(classify_source(&commented, PACK), Drift::Clean);
     }
 
+}
+
+#[cfg(test)]
+mod merge_report_tests {
+    //! The run is a value now: the CLI renders it and the MCP tool returns it.
+    //! These hold the rendering to what the walk used to print, and the counts to
+    //! the events — a `--report-only` run used to summarise zeros beside its own
+    //! "would …" lines, and an `--adopt all` skip was counted nowhere at all.
+    use super::*;
+
+    fn pack(file: &str, action: MergeAction) -> MergeEvent {
+        MergeEvent::Pack { file: file.into(), action, fork: None, diff: None, versions: None, reason: None }
+    }
+
+    #[test]
+    fn a_report_only_run_counts_what_it_would_do() {
+        let events = vec![
+            pack("a.satz", MergeAction::Installed),
+            pack("b.md", MergeAction::ArtifactUpdated),
+            pack("c.satz", MergeAction::DocOnly),
+            pack("d.satz", MergeAction::SkippedEdited),
+        ];
+        let r = MergeReport::counted(events, true, true);
+        assert_eq!((r.counts.installed, r.counts.artifacts_updated, r.counts.doc_only), (1, 1, 1));
+        assert_eq!(r.counts.skipped_edited, 1, "a skipped local edit is in the summary");
+        let out = render_merge(&r);
+        assert!(out.contains("  would install a.satz\n"), "{out}");
+        assert!(out.contains("  would update artifact b.md\n"), "{out}");
+        assert!(out.contains("  would update c.satz (doc/format only)\n"), "{out}");
+        assert!(out.contains("1 installed, 0 current, 1 artifacts updated, 1 doc-only"), "{out}");
+        assert!(out.contains("1 skipped (local edits)."), "{out}");
+    }
+
+    #[test]
+    fn a_real_run_says_what_it_did_and_stays_quiet_about_the_rest() {
+        let events = vec![
+            pack("a.satz", MergeAction::Installed),
+            pack("b.satz", MergeAction::Current),
+            MergeEvent::Pack {
+                file: "c.satz".into(),
+                action: MergeAction::ForkedAndRepointed,
+                fork: Some("c.local.satz".into()),
+                diff: Some("c.diff.satz".into()),
+                versions: Some("1.0 -> 2.0".into()),
+                reason: None,
+            },
+            MergeEvent::Pack {
+                file: "d.satz".into(),
+                action: MergeAction::Refused,
+                fork: None,
+                diff: None,
+                versions: None,
+                reason: Some("estate file has uncommitted changes".into()),
+            },
+        ];
+        let out = render_merge(&MergeReport::counted(events, false, true));
+        // an install and a current pack print nothing on the real path, as before
+        assert!(!out.contains("a.satz"), "{out}");
+        assert!(!out.contains("b.satz"), "{out}");
+        assert!(out.contains("  forked c.satz -> c.local.satz (upstream 1.0 -> 2.0); estate repointed — adoption delta in c.diff.satz\n"), "{out}");
+        assert!(out.contains("  REFUSED d.satz: estate file has uncommitted changes\n"), "{out}");
+        assert!(out.contains("1 installed, 1 current"), "{out}");
+    }
+
+    #[test]
+    fn the_notes_and_the_delta_keep_their_place() {
+        let events = vec![
+            MergeEvent::Note { text: "note: no estate found in 'yaml'".into() },
+            MergeEvent::Warning { file: "p.satz".into(), text: "content changed semantically but the pack version did not".into() },
+            MergeEvent::EmissionDelta { lines: vec!["    + google_x.y  (added)".into()] },
+        ];
+        let out = render_merge(&MergeReport::counted(events, false, true));
+        assert!(out.starts_with("note: no estate found in 'yaml'\n"), "{out}");
+        assert!(out.contains("  WARNING p.satz: content changed semantically but the pack version did not\n"), "{out}");
+        assert!(out.contains("\n  emission delta after adoption:\n    + google_x.y  (added)\n"), "{out}");
+        assert!(out.contains("  hcl/ on disk is NOT regenerated by this command"), "{out}");
+    }
+}
+
+
+#[cfg(test)]
+mod pack_version_tests {
+    //! A pack that does not parse has no version, and the drift report says so
+    //! rather than "content changed".
+    use super::*;
+
+    #[test]
+    fn a_pack_that_does_not_parse_is_an_error_not_a_missing_version() {
+        let err = satz_version("x.satz", "pack broken version \"1.0\"\n{{{\n").expect_err("a parse error must surface");
+        assert!(err.starts_with("x.satz:"), "{err}");
+        assert_eq!(satz_version("ok.satz", "pack ok version \"1.2\"\n").unwrap(), Some("1.2".into()));
+    }
 }

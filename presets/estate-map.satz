@@ -11,7 +11,7 @@
 // that gates a pack cannot live in the pack it gates, which is why they all live
 // here.
 //
-// Not a choice: the CIS baseline. It is what the estate is for, and its opt-in
+// Not a choice: the CIS baseline. The skeleton always uses it, and its opt-in
 // extensions are the baseline pack's own questions. Not on the map: the
 // per-project alert pack (the central one covers every project), Defender's plan
 // fragments (added by hand once Defender is on, per that pack's header), and the
@@ -21,7 +21,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.0"
+pack estate_map version "1.7"
 
 params {
   // ---- the security-group model: exactly one ------------------------------
@@ -35,11 +35,22 @@ params {
   use_essential_contacts  = true
 
   // ---- optional: off until the customer asks --------------------------------
-  use_budget               = false
-  use_scc_enablement       = false
-  use_security_audit_sa    = false
-  use_defender             = false
-  use_verification_runner  = false
+  use_budget                = false
+  use_scc_enablement        = false
+  use_scc_notifications     = false
+  use_scc_findings_mail     = false
+  use_scc_findings_siem     = false
+  use_scc_export            = false
+  use_security_audit_sa     = false
+  use_defender              = false
+  use_sentinel              = false
+  // Both log paths follow the Sentinel choice BY REFERENCE: a customer who
+  // connects Sentinel and accepts the defaults gets the logs Sentinel exists to
+  // read. Answer either one `false` to leave that path out.
+  use_sentinel_auditlogs    = use_sentinel
+  use_sentinel_network_logs = use_sentinel
+  use_verification_runner   = false
+  use_exemption_tag         = false
 }
 
 question oneof security_model {
@@ -88,10 +99,43 @@ question use_budget {
 }
 
 question use_scc_enablement {
-  prompt   = "Turn every Security Command Center service on at the organisation (a script satz run-actions runs)?"
-  why      = "SCC Premium or Enterprise is licensed per organisation and costs money; its activation has no provider resource, so the pack binds the script that does it and the estate declares the step."
+  prompt    = "Turn Security Command Center on for the organisation?"
+  why       = "Google's own detector platform: it watches every project for misconfigurations, leaked keys, crypto-mining and attack patterns, and nothing else in this library replaces it. The tier this library assumes is Premium, and it is not free: the charge is per covered resource per hour, not a share of the bill — at organisation level 0.0057 USD per instance-hour for Compute Engine, Cloud SQL and App Engine Flex, per vCPU-hour for Cloud Run and AlloyDB, 0.20 USD per container image scanned, plus Cloud Storage operation and BigQuery analysis rates (https://cloud.google.com/security-command-center/pricing). Because it follows the NUMBER of resources and not their size, it lands near the 5% of Google Cloud spend Google charges for the equivalent annual subscription on an estate of ordinary machines, and at 10% or more on an estate of many small ones. The 30-day trial is started in the console and becomes pay-as-you-go by itself; pay-as-you-go carries no commitment, and putting the organisation back to Standard stops the charge. Answering yes here declares the step that switches the detectors on — the tier itself is activated in the console."
+  reversal  = edit
+  blast     = low
+  recommend = true
+}
+
+question use_scc_notifications {
+  prompt   = "Publish findings to a Pub/Sub topic, for a SIEM or a ticket system to pick up?"
+  why      = "Findings that stay in the console are read when somebody remembers to look. The topic is the one place another system can read them from as they are raised. Whoever can read the topic reads every finding in the organisation."
   reversal = edit
   blast    = low
+  ask_when = use_scc_enablement
+}
+
+question use_scc_findings_mail {
+  prompt   = "Mail a security address when findings arrive?"
+  why      = "For an organisation with nothing subscribed to the topic — and a topic nobody subscribes to drops every message it receives. This adds a subscription that keeps seven days, an e-mail channel and an alert that fires when findings reach the topic. The mail says findings arrived and links to them; the finding itself stays in the topic, the console and the export. Off when a SIEM already reads the topic."
+  reversal = edit
+  blast    = low
+  ask_when = use_scc_notifications
+}
+
+question use_scc_findings_siem {
+  prompt   = "Let an external SIEM pull findings off the topic?"
+  why      = "For a customer whose security team works in Sentinel, Defender for Cloud, Splunk or QRadar rather than in a mailbox. It adds the connector's own pull subscription and `roles/pubsub.subscriber` for the identity it reads as, which is asked — without that grant a connector authenticates and reads nothing. This and the mailbox are not exclusive: the SIEM ingests every finding, the mailbox is told they are arriving."
+  reversal = edit
+  blast    = low
+  ask_when = use_scc_notifications
+}
+
+question use_scc_export {
+  prompt   = "Keep findings in BigQuery, so they can be queried months later?"
+  why      = "A notification tells somebody now; the export answers what the organisation looked like in March. Whoever can read the dataset reads every finding the organisation has ever raised, and the dataset's location cannot be changed afterwards."
+  reversal = edit
+  blast    = low
+  ask_when = use_scc_enablement
 }
 
 question use_security_audit_sa {
@@ -108,9 +152,39 @@ question use_defender {
   blast    = high
 }
 
+question use_sentinel {
+  prompt   = "Connect Microsoft Sentinel to this organisation?"
+  why      = "Sentinel reads Google Cloud logs by pulling them from Pub/Sub, federated through workload identity — no service-account key leaves the organisation. This creates the federation half: the pool named after the customer's Entra tenant, the provider that trusts Microsoft, and the account Sentinel acts as. Onboarding is two-sided: the connector in Azure is configured with what this creates, and nothing flows until both halves are done. Turning it off later leaves the connector authenticated against a pool that no longer exists."
+  reversal = recreate
+  blast    = low
+}
+
+question use_sentinel_auditlogs {
+  prompt   = "Send the organisation's audit logs to Sentinel?"
+  why      = "What a SIEM is for: who did what, organisation-wide, with `include_children` so a project created tomorrow is covered. On with Sentinel, because a connector with no audit logs answers no question anybody asks it. The one cost decision inside it is asked separately — Data Access logs are most of the volume and Sentinel bills by the gigabyte ingested."
+  reversal = recreate
+  blast    = low
+  ask_when = use_sentinel
+}
+
+question use_sentinel_network_logs {
+  prompt   = "Send the network streams too — VPC flow logs, firewall, DNS queries, Cloud NAT?"
+  why      = "Each of these is EMPTY until somebody enables that feature on a subnet, a firewall rule, a DNS policy or a NAT gateway, and Google charges nothing to route logs, so a sink for a feature nobody enabled costs nothing. Switching them off therefore saves nothing; what it costs is the day somebody enables flow logs and finds Sentinel was not watching. On with Sentinel. The volume once a feature IS on is real and lands on Sentinel's ingestion bill — an estate can leave one stream out with a `suppress`."
+  reversal = recreate
+  blast    = low
+  ask_when = use_sentinel
+}
+
 question use_verification_runner {
   prompt   = "Run continuous verification from this estate's own project — transpile --check on every push, report-compliance every night?"
   why      = "The customer-hosted shape: Cloud Build triggers and a runner account in the infrastructure project, plus the grant that lets the runner read as the estate. An MSP-hosted runner is the grant alone here and the runner in the MSP's estate, wired by hand."
   reversal = recreate
   blast    = low
+}
+
+question use_exemption_tag {
+  prompt   = "Create the organisation tag that lets a policy exempt named resources?"
+  why      = "An organisation policy is all-or-nothing per node: letting ONE service account or ONE project out of a control today means lowering the policy for a whole folder and raising it again afterwards, a window during which nothing is enforced and which nobody remembers to close. A Resource Manager tag is IAM-governed and an organisation policy's rule can condition on it, so the policy stays enforced everywhere and named resources are let out one at a time — visible in the compliance report and listable organisation-wide through Cloud Asset Inventory. Creating the tag exempts nothing on its own: a binding does, and each binding is written in the estate with its owner and its reason. Before granting any exemption, ask whether the consumer needs it at all — a workload in Google Cloud, a Cloud Run service and external CI can all federate instead."
+  reversal = edit
+  blast    = none
 }

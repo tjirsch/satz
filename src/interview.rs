@@ -88,7 +88,9 @@ fn params_block(src: &str) -> Result<(usize, usize), String> {
 
 /// Bind `name = value` in the estate's `params {}`: replace an existing binding in
 /// place, else append before the closing brace. Text surgery rather than a re-emit,
-/// so the comments and the ordering of a hand-edited file survive the interview.
+/// so the comments and the ordering of a hand-edited file survive the interview —
+/// the VALUE alone is replaced, so the line keeps its indentation, its `=` column and
+/// its trailing comment.
 pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<String, String> {
     let (open, close) = params_block(src)?;
     let lit = literal(value);
@@ -103,8 +105,10 @@ pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<S
                 .map(|rest| rest.trim_start().starts_with('='))
                 .unwrap_or(false);
         if binds_it {
-            let indent = &line[..line.len() - trimmed.len()];
-            out.push_str(&format!("{indent}{name} = {lit}\n"));
+            let (from, to) = value_span(line, name)?;
+            out.push_str(&line[..from]);
+            out.push_str(&lit);
+            out.push_str(&line[to..]);
             replaced = true;
         } else {
             out.push_str(line);
@@ -118,6 +122,69 @@ pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<S
     }
     out.push_str(&src[close..]);
     Ok(out)
+}
+
+/// The value of `name = …` on this line, as a byte range: from the first character
+/// after the `=` to the end of the value, with the trailing whitespace and any
+/// trailing comment left outside it. A `#` or `//` inside a string is text, not a
+/// comment.
+///
+/// A value that does not finish on its line — an open list or string — is refused
+/// rather than half-rewritten: `bind` works a line at a time, and replacing the
+/// first line of a multi-line list would leave its tail behind as stray text.
+fn value_span(line: &str, name: &str) -> Result<(usize, usize), String> {
+    let eq = line[line.find(name).unwrap_or(0)..]
+        .find('=')
+        .map(|i| line.find(name).unwrap_or(0) + i)
+        .ok_or_else(|| format!("{}: the binding has no `=`", name))?;
+    let from = line[eq + 1..]
+        .find(|c: char| !c.is_whitespace())
+        .map(|i| eq + 1 + i)
+        .ok_or_else(|| format!("{}: the binding has no value on its line", name))?;
+
+    let bytes = line.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut i = from;
+    let mut end = line.len();
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_string {
+            match c {
+                b'\\' => i += 1,
+                b'"' => in_string = false,
+                _ => {}
+            }
+        } else {
+            match c {
+                b'"' => in_string = true,
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' => depth -= 1,
+                b'#' if depth == 0 => {
+                    end = i;
+                    break;
+                }
+                b'/' if depth == 0 && bytes.get(i + 1) == Some(&b'/') => {
+                    end = i;
+                    break;
+                }
+                b'\n' => {
+                    end = i;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    if in_string || depth != 0 {
+        return Err(format!(
+            "{}: its value does not finish on one line — write that param by hand, or `satz fmt` it first",
+            name
+        ));
+    }
+    let end = line[..end].trim_end().len();
+    Ok((from, end))
 }
 
 /// Write one answer, given the question it answers. A `oneof` takes an option's
@@ -135,7 +202,9 @@ pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) ->
         }
         let mut out = src.to_string();
         for o in &row.options {
-            out = bind(&out, &o.param, &serde_yaml::Value::Bool(o.param == chosen))?;
+            let picked = serde_yaml::Value::Bool(o.param == chosen);
+            out = bind(&out, &o.param, &picked)?;
+            out = uncomment_pack(&out, &o.param, &picked);
         }
         return Ok(out);
     }
@@ -147,7 +216,37 @@ pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) ->
             ));
         }
     }
-    bind(src, &row.subject, value)
+    let out = bind(src, &row.subject, value)?;
+    Ok(uncomment_pack(&out, &row.subject, value))
+}
+
+/// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
+/// exists. Answering its question YES is what puts the pack in the estate — this is where
+/// that happens, for the interview and for `satz_interview` alike, since both land here.
+///
+/// Only ever uncomments. Answering a question `false` leaves the line where it is: `use …
+/// when <param>` already emits nothing while the param is false, and silently deleting a
+/// pack line from someone's estate is not a thing an answer should do.
+pub(crate) fn uncomment_pack(src: &str, gate: &str, value: &serde_yaml::Value) -> String {
+    if value.as_bool() != Some(true) {
+        return src.to_string();
+    }
+    let suffix = format!(" when {}", gate);
+    let mut out = String::with_capacity(src.len());
+    for line in src.split_inclusive('\n') {
+        let end = line.trim_end_matches('\n');
+        let body = end.trim_start();
+        if body.starts_with("// use \"") && end.ends_with(&suffix) {
+            out.push_str(&end[..end.len() - body.len()]);
+            out.push_str(body.trim_start_matches("// "));
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Read a typed answer in the shape of the value it replaces: a boolean stays a
@@ -186,12 +285,13 @@ pub(crate) fn apply(
 ) -> Result<usize, String> {
     let report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
     let mut src = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let before = src.clone();
     let mut n = 0;
     for (name, value) in answers {
         let row = report.questions.iter().find(|q| q.subject == *name).ok_or_else(|| {
             format!(
                 "{}: no pack this estate uses asks that. An answer names a question's subject — \
-                 `satz questions {}` lists them",
+                 `satz questions {} --format text --out /dev/stdout` lists them",
                 name,
                 estate.display()
             )
@@ -205,7 +305,7 @@ pub(crate) fn apply(
         let now = if answers.is_empty() {
             report
         } else {
-            crate::fsx::write(estate, &src).map_err(|e| format!("{}: {}", estate.display(), e))?;
+            crate::fsx::write_edited_satz(estate, &before, &src).map_err(|e| e.to_string())?;
             questions_report(estate, runtime).map_err(|e| e.to_string())?
         };
         for q in now.questions.iter().filter(|q| q.state == "unanswered") {
@@ -216,7 +316,7 @@ pub(crate) fn apply(
         }
     }
     if n > 0 {
-        crate::fsx::write(estate, &src).map_err(|e| format!("{}: {}", estate.display(), e))?;
+        crate::fsx::write_edited_satz(estate, &before, &src).map_err(|e| e.to_string())?;
     }
     Ok(n)
 }
@@ -337,7 +437,7 @@ pub(crate) fn run(
                 continue;
             }
         };
-        crate::fsx::write(estate, new_src).map_err(|e| e.to_string())?;
+        crate::fsx::write_edited_satz(estate, &src, &new_src).map_err(|e| e.to_string())?;
         w(out, &format!("  ✓ {} = {}\n", q.subject, literal(&value)))?;
         done.insert(q.subject.clone());
         // Re-read: a derived default may have become usable, a `use … when` may
@@ -356,6 +456,16 @@ fn present(q: &QuestionRow) -> String {
     }
     let door = if q.reversal == "recreate" || q.blast == "high" { "  ⚠ one-way" } else { "" };
     s.push_str(&format!("  changing it later: {} · blast {}{}\n", q.reversal.replace('_', " "), q.blast, door));
+    // What the pack would answer. It is not what Enter accepts — that stays the
+    // param default, so a bulk `--accept-defaults` never binds a recommendation
+    // nobody read — so it is only worth a line where the two differ.
+    if let Some(r) = &q.recommend {
+        let r = r.trim_matches('"');
+        let offered = q.current.as_ref().or(q.default.as_ref()).map(short);
+        if offered.as_deref() != Some(r) {
+            s.push_str(&format!("  the pack recommends: {}\n", r));
+        }
+    }
     if q.kind == "oneof" {
         let picked = q.current.as_ref().or(q.default.as_ref()).and_then(|v| v.as_str().map(str::to_string));
         let mut default_no = None;
@@ -408,7 +518,8 @@ fn finish(estate: &Path, runtime: &ToolConfig, out: &mut dyn Write) -> Result<()
     } else {
         text.push_str(&format!(
             "NOT complete — bootstrap and apply refuse until every question is answered.\n  \
-             still open: {}\n  run `satz interview {}` again, or `satz questions {} --format markdown` for the sheet.\n",
+             still open: {}\n  run `satz interview {}` again, or \
+             `satz questions {} --format markdown --out decisions.md` for the sheet.\n",
             open_names(&report).join(", "),
             estate.display(),
             estate.display()
@@ -457,6 +568,53 @@ mod tests {
     }
 
     #[test]
+    fn answering_yes_uncomments_that_pack_and_nothing_else() {
+        let src = "\
+estate e
+
+params {
+}
+
+// once the audit archive exists
+// use \"presets/integrations/microsoft-sentinel.satz\" when use_sentinel
+// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\" when use_sentinel_auditlogs
+// use \"presets/organization-budget.satz\" when use_budget
+
+google_folder {
+  infra {
+    // use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink
+  }
+}
+";
+        let yes = serde_yaml::Value::Bool(true);
+        let no = serde_yaml::Value::Bool(false);
+
+        // the gate is matched exactly: `use_sentinel` must not drag in `use_sentinel_auditlogs`
+        let out = uncomment_pack(src, "use_sentinel", &yes);
+        assert!(out.contains("\nuse \"presets/integrations/microsoft-sentinel.satz\" when use_sentinel\n"));
+        assert!(
+            out.contains("// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\""),
+            "a longer param that starts with the same text stays commented:\n{}",
+            out
+        );
+
+        // answering no changes nothing — a `use … when` already emits nothing, and deleting
+        // somebody's pack line is not what an answer does
+        assert_eq!(uncomment_pack(src, "use_budget", &no), src);
+
+        // indentation is kept, so a pack inside a block stays inside it
+        let out = uncomment_pack(src, "use_audit_logsink", &yes);
+        assert!(
+            out.contains("    use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink"),
+            "the line keeps its four spaces:\n{}",
+            out
+        );
+
+        // and a value that is not a boolean true leaves the file alone
+        assert_eq!(uncomment_pack(src, "use_budget", &serde_yaml::Value::String("yes".into())), src);
+    }
+
+    #[test]
     fn literal_escapes_and_types() {
         assert_eq!(literal(&yaml("say \"hi\" \\ back")), r#""say \"hi\" \\ back""#);
         assert_eq!(literal(&serde_yaml::Value::Bool(false)), "false");
@@ -501,6 +659,7 @@ params {
   model_b     = false
   want_extra  = false
   extra_level = 3
+  paid        = false
 }
 
 question shortname { prompt = "Short name" why = "Ids derive from it." reversal = recreate blast = high }
@@ -513,6 +672,7 @@ question oneof model {
   option model_b { label = "B" }
 }
 question extra_level { prompt = "Extra level" reversal = edit blast = none ask_when = want_extra }
+question paid { prompt = "Switch the paid service on?" why = "It is billed per hour." reversal = edit blast = low recommend = true }
 "#,
         )
         .unwrap();
@@ -538,7 +698,7 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
         assert_eq!(by("model").default, Some(yaml("model_a")), "the pack's true option is the offer");
         assert_eq!(by("extra_level").state, "not-applicable");
         assert!(!r.summary.complete);
-        assert_eq!((r.summary.total, r.summary.unanswered, r.summary.blocking, r.summary.not_applicable), (5, 5, 2, 1));
+        assert_eq!((r.summary.total, r.summary.unanswered, r.summary.blocking, r.summary.not_applicable), (6, 6, 2, 1));
 
         // answer the short name: the derived project id becomes an offer
         apply(&estate, &cfg, &BTreeMap::from([("shortname".to_string(), yaml("acme"))]), false).unwrap();
@@ -550,13 +710,55 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
 
         // accept every default: complete, and the oneof was written as two booleans
         let n = apply(&estate, &cfg, &BTreeMap::new(), true).unwrap();
-        assert_eq!(n, 4, "region, project, zone, model");
+        assert_eq!(n, 5, "region, project, zone, model, paid — the recommendation is not what a bulk run binds");
         let r = questions_report(&estate, &cfg).unwrap();
         assert!(r.summary.complete, "{:?}", r.summary);
         let src = std::fs::read_to_string(&estate).unwrap();
-        assert!(src.contains("model_a = true\n") && src.contains("model_b = false\n"), "{}", src);
-        assert!(src.contains("project = \"acme-infra-001\"\n"), "{}", src);
+        assert!(bound(&src, "model_a", "true") && bound(&src, "model_b", "false"), "{}", src);
+        assert!(bound(&src, "project", "\"acme-infra-001\""), "{}", src);
         assert!(crate::questions::require_complete(&estate, &cfg, "apply").is_ok());
+    }
+
+    fn yaml_num(n: i64) -> serde_yaml::Value {
+        serde_yaml::Value::Number(n.into())
+    }
+
+    /// A param bound in the file: its line reads `name = value`, at whatever column
+    /// the formatter aligned the `=` to.
+    fn bound(src: &str, name: &str, value: &str) -> bool {
+        src.lines().any(|l| {
+            let l = l.trim();
+            l.starts_with(name) && l[name.len()..].trim_start().starts_with('=') && l.ends_with(&format!("= {}", value))
+        })
+    }
+
+    /// An answer replaces the VALUE. What the author wrote around it — the `=` column
+    /// of a hand-aligned block, the note at the end of the line — is theirs, and an
+    /// interview that eats it is an interview nobody runs twice.
+    #[test]
+    fn binding_keeps_the_trailing_comment_and_the_alignment() {
+        let src = "estate e\n\nparams {\n  audit_retention_days     = 400 # a number\n  customer_shortname       = \"old\"  // typed on day 0\n}\n";
+        let out = bind(src, "audit_retention_days", &yaml_num(30)).unwrap();
+        assert!(out.contains("  audit_retention_days     = 30 # a number\n"), "{out}");
+        let out = bind(&out, "customer_shortname", &yaml("acme")).unwrap();
+        assert!(out.contains("  customer_shortname       = \"acme\"  // typed on day 0\n"), "{out}");
+    }
+
+    #[test]
+    fn a_hash_or_slashes_inside_a_string_are_the_value_not_a_comment() {
+        let src = "estate e\n\nparams {\n  logsink_filter = \"log_id(\\\"a#b\\\") // keep\"\n}\n";
+        let out = bind(src, "logsink_filter", &yaml("x")).unwrap();
+        assert!(out.contains("  logsink_filter = \"x\"\n"), "{out}");
+    }
+
+    /// `bind` works a line at a time, so a value that opens a list and closes it three
+    /// lines down cannot be replaced by rewriting one line: say so instead of leaving
+    /// the tail behind as stray text.
+    #[test]
+    fn a_value_that_spans_lines_is_refused_not_half_written() {
+        let src = "estate e\n\nparams {\n  members = [\n    \"a\",\n  ]\n}\n";
+        let e = bind(src, "members", &yaml("x")).unwrap_err();
+        assert!(e.contains("does not finish on one line"), "{e}");
     }
 
     #[test]
@@ -578,8 +780,9 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
     fn a_piped_run_answers_skips_and_stops() {
         let (estate, cfg) = fixture("piped");
         // decline the offer, type the short name, accept region by Enter, skip the
-        // project, accept zone, choose model 2, then the input ends
-        let mut input = std::io::Cursor::new("n\nacme\n\nskip\n\n2\n");
+        // project, accept zone, choose model 2, accept the paid question's default,
+        // then the input ends
+        let mut input = std::io::Cursor::new("n\nacme\n\nskip\n\n2\n\n");
         let mut out = Vec::new();
         run(&estate, &cfg, false, false, &mut input, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
@@ -587,10 +790,16 @@ question extra_level { prompt = "Extra level" reversal = edit blast = none ask_w
         assert!(text.contains("Asks three things and derives a fourth."), "the pack's description opens its section: {}", text);
         assert!(text.contains("✓ shortname = \"acme\""), "{}", text);
         assert!(text.contains("✓ region = \"europe-west3\""), "Enter accepts the default: {}", text);
+        // a recommendation is shown where it differs from the offer, and Enter still
+        // takes the offer: a pack can recommend a service that costs money without a
+        // run binding it by itself
+        assert!(text.contains("the pack recommends: true"), "the recommendation is visible: {}", text);
+        assert!(!text.contains("recommends: europe-west3"), "a recommendation equal to the offer is noise: {}", text);
+        assert!(text.contains("✓ paid = false"), "Enter accepts the default, not the recommendation: {}", text);
         assert!(text.contains("✓ model = \"model_b\""), "{}", text);
         assert!(text.contains("NOT complete") && text.contains("still open: project"), "{}", text);
         let src = std::fs::read_to_string(&estate).unwrap();
-        assert!(src.contains("model_b = true\n") && src.contains("model_a = false\n"), "{}", src);
+        assert!(bound(&src, "model_b", "true") && bound(&src, "model_a", "false"), "{}", src);
         assert!(!src.contains("project ="), "skipped means not written: {}", src);
 
         // the second run asks only what is open; accepting the offer finishes it

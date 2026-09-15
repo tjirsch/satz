@@ -1,0 +1,158 @@
+// Microsoft Sentinel's GCP connector — the federation half, once per customer.
+//
+//   use "presets/integrations/microsoft-sentinel.satz"
+//
+// Sentinel reads Google Cloud logs by PULLING them from a Pub/Sub subscription,
+// authenticating through workload identity federation: no service-account key
+// leaves the organisation. This file creates what the federation needs — the pool,
+// the OIDC provider that trusts Microsoft, the service account Sentinel acts as,
+// and the binding that lets the federated principal become it. What it does NOT
+// create is anything to read: each log source is its own topic, subscription and
+// sink, and `microsoft-sentinel-auditlogs.satz` is the first of them.
+//
+// TRANSCRIBED FROM MICROSOFT, NOT IMPORTED. The shape is
+// `Azure/Azure-Sentinel`, `DataConnectors/GCP/Terraform/sentinel_resources_creation/`.
+// That configuration pins the Google provider at 3.73.0 and uses authoritative
+// `google_project_iam_binding`, which REPLACES every other member of a role in the
+// project — run as published beside an estate, it silently removes grants the estate
+// made. Everything here is non-authoritative `_iam_member`.
+//
+// THE TWO MICROSOFT IDENTIFIERS ARE VENDOR CONSTANTS, not this customer's: the
+// audience is Sentinel's application id and the issuer is Microsoft's commercial
+// tenant, both published in Microsoft's connector documentation and identical for
+// every customer (docs/examples.md lists them). The customer's OWN tenant id is
+// `sentinel_workload_pool_id` — the pool is named after it, without dashes, which is
+// what Microsoft's script does.
+//
+// TWO ORGANISATION POLICIES CAN REFUSE THIS, and neither is set by this library:
+//   1. a deny-all on `iam.workloadIdentityPoolProviders` blocks the provider below —
+//      the estate must allow the `sts.windows.net/<microsoft tenant>` issuer;
+//   2. where `iam.managed.allowedPolicyMembers` is enforced, the principal set has
+//      to be allowed before the binding is applied. The constraints AND together,
+//      and an incomplete subject list refuses the grant rather than warning.
+// Both are landing-zone policies an estate inherits; a first apply that fails on
+// either is that policy, not this pack.
+//
+// RUNNING DEFENDER FOR CLOUD TOO? The two are separate integrations with separate
+// pools, service accounts and topics, and nothing here is shared with
+// `microsoft-defender-for-cloud.satz`. If both are pointed at ONE project, give them
+// different pool ids: a pool id is unique per project, and the second apply fails on
+// the first pool's name. Different projects need nothing.
+//
+// ONBOARDING IS TWO-SIDED. This is the Google half; the Sentinel connector in Azure
+// is configured with the pool, provider and service account this creates, and the
+// connector does not work until both sides are done.
+//
+// NO CLAIM. Sentinel is a SIEM that reads the estate. Exporting logs to it does not
+// satisfy a retention control — `monitoring/organization-audit-logsink.satz` is what
+// claims those — and Sentinel is itself in no catalog.
+
+pack integrations.microsoft_sentinel version "1.1"
+
+params {
+  // The project that holds the federation and, with the log fragments, the topics
+  // and subscriptions. The audit-log archive's project by reference: sinks, topics
+  // and log plumbing belong together, and an estate using the logsink pack wires
+  // nothing. Without that pack the compile stops with `unknown param
+  // 'logsink_project_id'`, which is the right failure — the project is undecided.
+  sentinel_project_id = logsink_project_id
+
+  // Google assigns the project NUMBER at creation and the principal set is built
+  // from it, so it cannot be derived from the id:
+  //   gcloud projects describe <project-id> --format='value(projectNumber)'
+  sentinel_project_number = ""
+
+  // The customer's Microsoft Entra tenant id WITHOUT dashes — what Microsoft's
+  // script names the pool after. Per customer, so no default.
+  sentinel_workload_pool_id = ""
+
+  sentinel_sa_account = "sentinel-service-account"
+
+  // Microsoft's own, identical for every customer, from the connector documentation.
+  sentinel_application_id = "2041288c-b303-4ca0-9076-9612db3beeb2"
+  microsoft_tenant_id     = "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+
+question sentinel_workload_pool_id {
+  prompt   = "The customer's Microsoft Entra tenant id without dashes — the workload identity pool id Sentinel's setup names"
+  why      = "It is per customer and cannot be guessed. The pool is created with this id; changing it later is a new pool, a new provider and a connector that has to be onboarded again on the Azure side."
+  reversal = recreate
+  blast    = high
+}
+
+question sentinel_project_number {
+  prompt   = "The number of the project that holds the Sentinel federation (not its id)"
+  why      = "Google assigns it at creation and the federated principal set is built from it, so it cannot be derived from the project id: `gcloud projects describe <id> --format='value(projectNumber)'`. A wrong number makes a binding that grants nothing, and the connector authenticates against a principal that does not exist."
+  reversal = edit
+  blast    = high
+}
+
+question sentinel_project_id {
+  prompt   = "Which project holds the Sentinel federation and its topics?"
+  why      = "Whoever administers this project controls what Sentinel can read. The default is the audit-log archive's project, which is where the sinks and topics belong. Moving it later means a new pool, new topics and a re-onboarded connector."
+  reversal = recreate
+  blast    = low
+}
+
+// The APIs the federation needs. Microsoft's script enables these two.
+google_project_service {
+  sentinel_iam {
+    project = sentinel_project_id
+    service = "iam.googleapis.com"
+  }
+  sentinel_crm {
+    project = sentinel_project_id
+    service = "cloudresourcemanager.googleapis.com"
+  }
+}
+
+// 1) The pool: one per customer, named after their tenant.
+google_iam_workload_identity_pool {
+  sentinel_pool {
+    project                   = sentinel_project_id
+    workload_identity_pool_id = sentinel_workload_pool_id
+    display_name              = "Microsoft Sentinel"
+    description               = "Workload identity pool Microsoft Sentinel federates through"
+  }
+}
+
+// 2) The provider that trusts Microsoft. `google.subject = assertion.sub` is the
+//    mapping Sentinel's token carries; the audience is `api://<application id>`,
+//    which is the form Microsoft's script writes and not the bare id.
+google_iam_workload_identity_pool_provider {
+  sentinel_identity_provider {
+    project                            = sentinel_project_id
+    workload_identity_pool_id          = "${{google_iam_workload_identity_pool.sentinel_pool.workload_identity_pool_id}}"
+    workload_identity_pool_provider_id = "sentinel-identity-provider"
+    display_name                       = "Microsoft Sentinel"
+    description                        = "OIDC provider for the Microsoft Sentinel GCP connector"
+    attribute_mapping = {
+      "google.subject" = "assertion.sub"
+    }
+    oidc {
+      allowed_audiences = ["api://{sentinel_application_id}"]
+      issuer_uri        = "https://sts.windows.net/{microsoft_tenant_id}"
+    }
+  }
+}
+
+// 3) The account Sentinel acts as. It holds nothing here: each log fragment grants
+//    it what that log source needs, on that subscription and nowhere wider.
+google_service_account {
+  sentinel {
+    project      = sentinel_project_id
+    account_id   = sentinel_sa_account
+    display_name = "Microsoft Sentinel connector"
+  }
+}
+
+// 4) Anything federated through the pool may become that account. The principal set
+//    carries the project NUMBER, which is why it is asked.
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.sentinel.name}}"
+  "principalSet://iam.googleapis.com/projects/{sentinel_project_number}/locations/global/workloadIdentityPools/{sentinel_workload_pool_id}/*" = [
+    "roles/iam.workloadIdentityUser",
+  ]
+}

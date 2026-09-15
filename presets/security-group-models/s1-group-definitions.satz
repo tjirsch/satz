@@ -8,18 +8,18 @@
 // ids are written into the estate as "import-id". That is why no group ids are
 // hard-coded here — they are tenant-specific and do not belong in a shared preset.
 //
-// Memberships are deliberately NOT part of this preset: presets define groups,
+// Memberships are NOT part of this preset: presets define groups,
 // humans grant membership. Estates that need managed memberships declare them
 // as estate-level resources.
 
-pack s1_group_definitions version "1.3"
+pack s1_group_definitions version "1.4"
 
 params {
   gcp_organization_admins_name = "gcp-organization-admins"
-  gcp_project_admins_name = "gcp-project-admins"
-  gcp_security_admins_name = "gcp-security-admins"
-  gcp_security_viewers_name = "gcp-security-viewers"
-  gcp_billing_admins_name = "gcp-billing-admins"
+  gcp_project_admins_name      = "gcp-project-admins"
+  gcp_security_admins_name     = "gcp-security-admins"
+  gcp_security_viewers_name    = "gcp-security-viewers"
+  gcp_billing_admins_name      = "gcp-billing-admins"
 }
 
 // ---- what a customer decides, asked -------------------------------------------
@@ -69,7 +69,7 @@ question gcp_billing_admins_name {
     ]
   }
   display_name = "GCP-Organization Admins"
-  description = "Permissions merged from default roles for\nOrganization administrators, Hybrid Connectivity administrators,\nLogging-monitoring administrators and Network administrators.\n"
+  description  = "Permissions merged from default roles for\nOrganization administrators, Hybrid Connectivity administrators,\nLogging-monitoring administrators and Network administrators.\n"
   owner = [
     "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
   ]
@@ -82,7 +82,7 @@ question gcp_billing_admins_name {
     ]
   }
   display_name = "GCP-Project Admins"
-  description = "Permissions allow Day2Day Project Administration across all projects+\nHybrid Connectivity administrators, Logging-monitoring administrators and\nNetwork administrators.\n"
+  description  = "Permissions allow Day2Day Project Administration across all projects+\nHybrid Connectivity administrators, Logging-monitoring administrators and\nNetwork administrators.\n"
   owner = [
     "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
   ]
@@ -95,7 +95,7 @@ question gcp_billing_admins_name {
     ]
   }
   display_name = "GCP-Security Admins"
-  description = "Permissions for use with Security Admin role. Use of setting IAM on most Resources.\nOrganizational, Folder  and Project IAM Admin roles.\nSCC PowerUser.\n"
+  description  = "Security administration: organisation policies, folder IAM, Security Command Center.\nLog sinks and metrics, monitoring, private logs.\nRead access to IAM, compute, containers and the asset inventory.\n"
   owner = [
     "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
   ]
@@ -108,7 +108,7 @@ question gcp_billing_admins_name {
     ]
   }
   display_name = "GCP-Security Viewers"
-  description = "All Viewer Permissions for use with Security Auitor role.\nSCC User.\n"
+  description  = "All Viewer Permissions for use with Security Auitor role.\nSCC User.\n"
   owner = [
     "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
   ]
@@ -121,9 +121,8 @@ question gcp_billing_admins_name {
     ]
   }
   display_name = "GCP-Billing Admins"
-  description = "All Billing and Procurement roles.\n"
+  description  = "All Billing and Procurement roles.\n"
   owner = [
     "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com",
   ]
 }
-
