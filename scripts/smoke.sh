@@ -933,6 +933,23 @@ PYEOF
 step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
 
+step "report-compliance --format pdf: typeset by satz, with nothing on PATH"
+# This step could not exist before: the PDF went through pandoc, which needed a
+# LaTeX engine behind it, and CI has neither. Typst is in the binary now.
+"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
+  || fail "report-compliance --format pdf failed"
+[ -s tmp/evidence.pdf ] || fail "no PDF was written"
+python3 - <<'PYEOF' || fail "what was written is not a PDF"
+data = open("tmp/evidence.pdf", "rb").read()
+assert data.startswith(b"%PDF-"), data[:16]
+assert len(data) > 20_000, f"a whole evidence report in {len(data)} bytes?"
+assert b"/Type /Page" in data or b"/Type/Page" in data, "no page objects"
+PYEOF
+# the same report twice is the same bytes: a diff of two runs is a diff of the estate
+"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence2.pdf >/dev/null 2>&1
+cmp -s tmp/evidence.pdf tmp/evidence2.pdf || fail "the PDF is not deterministic"
+if command -v pandoc >/dev/null 2>&1; then fail "this machine has pandoc — the step proves nothing here"; fi
+
 step "check-presets against the repository's own presets (must be clean)"
 "$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz --format text --out /dev/stdout
 

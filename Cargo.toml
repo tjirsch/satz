@@ -50,6 +50,11 @@ rust_xlsxwriter = "0.99"
 lsp-server = "0.10"
 lsp-types = "0.97"
 url = "2"
+typst = "0.15.1"
+typst-pdf = "0.15.1"
+typst-kit = { version = "0.15.1", default-features = false, features = ["embedded-fonts"] }
+pulldown-cmark = "0.13.4"
+typst-layout = "0.15.1"
 
 [dev-dependencies]
 # the workbook test opens the xlsx package; the same zip rust_xlsxwriter writes with
