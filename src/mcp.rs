@@ -177,15 +177,16 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("review-pack", Parity::Tools(&["satz_review_pack"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
     ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
+    ("fmt", Parity::Tools(&["satz_fmt"])),
     // --- not served ---------------------------------------------------------
     ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
-    ("fmt", Parity::Off("it rewrites files on disk; an agent writes Satz the guide's way and `satz_transpile_check` judges it")),
-    ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; `--from-live` runs as the human, before there is an estate")),
+
+    ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; init derives from the credentials and runs as the human, before there is an estate")),
     ("bootstrap", Parity::Off("day 0: it creates the folder, project and state bucket as the human, after an interactive pre-flight")),
     ("plan", Parity::Off("it hands stdio to the tool; an agent runs tofu itself")),
     ("apply", Parity::Off("it hands stdio to the tool, approval prompt included")),
     ("hcl-init", Parity::Off("it hands stdio to the tool")),
-    ("import", Parity::Off("the live sweep runs for minutes and rewrites the estate; there is no report to return yet")),
+    ("import", Parity::Off("the live sweep runs for minutes against the platform and rewrites the estate; nothing reports progress over this protocol, and a call that returns after ten silent minutes is a call a client has already given up on")),
     ("adopt-org-policies", Parity::Off("the alias also imports and activates; `satz_adopt` serves the resolution, the writing half stays with the human")),
     ("run-actions", Parity::Off("it runs the estate's deployment steps against the organisation")),
     ("export-organizational-policies", Parity::Off("it writes a preset from a live organisation; `satz_report_compliance` answers what an agent asks of live policy")),
@@ -504,6 +505,22 @@ pub(crate) struct MergePresetsArgs {
     /// `all` for every pack that is merely behind
     #[serde(default)]
     pub adopt: Vec<String>,
+}
+
+/// Satz text in, canonical Satz text out. No path and no write: the client holds
+/// the file, satz holds the layout.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct FmtArgs {
+    /// The Satz source to format — the contents of the file, not its path
+    pub text: String,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct FmtResult {
+    /// the same Satz in the canonical layout
+    pub formatted: String,
+    /// false when the input was already formatted
+    pub changed: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1199,6 +1216,32 @@ impl SatzMcp {
                 &estate,
                 e.as_ref(),
             ))),
+        }
+    }
+
+    #[tool(
+        name = "satz_fmt",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<FmtResult>(),
+        description = "Format Satz text: the canonical layout every file in the library is in — two-space \
+                       indent, `=` aligned over a run, one list item per line. Text in, text out: satz \
+                       writes no file, so the client keeps the one it holds. Meaning never changes, and the \
+                       formatter proves it. `satz_review_pack` refuses a pack that is not formatted, and \
+                       this is what formats it.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn fmt(
+        &self,
+        Parameters(args): Parameters<FmtArgs>,
+    ) -> Result<Result<Json<FmtResult>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        match satz_core::fmt::format(&args.text) {
+            Ok(formatted) => {
+                let changed = formatted != args.text;
+                Ok(Ok(Json(FmtResult { formatted, changed })))
+            }
+            Err(e) => Ok(Err(refused(format!("fmt: {}", e)))),
         }
     }
 
@@ -2128,6 +2171,47 @@ mod parity_tests {
 
     fn registered() -> BTreeSet<String> {
         SatzMcp::tool_router().list_all().into_iter().map(|t| t.name.to_string()).collect()
+    }
+
+    /// A reason is prose, and prose goes stale: `init`'s said `--from-live` for a
+    /// release after that flag was retired, and nothing noticed. Any `--flag` a
+    /// reason names has to be a flag the CLI still has.
+    #[test]
+    fn a_reason_that_names_a_flag_names_one_that_exists() {
+        use clap::CommandFactory;
+        let cli = crate::Cli::command();
+        let mut flags: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut collect = |c: &clap::Command| {
+            for a in c.get_arguments() {
+                if let Some(l) = a.get_long() {
+                    flags.insert(format!("--{}", l));
+                }
+                for l in a.get_all_aliases().unwrap_or_default() {
+                    flags.insert(format!("--{}", l));
+                }
+            }
+        };
+        collect(&cli);
+        for sub in cli.get_subcommands() {
+            collect(sub);
+        }
+        for (command, parity) in super::MCP_PARITY {
+            let Parity::Off(reason) = parity else { continue };
+            for word in reason.split_whitespace() {
+                let token: String =
+                    word.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect();
+                if !token.starts_with("--") || token.len() < 4 {
+                    continue;
+                }
+                assert!(
+                    flags.contains(&token),
+                    "MCP_PARITY: the reason for `{}` names {}, which is not a flag satz has — \
+                     the reason has outlived the thing it described",
+                    command,
+                    token
+                );
+            }
+        }
     }
 
     #[test]
