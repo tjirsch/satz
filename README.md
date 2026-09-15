@@ -586,7 +586,7 @@ satz report-organizational-policies C0example.satz --scope full --format markdow
 
 `--scope`: `active` (set policies), `inactive` (available but unset), or `full` (both,
 with constraint descriptions pulled from the Org Policy constraints API). `--format pdf`
-converts the markdown via `pandoc` if it is on `PATH` (otherwise the markdown is kept).
+typesets the markdown itself — Typst is compiled into satz with its fonts, so a PDF needs no tool on `PATH` and renders the same bytes on every machine.
 
 ### Hoisted scopes: where resource types may live
 
@@ -1208,7 +1208,7 @@ types have no live check), **unverified** (no witness could be checked — no AD
 inventory unavailable), **DRIFTED** (declared but not live),
 partial (open/attested duties), unmet, broken claim. Each run appends
 `evidence/<framework>-<timestamp>.json` beside the config — the evidence history —
-and writes the report (pandoc PDF like `report-organizational-policies`). Without
+and writes the report (`--format pdf` typeset by satz itself, like `report-organizational-policies`). Without
 credentials or with `--no-live`, the report shows declared-estate status and
 records why: `live` says whether the inventory was actually read,
 `live_status` says why not (`skipped`, `no-organization-id`, `no-witnesses`,

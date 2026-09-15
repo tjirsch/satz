@@ -59,10 +59,10 @@ Three consequences follow from "exactly one artefact":
 
 - **No format default.** A default format plus a named file writes the wrong rendering
   into the right path — `--out decisions.xlsx` would have produced text.
-- **`--format pdf` needs `pandoc`, or it fails.** It used to keep the markdown and
-  print a note, which left an artefact the caller did not ask for under a name that
-  says it is something else. The markdown now goes to pandoc on stdin and never
-  becomes a second file.
+- **`--format pdf` fails rather than leaving markdown behind.** It used to keep the
+  markdown and print a note, which left an artefact the caller did not ask for under a
+  name that says it is something else. (It went through `pandoc` on stdin then; since
+  ADR 0025 satz typesets the PDF itself and needs no tool at all.)
 - **`triage --fix` writes the delta INTO the report**, and is markdown-only. It is
   prose; a JSON caller reads the rows.
 

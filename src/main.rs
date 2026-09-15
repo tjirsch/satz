@@ -36,6 +36,7 @@ mod github;
 mod policy_tree;
 mod prowler;
 mod out;
+mod pdf;
 
 use clap::{Parser, Subcommand, CommandFactory};
 // the one output vocabulary: what a caller may ask for, and where it goes
@@ -402,7 +403,7 @@ enum Commands {
         /// Which policies to include
         #[arg(long, default_value = "active", value_parser = ["active", "inactive", "full"])]
         scope: String,
-        /// Report format: markdown, json or pdf (pdf needs pandoc on PATH)
+        /// Report format: markdown, json or pdf (typeset by satz itself)
         #[arg(long, value_enum)]
         format: OutFormat,
         /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
@@ -567,7 +568,7 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: markdown, json or pdf (pdf needs pandoc on PATH)
+        /// Output format: markdown, json or pdf (typeset by satz itself)
         #[arg(long, value_enum)]
         format: OutFormat,
         /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)

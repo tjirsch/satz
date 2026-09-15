@@ -13,7 +13,6 @@
 //! prints a command line to paste.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 type BoxErr = Box<dyn std::error::Error>;
 
@@ -28,7 +27,7 @@ pub(crate) enum OutFormat {
     Text,
     Markdown,
     Json,
-    /// markdown rendered by `pandoc`, which must be on PATH
+    /// the markdown typeset by satz itself — no tool on PATH, nothing to install
     Pdf,
     /// a workbook: the catalog a customer fills in and sends back
     Xlsx,
@@ -74,39 +73,11 @@ pub(crate) fn write_report(path: &Path, bytes: &[u8], what: &str) -> Result<(), 
     Ok(())
 }
 
-/// A PDF from markdown, through `pandoc` on stdin so the markdown never becomes a
-/// second file beside the one that was asked for. Without `pandoc` this is an
-/// error naming it: `--format pdf` that quietly left markdown behind produced an
-/// artefact the caller did not ask for under a name that says it is something else.
+/// A PDF from markdown, typeset by satz itself (`src/pdf.rs`). It used to shell out
+/// to `pandoc`, which needed a PDF engine behind it in turn, so the format a customer
+/// is most likely to be handed was the one that failed on a machine with neither.
 pub(crate) fn pdf_from_markdown(markdown: &str, path: &Path, what: &str) -> Result<(), BoxErr> {
-    use std::io::Write;
-
-    if let Some(dir) = path.parent() {
-        if !dir.as_os_str().is_empty() {
-            crate::fsx::create_dir_all(dir)?;
-        }
-    }
-    let mut child = Command::new("pandoc")
-        .arg("-f")
-        .arg("markdown")
-        .arg("-o")
-        .arg(path)
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            format!("--format pdf needs `pandoc` on PATH ({e}); `--format markdown` needs nothing")
-        })?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("pandoc: no stdin")?
-        .write_all(markdown.as_bytes())?;
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(format!("pandoc exited {status} writing {}", path.display()).into());
-    }
-    eprintln!("wrote {} — {}", path.display(), what);
-    Ok(())
+    crate::pdf::write(markdown, path, what)
 }
 
 #[cfg(test)]
