@@ -694,6 +694,29 @@ fails on apply: the grants run beside the group creations, the IAM API refuses a
 that does not exist yet, and the first refusal stops the groups still queued from being
 created at all.
 
+**A resource waits for the service that enables the API it needs.** Every resource
+type satz can emit is served by an API (`google_billing_budget` by
+`billingbudgets.googleapis.com`, `google_monitoring_alert_policy` by
+`monitoring.googleapis.com`), and the emitted resource carries `depends_on` on each
+`google_project_service` in the estate that enables one — bounded to the two projects
+that can matter: the project the resource lives in, and the infra project every
+provider call is billed to. `google_project_service` itself is never ordered behind
+another service, and no edge is added into a service block's own dependency closure,
+so the project a service is declared on and the folder above it never wait for it.
+Without the ordering `tofu` runs both at once and the apply dies on an API that was
+about to be switched on. A resource whose API no `google_project_service` enables
+gets no edge — the compile reports that instead, because a dependency on nothing is
+not a thing.
+
+**The API has to be on the project the call is BILLED to.** Every provider block
+carries `user_project_override = true` with `billing_project = infra_project_name`,
+so Google requires the service enabled on the infra project whatever the resource's
+own scope is — a budget hangs off the billing account and an org policy off the
+organisation, and both still need their API there. That is what the compile checks:
+the APIs the estate's emitted types need, against the `project_service` list of the
+infra project. A pack that enables an API on a project of its own has answered a
+different question.
+
 **Every `*_iam_member` type takes the member map.** The organisation's scope
 comes from `customer_organization_id`, a project's or folder's from the node the
 map is written in, and every other type writes its scope in the map — one key

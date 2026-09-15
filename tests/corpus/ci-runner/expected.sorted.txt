@@ -20,6 +20,9 @@
       service_account_email = "${google_service_account.satz_runner.email}"
     branch_name = "^main$"
     branch_name = "main"
+    google_project_service.cloudbuild
+    google_project_service.cloudbuild
+    google_project_service.cloudscheduler
     google_service_account.satz_runner
     google_service_account.satz_runner
     google_service_account.satz_runner
@@ -44,9 +47,15 @@
   ]
   ]
   ]
+  ]
+  ]
+  ]
   account_id = "satz-runner"
   build {
   build {
+  depends_on = [
+  depends_on = [
+  depends_on = [
   depends_on = [
   depends_on = [
   depends_on = [

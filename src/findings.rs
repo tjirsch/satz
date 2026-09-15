@@ -31,7 +31,7 @@ pub(crate) enum Kind {
     Emit,
     WrittenReference,
     MissingRequired,
-    IacRoles,
+    Prerequisites,
     UnadoptedPack,
     Providers,
     Action,

@@ -194,7 +194,7 @@ pub(crate) struct WhoamiReport {
     /// Given an estate, online: the permissions its resource types need, tested
     /// with the credential its live commands run as.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<crate::iac_roles::PermissionCheck>,
+    pub permissions: Option<crate::prerequisites::PermissionCheck>,
 }
 
 /// Whether the credential can reach the project it names as its quota project.
@@ -232,7 +232,7 @@ pub(crate) async fn check_quota_project(
 /// resolver, two renderings — the divergence cannot come back.
 pub(crate) async fn whoami_report(
     offline: bool,
-    probe: Option<crate::iac_roles::Probe>,
+    probe: Option<crate::prerequisites::Probe>,
 ) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
     let file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
     let kind_name = |k: &CredKind| match k {
@@ -321,7 +321,7 @@ pub(crate) async fn whoami_report(
     // The estate's permissions last: they are tested as the identity its live
     // commands run as, which the two checks above just proved it can become.
     let permissions = match probe {
-        Some(p) => Some(crate::iac_roles::test_live(&p).await),
+        Some(p) => Some(crate::prerequisites::test_live(&p).await),
         None => None,
     };
 
@@ -344,7 +344,7 @@ pub(crate) fn project_of(sa: &str) -> Option<&str> {
 
 /// The terminal rendering of `whoami_report` — the same answer `satz_whoami`
 /// returns as data.
-pub(crate) async fn whoami(offline: bool, probe: Option<crate::iac_roles::Probe>) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn whoami(offline: bool, probe: Option<crate::prerequisites::Probe>) -> Result<(), Box<dyn std::error::Error>> {
     let r = whoami_report(offline, probe).await?;
     println!("{}", render_whoami(&r));
     // A credential that cannot become the estate's account, or a quota project
@@ -428,7 +428,7 @@ pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
             out.push_str(&format!("\npermissions: {} tested for this estate's resource types — all held", p.tested));
         } else {
             out.push_str(&format!("\npermissions: {} of {} tested are MISSING:", p.missing.len(), p.tested));
-            for line in crate::iac_roles::describe(&crate::iac_roles::cover(&p.missing)) {
+            for line in crate::prerequisites::describe(&crate::prerequisites::cover(&p.missing)) {
                 out.push_str(&format!("\n  {}", line));
             }
         }
@@ -826,7 +826,7 @@ mod whoami_render_tests {
 
     #[test]
     fn the_estates_permissions_are_named_with_the_role_that_carries_them() {
-        use crate::iac_roles::{Need, PermissionCheck, Scope};
+        use crate::prerequisites::{Need, PermissionCheck, Scope};
         let mut r = report();
         r.permissions = Some(PermissionCheck {
             tested: 3,

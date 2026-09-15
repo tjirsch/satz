@@ -76,69 +76,80 @@ pub(crate) const READ: &[Entry] = &[
 /// creator its owner, so the account deletes the projects it created and no other;
 /// a project it did not create needs `roles/resourcemanager.projectDeleter`, which is
 /// not a standing grant. The provider's `deletion_policy` refuses the delete by default.
-pub(crate) const TYPES: &[(&str, &[Entry])] = &[
-    ("google_artifact_registry_repository", &[project("artifactregistry.repositories.create", &["roles/artifactregistry.admin"])]),
-    ("google_bigquery_dataset", &[project("bigquery.datasets.create", &["roles/bigquery.dataEditor"])]),
+pub(crate) const TYPES: &[(&str, &[Entry], &[&str])] = &[
+    ("google_artifact_registry_repository", &[project("artifactregistry.repositories.create", &["roles/artifactregistry.admin"])], &["artifactregistry.googleapis.com"]),
+    ("google_bigquery_dataset", &[project("bigquery.datasets.create", &["roles/bigquery.dataEditor"])], &["bigquery.googleapis.com"]),
     // dataEditor can create a dataset; handing out access on one needs admin
-    ("google_bigquery_dataset_iam_member", &[project("bigquery.datasets.setIamPolicy", &["roles/bigquery.admin"])]),
-    ("google_billing_account_iam_member", &[billing("billing.accounts.setIamPolicy", &["roles/billing.admin"])]),
-    ("google_billing_budget", &[billing("billing.budgets.create", &["roles/billing.admin", "roles/billing.costsManager"])]),
-    ("google_cloud_identity_group", &[GROUPS_ADMIN]),
-    ("google_cloud_identity_group_membership", &[GROUPS_ADMIN]),
-    ("google_cloud_scheduler_job", &[project("cloudscheduler.jobs.create", &["roles/cloudscheduler.admin"])]),
-    ("google_cloudbuild_trigger", &[project("cloudbuild.builds.create", &["roles/cloudbuild.builds.editor"])]),
-    ("google_compute_address", &[project("compute.addresses.create", &["roles/compute.networkAdmin"])]),
-    ("google_compute_firewall", &[project("compute.firewalls.create", &["roles/compute.securityAdmin"])]),
-    ("google_compute_firewall_policy", &[org("compute.firewallPolicies.create", &["roles/compute.orgFirewallPolicyAdmin"])]),
+    ("google_bigquery_dataset_iam_member", &[project("bigquery.datasets.setIamPolicy", &["roles/bigquery.admin"])], &["bigquery.googleapis.com"]),
+    ("google_billing_account_iam_member", &[billing("billing.accounts.setIamPolicy", &["roles/billing.admin"])], &["cloudbilling.googleapis.com"]),
+    ("google_billing_budget", &[billing("billing.budgets.create", &["roles/billing.admin", "roles/billing.costsManager"])], &["billingbudgets.googleapis.com"]),
+    ("google_cloud_identity_group", &[GROUPS_ADMIN], &["cloudidentity.googleapis.com"]),
+    ("google_cloud_identity_group_membership", &[GROUPS_ADMIN], &["cloudidentity.googleapis.com"]),
+    ("google_cloud_scheduler_job", &[project("cloudscheduler.jobs.create", &["roles/cloudscheduler.admin"])], &["cloudscheduler.googleapis.com"]),
+    ("google_cloudbuild_trigger", &[project("cloudbuild.builds.create", &["roles/cloudbuild.builds.editor"])], &["cloudbuild.googleapis.com"]),
+    ("google_compute_address", &[project("compute.addresses.create", &["roles/compute.networkAdmin"])], &["compute.googleapis.com"]),
+    ("google_compute_firewall", &[project("compute.firewalls.create", &["roles/compute.securityAdmin"])], &["compute.googleapis.com"]),
+    ("google_compute_firewall_policy", &[org("compute.firewallPolicies.create", &["roles/compute.orgFirewallPolicyAdmin"])], &["compute.googleapis.com"]),
     (
         "google_compute_firewall_policy_association",
         &[org("compute.organizations.setFirewallPolicy", &["roles/compute.orgSecurityResourceAdmin"])],
+        &["compute.googleapis.com"],
     ),
-    ("google_compute_firewall_policy_rule", &[org("compute.firewallPolicies.update", &["roles/compute.orgFirewallPolicyAdmin"])]),
-    ("google_compute_global_address", &[project("compute.globalAddresses.create", &["roles/compute.networkAdmin"])]),
-    ("google_compute_network", &[project("compute.networks.create", &["roles/compute.networkAdmin"])]),
-    ("google_compute_router", &[project("compute.routers.create", &["roles/compute.networkAdmin"])]),
-    ("google_compute_router_nat", &[project("compute.routers.update", &["roles/compute.networkAdmin"])]),
-    ("google_compute_subnetwork", &[project("compute.subnetworks.create", &["roles/compute.networkAdmin"])]),
-    ("google_dns_managed_zone", &[project("dns.managedZones.create", &["roles/dns.admin"])]),
-    ("google_dns_record_set", &[project("dns.changes.create", &["roles/dns.admin"])]),
-    ("google_essential_contacts_contact", &[org("essentialcontacts.contacts.create", &["roles/essentialcontacts.admin"])]),
-    ("google_folder", &[org("resourcemanager.folders.create", &["roles/resourcemanager.folderAdmin"])]),
+    ("google_compute_firewall_policy_rule", &[org("compute.firewallPolicies.update", &["roles/compute.orgFirewallPolicyAdmin"])], &["compute.googleapis.com"]),
+    ("google_compute_global_address", &[project("compute.globalAddresses.create", &["roles/compute.networkAdmin"])], &["compute.googleapis.com"]),
+    ("google_compute_network", &[project("compute.networks.create", &["roles/compute.networkAdmin"])], &["compute.googleapis.com"]),
+    ("google_compute_router", &[project("compute.routers.create", &["roles/compute.networkAdmin"])], &["compute.googleapis.com"]),
+    ("google_compute_router_nat", &[project("compute.routers.update", &["roles/compute.networkAdmin"])], &["compute.googleapis.com"]),
+    ("google_compute_subnetwork", &[project("compute.subnetworks.create", &["roles/compute.networkAdmin"])], &["compute.googleapis.com"]),
+    ("google_dns_managed_zone", &[project("dns.managedZones.create", &["roles/dns.admin"])], &["dns.googleapis.com"]),
+    ("google_dns_record_set", &[project("dns.changes.create", &["roles/dns.admin"])], &["dns.googleapis.com"]),
+    ("google_essential_contacts_contact", &[org("essentialcontacts.contacts.create", &["roles/essentialcontacts.admin"])], &["essentialcontacts.googleapis.com"]),
+    ("google_folder", &[org("resourcemanager.folders.create", &["roles/resourcemanager.folderAdmin"])], &["cloudresourcemanager.googleapis.com"]),
     (
         "google_folder_iam_member",
         &[org("resourcemanager.folders.setIamPolicy", &["roles/resourcemanager.folderAdmin", "roles/resourcemanager.organizationAdmin"])],
+        &["cloudresourcemanager.googleapis.com"],
     ),
-    ("google_iam_workload_identity_pool", &[project("iam.googleapis.com/workloadIdentityPools.create", &["roles/iam.workloadIdentityPoolAdmin"])]),
+    (
+        "google_iam_workload_identity_pool",
+        &[project("iam.googleapis.com/workloadIdentityPools.create", &["roles/iam.workloadIdentityPoolAdmin"])],
+        &["iam.googleapis.com"],
+    ),
     (
         "google_iam_workload_identity_pool_provider",
         &[project("iam.googleapis.com/workloadIdentityPoolProviders.create", &["roles/iam.workloadIdentityPoolAdmin"])],
+        &["iam.googleapis.com"],
     ),
-    ("google_kms_crypto_key", &[project("cloudkms.cryptoKeys.create", &["roles/cloudkms.admin"])]),
-    ("google_kms_key_ring", &[project("cloudkms.keyRings.create", &["roles/cloudkms.admin"])]),
-    ("google_logging_folder_sink", &[org("logging.sinks.create", &["roles/logging.configWriter"])]),
-    ("google_logging_metric", &[project("logging.logMetrics.create", &["roles/logging.configWriter"])]),
-    ("google_logging_organization_sink", &[org("logging.sinks.create", &["roles/logging.configWriter"])]),
-    ("google_logging_project_bucket_config", &[project("logging.buckets.create", &["roles/logging.configWriter"])]),
-    ("google_logging_project_sink", &[project("logging.sinks.create", &["roles/logging.configWriter"])]),
-    ("google_monitoring_alert_policy", &[project("monitoring.alertPolicies.create", &["roles/monitoring.alertPolicyEditor"])]),
+    ("google_kms_crypto_key", &[project("cloudkms.cryptoKeys.create", &["roles/cloudkms.admin"])], &["cloudkms.googleapis.com"]),
+    ("google_kms_key_ring", &[project("cloudkms.keyRings.create", &["roles/cloudkms.admin"])], &["cloudkms.googleapis.com"]),
+    ("google_logging_folder_sink", &[org("logging.sinks.create", &["roles/logging.configWriter"])], &["logging.googleapis.com"]),
+    ("google_logging_metric", &[project("logging.logMetrics.create", &["roles/logging.configWriter"])], &["logging.googleapis.com"]),
+    ("google_logging_organization_sink", &[org("logging.sinks.create", &["roles/logging.configWriter"])], &["logging.googleapis.com"]),
+    ("google_logging_project_bucket_config", &[project("logging.buckets.create", &["roles/logging.configWriter"])], &["logging.googleapis.com"]),
+    ("google_logging_project_sink", &[project("logging.sinks.create", &["roles/logging.configWriter"])], &["logging.googleapis.com"]),
+    ("google_monitoring_alert_policy", &[project("monitoring.alertPolicies.create", &["roles/monitoring.alertPolicyEditor"])], &["monitoring.googleapis.com"]),
     (
         "google_monitoring_notification_channel",
         &[project("monitoring.notificationChannels.create", &["roles/monitoring.notificationChannelEditor"])],
+        &["monitoring.googleapis.com"],
     ),
-    ("google_org_policy_custom_constraint", &[org("orgpolicy.customConstraints.create", &["roles/orgpolicy.policyAdmin"])]),
-    ("google_org_policy_policy", &[org("orgpolicy.policies.create", &["roles/orgpolicy.policyAdmin"])]),
+    ("google_org_policy_custom_constraint", &[org("orgpolicy.customConstraints.create", &["roles/orgpolicy.policyAdmin"])], &["orgpolicy.googleapis.com"]),
+    ("google_org_policy_policy", &[org("orgpolicy.policies.create", &["roles/orgpolicy.policyAdmin"])], &["orgpolicy.googleapis.com"]),
     (
         "google_organization_access_approval_settings",
         &[org("accessapproval.settings.update", &["roles/accessapproval.configEditor"])],
+        &["accessapproval.googleapis.com"],
     ),
     (
         "google_organization_iam_audit_config",
         &[org("resourcemanager.organizations.setIamPolicy", &["roles/resourcemanager.organizationAdmin"])],
+        &["cloudresourcemanager.googleapis.com"],
     ),
-    ("google_organization_iam_custom_role", &[org("iam.roles.create", &["roles/iam.organizationRoleAdmin"])]),
+    ("google_organization_iam_custom_role", &[org("iam.roles.create", &["roles/iam.organizationRoleAdmin"])], &["iam.googleapis.com"]),
     (
         "google_organization_iam_member",
         &[org("resourcemanager.organizations.setIamPolicy", &["roles/resourcemanager.organizationAdmin"])],
+        &["cloudresourcemanager.googleapis.com"],
     ),
     (
         "google_project",
@@ -148,6 +159,9 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
             org("resourcemanager.projects.createBillingAssignment", &["roles/billing.projectManager"]),
             billing("billing.resourceAssociations.create", &["roles/billing.user", "roles/billing.admin"]),
         ],
+        // creating the project is Resource Manager; linking it to the billing account is
+        // Cloud Billing, and a project with no billing link cannot enable a paid API
+        &["cloudresourcemanager.googleapis.com", "cloudbilling.googleapis.com"],
     ),
     (
         "google_project_iam_member",
@@ -155,21 +169,23 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
             "resourcemanager.projects.setIamPolicy",
             &["roles/resourcemanager.projectIamAdmin", "roles/resourcemanager.organizationAdmin", "roles/resourcemanager.folderAdmin"],
         )],
+        &["cloudresourcemanager.googleapis.com"],
     ),
-    ("google_project_service", &[project("serviceusage.services.enable", &["roles/serviceusage.serviceUsageAdmin"])]),
-    ("google_pubsub_subscription", &[project("pubsub.subscriptions.create", &["roles/pubsub.editor"])]),
+    ("google_project_service", &[project("serviceusage.services.enable", &["roles/serviceusage.serviceUsageAdmin"])], &["serviceusage.googleapis.com"]),
+    ("google_pubsub_subscription", &[project("pubsub.subscriptions.create", &["roles/pubsub.editor"])], &["pubsub.googleapis.com"]),
     // Same as the topic below: `roles/pubsub.editor` does not carry setIamPolicy.
-    ("google_pubsub_subscription_iam_member", &[project("pubsub.subscriptions.setIamPolicy", &["roles/pubsub.admin"])]),
-    ("google_pubsub_topic", &[project("pubsub.topics.create", &["roles/pubsub.editor"])]),
+    ("google_pubsub_subscription_iam_member", &[project("pubsub.subscriptions.setIamPolicy", &["roles/pubsub.admin"])], &["pubsub.googleapis.com"]),
+    ("google_pubsub_topic", &[project("pubsub.topics.create", &["roles/pubsub.editor"])], &["pubsub.googleapis.com"]),
     // the SCC notification chain: the grant on the topic, and the config at the
     // organisation. `roles/pubsub.editor` does not carry setIamPolicy — admin does.
-    ("google_pubsub_topic_iam_member", &[project("pubsub.topics.setIamPolicy", &["roles/pubsub.admin"])]),
+    ("google_pubsub_topic_iam_member", &[project("pubsub.topics.setIamPolicy", &["roles/pubsub.admin"])], &["pubsub.googleapis.com"]),
     (
         "google_scc_v2_organization_notification_config",
         &[org(
             "securitycenter.notificationconfig.create",
             &["roles/securitycenter.settingsEditor", "roles/securitycenter.admin"],
         )],
+        &["securitycenter.googleapis.com"],
     ),
     (
         "google_scc_v2_organization_scc_big_query_export",
@@ -177,31 +193,48 @@ pub(crate) const TYPES: &[(&str, &[Entry])] = &[
             "securitycenter.bigQueryExports.create",
             &["roles/securitycenter.settingsEditor", "roles/securitycenter.admin"],
         )],
+        &["securitycenter.googleapis.com"],
     ),
-    ("google_secret_manager_secret", &[project("secretmanager.secrets.create", &["roles/secretmanager.admin"])]),
-    ("google_service_account", &[project("iam.serviceAccounts.create", &["roles/iam.serviceAccountAdmin"])]),
-    ("google_service_account_iam_member", &[project("iam.serviceAccounts.setIamPolicy", &["roles/iam.serviceAccountAdmin"])]),
-    ("google_storage_bucket", &[project("storage.buckets.create", &["roles/storage.admin"])]),
-    ("google_storage_bucket_iam_member", &[project("storage.buckets.setIamPolicy", &["roles/storage.admin"])]),
+    ("google_secret_manager_secret", &[project("secretmanager.secrets.create", &["roles/secretmanager.admin"])], &["secretmanager.googleapis.com"]),
+    ("google_service_account", &[project("iam.serviceAccounts.create", &["roles/iam.serviceAccountAdmin"])], &["iam.googleapis.com"]),
+    ("google_service_account_iam_member", &[project("iam.serviceAccounts.setIamPolicy", &["roles/iam.serviceAccountAdmin"])], &["iam.googleapis.com"]),
+    ("google_storage_bucket", &[project("storage.buckets.create", &["roles/storage.admin"])], &["storage.googleapis.com"]),
+    ("google_storage_bucket_iam_member", &[project("storage.buckets.setIamPolicy", &["roles/storage.admin"])], &["storage.googleapis.com"]),
     // Resource Manager tags. The key and its values are organisation-scoped; a binding
     // attaches a value to one resource and is the exemption itself, which is why it is
     // listed separately: an estate may be allowed to define the vocabulary without being
     // allowed to hand out exemptions with it.
-    ("google_tags_tag_binding", &[org("resourcemanager.tagValueBindings.create", &["roles/resourcemanager.tagUser"])]),
-    ("google_tags_tag_key", &[org("resourcemanager.tagKeys.create", &["roles/resourcemanager.tagAdmin"])]),
-    ("google_tags_tag_value", &[org("resourcemanager.tagValues.create", &["roles/resourcemanager.tagAdmin"])]),
-    ("google_tags_tag_value_iam_member", &[org("resourcemanager.tagValues.setIamPolicy", &["roles/resourcemanager.tagAdmin"])]),
+    ("google_tags_tag_binding", &[org("resourcemanager.tagValueBindings.create", &["roles/resourcemanager.tagUser"])], &["cloudresourcemanager.googleapis.com"]),
+    ("google_tags_tag_key", &[org("resourcemanager.tagKeys.create", &["roles/resourcemanager.tagAdmin"])], &["cloudresourcemanager.googleapis.com"]),
+    ("google_tags_tag_value", &[org("resourcemanager.tagValues.create", &["roles/resourcemanager.tagAdmin"])], &["cloudresourcemanager.googleapis.com"]),
+    (
+        "google_tags_tag_value_iam_member",
+        &[org("resourcemanager.tagValues.setIamPolicy", &["roles/resourcemanager.tagAdmin"])],
+        &["cloudresourcemanager.googleapis.com"],
+    ),
 ];
 
-/// The table's entries for one resource type.
+/// The table's role entries for one resource type.
 pub(crate) fn entries_for(tf_type: &str) -> Option<&'static [Entry]> {
-    TYPES.iter().find(|(t, _)| *t == tf_type).map(|(_, e)| *e)
+    TYPES.iter().find(|(t, _, _)| *t == tf_type).map(|(_, e, _)| *e)
 }
 
-/// The whole table as data — what `iac-roles --format json` prints and
-/// `scripts/check_iac_roles.py` reads.
+/// The APIs one resource type is served by. Every call the provider makes for it
+/// is billed to the infra project (`user_project_override`), so these have to be
+/// enabled THERE whatever the resource's own scope is — a budget hangs off the
+/// billing account and an org policy off the organisation, and both still need
+/// their API on the project being billed for the call.
+pub(crate) fn apis_for(tf_type: &str) -> Option<&'static [&'static str]> {
+    TYPES.iter().find(|(t, _, _)| *t == tf_type).map(|(_, _, a)| *a)
+}
+
+/// The whole table as data — what `--format json` prints and
+/// `scripts/check_prerequisites.py` reads.
 pub(crate) fn table_json() -> serde_json::Value {
-    let types: BTreeMap<&str, &[Entry]> = TYPES.iter().map(|(t, e)| (*t, *e)).collect();
+    let types: BTreeMap<&str, serde_json::Value> = TYPES
+        .iter()
+        .map(|(t, e, a)| (*t, serde_json::json!({ "roles": e, "apis": a })))
+        .collect();
     serde_json::json!({ "read": READ, "types": types })
 }
 
@@ -219,9 +252,10 @@ pub(crate) fn render_table() -> String {
     };
     let mut out = String::from("always (import, adopt, report):\n");
     READ.iter().for_each(|e| out.push_str(&line(e)));
-    for (t, entries) in TYPES {
+    for (t, entries, apis) in TYPES {
         out.push_str(&format!("{}:\n", t));
         entries.iter().for_each(|e| out.push_str(&line(e)));
+        out.push_str(&format!("  {:<56} {}\n", "(api)", apis.join(", ")));
     }
     out
 }
@@ -236,6 +270,50 @@ pub(crate) struct Need {
     /// any one of these carries it
     pub roles: Vec<String>,
     pub scope: Scope,
+}
+
+/// One API an estate's emitted resources are served by, and the types that put it
+/// there. `declared` is whether a `google_project_service` in the estate enables it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ApiNeed {
+    pub api: String,
+    /// the resource types that need it, sorted
+    pub reason: Vec<String>,
+    pub declared: bool,
+}
+
+/// The APIs the estate's emitted types need, each marked with whether the INFRA
+/// project enables it. That project is the one that counts whatever the resource's
+/// own scope is: every provider block carries `user_project_override` with
+/// `billing_project = infra_project_name`, so Google bills the call there and wants
+/// the API enabled there. A pack that enables an API on a project of its own has
+/// not satisfied this — that project needs it for its own calls, which is the
+/// pack's business; the billed project is the estate's.
+pub(crate) fn apis(manifest: &Manifest, infra_project: &str) -> Vec<ApiNeed> {
+    let declared: BTreeSet<&str> = manifest
+        .of_type("google_project_service")
+        .filter(|r| manifest.project_of(r).as_deref() == Some(infra_project))
+        .filter_map(|r| r.attrs.get("service").map(String::as_str))
+        .collect();
+    let mut by_api: BTreeMap<&'static str, BTreeSet<String>> = BTreeMap::new();
+    for t in manifest.resources.values().map(|r| r.tf_type.as_str()).collect::<BTreeSet<_>>() {
+        for api in apis_for(t).unwrap_or(&[]) {
+            by_api.entry(api).or_default().insert(t.to_string());
+        }
+    }
+    by_api
+        .into_iter()
+        .map(|(api, reason)| ApiNeed {
+            declared: declared.contains(api),
+            api: api.to_string(),
+            reason: reason.into_iter().collect(),
+        })
+        .collect()
+}
+
+/// The APIs the infra project does not enable.
+pub(crate) fn missing_apis(manifest: &Manifest, infra_project: &str) -> Vec<ApiNeed> {
+    apis(manifest, infra_project).into_iter().filter(|a| !a.declared).collect()
 }
 
 /// What an estate's emitted resources need — `read` first, then one `Need` per
@@ -650,15 +728,47 @@ mod tests {
         )
     }
 
+    /// The API column is hand-kept, and a typo in it is invisible: the estate
+    /// declares a service Google does not have and the apply fails on the one it
+    /// does. Cloud Asset Inventory namespaces every asset type by the service that
+    /// serves it (`bigquery.googleapis.com/Dataset`), and
+    /// `presets/import-config.yaml` carries that column for 841 types — refreshed
+    /// from Google's own list, never by hand. Where both know a type, they must
+    /// agree.
+    #[test]
+    fn the_api_column_agrees_with_the_import_table() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets/import-config.yaml");
+        let cfg: crate::config::ImportConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(&path).expect("the import table")).expect("parses");
+        let mut checked = 0;
+        for (t, _, apis) in TYPES {
+            let Some(asset) = cfg.resource_types.get(*t).and_then(|r| r.asset_type.as_deref()) else { continue };
+            if asset.starts_with("TODO") {
+                continue;
+            }
+            let Some((host, _)) = asset.split_once('/') else { continue };
+            assert!(
+                apis.contains(&host),
+                "{}: the import table serves it from {} and the row names {:?} — one of the two is wrong",
+                t,
+                host,
+                apis
+            );
+            checked += 1;
+        }
+        assert!(checked >= 40, "only {} rows could be cross-checked", checked);
+    }
+
     #[test]
     fn the_table_is_well_formed_and_sorted() {
         let mut seen = BTreeSet::new();
         let mut last = "";
-        for (t, entries) in TYPES {
+        for (t, entries, apis) in TYPES {
             assert!(seen.insert(*t), "{} listed twice", t);
             assert!(*t > last, "{} is out of order", t);
             last = t;
             assert!(!entries.is_empty(), "{} has no entry", t);
+            assert!(!apis.is_empty(), "{} names no API", t);
             for e in *entries {
                 assert!(!e.roles.is_empty(), "{}: an entry names no role", t);
                 assert_eq!(e.permission.is_none(), e.scope == Scope::Workspace, "{}: only a Workspace entry has no permission", t);
@@ -668,7 +778,8 @@ mod tests {
             }
         }
         let json = table_json();
-        assert!(json["types"]["google_project"].as_array().is_some_and(|a| a.len() == 4));
+        assert!(json["types"]["google_project"]["roles"].as_array().is_some_and(|a| a.len() == 4));
+        assert_eq!(json["types"]["google_billing_budget"]["apis"][0], "billingbudgets.googleapis.com");
         assert_eq!(json["read"].as_array().map(Vec::len), Some(READ.len()));
     }
 

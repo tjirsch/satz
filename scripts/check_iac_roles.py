@@ -70,10 +70,16 @@ def role_permissions(role: str, token: str) -> set[str]:
 
 
 def entries(t: dict) -> list[tuple[str, dict]]:
-    """(where, entry) for every entry, `read` and each type."""
+    """(where, entry) for every ROLE entry, `read` and each type.
+
+    A type's row carries both halves of its prerequisite — `roles` and `apis`.
+    Only the roles are checkable against Google's IAM API, which is what this
+    script does; the API half is cross-checked against the import table's asset
+    types by a unit test in src/prerequisites.rs.
+    """
     out = [("read", e) for e in t.get("read", [])]
-    for tf_type, es in t.get("types", {}).items():
-        out.extend((tf_type, e) for e in es)
+    for tf_type, row in t.get("types", {}).items():
+        out.extend((tf_type, e) for e in row["roles"])
     return out
 
 
