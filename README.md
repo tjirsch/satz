@@ -166,7 +166,7 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`), `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
+| `questions <INPUT>` | `--format` (`text`\|`markdown`\|`json`), `--unanswered`, `--xlsx <FILE>` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
 | `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. See [satz interview](docs/interview.md) |
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
@@ -695,6 +695,50 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 - GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/workflows.md](docs/workflows.md#when-upstream-stops-answering-the-github-quota).
 - Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. Changing a pack the estate deploys changes the org, and a `tofu plan` should not be the first place you learn that. `--force` overwrites anyway, listing each in-use pack as it does.
 - `X.local.*` files have no upstream counterpart, so nothing here can touch them.
+
+### The decisions sheet (`questions --format markdown`)
+
+Every decision the estate rests on, as one page a customer can read: what was asked,
+what it is set to, whether that was **chosen for this estate** or taken as offered, and
+what changing it later costs. Under each row sits the italic line saying why the
+question exists at all — which is the half that makes it readable by someone who did
+not write the estate.
+
+```bash
+satz questions C0example.satz --format markdown > decisions.md
+```
+
+It opens with the gate verdict, so the sheet answers "may we start?" before it answers
+anything else:
+
+> **All 25 questions are answered.** Nothing below is undecided; this estate may be
+> bootstrapped.
+
+One table per pack, opened by that pack's own description, in the estate's order.
+
+**Read it at two moments**, because it is two different documents:
+
+1. **After choosing the packs, before the organisation is touched** — the
+   "these are your decisions, shall we start?" page. Pair it with `--unanswered` for the
+   interview's worklist, and with `--xlsx` when the customer should fill the answers in
+   and send them back:
+   ```bash
+   satz questions C0example.satz --unanswered --format markdown   # what is still open
+   satz questions C0example.satz --xlsx decisions.xlsx            # the customer fills this in
+   ```
+2. **After the rollout, as documentation** — the same command against the applied estate
+   is the record of what was decided and why, with the cost of reversing each choice
+   already written down. Regenerate it after any estate change and keep it beside the
+   compliance report:
+   ```bash
+   satz questions C0example.satz --format markdown > decisions.md
+   ```
+   `questions` has no `--report`; it writes to stdout, so redirect. Unlike
+   `report-compliance` and `report-organizational-policies`, it has no `pdf` form either.
+
+Because the estate is the answer record ([ADR 0006](docs/adr/0006-an-answer-is-a-param-the-estate-binds.md)),
+the sheet is always derived, never maintained — it cannot drift from what will actually
+be applied. See [satz interview](docs/interview.md#the-decisions-sheet).
 
 ### Compliance goal view (`require`)
 
