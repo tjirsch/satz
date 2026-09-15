@@ -2866,7 +2866,7 @@ pub(crate) async fn run_report_compliance(
     org_id: Option<&str>,
     config_dir: &Path,
     format: crate::OutFormat,
-    report_path: Option<PathBuf>,
+    out: &Path,
     prowler_path: Option<PathBuf>,
     checkov: Option<&crate::scan::Report>,
     no_live: bool,
@@ -2896,16 +2896,13 @@ pub(crate) async fn run_report_compliance(
         crate::fsx::write(&hist, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
     }
 
-    let out_path = report_path.unwrap_or_else(|| hist_dir.join(format!("{}-latest.md", framework)));
+    let what = format!("{} control(s)", json_rows.len());
     match format {
-        crate::OutFormat::Json => println!("{}", serde_json::to_string_pretty(&evidence)?),
-        _ => {
-            crate::fsx::write(&out_path, md.as_bytes())?;
-            println!("Wrote evidence report to {} (history: {})", out_path.display(), hist.display());
-            if format == crate::OutFormat::Pdf {
-                crate::org_policy::try_pandoc_pdf(&out_path);
-            }
+        crate::OutFormat::Json => {
+            crate::write_report(out, serde_json::to_string_pretty(&evidence)?.as_bytes(), &what)?
         }
+        crate::OutFormat::Pdf => crate::pdf_from_markdown(&md, out, &what)?,
+        _ => crate::write_report(out, md.as_bytes(), &format!("{what} (history: {})", hist.display()))?,
     }
     // the report is written whatever the verdicts; the EXIT CODE is the gate,
     // opted into per status so CI can fail on what the operator decides
@@ -3376,36 +3373,25 @@ pub(crate) fn run_triage(
     manifest: &Manifest,
     prowler_path: &Path,
     format: crate::OutFormat,
-    report_path: Option<PathBuf>,
+    out: &Path,
     fix: bool,
 ) -> Result<(), BoxErr> {
     let Triage { catalog, rows, unmapped } = triage_rows(framework, presets_dir, included_claims, manifest, prowler_path)?;
 
+    // `--fix` belongs IN the report: the delta is what the operator acts on, and a
+    // second rendering on the console is one nobody asked for.
     let text = match format {
         crate::OutFormat::Json => serde_json::to_string_pretty(&rows)?,
-        _ => render_triage(&catalog, &rows) + &render_unmapped(&catalog, &unmapped),
+        _ => {
+            let mut t = render_triage(&catalog, &rows) + &render_unmapped(&catalog, &unmapped);
+            if fix {
+                t.push('\n');
+                t.push_str(&fix_plan(&rows, presets_dir));
+            }
+            t
+        }
     };
-    match report_path {
-        Some(p) => {
-            if let Some(d) = p.parent() {
-                crate::fsx::create_dir_all(d)?;
-            }
-            crate::fsx::write(&p, &text)?;
-            println!("Wrote {}", p.display());
-            if fix {
-                // To stdout even when the table went to a file: the delta is what
-                // the operator acts on now, and burying it in the report is how
-                // it goes unread.
-                println!("{}", fix_plan(&rows, presets_dir));
-            }
-        }
-        None => {
-            print!("{}", text);
-            if fix {
-                println!("{}", fix_plan(&rows, presets_dir));
-            }
-        }
-    }
+    crate::write_report(out, text.as_bytes(), &format!("{} finding(s)", rows.len()))?;
     let counts: BTreeMap<String, usize> = rows.iter().fold(BTreeMap::new(), |mut m, r| {
         *m.entry(format!("{:?}", r.bucket)).or_default() += 1;
         m

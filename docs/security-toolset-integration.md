@@ -179,7 +179,7 @@ line, `satz_remediation_items` and `satz_remediation_annotate` over MCP. The mod
 pass is the agent's.*
 
 **What.** `satz remediation-plan <framework> <estate> --prowler <ocsf.json>
-[--checkov] [--out <dir>]` builds the **dossier**: the I3 triage rows joined
+[--checkov] [--out-dir <dir>]` builds the **dossier**: the I3 triage rows joined
 with Checkov findings on the declared address (the one identity both scanners
 share), each item carrying its bucket, normalized severity, control + the
 catalog's paraphrase, the declaring `file:line`, the sources that flagged it,

@@ -1386,11 +1386,13 @@ Composition follows from that: a choice between two packs is two booleans plus t
 
 #### Where they show up
 
-- `satz questions <estate>` — every question its packs contribute with its state:
+- `satz questions <estate> --format … --out <file>` — every question its packs contribute
+  with its state:
   `answered` when the estate's own `params {}` binds the param (accepting a default
   is an answer, written as the default), `unanswered` with the default the pack
   offers or `blocking` when none is possible, `not-applicable` when its `ask_when`
-  is false. `--unanswered` is the worklist, `--format markdown` the decisions sheet.
+  is false. `--unanswered` is the worklist, `--format markdown` the decisions sheet
+  and `--format xlsx` the workbook a customer fills in.
   Offline and schema-free: an interview happens before anyone runs `update-schema`.
 - `bootstrap` and `transpile --apply` **refuse while a question is unanswered**;
   `--dry-run` and `--plan` warn. `satz interview` asks and writes the answers —
@@ -1429,7 +1431,7 @@ Suffix carries meaning; the tooling enforces it.
 *as written* discharges; a claim whose witness is not emitted reads as broken.
 
 ```
-satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme
+satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme --format text --out /dev/stdout
 ```
 
 ```
@@ -1497,7 +1499,8 @@ reads *unverifiable* with that reason — and for org policies, compared **by
 value**, because an inventory lists a switched-off policy like an enforced one.
 
 ```
-satz report-compliance cis-gcp-4.0 C0example.satz --config ~/estates/acme
+satz report-compliance cis-gcp-4.0 C0example.satz --config ~/estates/acme \
+  --format markdown --out evidence/cis-4.0.md
 ```
 
 The report has seven columns — `Control | Title | Status | Witnesses (declared →
@@ -1624,29 +1627,33 @@ these properties was verified at this time".
 | command | layer | does |
 |---|---|---|
 | `transpile <estate>.satz` | Satz → HCL | emit `hcl/`; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars |
-| `require <framework> <estate>.satz` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
-| `report-compliance <framework> <estate>.satz` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--format pdf`, `--fail-on <statuses>` (exit code as the CI gate) |
-| `questions <estate>.satz [--unanswered] [--format text\|json\|markdown] [--xlsx f]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet, `--xlsx` the workbook a customer fills in |
+| `require <framework> <estate>.satz --format text\|json --out f` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
+| `report-compliance <framework> <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). `pdf` needs `pandoc` on PATH |
+| `questions <estate>.satz --format text\|json\|markdown\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet, `xlsx` the workbook a customer fills in |
 | `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
 | `iac-roles [<estate>.satz] [--execute] [--format text\|json]` | Satz | the roles the IaC service account needs for the types the estate emits, against what it grants; `--execute` writes the missing ones into the estate |
 | `whoami [<estate>.satz]` | — | the credential satz runs as and, with an estate, the service account it becomes, with the live checks that decide whether the next call works |
 | `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |
-| `remediation-plan <framework> <estate>.satz --prowler f [--checkov] [--out d] [--authored f]` | Evidence | the remediation dossier: items per control and resource from the triage and the report, the XLSX, the authored columns merged from `--authored` |
-| `check-presets <estate>.satz` | Satz | drift of packs vs upstream |
+| `remediation-plan <framework> <estate>.satz --prowler f [--checkov] [--out-dir d] [--authored f]` | Evidence | the remediation dossier: items per control and resource from the triage and the report, the XLSX, the authored columns merged from `--authored` |
+| `check-presets <estate>.satz --format text\|json --out f` | Satz | drift of packs vs upstream |
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `hcl-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
 | `run-actions <estate>.satz [--check\|--execute] [--only n,…] [--phase p]` | Satz | run the estate's declared `action`s (§6.13). Prints and stops by default; `--check` runs each action's own dry-run form, `--execute` the form that writes. Global `--no-actions`, `--no-pack-actions`, `--no-action-warnings` |
 | `import [<source>] [--all] [--only t,…] [--exclude t,…] [--import-config f] [-o <file>] [--into <estate>] [--wrap-all] [--kind estate\|pack] [--gate <estate>] [--fork]` | — | create an estate from what exists (§12): a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, a directory of `.tf`, or a legacy `.yaml` file; `--from` forces the shape; `--into` imports only what the estate does not declare, as packs it `use`s; checked by `transpile` + `tofu plan` |
-| `triage <framework> <estate>.satz --prowler f` | Evidence | every Prowler FAIL sorted into buckets A–E (a pack covers it / Satz declares it / declared exception / unmanaged / manual) — the remediation plan's skeleton; `--fix` prints the estate delta the buckets imply |
+| `triage <framework> <estate>.satz --prowler f --format markdown\|json --out f` | Evidence | every Prowler FAIL sorted into buckets A–E (a pack covers it / Satz declares it / declared exception / unmanaged / manual) — the remediation plan's skeleton; `--fix` adds the estate delta the buckets imply to the report (markdown only) |
 | `scan [<estate>.satz]` | HCL | Checkov over `hcl_dir`, findings pointed at the Satz line that declared the resource; failed checks exit 1 |
-| `doc-packs [--out d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
+| `doc-packs [--out-dir d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
 | `map-types [--only t,…]` | — | derive the API→Terraform field map per type into `presets/type-map.yaml` (from the Discovery Documents and the provider schema) |
 | `bootstrap <estate>.satz [--dry-run] [--greenfield]` | Satz | first apply for a new organisation: management project, state bucket, service account |
 | `migrate <estate>.satz --mode local\|cloud` | Satz | rewrite `deployment_mode` in the estate's params and move the state |
-| `export-` / `diff-` / `report-organizational-policies <estate>.satz [--recursive]` | Evidence | the org-policy specialist tools: snapshot live policies as a pack, diff desired vs live by (parent, constraint), inventory report |
+| `export-organizational-policies <estate>.satz [--output f]`; `diff-` / `report-organizational-policies <estate>.satz --format … --out f [--recursive]` | Evidence | the org-policy specialist tools: snapshot live policies as a pack, diff desired vs live by (parent, constraint), inventory report |
 
-All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere.
+All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere. A command
+that produces a report takes `--format`, the rendering, and `--out`, the file it lands in:
+one invocation, one artefact, one named path, and nothing on the console but the line on
+stderr saying where it went — `--out /dev/stdout` pipes. `iac-roles` and `prowler` answer
+on the console instead: an exit code and a command line to paste are not documents.
 The estate file is a positional argument, relative to `yaml_dir`.
 
 ---

@@ -291,7 +291,7 @@ pub(crate) fn apply(
         let row = report.questions.iter().find(|q| q.subject == *name).ok_or_else(|| {
             format!(
                 "{}: no pack this estate uses asks that. An answer names a question's subject — \
-                 `satz questions {}` lists them",
+                 `satz questions {} --format text --out /dev/stdout` lists them",
                 name,
                 estate.display()
             )
@@ -518,7 +518,8 @@ fn finish(estate: &Path, runtime: &ToolConfig, out: &mut dyn Write) -> Result<()
     } else {
         text.push_str(&format!(
             "NOT complete — bootstrap and apply refuse until every question is answered.\n  \
-             still open: {}\n  run `satz interview {}` again, or `satz questions {} --format markdown` for the sheet.\n",
+             still open: {}\n  run `satz interview {}` again, or \
+             `satz questions {} --format markdown --out decisions.md` for the sheet.\n",
             open_names(&report).join(", "),
             estate.display(),
             estate.display()

@@ -9,8 +9,8 @@
 //                    A satz release that no longer compiles the estate fails
 //                    the estate's next push.
 //   satz-compliance  nightly, via Cloud Scheduler — `satz report-compliance
-//                    --fail-on <statuses>`. An org policy widened in the
-//                    console fails the next nightly run.
+//                    --format markdown --out <file> --fail-on <statuses>`. An
+//                    org policy widened in the console fails the next nightly run.
 //
 // The runner is a service account of its own. It holds nothing about the
 // estate: satz's first act inside the build is to exchange the runner's identity

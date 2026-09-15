@@ -121,6 +121,8 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
+Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out /dev/stdout | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `iac-roles`, whose exit code is the answer, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
+
 **Estate**
 
 | Command | Options / Arguments |
@@ -150,30 +152,30 @@ All commands accept the [global options](#global-options) (`--config`, `--valida
 |---------|---------------------|
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
-| `check-presets <INPUT>` | `--format` (`text`\|`json`), `--pristine-dir` |
-| `doc-packs` | `--out <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file, plus a grouped index; `--check` fails when the pages are behind, a claim names a control its catalog lacks, a pack header says nothing the index can print, or a pack version has no changelog row |
+| `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
+| `doc-packs` | `--out-dir <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file, plus a grouped index; `--check` fails when the pages are behind, a claim names a control its catalog lacks, a pack header says nothing the index can print, or a pack version has no changelog row |
 
 **Policies**
 
 | Command | Options / Arguments |
 |---------|---------------------|
 | `export-organizational-policies <ESTATE>` (alias `export-org-policies`) | `--customer-organization-id`, `--output` |
-| `diff-organizational-policies <ESTATE>` (alias `diff-org-policies`) | `--customer-organization-id`, `--report`, `--format` (`text`\|`markdown`\|`json`), `-r/--recursive` (every folder and project below) |
-| `report-organizational-policies <ESTATE>` (alias `report-org-policies`) | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--report`, `-r/--recursive` |
+| `diff-organizational-policies <ESTATE>` (alias `diff-org-policies`) | `--customer-organization-id`, `--format` (`text`\|`markdown`\|`json`), `--out <FILE>`, `-r/--recursive` (every folder and project below) |
+| `report-organizational-policies <ESTATE>` (alias `report-org-policies`) | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `-r/--recursive` |
 | `adopt-org-policies <INPUT>` | `--dry-run` — alias of `adopt --only google_org_policy_policy --activate --execute --import` |
 
 **Compliance and audit**
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`), `--unanswered`, `--xlsx <FILE>` (the decisions catalog as a workbook a customer fills in and sends back) — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
+| `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`\|`xlsx`, the decisions catalog as a workbook a customer fills in and sends back), `--out <FILE>`, `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
 | `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. See [satz interview](docs/interview.md) |
-| `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), *(catalog id, e.g. `cis-gcp-4.0`)* |
-| `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--report`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
+| `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, *(catalog id, e.g. `cis-gcp-4.0`)* |
+| `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
 | `prowler <INPUT>` | `--format` (`text`\|`json`) — the Prowler invocation this estate needs, printed. The organisation and the project ids the estate declares, the frameworks it CLAIMS as `--compliance` (which also filters which checks run), `--output-formats json-ocsf`, and an output path under `evidence/prowler/<UTC date>/`. satz never runs Prowler: the scan spends API quota in every project, and Prowler reads as whoever is logged in rather than as the estate's service account |
-| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--report`, `--fix` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims, and the checks Prowler maps to no control of the framework counted in a section of their own; `--fix` adds the estate delta they imply (proposed, never written) |
-| `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out <dir>`, `--merge <authored.json>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[Authored]` columns and who authored them, Review dropdown) + `meta.json` under `evidence/plan/`; offline and deterministic (the dossier hash names the run). `--merge` fills the `[Authored]` columns from an `authored.json` written against this run's hash — every entry names `authored_by` and `authored_at` — and keeps it beside the run; `dossier.json` and its hash do not change |
+| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--out <FILE>`, `--fix` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims, and the checks Prowler maps to no control of the framework counted in a section of their own; `--fix` adds the estate delta they imply to the report (markdown only, proposed, never written) |
+| `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out-dir <DIR>`, `--merge <authored.json>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[Authored]` columns and who authored them, Review dropdown) + `meta.json` under `evidence/plan/`; offline and deterministic (the dossier hash names the run). `--merge` fills the `[Authored]` columns from an `authored.json` written against this run's hash — every entry names `authored_by` and `authored_at` — and keeps it beside the run; `dossier.json` and its hash do not change |
 
 **Tool**
 
@@ -493,7 +495,7 @@ run `satz adopt` to import what it describes.
 
 ```bash
 # Everything the estate declares (its own blocks and the packs it uses) against live:
-satz diff-organizational-policies C0example.satz --format markdown --report diff.md
+satz diff-organizational-policies C0example.satz --format markdown --out diff.md
 ```
 
 The desired set is read off the compiled estate — the same `google_org_policy_policy`
@@ -509,7 +511,7 @@ object so it doesn't report false changes.
 #### Report with explanatory text (`report-organizational-policies`)
 
 ```bash
-satz report-organizational-policies C0example.satz --scope full --format markdown
+satz report-organizational-policies C0example.satz --scope full --format markdown --out policies.md
 ```
 
 `--scope`: `active` (set policies), `inactive` (available but unset), or `full` (both,
@@ -794,7 +796,7 @@ IDs with this project's own paraphrases; preset packs declare **claims** inline
 these resources". `require` is the goal view over both:
 
 ```bash
-satz require cis-gcp-4.0 C0example.satz
+satz require cis-gcp-4.0 C0example.satz --format text --out /dev/stdout
 #   ✓ 2.2  Sinks for all log entries    — google_logging_organization_sink.…
 #   ◐ 2.3  Retention on the log bucket  — open duty: validate-then-lock
 #   ✗ 2.11 Storage IAM change alerts    — unmet. Provides: monitoring/organization-cis-log-alerts-central
@@ -805,7 +807,7 @@ each command accepting the subset it can produce and **refusing the rest by name
 `require --format json` gives the same verdicts as data:
 
 ```bash
-satz require cis-gcp-4.0 C0example.satz --format json | jq '.summary'
+satz require cis-gcp-4.0 C0example.satz --format json --out /dev/stdout | jq '.summary'
 #   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 14, "broken": 0, "contradicted": 0, … }
 ```
 
@@ -820,7 +822,7 @@ as that evidence; `require iso27001-2022` folds those verdicts rather than askin
 to claim a second framework:
 
 ```bash
-satz require iso27001-2022 C0example.satz
+satz require iso27001-2022 C0example.satz --format text --out /dev/stdout
 #   ✓ A.8.3  Information access restriction  — google_org_policy_policy.storage_publicAccessPrevention, …
 #   ◐ A.5.3  Segregation of duties           — open duties: role-matrix-reviewed
 #   ○ A.5.1  Policies for information security — organizational control (no IaC witness)
@@ -920,7 +922,7 @@ from any working directory:
 
 ```bash
 satz transpile C0example.satz --config ~/estates/acme
-satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme
+satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme --format text --out /dev/stdout
 satz plan  --config ~/estates/acme
 satz apply --config ~/estates/acme
 ```
@@ -1073,10 +1075,10 @@ The exit code is 0 whatever the verdicts — the report is the deliverable;
 not verified/declared) makes the run fail for CI after the report is written.
 
 ```bash
-satz report-compliance cis-gcp-4.0 C0example.satz            # markdown + history
-satz report-compliance cis-gcp-4.0 C0example.satz --format pdf --prowler prowler.json
-satz report-compliance cis-gcp-4.0 C0example.satz --checkov   # + a Checkov column: failed checks on a control's witnesses
-satz triage cis-gcp-4.0 C0example.satz --prowler prowler.json  # the remediation-plan skeleton: A pack covers it / B Satz declares it / C accepted exception / D bring under management / E manual
+satz report-compliance cis-gcp-4.0 C0example.satz --format markdown --out evidence/cis-4.0.md   # + history
+satz report-compliance cis-gcp-4.0 C0example.satz --format pdf --out evidence/cis-4.0.pdf --prowler prowler.json
+satz report-compliance cis-gcp-4.0 C0example.satz --format markdown --out evidence/cis-4.0.md --checkov   # + a Checkov column: failed checks on a control's witnesses
+satz triage cis-gcp-4.0 C0example.satz --prowler prowler.json --format markdown --out triage.md  # the remediation-plan skeleton: A pack covers it / B Satz declares it / C accepted exception / D bring under management / E manual
 ```
 
 Each row carries the catalog's own one-line `paraphrase` of the control under
@@ -1153,8 +1155,8 @@ Presets are read-only building blocks — per-org values belong in the estate's 
 edited locally and prints how to migrate them:
 
 ```bash
-satz check-presets C0example.satz            # compares against upstream (downloads a pristine copy)
-satz check-presets C0example.satz --pristine-dir /path/to/pristine/presets
+satz check-presets C0example.satz --format text --out /dev/stdout   # compares against upstream (downloads a pristine copy)
+satz check-presets C0example.satz --pristine-dir /path/to/pristine/presets --format text --out drift.txt
 ```
 
 Every local preset is compared against its pristine upstream version and classified:

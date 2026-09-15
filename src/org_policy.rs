@@ -1251,7 +1251,7 @@ fn exported_pack_satz(
 pub async fn diff_org_policies(
     config_path: PathBuf,
     org_id_override: Option<String>,
-    report: Option<PathBuf>,
+    out: &Path,
     format: crate::OutFormat,
     recursive: bool,
     runtime_config: ToolConfig,
@@ -1277,23 +1277,7 @@ pub async fn diff_org_policies(
         }
     }
 
-    if let Some(path) = report {
-        if let Some(dir) = path.parent() {
-            crate::fsx::create_dir_all(dir)?;
-        }
-        crate::fsx::write(&path, &rendered)?;
-        println!("Wrote report to {}", path.display());
-        // Always echo the console summary to stdout too.
-        let mut echoed = render_console(&report_obj);
-        if let (Some(t), Some(nodes), Some(summary)) =
-            (&tree, &report_obj.nodes, &report_obj.tree_summary)
-        {
-            echoed.push_str(&crate::policy_tree::render_console_tree(t, nodes, summary));
-        }
-        println!("{}", echoed);
-    } else {
-        println!("{}", rendered);
-    }
+    crate::write_report(out, rendered.as_bytes(), &format!("{} entr(y/ies)", report_obj.entries.len()))?;
     Ok(())
 }
 
@@ -1306,12 +1290,12 @@ pub async fn report_org_policies(
     org_id_override: Option<String>,
     scope: String,
     format: crate::OutFormat,
-    report: Option<PathBuf>,
+    out: &Path,
     recursive: bool,
     runtime_config: ToolConfig,
 ) -> Result<(), BoxErr> {
     let include_paths: Vec<PathBuf> = runtime_config.include_dirs.iter().map(PathBuf::from).collect();
-    let (parent, vars) =
+    let (parent, _vars) =
         resolve_org_and_vars(&config_path, &include_paths, org_id_override.as_deref())?;
 
     // Recursive: one CAI sweep replaces the per-parent policy fetch; constraint
@@ -1332,29 +1316,18 @@ pub async fn report_org_policies(
             }
         }
 
-        let out_path = report.unwrap_or_else(|| {
-            let ext = if format == crate::OutFormat::Json { "json" } else { "md" };
-            PathBuf::from(format!(
-                "{}-orgpolicies-tree-report.{}",
-                output_basename(&parent, &vars),
-                ext
-            ))
-        });
-        if let Some(dir) = out_path.parent() {
-            crate::fsx::create_dir_all(dir)?;
-        }
-
+        let what = format!("{} node(s)", tree.nodes.len());
         if format == crate::OutFormat::Json {
             let json = crate::policy_tree::render_tree_inventory_json(&tree, &scope);
-            crate::fsx::write(&out_path, serde_json::to_string_pretty(&json)?)?;
+            crate::write_report(out, serde_json::to_string_pretty(&json)?.as_bytes(), &what)?;
         } else {
             let md = crate::policy_tree::render_tree_inventory_markdown(&tree, &descriptions);
-            crate::fsx::write(&out_path, &md)?;
             if format == crate::OutFormat::Pdf {
-                try_pandoc_pdf(&out_path);
+                crate::pdf_from_markdown(&md, out, &what)?;
+            } else {
+                crate::write_report(out, md.as_bytes(), &what)?;
             }
         }
-        println!("Wrote report to {}", out_path.display());
         return Ok(());
     }
 
@@ -1383,35 +1356,19 @@ pub async fn report_org_policies(
 
     let md = render_inventory_markdown(&parent, &scope, &current, &descriptions);
 
-    // A report is human-readable output, not a definition, so it lands in the working
-    // directory where the caller is looking — matching an explicitly passed --report.
-    // Previously the default went to yaml_dir while an explicit path did not.
-    let out_path = report.unwrap_or_else(|| {
-        let ext = if format == crate::OutFormat::Json { "json" } else { "md" };
-        PathBuf::from(format!(
-            "{}-orgpolicies-report.{}",
-            output_basename(&parent, &vars),
-            ext
-        ))
-    });
-    if let Some(dir) = out_path.parent() {
-        crate::fsx::create_dir_all(dir)?;
-    }
-
+    let what = format!("{} polic(y/ies)", current.len());
     if format == crate::OutFormat::Json {
         let json = serde_json::json!({
             "parent": parent,
             "scope": scope,
             "policies": current.values().cloned().collect::<Vec<_>>(),
         });
-        crate::fsx::write(&out_path, serde_json::to_string_pretty(&json)?)?;
+        crate::write_report(out, serde_json::to_string_pretty(&json)?.as_bytes(), &what)?;
+    } else if format == crate::OutFormat::Pdf {
+        crate::pdf_from_markdown(&md, out, &what)?;
     } else {
-        crate::fsx::write(&out_path, &md)?;
-        if format == crate::OutFormat::Pdf {
-            try_pandoc_pdf(&out_path);
-        }
+        crate::write_report(out, md.as_bytes(), &what)?;
     }
-    println!("Wrote report to {}", out_path.display());
     Ok(())
 }
 
@@ -1473,22 +1430,6 @@ fn render_inventory_markdown(
     }
 
     s
-}
-
-pub(crate) fn try_pandoc_pdf(md_path: &Path) {
-    let pdf_path = md_path.with_extension("pdf");
-    let status = std::process::Command::new("pandoc")
-        .arg(md_path)
-        .arg("-o")
-        .arg(&pdf_path)
-        .status();
-    match status {
-        Ok(s) if s.success() => println!("Wrote PDF to {}", pdf_path.display()),
-        _ => println!(
-            "Note: PDF generation needs `pandoc` on PATH; kept markdown at {}",
-            md_path.display()
-        ),
-    }
 }
 
 // ---------------------------------------------------------------------------

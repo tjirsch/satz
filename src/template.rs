@@ -526,7 +526,7 @@ pub(crate) fn skeleton(stem: &str) -> String {
     let scaffold = SCAFFOLD;
     let composed = format!(
         r#"// Written for an interview: a question is open until its param is bound below.
-// `satz questions {stem}.satz --unanswered` lists what is still to decide;
+// `satz questions {stem}.satz --unanswered --format text --out /dev/stdout` lists what is still to decide;
 // bootstrap and apply refuse until nothing is.
 
 estate {estate}

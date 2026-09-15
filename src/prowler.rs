@@ -137,7 +137,10 @@ pub(crate) fn plan(
         unmapped_frameworks: unmapped,
         output_directory: dir,
         output_filename: stem,
-        then: format!("satz report-compliance <framework> <estate> --prowler {}", output_path),
+        then: format!(
+            "satz report-compliance <framework> <estate> --prowler {} --format markdown --out <file>",
+            output_path
+        ),
         output_path,
         command: shell_join(&argv),
     }
