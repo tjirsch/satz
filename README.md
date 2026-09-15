@@ -121,7 +121,7 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
-Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out /dev/stdout | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `iac-roles`, whose exit code is the answer, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
+Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out /dev/stdout | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
 
 **Estate**
 
@@ -132,7 +132,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--on-collision error|counter`, `--customer-shortname`; yaml shape: `--kind`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
-| `iac-roles [INPUT]` | `--execute`, `--format` (`text`\|`json`) — the roles the estate's IaC service account needs for the resource types the estate emits, against the roles the estate grants it; exits non-zero when one is missing; `--execute` writes the missing roles into the estate file. Without an estate: the table of resource types and roles. See [IaC service account roles](#iac-service-account-roles-iac-roles) |
+| `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
 
 **HCL**
 
@@ -261,18 +261,23 @@ satz bootstrap <ESTATE> [options]
     - **Init**: Runs `tofu init` to download plugins.
     - **Import**: Automatically imports the created Folder, Project, and Bucket into the local state.
 
-### IaC service account roles (`iac-roles`)
+### What an estate must declare (`update-prerequisites`)
 
 The estate's IaC service account — `svc_iac_account` in `infra_project_name` — holds
 named roles at the organization, not `roles/owner`. A role granted at the organization
 is inherited by every folder and project under it, including those created by hand or
-before the estate, so the same roles reach them. `iac-roles` compares the roles the
-estate grants that account with the roles the resource types it emits need.
+before the estate, so the same roles reach them.
+
+A resource type obliges the estate to declare two things, and `update-prerequisites`
+derives both from the types the estate emits: the ROLES that account needs, against the
+roles the estate grants it, and the APIs that serve those types, against the
+`project_service` list of the infrastructure project. It writes what is missing into
+the estate file, because it has to be there either way.
 
 ```bash
-satz iac-roles <INPUT>             # the report; exits non-zero when a role is missing
-satz iac-roles <INPUT> --execute   # writes the missing roles into the estate file
-satz iac-roles --format json       # the table: per resource type, a permission and the roles that carry it
+satz update-prerequisites <INPUT>                # writes the missing roles and APIs, then re-checks
+satz update-prerequisites <INPUT> --report-only  # lists them instead; exits non-zero while anything is missing
+satz update-prerequisites --format json          # the table: per resource type, its permission, roles and API
 ```
 
 **What the account needs.**
@@ -285,8 +290,9 @@ satz iac-roles --format json       # the table: per resource type, a permission 
   (`roles/resourcemanager.folderAdmin`), `google_project` needs
   `resourcemanager.projects.create` (`roles/resourcemanager.projectCreator`),
   `resourcemanager.projects.update` for a project it did not create
-  (`roles/resourcemanager.projectMover`) and the billing link. `satz iac-roles`
-  without an estate prints the whole table; its source is `src/iac_roles.rs`.
+  (`roles/resourcemanager.projectMover`) and the billing link. `satz
+  update-prerequisites` without an estate prints the whole table; its source is
+  `src/prerequisites.rs`.
 - Organization and project needs are met by a role granted at the organization, and
   `roles/owner` there meets all of them. Billing-account needs are met by a grant on
   the billing account (`google_billing_account_iam_member`).
@@ -303,20 +309,43 @@ The roles granted are the `google_organization_iam_member` and
 `serviceAccount:<svc_iac_account>@<infra_project_name>.iam.gserviceaccount.com`, in the
 estate and in every pack it uses.
 
-**`--execute`** adds each missing role to the account's existing grant list — the list
+**What the estate must enable.** Every provider block carries `user_project_override`
+with `billing_project = infra_project_name`, so Google bills every call the provider
+makes to the infrastructure project and requires the API enabled THERE, whatever the
+resource's own scope is — a budget hangs off the billing account and an org policy off
+the organization, and both still need their API on that project. The APIs are judged
+against the infrastructure project's `project_service` list; a pack that enables an API
+on a project of its own has answered a different question, for its own calls.
+
+**The emitted HCL carries the ordering.** A resource waits for the
+`google_project_service` that enables its API — `depends_on`, added by the compiler for
+the resource's own project and for the infrastructure project — because
+`google_project_service` has no ordering of its own and one apply can otherwise create
+a resource before its API is on. A service is never ordered behind a service, and no
+edge is added into a service block's own dependencies, so the project a service is
+declared on and the folder above it never wait for it.
+
+**The write** adds each missing role to the account's existing grant list — the list
 whose key names the account once `{param}`s are interpolated — or appends a new block
 when the estate has none. It writes the fewest roles: a need only one role meets takes
 that role, and a need with alternatives takes a role already chosen. A new
 billing-account block is itself a `google_billing_account_iam_member` and needs
 `roles/billing.admin`, which also carries the billing link, so that is the role written
-there. The command then compiles the estate again, and restores the file when a role
-is still missing.
+there. Each missing API is spliced into the infrastructure project's `project_service`
+list, or a list is created under its `project_id`; the list is only ever added to,
+because the emitter derives `google_project_service.<project label>_<service>` from it
+and the CIS pack claims 5.0 §2.14 against one of those addresses. The command then
+compiles the estate again and restores the file when anything is still missing — both
+halves are written before either is verified, so the estate is never left half-edited.
+An infrastructure project declared outside the estate file (in a pack, which the next
+`merge-presets` would overwrite) is named and nothing is written.
 
 **Every compile checks the same**, at the [validation level](#schema-validation): `warn`
-(the default) prints the missing roles and the `iac-roles --execute` command that writes
-them, `error` refuses the compile, `none` skips the check. An estate that names no IaC
-service account is not checked. A resource type the table has no row for is named in a
-note.
+(the default) prints the missing roles and APIs with the `update-prerequisites` command
+that writes them, `error` refuses the compile, `none` skips the check. An estate that
+names no IaC service account is not role-checked; one that binds no
+`infra_project_name` is not API-checked. A resource type the table has no row for is
+named in a note.
 
 **`satz whoami <estate>`** tests the same needs live — the permissions themselves, with
 the credential the estate's live commands run as, on the organization, the infra
@@ -1340,7 +1369,7 @@ satz fmt --stdin < in.satz         # one file from stdin to stdout, for an edito
 - Every Satz file satz writes is in the canonical layout: what `init`, `import`,
   `export-organizational-policies` and a skeleton compose whole is formatted as it is
   written. An in-place edit — an answer from `interview`, an `"import-id"` from
-  `adopt --execute`, a role from `iac-roles --execute`, a `use` line from `merge-presets`
+  `adopt --execute`, a role or an API from `update-prerequisites`, a `use` line from `merge-presets`
   — keeps the author's layout, and keeps a formatted file formatted. A pristine pack from
   upstream and the `.local.satz` fork of an author's file are copied byte for byte.
 - In Zed, until the language server serves formatting, an external formatter does:
@@ -1445,7 +1474,7 @@ is refused. `tofu plan` refuses such a resource either way.
 
 The same level governs the check that the IaC service account holds the roles the
 emitted resource types need — see
-[IaC service account roles](#iac-service-account-roles-iac-roles).
+[What an estate must declare](#what-an-estate-must-declare-update-prerequisites).
 
 ## Satz
 
@@ -1841,8 +1870,8 @@ service account in the organization. Membership of the group is the operator's g
 
 **What the IaC service account holds.** Named roles at the organization and
 `roles/billing.admin` on the billing account — the reads and the roles its resource
-types need, as [IaC service account roles](#iac-service-account-roles-iac-roles)
-describes. `satz iac-roles --execute` adds the ones a new pack brings.
+types need, as [What an estate must declare](#what-an-estate-must-declare-update-prerequisites)
+describes. `satz update-prerequisites` adds the roles and the APIs a new pack brings.
 
 ## License
 

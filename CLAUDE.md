@@ -101,9 +101,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **Memberships stay OUT of presets** — presets define groups, humans grant
   membership.
 - **The IaC service account holds named roles, never `roles/owner`** (ADR 0009). A
-  pack that emits a resource type the role table in `src/iac_roles.rs` has no row for
-  adds the row in the same PR, verified with `scripts/check_iac_roles.py`; a new pack
-  gets a line in one of the `tests/iac/` cases. `iac_roles_gate` fails on either
+  pack that emits a resource type the prerequisite table in `src/prerequisites.rs`
+  has no row for — the roles it needs AND the API that serves it — adds the row in the
+  same PR, verified with `scripts/check_prerequisites.py`; a new pack
+  gets a line in one of the `tests/iac/` cases. `prerequisites_gate` fails on either
   omission.
 - **80% of customisation via params, the rest via `.local` forks** — no
   variable explosion. Names that must be globally unique derive from

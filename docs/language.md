@@ -1654,7 +1654,7 @@ these properties was verified at this time".
 | `report-compliance <framework> <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). `pdf` needs `pandoc` on PATH |
 | `questions <estate>.satz --format text\|json\|markdown\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet, `xlsx` the workbook a customer fills in |
 | `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
-| `iac-roles [<estate>.satz] [--execute] [--format text\|json]` | Satz | the roles the IaC service account needs for the types the estate emits, against what it grants; `--execute` writes the missing ones into the estate |
+| `update-prerequisites [<estate>.satz] [--report-only] [--format text\|json]` | Satz | what the estate's resource types oblige it to declare: the roles the IaC service account needs against what it grants, and the APIs the infrastructure project must enable against what it declares. Writes both into the estate; `--report-only` lists them instead |
 | `whoami [<estate>.satz]` | — | the credential satz runs as and, with an estate, the service account it becomes, with the live checks that decide whether the next call works |
 | `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |
 | `remediation-plan <framework> <estate>.satz --prowler f [--checkov] [--out-dir d] [--authored f]` | Evidence | the remediation dossier: items per control and resource from the triage and the report, the XLSX, the authored columns merged from `--authored` |
@@ -1675,7 +1675,7 @@ these properties was verified at this time".
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere. A command
 that produces a report takes `--format`, the rendering, and `--out`, the file it lands in:
 one invocation, one artefact, one named path, and nothing on the console but the line on
-stderr saying where it went — `--out /dev/stdout` pipes. `iac-roles` and `prowler` answer
+stderr saying where it went — `--out /dev/stdout` pipes. `update-prerequisites` and `prowler` answer
 on the console instead: an exit code and a command line to paste are not documents.
 The estate file is a positional argument, relative to `yaml_dir`.
 

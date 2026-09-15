@@ -305,7 +305,7 @@ itself (`satz adopt --execute --import`) is a human's.
 
 Also available: `satz_check_presets` (is the pack library current, or forked?),
 `satz_merge_presets` (bring it up to date: forks a used pack that changed and repoints
-the estate, or adopts upstream in place with `adopt`), `satz_iac_roles` (the roles the
+the estate, or adopts upstream in place with `adopt`), `satz_update_prerequisites` (the roles the
 estate's service account is missing for what it emits, and `execute` writes them),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
 (both halves of the identity — the ADC account and the estate's service account — with
@@ -335,7 +335,8 @@ recoverable: say what you would need and why, rather than retrying the same call
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |
 | a question names no local param | a question must travel with the param it answers |
-| the IaC service account … lacks roles | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run `satz iac-roles <estate> --execute` |
+| the IaC service account … lacks roles | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run `satz update-prerequisites <estate>` |
+| … API(s) this estate's resources need are not enabled on … | a resource type the estate emits is served by an API no `project_service` entry of the infrastructure project enables; add it to that list, or run `satz update-prerequisites <estate>` |
 
 ## Hard rules
 

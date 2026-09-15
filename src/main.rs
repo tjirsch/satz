@@ -197,7 +197,7 @@ static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::At
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "iac-roles"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs"]),
     (
@@ -626,17 +626,21 @@ enum Commands {
         #[arg(long)]
         activate: bool,
     },
-    /// The roles the IaC service account needs for the resource types the estate emits, against the roles the estate grants it; --execute writes the missing grants into the estate file
+    /// What the estate's resource types oblige it to declare and does not — the roles its IaC service account is missing, and the APIs its infrastructure project does not enable — written into the estate file
     ///
-    /// A dry run unless --execute. Exits non-zero while a role is missing.
-    /// Without an estate: the table itself (--format json for scripts/check_iac_roles.py)
-    IacRoles {
+    /// Writing is the point: the declarations have to be there either way. The
+    /// estate must compile and come out complete afterwards, or the file is
+    /// restored. `--report-only` lists the gap instead, for an engagement where
+    /// satz may not grant those roles itself; it exits non-zero while anything is
+    /// missing. Without an estate: the table itself (--format json for
+    /// scripts/check_prerequisites.py)
+    #[command(visible_alias = "prerequisites")]
+    UpdatePrerequisites {
         /// Estate file (.satz, inside yaml_dir if relative); omit to print the table
         input: Option<String>,
-        /// Write the missing roles into the estate file: into the service account's
-        /// grant list, or a new block at the end of the file
+        /// List what is missing and write nothing; exits non-zero while anything is
         #[arg(long)]
-        execute: bool,
+        report_only: bool,
         /// text (default) or json
         #[arg(long, value_enum, default_value_t = OutFormat::Text)]
         format: OutFormat,
@@ -1001,7 +1005,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match cmd_choice {
                 Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
-                | Commands::IacRoles { input: Some(_), .. } => {
+                | Commands::UpdatePrerequisites { input: Some(_), .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
                     // those args. "config.toml not found" is baffling then, so name
@@ -1015,7 +1019,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
                 Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Fmt { .. } | Commands::Lsp
-                | Commands::IacRoles { input: None, .. } => {
+                | Commands::UpdatePrerequisites { input: None, .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }
@@ -1100,6 +1104,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if plan || apply {
                 // Same gate as bootstrap: apply refuses, plan warns.
                 match crate::questions::require_complete(&input_path, &runtime_config, if apply { "apply" } else { "plan" }) {
+                    Ok(()) => {}
+                    Err(e) if !apply => eprintln!("warning: {}", e),
+                    Err(e) => return Err(e.into()),
+                }
+                // And the same for an API nothing enables: the apply would run until
+                // it reached that resource and then fail, leaving half an estate.
+                match prerequisites_report(&input_path, &tool_config, &runtime_config)
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| require_apis_declared(&r, if apply { "apply" } else { "plan" }))
+                {
                     Ok(()) => {}
                     Err(e) if !apply => eprintln!("warning: {}", e),
                     Err(e) => return Err(e.into()),
@@ -1575,8 +1589,28 @@ Thumbs.db
                 Err(e) if dry_run => eprintln!("warning: {}", e),
                 Err(e) => return Err(e.into()),
             }
+            // The same shape for the other prerequisite: what bootstrap enables
+            // before `tofu` runs is what the estate declares, so an estate whose
+            // resources need an API it declares nowhere is refused here rather than
+            // halfway through the first apply.
+            let services = match prerequisites_report(&config_path, &tool_config, &runtime_config) {
+                Ok(r) => {
+                    if let Err(e) = require_apis_declared(&r, "bootstrap") {
+                        if dry_run {
+                            eprintln!("warning: {}", e);
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                    r.infra_services
+                }
+                // an estate that cannot be compiled fails in bootstrap's own pre-flight
+                // with a better message than this one could give
+                Err(_) => Vec::new(),
+            };
             crate::bootstrap::bootstrap(
                 config_path,
+                &services,
                 dry_run,
                 greenfield,
                 no_default_grants,
@@ -2045,8 +2079,8 @@ Thumbs.db
             crate::mcp::serve(root, ceiling, self_gated).await
         }
         Commands::OpenReadme => open_url(DOCS_URL),
-        Commands::IacRoles { input, execute, format } => {
-            let format = format.require_one_of("iac-roles", &[OutFormat::Text, OutFormat::Json])?;
+        Commands::UpdatePrerequisites { input, report_only, format } => {
+            let format = format.require_one_of("update-prerequisites", &[OutFormat::Text, OutFormat::Json])?;
             match input {
                 None => {
                     match format {
@@ -2057,7 +2091,7 @@ Thumbs.db
                 }
                 Some(estate) => {
                     let path = estate_path(PathBuf::from(&estate), &runtime_config);
-                    run_iac_roles(&path, execute, format, &tool_config, &runtime_config)
+                    run_update_prerequisites(&path, report_only, format, &tool_config, &runtime_config)
                 }
             }
         }
@@ -2212,7 +2246,7 @@ fn pipeline_b_generate(
     };
     let fe = satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader)?;
     let tail = compile_tail(&fe, &resolver, &registry, tool_config, &runtime_config.validation_level, input_path, &src);
-    // The CLI's two silencers: `--no-action-warnings`, and the `iac-roles` command,
+    // The CLI's two silencers: `--no-action-warnings`, and `update-prerequisites`,
     // which reports the same finding itself and would otherwise print it twice.
     let findings: Vec<crate::findings::Finding> = tail
         .findings
@@ -2263,7 +2297,7 @@ fn pipeline_b_generate(
     })
 }
 
-/// Set by `iac-roles`, which reports the same finding itself and would otherwise
+/// Set by `update-prerequisites`, which reports the same finding itself and would otherwise
 /// print it twice.
 static PREREQUISITES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -2556,7 +2590,7 @@ fn prerequisite_findings(
                 Kind::Prerequisites,
                 format!(
                     "the IaC service account {} lacks roles this estate's resource types need — \
-                     `satz iac-roles {} --execute` writes them into the estate:\n  {}",
+                     `satz update-prerequisites {}` writes them into the estate:\n  {}",
                     sa,
                     file,
                     crate::prerequisites::describe(&crate::prerequisites::plan(&missing, &granted)).join("\n  ")
@@ -2707,11 +2741,41 @@ pub(crate) fn iac_probe(
     })
 }
 
-/// What `iac-roles <estate>` reports.
+/// An estate may not be applied while a resource type it emits is served by an API
+/// nothing enables: the apply runs until it reaches that resource and fails there,
+/// leaving half an estate. The same two-speed rule as the unanswered-question gate —
+/// `apply` and `bootstrap` refuse, `plan` and `--dry-run` warn.
+fn require_apis_declared(report: &PrerequisitesReport, action: &str) -> Result<(), String> {
+    if report.missing_apis.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} refused: {} API(s) this estate's resources need are not enabled on {} — {}. \
+         `satz update-prerequisites {}` writes them into the estate.",
+        action,
+        report.missing_apis.len(),
+        report.infra_project,
+        report.missing_apis.iter().map(|a| a.api.as_str()).collect::<Vec<_>>().join(", "),
+        Path::new(&report.estate).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+    ))
+}
+
+/// What `update-prerequisites <estate>` reports: both halves of what the estate's
+/// own resource types oblige it to declare.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
-pub(crate) struct IacRolesReport {
+pub(crate) struct PrerequisitesReport {
     pub estate: String,
     pub service_account: String,
+    /// the project every provider call is billed to, so the project the APIs are
+    /// judged on; empty when the estate binds none
+    pub infra_project: String,
+    /// every API the emitted types need, each marked declared or not
+    pub apis: Vec<crate::prerequisites::ApiNeed>,
+    /// the APIs the infra project does not enable — what the write adds
+    pub missing_apis: Vec<crate::prerequisites::ApiNeed>,
+    /// every service the infra project declares, whatever needs it: what
+    /// `bootstrap` enables before `tofu` runs
+    pub infra_services: Vec<String>,
     pub granted: crate::prerequisites::Granted,
     pub needs: Vec<crate::prerequisites::Need>,
     pub missing: Vec<crate::prerequisites::Need>,
@@ -2729,11 +2793,11 @@ fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<Hash
         .collect())
 }
 
-pub(crate) fn iac_roles_report(
+pub(crate) fn prerequisites_report(
     path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
-) -> Result<IacRolesReport, Box<dyn std::error::Error>> {
+) -> Result<PrerequisitesReport, Box<dyn std::error::Error>> {
     let out = pipeline_b_generate(path, tool_config, runtime_config)?;
     let params = estate_param_strings(path, runtime_config)?;
     let sa = crate::prerequisites::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
@@ -2745,9 +2809,20 @@ pub(crate) fn iac_roles_report(
     let (needs, unknown) = crate::prerequisites::needs(&out.manifest);
     let granted = crate::prerequisites::granted(&out.manifest, &sa);
     let missing = crate::prerequisites::missing(&needs, &granted);
-    Ok(IacRolesReport {
+    let infra = params.get("infra_project_name").cloned().unwrap_or_default();
+    let apis =
+        if infra.is_empty() { Vec::new() } else { crate::prerequisites::apis(&out.manifest, &infra) };
+    Ok(PrerequisitesReport {
         estate: path.display().to_string(),
         service_account: sa,
+        missing_apis: apis.iter().filter(|a| !a.declared).cloned().collect(),
+        apis,
+        infra_services: if infra.is_empty() {
+            Vec::new()
+        } else {
+            crate::prerequisites::declared_apis(&out.manifest, &infra)
+        },
+        infra_project: infra,
         unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
         write: crate::prerequisites::plan(&missing, &granted),
         granted,
@@ -2756,7 +2831,7 @@ pub(crate) fn iac_roles_report(
     })
 }
 
-fn render_iac_roles(r: &IacRolesReport) -> String {
+fn render_prerequisites(r: &PrerequisitesReport) -> String {
     let mut out = format!("IaC service account: {}\n", r.service_account);
     out.push_str(&format!(
         "the estate grants it {} role(s) at the organization and {} on the billing account; satz's reads and its resource types need {} permission(s)\n",
@@ -2786,79 +2861,112 @@ fn render_iac_roles(r: &IacRolesReport) -> String {
     }
     if !r.unknown_types.is_empty() {
         out.push_str(&format!(
-            "no role known for: {} — grant the one it needs in the estate\n",
+            "no prerequisite known for: {} — grant the role it needs, and enable its API, in the estate\n",
             r.unknown_types.join(", ")
         ));
+    }
+    // the other half: the APIs, on the project every call is billed to
+    if r.infra_project.is_empty() {
+        out.push_str("APIs: not checked — the estate binds no infra_project_name\n");
+    } else {
+        out.push_str(&format!(
+            "infrastructure project: {} — {} of {} API(s) its resource types need are enabled there\n",
+            r.infra_project,
+            r.apis.len() - r.missing_apis.len(),
+            r.apis.len()
+        ));
+        if r.missing_apis.is_empty() {
+            out.push_str("missing APIs: none\n");
+        } else {
+            out.push_str("missing APIs:\n");
+            for a in &r.missing_apis {
+                out.push_str(&format!("  {} — for {}\n", a.api, a.reason.join(", ")));
+            }
+        }
     }
     out
 }
 
-/// `iac-roles <estate>`: the report, and with `--execute` the missing roles
-/// written into the estate file. The edit proves itself — the estate compiles and
-/// nothing is missing afterwards — or the file is restored.
-fn run_iac_roles(
+/// `update-prerequisites <estate>`: both halves reported, and — unless
+/// `--report-only` — written into the estate file. The edit proves itself: the
+/// estate compiles and nothing is missing afterwards, or the file is restored.
+fn run_update_prerequisites(
     path: &Path,
-    execute: bool,
+    report_only: bool,
     format: OutFormat,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     PREREQUISITES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
-    let report = iac_roles_report(path, tool_config, runtime_config)?;
-    let emit = |r: &IacRolesReport| -> Result<(), Box<dyn std::error::Error>> {
+    let report = prerequisites_report(path, tool_config, runtime_config)?;
+    let emit = |r: &PrerequisitesReport| -> Result<(), Box<dyn std::error::Error>> {
         match format {
             OutFormat::Json => println!("{}", serde_json::to_string_pretty(r)?),
-            _ => print!("{}", render_iac_roles(r)),
+            _ => print!("{}", render_prerequisites(r)),
         }
         Ok(())
     };
-    if !execute || report.missing.is_empty() {
-        emit(&report)?;
-        if !report.missing.is_empty() {
-            let (org, bill) = crate::prerequisites::to_write(&report.write);
-            return Err(format!(
-                "{} role(s) missing — `satz iac-roles {} --execute` writes them into the estate",
-                org.len() + bill.len(),
-                path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
-            )
-            .into());
-        }
-        return Ok(());
+    // counted as DECLARATIONS the estate is missing — the roles the write would add
+    // and the APIs beside them — not as permissions, of which one role can carry many
+    let (org, bill) = crate::prerequisites::to_write(&report.write);
+    let gap = org.len() + bill.len() + report.missing_apis.len();
+    if gap == 0 {
+        return emit(&report);
     }
-    let (written, after) = iac_roles_write(path, &report, tool_config, runtime_config)?;
+    if report_only {
+        emit(&report)?;
+        // the escape hatch: an engagement where satz may not grant those roles
+        // itself needs the list, not an edit
+        return Err(format!(
+            "{} prerequisite(s) missing — `satz update-prerequisites {}` writes them into the estate",
+            gap,
+            path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+        )
+        .into());
+    }
+    let (written, after) = prerequisites_write(path, &report, tool_config, runtime_config)?;
     for w in &written {
         println!("wrote {} → {}", w, path.display());
     }
     emit(&after)
 }
 
-/// Write the missing roles into the estate and re-check: the grants written, and
-/// the report the edited estate yields. A gap that survives the write, or an
-/// estate that no longer compiles, restores the file and is an error — the
-/// estate is never left half-edited. Prints nothing, so the MCP tool shares it.
-pub(crate) fn iac_roles_write(
+/// Write the missing roles AND the missing APIs into the estate, then re-check:
+/// what was written, and the report the edited estate yields. A gap that survives
+/// the write, or an estate that no longer compiles, restores the file and is an
+/// error — the estate is never left half-edited, which is why both halves are
+/// written before anything is verified and one restore covers both. Prints
+/// nothing, so the MCP tool shares it.
+pub(crate) fn prerequisites_write(
     path: &Path,
-    report: &IacRolesReport,
+    report: &PrerequisitesReport,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
-) -> Result<(Vec<String>, IacRolesReport), Box<dyn std::error::Error>> {
+) -> Result<(Vec<String>, PrerequisitesReport), Box<dyn std::error::Error>> {
     let (org, bill) = crate::prerequisites::to_write(&report.write);
     let params = estate_param_strings(path, runtime_config)?;
     let before = fsx::read_to_string(path)?;
-    let written = crate::prerequisites::write_grants(path, &params, &report.service_account, &org, &bill)?;
     let restore = |why: String| -> Box<dyn std::error::Error> {
         match crate::fsx::write_verbatim(path, &before) {
             Ok(()) => format!("{} — {} restored", why, path.display()).into(),
             Err(e) => format!("{} — and restoring {} failed: {}", why, path.display(), e).into(),
         }
     };
-    match iac_roles_report(path, tool_config, runtime_config) {
-        Ok(after) if after.missing.is_empty() => Ok((written, after)),
+    let mut written = crate::prerequisites::write_grants(path, &params, &report.service_account, &org, &bill)?;
+    let apis: std::collections::BTreeSet<String> = report.missing_apis.iter().map(|a| a.api.clone()).collect();
+    match crate::prerequisites::write_apis(path, &params, &apis) {
+        Ok(lines) => written.extend(lines),
+        // the roles may already be on disk, so a refusal here restores the file
+        // rather than leaving the estate half-written
+        Err(e) => return Err(restore(e)),
+    }
+    match prerequisites_report(path, tool_config, runtime_config) {
+        Ok(after) if after.missing.is_empty() && after.missing_apis.is_empty() => Ok((written, after)),
         Ok(after) => Err(restore(format!(
-            "the grants were written and {} permission(s) are still missing",
-            after.missing.len()
+            "the declarations were written and {} prerequisite(s) are still missing",
+            after.missing.len() + after.missing_apis.len()
         ))),
-        Err(e) => Err(restore(format!("the edited estate does not compile ({})", e))),
+        Err(e) => Err(restore(format!("the declarations were written and the estate no longer compiles: {}", e))),
     }
 }
 
@@ -5197,7 +5305,7 @@ fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Er
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration", "run-actions", "iac-roles", "fmt", "lsp",
+        "scan-plan", "generate-migration", "run-actions", "update-prerequisites", "fmt", "lsp",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
@@ -5437,7 +5545,7 @@ mod command_groups {
         ("map-types", Identity::Human("Discovery documents are public — no credential at all")),
         ("mcp", Identity::PerTool),
         ("transpile", Identity::NoGoogleApi),
-        ("iac-roles", Identity::NoGoogleApi),
+        ("update-prerequisites", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("plan", Identity::NoGoogleApi),
         ("apply", Identity::NoGoogleApi),

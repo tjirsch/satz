@@ -133,7 +133,7 @@ google_folder {
   }
 }
 
-// The IaC service account's roles for this estate's resource types (`satz iac-roles`).
+// The IaC service account's roles for this estate's resource types (`satz update-prerequisites`).
 google_billing_account_iam_member {
   billing_account_id = billing_account_infra
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [

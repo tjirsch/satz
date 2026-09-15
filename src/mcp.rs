@@ -173,7 +173,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("check-presets", Parity::Tools(&["satz_check_presets"])),
     ("get-presets", Parity::Tools(&["satz_get_presets"])),
     ("adopt", Parity::Tools(&["satz_adopt"])),
-    ("iac-roles", Parity::Tools(&["satz_iac_roles"])),
+    ("update-prerequisites", Parity::Tools(&["satz_update_prerequisites"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
     ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
     // --- not served ---------------------------------------------------------
@@ -506,22 +506,23 @@ pub(crate) struct MergePresetsArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub(crate) struct IacRolesArgs {
+pub(crate) struct PrerequisitesArgs {
     /// The estate to check; the open estate when omitted
     #[serde(default)]
     pub estate: Option<String>,
-    /// Write the missing roles into the estate file and re-check
+    /// List what is missing and write nothing. The default WRITES the missing
+    /// roles and APIs into the estate file and re-checks it.
     #[serde(default)]
-    pub execute: bool,
+    pub report_only: bool,
 }
 
-/// The roles an estate's IaC service account needs against the ones it grants,
-/// and — with `execute` — the grants written into the estate.
+/// What the estate's resource types oblige it to declare — the IaC service
+/// account's roles and the infra project's APIs — and what was written into it.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
-pub(crate) struct IacRolesResult {
-    pub report: crate::IacRolesReport,
-    /// the grant lines `execute` wrote; empty without it, and empty when
-    /// nothing was missing
+pub(crate) struct PrerequisitesResult {
+    pub report: crate::PrerequisitesReport,
+    /// the lines written into the estate; empty under `report_only`, and empty
+    /// when nothing was missing
     pub written: Vec<String>,
 }
 
@@ -1537,24 +1538,26 @@ impl SatzMcp {
     }
 
     #[tool(
-        name = "satz_iac_roles",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<IacRolesResult>(),
-        description = "The roles the estate's IaC service account needs for the resource types the estate \
-                       emits, against the roles the estate grants it: `missing` is the gap, `write` the fewest \
-                       roles that close it, `unknown_types` the emitted types the role table has no row for. \
-                       Offline. With `execute` the missing roles are written into the estate file and the \
-                       estate is re-checked — a gap that survives the write restores the file. Reading needs \
-                       'read', `execute` needs 'write'.",
+        name = "satz_update_prerequisites",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<PrerequisitesResult>(),
+        description = "What the estate's own resource types oblige it to declare and it does not: the roles \
+                       its IaC service account is missing (`missing`, with `write` the fewest roles that close \
+                       it) and the APIs its infrastructure project does not enable (`missing_apis`, each with \
+                       the types that need it). `unknown_types` are emitted types the table has no row for. \
+                       Offline. It WRITES both into the estate file by default and re-checks — a gap that \
+                       survives the write restores the file — so the default needs 'write'; pass `report_only` \
+                       to list the gap instead, which needs only 'read'.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
-    async fn iac_roles(
+    async fn update_prerequisites(
         &self,
-        Parameters(args): Parameters<IacRolesArgs>,
-    ) -> Result<Result<Json<IacRolesResult>, CallToolResult>, McpError> {
+        Parameters(args): Parameters<PrerequisitesArgs>,
+    ) -> Result<Result<Json<PrerequisitesResult>, CallToolResult>, McpError> {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        if args.execute {
+        // the default writes, so the ceiling is checked for the default
+        if !args.report_only {
             if let Err(r) = self.permits(Group::Write) {
                 return Ok(Err(r));
             }
@@ -1563,16 +1566,16 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let report = match crate::iac_roles_report(&estate, &open.tool, &open.runtime) {
+        let report = match crate::prerequisites_report(&estate, &open.tool, &open.runtime) {
             Ok(r) => r,
-            Err(e) => return Ok(Err(refused(format!("iac-roles: {}", e)))),
+            Err(e) => return Ok(Err(refused(format!("update-prerequisites: {}", e)))),
         };
-        if !args.execute || report.missing.is_empty() {
-            return Ok(Ok(Json(IacRolesResult { report, written: Vec::new() })));
+        if args.report_only || (report.missing.is_empty() && report.missing_apis.is_empty()) {
+            return Ok(Ok(Json(PrerequisitesResult { report, written: Vec::new() })));
         }
-        match crate::iac_roles_write(&estate, &report, &open.tool, &open.runtime) {
-            Ok((written, after)) => Ok(Ok(Json(IacRolesResult { report: after, written }))),
-            Err(e) => Ok(Err(refused(format!("iac-roles --execute: {}", e)))),
+        match crate::prerequisites_write(&estate, &report, &open.tool, &open.runtime) {
+            Ok((written, after)) => Ok(Ok(Json(PrerequisitesResult { report: after, written }))),
+            Err(e) => Ok(Err(refused(format!("update-prerequisites: {}", e)))),
         }
     }
 
@@ -2114,7 +2117,7 @@ mod parity_tests {
     fn the_instructions_name_the_tools_and_what_is_missing() {
         let served = served_by();
         assert!(served.contains("transpile -> satz_transpile, satz_transpile_check"), "{served}");
-        assert!(served.contains("iac-roles -> satz_iac_roles"), "{served}");
+        assert!(served.contains("update-prerequisites -> satz_update_prerequisites"), "{served}");
         let off = not_served();
         assert!(off.contains("apply (it hands stdio to the tool"), "{off}");
         assert!(off.contains("bootstrap (day 0"), "{off}");

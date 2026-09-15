@@ -269,7 +269,7 @@ The first apply creates the identity layer: the Cloud Identity groups, their IAM
 (`Token Creator` among them) and the rest of the management project.
 
 A pack added later can emit a resource type the IaC service account holds no role for.
-The compile names the role, and `satz iac-roles C0example.satz --execute` writes it into
+The compile names the role, and `satz update-prerequisites C0example.satz` writes it into
 the estate's grant list. The apply then creates the grant and the resources that need it
 in one pass; a resource that meets a permission error on the role just granted is
 created by running the apply again once the grant has taken effect, which takes up to a
@@ -445,7 +445,7 @@ from then on the infrastructure is changed through the estate.
 
 The IaC service account reaches the adopted folders and projects, hand-made ones
 included, through the roles it holds at the organization: every folder and project
-inherits them. `satz iac-roles <estate>` names each role the adopted resource types need
+inherits them. `satz update-prerequisites <estate>` names each role the adopted resource types need
 that the estate does not grant it yet, and `--execute` writes them.
 
 ---
