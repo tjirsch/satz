@@ -36,6 +36,8 @@ pub(crate) enum Kind {
     Providers,
     Action,
     HclPassthrough,
+    /// `review-pack`: a rule the preset library holds, judged on one pack
+    Pack,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -59,6 +61,18 @@ impl Finding {
     pub(crate) fn new(severity: Severity, kind: Kind, message: impl Into<String>) -> Self {
         Finding { severity, kind, group: None, file: None, line: None, message: message.into() }
     }
+    /// The file this finding is about, with no line — the whole file is the subject.
+    pub(crate) fn at_file(mut self, file: impl Into<String>) -> Self {
+        self.file = Some(file.into());
+        self
+    }
+
+    /// The line, once the file is set.
+    pub(crate) fn at_line(mut self, line: u32) -> Self {
+        self.line = Some(line);
+        self
+    }
+
     pub(crate) fn located(mut self, file: impl Into<String>, line: u32) -> Self {
         self.file = Some(file.into());
         self.line = Some(line);
@@ -123,6 +137,30 @@ pub(crate) fn refusal_findings(e: &(dyn std::error::Error + 'static)) -> Vec<Fin
 /// The CLI's rendering: warnings and notes to stderr as they always were, each group's
 /// header once; the errors joined into one message under their headers — `Err` when
 /// there is any, so `?` refuses the compile.
+/// The same verdict `render` reaches, with nothing printed: what a command that
+/// reports the findings in its own output needs, so an internal compile does not
+/// speak over it.
+pub(crate) fn refusal(findings: &[Finding]) -> Result<(), String> {
+    let errors: Vec<&Finding> = findings.iter().filter(|f| f.severity == Severity::Error).collect();
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::new();
+    let mut group: Option<&str> = None;
+    for f in errors {
+        if let Some(g) = f.group.as_deref() {
+            if group != Some(g) {
+                msg.push_str(g);
+                msg.push('\n');
+                group = Some(g);
+            }
+        }
+        msg.push_str(&f.message);
+        msg.push('\n');
+    }
+    Err(msg.trim_end().to_string())
+}
+
 pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
     let mut seen: Vec<&str> = Vec::new();
     for f in findings.iter().filter(|f| f.severity != Severity::Error) {

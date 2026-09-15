@@ -153,6 +153,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking |
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
+| `review-pack <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-pack) |
 | `doc-packs` | `--out-dir <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file, plus a grouped index; `--check` fails when the pages are behind, a claim names a control its catalog lacks, a pack header says nothing the index can print, or a pack version has no changelog row |
 
 **Policies**
@@ -260,6 +261,46 @@ satz bootstrap <ESTATE> [options]
     - **Transpile**: Compiles the estate to HCL.
     - **Init**: Runs `tofu init` to download plugins.
     - **Import**: Automatically imports the created Folder, Project, and Bucket into the local state.
+
+### Reviewing a pack (`review-pack`)
+
+A pack is the unit everyone extends satz with, and the bar it has to clear is real: it
+is what the library's own gates enforce on every pack in `presets/`. Those gates need a
+satz checkout and a Rust toolchain, so a pack written anywhere else could not be checked
+at all — its author found out by opening a pull request, or never. `review-pack` is that
+bar as a command.
+
+```bash
+satz review-pack my-pack.satz --format text --out /dev/stdout
+satz review-pack my-pack.satz --format json --out review.json      # the findings as data
+satz review-pack my-pack.satz --against C0example.satz --format text --out /dev/stdout
+```
+
+It checks, in the order a pack fails them: it **parses**; it is **formatted** (`satz fmt
+<file>` is the whole fix); its **header** opens with a sentence saying what it is, which
+is what the pack index prints; it declares a **version** in-file and that version has a
+row in the library's `## Changelog`; it declares **no membership** — presets define
+groups, humans grant membership; it runs **no legacy org-policy constraint beside its
+managed replacement** (`presets/managed-constraint-equivalents.txt`); every **resource
+type it emits has a row** in satz's prerequisite table, so the roles and the API it needs
+are known; and it **compiles**. It also says what adopting the pack costs an estate — the
+roles and the APIs `satz update-prerequisites` would write — and names the questions a
+customer must answer because no default is possible.
+
+A pack is a fragment, so satz folds it into an estate to see what it emits: a synthesised
+one, with the documented example values for the estate's own params and the pack's own
+declared defaults for its questions, which checks the pack the way a customer first meets
+it. `--against <estate>` judges it inside a real estate instead.
+
+The findings are the same `Finding` the compile, `satz lsp` and `satz_transpile_check`
+produce — severity, kind, file, line, message — so an editor or an app that already reads
+those needs nothing new to show them. `satz_review_pack` serves the same review over MCP,
+read-only. The command exits non-zero when the pack does not clear the bar.
+
+Not checked here: the **privacy shapes** — organisation and project ids, e-mail addresses,
+domains. A pack written against its author's own organisation is full of them, and they
+are what must become params before it can leave that machine;
+`scripts/check-names.sh` in a satz checkout is what rejects them today.
 
 ### What an estate must declare (`update-prerequisites`)
 

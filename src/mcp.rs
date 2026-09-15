@@ -174,6 +174,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("get-presets", Parity::Tools(&["satz_get_presets"])),
     ("adopt", Parity::Tools(&["satz_adopt"])),
     ("update-prerequisites", Parity::Tools(&["satz_update_prerequisites"])),
+    ("review-pack", Parity::Tools(&["satz_review_pack"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
     ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
     // --- not served ---------------------------------------------------------
@@ -503,6 +504,15 @@ pub(crate) struct MergePresetsArgs {
     /// `all` for every pack that is merely behind
     #[serde(default)]
     pub adopt: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct ReviewPackArgs {
+    /// The pack file to review, inside the server's root
+    pub pack: String,
+    /// Judge it inside this estate instead of a synthesised one
+    #[serde(default)]
+    pub against: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1189,6 +1199,46 @@ impl SatzMcp {
                 &estate,
                 e.as_ref(),
             ))),
+        }
+    }
+
+    #[tool(
+        name = "satz_review_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::review_pack::Review>(),
+        description = "Judge one pack against the library's own bar, the way a pull request would: it \
+                       parses, it is formatted, its header says what it is, its version has a changelog \
+                       row, it declares no membership (presets define groups, humans grant membership), it \
+                       runs no legacy org-policy constraint beside its managed replacement, every resource \
+                       type it emits has a row in satz's prerequisite table, and it compiles. A pack is a \
+                       fragment, so it is folded into an estate to see what it emits — a synthesised one \
+                       unless `against` names a real estate. Returns the same findings the compile and the \
+                       language server produce, each anchored to file and line. Offline, reads only.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn review_pack(
+        &self,
+        Parameters(args): Parameters<ReviewPackArgs>,
+    ) -> Result<Result<Json<crate::review_pack::Review>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        // a pack is a file, not an estate, so the server's root is what bounds it
+        let pack = match self.confine(self.ctx.root.join(&args.pack)) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let against = match args.against.as_deref().map(|a| self.confine(self.ctx.root.join(a))) {
+            Some(Ok(p)) => Some(p),
+            Some(Err(r)) => return Ok(Err(r)),
+            None => None,
+        };
+        let (open, _) = match self.target(None) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::review_pack::review(&pack, against.as_deref(), &open.tool, &open.runtime) {
+            Ok(review) => Ok(Ok(Json(review))),
+            Err(e) => Ok(Err(refused(format!("review-pack: {}", e)))),
         }
     }
 

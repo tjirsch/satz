@@ -19,6 +19,7 @@ mod preflight;
 mod day_zero;
 mod init_params;
 mod prerequisites;
+mod review_pack;
 mod gcp;
 mod org_policy;
 mod cloud_identity;
@@ -199,7 +200,7 @@ static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::At
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
-    ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs"]),
+    ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "review-pack"]),
     (
         "Policies",
         &[
@@ -734,6 +735,25 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Judge one pack against the library's own bar: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles
+    ///
+    /// A pack is a fragment, so satz folds it into an estate to see what it emits:
+    /// a synthesised one — the documented example params, the pack's own declared
+    /// defaults — unless `--against` names a real estate. Exits non-zero when the
+    /// pack does not clear the bar.
+    ReviewPack {
+        /// The pack file to review (.satz)
+        pack: PathBuf,
+        /// Judge it inside this estate instead of a synthesised one
+        #[arg(long, value_name = "ESTATE")]
+        against: Option<PathBuf>,
+        /// Output format: text or json — the findings an editor already reads
+        #[arg(long, value_enum)]
+        format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
     /// Run `<tf_tool> plan` in the estate's hcl dir (extra args are passed through)
     Plan {
         /// Arguments passed straight to the tool, e.g. `-target=…`, `-out=plan.tfplan`
@@ -1005,6 +1025,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match cmd_choice {
                 Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
+                | Commands::ReviewPack { .. }
                 | Commands::UpdatePrerequisites { input: Some(_), .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1967,6 +1988,24 @@ Thumbs.db
             }
             Ok(())
         }
+        Commands::ReviewPack { pack, against, format, out } => {
+            let format = format.require_one_of("review-pack", &[OutFormat::Text, OutFormat::Json])?;
+            let review = crate::review_pack::review(&pack, against.as_deref(), &tool_config, &runtime_config)?;
+            let text = match format {
+                OutFormat::Json => serde_json::to_string_pretty(&review)?,
+                _ => crate::review_pack::render(&review),
+            };
+            let what = format!(
+                "{} finding(s) on {}",
+                review.findings.len(),
+                pack.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+            );
+            write_report(&out, text.as_bytes(), &what)?;
+            if !review.passed() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
         Commands::HclInit { args } => run_tf(&runtime_config, "init", &args),
@@ -2254,7 +2293,12 @@ fn pipeline_b_generate(
         .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
         .filter(|f| !(f.kind == crate::findings::Kind::Prerequisites && PREREQUISITES_QUIET.load(std::sync::atomic::Ordering::Relaxed)))
         .collect();
-    if let Err(message) = crate::findings::render(&findings) {
+    let verdict = if FINDINGS_QUIET.load(std::sync::atomic::Ordering::Relaxed) {
+        crate::findings::refusal(&findings)
+    } else {
+        crate::findings::render(&findings)
+    };
+    if let Err(message) = verdict {
         return Err(Box::new(crate::findings::CompileRefusal { message, findings }));
     }
     let out = tail.out.expect("no error finding, so the emitter ran");
@@ -2296,6 +2340,10 @@ fn pipeline_b_generate(
         findings,
     })
 }
+
+/// Set by `review-pack`: its compile is internal — the findings are the review's
+/// own output, and printing them beside it would say everything twice.
+static FINDINGS_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Set by `update-prerequisites`, which reports the same finding itself and would otherwise
 /// print it twice.
@@ -5305,7 +5353,7 @@ fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Er
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration", "run-actions", "update-prerequisites", "fmt", "lsp",
+        "scan-plan", "generate-migration", "run-actions", "update-prerequisites", "review-pack", "fmt", "lsp",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
@@ -5546,6 +5594,7 @@ mod command_groups {
         ("mcp", Identity::PerTool),
         ("transpile", Identity::NoGoogleApi),
         ("update-prerequisites", Identity::NoGoogleApi),
+        ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("plan", Identity::NoGoogleApi),
         ("apply", Identity::NoGoogleApi),

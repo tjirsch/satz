@@ -306,7 +306,10 @@ itself (`satz adopt --execute --import`) is a human's.
 Also available: `satz_check_presets` (is the pack library current, or forked?),
 `satz_merge_presets` (bring it up to date: forks a used pack that changed and repoints
 the estate, or adopts upstream in place with `adopt`), `satz_update_prerequisites` (the roles the
-estate's service account is missing for what it emits, and `execute` writes them),
+estate's service account is missing for what it emits and the APIs its infrastructure
+project does not enable — it writes both unless `report_only`),
+`satz_review_pack` (judge a pack somebody wrote against the library's bar, findings
+anchored to file and line — offline and read-only),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
 (both halves of the identity — the ADC account and the estate's service account — with
 live checks that the one may become the other and that the quota project is reachable;
