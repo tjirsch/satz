@@ -155,16 +155,68 @@ without a prompt.
 
 ## Claude Code
 
+`claude mcp add` registers the server. satz takes flags of its own, so they go after
+`--`, which is where Claude Code's arguments end and the server's begin:
+
+```bash
+claude mcp add satz -- satz mcp --root /path/to/estates --allow read
+```
+
+### Where it is written
+
+`--scope` (`-s`) decides the file, and the file decides who sees the server:
+
+| scope | the server is available | written to |
+|---|---|---|
+| `local` (the default) | to you, in the project you added it from | your own file, under that project's path |
+| `user` | to you, in every project | your own file, at the top level |
+| `project` | to everyone who clones the repository | `.mcp.json` at the repository root, committed with it |
+
+Your own file is `.claude.json` in your home directory:
+
+| platform | path |
+|---|---|
+| macOS | `~/.claude.json` |
+| Linux | `~/.claude.json` |
+| Windows | `%USERPROFILE%\.claude.json` |
+
+`CLAUDE_CONFIG_DIR` moves it: set it, and the file is read from inside that directory.
+A `project` server is the same JSON in `.mcp.json` at the repository root on all three
+platforms, which is the scope that puts an estate's server in the estate's own repository.
+
+### Written by hand
+
 ```json
 {
   "mcpServers": {
     "satz": {
+      "type": "stdio",
       "command": "satz",
       "args": ["mcp", "--root", "/path/to/estates", "--allow", "read"]
     }
   }
 }
 ```
+
+`command` is looked up on `PATH`, so the installer's `~/.local/bin/satz` resolves by
+name; an absolute path resolves anywhere. The release archives are macOS and Linux, so on
+Windows `command` names a binary built from source. A Windows path is JSON, so its
+separators are escaped — `"C:\\Users\\you\\estates"` — or written as `/`.
+
+**Give `--root` an absolute path.** The client starts the server, so the working
+directory is the client's rather than the one you typed in, and a relative root resolves
+against it. The root is one directory holding many estates: one server serves a fleet,
+and the client opens an estate per call.
+
+### Check it
+
+`claude mcp list` health-checks every server and prints the command behind each;
+`/mcp` in a session shows one server's tools and reconnects it. A server from `.mcp.json`
+is listed as pending until it is approved, so cloning a repository does not start a
+process without consent.
+
+Run the same command in a terminal to see what the client cannot show you: it holds the
+line waiting for a client, and says so when stdin closes.
 
 ## The MCP SDK
 
