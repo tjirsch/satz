@@ -19,6 +19,11 @@
     ]
     allowed_audiences = [
     allowed_audiences = [
+    google_project_service.mdc_mgmt_iam_googleapis_com
+    google_project_service.mdc_mgmt_iam_googleapis_com
+    google_project_service.mdc_mgmt_iam_googleapis_com
+    google_project_service.mdc_mgmt_iam_googleapis_com
+    google_project_service.mdc_mgmt_iam_googleapis_com
     google_service_account.mdc_cspm
     google_service_account.mdc_cspm
     google_service_account.mdc_onboarding
@@ -29,11 +34,21 @@
   ]
   ]
   ]
+  ]
+  ]
+  ]
+  ]
+  ]
   account_id = "mdc-onboarding-sa"
   account_id = "microsoft-defender-cspm"
   attribute_mapping = {
   attribute_mapping = {
   billing_account = "01AA-BB-CC"
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
   depends_on = [
   depends_on = [
   depends_on = [

@@ -17,6 +17,9 @@ pub(crate) struct EmitCtx<'a> {
     /// The conventional billing fallback (`billing-account-infra`) as a YAML
     /// value, exactly like the walk's `variables` lookup.
     pub billing_fallback: Option<serde_yaml::Value>,
+    /// The project every provider call is billed to, so the project an API has to
+    /// be enabled on whatever the resource's own scope is. Empty when unbound.
+    pub infra_project: String,
     pub registry: Option<&'a crate::schema::ResourceRegistry>,
 }
 
@@ -28,6 +31,7 @@ impl EmitCtx<'_> {
             customer_domain: get("customer_domain"),
             org_id: get("customer_organization_id"),
             billing_fallback: env.get("billing_account_infra").cloned(),
+            infra_project: get("infra_project_name"),
             registry: None,
         }
     }
@@ -188,16 +192,10 @@ fn block_address(b: &hcl::Block) -> Option<String> {
 /// behind. Each one gets a `depends_on` on the account.
 fn order_after_service_accounts(blocks: &mut [hcl::Block]) {
     let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
-    let project_of = |r: &crate::manifest::EmittedResource| -> Option<String> {
-        r.attrs.get("project").cloned().or_else(|| {
-            let project = r.refs.get("project")?.strip_suffix(".project_id")?;
-            manifest.resources.get(project)?.attrs.get("project_id").cloned()
-        })
-    };
     let accounts: std::collections::BTreeMap<String, String> = manifest
         .of_type("google_service_account")
         .filter_map(|r| {
-            let email = format!("{}@{}.iam.gserviceaccount.com", r.attrs.get("account_id")?, project_of(r)?);
+            let email = format!("{}@{}.iam.gserviceaccount.com", r.attrs.get("account_id")?, manifest.project_of(r)?);
             Some((email, r.address()))
         })
         .collect();
@@ -266,6 +264,65 @@ fn order_after_custom_constraints(blocks: &mut [hcl::Block]) {
         let Some(constraint) = r.attrs.get("name").and_then(|n| n.rsplit_once("/policies/")).map(|(_, c)| c) else { continue };
         if let Some(declared) = constraints.get(constraint) {
             add_depends_on(b, declared);
+        }
+    }
+}
+
+/// A resource whose API is not on yet fails the apply, and `google_project_service`
+/// carries no ordering of its own: inside one apply Terraform can create the
+/// resource before the service that enables it. Bootstrap escapes that race by
+/// enabling the day-0 APIs imperatively before `tofu` runs, but a pack adopted on
+/// day 40 has no bootstrap pass — its service block and the resources that need it
+/// land in the same apply, unordered, and it passes or fails on scheduling luck.
+///
+/// Every resource whose type the prerequisite table knows gets a `depends_on` on
+/// the services that enable its APIs, bounded to the two projects that can matter:
+/// the project the resource lives in, and the infra project every provider call is
+/// billed to (`user_project_override` + `billing_project`). A service on a third
+/// project is nothing to it.
+///
+/// No edge is added into a service block's own dependency closure, and a service
+/// is never ordered after a service. That is what keeps the graph acyclic: the
+/// infra project references nothing, but the services on it reference IT, and the
+/// folder that contains it is reached through the project — so both would
+/// otherwise wait for a service that waits for them.
+fn order_after_project_services(blocks: &mut [hcl::Block], infra_project: &str) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    struct Service {
+        address: String,
+        project: Option<String>,
+        closure: std::collections::BTreeSet<String>,
+    }
+    let mut by_api: std::collections::BTreeMap<&str, Vec<Service>> = std::collections::BTreeMap::new();
+    for r in manifest.of_type("google_project_service") {
+        let Some(service) = r.attrs.get("service") else { continue };
+        let address = r.address();
+        by_api.entry(service.as_str()).or_default().push(Service {
+            project: manifest.project_of(r),
+            closure: manifest.closure_of(&address),
+            address,
+        });
+    }
+    if by_api.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address) else { continue };
+        // one API is never ordered behind another: `serviceusage` would wait for
+        // itself, and enabling an API is bootstrap's imperative business
+        if r.tf_type == "google_project_service" {
+            continue;
+        }
+        let own_project = manifest.project_of(r);
+        for api in crate::prerequisites::apis_for(&r.tf_type).unwrap_or(&[]) {
+            for s in by_api.get(api).into_iter().flatten() {
+                let Some(project) = &s.project else { continue };
+                let relevant = project == infra_project || own_project.as_ref() == Some(project);
+                if relevant && !s.closure.contains(&address) {
+                    add_depends_on(b, &s.address);
+                }
+            }
         }
     }
 }
@@ -615,6 +672,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     order_after_service_accounts(&mut blocks);
     order_after_groups(&mut blocks);
     order_after_custom_constraints(&mut blocks);
+    order_after_project_services(&mut blocks, &ctx.infra_project);
 
     let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
     manifest.attach_imports(&imports);
@@ -1096,6 +1154,120 @@ mod service_account_order_tests {
     }
 
     #[test]
+    fn a_resource_waits_for_the_service_that_enables_its_api() {
+        let mut bs = blocks(
+            r#"
+resource "google_project" "infra" {
+  project_id = "acme-infra-001"
+}
+resource "google_project_service" "infra_billingbudgets_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "billingbudgets.googleapis.com"
+}
+resource "google_project_service" "infra_logging_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "logging.googleapis.com"
+}
+resource "google_billing_budget" "global_budget" {
+  billing_account = "012345-6789AB-CDEF01"
+  display_name = "Global Budget"
+}
+resource "google_logging_organization_sink" "audit" {
+  name = "audit"
+  org_id = "123456789012"
+}
+resource "google_storage_bucket" "state" {
+  name = "acme-infra-001-state"
+  project = "acme-infra-001"
+}
+"#,
+        );
+        order_after_project_services(&mut bs, "acme-infra-001");
+        let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
+        // the budget hangs off the billing account and still waits for the API on
+        // the infra project — every call the provider makes is billed there
+        assert_eq!(
+            depends_on(by("global_budget")).as_deref(),
+            Some("[google_project_service.infra_billingbudgets_googleapis_com]")
+        );
+        assert_eq!(depends_on(by("audit")).as_deref(), Some("[google_project_service.infra_logging_googleapis_com]"));
+        // an API the estate declares nowhere orders nothing: the compile reports it
+        assert_eq!(depends_on(by("state")), None);
+    }
+
+    /// The three edges that would make tofu refuse the whole graph rather than one
+    /// resource: a service waiting for a service, the project a service is declared
+    /// on, and the folder that project sits in — reached through the project, which
+    /// is why the rule is the reference closure and not a list of types.
+    #[test]
+    fn the_ordering_pass_never_closes_a_cycle() {
+        let mut bs = blocks(
+            r#"
+resource "google_folder" "infra_folder" {
+  display_name = "Infrastructure"
+  parent = "organizations/123456789012"
+}
+resource "google_project" "infra" {
+  project_id = "acme-infra-001"
+  folder_id = google_folder.infra_folder.name
+}
+resource "google_project_service" "infra_serviceusage_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "serviceusage.googleapis.com"
+}
+resource "google_project_service" "infra_cloudresourcemanager_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "cloudresourcemanager.googleapis.com"
+}
+resource "google_project_service" "infra_cloudbilling_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "cloudbilling.googleapis.com"
+}
+"#,
+        );
+        order_after_project_services(&mut bs, "acme-infra-001");
+        for b in &bs {
+            assert_eq!(depends_on(b), None, "{:?} was ordered and must not be", b.labels());
+        }
+    }
+
+    /// A service on a project this resource has nothing to do with is not its
+    /// dependency: the two that can matter are its own project and the project the
+    /// call is billed to.
+    #[test]
+    fn a_service_on_an_unrelated_project_is_no_dependency() {
+        let mut bs = blocks(
+            r#"
+resource "google_project" "infra" {
+  project_id = "acme-infra-001"
+}
+resource "google_project" "other" {
+  project_id = "acme-other-001"
+}
+resource "google_project_service" "other_storage_googleapis_com" {
+  project = google_project.other.project_id
+  service = "storage.googleapis.com"
+}
+resource "google_project_service" "infra_storage_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "storage.googleapis.com"
+}
+resource "google_storage_bucket" "elsewhere" {
+  name = "acme-other-001-data"
+  project = "acme-other-001"
+}
+"#,
+        );
+        order_after_project_services(&mut bs, "acme-infra-001");
+        let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
+        // its own project's service AND the infra project's, both and no more
+        assert_eq!(
+            depends_on(by("elsewhere")).as_deref(),
+            Some("[google_project_service.infra_storage_googleapis_com,google_project_service.other_storage_googleapis_com]")
+        );
+    }
+
+    #[test]
     fn grants_and_memberships_naming_a_declared_account_wait_for_it() {
         let mut bs = blocks(
             r#"
@@ -1333,6 +1505,7 @@ mod billing_grant_tests {
             customer_domain: String::new(),
             org_id: String::new(),
             billing_fallback: fallback.map(serde_yaml::Value::from),
+            infra_project: String::new(),
             registry: None,
         }
     }

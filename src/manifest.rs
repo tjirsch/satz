@@ -74,6 +74,39 @@ pub(crate) struct Manifest {
 }
 
 impl Manifest {
+    /// The project id a resource belongs to: its literal `project`, else the
+    /// `project_id` of the `google_project` its `project` reference names. `None`
+    /// when it has neither — an organisation-, folder- or billing-scoped resource —
+    /// or when the reference resolves to nothing satz can read.
+    pub fn project_of(&self, r: &EmittedResource) -> Option<String> {
+        let literal = r.attrs.get("project").filter(|p| !p.is_empty()).cloned();
+        literal.or_else(|| {
+            let project = r.refs.get("project")?.strip_suffix(".project_id")?;
+            self.resources.get(project)?.attrs.get("project_id").filter(|p| !p.is_empty()).cloned()
+        })
+    }
+
+    /// Every address this resource reaches through its references, transitively,
+    /// including its own. An edge INTO this set is a cycle: the target already
+    /// waits for the source.
+    pub fn closure_of(&self, address: &str) -> std::collections::BTreeSet<String> {
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut queue = vec![address.to_string()];
+        while let Some(a) = queue.pop() {
+            if !seen.insert(a.clone()) {
+                continue;
+            }
+            let Some(r) = self.resources.get(&a) else { continue };
+            for target in r.refs.values() {
+                let mut parts = target.split('.');
+                if let (Some(t), Some(l)) = (parts.next(), parts.next()) {
+                    queue.push(format!("{}.{}", t, l));
+                }
+            }
+        }
+        seen
+    }
+
     /// From the blocks the emitter built. Non-`resource` blocks are ignored.
     pub fn from_blocks<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>) -> Self {
         let mut resources = BTreeMap::new();

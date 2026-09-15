@@ -99,6 +99,25 @@
     display_name = "Network route changed"
     display_name = "Project ownership assignment changed"
     display_name = "VPC network changed"
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_logging_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_monitoring_googleapis_com
+    google_project_service.logsink_project_storage_googleapis_com
     log_type = "ADMIN_READ"
     log_type = "DATA_READ"
     log_type = "DATA_WRITE"
@@ -144,6 +163,25 @@
   ]
   ]
   ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
   audit_log_config {
   audit_log_config {
   audit_log_config {
@@ -174,6 +212,25 @@
   conditions {
   conditions {
   conditions {
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
   description = "CIS 2.10 — VPC network changed (org-wide)"
   description = "CIS 2.11 — Cloud Storage IAM permissions changed (org-wide)"
   description = "CIS 2.12 — Cloud SQL instance configuration changed (org-wide)"

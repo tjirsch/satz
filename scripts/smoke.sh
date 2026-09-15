@@ -1113,6 +1113,34 @@ grep -q 'does not emit' tmp/badref.txt || fail "the reference check did not fire
 grep -q 'google_storage_bucket.lugs.name' tmp/badref.txt || fail "the error does not name the bad reference"
 grep -q 'emitted `google_storage_bucket` labels: logs' tmp/badref.txt || fail "the error does not name the labels that do exist:\n$(cat tmp/badref.txt)"
 
+step "prerequisites: a resource waits for the API that serves it, and a missing one is reported"
+# The failure this exists to stop: `google_project_service` carries no ordering of
+# its own, so an apply can create a resource before the API it needs is on.
+grep -q 'depends_on = \[' hcl/main.tf || fail "no ordering at all in the emitted HCL"
+python3 - <<'PYEOF' || fail "the state bucket does not wait for the storage API"
+import re
+tf = open("hcl/main.tf").read()
+block = re.search(r'resource "google_storage_bucket" "state" \{(.*?)\n\}', tf, re.S).group(1)
+assert "google_project_service.infra_storage_googleapis_com" in block, block
+# the project a service is declared on must NOT wait for it — that is the cycle
+infra = re.search(r'resource "google_project" "infra" \{(.*?)\n\}', tf, re.S).group(1)
+assert "google_project_service.infra_storage" not in infra, infra
+PYEOF
+# An API the infra project does not enable: the estate still compiles, and says so.
+grep -v '"monitoring.googleapis.com",' yaml/smoke.satz > tmp/api-gap.satz
+"$satz" --config . transpile tmp/api-gap.satz --check > tmp/api-warn.txt 2>&1 \
+  || fail "an API gap failed the compile at the default level:\n$(cat tmp/api-warn.txt)"
+grep -q 'monitoring.googleapis.com — needed by google_monitoring_alert_policy' tmp/api-warn.txt \
+  || fail "the warning does not name the API and the type that needs it:\n$(cat tmp/api-warn.txt)"
+if "$satz" --config . --validation error transpile tmp/api-gap.satz --check > tmp/api-err.txt 2>&1; then
+  fail "--validation error compiled an estate whose API is enabled nowhere"
+fi
+"$satz" --config . --validation none transpile tmp/api-gap.satz --check > tmp/api-none.txt 2>&1
+if grep -q 'monitoring.googleapis.com' tmp/api-none.txt; then fail "--validation none still checked the APIs"; fi
+# A pack enabling an API on ITS OWN project has not enabled it on the billed one.
+"$satz" --config . transpile smoke.satz --check > tmp/api-clean.txt 2>&1
+if grep -q 'API(s) this estate' tmp/api-clean.txt; then fail "a complete estate warned about APIs:\n$(cat tmp/api-clean.txt)"; fi
+
 step "iac-roles: the IaC service account holds what the estate's types need, and --execute writes a gap"
 "$satz" --config . iac-roles smoke.satz > tmp/iac.txt 2>&1 || fail "the smoke estate's IaC service account misses roles:\n$(cat tmp/iac.txt)"
 grep -q '^missing: none' tmp/iac.txt || fail "iac-roles did not report the smoke estate complete:\n$(cat tmp/iac.txt)"
@@ -1148,7 +1176,12 @@ python3 - <<'PYEOF' || fail "iac-roles --format json did not print the table"
 import json
 t = json.load(open("tmp/iac-table.json"))
 assert t["read"], "no read entries"
-assert any(e["roles"] == ["roles/resourcemanager.projectCreator"] for e in t["types"]["google_project"]), t["types"]["google_project"]
+row = t["types"]["google_project"]
+# both halves of a prerequisite, per type: what it takes to be allowed, and what
+# has to be switched on
+assert any(e["roles"] == ["roles/resourcemanager.projectCreator"] for e in row["roles"]), row["roles"]
+assert "cloudresourcemanager.googleapis.com" in row["apis"], row["apis"]
+assert t["types"]["google_billing_budget"]["apis"] == ["billingbudgets.googleapis.com"], t["types"]["google_billing_budget"]
 PYEOF
 
 step "plan/apply replace an org policy the state holds with rules and the estate declares reset"

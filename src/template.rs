@@ -146,6 +146,7 @@ google_folder {
           "securitycentermanagement.googleapis.com",
           "serviceusage.googleapis.com",
           "essentialcontacts.googleapis.com",
+          "storage.googleapis.com",
         ]
         google_storage_bucket {
           state {

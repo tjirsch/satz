@@ -18,7 +18,7 @@ mod bootstrap;
 mod preflight;
 mod day_zero;
 mod init_params;
-mod iac_roles;
+mod prerequisites;
 mod gcp;
 mod org_policy;
 mod cloud_identity;
@@ -2050,8 +2050,8 @@ Thumbs.db
             match input {
                 None => {
                     match format {
-                        OutFormat::Json => println!("{}", serde_json::to_string_pretty(&crate::iac_roles::table_json())?),
-                        _ => print!("{}", crate::iac_roles::render_table()),
+                        OutFormat::Json => println!("{}", serde_json::to_string_pretty(&crate::prerequisites::table_json())?),
+                        _ => print!("{}", crate::prerequisites::render_table()),
                     }
                     Ok(())
                 }
@@ -2218,7 +2218,7 @@ fn pipeline_b_generate(
         .findings
         .into_iter()
         .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
-        .filter(|f| !(f.kind == crate::findings::Kind::IacRoles && IAC_ROLES_QUIET.load(std::sync::atomic::Ordering::Relaxed)))
+        .filter(|f| !(f.kind == crate::findings::Kind::Prerequisites && PREREQUISITES_QUIET.load(std::sync::atomic::Ordering::Relaxed)))
         .collect();
     if let Err(message) = crate::findings::render(&findings) {
         return Err(Box::new(crate::findings::CompileRefusal { message, findings }));
@@ -2265,7 +2265,7 @@ fn pipeline_b_generate(
 
 /// Set by `iac-roles`, which reports the same finding itself and would otherwise
 /// print it twice.
-static IAC_ROLES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PREREQUISITES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A pack whose question is answered YES while its `use` line is still commented out —
 /// or missing from the estate altogether.
@@ -2345,7 +2345,7 @@ pub(crate) fn compile_tail(
     };
     written_reference_findings(&folded, &out.manifest, &mut f);
     missing_required_findings(&out.missing_required, level, &mut f);
-    iac_role_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
+    prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
     unadopted_pack_findings(estate, estate_src, &fe.env, level, &mut f);
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     let providers_tf = match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
@@ -2504,12 +2504,13 @@ fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level:
     }
 }
 
-/// The roles the estate's resource types need that it does not grant its IaC
-/// service account, at the validation level: `warn` names them and the command
-/// that writes them, `error` refuses, `none` skips. A type the table does not know
-/// is a note, never an error — satz cannot say which role it needs. The line is the
+/// What the estate's resource types oblige it to declare and does not: the roles
+/// its IaC service account is missing, and the APIs no `google_project_service`
+/// enables. Both at the validation level — `warn` names them and the command that
+/// writes them, `error` refuses, `none` skips. A type the table does not know is a
+/// note, never an error: satz cannot say what it needs. The role line is the
 /// estate's `svc_iac_account` param, the nearest thing the grant has to a site.
-fn iac_role_findings(
+fn prerequisite_findings(
     manifest: &crate::manifest::Manifest,
     env: &satz_core::pipeline::Env,
     estate: &Path,
@@ -2520,22 +2521,45 @@ fn iac_role_findings(
     use crate::findings::{Finding, Kind, Severity};
     let Some(sev) = crate::findings::at_level(level) else { return };
     let get = |k: &str| env.get(k).and_then(|v| v.as_str()).map(str::to_string);
-    let Some(sa) = crate::iac_roles::service_account_of(get) else { return };
-    let (needs, unknown) = crate::iac_roles::needs(manifest);
-    let granted = crate::iac_roles::granted(manifest, &sa);
-    let missing = crate::iac_roles::missing(&needs, &granted);
+    let Some(sa) = crate::prerequisites::service_account_of(get) else { return };
+    // Judging the API half needs the project the calls are billed to; an estate
+    // that binds no infra project has a louder problem than this check.
+    let infra = get("infra_project_name").unwrap_or_default();
+    let missing_apis =
+        if infra.is_empty() { Vec::new() } else { crate::prerequisites::missing_apis(manifest, &infra) };
+    if !missing_apis.is_empty() {
+        f.push(Finding::new(
+            sev,
+            Kind::Prerequisites,
+            format!(
+                "{} API(s) this estate's resources need are not enabled on {} — every call \
+                 the provider makes is billed to the infra project, so each has to be a \
+                 `project_service` entry on it:\n  {}",
+                missing_apis.len(),
+                infra,
+                missing_apis
+                    .iter()
+                    .map(|a| format!("{} — needed by {}", a.api, a.reason.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            ),
+        ));
+    }
+    let (needs, unknown) = crate::prerequisites::needs(manifest);
+    let granted = crate::prerequisites::granted(manifest, &sa);
+    let missing = crate::prerequisites::missing(&needs, &granted);
     let file = estate.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
     if !missing.is_empty() {
         f.push(
             Finding::new(
                 sev,
-                Kind::IacRoles,
+                Kind::Prerequisites,
                 format!(
                     "the IaC service account {} lacks roles this estate's resource types need — \
                      `satz iac-roles {} --execute` writes them into the estate:\n  {}",
                     sa,
                     file,
-                    crate::iac_roles::describe(&crate::iac_roles::plan(&missing, &granted)).join("\n  ")
+                    crate::prerequisites::describe(&crate::prerequisites::plan(&missing, &granted)).join("\n  ")
                 ),
             )
             .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "svc_iac_account")),
@@ -2544,7 +2568,7 @@ fn iac_role_findings(
     if !granted.owner() && !unknown.is_empty() {
         f.push(Finding::new(
             Severity::Note,
-            Kind::IacRoles,
+            Kind::Prerequisites,
             format!(
                 "no role is known for {} — grant the one it needs to the IaC service account in the estate",
                 unknown.into_iter().collect::<Vec<_>>().join(", ")
@@ -2669,14 +2693,14 @@ pub(crate) fn iac_probe(
     path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
-) -> Result<crate::iac_roles::Probe, Box<dyn std::error::Error>> {
+) -> Result<crate::prerequisites::Probe, Box<dyn std::error::Error>> {
     // whoami reports the permissions live; the compile's own note would repeat them
-    IAC_ROLES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    PREREQUISITES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
     let out = pipeline_b_generate(path, tool_config, runtime_config)?;
     let params = estate_param_strings(path, runtime_config)?;
     let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
-    Ok(crate::iac_roles::Probe {
-        needs: crate::iac_roles::needs(&out.manifest).0,
+    Ok(crate::prerequisites::Probe {
+        needs: crate::prerequisites::needs(&out.manifest).0,
         scope_root: get("customer_organization_id").map(|o| crate::org_policy::normalize_parent(&o)),
         project: get("infra_project_name").map(|p| format!("projects/{}", p)),
         billing_account: get("billing_account_infra"),
@@ -2688,11 +2712,11 @@ pub(crate) fn iac_probe(
 pub(crate) struct IacRolesReport {
     pub estate: String,
     pub service_account: String,
-    pub granted: crate::iac_roles::Granted,
-    pub needs: Vec<crate::iac_roles::Need>,
-    pub missing: Vec<crate::iac_roles::Need>,
+    pub granted: crate::prerequisites::Granted,
+    pub needs: Vec<crate::prerequisites::Need>,
+    pub missing: Vec<crate::prerequisites::Need>,
     /// the roles `--execute` writes for `missing`
-    pub write: Vec<crate::iac_roles::Pick>,
+    pub write: Vec<crate::prerequisites::Pick>,
     /// emitted types the table has no entry for
     pub unknown_types: Vec<String>,
 }
@@ -2712,20 +2736,20 @@ pub(crate) fn iac_roles_report(
 ) -> Result<IacRolesReport, Box<dyn std::error::Error>> {
     let out = pipeline_b_generate(path, tool_config, runtime_config)?;
     let params = estate_param_strings(path, runtime_config)?;
-    let sa = crate::iac_roles::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
+    let sa = crate::prerequisites::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
         format!(
             "{}: the estate names no IaC service account (svc_iac_account and infra_project_name)",
             path.display()
         )
     })?;
-    let (needs, unknown) = crate::iac_roles::needs(&out.manifest);
-    let granted = crate::iac_roles::granted(&out.manifest, &sa);
-    let missing = crate::iac_roles::missing(&needs, &granted);
+    let (needs, unknown) = crate::prerequisites::needs(&out.manifest);
+    let granted = crate::prerequisites::granted(&out.manifest, &sa);
+    let missing = crate::prerequisites::missing(&needs, &granted);
     Ok(IacRolesReport {
         estate: path.display().to_string(),
         service_account: sa,
         unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
-        write: crate::iac_roles::plan(&missing, &granted),
+        write: crate::prerequisites::plan(&missing, &granted),
         granted,
         needs,
         missing,
@@ -2747,14 +2771,14 @@ fn render_iac_roles(r: &IacRolesReport) -> String {
         out.push_str("missing: none\n");
     } else {
         out.push_str("missing:\n");
-        for l in crate::iac_roles::describe(&r.write) {
+        for l in crate::prerequisites::describe(&r.write) {
             out.push_str(&format!("  {}\n", l));
         }
     }
     let workspace: std::collections::BTreeSet<String> = r
         .needs
         .iter()
-        .filter(|n| n.scope == crate::iac_roles::Scope::Workspace)
+        .filter(|n| n.scope == crate::prerequisites::Scope::Workspace)
         .flat_map(|n| n.reason.iter().map(move |t| format!("{} — {}", t, n.roles[0])))
         .collect();
     for w in workspace {
@@ -2779,7 +2803,7 @@ fn run_iac_roles(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    IAC_ROLES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    PREREQUISITES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
     let report = iac_roles_report(path, tool_config, runtime_config)?;
     let emit = |r: &IacRolesReport| -> Result<(), Box<dyn std::error::Error>> {
         match format {
@@ -2791,7 +2815,7 @@ fn run_iac_roles(
     if !execute || report.missing.is_empty() {
         emit(&report)?;
         if !report.missing.is_empty() {
-            let (org, bill) = crate::iac_roles::to_write(&report.write);
+            let (org, bill) = crate::prerequisites::to_write(&report.write);
             return Err(format!(
                 "{} role(s) missing — `satz iac-roles {} --execute` writes them into the estate",
                 org.len() + bill.len(),
@@ -2818,10 +2842,10 @@ pub(crate) fn iac_roles_write(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(Vec<String>, IacRolesReport), Box<dyn std::error::Error>> {
-    let (org, bill) = crate::iac_roles::to_write(&report.write);
+    let (org, bill) = crate::prerequisites::to_write(&report.write);
     let params = estate_param_strings(path, runtime_config)?;
     let before = fsx::read_to_string(path)?;
-    let written = crate::iac_roles::write_grants(path, &params, &report.service_account, &org, &bill)?;
+    let written = crate::prerequisites::write_grants(path, &params, &report.service_account, &org, &bill)?;
     let restore = |why: String| -> Box<dyn std::error::Error> {
         match crate::fsx::write_verbatim(path, &before) {
             Ok(()) => format!("{} — {} restored", why, path.display()).into(),
@@ -6242,11 +6266,138 @@ hcl trust "test fixture" {
 }
 
 #[cfg(test)]
-mod iac_roles_gate {
-    //! Every resource type the library can emit has a row in the IaC service
-    //! account's role table (`src/iac_roles.rs`). The cases under `tests/iac/`
-    //! together use every pack, each one unconditionally, so a pack added without
-    //! a case, or a pack emitting a type the table does not know, fails here.
+mod acyclic_gate {
+    //! `depends_on` is ordering, and ordering that comes back to where it started
+    //! is a plan `tofu` refuses in full — not one broken resource but an estate
+    //! that cannot be applied at all. The emitter adds those edges itself
+    //! (`order_after_project_services` and the three beside it), so the property
+    //! belongs here rather than in the pass that happens to add the last edge:
+    //! every case under `tests/corpus/` and `tests/iac/`, graphed over its
+    //! references AND its emitted `depends_on`, is acyclic.
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::Path;
+
+    /// `google_project.infra.project_id` → `google_project.infra`.
+    fn address_of(traversal: &str) -> Option<String> {
+        let mut parts = traversal.trim().split('.');
+        match (parts.next(), parts.next()) {
+            (Some(t), Some(l)) if t.starts_with("google_") => Some(format!("{}.{}", t, l)),
+            _ => None,
+        }
+    }
+
+    fn graph(main_tf: &str) -> BTreeMap<String, BTreeSet<String>> {
+        let body = hcl::parse(main_tf).expect("emitted HCL parses");
+        let mut edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for b in body.blocks() {
+            if b.identifier() != "resource" {
+                continue;
+            }
+            let [t, l] = b.labels() else { continue };
+            let from = format!("{}.{}", t.as_str(), l.as_str());
+            let to = edges.entry(from).or_default();
+            for a in b.body().attributes() {
+                match a.expr() {
+                    hcl::Expression::Traversal(_) => {
+                        if let Ok(rendered) = hcl::format::to_string(a.expr()) {
+                            to.extend(address_of(&rendered));
+                        }
+                    }
+                    hcl::Expression::Array(items) => {
+                        for i in items {
+                            if let (hcl::Expression::Traversal(_), Ok(rendered)) = (i, hcl::format::to_string(i)) {
+                                to.extend(address_of(&rendered));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        edges
+    }
+
+    /// Iterative depth-first search with a colour map; the panic names the cycle.
+    fn find_cycle(edges: &BTreeMap<String, BTreeSet<String>>) -> Option<Vec<String>> {
+        let mut done: BTreeSet<&str> = BTreeSet::new();
+        for root in edges.keys() {
+            let mut path: Vec<&str> = Vec::new();
+            let mut on_path: BTreeSet<&str> = BTreeSet::new();
+            let mut stack: Vec<(&str, bool)> = vec![(root.as_str(), false)];
+            while let Some((node, leaving)) = stack.pop() {
+                if leaving {
+                    on_path.remove(node);
+                    path.pop();
+                    done.insert(node);
+                    continue;
+                }
+                if done.contains(node) {
+                    continue;
+                }
+                if !on_path.insert(node) {
+                    let start = path.iter().position(|n| *n == node).unwrap_or(0);
+                    let mut cycle: Vec<String> = path[start..].iter().map(|n| n.to_string()).collect();
+                    cycle.push(node.to_string());
+                    return Some(cycle);
+                }
+                path.push(node);
+                stack.push((node, true));
+                for next in edges.get(node).into_iter().flatten() {
+                    if let Some((k, _)) = edges.get_key_value(next.as_str()) {
+                        stack.push((k.as_str(), false));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn no_case_emits_a_dependency_cycle() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let reg = super::corpus::registry();
+        let mut cases = 0;
+        for dir in ["tests/corpus", "tests/iac"] {
+            for entry in std::fs::read_dir(root.join(dir)).expect(dir).flatten() {
+                let case = entry.path();
+                if !case.join("main.satz").exists() {
+                    continue;
+                }
+                let (out, _) = super::manifest_gate::emit_case(&case, &reg);
+                if let Some(cycle) = find_cycle(&graph(&out.main_tf)) {
+                    panic!("{}: dependency cycle — {}", case.display(), cycle.join(" → "));
+                }
+                cases += 1;
+            }
+        }
+        assert!(cases >= 10, "the gate saw only {} cases", cases);
+    }
+
+    /// The property has to be able to FAIL, or it proves nothing about the search.
+    #[test]
+    fn the_search_finds_a_cycle_that_is_there() {
+        let tf = r#"
+resource "google_project" "infra" {
+  project_id = "acme-infra-001"
+  depends_on = [google_project_service.infra_cloudresourcemanager_googleapis_com]
+}
+resource "google_project_service" "infra_cloudresourcemanager_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "cloudresourcemanager.googleapis.com"
+}
+"#;
+        let cycle = find_cycle(&graph(tf)).expect("this graph is a cycle");
+        assert!(cycle.len() >= 3, "{:?}", cycle);
+    }
+}
+
+#[cfg(test)]
+mod prerequisites_gate {
+    //! Every resource type the library can emit has a row in the prerequisite
+    //! table (`src/prerequisites.rs`) — the roles the IaC service account needs for
+    //! it AND the API that serves it. The cases under `tests/iac/` together use
+    //! every pack, each one unconditionally, so a pack added without a case, or a
+    //! pack emitting a type the table does not know, fails here.
     use std::collections::BTreeSet;
     use std::path::Path;
 
@@ -6269,7 +6420,7 @@ mod iac_roles_gate {
     }
 
     #[test]
-    fn every_type_the_library_emits_has_a_role() {
+    fn every_type_the_library_emits_has_its_prerequisites() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let reg = super::corpus::registry();
         let mut used = BTreeSet::new();
@@ -6280,14 +6431,32 @@ mod iac_roles_gate {
                 .unwrap_or_else(|e| panic!("{}: {}", case.display(), e));
             used.extend(uses(&case, &src));
             let (out, _) = super::manifest_gate::emit_case(&case, &reg);
-            let (_, unknown) = crate::iac_roles::needs(&out.manifest);
+            let (_, unknown) = crate::prerequisites::needs(&out.manifest);
             assert!(
                 unknown.is_empty(),
-                "{}: no role known for {:?} — add the type's row to TYPES in src/iac_roles.rs",
+                "{}: no role known for {:?} — add the type's row to TYPES in src/prerequisites.rs",
                 case.display(),
                 unknown
             );
             types.extend(out.manifest.resources.values().map(|r| r.tf_type.clone()));
+        }
+        // The other half of the row. A type with no API is how a pack ships that
+        // enables nothing and fails its first apply on an API nobody named.
+        for t in &types {
+            let apis = crate::prerequisites::apis_for(t).unwrap_or(&[]);
+            assert!(
+                !apis.is_empty(),
+                "{}: no API known — add the service that serves it to the type's row in src/prerequisites.rs",
+                t
+            );
+            for api in apis {
+                assert!(
+                    api.ends_with(".googleapis.com"),
+                    "{}: {:?} is not an API host — the row names the service to enable, e.g. `logging.googleapis.com`",
+                    t,
+                    api
+                );
+            }
         }
         let packs: BTreeSet<String> = crate::doc_packs::packs(&root.join("presets"))
             .expect("the preset library")
@@ -6583,13 +6752,23 @@ mod init_template {
         // named roles, not owner — and exactly what the template's own resource
         // types need, so a fresh estate has nothing to add
         let get = |k: &str| fe.env.get(k).and_then(|v| v.as_str()).map(str::to_string);
-        let sa = crate::iac_roles::service_account_of(get).expect("the template names its IaC service account");
-        let granted = crate::iac_roles::granted(&out.manifest, &sa);
+        let sa = crate::prerequisites::service_account_of(get).expect("the template names its IaC service account");
+        let granted = crate::prerequisites::granted(&out.manifest, &sa);
         assert!(!granted.owner(), "the template grants roles/owner");
-        let (needs, unknown) = crate::iac_roles::needs(&out.manifest);
+        let (needs, unknown) = crate::prerequisites::needs(&out.manifest);
         assert!(unknown.is_empty(), "the template emits types the role table does not know: {:?}", unknown);
-        let missing = crate::iac_roles::missing(&needs, &granted);
-        assert!(missing.is_empty(), "the template misses roles its own types need: {:?}", crate::iac_roles::describe(&crate::iac_roles::cover(&missing)));
+        let missing = crate::prerequisites::missing(&needs, &granted);
+        assert!(missing.is_empty(), "the template misses roles its own types need: {:?}", crate::prerequisites::describe(&crate::prerequisites::cover(&missing)));
+        // and the other half of a prerequisite: the APIs its own types are served
+        // by, on the project every call is billed to. A fresh estate that warns on
+        // its first transpile is a scaffold that was never finished.
+        let infra = get("infra_project_name").expect("the template names its infra project");
+        let missing_apis = crate::prerequisites::missing_apis(&out.manifest, &infra);
+        assert!(
+            missing_apis.is_empty(),
+            "the template misses APIs its own types need: {:?}",
+            missing_apis.iter().map(|a| a.api.as_str()).collect::<Vec<_>>()
+        );
         // the users group may become the IaC service account, and only that one:
         // TokenCreator and serviceAccountUser on the account, not on the org
         assert_eq!(out.manifest.of_type("google_service_account_iam_member").count(), 2);

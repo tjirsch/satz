@@ -102,8 +102,16 @@ google_folder {
           // The CIS pack claims CIS 5.0 §2.14 against this one, and `report-compliance`
           // reads the organisation through it — `satz init` puts it in every estate.
           "cloudasset.googleapis.com",
+          "cloudbilling.googleapis.com",
+          "cloudidentity.googleapis.com",
           "cloudresourcemanager.googleapis.com",
+          "essentialcontacts.googleapis.com",
           "iam.googleapis.com",
+          "logging.googleapis.com",
+          "monitoring.googleapis.com",
+          "orgpolicy.googleapis.com",
+          "serviceusage.googleapis.com",
+          "storage.googleapis.com",
         ]
         google_storage_bucket {
           state {
