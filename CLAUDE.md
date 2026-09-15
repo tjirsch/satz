@@ -237,9 +237,9 @@ command nor a preset (SCC service enablement, the doc build, the privacy gate).
 
 Its first half lists every file DERIVED from something outside this
 repository — the provider schema fixture, the CAI asset-type list, the
-managed/legacy constraint pairing, the catalogs, the version pins — with what
-refreshes each, what triggers it, and what catches it when nobody remembers.
-Five of them have no automatic check at all, which is the reason the page
-exists. Anything derived gets a script, else a gate, else a line on that page:
+managed/legacy constraint pairing, the catalogs, the version pins, the `NOTICE`
+that attributes them — with what refreshes each, what triggers it, and what
+catches it when nobody remembers. Six of them have no automatic check at all,
+which is the reason the page exists. Anything derived gets a script, else a gate, else a line on that page:
 a file that is out of date while the tests report success is how a compliance
 tool starts lying.

@@ -92,4 +92,7 @@ Use the example customers for anything that looks like a real organisation.
 
 ## License
 
-By contributing to this project, you agree that your contributions will be licensed under the MIT License.
+satz is licensed under the Apache License, Version 2.0. Section 5 of that licence
+states the terms for contributions: a contribution you deliberately submit for
+inclusion is licensed to the project under Apache 2.0. There is no separate
+contributor agreement to sign.

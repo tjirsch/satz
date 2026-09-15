@@ -1798,4 +1798,8 @@ describes. `satz iac-roles --execute` adds the ones a new pack brings.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/tjirsch/satz/blob/main/LICENSE) file for details.
+satz is licensed under the Apache License, Version 2.0 — see
+[LICENSE](https://github.com/tjirsch/satz/blob/main/LICENSE). Redistribution carries
+[NOTICE](https://github.com/tjirsch/satz/blob/main/NOTICE) with it: it names the
+third-party material in this repository — the provider schema fixture, the release
+workflow cargo-dist generates, and the control identifiers the catalogs carry.

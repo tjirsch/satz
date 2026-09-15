@@ -29,10 +29,11 @@ ships it).
 | `tests/corpus/*/expected.sorted.txt` | `UPDATE_CORPUS=1 cargo test` | emission changes | `cargo test` (that is the gate) |
 | provider version pin | by hand | a provider release | **nothing** |
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
+| `NOTICE` (its third-party entries) | by hand, one entry per piece of foreign material | material from outside the project enters or leaves the tree | **nothing** |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
-Five have **no** automatic check, and the IaC role table has none for a changed
+Six have **no** automatic check, and the IaC role table has none for a changed
 role: refresh them on their trigger.
 
 ## The provider schema fixture
@@ -163,6 +164,18 @@ Two triggers make it stale:
   reads every role the table names from the IAM API and fails when an entry's
   permission is in none of its roles: **run it when adding a row, and on each provider
   pin move.**
+
+## The third-party notice
+
+`NOTICE` names every piece of material in this repository that came from outside it:
+the provider schema fixture and the provider's own text inside it, the release
+workflow cargo-dist generates, and the control identifiers the catalogs carry. Apache
+2.0 §4(d) makes that file travel with every redistribution of satz, so material that
+arrives from outside and is not named there goes unattributed everywhere satz is
+redistributed.
+
+Nothing checks it. Write the entry in the same change that brings the material in,
+and delete the entry in the change that takes it out.
 
 ## Versions
 
