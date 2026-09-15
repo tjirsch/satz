@@ -5,14 +5,14 @@
 # ///
 """Check satz's IaC role table against Google's predefined role definitions.
 
-The table (`src/iac_roles.rs`, printed by `satz iac-roles --format json`) names,
+The table (`src/prerequisites.rs`, printed by `satz update-prerequisites --format json`) names,
 per resource type, a permission and the predefined roles that carry it. This reads
 each named role from the IAM API and fails when none of an entry's roles carries
 its permission — a typo in the table, a permission Google renamed, or a role Google
 narrowed.
 
-    uv run scripts/check_iac_roles.py                 # the table of this checkout (cargo run)
-    uv run scripts/check_iac_roles.py --satz satz     # the table of an installed binary
+    uv run scripts/check_prerequisites.py                 # the table of this checkout (cargo run)
+    uv run scripts/check_prerequisites.py --satz satz     # the table of an installed binary
 
 Needs Application Default Credentials (`gcloud auth application-default login`);
 predefined roles are Google's and the same for every organisation, so any
@@ -33,9 +33,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def table(satz: str | None) -> dict:
     cmd = (
-        [satz, "iac-roles", "--format", "json"]
+        [satz, "update-prerequisites", "--format", "json"]
         if satz
-        else ["cargo", "run", "--quiet", "--", "iac-roles", "--format", "json"]
+        else ["cargo", "run", "--quiet", "--", "update-prerequisites", "--format", "json"]
     )
     try:
         out = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, check=True)

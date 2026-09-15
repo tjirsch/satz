@@ -515,6 +515,9 @@ fn load_bootstrap_yaml(
 #[allow(clippy::too_many_arguments)]
 pub async fn bootstrap(
     config_file: PathBuf,
+    // the services the estate declares on its infrastructure project — enabled
+    // before `tofu` runs, so the first apply never races an API
+    estate_services: &[String],
     dry_run: bool,
     greenfield: bool,
     no_default_grants: bool,
@@ -864,15 +867,15 @@ pub async fn bootstrap(
         "storage.googleapis.com",
         "cloudbilling.googleapis.com",
     ];
-    let template_services = [
-        "cloudidentity.googleapis.com",
-        "cloudasset.googleapis.com",
-        "logging.googleapis.com",
-        "orgpolicy.googleapis.com",
-        "essentialcontacts.googleapis.com",
-    ];
+    // The rest are the estate's own: every service its infrastructure project
+    // declares. Derived rather than listed, because the list a pack brings with it is
+    // exactly the one a hardcoded table would be missing — the budget pack's
+    // `billingbudgets`, the alert pack's `monitoring`. An estate that declares none
+    // falls back to the six above and `tofu` enables the rest.
+    let template_services: Vec<&str> =
+        estate_services.iter().map(String::as_str).filter(|s| !required_services.contains(s)).collect();
 
-    for service in required_services.iter().chain(template_services.iter()).copied() {
+    for service in required_services.iter().copied().chain(template_services.iter().copied()) {
         let required = required_services.contains(&service);
         let step = format!("API {}", service);
         if !project_usable {

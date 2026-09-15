@@ -3,8 +3,8 @@
 //!
 //! The table is satz's own knowledge — which predefined role carries the permission
 //! a resource type needs — so it is compiled in, like the bootstrap pre-flight's
-//! `required_permissions`. `satz iac-roles --format json` prints it, and
-//! `scripts/check_iac_roles.py` checks every entry against Google's role
+//! `required_permissions`. `satz update-prerequisites --format json` prints it, and
+//! `scripts/check_prerequisites.py` checks every role entry against Google's role
 //! definitions.
 //!
 //! The roles are granted at the organization, so every folder and project inherits
@@ -35,7 +35,7 @@ pub(crate) enum Scope {
 }
 
 /// One capability: the permission that proves it, and the predefined roles that
-/// carry it. Any one of them suffices; the first is the one `iac-roles --execute`
+/// carry it. Any one of them suffices; the first is the one `update-prerequisites`
 /// writes.
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 pub(crate) struct Entry {
@@ -308,6 +308,20 @@ pub(crate) fn apis(manifest: &Manifest, infra_project: &str) -> Vec<ApiNeed> {
             api: api.to_string(),
             reason: reason.into_iter().collect(),
         })
+        .collect()
+}
+
+/// Every service the infra project declares, in the estate and in the packs it
+/// uses. This is what `bootstrap` enables imperatively before `tofu` runs: the
+/// race it dodges is the same one the emitter's ordering pass handles inside an
+/// apply, and on day 0 there is no apply yet.
+pub(crate) fn declared_apis(manifest: &Manifest, infra_project: &str) -> Vec<String> {
+    manifest
+        .of_type("google_project_service")
+        .filter(|r| manifest.project_of(r).as_deref() == Some(infra_project))
+        .filter_map(|r| r.attrs.get("service").cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
 }
 
@@ -601,6 +615,150 @@ pub(crate) fn write_grants(
     Ok(written)
 }
 
+/// Write the APIs into the estate's own `google_project` block for the infra
+/// project: into its `project_service` list when it has one, else a list created
+/// right after `project_id`. The list is the estate's record of what is switched
+/// on, and it is where the emitter derives `google_project_service.<label>_<service>`
+/// from — the address the CIS pack claims 5.0 §2.14 against — so this only ever
+/// ADDS, in the list's own order.
+///
+/// It refuses rather than guesses: an estate that binds no `infra_project_name`,
+/// or whose infra project is declared somewhere other than this file (a pack, most
+/// likely), is named and nothing is written. A splice into a pristine pack would be
+/// overwritten by the next `merge-presets`.
+pub(crate) fn write_apis(
+    estate: &Path,
+    params: &HashMap<String, String>,
+    apis: &BTreeSet<String>,
+) -> Result<Vec<String>, String> {
+    if apis.is_empty() {
+        return Ok(Vec::new());
+    }
+    let infra = params.get("infra_project_name").filter(|v| !v.is_empty()).ok_or_else(|| {
+        format!(
+            "{}: the estate binds no infra_project_name, so there is no project to enable {} on — \
+             nothing was written",
+            estate.display(),
+            apis.iter().cloned().collect::<Vec<_>>().join(", ")
+        )
+    })?;
+    let text = std::fs::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let out = add_to_service_list(&text, infra, params, apis).ok_or_else(|| {
+        format!(
+            "{}: no `google_project` block in this file declares project_id {} — the infra project \
+             is declared elsewhere (a pack is never edited: the next merge-presets would overwrite \
+             it). Add these to its project_service list by hand: {}",
+            estate.display(),
+            infra,
+            apis.iter().cloned().collect::<Vec<_>>().join(", ")
+        )
+    })?;
+    crate::fsx::write_edited_satz(estate, &text, &out).map_err(|e| e.to_string())?;
+    Ok(apis.iter().map(|a| format!("{} on {}", a, infra)).collect())
+}
+
+/// Splice the services into the `project_service` list of the `google_project`
+/// block whose `project_id` is this project — the value read after `{param}`
+/// interpolation, and after a bare param reference, since `project_id =
+/// infra_project_name` is how every estate the template writes names it. `None`
+/// when no block in this text declares that project.
+fn add_to_service_list(
+    text: &str,
+    project: &str,
+    params: &HashMap<String, String>,
+    apis: &BTreeSet<String>,
+) -> Option<String> {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    // find the `project_id` line that names this project, then the block it is in
+    let mut target: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        let Some(value) = t.strip_prefix("project_id").and_then(|r| r.trim_start().strip_prefix('=')) else {
+            continue;
+        };
+        let value = value.trim();
+        let named = match value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+            Some(literal) => interpolate(literal, params) == project,
+            // a bare param reference: `project_id = infra_project_name`
+            None => params.get(value).is_some_and(|v| v == project),
+        };
+        if named {
+            target = Some(i);
+            break;
+        }
+    }
+    let at = target?;
+    let indent: String = lines[at].chars().take_while(|c| c.is_whitespace()).collect();
+
+    // the list, if this block already has one: from `project_id` to the end of its
+    // block, the first `project_service = [` at the same depth
+    let mut depth: i32 = 0;
+    let mut list: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate().skip(at) {
+        let t = line.trim();
+        if t.starts_with("project_service") && t.contains('[') && depth == 0 {
+            list = Some(i);
+            break;
+        }
+        for c in t.chars() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth < 0 {
+            break;
+        }
+    }
+
+    match list {
+        Some(i) if lines[i].trim_end().trim_end_matches(',').ends_with(']') => {
+            // one line: `project_service = ["a", "b"]`
+            let close = lines[i].rfind(']')?;
+            let inner = lines[i][..close].trim_end().to_string();
+            let sep = if inner.ends_with('[') { "" } else { ", " };
+            let add = apis.iter().map(|a| format!("\"{}\"", a)).collect::<Vec<_>>().join(", ");
+            lines[i] = format!("{}{}{}{}", inner, sep, add, &lines[i][close..]);
+        }
+        Some(i) => {
+            // multi-line: insert before the closing `]`, in the list's own order
+            let mut j = i + 1;
+            while j < lines.len() && !lines[j].trim_start().starts_with(']') {
+                j += 1;
+            }
+            if j == lines.len() {
+                return None;
+            }
+            let item_indent: String = if j > i + 1 {
+                lines[i + 1].chars().take_while(|c| c.is_whitespace()).collect()
+            } else {
+                format!("{}  ", indent)
+            };
+            if j > i + 1 && !lines[j - 1].trim_end().ends_with(',') && !lines[j - 1].trim().is_empty() {
+                lines[j - 1].push(',');
+            }
+            for (k, a) in apis.iter().enumerate() {
+                lines.insert(j + k, format!("{}\"{}\",", item_indent, a));
+            }
+        }
+        None => {
+            // no list at all: write one under `project_id`
+            let mut block = vec![format!("{}project_service = [", indent)];
+            block.extend(apis.iter().map(|a| format!("{}  \"{}\",", indent, a)));
+            block.push(format!("{}]", indent));
+            for (k, l) in block.into_iter().enumerate() {
+                lines.insert(at + 1 + k, l);
+            }
+        }
+    }
+    let mut s = lines.join("\n");
+    if text.ends_with('\n') {
+        s.push('\n');
+    }
+    Some(s)
+}
+
 /// `{name}` replaced by the param's value — the key as the compiler reads it.
 fn interpolate(key: &str, params: &HashMap<String, String>) -> String {
     let mut out = String::new();
@@ -692,7 +850,7 @@ fn add_to_existing(text: &str, block: &str, member: &str, params: &HashMap<Strin
 /// A new top-level block granting the roles.
 fn append_block(text: &str, block: &str, roles: &BTreeSet<String>) -> String {
     let mut s = text.trim_end().to_string();
-    s.push_str("\n\n// The IaC service account's roles for this estate's resource types (`satz iac-roles`).\n");
+    s.push_str("\n\n// The IaC service account's roles for this estate's resource types (`satz update-prerequisites`).\n");
     s.push_str(&format!("{} {{\n", block));
     if block == "google_billing_account_iam_member" {
         s.push_str("  billing_account_id = billing_account_infra\n");
@@ -894,6 +1052,67 @@ mod tests {
         let one = "google_organization_iam_member {\n  \"serviceAccount:svc-iac-001@corp-infra-001.iam.gserviceaccount.com\" = [\"roles/viewer\"]\n}\n";
         let edited = add_to_existing(one, "google_organization_iam_member", &format!("serviceAccount:{}", SA), &params(), &roles(&["roles/browser"])).unwrap();
         assert!(edited.contains("= [\"roles/viewer\", \"roles/browser\"]\n"), "{}", edited);
+    }
+
+    fn apis(list: &[&str]) -> BTreeSet<String> {
+        list.iter().map(|a| a.to_string()).collect()
+    }
+
+    /// The infra project is named by a bare param reference in every estate the
+    /// template writes, and by a literal in one somebody hand-wrote. Both resolve.
+    #[test]
+    fn an_api_is_spliced_into_the_infra_projects_service_list() {
+        let src = "estate e\n\ngoogle_folder {\n  infra_folder {\n    google_project {\n      infra {\n        project_id      = infra_project_name\n        project_service = [\n          \"cloudasset.googleapis.com\",\n          \"iam.googleapis.com\",\n        ]\n      }\n    }\n  }\n}\n";
+        let edited = add_to_service_list(src, "corp-infra-001", &params(), &apis(&["monitoring.googleapis.com"])).unwrap();
+        assert!(
+            edited.contains("          \"iam.googleapis.com\",\n          \"monitoring.googleapis.com\",\n        ]"),
+            "{}",
+            edited
+        );
+        // a literal project id, and a one-line list
+        let literal = "google_project {\n  infra {\n    project_id = \"corp-infra-001\"\n    project_service = [\"iam.googleapis.com\"]\n  }\n}\n";
+        let edited = add_to_service_list(literal, "corp-infra-001", &params(), &apis(&["storage.googleapis.com"])).unwrap();
+        assert!(edited.contains("= [\"iam.googleapis.com\", \"storage.googleapis.com\"]"), "{}", edited);
+    }
+
+    /// An estate whose infra project has no list at all gets one, under the line
+    /// that names the project.
+    #[test]
+    fn a_project_without_a_service_list_gets_one() {
+        let src = "google_project {\n  infra {\n    project_id      = infra_project_name\n    billing_account = billing_account_infra\n  }\n}\n";
+        let edited = add_to_service_list(src, "corp-infra-001", &params(), &apis(&["billingbudgets.googleapis.com"])).unwrap();
+        assert!(
+            edited.contains(
+                "    project_id      = infra_project_name\n    project_service = [\n      \"billingbudgets.googleapis.com\",\n    ]\n"
+            ),
+            "{}",
+            edited
+        );
+    }
+
+    /// Another project's list is not the infra project's, and a file that declares
+    /// neither is not edited at all — the caller names the file to fix by hand.
+    #[test]
+    fn a_project_that_is_not_the_infra_project_is_never_edited() {
+        let other = "google_project {\n  logsink {\n    project_id      = \"corp-logs-001\"\n    project_service = [\n      \"logging.googleapis.com\",\n    ]\n  }\n}\n";
+        assert!(add_to_service_list(other, "corp-infra-001", &params(), &apis(&["monitoring.googleapis.com"])).is_none());
+    }
+
+    #[test]
+    fn write_apis_refuses_an_estate_with_no_infra_project_and_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!("satz-apis-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let estate = dir.join("e.satz");
+        let src = "estate e\n\ngoogle_project {\n  other {\n    project_id = \"corp-other-001\"\n  }\n}\n";
+        std::fs::write(&estate, src).unwrap();
+        // the param is bound, but no block in this file declares that project
+        let err = write_apis(&estate, &params(), &apis(&["monitoring.googleapis.com"])).unwrap_err();
+        assert!(err.contains("corp-infra-001") && err.contains("monitoring.googleapis.com"), "{}", err);
+        assert_eq!(std::fs::read_to_string(&estate).unwrap(), src, "nothing may be written");
+        // and with no infra project bound at all, it says that instead
+        let err = write_apis(&estate, &HashMap::new(), &apis(&["monitoring.googleapis.com"])).unwrap_err();
+        assert!(err.contains("infra_project_name"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

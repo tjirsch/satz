@@ -893,6 +893,16 @@ pub(crate) enum MergeEvent {
     Note { text: String },
     /// what an adoption changes in the emission
     EmissionDelta { lines: Vec<String> },
+    /// the roles and APIs the estate gained because of the packs this run installed
+    Prerequisites {
+        /// one line per declaration written into the estate
+        wrote: Vec<String>,
+        /// what is still missing — a refusal, or a `--report-only` run's list
+        missing: Vec<String>,
+        /// why nothing was written, when something stopped it
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refused: Option<String>,
+    },
 }
 
 /// How many packs each outcome took, in both modes: a `--report-only` run counts
@@ -956,6 +966,20 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
         match e {
             MergeEvent::Note { text } => out.push_str(&format!("{}\n", text)),
             MergeEvent::Warning { file, text } => out.push_str(&format!("  WARNING {}: {}\n", file, text)),
+            MergeEvent::Prerequisites { wrote, missing, refused } => {
+                // What the packs this run installed oblige the estate to declare. A
+                // `--report-only` run says what it would write; a refusal says why it
+                // could not, and both set `attention`.
+                for w in wrote {
+                    out.push_str(&format!("  prerequisite written: {}\n", w));
+                }
+                if let Some(why) = refused {
+                    out.push_str(&format!("  prerequisites NOT written: {}\n", why));
+                }
+                for m in missing {
+                    out.push_str(&format!("  {} {}\n", if dry { "would declare" } else { "still missing:" }, m));
+                }
+            }
             MergeEvent::EmissionDelta { lines } => {
                 out.push_str("\n  emission delta after adoption:\n");
                 for l in lines {
@@ -1403,6 +1427,49 @@ pub(crate) async fn run_merge_presets(
             return Err("merge-presets: estate repoint changed the transpiled output — rolled back everything (this should be impossible; please report)".into());
         }
         events.push(MergeEvent::Note { text: "  estate repoint verified: transpiled output identical.".to_string() });
+    }
+
+    // Last, and after the repoint proof: a pack the estate gained may emit a type
+    // whose role or API the estate does not declare yet, and the pickup is exactly
+    // when that becomes true. It runs here rather than earlier because a
+    // prerequisite write legitimately changes the emission, and the proof above
+    // compares the estate with itself.
+    if let Some(est) = &estate {
+        match crate::prerequisites_report(est, tool_config, runtime_config) {
+            Ok(report) => {
+                let missing: Vec<String> = crate::prerequisites::describe(&report.write)
+                    .into_iter()
+                    .chain(report.missing_apis.iter().map(|a| format!("{} on {}", a.api, report.infra_project)))
+                    .collect();
+                if missing.is_empty() {
+                    // nothing to say: the estate already declares what its packs need
+                } else if report_only {
+                    events.push(MergeEvent::Prerequisites { wrote: Vec::new(), missing, refused: None });
+                    needs_attention = true;
+                } else {
+                    match crate::prerequisites_write(est, &report, tool_config, runtime_config) {
+                        Ok((wrote, _)) => events.push(MergeEvent::Prerequisites { wrote, missing: Vec::new(), refused: None }),
+                        Err(e) => {
+                            events.push(MergeEvent::Prerequisites {
+                                wrote: Vec::new(),
+                                missing,
+                                refused: Some(e.to_string()),
+                            });
+                            needs_attention = true;
+                        }
+                    }
+                }
+            }
+            // an estate that cannot be compiled or names no IaC service account has a
+            // louder problem than this step; the packs are already written either way
+            Err(e) => events.push(MergeEvent::Note {
+                text: format!(
+                    "  prerequisites not checked for {}: {}",
+                    est.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
+                    e.to_string().rsplit(": ").next().unwrap_or("")
+                ),
+            }),
+        }
     }
 
     Ok(MergeReport::counted(events, report_only, needs_attention))

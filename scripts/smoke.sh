@@ -1141,38 +1141,48 @@ if grep -q 'monitoring.googleapis.com' tmp/api-none.txt; then fail "--validation
 "$satz" --config . transpile smoke.satz --check > tmp/api-clean.txt 2>&1
 if grep -q 'API(s) this estate' tmp/api-clean.txt; then fail "a complete estate warned about APIs:\n$(cat tmp/api-clean.txt)"; fi
 
-step "iac-roles: the IaC service account holds what the estate's types need, and --execute writes a gap"
-"$satz" --config . iac-roles smoke.satz > tmp/iac.txt 2>&1 || fail "the smoke estate's IaC service account misses roles:\n$(cat tmp/iac.txt)"
-grep -q '^missing: none' tmp/iac.txt || fail "iac-roles did not report the smoke estate complete:\n$(cat tmp/iac.txt)"
+step "update-prerequisites: the estate declares the roles and APIs its own types need, and the write closes a gap"
+"$satz" --config . update-prerequisites smoke.satz > tmp/iac.txt 2>&1 || fail "the smoke estate misses a prerequisite:\n$(cat tmp/iac.txt)"
+grep -q '^missing: none' tmp/iac.txt || fail "update-prerequisites did not report the roles complete:\n$(cat tmp/iac.txt)"
+grep -q '^missing APIs: none' tmp/iac.txt || fail "update-prerequisites did not report the APIs complete:\n$(cat tmp/iac.txt)"
+# a complete estate is not edited by a run that finds nothing
+cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" || fail "update-prerequisites edited a complete estate"
 "$satz" --config . transpile smoke.satz --check > tmp/iac-clean.txt 2>&1
 if grep -q 'lacks roles' tmp/iac-clean.txt; then fail "a complete estate warned about roles:\n$(cat tmp/iac-clean.txt)"; fi
-# A gap: the storage role goes, the estate still has a bucket.
-grep -v '"roles/storage.admin",' yaml/smoke.satz > tmp/iac-gap.satz
+# A gap in BOTH halves: the storage role and the monitoring API go, and the
+# estate still has a bucket and alert policies.
+grep -v '"roles/storage.admin",' yaml/smoke.satz | grep -v '"monitoring.googleapis.com",' > tmp/iac-gap.satz
+cp tmp/iac-gap.satz tmp/iac-gap-before.satz
 "$satz" --config . transpile tmp/iac-gap.satz --check > tmp/iac-warn.txt 2>&1 || fail "a role gap failed the compile at the default level:\n$(cat tmp/iac-warn.txt)"
 grep -q 'lacks roles' tmp/iac-warn.txt || fail "the compile did not warn about the gap:\n$(cat tmp/iac-warn.txt)"
 grep -q 'roles/storage.admin at the organization — for google_storage_bucket' tmp/iac-warn.txt \
   || fail "the warning does not name the role and the type:\n$(cat tmp/iac-warn.txt)"
+grep -q 'monitoring.googleapis.com — needed by google_monitoring_alert_policy' tmp/iac-warn.txt \
+  || fail "the warning does not name the API and the type:\n$(cat tmp/iac-warn.txt)"
 if "$satz" --config . --validation error transpile tmp/iac-gap.satz --check > tmp/iac-err.txt 2>&1; then
   fail "--validation error compiled an estate with a role gap"
 fi
 grep -q 'roles/storage.admin' tmp/iac-err.txt || fail "the refusal does not name the role:\n$(cat tmp/iac-err.txt)"
 "$satz" --config . --validation none transpile tmp/iac-gap.satz --check > tmp/iac-none.txt 2>&1
 if grep -q 'lacks roles' tmp/iac-none.txt; then fail "--validation none still checked roles"; fi
-if "$satz" --config . iac-roles tmp/iac-gap.satz > tmp/iac-dry.txt 2>&1; then
-  fail "iac-roles exited 0 on a gap:\n$(cat tmp/iac-dry.txt)"
+if "$satz" --config . update-prerequisites tmp/iac-gap.satz --report-only > tmp/iac-dry.txt 2>&1; then
+  fail "--report-only exited 0 on a gap:\n$(cat tmp/iac-dry.txt)"
 fi
-grep -q '1 role(s) missing' tmp/iac-dry.txt || fail "the dry run does not count the gap:\n$(cat tmp/iac-dry.txt)"
-"$satz" --config . iac-roles tmp/iac-gap.satz --execute > tmp/iac-exec.txt 2>&1 || fail "iac-roles --execute failed:\n$(cat tmp/iac-exec.txt)"
+# one role and one API, counted together: a prerequisite is a prerequisite
+grep -q '2 prerequisite(s) missing' tmp/iac-dry.txt || fail "--report-only does not count both halves of the gap:\n$(cat tmp/iac-dry.txt)"
+# --report-only wrote nothing
+cmp -s tmp/iac-gap.satz tmp/iac-gap-before.satz || fail "--report-only edited the estate"
+"$satz" --config . update-prerequisites tmp/iac-gap.satz > tmp/iac-exec.txt 2>&1 || fail "the write failed:\n$(cat tmp/iac-exec.txt)"
 grep -q 'wrote roles/storage.admin in google_organization_iam_member' tmp/iac-exec.txt \
   || fail "--execute did not write the role:\n$(cat tmp/iac-exec.txt)"
-"$satz" fmt --check tmp/iac-gap.satz || fail "iac-roles --execute left a formatted estate unformatted"
+"$satz" fmt --check tmp/iac-gap.satz || fail "the write left a formatted estate unformatted"
 # into the account's existing list: no second block, no appended one
 [ "$(grep -c '^google_organization_iam_member {' tmp/iac-gap.satz)" = 1 ] || fail "--execute added a second grant block"
-[ "$(grep -c 'satz iac-roles' tmp/iac-gap.satz)" = "$(grep -c 'satz iac-roles' yaml/smoke.satz)" ] \
-  || fail "--execute appended a block where the list exists"
-"$satz" --config . iac-roles tmp/iac-gap.satz > /dev/null 2>&1 || fail "the gap is still reported after --execute"
-"$satz" iac-roles --format json > tmp/iac-table.json
-python3 - <<'PYEOF' || fail "iac-roles --format json did not print the table"
+[ "$(grep -c 'satz update-prerequisites' tmp/iac-gap.satz)" = "$(grep -c 'satz update-prerequisites' yaml/smoke.satz)" ] \
+  || fail "the write appended a block where the list exists"
+"$satz" --config . update-prerequisites tmp/iac-gap.satz --report-only > /dev/null 2>&1 || fail "a gap survived the write"
+"$satz" update-prerequisites --format json > tmp/iac-table.json
+python3 - <<'PYEOF' || fail "update-prerequisites --format json did not print the table"
 import json
 t = json.load(open("tmp/iac-table.json"))
 assert t["read"], "no read entries"
@@ -1416,7 +1426,7 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_transpile","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_require","arguments":{"estate":"../../../README.md","framework":"cis-gcp-4.0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"satz_scan_checkov","arguments":{"estate":"smoke.satz"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_iac_roles","arguments":{"estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_update_prerequisites","arguments":{"estate":"smoke.satz","report_only":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"showcase.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"tmp/refuse.satz"}}}'
 } > tmp/mcp-in.jsonl
@@ -1467,7 +1477,7 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_transpile_check", "satz_transpile", "satz_report_compliance",
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
-                      "satz_iac_roles", "satz_merge_presets", "satz_restrict"}, sorted(tools)
+                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -1486,7 +1496,7 @@ assert opened["runs_as"] is None, opened
 for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_prowler", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
-             "satz_adopt", "satz_get_presets", "satz_iac_roles", "satz_merge_presets"):
+             "satz_adopt", "satz_get_presets", "satz_update_prerequisites", "satz_merge_presets"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
@@ -1789,7 +1799,9 @@ merged = g[5]["result"]["structuredContent"]
 assert merged["report_only"] is True, merged
 assert merged["counts"]["current"] == second["current"], merged["counts"]
 assert merged["attention"] is False, merged
-assert all(e["kind"] == "pack" for e in merged["events"]), [e["kind"] for e in merged["events"]][:5]
+# every event is structured — packs, and the notes the run has to add (an estate
+# with no IaC service account cannot be prerequisite-checked, and says so)
+assert all(e["kind"] in ("pack", "note") for e in merged["events"]), [e["kind"] for e in merged["events"]][:5]
 PYEOF
 [ -s tmp/gp/presets/CIS-GCP-Foundation-4.0.satz ] || fail "satz_get_presets did not install the library"
 

@@ -8,7 +8,8 @@
 //! write", and no rendering nobody asked for.
 //!
 //! Two commands answer on the console instead, because what they produce is not a
-//! document: `iac-roles`, whose exit code is the answer, and `prowler`, which
+//! document: `update-prerequisites`, which edits the estate and reports what it
+//! wrote, and `prowler`, which
 //! prints a command line to paste.
 
 use std::path::Path;

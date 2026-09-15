@@ -84,7 +84,7 @@ google_cloud_identity_group {
 
 google_organization_iam_member {
   // The IaC service account: read on every project (import, adopt, reports), and
-  // the roles this estate's resource types need — `satz iac-roles` adds the ones
+  // the roles this estate's resource types need — `satz update-prerequisites` adds the ones
   // further packs bring. Granted at the organization, so every folder and project
   // inherits them, hand-made ones included. The Groups Admin role in the Workspace
   // admin console is needed as well; it is not an IAM role.

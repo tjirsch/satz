@@ -21,7 +21,7 @@ pub(crate) enum Severity {
 }
 
 /// Which check spoke. The CLI's flags silence two of them (`--no-action-warnings`,
-/// the `iac-roles` command's own report); an agent can group by it.
+/// the `update-prerequisites` command's own report); an agent can group by it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Kind {

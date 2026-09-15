@@ -25,7 +25,7 @@ ships it).
 | `presets/cis-extensions/*-dry-run.satz` | `scripts/build_dry_run_fragments.py` | the enforcing fragment it is derived from changes | smoke: `--check`, which compares byte for byte |
 | `presets/README.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
 | `presets/catalogs/*.yaml` | by hand, from the benchmark | a benchmark release | **nothing** |
-| `src/iac_roles.rs` (the IaC role table) | by hand, from Google's predefined roles | a pack emits a new resource type; Google changes a role | a new type: `cargo test` (`iac_roles_gate`); a changed role: **nothing** — run `scripts/check_iac_roles.py` |
+| `src/prerequisites.rs` (the prerequisite table: roles and APIs per type) | by hand, from Google's predefined roles | a pack emits a new resource type; Google changes a role | a new type: `cargo test` (`prerequisites_gate`); a changed role: **nothing** — run `scripts/check_prerequisites.py` |
 | `tests/corpus/*/expected.sorted.txt` | `UPDATE_CORPUS=1 cargo test` | emission changes | `cargo test` (that is the gate) |
 | provider version pin | by hand | a provider release | **nothing** |
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
@@ -147,20 +147,20 @@ the packs that implement them.
 
 ## The IaC role table
 
-`src/iac_roles.rs` — per resource type, the permission the IaC service account needs
+`src/prerequisites.rs` — per resource type, the permission the IaC service account needs
 to manage it and the predefined roles that carry that permission, plus the reads every
-estate needs. `satz iac-roles` checks an estate against it and `--execute` writes the
-missing roles; `satz whoami <estate>` tests the permissions live. `satz iac-roles
+estate needs. `satz update-prerequisites` checks an estate against it and `--execute` writes the
+missing roles; `satz whoami <estate>` tests the permissions live. `satz update-prerequisites
 --format json` prints it.
 
 Two triggers make it stale:
 
-- **A pack emits a type the table has no row for.** `iac_roles_gate` in `cargo test`
+- **A pack emits a type the table has no row for.** `prerequisites_gate` in `cargo test`
   compiles the cases under `tests/iac/` — together they use every pack, each one
   unconditionally — and fails on an emitted type without a row, and on a pack no case
   uses. A new pack gets a line in one of those cases; a new type gets its row.
 - **Google changes a predefined role** — a permission renamed, or moved out of the role
-  the table names. Nothing in the repository sees it. `scripts/check_iac_roles.py`
+  the table names. Nothing in the repository sees it. `scripts/check_prerequisites.py`
   reads every role the table names from the IAM API and fails when an entry's
   permission is in none of its roles: **run it when adding a row, and on each provider
   pin move.**
@@ -229,7 +229,7 @@ second kind.
 | `update_schema_fixture.py` | helper | keep `tests/schemas/google.json` in step with the types the packs emit; `--check` names what is missing |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build_dry_run_fragments.py` | helper | generate each CIS extension's dry-run twin from the enforcing fragment: `spec` becomes `dry_run_spec`, every claim is dropped. `--check` fails on a stale twin |
-| `check_iac_roles.py` | gate | hold the IaC role table (`src/iac_roles.rs`) against Google's predefined role definitions; needs ADC, not run by CI |
+| `check_prerequisites.py` | gate | hold the prerequisite table's roles (`src/prerequisites.rs`) against Google's predefined role definitions; needs ADC, not run by CI |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every push (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
@@ -615,18 +615,18 @@ protoPayload.metadata."@type"="type.googleapis.com/google.cloud.audit.OrgPolicyV
 Promote by switching the dry-run param off and the enforcing param on. Both on at once is
 refused, naming both params and what each choice means.
 
-## `check_iac_roles.py` — the role table against Google's roles
+## `check_prerequisites.py` — the prerequisite table's roles against Google's roles
 
 The IaC role table names, per resource type, a permission and the predefined roles
-that carry it. The script reads the table from `satz iac-roles --format json` (of this
+that carry it. The script reads the table from `satz update-prerequisites --format json` (of this
 checkout through `cargo run`, or of an installed binary with `--satz`), fetches each
 role it names from the IAM API (`roles.get`), and fails when none of an entry's roles
 carries the entry's permission: a typo in the table, a permission Google renamed, or a
 role Google narrowed.
 
 ```bash
-uv run scripts/check_iac_roles.py                 # the table of this checkout
-uv run scripts/check_iac_roles.py --satz satz     # the table of an installed binary
+uv run scripts/check_prerequisites.py                 # the table of this checkout
+uv run scripts/check_prerequisites.py --satz satz     # the table of an installed binary
 ```
 
 Needs Application Default Credentials; predefined roles are Google's and the same for
