@@ -459,7 +459,7 @@ live organisation matches it:
 | trigger | when | runs | fails when |
 |---|---|---|---|
 | `satz-check` | every push to `main` | `satz transpile --check <estate>` | the estate no longer compiles |
-| `satz-compliance` | nightly, Cloud Scheduler | `satz report-compliance <framework> <estate> --fail-on <statuses>` | a witness is DRIFTED or NOT ENFORCED |
+| `satz-compliance` | nightly, Cloud Scheduler | `satz report-compliance <framework> <estate> --format markdown --out <file> --fail-on <statuses>` | a witness is DRIFTED or NOT ENFORCED |
 
 Both are one pack:
 
@@ -545,8 +545,10 @@ predict it.
 Then fold the export back in — any of the three read the same file:
 
 ```bash
-satz report-compliance cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json
-satz triage cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json
+satz report-compliance cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json \
+  --format markdown --out evidence/cis-4.0.md
+satz triage cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json \
+  --format markdown --out evidence/triage.md
 satz remediation-plan cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json
 ```
 

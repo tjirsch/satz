@@ -165,7 +165,7 @@ grep -q 'num_newer_versions' "$sc" || fail "list-of-objects lifecycle rules miss
 grep -q 'google_storage_bucket_iam_member' "$sc" || fail "bucket-scoped grant missing"
 grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form of a bucket-scoped grant did not reach main.tf"
 [ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should emit one resource each"
-"$satz" --config . require cis-gcp-4.0 showcase.satz > tmp/showcase-require.txt 2>&1 || true
+"$satz" --config . require cis-gcp-4.0 showcase.satz --format text --out tmp/showcase-require.txt 2>/dev/null || true
 grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not read as a deviation"
 grep -q '0 contradicted claim(s)' tmp/showcase-require.txt || fail "a claim contradicts its own witness in the showcase estate"
 # R7: the coverage word is an assertion about what the witness DOES. Switch the
@@ -173,7 +173,7 @@ grep -q '0 contradicted claim(s)' tmp/showcase-require.txt || fail "a claim cont
 # contradicted rather than as a disclosed non-conformance (ADR 0013).
 sed 's/enforce = "FALSE"/enforce = "TRUE"/' yaml/showcase-policies.satz > tmp/showcase-policies-enforcing.satz
 sed 's|use "showcase-policies.satz"|use "../tmp/showcase-policies-enforcing.satz"|' yaml/showcase.satz > tmp/showcase-contradicted.satz
-"$satz" --config . require cis-gcp-4.0 ../tmp/showcase-contradicted.satz > tmp/showcase-contradicted.txt 2>&1 || true
+"$satz" --config . require cis-gcp-4.0 ../tmp/showcase-contradicted.satz --format text --out tmp/showcase-contradicted.txt 2>/dev/null || true
 grep -q 'declares a deviation and its witnesses enforce the control' tmp/showcase-contradicted.txt || fail "a deviation over an enforcing policy must read as a contradicted claim"
 grep -q '1 contradicted claim(s)' tmp/showcase-contradicted.txt || fail "the contradicted claim is not counted in the summary"
 if command -v tofu >/dev/null 2>&1; then
@@ -263,11 +263,11 @@ grep -q "is not an opt-in service" tmp/scc-bad.txt \
   || fail "the refusal does not say what --optional takes:\n$(cat tmp/scc-bad.txt)"
 
 step "questions: what the estate can be asked, and what the answers cost"
-"$satz" --config . questions showcase.satz > tmp/questions.txt 2>/dev/null || fail "satz questions failed"
+"$satz" --config . questions showcase.satz --format text --out tmp/questions.txt 2>/dev/null || fail "satz questions failed"
 grep -q 'customer_shortname' tmp/questions.txt || fail "the showcase's question is missing"
 grep -q 'one-way' tmp/questions.txt || fail "a recreate-reversal question must be marked as a one-way door"
 grep -q 'group_model' tmp/questions.txt || fail "the oneof question is missing"
-"$satz" --config . questions showcase.satz --format json 2>/dev/null > tmp/questions.json || true
+"$satz" --config . questions showcase.satz --format json --out tmp/questions.json 2>/dev/null || true
 python3 - <<'PYEOF' || fail "satz questions --format json did not emit parseable JSON"
 import json
 d = json.load(open("tmp/questions.json"))
@@ -283,9 +283,9 @@ assert all(q["state"] == "answered" for q in d["questions"]), [(q["subject"], q[
 assert d["summary"]["complete"] is True and d["summary"]["unanswered"] == 0, d["summary"]
 PYEOF
 grep -q 'satz v' tmp/questions.json && fail "the version banner is on stdout"
-"$satz" --config . questions showcase.satz --unanswered > tmp/questions-open.txt 2>/dev/null || fail "questions --unanswered failed"
+"$satz" --config . questions showcase.satz --unanswered --format text --out tmp/questions-open.txt 2>/dev/null || fail "questions --unanswered failed"
 if grep -q 'customer_shortname' tmp/questions-open.txt; then fail "an answered question must not be listed under --unanswered"; fi
-"$satz" --config . questions showcase.satz --format markdown > tmp/decisions.md 2>/dev/null || fail "questions --format markdown failed"
+"$satz" --config . questions showcase.satz --format markdown --out tmp/decisions.md 2>/dev/null || fail "questions --format markdown failed"
 grep -q 'All 3 questions are answered' tmp/decisions.md || fail "the decisions sheet must say the showcase is complete"
 
 step "interview: a skeleton, piped answers, derived defaults, the gate, and the decisions sheet"
@@ -338,7 +338,7 @@ sed '/default_zone/d' tmp/iv/new.satz > tmp/iv/almost.satz
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/almost.satz" --dry-run > tmp/iv/dry.txt 2>&1 \
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
-"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown > tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
+"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown --out tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
 grep -q '1 of 16 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 # the catalog is what the customer keeps: every question carries WHY it is asked, whether
 # the answer was chosen or taken as offered, and the cost of changing it in words
@@ -347,9 +347,10 @@ grep -q 'how | changing it later' tmp/iv/decisions.md || fail "the catalog colum
 grep -qE '\| \*[A-Z]' tmp/iv/decisions.md || fail "no question carries its `why` line"
 grep -q 'the estate and the running organisation feels it\|destroyed and made again' tmp/iv/decisions.md \
   || fail "the cost of a later change must be words, not two enum names"
-# and the workbook a customer fills in and sends back
-"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --xlsx "$PWD/tmp/iv/decisions.xlsx" > /dev/null 2>tmp/iv/xlsx.txt \
+# and the workbook a customer fills in and sends back — a format, not a flag
+"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format xlsx --out "$PWD/tmp/iv/decisions.xlsx" > tmp/iv/xlsx.out 2>tmp/iv/xlsx.txt \
   || fail "the catalog workbook was not written:\n$(cat tmp/iv/xlsx.txt)"
+[ -s tmp/iv/xlsx.out ] && fail "the console must carry nothing: $(cat tmp/iv/xlsx.out)"
 grep -q 'the `your answer` column is the customer' tmp/iv/xlsx.txt || fail "the workbook must say whose column that is"
 python3 - "$PWD/tmp/iv/decisions.xlsx" <<'PYX' || fail "the workbook is not a readable xlsx with the catalog columns"
 import re, sys, zipfile
@@ -367,7 +368,7 @@ grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is sho
 # line. Without that, the answer binds and nothing emits it, which is the whole point of
 # the check below.
 sed 's|^// use "presets/estate-map.satz"|use "presets/estate-map.satz"|' tmp/iv/new.satz > tmp/iv/mapped.satz
-"$satz" --config . questions "$PWD/tmp/iv/mapped.satz" > tmp/iv/mapped.txt 2>&1 || true
+"$satz" --config . questions "$PWD/tmp/iv/mapped.satz" --format text --out tmp/iv/mapped.txt 2>/dev/null || true
 grep -q 'use_scc_enablement' tmp/iv/mapped.txt \
   || fail "with the map in, the pack choices must be asked:\n$(cat tmp/iv/mapped.txt)"
 printf '%s\n' y | "$satz" --config . interview "$PWD/tmp/iv/mapped.satz" > tmp/iv/mapped2.txt 2>&1 \
@@ -401,7 +402,7 @@ step "require cis-gcp-4.0 (goal view, offline)"
 # `require` exits non-zero when a technical control is unmet — that IS the CI
 # gate; the smoke estate leaves 2.12 (DNS logging) and 2.13 (CAI) unmet on
 # purpose, so the step asserts on the verdict line, not the exit code
-"$satz" --config . require cis-gcp-4.0 smoke.satz > tmp/require.txt 2>&1 || true
+"$satz" --config . require cis-gcp-4.0 smoke.satz --format text --out tmp/require.txt 2>/dev/null || true
 cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 # 14 unmet: 2.12 DNS logging and 2.13 CAI, which no pack covers, plus the twelve
@@ -410,13 +411,14 @@ grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 # rather than absent — that is what makes the number meaningful.
 grep -q '14 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the twelve opt-in extension controls unmet:\n$(tail -3 tmp/require.txt)"
 
-step "require --format json: stdout carries the answer and nothing else"
-# The reason this matters beyond convenience: once `satz mcp` speaks JSON-RPC over
-# stdout, a stray progress line is a corrupt protocol stream, not cosmetic noise.
-# So the assertion is deliberately strict — stdout must parse WHOLE, with stderr
-# discarded, and the version banner and the schema-loader line must not be in it.
-"$satz" --config . require cis-gcp-4.0 smoke.satz --format json 2>/dev/null > tmp/require.json || true
-python3 - <<'PY' || fail "require --format json did not emit parseable JSON on stdout"
+step "require --format json: the file carries the answer and the console nothing"
+# Where the bytes go is the whole contract: the artefact is the file `--out` names,
+# and stdout stays EMPTY so `--out /dev/stdout | jq` is a clean pipe. The line
+# saying where it went, the version banner and the schema-loader line are stderr.
+"$satz" --config . require cis-gcp-4.0 smoke.satz --format json --out tmp/require.json > tmp/require-stdout.txt 2>tmp/require-stderr.txt || true
+[ -s tmp/require-stdout.txt ] && fail "require printed to stdout: $(cat tmp/require-stdout.txt)"
+grep -q "wrote tmp/require.json" tmp/require-stderr.txt || fail "the command did not say where it put the report:\n$(cat tmp/require-stderr.txt)"
+python3 - <<'PY' || fail "require --format json did not write parseable JSON"
 import json, sys
 d = json.load(open("tmp/require.json"))
 assert d["catalog"] == "cis-gcp" and d["version"] == "4.0", d.get("catalog")
@@ -429,18 +431,18 @@ assert s["satisfied"] == 18, s
 verdicts = {c["verdict"] for c in d["controls"]}
 assert verdicts <= {"satisfied","partial","broken","deviation","unmet","organizational","inherited"}, verdicts
 PY
-grep -q 'satz v' tmp/require.json && fail "the version banner is on stdout — it must go to stderr"
-grep -q 'Loaded ' tmp/require.json && fail "a progress line is on stdout — it must go to stderr"
+grep -q 'satz v' tmp/require.json && fail "the version banner reached the report file"
+grep -q 'Loaded ' tmp/require.json && fail "a progress line reached the report file"
 
 step "a format a command cannot produce is refused, not quietly rendered as something else"
-if "$satz" --config . require cis-gcp-4.0 smoke.satz --format pdf >tmp/fmt.txt 2>&1; then
+if "$satz" --config . require cis-gcp-4.0 smoke.satz --format pdf --out tmp/fmt.pdf >tmp/fmt.txt 2>&1; then
   fail "require accepted --format pdf"
 fi
 grep -q 'not available here' tmp/fmt.txt || fail "the refusal does not name the problem:\n$(cat tmp/fmt.txt)"
 grep -q 'text or json' tmp/fmt.txt || fail "the refusal does not name what it can do:\n$(cat tmp/fmt.txt)"
 
 step "require cis-gcp-5.0: the same pack answers both benchmark versions"
-"$satz" --config . require cis-gcp-5.0 smoke.satz > tmp/require-50.txt 2>&1 || true
+"$satz" --config . require cis-gcp-5.0 smoke.satz --format text --out tmp/require-50.txt 2>/dev/null || true
 grep -q 'satisfied' tmp/require-50.txt || fail "require printed no verdict line:\n$(cat tmp/require-50.txt)"
 grep -q '0 broken claim' tmp/require-50.txt || fail "a 5.0 claim names a witness the estate does not emit:\n$(grep -i broken tmp/require-50.txt)"
 # CIS 5.0 §2.14 is the one control whose witness is the SCAFFOLD's, not a pack's: the
@@ -506,7 +508,7 @@ SATZ
 grep -q 'name = "organizations/123456789012/policies/compute.requireShieldedVm"' tmp/ext-hcl/main.tf || fail "the plain boolean constraint is missing"
 grep -q 'parameters = "{\\"allowedServices\\":\[\\"storage.googleapis.com\\"\]}"' tmp/ext-hcl/main.tf || fail "the parameterised constraint did not JSON-encode its parameters:\n$(grep -A3 disableServiceAccountApiKey tmp/ext-hcl/main.tf)"
 grep -q 'denied_values' tmp/ext-hcl/main.tf || fail "the CMEK list constraint lost its values"
-"$satz" --config . require cis-gcp-4.0 tmp/ext.satz > tmp/ext-require.txt 2>&1 || true
+"$satz" --config . require cis-gcp-4.0 tmp/ext.satz --format text --out tmp/ext-require.txt 2>/dev/null || true
 grep -q '0 broken claim' tmp/ext-require.txt || fail "an extension claims a witness it does not emit:\n$(grep -i broken tmp/ext-require.txt)"
 grep -qE '✓ 4.8 ' tmp/ext-require.txt || fail "4.8 did not become satisfied with its fragment on"
 if command -v tofu >/dev/null 2>&1; then
@@ -538,7 +540,7 @@ grep -q 'ip_protocol = "udp"' tmp/fw-hcl/main.tf || fail "UDP 3389 is not denied
 # Google forbids logging on goto_next, so exactly the two denies log
 [ "$(grep -c 'enable_logging = true' tmp/fw-hcl/main.tf)" = 2 ] \
   || fail "expected logging on the two deny rules only — Google refuses it on goto_next:\n$(grep -c 'enable_logging' tmp/fw-hcl/main.tf)"
-"$satz" --config . require cis-gcp-4.0 tmp/fw.satz > tmp/fwreq.txt 2>&1 || true
+"$satz" --config . require cis-gcp-4.0 tmp/fw.satz --format text --out tmp/fwreq.txt 2>/dev/null || true
 grep -q '0 broken claim' tmp/fwreq.txt || fail "the 3.6/3.7 claims name a witness the estate does not emit:\n$(grep -i broken tmp/fwreq.txt)"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/fw-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the admin-port policy does not validate"
@@ -565,7 +567,7 @@ grep -q 'condition = "resource.enableLogging == true"' tmp/dns-hcl/main.tf \
 grep -q '"dns.googleapis.com/Policy"' tmp/dns-hcl/main.tf || fail "the DNS constraint names the wrong resource type"
 # it CONTRIBUTES, never implements: no org policy can require that a network HAS a policy
 grep -q 'contributes' ../../presets/cis-extensions/dns-logging.satz || fail "the DNS claim must not be an implements"
-"$satz" --config . require cis-gcp-5.0 tmp/dns.satz > tmp/dnsreq.txt 2>&1 || true
+"$satz" --config . require cis-gcp-5.0 tmp/dns.satz --format text --out tmp/dnsreq.txt 2>/dev/null || true
 grep -q '0 broken claim' tmp/dnsreq.txt || fail "the DNS claim names a witness the estate does not emit:\n$(grep -i broken tmp/dnsreq.txt)"
 
 step "sentinel: federation without a key, and an audit path whose every grant is there"
@@ -710,7 +712,7 @@ if command -v tofu >/dev/null 2>&1; then
 fi
 
 step "require iso27001-2022 (cross-walk: ISO verdicts folded from the CIS ones)"
-"$satz" --config . require iso27001-2022 smoke.satz > tmp/require-iso.txt 2>&1 || true
+"$satz" --config . require iso27001-2022 smoke.satz --format text --out tmp/require-iso.txt 2>/dev/null || true
 grep -q 'satisfied' tmp/require-iso.txt || fail "require printed no verdict line:\n$(cat tmp/require-iso.txt)"
 # the fold reaches through: an ISO control with no claim of its own is satisfied
 # by the CIS witnesses its evidence names
@@ -724,11 +726,11 @@ grep -q '◇ A.7.1 .*inherited from the provider' tmp/require-iso.txt || fail "p
 
 step "remediation-plan: the dossier + workbook, offline and deterministic"
 rm -rf tmp/plan tmp/plan2
-"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan > tmp/plan.txt 2>&1 || fail "remediation-plan failed:\n$(cat tmp/plan.txt)"
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out-dir tmp/plan > tmp/plan.txt 2>&1 || fail "remediation-plan failed:\n$(cat tmp/plan.txt)"
 for f in dossier.json findings.csv findings.xlsx meta.json; do [ -s "tmp/plan/$f" ] || fail "remediation-plan: $f missing or empty"; done
 grep -q '"declared_address": "google_storage_bucket.state"' tmp/plan/dossier.json || fail "the bucket finding was not joined to its declaring block"
 grep -q '^\[Authored\] Recommended fix' <(head -1 tmp/plan/findings.csv | tr ',' '\n') || fail "the CSV lacks the [Authored] columns"
-"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan2 >/dev/null 2>&1
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out-dir tmp/plan2 >/dev/null 2>&1
 h1=$(grep -o '"dossier_sha256": "[0-9a-f]*"' tmp/plan/meta.json); h2=$(grep -o '"dossier_sha256": "[0-9a-f]*"' tmp/plan2/meta.json)
 [ "$h1" = "$h2" ] || fail "the dossier is not deterministic: $h1 vs $h2"
 # The round trip: authored values, pinned to the dossier's hash, rendered beside the
@@ -742,25 +744,30 @@ json.dump({"dossier_sha256": meta["dossier_sha256"], "items": {first: {
     "authored_by": "smoke", "authored_at": "2026-09-11T20:00:00Z"}}}, open("tmp/authored.json", "w"))
 json.dump({"dossier_sha256": "0" * 64, "items": {}}, open("tmp/authored-stale.json", "w"))
 PYEOF
-"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan3 --merge tmp/authored.json > tmp/plan3.txt 2>&1 \
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out-dir tmp/plan3 --merge tmp/authored.json > tmp/plan3.txt 2>&1 \
   || fail "remediation-plan --merge failed:\n$(cat tmp/plan3.txt)"
 grep -q 'Turn on public access prevention for the state bucket' tmp/plan3/findings.csv || fail "the authored value is not in the CSV"
 grep -q 'smoke,2026-09-11T20:00:00Z' tmp/plan3/findings.csv || fail "the CSV does not name who authored the value, and when"
 [ -s tmp/plan3/authored.json ] || fail "--merge did not keep authored.json beside the run"
 cmp -s tmp/plan/dossier.json tmp/plan3/dossier.json || fail "authoring changed dossier.json — the hash that names the run must not move"
-if "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out tmp/plan4 --merge tmp/authored-stale.json > tmp/plan4.txt 2>&1; then
+if "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --out-dir tmp/plan4 --merge tmp/authored-stale.json > tmp/plan4.txt 2>&1; then
   fail "authored values written against another dossier were merged"
 fi
 grep -q 'the findings changed' tmp/plan4.txt || fail "the stale-hash refusal does not say why:\n$(cat tmp/plan4.txt)"
 
 step "triage: Prowler FAILs sorted into buckets against the estate's claims"
-"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
+"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --format markdown --out tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
 grep -q '^## B ·' tmp/triage.md || fail "no bucket headings"
 grep -q 'declared as `google_storage_bucket' tmp/triage.md || fail "the bucket finding was not matched to its declaring block:\n$(cat tmp/triage.md)"
-# --fix turns the buckets into the estate edit they imply. The delta goes to
-# STDOUT even when the table went to a file: it is what the operator acts on now.
-"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix > tmp/triage-fix.txt 2>/dev/null \
+# --fix turns the buckets into the estate edit they imply, INSIDE the report:
+# one invocation writes one artefact, and a second rendering on the console is one
+# nobody asked for. It is prose, so it is markdown only.
+"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix --format markdown --out tmp/triage-fix.txt 2>/dev/null \
   || fail "triage --fix failed:\n$(cat tmp/triage-fix.txt)"
+if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix --format json --out tmp/triage-fix.json >tmp/triage-fix-json.txt 2>&1; then
+  fail "triage --fix --format json was accepted; the delta is prose"
+fi
+grep -q 'use --format markdown' tmp/triage-fix-json.txt || fail "the refusal does not name the format that works:\n$(cat tmp/triage-fix-json.txt)"
 grep -q 'proposed estate delta' tmp/triage-fix.txt || fail "--fix printed no delta:\n$(cat tmp/triage-fix.txt)"
 # The buckets with nothing to edit are still reported — a list naming only the
 # actionable ones reads as "nothing else to do".
@@ -769,13 +776,13 @@ grep -q 'nothing to edit for' tmp/triage-fix.txt \
 # It proposes; it never writes. The estate must be byte-identical afterwards.
 cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" \
   || fail "triage --fix modified the estate — it proposes, it does not apply"
-"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --report tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
+"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --format markdown --out tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
 grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
 grep -q 'Prowler 5.42.0' tmp/ev2.md || fail "the report does not name the Prowler version that wrote the export"
 # An export from an older Prowler keeps the check id and the project elsewhere;
 # it is refused by its version, never half-read.
 sed 's/"version":"5.42.0"/"version":"4.6.1"/' prowler.json > tmp/prowler4.json
-if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler tmp/prowler4.json > tmp/p4.txt 2>&1; then
+if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler tmp/prowler4.json --format markdown --out tmp/p4.md > tmp/p4.txt 2>&1; then
   fail "triage accepted an export written by Prowler 4"
 fi
 grep -q 'written by Prowler 4.6.1' tmp/p4.txt || fail "the Prowler 4 refusal does not name the version:\n$(cat tmp/p4.txt)"
@@ -785,7 +792,7 @@ step "report-compliance: the envelope says whether live state was actually read"
 # has to mean "the inventory WAS read", never "live was requested" — otherwise a
 # caller with no stderr (MCP, a pipeline) cannot tell a blind run from a
 # verified one. CI has no credentials, so `--no-live` is the case it can assert.
-"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format json > tmp/ev-envelope.json 2>/dev/null || fail "report-compliance --format json failed"
+"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format json --out tmp/ev-envelope.json 2>/dev/null || fail "report-compliance --format json failed"
 python3 - <<'PYEOF' || fail "the evidence envelope does not describe the live run"
 import json
 o = json.load(open("tmp/ev-envelope.json"))
@@ -826,7 +833,7 @@ step "a tag-conditional exemption keeps the verdict and is reported beside it"
 # The CIS baseline's OWN constraint, exempted by rebinding one param — no fork, and the
 # claim is the pack's rather than one this step wrote to make the assertion pass.
 cp "$root/tests/iac/exemption-tag/main.satz" tmp/exemption.satz
-"$satz" --config . require cis-gcp-4.0 ../tmp/exemption.satz > tmp/exemption.txt 2>&1 || true
+"$satz" --config . require cis-gcp-4.0 ../tmp/exemption.satz --format text --out tmp/exemption.txt 2>/dev/null || true
 grep -q 'cis_sa_key_creation_rules' "$root/presets/CIS-GCP-Foundation-4.0.satz" \
   || fail "the baseline no longer takes the SA-key rules from a param — the exemption needs a fork again"
 grep -qE '^  . 1\.4 ' tmp/exemption.txt || fail "the exempted control is not in the goal view at all"
@@ -876,18 +883,18 @@ step "pack docs are current, claims are on-catalog, every version has a changelo
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
 
 step "check-presets against the repository's own presets (must be clean)"
-"$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz
+"$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz --format text --out /dev/stdout
 
 # and the same verdicts as data — the last reporting command that had no JSON
-"$satz" --config . check-presets smoke.satz --pristine-dir "$root/presets" --format json 2>/dev/null > tmp/presets.json || true
-python3 - <<'PYEOF' || fail "check-presets --format json did not emit parseable JSON on stdout"
+"$satz" --config . check-presets smoke.satz --pristine-dir "$root/presets" --format json --out tmp/presets.json 2>/dev/null || true
+python3 - <<'PYEOF' || fail "check-presets --format json did not write parseable JSON"
 import json
 d = json.load(open("tmp/presets.json"))
 assert d["packs"], "no pack rows"
 assert d["summary"]["drift_in_use"] is False, d["summary"]
 assert {p["status"] for p in d["packs"]} <= {"clean","stale","edited","fork","local-only","missing-locally"}
 PYEOF
-grep -q 'satz v' tmp/presets.json && fail "the version banner is on stdout"
+grep -q 'satz v' tmp/presets.json && fail "the version banner reached the report file"
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"
@@ -993,7 +1000,7 @@ if command -v checkov >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
   "$satz" --config . scan smoke.satz > tmp/scan.txt 2>&1 || true
   grep -q '^scan: Checkov' tmp/scan.txt || fail "scan printed no summary:\n$(cat tmp/scan.txt)"
   grep -q 'declared at' tmp/scan.txt || fail "findings were not pointed at the Satz source:\n$(cat tmp/scan.txt)"
-  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --checkov --report tmp/evidence.md >/dev/null 2>&1 || fail "report-compliance --checkov failed"
+  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --checkov --format markdown --out tmp/evidence.md >/dev/null 2>&1 || fail "report-compliance --checkov failed"
   grep -q '| Checkov |' tmp/evidence.md || fail "the evidence report has no Checkov column"
 else
   step "neither checkov nor uvx on PATH — scan skipped"

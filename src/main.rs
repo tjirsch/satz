@@ -34,8 +34,11 @@ mod doc_packs;
 mod github;
 mod policy_tree;
 mod prowler;
+mod out;
 
 use clap::{Parser, Subcommand, CommandFactory};
+// the one output vocabulary: what a caller may ask for, and where it goes
+pub(crate) use out::{OutFormat, pdf_from_markdown, write_report};
 // the MCP output schema of `IacRolesReport`; schemars reaches the crate through rmcp
 use rmcp::schemars;
 use clap_complete::Shell as CompletionShell;
@@ -136,45 +139,6 @@ fn default_auto_explode() -> Vec<String> {
 }
 fn default_validation_level() -> String { "warn".to_string() }
 
-
-/// One output vocabulary for every reporting command. A `String` per command let a
-/// typo fall through to the default renderer silently — `--format jsom` printed
-/// markdown and exited 0. clap rejects an unknown value by name instead, and each
-/// command refuses the formats it cannot produce.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum OutFormat {
-    /// human-readable terminal output
-    #[value(alias = "console")]
-    Text,
-    Markdown,
-    Json,
-    Pdf,
-}
-
-impl OutFormat {
-    fn as_str(self) -> &'static str {
-        match self {
-            OutFormat::Text => "text",
-            OutFormat::Markdown => "markdown",
-            OutFormat::Json => "json",
-            OutFormat::Pdf => "pdf",
-        }
-    }
-
-    /// Refuse a format this command cannot produce, naming what it can — a silent
-    /// fallback to another renderer is how a caller ends up parsing prose.
-    fn require_one_of(self, command: &str, allowed: &[OutFormat]) -> Result<Self, String> {
-        if allowed.contains(&self) {
-            return Ok(self);
-        }
-        Err(format!(
-            "{}: --format {} is not available here; use {}",
-            command,
-            self.as_str(),
-            allowed.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(" or ")
-        ))
-    }
-}
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, max_term_width = 110)]
@@ -412,12 +376,12 @@ enum Commands {
         /// Organization id override; else read from config
         #[arg(long)]
         customer_organization_id: Option<String>,
-        /// Write the report to this path (else stdout)
-        #[arg(long)]
-        report: Option<PathBuf>,
-        /// Report format: console (default), markdown, json
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        /// Report format: text, markdown or json
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
         ///
         /// Needs roles/cloudasset.viewer on the organization
@@ -437,12 +401,12 @@ enum Commands {
         /// Which policies to include
         #[arg(long, default_value = "active", value_parser = ["active", "inactive", "full"])]
         scope: String,
-        /// Report format: markdown (default), json, pdf (pdf needs pandoc on PATH)
-        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        /// Report format: markdown, json or pdf (pdf needs pandoc on PATH)
+        #[arg(long, value_enum)]
         format: OutFormat,
-        /// Output path (default: <yaml_dir>/<Cxxxx>-orgpolicies-report.<ext>)
-        #[arg(long)]
-        report: Option<PathBuf>,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         /// Inventory declared policies across the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory
         ///
         /// --scope's "available but not set" section stays org-level. Needs
@@ -588,8 +552,11 @@ enum Commands {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// Output format: text or json
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
     },
     /// Evidence report: the goal view joined with LIVE verification (Cloud Asset
     /// Inventory), manual-duty attestations and optional Prowler corroboration —
@@ -599,12 +566,12 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format
-        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        /// Output format: markdown, json or pdf (pdf needs pandoc on PATH)
+        #[arg(long, value_enum)]
         format: OutFormat,
-        /// Report file path (default: evidence/<framework>-latest.md beside config)
-        #[arg(long)]
-        report: Option<PathBuf>,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         /// Prowler 5 OCSF export to ingest as corroboration (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: Option<PathBuf>,
@@ -632,8 +599,11 @@ enum Commands {
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
         /// Output format: text or json
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
     },
     /// Adopt what already exists: resolve the live ids of the resources this estate declares (folders by name, groups by email, org policies by constraint, everything else by its rule in import-config.yaml) and bring them under management
     ///
@@ -702,15 +672,16 @@ enum Commands {
         /// Prowler 5 OCSF export (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: PathBuf,
-        /// markdown (default) or json
-        #[arg(long, value_enum, default_value_t = OutFormat::Markdown)]
+        /// Output format: markdown or json
+        #[arg(long, value_enum)]
         format: OutFormat,
-        /// Write the plan here instead of stdout
-        #[arg(long)]
-        report: Option<PathBuf>,
-        /// Also print the estate delta the findings imply — `use` lines to add,
-        /// resources to bring under management, and what has nothing to edit.
-        /// Proposed only: satz never writes the estate or the cloud from a finding
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// Add the estate delta the findings imply — `use` lines to add, resources
+        /// to bring under management, and what has nothing to edit — to the report.
+        /// Proposed only: satz never writes the estate or the cloud from a finding.
+        /// Markdown only: the delta is prose, and a JSON caller parses rows
         #[arg(long)]
         fix: bool,
     },
@@ -733,9 +704,9 @@ enum Commands {
         /// Also run Checkov over hcl_dir and join its findings
         #[arg(long)]
         checkov: bool,
-        /// Output directory (default: <config dir>/evidence/plan/<framework>-<timestamp>)
-        #[arg(long)]
-        out: Option<PathBuf>,
+        /// Output directory — several files (default: <config dir>/evidence/plan/<framework>-<timestamp>)
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<PathBuf>,
         /// An authored.json written against this run's dossier: its values fill the [Authored] columns
         #[arg(long, value_name = "AUTHORED_JSON")]
         merge: Option<PathBuf>,
@@ -752,9 +723,9 @@ enum Commands {
     ///
     /// `--check` fails when the pages are behind the packs
     DocPacks {
-        /// Output directory (default: `<presets_dir>/docs`)
-        #[arg(long)]
-        out: Option<PathBuf>,
+        /// Output directory — one page per pack (default: `<presets_dir>/docs`)
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<PathBuf>,
         /// Verify instead of write: exit 1 when a page is behind its pack
         #[arg(long)]
         check: bool,
@@ -784,16 +755,17 @@ enum Commands {
     Questions {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: text, json, or markdown — the decisions sheet a human reads
-        /// before an organisation is touched
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        /// Output format: text, json, markdown — the decisions sheet a human reads
+        /// before an organisation is touched — or xlsx, the workbook a customer
+        /// fills in and sends back
+        #[arg(long, value_enum)]
         format: OutFormat,
+        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         /// Only the questions the estate has not answered yet — the interview's worklist
         #[arg(long)]
         unanswered: bool,
-        /// Also write the catalog as a workbook here — the format a customer fills in and returns
-        #[arg(long, value_name = "FILE")]
-        xlsx: Option<PathBuf>,
     },
     /// The Prowler invocation this estate needs — printed, never run
     ///
@@ -1630,7 +1602,7 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::DiffOrganizationalPolicies { estate, customer_organization_id, report, format, recursive } => {
+        Commands::DiffOrganizationalPolicies { estate, customer_organization_id, out, format, recursive } => {
             let format = format.require_one_of(
                 "diff-organizational-policies",
                 &[OutFormat::Text, OutFormat::Markdown, OutFormat::Json],
@@ -1642,7 +1614,7 @@ Thumbs.db
             crate::org_policy::diff_org_policies(
                 config_path,
                 customer_organization_id,
-                report,
+                &out,
                 format,
                 recursive,
                 runtime_config,
@@ -1650,7 +1622,7 @@ Thumbs.db
             .await?;
             Ok(())
         }
-        Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, report, recursive } => {
+        Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, out, recursive } => {
             let format = format.require_one_of(
                 "report-organizational-policies",
                 &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
@@ -1663,7 +1635,7 @@ Thumbs.db
                 customer_organization_id,
                 scope,
                 format,
-                report,
+                &out,
                 recursive,
                 runtime_config,
             )
@@ -1784,7 +1756,7 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Require { framework, input, format } => {
+        Commands::Require { framework, input, format, out } => {
             let format = format.require_one_of("require", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             // This command REPORTS, it does not emit — it needs `main.tf` as a
@@ -1801,16 +1773,17 @@ Thumbs.db
                 &included_claims,
                 &manifest,
             )?;
-            match format {
-                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                _ => print!("{}", crate::compliance::render_require(&report)),
-            }
+            let text = match format {
+                OutFormat::Json => serde_json::to_string_pretty(&report)?,
+                _ => crate::compliance::render_require(&report),
+            };
+            write_report(&out, text.as_bytes(), &format!("{} control(s)", report.controls.len()))?;
             if report.gaps() {
                 std::process::exit(1);
             }
             Ok(())
         }
-        Commands::ReportCompliance { framework, input, format, report, prowler, no_live, checkov, fail_on } => {
+        Commands::ReportCompliance { framework, input, format, out, prowler, no_live, checkov, fail_on } => {
             let format = format.require_one_of(
                 "report-compliance",
                 &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
@@ -1831,7 +1804,7 @@ Thumbs.db
                 org_id.as_deref(),
                 &config_dir,
                 format,
-                report,
+                &out,
                 prowler,
                 checkov_report.as_ref(),
                 no_live,
@@ -1860,17 +1833,22 @@ Thumbs.db
             )
             .await
         }
-        Commands::Triage { framework, input, prowler, format, report, fix } => {
+        Commands::Triage { framework, input, prowler, format, out, fix } => {
             let format = format.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json])?;
+            if fix && format == OutFormat::Json {
+                return Err("triage --fix renders the estate delta as prose; \
+                            use --format markdown, or read the rows from --format json"
+                    .into());
+            }
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
-            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, report, fix)
+            crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, &out, fix)
         }
-        Commands::RemediationPlan { framework, input, prowler, checkov, out, merge } => {
+        Commands::RemediationPlan { framework, input, prowler, checkov, out_dir, merge } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
-            let out = out.unwrap_or_else(|| {
+            let out_dir = out_dir.unwrap_or_else(|| {
                 config_dir.join("evidence").join("plan").join(format!("{}-{}", framework, crate::compliance::chrono_free_timestamp()))
             });
             crate::compliance::run_remediation_dossier(
@@ -1881,14 +1859,14 @@ Thumbs.db
                 &input_path,
                 &prowler,
                 checkov_report.as_ref(),
-                &out,
+                &out_dir,
                 merge.as_deref(),
             )
         }
-        Commands::DocPacks { out, check } => {
+        Commands::DocPacks { out_dir, check } => {
             let presets = PathBuf::from(&runtime_config.presets_dir);
-            let out = out.unwrap_or_else(|| presets.join("docs"));
-            crate::doc_packs::run(&presets, &out, check)
+            let out_dir = out_dir.unwrap_or_else(|| presets.join("docs"));
+            crate::doc_packs::run(&presets, &out_dir, check)
         }
         Commands::RunActions { input, check, execute, only, phase } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -1958,7 +1936,7 @@ Thumbs.db
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
         Commands::HclInit { args } => run_tf(&runtime_config, "init", &args),
-        Commands::CheckPresets { input, pristine_dir, format } => {
+        Commands::CheckPresets { input, pristine_dir, format, out } => {
             let format = format.require_one_of("check-presets", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let report = crate::presets::check_presets_report(
@@ -1968,10 +1946,11 @@ Thumbs.db
                 pristine_dir,
             )
             .await?;
-            match format {
-                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                _ => print!("{}", crate::presets::render_check_presets(&report)),
-            }
+            let text = match format {
+                OutFormat::Json => serde_json::to_string_pretty(&report)?,
+                _ => crate::presets::render_check_presets(&report),
+            };
+            write_report(&out, text.as_bytes(), &format!("{} clean, {} stale", report.summary.clean, report.summary.stale))?;
             if report.summary.drift_in_use {
                 std::process::exit(1);
             }
@@ -2015,30 +1994,31 @@ Thumbs.db
             crate::interview::run(&input_path, &runtime_config, all, accept_defaults, &mut input, &mut out)?;
             Ok(())
         }
-        Commands::Questions { input, format, unanswered, xlsx } => {
-            let format = format.require_one_of("questions", &[OutFormat::Text, OutFormat::Json, OutFormat::Markdown])?;
+        Commands::Questions { input, format, out, unanswered } => {
+            let format = format.require_one_of(
+                "questions",
+                &[OutFormat::Text, OutFormat::Json, OutFormat::Markdown, OutFormat::Xlsx],
+            )?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let mut report = crate::questions::questions_report(&input_path, &runtime_config)?;
             if unanswered {
                 // The summary stays whole: it describes the estate, not the filter.
                 report.questions.retain(|q| q.state == "unanswered");
             }
-            // The workbook is a file, never stdout — a spreadsheet down a pipe is a corrupt
-            // spreadsheet. It is written beside whatever the chosen format prints.
-            if let Some(path) = xlsx {
-                let bytes = crate::questions::xlsx(&report)?;
-                crate::fsx::write(&path, &bytes)?;
-                eprintln!(
-                    "wrote {} — {} decision(s); the `your answer` column is the customer's",
-                    path.display(),
-                    report.questions.len()
-                );
-            }
-            match format {
-                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                OutFormat::Markdown => print!("{}", crate::questions::render_decisions(&report)),
-                _ => print!("{}", crate::questions::render_questions(&report)),
-            }
+            let bytes = match format {
+                // The workbook is the catalog a customer fills in and sends back: one
+                // format among the others since it stopped being a flag of its own.
+                OutFormat::Xlsx => crate::questions::xlsx(&report)?,
+                OutFormat::Json => serde_json::to_string_pretty(&report)?.into_bytes(),
+                OutFormat::Markdown => crate::questions::render_decisions(&report).into_bytes(),
+                _ => crate::questions::render_questions(&report).into_bytes(),
+            };
+            let what = if format == OutFormat::Xlsx {
+                format!("{} decision(s); the `your answer` column is the customer's", report.questions.len())
+            } else {
+                format!("{} question(s)", report.questions.len())
+            };
+            write_report(&out, &bytes, &what)?;
             Ok(())
         }
         Commands::Mcp { root, allow, self_gated } => {
@@ -5514,7 +5494,7 @@ mod command_groups {
         for args in [&["mcp"][..], &["lsp"], &["self-update"], &["whoami"]] {
             assert!(!checks_for_updates(&parse(args)), "{args:?} must not check");
         }
-        for args in [&["questions", "x.satz"][..], &["transpile", "x.satz"]] {
+        for args in [&["questions", "x.satz", "--format", "text", "--out", "q.txt"][..], &["transpile", "x.satz"]] {
             assert!(checks_for_updates(&parse(args)), "{args:?} checks");
         }
     }
@@ -7323,34 +7303,6 @@ mod constraint_equivalents {
             }
         }
         assert!(problems.is_empty(), "\n  - {}\n", problems.join("\n  - "));
-    }
-}
-
-
-#[cfg(test)]
-mod out_format_tests {
-    use super::OutFormat;
-
-    /// A format a command cannot produce must be REFUSED, not quietly rendered as
-    /// something else. The old `&str` handlers fell through to the default arm, so
-    /// `--format jsom` printed markdown and exited 0 — a caller parsing that gets
-    /// prose and no error.
-    #[test]
-    fn an_unsupported_format_is_refused_by_name() {
-        let err = OutFormat::Pdf
-            .require_one_of("require", &[OutFormat::Text, OutFormat::Json])
-            .unwrap_err();
-        assert!(err.contains("require:"), "{err}");
-        assert!(err.contains("pdf"), "{err}");
-        assert!(err.contains("text or json"), "names what it can do: {err}");
-    }
-
-    #[test]
-    fn a_supported_format_passes_through() {
-        assert_eq!(
-            OutFormat::Json.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json]).unwrap(),
-            OutFormat::Json
-        );
     }
 }
 
