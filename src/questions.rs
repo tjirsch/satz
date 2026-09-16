@@ -168,7 +168,7 @@ pub(crate) fn questions_report(
                     let blocking = picked.is_none();
                     ("unanswered", None, picked, blocking)
                 }
-            } else if own.contains(&q.subject) {
+            } else if own.contains(&q.subject) && !restates_unknown(&q.subject, declared, &env) {
                 ("answered", env.get(&q.subject).cloned(), None, false)
             } else {
                 let usable = match declared {
@@ -329,6 +329,29 @@ pub(crate) fn rename_to(estate: &Path, r: &QuestionsReport) -> Option<String> {
     }
     let stem = estate.file_stem()?.to_str()?;
     (stem != id).then(|| format!("{}.satz", id))
+}
+
+/// Whether the estate's own binding of a param only says what the pack already
+/// says: nothing is known. `presets/estate-core.satz` declares the identity params —
+/// organisation, directory customer, domain, billing account — as `""`, because no
+/// default is possible, and `satz init` writes `""` for the ones it could not
+/// derive. That binding is the estate, not an answer; `bootstrap`'s day-0 gate
+/// already refuses it by name, and the question has to agree with the gate or the
+/// interview asks nothing while bootstrap refuses. A param whose pack default is
+/// NOT empty is different: `infra_folder_name = ""` there is a real choice (no
+/// folder), and stays answered.
+fn restates_unknown(name: &str, declared: Option<&PackFacts>, env: &Env) -> bool {
+    let own_empty = env.get(name).map(is_empty).unwrap_or(true);
+    let pack_default_empty = match declared.and_then(|f| f.params.get(name)) {
+        Some(satz_core::satz::Value::Str(parts)) => parts.iter().all(|p| match p {
+            satz_core::satz::StrPart::Lit(l) => l.trim().is_empty(),
+            satz_core::satz::StrPart::Param(_) => false,
+        }),
+        Some(_) => false,
+        // a pack that declares no default at all has none to restate
+        None => true,
+    };
+    own_empty && pack_default_empty
 }
 
 fn is_empty(v: &serde_yaml::Value) -> bool {
@@ -582,6 +605,33 @@ pub(crate) fn short(v: &serde_yaml::Value) -> String {
 #[cfg(test)]
 mod render_tests {
     use super::*;
+
+    /// The rule that made `init --interview` ask nothing: an estate that binds an
+    /// identity param to `""` has restated the pack's own "no default possible", and
+    /// the question is still open — the day-0 gate refuses the same value by name.
+    /// A param whose pack default is NOT empty is different: `""` there is a choice.
+    #[test]
+    fn an_empty_binding_of_a_param_nobody_can_default_is_still_open() {
+        let str_lit = |s: &str| satz_core::satz::Value::Str(vec![satz_core::satz::StrPart::Lit(s.to_string())]);
+        let declared = PackFacts {
+            description: String::new(),
+            params: BTreeMap::from([
+                ("customer_organization_id".to_string(), str_lit("")),
+                ("infra_folder_name".to_string(), str_lit("Infrastructure")),
+            ]),
+        };
+        let env: Env = BTreeMap::from([
+            ("customer_organization_id".to_string(), serde_yaml::Value::String(String::new())),
+            ("infra_folder_name".to_string(), serde_yaml::Value::String(String::new())),
+            ("customer_domain".to_string(), serde_yaml::Value::String("example.com".into())),
+        ]);
+        // "" for an undefaultable param: the pack's unknown, restated — open
+        assert!(restates_unknown("customer_organization_id", Some(&declared), &env));
+        // "" where the pack offers a default: a real choice (no folder) — answered
+        assert!(!restates_unknown("infra_folder_name", Some(&declared), &env));
+        // a value is a value
+        assert!(!restates_unknown("customer_domain", Some(&declared), &env));
+    }
 
     #[test]
     fn the_catalog_workbook_carries_the_reason_and_marks_what_is_open() {

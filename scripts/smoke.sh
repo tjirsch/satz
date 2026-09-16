@@ -73,6 +73,28 @@ grep -qE '^  first_admin += ""$' tmp/init-bare/yaml/C0bare.satz \
   || fail "an admin nobody supplied must be empty:\n$(grep first_admin tmp/init-bare/yaml/C0bare.satz)"
 grep -q 'nothing could be derived' tmp/init-bare.txt \
   || fail "init must say that it derived nothing:\n$(cat tmp/init-bare.txt)"
+# init --interview asks what init could not derive. It shipped asking NOTHING: init
+# writes estate-core commented out, the questions live there, and an empty binding
+# counted as an answer. The library is seeded here as `get-presets` would leave it.
+rm -rf tmp/init-iv && mkdir -p tmp/init-iv
+(cd tmp/init-iv && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
+  "$satz" init --customer-id C0example --customer-shortname acme > ../init-iv1.txt 2>&1) \
+  || fail "the plain init before the interview failed:\n$(cat tmp/init-iv1.txt)"
+cp -R "$root/presets" tmp/init-iv/presets
+printf '%s\n' 123456789012 example.com "Acme Corporation" first.admin 012345-6789AB-CDEF01 \
+  | (cd tmp/init-iv && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
+       "$satz" init --customer-id C0example --interview > ../init-iv2.txt 2>&1) \
+  || fail "satz init --interview failed:\n$(cat tmp/init-iv2.txt)"
+if grep -q 'nothing to ask' tmp/init-iv2.txt; then
+  fail "init --interview asked nothing — the questions init could not answer are still open:\n$(cat tmp/init-iv2.txt)"
+fi
+grep -q '^customer_organization_id — ' tmp/init-iv2.txt || fail "the interview did not ask for the organisation id:\n$(cat tmp/init-iv2.txt)"
+grep -q 'complete — every question is answered' tmp/init-iv2.txt || fail "the interview did not finish complete:\n$(tail -8 tmp/init-iv2.txt)"
+grep -qE '^use "presets/estate-core.satz"' tmp/init-iv/yaml/C0example.satz || fail "estate-core was not switched on"
+grep -qE '^  customer_organization_id += "123456789012"' tmp/init-iv/yaml/C0example.satz \
+  || fail "the answer did not land:\n$(grep organization tmp/init-iv/yaml/C0example.satz)"
+grep -qE '^  customer_longname +=  *"Acme Corporation"' tmp/init-iv/yaml/C0example.satz || fail "the longname did not land"
+"$satz" fmt --check tmp/init-iv/yaml/C0example.satz || fail "the interview left the init estate uncanonical"
 # a re-run MERGES what it names and leaves the rest alone (it used to skip silently)
 cp tmp/init/yaml/C0example.satz tmp/init-before.satz
 (cd tmp/init && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent "$satz" init \
