@@ -2490,6 +2490,7 @@ pub(crate) fn compile_tail(
     };
     written_reference_findings(&folded, &out.manifest, &mut f);
     missing_required_findings(&out.missing_required, level, &mut f);
+    wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
     unadopted_pack_findings(estate, estate_src, &fe.env, level, &mut f);
     let (provider_sources, provider_versions) = provider_maps(tool_config);
@@ -2647,6 +2648,57 @@ fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level:
         }
         f.push(finding);
     }
+}
+
+/// An emitted attribute whose value the provider refuses by its shape — at the declaring
+/// block, at the validation level like a missing argument. The finding names the param
+/// where the declaring file binds the attribute to a bare one: the operator edits the
+/// param in the estate, and the HCL line `tofu apply` would name is generated.
+fn wrong_shape_findings(
+    wrong: &[crate::emitter::WrongShape],
+    env: &satz_core::pipeline::Env,
+    level: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let Some(sev) = crate::findings::at_level(level) else { return };
+    for w in wrong {
+        let leaf = w.attribute.rsplit('.').next().unwrap_or(&w.attribute);
+        let param = w.origin.as_ref().and_then(|(file, line)| bound_param(file, *line, leaf)).filter(|p| env.contains_key(p));
+        let at = w.origin.as_ref().map(|(fl, l)| format!(" ({}:{})", fl, l)).unwrap_or_default();
+        let via = match &param {
+            Some(p) => format!(" — it comes from the param `{}`, which the estate binds as a {}", p, w.got),
+            None => String::new(),
+        };
+        let text = format!("{}{}: `{}` is a {}, and the provider wants {}{}", w.address, at, w.attribute, w.got, w.expected, via);
+        let mut finding = if sev == Severity::Error {
+            Finding::new(sev, Kind::AttributeShape, text).in_group("attribute values the provider refuses:")
+        } else {
+            Finding::new(sev, Kind::AttributeShape, format!("{} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", text))
+        };
+        if let Some((fl, l)) = &w.origin {
+            finding = finding.located(fl.clone(), *l);
+        }
+        f.push(finding);
+    }
+}
+
+/// The param a declaring block binds `attribute` to, when it is a bare one
+/// (`notification_emails = access_approval_notification_emails`): the first such line
+/// after the block's start. `None` when the file cannot be read or the value is anything
+/// else.
+fn bound_param(file: &str, line: u32, attribute: &str) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    text.lines().skip(line.saturating_sub(1) as usize).take(200).find_map(|l| {
+        let (key, value) = l.split_once('=')?;
+        if key.trim() != attribute {
+            return None;
+        }
+        let v = value.trim();
+        (!v.is_empty() && v.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            && v.chars().next().is_some_and(|c| c.is_ascii_lowercase()))
+        .then(|| v.to_string())
+    })
 }
 
 /// What the estate's resource types oblige it to declare and does not: the roles
@@ -6905,6 +6957,29 @@ mod variables_gate {
         assert!(accepts(crate::emitter::variable_type(&rules), &rules));
         let names: serde_yaml::Value = serde_yaml::from_str("[a, true, 3]").unwrap();
         assert_eq!(crate::emitter::variable_type(&names), "list(string)", "a list of scalars keeps its type");
+    }
+
+    /// The attribute half of the same promise: nothing the library emits has a literal
+    /// the provider schema's type refuses. The customer apply that found the check —
+    /// `notification_emails` a string where a set belongs — came from an answer; this
+    /// holds the packs' own defaults to it.
+    #[test]
+    fn no_case_emits_an_attribute_the_schema_refuses() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let reg = super::corpus::registry();
+        let mut checked = 0;
+        for dir in ["tests/iac", "tests/corpus"] {
+            for entry in std::fs::read_dir(root.join(dir)).expect("case directory").flatten() {
+                let case = entry.path();
+                if !case.join("main.satz").exists() {
+                    continue;
+                }
+                let (out, _) = super::manifest_gate::emit_case(&case, &reg);
+                assert!(out.wrong_shapes.is_empty(), "{}: {:?}", case.display(), out.wrong_shapes);
+                checked += out.manifest.resources.len();
+            }
+        }
+        assert!(checked >= 200, "only {checked} resources checked");
     }
 
     #[test]

@@ -31,6 +31,8 @@ pub(crate) enum Kind {
     Emit,
     WrittenReference,
     MissingRequired,
+    /// an emitted attribute whose value the provider refuses by its shape
+    AttributeShape,
     Prerequisites,
     UnadoptedPack,
     Providers,

@@ -53,6 +53,13 @@ pub(crate) struct QuestionRow {
     /// anything; a value has to be typed before the estate may touch an
     /// organisation.
     pub blocking: bool,
+    /// The shape the pack declares for the param — `string`, `number`, `bool`, `list`
+    /// or `map` — and so the shape an answer must have. A param declared `[]` has no
+    /// default to offer, and without this a client typing one address wrote a string
+    /// where the provider wants a set. Absent for a choice, which is answered by an
+    /// option's name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<&'static str>,
     /// The pack's own description — its header's first paragraph — so an
     /// interview can say what a pack is FOR before asking about its params.
     pub pack_description: String,
@@ -184,6 +191,7 @@ pub(crate) fn questions_report(
                 let default = if usable { env.get(&q.subject).cloned() } else { None };
                 ("unanswered", None, default, !usable)
             };
+            let shape = if q.oneof { None } else { declared_shape(&q.subject, declared.map(|f| &f.params), &env, 0) };
             let one_way = q.reversal == satz_core::satz::Reversal::Recreate
                 || q.blast == satz_core::satz::Blast::High;
             match state {
@@ -214,6 +222,7 @@ pub(crate) fn questions_report(
                 current,
                 default,
                 blocking,
+                shape,
                 pack_description: declared.map(|f| f.description.clone()).unwrap_or_default(),
                 recommend: q.recommend.as_ref().map(crate::doc_packs::value_text),
                 options: q
@@ -260,6 +269,40 @@ pub(crate) fn require_complete(input: &Path, runtime: &ToolConfig, action: &str)
         names.join(", "),
         input.display()
     ))
+}
+
+/// The shape of a value, in the words the report uses.
+pub(crate) fn value_shape(v: &serde_yaml::Value) -> Option<&'static str> {
+    match v {
+        serde_yaml::Value::String(_) => Some("string"),
+        serde_yaml::Value::Number(_) => Some("number"),
+        serde_yaml::Value::Bool(_) => Some("bool"),
+        serde_yaml::Value::Sequence(_) => Some("list"),
+        serde_yaml::Value::Mapping(_) => Some("map"),
+        _ => None,
+    }
+}
+
+/// The shape a param's own declaration gives it. A declaration that names another param
+/// (`x = y`) has that param's shape; one this file does not declare is read off the
+/// folded value, where the declaring file already decided it.
+fn declared_shape(
+    name: &str,
+    params: Option<&BTreeMap<String, satz_core::satz::Value>>,
+    env: &Env,
+    depth: usize,
+) -> Option<&'static str> {
+    use satz_core::satz::Value;
+    match params.and_then(|p| p.get(name)) {
+        Some(Value::Str(_)) => Some("string"),
+        Some(Value::Num(_)) => Some("number"),
+        Some(Value::Bool(_)) => Some("bool"),
+        Some(Value::List(_)) => Some("list"),
+        Some(Value::Obj(_)) => Some("map"),
+        Some(Value::Ref(other)) if depth < 8 => declared_shape(other, params, env, depth + 1),
+        Some(Value::Ref(_)) => None,
+        None => env.get(name).and_then(value_shape),
+    }
 }
 
 /// What one declaring file contributes besides its questions.

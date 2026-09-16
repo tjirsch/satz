@@ -40,6 +40,14 @@ and one flag: **`blocking`** — unanswered *and* no usable default. A directory
 id, a billing account, a domain: the pack can name the question, it cannot guess the
 answer. These need a typed value.
 
+Each param question also carries its **`shape`** — `string`, `number`, `bool`, `list` or
+`map` — as the pack declares it (`access_approval_notification_emails = []` is a list),
+so an answer to a question with nothing to offer still has a shape. The interview reads a
+typed answer in that shape: one address for a list is a list of one, `yes` for a bool is
+`true`. An answer whose shape contradicts the declaration — a string for a list, the
+string `"true"` for a bool — is refused, from the terminal and through `satz_interview`
+alike, naming the param and the shape to use.
+
 A default is usable when it is not empty and not built from something still open.
 `infra_project_name` defaults to `"{customer_shortname}-infra-001"`; with the short
 name unanswered that is `-infra-001`, which is a string and not a default, so the

@@ -117,6 +117,8 @@ pub(crate) struct EmitOut {
     /// requires and the emitted block does not carry. Checked on what is
     /// emitted, after every derived attribute is in.
     pub missing_required: Vec<MissingRequired>,
+    /// Per emitted attribute the provider will refuse by its shape.
+    pub wrong_shapes: Vec<WrongShape>,
 }
 
 /// A resource the provider will refuse: required arguments or blocks absent.
@@ -126,6 +128,94 @@ pub(crate) struct MissingRequired {
     pub missing: Vec<String>,
     /// where the declaring block starts, when it was declared rather than derived
     pub origin: Option<(String, u32)>,
+}
+
+/// An emitted attribute whose value the provider refuses by its SHAPE: a string where
+/// the schema types a set, a list where it types a string. Found on a customer estate —
+/// a list param answered with one address became `notification_emails = "…"`, and
+/// nothing said so until `tofu apply`, naming a line of generated HCL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WrongShape {
+    pub address: String,
+    /// the attribute, dotted through the nested blocks it sits in
+    pub attribute: String,
+    /// the schema's type, as `set(string)`, `number`
+    pub expected: String,
+    /// the emitted value's shape: `string`, `number`, `bool`, `list`, `map`
+    pub got: &'static str,
+    /// where the declaring block starts
+    pub origin: Option<(String, u32)>,
+}
+
+/// The shape of an emitted literal; `None` for anything Terraform only knows at plan
+/// time — a reference, an interpolation, a function call.
+fn literal_shape(expr: &hcl::Expression) -> Option<(&'static str, Option<&str>)> {
+    match expr {
+        hcl::Expression::String(s) if !s.contains("${") => Some(("string", Some(s.as_str()))),
+        hcl::Expression::Number(_) => Some(("number", None)),
+        hcl::Expression::Bool(_) => Some(("bool", None)),
+        hcl::Expression::Array(_) => Some(("list", None)),
+        hcl::Expression::Object(_) => Some(("map", None)),
+        _ => None,
+    }
+}
+
+/// The schema's type expression as Terraform writes it: `string`, `set(string)`.
+fn type_text(t: &serde_json::Value) -> String {
+    match t {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(parts) => match parts.as_slice() {
+            [kind, inner] => format!("{}({})", kind.as_str().unwrap_or("?"), type_text(inner)),
+            _ => t.to_string(),
+        },
+        other => other.to_string(),
+    }
+}
+
+/// Whether Terraform converts a literal of this shape to the schema's type. Only what
+/// it certainly refuses is a mismatch: a scalar for a collection, a collection for a
+/// scalar, a string that spells no number or bool where one is wanted.
+fn shape_fits(t: &serde_json::Value, shape: &str, text: Option<&str>) -> bool {
+    match t {
+        serde_json::Value::String(kind) => match kind.as_str() {
+            "string" => matches!(shape, "string" | "number" | "bool"),
+            "number" => shape == "number" || text.is_some_and(|s| s.trim().parse::<f64>().is_ok()),
+            "bool" => shape == "bool" || matches!(text, Some("true" | "false")),
+            _ => true, // dynamic
+        },
+        serde_json::Value::Array(parts) => match parts.first().and_then(|k| k.as_str()) {
+            Some("list" | "set" | "tuple") => shape == "list",
+            Some("map" | "object") => shape == "map",
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+/// Every attribute of `block`, nested blocks included, whose literal the schema's type
+/// refuses: `(attribute path, expected type, emitted shape)`. Empty for a type the
+/// registry does not know.
+pub(crate) fn wrong_shapes(block: &hcl::Block, registry: &crate::schema::ResourceRegistry) -> Vec<(String, String, &'static str)> {
+    fn walk(body: &hcl::Body, schema: &crate::schema::BlockSchema, prefix: &str, out: &mut Vec<(String, String, &'static str)>) {
+        for attr in body.attributes() {
+            let (Some(a), Some((shape, text))) = (schema.attributes.get(attr.key()), literal_shape(attr.expr())) else { continue };
+            let Some(t) = &a.type_ else { continue };
+            if !shape_fits(t, shape, text) {
+                out.push((format!("{}{}", prefix, attr.key()), type_text(t), shape));
+            }
+        }
+        for b in body.blocks() {
+            if let Some(bt) = schema.block_types.get(b.identifier()) {
+                walk(b.body(), &bt.block, &format!("{}{}.", prefix, b.identifier()), out);
+            }
+        }
+    }
+    let labels: Vec<&str> = block.labels().iter().map(|l| l.as_str()).collect();
+    let [tf_type, _] = labels.as_slice() else { return Vec::new() };
+    let Some((_, schema)) = registry.resources.get(*tf_type) else { return Vec::new() };
+    let mut out = Vec::new();
+    walk(block.body(), &schema.block, "", &mut out);
+    out
 }
 
 /// The required top-level arguments and blocks (`min_items` ≥ 1) of `block`'s
@@ -737,6 +827,24 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             .collect(),
         None => Vec::new(),
     };
+    let wrong_shapes: Vec<WrongShape> = match ctx.registry {
+        Some(registry) => blocks
+            .iter()
+            .filter(|b| b.identifier() == "resource")
+            .flat_map(|b| {
+                let address = block_address(b).unwrap_or_default();
+                let origin = manifest.resources.get(&address).and_then(|r| r.origin.clone());
+                wrong_shapes(b, registry).into_iter().map(move |(attribute, expected, got)| WrongShape {
+                    address: address.clone(),
+                    attribute,
+                    expected,
+                    got,
+                    origin: origin.clone(),
+                })
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     let mut body = hcl::Body::builder();
     for b in blocks {
         body = body.add_block(b);
@@ -752,7 +860,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
     let imports_tf = hcl::to_string(&import_body.build()).map_err(|e| e.to_string())?;
-    Ok(EmitOut { main_tf, imports_tf, manifest, missing_required })
+    Ok(EmitOut { main_tf, imports_tf, manifest, missing_required, wrong_shapes })
 }
 
 /// google_project + its google_project_service children — mirrors the walk's
@@ -1526,6 +1634,43 @@ resource "not_a_type_the_registry_knows" "x" {}
         assert!(missing_required(blocks[1], &reg).is_empty());
         // no schema, no verdict
         assert!(missing_required(blocks[2], &reg).is_empty());
+    }
+
+    /// The customer's apply: one address for a set of addresses.
+    #[test]
+    fn a_literal_the_schema_s_type_refuses_is_named_and_a_convertible_one_is_not() {
+        let body = hcl::parse(
+            r#"
+resource "google_organization_access_approval_settings" "one_address" {
+  organization_id     = "123456789012"
+  notification_emails = "security@example.com"
+}
+resource "google_organization_access_approval_settings" "a_list" {
+  organization_id     = "123456789012"
+  notification_emails = ["security@example.com"]
+}
+resource "google_storage_bucket" "converts" {
+  name     = "acme-logs"
+  location = 42
+  project  = "${var.project}"
+}
+resource "google_storage_bucket" "a_list_for_a_string" {
+  name     = ["acme-logs"]
+  location = "EU"
+}
+"#,
+        )
+        .unwrap();
+        let reg = registry();
+        let blocks: Vec<&hcl::Block> = body.blocks().collect();
+        assert_eq!(
+            wrong_shapes(blocks[0], &reg),
+            vec![("notification_emails".to_string(), "set(string)".to_string(), "string")]
+        );
+        assert!(wrong_shapes(blocks[1], &reg).is_empty());
+        // Terraform converts a number to a string, and an interpolation is known at plan
+        assert!(wrong_shapes(blocks[2], &reg).is_empty());
+        assert_eq!(wrong_shapes(blocks[3], &reg), vec![("name".to_string(), "string".to_string(), "list")]);
     }
 }
 
