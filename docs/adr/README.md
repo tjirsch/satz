@@ -46,7 +46,7 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0006](0006-an-answer-is-a-param-the-estate-binds.md) | an answer is a param the estate binds; nothing may be left unanswered | accepted |
 | [0007](0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md) | the estate map is a pack of choices; the estate carries the `use` lines | accepted |
 | [0008](0008-the-site-renders-markdown-with-githubs-parser.md) | the site renders markdown with GitHub's own parser (cmark-gfm) | accepted |
-| [0009](0009-iac-service-account-named-roles.md) | the IaC service account holds named roles, derived from the resource types; `iac-roles` writes them | accepted |
+| [0009](0009-iac-service-account-named-roles.md) | the IaC service account holds named roles, derived from the resource types; `update-prerequisites` writes them | accepted |
 | [0010](0010-the-minor-version-marks-an-upgrade-that-brings-work.md) | the minor version marks an upgrade that brings estate work; everything else is a patch | accepted |
 | [0011](0011-plan-and-apply-replace-a-policy-switching-to-reset.md) | `satz plan` and `satz apply` replace an org policy the state holds with rules and the estate declares reset | accepted |
 | [0012](0012-the-admin-port-policy-ships-on-and-passes-the-private-ranges.md) | the admin-port policy ships on and passes the private ranges | accepted |
