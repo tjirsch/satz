@@ -1446,6 +1446,29 @@ Thumbs.db
                 // Stating it is the flag because the interview is interactive
                 // and a scripted run must not block on it.
                 if interview {
+                    // Every day-0 question lives in presets/estate-core.satz, and init
+                    // writes that `use` commented out so the estate compiles before any
+                    // library is fetched. Handed over like that, the interview found no
+                    // pack declaring a question and asked nothing. Asking needs the
+                    // library and the pack: fetch it when it is absent, switch it on.
+                    let core = Path::new(&runtime_config.presets_dir).join("estate-core.satz");
+                    if !core.exists() {
+                        println!("\nfetching the preset library — the day-0 questions are read from {}", core.display());
+                        crate::presets::get_presets(&runtime_config.presets_dir, &runtime_config, false, None)
+                            .await
+                            .map_err(|e| {
+                                format!(
+                                    "init --interview: the questions live in {}, which is not here and could not be \
+                                     fetched ({}) — run `satz get-presets`, then `satz interview {}`",
+                                    core.display(),
+                                    e,
+                                    yaml_path.display()
+                                )
+                            })?;
+                    }
+                    if crate::template::use_estate_core(&yaml_path)? {
+                        println!("switched on `use \"presets/estate-core.satz\"` in {}", yaml_path.display());
+                    }
                     println!();
                     let stdin = std::io::stdin();
                     let mut input = stdin.lock();

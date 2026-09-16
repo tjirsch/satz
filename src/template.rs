@@ -523,6 +523,22 @@ pub(crate) fn pack_line(path: &str, gate: &str) -> String {
 ///
 /// `presets/estate-map.satz` is the line to uncomment first — it is what declares the
 /// questions the other lines are gated on.
+/// Switch `use "presets/estate-core.satz"` on in an estate `init` wrote, where it is
+/// commented out. A splice through `write_edited_satz`, so the author's layout stays.
+/// `false` when the line is already active, or the estate never mentions the pack —
+/// the interview then says what it finds.
+pub(crate) fn use_estate_core(estate: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    const COMMENTED: &str = "// use \"presets/estate-core.satz\"";
+    let before = crate::fsx::read_to_string(estate)?;
+    let Some(line) = before.lines().find(|l| l.trim() == COMMENTED) else {
+        return Ok(false);
+    };
+    let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+    let after = before.replacen(line, &format!("{}use \"presets/estate-core.satz\"", indent), 1);
+    crate::fsx::write_edited_satz(estate, &before, &after)?;
+    Ok(true)
+}
+
 pub(crate) fn skeleton(stem: &str) -> String {
     let scaffold = SCAFFOLD;
     let composed = format!(
@@ -592,9 +608,10 @@ params {{
   default_zone             = "{region}-a"
 }}
 
-// The day-0 params and their questions. Every value above is already answered, so this
-// estate needs nothing from it to bootstrap — uncomment it after `satz get-presets` and
-// `satz questions` reads from it like an interview-built estate.
+// The day-0 params and their questions: init binds what it derived above, and this pack
+// declares the rest, each with its question. It stays commented until the library is
+// fetched, so the estate compiles with nothing downloaded — `satz init --interview`
+// fetches it, switches it on, and asks what init could not derive.
 // use "presets/estate-core.satz"
 
 {menu}
