@@ -2267,6 +2267,31 @@ mod parity_tests {
     /// docs/mcp.md is the tool list a client's author reads. Nothing compared it
     /// to the server, so a tool could ship undocumented, or a removed one could
     /// stay on the page.
+    /// The README states how many tools the server serves, and a number nothing
+    /// derives goes stale: this one said "twenty" through two releases that changed
+    /// it, twice. It is now read back from the line and compared with the tools that
+    /// are actually registered, so the next tool to arrive fails here.
+    #[test]
+    fn the_readme_counts_the_tools_the_server_serves() {
+        let readme = include_str!("../README.md");
+        let line = readme
+            .lines()
+            .find(|l| l.contains("tools: each data tool returns structured content"))
+            .expect("README's `mcp` row says how many tools the server serves");
+        let stated: usize = line
+            .split_whitespace()
+            .find_map(|w| w.parse::<usize>().ok())
+            .expect("the count is a numeral, so this test can read it");
+        assert_eq!(
+            stated,
+            registered().len(),
+            "README says {} tools and the server registers {} — {:?}",
+            stated,
+            registered().len(),
+            registered()
+        );
+    }
+
     #[test]
     fn the_docs_name_every_tool() {
         let doc = include_str!("../docs/mcp.md");

@@ -189,7 +189,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
-| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. Twenty tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
+| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. 22 tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
 | `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and (with an estate) the service account that estate's live commands run as, checked — may this credential become it, is the quota project reachable, and does it hold the permissions the estate's resource types need |
 
 Details for each command are below.
