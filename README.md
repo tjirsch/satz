@@ -1248,6 +1248,12 @@ version-line changes upgrade in place), merge-presets:
 3. updates pristine `X.satz` and writes `X.diff.satz` — exactly what adopting
    upstream would change, with a `local -> upstream` version header.
 
+That check needs the estate to compile BEFORE anything is written, so merge-presets
+refuses an estate that does not. When what fails is a pack copy binding a param the
+estate renamed, `satz get-presets --force` refreshes the pristine copies of the packs the
+estate uses without compiling (it lists them first); then merge-presets runs. A
+`X.local.satz` fork is the estate's own file and is edited by hand.
+
 **Adoption** is `--adopt <stem>`: the pristine
 name is overwritten in place, the estate's `use` is left alone, and the run prints
 the **emission** delta (which resources appear or disappear) rather than the preset
