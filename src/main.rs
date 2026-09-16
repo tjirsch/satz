@@ -6739,7 +6739,63 @@ mod prerequisites_gate {
         let unused: Vec<&String> = packs.difference(&used).collect();
         assert!(unused.is_empty(), "packs no case under tests/iac/ uses: {:?}", unused);
         assert!(types.len() >= 20, "the gate checked only {} types: {:?}", types.len(), types);
+
+        // The third half of shipping a type: `adopt` can find it live. Found when the
+        // SCC notification config 409'd on a re-run and adopt answered "no rule" —
+        // a pack that emits a type nobody can adopt has no way back once the object
+        // exists, except `tofu import` by hand.
+        let cfg: crate::config::ImportConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(root.join("presets/import-config.yaml")).expect("import-config.yaml"))
+                .expect("import-config.yaml parses");
+        let unadoptable: BTreeSet<&str> =
+            types.iter().map(String::as_str).filter(|t| !crate::adopt::adoptable(&cfg, t)).collect();
+        let excepted: BTreeSet<&str> = NOT_ADOPTABLE_YET.iter().map(|(t, _)| *t).collect();
+        let new_gaps: Vec<&&str> = unadoptable.difference(&excepted).collect();
+        assert!(
+            new_gaps.is_empty(),
+            "the library emits types adopt cannot resolve — add `import_id:` or `match_on:` to their rows in presets/import-config.yaml: {:?}",
+            new_gaps
+        );
+        let closed: Vec<&&str> = excepted.difference(&unadoptable).collect();
+        assert!(closed.is_empty(), "adopt resolves these now — take them off NOT_ADOPTABLE_YET: {:?}", closed);
+
+        // and every placeholder of a template names something the resource declares: a
+        // placeholder the packs never bind would only surface as `unresolvable` on a
+        // customer's adopt. A value that is a reference to a folder's or group's live id,
+        // or to an attribute known only after apply, legitimately does not render
+        // offline — a placeholder with nothing behind it at all is the data bug.
+        let mut rendered = 0;
+        for entry in std::fs::read_dir(root.join("tests/iac")).expect("tests/iac").flatten() {
+            let (out, _) = super::manifest_gate::emit_case(&entry.path(), &reg);
+            for r in out.manifest.resources.values() {
+                match crate::adopt::render_rule(&cfg, r, &out.manifest) {
+                    Some(Ok(id)) => {
+                        assert!(!id.contains('{') && !id.trim().is_empty(), "{}: rendered `{}`", r.address(), id);
+                        rendered += 1;
+                    }
+                    Some(Err(why)) if why.contains(&format!("{} has no `", r.address())) => {
+                        panic!("{}: its import_id rule names an attribute the resource does not declare — {}", r.address(), why)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(rendered >= 20, "only {rendered} template ids rendered");
     }
+
+    /// Types the library emits whose live id is assigned by the server, so no template
+    /// can derive it from the estate: adopting one needs a live lookup adopt does not do
+    /// yet. Each entry leaves the list with the rule that resolves it.
+    const NOT_ADOPTABLE_YET: &[(&str, &str)] = &[
+        ("google_tags_tag_key", "tagKeys/<number>, assigned on create — needs a lookup by short_name under the parent"),
+        ("google_tags_tag_value", "tagValues/<number>, assigned on create — needs a lookup by short_name under the key"),
+        ("google_tags_tag_binding", "tagBindings/<url-encoded parent>/tagValues/<number> — the value's number is assigned"),
+        ("google_tags_tag_value_iam_member", "tagValues/<number> <role> <member> — the value's number is assigned"),
+        ("google_compute_firewall_policy", "locations/global/firewallPolicies/<number>, assigned on create — needs a lookup by short_name"),
+        ("google_compute_firewall_policy_association", "…/firewallPolicies/<number>/associations/<name> — the policy's number is assigned"),
+        ("google_compute_firewall_policy_rule", "…/firewallPolicies/<number>/rules/<priority> — the policy's number is assigned"),
+        ("google_cloudbuild_trigger", "projects/<p>/locations/<l>/triggers/<uuid>, assigned on create — needs a lookup by name"),
+    ];
 }
 
 #[cfg(test)]

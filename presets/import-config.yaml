@@ -132,6 +132,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_cloud_scheduler_job:
+    import_id: "projects/{project}/locations/{region}/jobs/{name}"
     description: Cloud Scheduler job
     import: false
     asset_type: cloudscheduler.googleapis.com/Job
@@ -900,6 +901,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_pubsub_subscription_iam_member:
+    import_id: "projects/{project}/subscriptions/{subscription} {role} {member}"
     description: IAM policy for a Pub/Sub subscription
     import: false
     asset_type: pubsub.googleapis.com/Subscription
@@ -913,6 +915,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_pubsub_topic_iam_member:
+    import_id: "projects/{project}/topics/{topic} {role} {member}"
     description: IAM policy for a Pub/Sub topic
     import: false
     asset_type: pubsub.googleapis.com/Topic
@@ -1559,6 +1562,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_bigquery_dataset_iam_member:
+    import_id: "projects/{project}/datasets/{dataset_id} {role} {member}"
     description: Auto-generated entry for google_bigquery_dataset_iam_member
     import: false
     content_type: RESOURCE
@@ -4201,6 +4205,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_org_policy_custom_constraint:
+    import_id: "{parent}/customConstraints/{name}"
     description: Auto-generated entry for google_org_policy_custom_constraint
     import: false
     asset_type: orgpolicy.googleapis.com/CustomConstraint
@@ -4216,6 +4221,7 @@ resource_types:
     derive_yaml_key_from: name
     exclude: []
   google_organization_access_approval_settings:
+    import_id: "organizations/{organization_id}/accessApprovalSettings"
     description: Auto-generated entry for google_organization_access_approval_settings
     import: false
     asset_type: TODO/UNKNOWN
@@ -4537,12 +4543,14 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_scc_v2_organization_notification_config:
+    import_id: "organizations/{organization}/locations/{location}/notificationConfigs/{config_id}"
     description: Auto-generated entry for google_scc_v2_organization_notification_config
     import: false
     asset_type: securitycenter.googleapis.com/NotificationConfig
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_scc_v2_organization_scc_big_query_export:
+    import_id: "organizations/{organization}/locations/{location}/bigQueryExports/{big_query_export_id}"
     description: Auto-generated entry for google_scc_v2_organization_scc_big_query_export
     import: false
     asset_type: securitycenter.googleapis.com/BigQueryExport
@@ -4704,6 +4712,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_service_account_iam_member:
+    import_id: "{service_account_id} {role} {member}"
     description: Auto-generated entry for google_service_account_iam_member
     import: false
     content_type: RESOURCE

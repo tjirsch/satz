@@ -117,6 +117,35 @@ enum Rule {
     None,
 }
 
+/// The types `resolve` looks up by their natural key in code rather than by a rule.
+const NATIVE: &[&str] = &[
+    "google_folder",
+    "google_project",
+    "google_cloud_identity_group",
+    "google_cloud_identity_group_membership",
+    "google_org_policy_policy",
+    "google_billing_budget",
+];
+
+/// Whether `adopt` can resolve a live object of this type at all: a native lookup, an
+/// `import_id` template or a `match_on` rule. A type with none has no recovery once
+/// the object exists — a console click, a partial apply — except `tofu import` by hand.
+pub(crate) fn adoptable(rules: &ImportConfig, tf_type: &str) -> bool {
+    NATIVE.contains(&tf_type) || !matches!(rule_for(rules, tf_type), Rule::None)
+}
+
+/// The id an `import_id` rule renders for `r` offline, or why it cannot; `None` for a
+/// type without a template rule. What the library gate holds each template to.
+#[cfg(test)]
+pub(crate) fn render_rule(rules: &ImportConfig, r: &EmittedResource, manifest: &Manifest) -> Option<Result<String, String>> {
+    let Rule::Template(template) = rule_for(rules, &r.tf_type) else { return None };
+    Some(match render_template(&template, r, manifest, &BTreeMap::new()) {
+        (_, Outcome::Resolved { id, .. }) => Ok(id),
+        (_, Outcome::Unresolvable(why)) => Err(why),
+        (_, other) => Err(format!("{other:?}")),
+    })
+}
+
 fn rule_for(rules: &ImportConfig, tf_type: &str) -> Rule {
     match rules.resource_types.get(tf_type) {
         Some(r) if r.import_id.is_some() => Rule::Template(r.import_id.clone().unwrap()),
