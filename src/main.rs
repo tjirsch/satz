@@ -453,7 +453,8 @@ enum Commands {
         /// (overrides `exclude` in the import config)
         #[arg(long, value_delimiter = ',')]
         exclude: Vec<String>,
-        /// Output file inside yaml_dir (state/live shapes; default discovered.satz)
+        /// Output file inside yaml_dir (state, live and hcl shapes; default discovered.satz,
+        /// imported-hcl.satz for hcl — the yaml shape writes beside its source)
         #[arg(long, short)]
         output: Option<PathBuf>,
         /// Import configuration (default: <presets_dir>/import-config.yaml)
@@ -463,7 +464,7 @@ enum Commands {
         #[arg(long)]
         gate: Option<PathBuf>,
         /// yaml shape: declared kind of the converted file
-        #[arg(long, default_value = "pack")]
+        #[arg(long, default_value = "pack", value_parser = ["pack", "estate"])]
         kind: String,
         /// yaml shape: write the conversion as a `<stem>.local.satz` fork
         #[arg(long)]
@@ -1575,6 +1576,16 @@ Thumbs.db
             match shape.as_str() {
                 "yaml" => {
                     let src = source.ok_or("the yaml shape needs a file to convert")?;
+                    // the conversion lands beside its source (or as its `.local` fork):
+                    // an --output it would ignore is refused rather than dropped
+                    if let Some(o) = &output {
+                        return Err(format!(
+                            "--output {}: the yaml shape writes the conversion beside {} (or its `.local` fork with --fork) — leave --output off",
+                            o.display(),
+                            src
+                        )
+                        .into());
+                    }
                     convert_yaml_to_satz(PathBuf::from(src), gate, kind, fork, &tool_config, &runtime_config)
                 }
                 "hcl" => {

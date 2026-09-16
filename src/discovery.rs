@@ -2311,6 +2311,36 @@ pub fn resolve_grant_collisions(config: &mut Config, mode: OnCollision) -> Resul
     Ok(notes)
 }
 
+/// The Terraform type of a parent a skipped resource named: `project <id>` and
+/// `projects/<id>` are projects, `folders/<n>` a folder. An organisation is never
+/// filtered out, so it has none.
+fn parent_type_of(parent: &str) -> Option<&'static str> {
+    if parent.starts_with("project ") || parent.starts_with("projects/") {
+        Some("google_project")
+    } else if parent.starts_with("folders/") {
+        Some("google_folder")
+    } else {
+        None
+    }
+}
+
+/// Resources dropped because their parent is not in the estate, where the parent's
+/// TYPE is one `--only`/`--exclude` filtered out: `(child type, parent type) → count`.
+fn parents_left_out<'a>(skipped: &'a [Skipped], filtered_off: &HashSet<String>) -> BTreeMap<(&'a str, &'static str), usize> {
+    let filtered = |t: &str| {
+        filtered_off.contains(t) || skipped.iter().any(|s| s.reason == SkipReason::Filtered && s.tf_type == t)
+    };
+    let mut out = BTreeMap::new();
+    for s in skipped {
+        if let SkipReason::ParentNotFound(parent) = &s.reason {
+            if let Some(parent_type) = parent_type_of(parent).filter(|t| filtered(t)) {
+                *out.entry((s.tf_type.as_str(), parent_type)).or_default() += 1;
+            }
+        }
+    }
+    out
+}
+
 /// The end of every import: what was left out, and why. Never silent — a
 /// partial estate is fine, an unexplained one is not.
 pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbose: bool) {
@@ -2337,15 +2367,20 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
         println!("import: nothing skipped — every resource the source had is in the estate.");
         return;
     }
+    // A resource needs its parent in the estate. When `--only`/`--exclude` left the
+    // parent's type out, every child is dropped and the estate can come out empty:
+    // name the type to add, in the normal output — a targeted import that yields
+    // nothing, with the reason only behind `--verbose`, is the defect this answers.
+    for ((child, parent), n) in parents_left_out(skipped, filtered_off) {
+        println!("import: {} {} need {}, which --only/--exclude left out — add {} to --only", n, child, parent, parent);
+    }
+
     let mut by_reason: BTreeMap<String, usize> = BTreeMap::new();
     if !filtered_off.is_empty() && !skipped.iter().any(|s| s.reason == SkipReason::Filtered) {
         // live shape: filtered types are never fetched, so they have no
-        // per-resource rows — say so at the type level
-        by_reason.insert(format!("type(s) filtered by --only/--exclude, not fetched ({})", {
-            let mut v: Vec<&str> = filtered_off.iter().map(String::as_str).collect();
-            v.sort();
-            v.join(", ")
-        }), filtered_off.len());
+        // per-resource rows — say so at the type level, as a count: the names of
+        // hundreds of types on one line buried everything around them
+        by_reason.insert("type(s) filtered by --only/--exclude, not fetched".to_string(), filtered_off.len());
     }
     for s in skipped {
         let key = match &s.reason {
@@ -2363,6 +2398,11 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
     for (reason, n) in &by_reason {
         println!("  {:5} {}", n, reason);
     }
+    if verbose && !filtered_off.is_empty() {
+        let mut types: Vec<&str> = filtered_off.iter().map(String::as_str).collect();
+        types.sort();
+        println!("  filtered type(s): {}", types.join(", "));
+    }
     if verbose && !skipped.is_empty() {
         let mut rows: Vec<&Skipped> = skipped.iter().collect();
         rows.sort_by(|a, b| (&a.tf_type, &a.what).cmp(&(&b.tf_type, &b.what)));
@@ -2371,6 +2411,31 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
         }
     } else {
         println!("  (--verbose lists every one; `import: false` rows, `--all`, `--only` and `--exclude` are the levers)");
+    }
+}
+
+#[cfg(test)]
+mod skipped_tests {
+    use super::*;
+
+    /// Found importing four types from a live organisation: `--only
+    /// google_monitoring_alert_policy,…` fetched them all and dropped every one, because
+    /// `--only` had left out `google_project`, and the estate came out empty.
+    #[test]
+    fn a_child_dropped_for_a_filtered_parent_names_the_type_to_add() {
+        let skip = |t: &str, reason: SkipReason| Skipped { tf_type: t.into(), what: "x".into(), reason };
+        let skipped = vec![
+            skip("google_monitoring_alert_policy", SkipReason::ParentNotFound("project acme-infra-001".into())),
+            skip("google_monitoring_alert_policy", SkipReason::ParentNotFound("projects/acme-infra-001".into())),
+            skip("google_bigquery_dataset", SkipReason::ParentNotFound("project acme-infra-001".into())),
+            skip("google_folder_iam_member", SkipReason::ParentNotFound("folders/111".into())),
+        ];
+        let filtered: HashSet<String> = ["google_project".to_string()].into();
+        let left_out = parents_left_out(&skipped, &filtered);
+        assert_eq!(left_out.get(&("google_monitoring_alert_policy", "google_project")), Some(&2));
+        assert_eq!(left_out.get(&("google_bigquery_dataset", "google_project")), Some(&1));
+        // a folder the filter did not touch is some other reason, not this one
+        assert_eq!(left_out.get(&("google_folder_iam_member", "google_folder")), None);
     }
 }
 
