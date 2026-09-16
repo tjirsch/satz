@@ -1158,9 +1158,27 @@ pub(crate) async fn run_merge_presets(
         });
     }
 
-    // baseline for the self-verifying estate edit
+    // baseline for the self-verifying estate edit. It must be taken BEFORE the first
+    // pack is written — the fork+repoint proof and the adoption delta compare against
+    // it — so an estate whose own pack copies no longer compile cannot be merged: the
+    // commonest way there is an estate param renamed while a pack copy still binds the
+    // old name. `get-presets --force` refreshes the pristine copies without compiling,
+    // which is the way through; say it rather than stop at the compile error.
     let baseline = match (&estate, report_only) {
-        (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config)?),
+        (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config).map_err(|e| {
+            // printed, not returned: `main` renders a returned error with `Debug`,
+            // which escapes the newlines
+            eprintln!(
+                "\nmerge-presets compiles {} before it changes anything, and it does not compile:\n  {}\n\
+                 If a pack copy under {} is what fails — a param the estate renamed that the copy still binds —\n\
+                 `satz get-presets --force` refreshes the packs the estate uses without compiling (it lists them first);\n\
+                 then run merge-presets again. A `.local.satz` fork is the estate's own file: edit it by hand.\n",
+                est.display(),
+                e,
+                presets_dir
+            );
+            format!("{} does not compile, so merge-presets changed nothing (see above)", est.display())
+        })?),
         _ => None,
     };
     let estate_dirty = match estate.as_deref() {

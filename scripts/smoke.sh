@@ -1075,6 +1075,42 @@ assert d["summary"]["drift_in_use"] is False, d["summary"]
 assert {p["status"] for p in d["packs"]} <= {"clean","stale","edited","fork","local-only","missing-locally"}
 PYEOF
 grep -q 'satz v' tmp/presets.json && fail "the version banner reached the report file"
+
+step "merge-presets on an estate whose pack copy binds a param it renamed: the way through is named"
+# merge-presets must compile before its first write, so a stale copy of a used pack was a
+# deadlock: the command that would refresh the copy could not run on the estate that needed
+# it. get-presets --force refreshes the copies without compiling.
+rm -rf tmp/deadlock && mkdir -p tmp/deadlock/yaml tmp/deadlock/presets tmp/deadlock/pristine
+cp -R "$root/tests/schemas" tmp/deadlock/schemas
+cat > tmp/deadlock/config.toml <<'CFGEOF'
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+include_dirs = [".", "yaml"]
+schema_dir = "schemas"
+presets_dir = "presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+CFGEOF
+pack() { # $1 version, $2 the param the pack binds
+  printf '// A log bucket, named by the estate.\npack logs version "%s"\n\ngoogle_storage_bucket {\n  logs {\n    name     = "{%s}"\n    project  = "acme-infra-001"\n    location = "EU"\n  }\n}\n' "$1" "$2"
+}
+pack 1.1 logs_bucket_name > tmp/deadlock/pristine/logs.satz
+pack 1.0 log_bucket_name > tmp/deadlock/presets/logs.satz
+printf 'estate deadlock\n\nparams {\n  logs_bucket_name = "acme-logs"\n}\n\nterraform {\n  backend {\n    local { path = "terraform.tfstate" }\n  }\n}\n\nproviders {\n  google {\n    alias   = "google"\n    project = "acme-infra-001"\n    region  = "europe-west3"\n  }\n}\n\nuse "presets/logs.satz"\n' > tmp/deadlock/yaml/deadlock.satz
+(cd tmp/deadlock && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
+if "$satz" --config tmp/deadlock/config.toml merge-presets --pristine-dir tmp/deadlock/pristine > tmp/deadlock-merge.txt 2>&1; then
+  fail "merge-presets ran on an estate that does not compile"
+fi
+grep -q 'satz get-presets --force' tmp/deadlock-merge.txt || fail "the refusal does not name the way through:\n$(cat tmp/deadlock-merge.txt)"
+"$satz" --config tmp/deadlock/config.toml get-presets --force --pristine-dir tmp/deadlock/pristine > tmp/deadlock-get.txt 2>&1 \
+  || fail "get-presets --force failed:\n$(cat tmp/deadlock-get.txt)"
+"$satz" --config tmp/deadlock/config.toml transpile deadlock.satz --check > tmp/deadlock-check.txt 2>&1 \
+  || fail "the refreshed pack copy does not compile:\n$(cat tmp/deadlock-check.txt)"
+(cd tmp/deadlock && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm refreshed)
+"$satz" --config tmp/deadlock/config.toml merge-presets --pristine-dir tmp/deadlock/pristine > tmp/deadlock-merge2.txt 2>&1 \
+  || fail "merge-presets still fails after the refresh:\n$(cat tmp/deadlock-merge2.txt)"
+
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"
