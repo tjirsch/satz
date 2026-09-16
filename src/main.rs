@@ -378,10 +378,11 @@ enum Commands {
         /// Organization id override; else read from config
         #[arg(long)]
         customer_organization_id: Option<String>,
-        /// Report format: text, markdown or json
-        #[arg(long, value_enum)]
+        /// Report format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
@@ -403,10 +404,11 @@ enum Commands {
         /// Which policies to include
         #[arg(long, default_value = "active", value_parser = ["active", "inactive", "full"])]
         scope: String,
-        /// Report format: markdown, json or pdf (typeset by satz itself)
-        #[arg(long, value_enum)]
+        /// Report format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Inventory declared policies across the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory
@@ -553,10 +555,11 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: text or json
-        #[arg(long, value_enum)]
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
@@ -568,10 +571,11 @@ enum Commands {
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: markdown, json or pdf (typeset by satz itself)
-        #[arg(long, value_enum)]
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Prowler 5 OCSF export to ingest as corroboration (`prowler gcp --output-formats json-ocsf`)
@@ -600,10 +604,11 @@ enum Commands {
         /// Compare against this directory instead of downloading the upstream presets
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
-        /// Output format: text or json
-        #[arg(long, value_enum)]
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
@@ -643,8 +648,8 @@ enum Commands {
         /// List what is missing and write nothing; exits non-zero while anything is
         #[arg(long)]
         report_only: bool,
-        /// text (default) or json
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
     /// Derive the API→Terraform field map per resource type from the API's Discovery Document and the provider schema, into <presets_dir>/type-map.yaml — what the live import applies so imported resources plan clean
@@ -678,10 +683,11 @@ enum Commands {
         /// Prowler 5 OCSF export (`prowler gcp --output-formats json-ocsf`)
         #[arg(long)]
         prowler: PathBuf,
-        /// Output format: markdown or json
-        #[arg(long, value_enum)]
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Add the estate delta the findings imply — `use` lines to add, resources
@@ -748,10 +754,11 @@ enum Commands {
         /// Judge it inside this estate instead of a synthesised one
         #[arg(long, value_name = "ESTATE")]
         against: Option<PathBuf>,
-        /// Output format: text or json — the findings an editor already reads
-        #[arg(long, value_enum)]
+        /// Output format — json carries the findings an editor already reads
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
@@ -780,12 +787,12 @@ enum Commands {
     Questions {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: text, json, markdown — the decisions sheet a human reads
-        /// before an organisation is touched — or xlsx, the workbook a customer
-        /// fills in and sends back
-        #[arg(long, value_enum)]
+        /// Output format — markdown and pdf are the decisions sheet a human reads
+        /// before an organisation is touched
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json, OutFormat::Xlsx]))]
         format: OutFormat,
-        /// Where it goes — the one file this run writes (`/dev/stdout` to pipe it)
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`/dev/stdout` to pipe it)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Only the questions the estate has not answered yet — the interview's worklist
@@ -801,8 +808,8 @@ enum Commands {
     Prowler {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// Output format: text, or json for an agent
-        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        /// Output format — json is for an agent
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
     /// Format Satz files in place: indentation, spacing, `=` alignment, list commas
@@ -973,7 +980,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // parse into matches first: the subcommand NAME is what --html-help needs,
     // and clap only hands it out at this level
-    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let matches = cli_command().get_matches();
     let subcommand = matches.subcommand_name().map(|s| s.to_string());
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
     if cli.html_help {
@@ -1707,10 +1714,7 @@ Thumbs.db
             Ok(())
         }
         Commands::DiffOrganizationalPolicies { estate, customer_organization_id, out, format, recursive } => {
-            let format = format.require_one_of(
-                "diff-organizational-policies",
-                &[OutFormat::Text, OutFormat::Markdown, OutFormat::Json],
-            )?;
+            let out = crate::out::target(out, format)?;
             // The params table and the declared policy set both come from the
             // fragment pipeline; the desired set is what the estate emits.
             let config_path = estate_path(estate, &runtime_config);
@@ -1727,10 +1731,7 @@ Thumbs.db
             Ok(())
         }
         Commands::ReportOrganizationalPolicies { estate, customer_organization_id, scope, format, out, recursive } => {
-            let format = format.require_one_of(
-                "report-organizational-policies",
-                &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
-            )?;
+            let out = crate::out::target(out, format)?;
             // Satz-native: bootstrap needs the variable table, nothing more.
             let config_path = estate_path(estate, &runtime_config);
             configure_estate_impersonation(&config_path, &runtime_config)?;
@@ -1847,7 +1848,6 @@ Thumbs.db
         Commands::Fmt { paths, check, stdin } => run_fmt(&paths, check, stdin),
         Commands::Lsp => lsp::run().map_err(|e| e as Box<dyn std::error::Error>),
         Commands::Prowler { input, format } => {
-            let format = format.require_one_of("prowler", &[OutFormat::Text, OutFormat::Json])?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
@@ -1861,7 +1861,7 @@ Thumbs.db
             Ok(())
         }
         Commands::Require { framework, input, format, out } => {
-            let format = format.require_one_of("require", &[OutFormat::Text, OutFormat::Json])?;
+            let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             // This command REPORTS, it does not emit — it needs `main.tf` as a
             // value, never on disk. The stage-B block belongs in `transpile`
@@ -1888,10 +1888,7 @@ Thumbs.db
             Ok(())
         }
         Commands::ReportCompliance { framework, input, format, out, prowler, no_live, checkov, fail_on } => {
-            let format = format.require_one_of(
-                "report-compliance",
-                &[OutFormat::Markdown, OutFormat::Json, OutFormat::Pdf],
-            )?;
+            let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             configure_estate_impersonation(&input_path, &runtime_config)?;
             // Reports, never emits — see the note in `require`.
@@ -1938,10 +1935,10 @@ Thumbs.db
             .await
         }
         Commands::Triage { framework, input, prowler, format, out, fix } => {
-            let format = format.require_one_of("triage", &[OutFormat::Markdown, OutFormat::Json])?;
+            let out = crate::out::target(out, format)?;
             if fix && format == OutFormat::Json {
                 return Err("triage --fix renders the estate delta as prose; \
-                            use --format markdown, or read the rows from --format json"
+                            use --format markdown or pdf, or read the rows from --format json"
                     .into());
             }
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
@@ -2038,7 +2035,7 @@ Thumbs.db
             Ok(())
         }
         Commands::ReviewPack { pack, against, format, out } => {
-            let format = format.require_one_of("review-pack", &[OutFormat::Text, OutFormat::Json])?;
+            let out = crate::out::target(out, format)?;
             let review = crate::review_pack::review(&pack, against.as_deref(), &tool_config, &runtime_config)?;
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&review)?,
@@ -2059,7 +2056,7 @@ Thumbs.db
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
         Commands::HclInit { args } => run_tf(&runtime_config, "init", &args),
         Commands::CheckPresets { input, pristine_dir, format, out } => {
-            let format = format.require_one_of("check-presets", &[OutFormat::Text, OutFormat::Json])?;
+            let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let report = crate::presets::check_presets_report(
                 &input_path,
@@ -2117,10 +2114,7 @@ Thumbs.db
             Ok(())
         }
         Commands::Questions { input, format, out, unanswered } => {
-            let format = format.require_one_of(
-                "questions",
-                &[OutFormat::Text, OutFormat::Json, OutFormat::Markdown, OutFormat::Xlsx],
-            )?;
+            let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let mut report = crate::questions::questions_report(&input_path, &runtime_config)?;
             if unanswered {
@@ -2132,15 +2126,19 @@ Thumbs.db
                 // format among the others since it stopped being a flag of its own.
                 OutFormat::Xlsx => crate::questions::xlsx(&report)?,
                 OutFormat::Json => serde_json::to_string_pretty(&report)?.into_bytes(),
-                OutFormat::Markdown => crate::questions::render_decisions(&report).into_bytes(),
-                _ => crate::questions::render_questions(&report).into_bytes(),
+                OutFormat::Markdown | OutFormat::Pdf => crate::questions::render_decisions(&report).into_bytes(),
+                OutFormat::Text => crate::questions::render_questions(&report).into_bytes(),
             };
             let what = if format == OutFormat::Xlsx {
                 format!("{} decision(s); the `your answer` column is the customer's", report.questions.len())
             } else {
                 format!("{} question(s)", report.questions.len())
             };
-            write_report(&out, &bytes, &what)?;
+            if format == OutFormat::Pdf {
+                pdf_from_markdown(&String::from_utf8(bytes)?, &out, &what)?;
+            } else {
+                write_report(&out, &bytes, &what)?;
+            }
             Ok(())
         }
         Commands::Mcp { root, allow, self_gated } => {
@@ -2168,7 +2166,6 @@ Thumbs.db
         }
         Commands::OpenReadme => open_url(DOCS_URL),
         Commands::UpdatePrerequisites { input, report_only, format } => {
-            let format = format.require_one_of("update-prerequisites", &[OutFormat::Text, OutFormat::Json])?;
             match input {
                 None => {
                     match format {
@@ -5028,6 +5025,33 @@ fn print_root_help(long: bool) {
     println!();
 }
 
+/// The CLI as it parses and as a command's help shows it: the global options hidden
+/// below the root. clap copies every global option into every command, so
+/// `satz transpile --help` repeated the options that belong to `satz` itself under
+/// each command. They are listed once, by `satz --help`, and still parse after any
+/// command — hiding changes the help and nothing else.
+///
+/// clap copies a global option into a command only when the command has no option
+/// of that id yet, so each command is given a HIDDEN copy before the build. Hiding
+/// the copies after the build is not possible: a built command's name lookup is
+/// computed once, and re-adding an option moves it.
+fn cli_command() -> clap::Command {
+    fn hide_below(cmd: clap::Command, globals: &[clap::Arg]) -> clap::Command {
+        cmd.mut_subcommands(|mut sub| {
+            for global in globals {
+                if sub.get_arguments().all(|a| a.get_id() != global.get_id()) {
+                    sub = sub.arg(global.clone());
+                }
+            }
+            hide_below(sub, globals)
+        })
+    }
+    let cmd = Cli::command();
+    let globals: Vec<clap::Arg> =
+        cmd.get_arguments().filter(|a| a.is_global_set()).map(|a| a.clone().hide(true)).collect();
+    hide_below(cmd, &globals)
+}
+
 /// `satz --verbose` with no command: the grouped root help, then every command's
 /// own help, walked in `COMMAND_GROUPS` order so the long form reads like the
 /// short one.
@@ -5035,8 +5059,7 @@ fn print_recursive_help(long: bool) {
     print_root_help(long);
     println!();
 
-    let mut canonical = Cli::command();
-    canonical.build();
+    let canonical = cli_command();
     let subcommands: Vec<clap::Command> = canonical.get_subcommands().cloned().collect();
     // the rule matches what clap wraps to: the terminal, capped like max_term_width
     let width = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(100).min(110);
@@ -5762,11 +5785,8 @@ mod command_groups {
     fn command_groups_cover_the_cli() {
         let mut cmd = Cli::command();
         cmd.build(); // `help` is generated here, and the table lists it too
-        let cli: BTreeSet<&str> = cmd
-            .get_subcommands()
-            .filter(|s| !s.is_hide_set())
-            .map(|s| s.get_name())
-            .collect();
+        // a hidden command is a command the help does not show, so none is exempt
+        let cli: BTreeSet<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
         let table: BTreeSet<&str> = declared().into_iter().collect();
 
         let missing: Vec<_> = cli.difference(&table).collect();
@@ -5780,6 +5800,53 @@ mod command_groups {
             unknown.is_empty(),
             "COMMAND_GROUPS names commands the CLI does not have: {unknown:?}"
         );
+    }
+
+    /// `satz --help` lists the global options; a command's own help does not repeat
+    /// them, at any depth, whichever way the help is asked for.
+    #[test]
+    fn a_command_s_help_leaves_the_global_options_to_the_root() {
+        let mut cmd = cli_command();
+        cmd.build();
+        let globals: Vec<String> = Cli::command()
+            .get_arguments()
+            .filter(|a| a.is_global_set())
+            .map(|a| a.get_id().to_string())
+            .collect();
+        assert!(globals.len() >= 5, "found only {globals:?}");
+        fn walk(cmd: &mut clap::Command, globals: &[String], checked: &mut usize) {
+            for sub in cmd.get_subcommands_mut() {
+                let help = sub.render_long_help().to_string();
+                assert!(!help.contains("Global options"), "`satz {} --help` repeats the global options", sub.get_name());
+                for id in globals {
+                    if let Some(arg) = sub.get_arguments().find(|a| a.get_id() == id.as_str()) {
+                        assert!(arg.is_hide_set(), "`{id}` shows under `{}`", sub.get_name());
+                    }
+                }
+                *checked += 1;
+                walk(sub, globals, checked);
+            }
+        }
+        let mut checked = 0;
+        walk(&mut cmd, &globals, &mut checked);
+        assert!(checked >= 30, "checked only {checked} commands");
+    }
+
+    /// Hiding changes the help and nothing else: a global option after the command
+    /// still reaches the root, as it did before.
+    #[test]
+    fn a_global_option_after_a_command_still_takes_effect() {
+        for argv in [
+            ["satz", "transpile", "x.satz", "--check", "--config", "estate-dir"],
+            ["satz", "--config", "estate-dir", "transpile", "x.satz", "--check"],
+        ] {
+            let matches = cli_command().try_get_matches_from(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+            let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap();
+            assert_eq!(cli.config.as_deref(), Some(Path::new("estate-dir")), "{argv:?}");
+        }
+        // and a command's --help is still its help, not a missing-argument refusal
+        let err = cli_command().try_get_matches_from(["satz", "prowler", "--help"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp, "{err}");
     }
 
     #[test]

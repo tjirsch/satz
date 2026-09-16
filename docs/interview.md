@@ -229,7 +229,8 @@ One table per pack, opened by the pack's description: the question, the answer t
 estate carries (or the default it would accept, or **needs a value**), and what
 changing it later costs. ### The catalog a customer keeps
 
-`satz questions <estate> --format markdown --out <file>` is the decisions sheet, and it is also the
+`satz questions <estate> --format markdown --out <file>` is the decisions sheet (`--format pdf`
+typesets it), and it is also the
 document handed over afterwards: every question grouped by pack, with the answer the estate
 carries, whether that answer was **chosen for this estate** or is the **same as the pack's
 default**, WHY the question is asked at all — the pack's own sentence — and what changing it

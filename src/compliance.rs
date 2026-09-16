@@ -3391,7 +3391,12 @@ pub(crate) fn run_triage(
             t
         }
     };
-    crate::write_report(out, text.as_bytes(), &format!("{} finding(s)", rows.len()))?;
+    let what = format!("{} finding(s)", rows.len());
+    if format == crate::OutFormat::Pdf {
+        crate::pdf_from_markdown(&text, out, &what)?;
+    } else {
+        crate::write_report(out, text.as_bytes(), &what)?;
+    }
     let counts: BTreeMap<String, usize> = rows.iter().fold(BTreeMap::new(), |mut m, r| {
         *m.entry(format!("{:?}", r.bucket)).or_default() += 1;
         m
