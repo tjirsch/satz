@@ -189,8 +189,11 @@ pub struct ResourceRegistry {
 impl ResourceRegistry {
     pub fn load_all(directory: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut resources = HashMap::new();
-        // A missing schema directory is not an error: schemas may be fetched later.
-        // Any other failure (e.g. permission denied) is surfaced with its path.
+        // A missing directory reads as empty here and is refused below with the rest:
+        // satz types every resource from the provider's own schema, so a compile with
+        // none is not a compile. It used to load zero types and carry on, and the
+        // estate then failed wherever the first resource needed a type — on a fresh
+        // organisation that was the IaC users group, three steps into bootstrap.
         let entries = match crate::fsx::read_dir_entries(directory) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -202,19 +205,27 @@ impl ResourceRegistry {
                     let content = crate::fsx::read_to_string(entry.path())?;
                     let schema: Schema = serde_json::from_str(&content)?;
                     
-                    let mut file_resource_count = 0;
+                    let file_name = entry.path().file_name().and_then(|f| f.to_str()).unwrap_or_default().to_string();
                     for (prov_name, prov_schema) in schema.provider_schemas {
+                        let count = prov_schema.resource_schemas.len();
                         for (res_name, res_schema) in prov_schema.resource_schemas {
                             resources.insert(res_name.clone(), (prov_name.clone(), res_schema));
-                            file_resource_count += 1;
                         }
-                    }
-                    if let Some(file_name) = entry.path().file_name().and_then(|f| f.to_str()) {
-                         // stderr: progress, not the answer — see the banner note in main().
-                         eprintln!("Loaded {} resource types from schema file '{}'", file_resource_count, file_name);
+                        // stderr: progress, not the answer — see the banner note in main().
+                        // Named by provider: the file name says which file, and what an
+                        // operator needs to know is which provider's types this compile has.
+                        eprintln!("Loaded {} resource types for {} ({})", count, prov_name, file_name);
                     }
                 }
             }
+        }
+        if resources.is_empty() {
+            return Err(format!(
+                "no provider schema in '{}' — satz types every resource from the provider's own schema. \
+                 `satz update-schema` writes it (it runs `tofu providers schema`, so OpenTofu has to be on PATH)",
+                directory
+            )
+            .into());
         }
         Ok(ResourceRegistry { resources })
     }
@@ -433,11 +444,23 @@ mod load_all_tests {
         dir
     }
 
+    /// A compile with no schema is not a compile. It used to load zero types and carry
+    /// on, and the estate failed wherever the first resource needed one — on a fresh
+    /// organisation, the IaC users group three steps into bootstrap. Missing or empty,
+    /// the directory is refused by name, with the command that fills it.
     #[test]
-    fn a_missing_directory_is_an_empty_registry() {
-        let dir = scratch("missing");
-        let reg = ResourceRegistry::load_all(dir.to_str().unwrap()).expect("a missing directory is not an error");
-        assert!(reg.resources.is_empty());
+    fn a_missing_or_empty_schema_directory_is_refused_by_name() {
+        let missing = scratch("missing");
+        let err = ResourceRegistry::load_all(missing.to_str().unwrap()).err().expect("no schema is an error");
+        assert!(err.to_string().contains("satz update-schema"), "{err}");
+        assert!(err.to_string().contains(missing.to_str().unwrap()), "{err}");
+
+        let empty = scratch("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let result = ResourceRegistry::load_all(empty.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&empty);
+        let err = result.err().expect("an empty schema dir is an error");
+        assert!(err.to_string().contains("no provider schema"), "{err}");
     }
 
     #[test]

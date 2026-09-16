@@ -48,11 +48,32 @@ cmp -s yaml/showcase.satz tmp/fmt-stdin.satz || fail "fmt --stdin changed an alr
 printf 'a = "open' | "$satz" fmt --stdin > /dev/null 2> tmp/fmt-err.txt && fail "fmt --stdin accepted an unterminated string"
 grep -q 'unterminated string' tmp/fmt-err.txt || fail "fmt did not name the parse error:\n$(cat tmp/fmt-err.txt)"
 
+step "a compile with no provider schema is refused by name, not run untyped"
+# It used to load zero types and carry on; a fresh organisation then failed three
+# steps into bootstrap, at the first resource that needed a type.
+rm -rf tmp/noschema && mkdir -p tmp/noschema/schemas tmp/noschema/yaml
+cp yaml/smoke.satz tmp/noschema/yaml/
+printf 'yaml_dir = "yaml"\nhcl_dir = "hcl"\nschema_dir = "schemas"\npresets_dir = "%s"\ninclude_dirs = [".", "yaml", "%s"]\ntf_tool = "tofu"\n' \
+  "$root/presets" "$root" > tmp/noschema/config.toml
+if "$satz" --config tmp/noschema transpile smoke.satz --check > tmp/noschema.txt 2>&1; then
+  fail "an estate compiled with an empty schema dir:\n$(cat tmp/noschema.txt)"
+fi
+grep -q 'no provider schema in' tmp/noschema.txt || fail "the refusal does not say what is missing:\n$(cat tmp/noschema.txt)"
+grep -q 'satz update-schema' tmp/noschema.txt || fail "the refusal does not name the command that fixes it:\n$(cat tmp/noschema.txt)"
+
 step "lsp: the language server answers an editor — diagnostics, completion, hover, definition, formatting"
 python3 "$root/tests/smoke/lsp_client.py" "$satz" yaml/showcase.satz || fail "satz lsp did not answer as an editor expects"
 
 step "init: the estate satz writes is in the canonical layout"
-rm -rf tmp/init && mkdir -p tmp/init
+# init fetches the schema of every provider the config names, unless it is already
+# there. Seeding the fixture keeps these steps offline — the fetch itself is
+# `tofu providers schema`, which `update-schema` shares.
+seed_schemas() {
+  mkdir -p "$1/schemas"
+  cp "$root/tests/schemas/google.json" "$1/schemas/google.json"
+  cp "$root/tests/schemas/google.json" "$1/schemas/google-beta.json"
+}
+rm -rf tmp/init && mkdir -p tmp/init && seed_schemas tmp/init
 (cd tmp/init && "$satz" init --customer-id C0example --customer-shortname acme \
   --billing-account-infra 012345-6789AB-CDEF01 --default-region europe-west3 \
   --customer-organization-id 123456789012 --customer-domain example.com \
@@ -63,7 +84,7 @@ rm -rf tmp/init && mkdir -p tmp/init
 # The placeholders it used to write looked like answers and pointed bootstrap at
 # an organisation nobody owned. (The run above STATES the org id, so it is right
 # to write it; this one states nothing and has no credentials to derive from.)
-rm -rf tmp/init-bare && mkdir -p tmp/init-bare
+rm -rf tmp/init-bare && mkdir -p tmp/init-bare && seed_schemas tmp/init-bare
 (cd tmp/init-bare && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" init --customer-id C0bare > ../init-bare.txt 2>&1) \
   || fail "satz init without credentials must still write an estate:\n$(cat tmp/init-bare.txt)"
@@ -76,7 +97,7 @@ grep -q 'nothing could be derived' tmp/init-bare.txt \
 # init --interview asks what init could not derive. It shipped asking NOTHING: init
 # writes estate-core commented out, the questions live there, and an empty binding
 # counted as an answer. The library is seeded here as `get-presets` would leave it.
-rm -rf tmp/init-iv && mkdir -p tmp/init-iv
+rm -rf tmp/init-iv && mkdir -p tmp/init-iv && seed_schemas tmp/init-iv
 (cd tmp/init-iv && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" init --customer-id C0example --customer-shortname acme > ../init-iv1.txt 2>&1) \
   || fail "the plain init before the interview failed:\n$(cat tmp/init-iv1.txt)"

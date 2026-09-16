@@ -1478,21 +1478,37 @@ Thumbs.db
             }
 
             // 4. Fetch Schemas
+            //
+            // For the providers the command line names, else the ones the config does —
+            // which defaults to google and google-beta. Only the flags used to count, so a
+            // plain `satz init` created an empty schema dir, fetched nothing, said nothing,
+            // and printed "Initialization complete" for an estate nothing could compile.
+            // A schema already on disk is kept: a re-run merges params, and re-downloading
+            // two providers to do that is not what anyone asked for.
             let mut all_provs = final_google;
             all_provs.extend(final_aws);
             all_provs.extend(final_azure);
             all_provs.extend(final_alibaba);
-
-            if !all_provs.is_empty() {
-                for p in all_provs {
-                    println!("Fetching schema for {}...", p);
-                    crate::schema::ResourceRegistry::generate_schema(
-                        &tool,
-                        &p,
-                        &runtime_config.provider_version,
-                        &format!("{}/{}.json", runtime_config.schema_dir, p)
-                    )?;
+            let wanted: Vec<(String, String)> = if all_provs.is_empty() {
+                tool_config.parsed_providers()
+            } else {
+                all_provs.into_iter().map(|p| (p, runtime_config.provider_version.clone())).collect()
+            };
+            for (provider, version) in wanted {
+                let name = provider.split('/').next_back().unwrap_or(&provider).to_string();
+                let out = format!("{}/{}.json", runtime_config.schema_dir, name);
+                if Path::new(&out).exists() {
+                    println!("Schema for {} already present: {}", name, out);
+                    continue;
                 }
+                println!("Fetching schema for {} {}...", provider, version);
+                crate::schema::ResourceRegistry::generate_schema(&tool, &provider, &version, &out).map_err(|e| {
+                    format!(
+                        "init: the estate is written, but the {} schema could not be fetched ({}) — nothing compiles \
+                         without it. Put OpenTofu on PATH and run `satz update-schema`",
+                        name, e
+                    )
+                })?;
             }
             println!("Initialization complete.");
             Ok(())
@@ -1649,9 +1665,18 @@ Thumbs.db
                     }
                     r.infra_services
                 }
-                // an estate that cannot be compiled fails in bootstrap's own pre-flight
-                // with a better message than this one could give
-                Err(_) => Vec::new(),
+                // An estate that does not compile is refused HERE, before a folder, a
+                // project or a bucket exists. This arm used to fall back to an empty list
+                // and carry on: bootstrap then enabled only the six APIs it calls itself,
+                // created everything, and the compile failure surfaced afterwards, at the
+                // first resource that needed a type. A dry run creates nothing, so it warns.
+                Err(e) if dry_run => {
+                    eprintln!("warning: bootstrap would refuse: the estate does not compile — {}", e);
+                    Vec::new()
+                }
+                Err(e) => {
+                    return Err(format!("bootstrap refused before creating anything: the estate does not compile — {}", e).into())
+                }
             };
             crate::bootstrap::bootstrap(
                 config_path,
