@@ -205,6 +205,16 @@ grep -q -- '--config nope.toml: no such file or directory' tmp/noconf.txt \
 if command -v tofu >/dev/null 2>&1; then
   step "tofu validate"
   (cd hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
+  # `validate` reads no tfvars, and apply checks every value against its declared
+  # type before it does anything. The two files alone are that check, with no
+  # provider; `tofu console` exits 0 on an invalid value, so its output is the verdict.
+  step "tofu: every declared variable accepts the value satz emitted for it"
+  rm -rf tmp/tfvars-judge && mkdir -p tmp/tfvars-judge
+  cp hcl/variables.tf hcl/terraform.tfvars tmp/tfvars-judge/
+  (cd tmp/tfvars-judge && echo 1 | tofu console -no-color) > tmp/tfvars-judge.txt 2>&1 || true
+  if grep -q 'Error:' tmp/tfvars-judge.txt; then
+    fail "tofu refuses a value satz emitted for a variable satz declared:\n$(cat tmp/tfvars-judge.txt)"
+  fi
 else
   step "tofu not on PATH — validate skipped"
 fi
