@@ -5355,13 +5355,16 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
         .into());
     }
 
+    // the assets are read by the installer path alone, which is unix-only
     #[derive(Deserialize)]
+    #[cfg_attr(windows, allow(dead_code))]
     struct Asset {
         name: String,
         browser_download_url: String,
     }
 
     #[derive(Deserialize)]
+    #[cfg_attr(windows, allow(dead_code))]
     struct Release {
         tag_name: String,
         html_url: String,
@@ -5393,123 +5396,127 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
             )
             .into());
         }
-        println!("\n📥 Installing update...");
-
-        // Installer and sidecar both come from THIS release object, never from
-        // `/releases/latest/download/` — a release published between the API
-        // call and the download would otherwise pair one release's installer
-        // with another's checksum.
-        let installer_asset = release.assets.iter()
-            .find(|a| a.name == "satz-installer.sh")
-            .ok_or_else(|| format!(
-                "Release {} has no satz-installer.sh asset — the release build did not finish. Aborting.",
-                release.html_url
-            ))?;
-
-        // Download installer as bytes for checksum verification
-        let installer_bytes = client
-            .get(&installer_asset.browser_download_url)
-            .send()
-            .await?
-            .error_for_status()
-            .map_err(|e| format!("installer download failed: {}", e))?
-            .bytes()
-            .await?;
-
-        // Checksum verification
-        let checksum_asset = release.assets.iter()
-            .find(|a| a.name == "satz-installer.sh.sha256");
-        match checksum_asset {
-            Some(asset) => {
-                let expected_raw = client
-                    .get(&asset.browser_download_url)
-                    .send()
-                    .await?
-                    .error_for_status()
-                    .map_err(|e| format!("checksum download failed: {}", e))?
-                    .text()
-                    .await?;
-                let expected = expected_raw.split_whitespace().next().unwrap_or("").to_lowercase();
-                use sha2::{Digest, Sha256};
-                let actual = hex::encode(Sha256::digest(&installer_bytes));
-                if actual != expected {
-                    return Err(format!(
-                        "Checksum mismatch — installer may have been tampered with.\n\
-                         Expected: {}\n\
-                         Got:      {}\n\
-                         Aborting. Download the release manually from {}",
-                        expected, actual, release.html_url
-                    ).into());
-                }
-                println!("✅ Checksum verified");
-            }
-            None if skip_checksum => {
-                eprintln!(
-                    "⚠️  No checksum file found in this release. \
-                     Proceeding without verification (--skip-checksum)."
-                );
-            }
-            None => {
-                return Err(
-                    "No checksum file (satz-installer.sh.sha256) found in this release.\n\
-                     Cannot verify installer integrity. Aborting.\n\
-                     If you are confident in the download, re-run with --skip-checksum."
-                    .into()
-                );
-            }
-        }
-
-        // Write to temp file and execute
-        // a private, unpredictable directory: on a shared /tmp a pre-created
-        // file at a guessable path could be swapped between write and run
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        let temp_dir = std::env::temp_dir().join(format!("satz-self-update-{}-{}", std::process::id(), nonce));
-        {
-            let mut b = std::fs::DirBuilder::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                b.mode(0o700);
-            }
-            b.create(&temp_dir).map_err(|e| format!("{}: {}", temp_dir.display(), e))?;
-        }
-        let temp_file = temp_dir.join("satz-installer.sh");
-        fsx::write(&temp_file, &installer_bytes)?;
-
+        // everything below runs the release's shell installer, which Windows cannot
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            fsx::set_permissions(&temp_file, std::fs::Permissions::from_mode(0o755))?;
+            println!("\n📥 Installing update...");
 
-            let path_for_installer = match installer_checksum_path(
-                &temp_dir,
-                &std::env::var_os("PATH").unwrap_or_default(),
-                skip_checksum,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    let _ = std::fs::remove_dir_all(&temp_dir);
-                    return Err(e.into());
+            // Installer and sidecar both come from THIS release object, never from
+            // `/releases/latest/download/` — a release published between the API
+            // call and the download would otherwise pair one release's installer
+            // with another's checksum.
+            let installer_asset = release.assets.iter()
+                .find(|a| a.name == "satz-installer.sh")
+                .ok_or_else(|| format!(
+                    "Release {} has no satz-installer.sh asset — the release build did not finish. Aborting.",
+                    release.html_url
+                ))?;
+
+            // Download installer as bytes for checksum verification
+            let installer_bytes = client
+                .get(&installer_asset.browser_download_url)
+                .send()
+                .await?
+                .error_for_status()
+                .map_err(|e| format!("installer download failed: {}", e))?
+                .bytes()
+                .await?;
+
+            // Checksum verification
+            let checksum_asset = release.assets.iter()
+                .find(|a| a.name == "satz-installer.sh.sha256");
+            match checksum_asset {
+                Some(asset) => {
+                    let expected_raw = client
+                        .get(&asset.browser_download_url)
+                        .send()
+                        .await?
+                        .error_for_status()
+                        .map_err(|e| format!("checksum download failed: {}", e))?
+                        .text()
+                        .await?;
+                    let expected = expected_raw.split_whitespace().next().unwrap_or("").to_lowercase();
+                    use sha2::{Digest, Sha256};
+                    let actual = hex::encode(Sha256::digest(&installer_bytes));
+                    if actual != expected {
+                        return Err(format!(
+                            "Checksum mismatch — installer may have been tampered with.\n\
+                             Expected: {}\n\
+                             Got:      {}\n\
+                             Aborting. Download the release manually from {}",
+                            expected, actual, release.html_url
+                        ).into());
+                    }
+                    println!("✅ Checksum verified");
                 }
-            };
-            let mut installer = std::process::Command::new("sh");
-            installer.arg(&temp_file);
-            if let Some(path) = path_for_installer {
-                installer.env("PATH", path);
+                None if skip_checksum => {
+                    eprintln!(
+                        "⚠️  No checksum file found in this release. \
+                         Proceeding without verification (--skip-checksum)."
+                    );
+                }
+                None => {
+                    return Err(
+                        "No checksum file (satz-installer.sh.sha256) found in this release.\n\
+                         Cannot verify installer integrity. Aborting.\n\
+                         If you are confident in the download, re-run with --skip-checksum."
+                        .into()
+                    );
+                }
             }
-            let status = installer.status()?;
-            let _ = std::fs::remove_dir_all(&temp_dir);
 
-            if status.success() {
-                println!("✅ Update installed successfully!");
-                println!("   Please restart your terminal or run: source ~/.profile");
-
-                println!("   Documentation: {}", DOCS_URL);
-                if open_docs {
-                    open_url(DOCS_URL)?;
+            // Write to temp file and execute
+            // a private, unpredictable directory: on a shared /tmp a pre-created
+            // file at a guessable path could be swapped between write and run
+            let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+            let temp_dir = std::env::temp_dir().join(format!("satz-self-update-{}-{}", std::process::id(), nonce));
+            {
+                let mut b = std::fs::DirBuilder::new();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::DirBuilderExt;
+                    b.mode(0o700);
                 }
-            } else {
-                return Err("Failed to run installer script".into());
+                b.create(&temp_dir).map_err(|e| format!("{}: {}", temp_dir.display(), e))?;
+            }
+            let temp_file = temp_dir.join("satz-installer.sh");
+            fsx::write(&temp_file, &installer_bytes)?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fsx::set_permissions(&temp_file, std::fs::Permissions::from_mode(0o755))?;
+
+                let path_for_installer = match installer_checksum_path(
+                    &temp_dir,
+                    &std::env::var_os("PATH").unwrap_or_default(),
+                    skip_checksum,
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _ = std::fs::remove_dir_all(&temp_dir);
+                        return Err(e.into());
+                    }
+                };
+                let mut installer = std::process::Command::new("sh");
+                installer.arg(&temp_file);
+                if let Some(path) = path_for_installer {
+                    installer.env("PATH", path);
+                }
+                let status = installer.status()?;
+                let _ = std::fs::remove_dir_all(&temp_dir);
+
+                if status.success() {
+                    println!("✅ Update installed successfully!");
+                    println!("   Please restart your terminal or run: source ~/.profile");
+
+                    println!("   Documentation: {}", DOCS_URL);
+                    if open_docs {
+                        open_url(DOCS_URL)?;
+                    }
+                } else {
+                    return Err("Failed to run installer script".into());
+                }
             }
         }
 
