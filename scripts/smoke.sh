@@ -1126,6 +1126,12 @@ cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pa
 "$satz" --config . import tmp/main.yaml --kind estate | tee tmp/import-yaml.txt
 grep -q 'CONVERTED' tmp/import-yaml.txt || fail "yaml import did not report CONVERTED"
 "$satz" fmt --check tmp/pack.satz tmp/main.satz || fail "the converter wrote files that are not in the canonical layout"
+# the language has two kinds, and a third word is refused at the argument — it used to
+# write a file satz then could not parse; and an --output the shape would ignore is refused
+if "$satz" --config . import tmp/pack.yaml --kind bogus > tmp/kind.txt 2>&1; then fail "import accepted --kind bogus"; fi
+grep -q 'possible values: pack, estate' tmp/kind.txt || fail "the --kind refusal does not name the two kinds:\n$(cat tmp/kind.txt)"
+if "$satz" --config . import tmp/pack.yaml --kind pack -o elsewhere.satz > tmp/yaml-o.txt 2>&1; then fail "the yaml shape accepted an --output it ignores"; fi
+grep -q 'writes the conversion beside' tmp/yaml-o.txt || fail "the yaml --output refusal does not say where it writes:\n$(cat tmp/yaml-o.txt)"
 
 step "import, yaml shape — the fix is named when a pack is still YAML"
 mkdir -p tmp/still && cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pack.yaml" tmp/still/
@@ -1133,6 +1139,26 @@ if "$satz" --config . import tmp/still/main.yaml --kind estate >tmp/still.txt 2>
   fail "an estate that still uses a YAML pack must be refused"
 fi
 grep -q 'convert them first' tmp/still.txt || fail "refusal did not name the packs to convert:\n$(cat tmp/still.txt)"
+
+step "import, hcl shape with no provider schema is refused by name, not wrapped verbatim"
+# an empty schema_dir would translate nothing and wrap every block in `hcl trust` — an
+# estate that deploys but is not the one anyone wanted; the refusal names the fix
+rm -rf tmp/noschema-hcl && mkdir -p tmp/noschema-hcl/schemas
+# paths in a config resolve against its own directory
+cat > tmp/noschema-hcl/config.toml <<CFGEOF
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+schema_dir = "schemas"
+presets_dir = "$root/presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+CFGEOF
+if "$satz" --config tmp/noschema-hcl/config.toml import "$PWD/tf" --from hcl -o never.satz > tmp/noschema-hcl.txt 2>&1; then
+  fail "an hcl import with no provider schema was not refused:\n$(cat tmp/noschema-hcl.txt)"
+fi
+grep -q 'satz update-schema' tmp/noschema-hcl.txt || fail "the refusal does not name update-schema:\n$(cat tmp/noschema-hcl.txt)"
+[ -e tmp/noschema-hcl/yaml/never.satz ] && fail "a refused hcl import wrote its estate"
 
 step "import, hcl shape (--wrap-all): every block verbatim, then transpile"
 "$satz" --config . import tf --wrap-all -o imported-hcl.satz --verbose | tee tmp/import-hcl.txt

@@ -182,7 +182,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
 
     ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; init derives from the credentials and runs as the human, before there is an estate")),
-    ("bootstrap", Parity::Off("day 0: it creates the folder, project and state bucket as the human, after an interactive pre-flight")),
+    ("bootstrap", Parity::Off("day 0: it runs as the operator's own credentials, because the IaC service account every other tool runs as does not exist until it has — creating the folder, project and state bucket, so a human runs it knowingly in their own shell")),
     ("plan", Parity::Off("it hands stdio to the tool; an agent runs tofu itself")),
     ("apply", Parity::Off("it hands stdio to the tool, approval prompt included")),
     ("hcl-init", Parity::Off("it hands stdio to the tool")),
