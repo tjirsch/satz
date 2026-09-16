@@ -829,6 +829,11 @@ pub(crate) async fn run_get_presets(
     if !r.refused.is_empty() {
         println!("Refused files are packs this estate deploys — changing them changes the org.");
     }
+    if r.no_estate {
+        println!("next: `satz init` — an estate that uses the library, with its packs as commented `use` lines");
+    } else {
+        println!("next: `satz merge-presets` — brings the estate's packs up to the library, writes a `use` line for each pack it gained, and adds the prerequisites they need");
+    }
     Ok(())
 }
 

@@ -592,7 +592,11 @@ pub async fn bootstrap(
 
     let project_id = final_proj_id.unwrap_or_else(|| format!("{}-iac-infra", sn));
     let bucket_name = final_bucket.unwrap_or_else(|| project_id.clone());
-    let sa_name = "svc-iac-001";
+    // the address the provider impersonates once the estate is in cloud mode — the
+    // emitter's own derivation, so what bootstrap prints is what every later run acts as
+    let sa_email = lookup_str(&["svc-iac-account"])
+        .filter(|a| !a.trim().is_empty())
+        .map(|a| format!("{}@{}.iam.gserviceaccount.com", a, project_id));
 
     println!("--- Bootstrap Plan ---");
     println!("Parent:          {}", parent);
@@ -601,7 +605,7 @@ pub async fn bootstrap(
     println!("Region:          {}", r);
     println!("Project ID:      {}", project_id);
     println!("Bucket:          {}", bucket_name);
-    println!("Service Account: {}.iam.gserviceaccount.com", sa_name);
+    println!("Service Account: {}", sa_email.as_deref().unwrap_or("(the estate declares no svc_iac_account)"));
     println!("----------------------");
 
     // The gate, before a credential is asked for: an empty or malformed param
@@ -1001,7 +1005,36 @@ pub async fn bootstrap(
         println!("Warning: HCL directory not found after transpilation. Skipping imports.");
     }
 
+    let estate = config_file
+        .strip_prefix(&runtime_config.yaml_dir)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| config_file.display().to_string());
+    print!("{}", next_steps(&estate, sa_email.as_deref(), &bucket_name));
     Ok(())
+}
+
+/// What follows bootstrap, with this estate's own values, in the order the day-0 run
+/// takes them. Bootstrap ends where the operator has the most choices in front of them,
+/// and the one day-0 prerequisite no check can see — Groups Admin, a Workspace role that
+/// `testIamPermissions` cannot test — belongs to the step before the service account
+/// starts managing the estate's groups. A placeholder would be documentation; the
+/// estate's own names are the next command.
+pub(crate) fn next_steps(estate: &str, sa_email: Option<&str>, bucket: &str) -> String {
+    let sa = sa_email.unwrap_or("the IaC service account (the estate declares no svc_iac_account)");
+    format!(
+        "\nnext, in this order:\n\
+         \x20 1. satz update-prerequisites {estate}\n\
+         \x20      writes the roles and APIs the estate's packs need into the estate\n\
+         \x20 2. satz transpile {estate} --plan, then satz transpile {estate} --apply\n\
+         \x20      as you, in local mode: creates the groups, {sa} and its roles\n\
+         \x20 3. Google Workspace admin console → Account → Admin roles → Groups Admin → Admins → Assign service accounts: {sa}\n\
+         \x20      a Workspace role, not an IAM grant: from the migrate on, the service account manages the estate's groups,\n\
+         \x20      and without it the first apply that touches a group is refused\n\
+         \x20 4. satz migrate {estate} --mode cloud\n\
+         \x20      moves the state into gs://{bucket} and makes every run impersonate {sa}\n\
+         \x20 5. satz whoami {estate}, then satz transpile {estate} --plan\n\
+         \x20      must name {sa} and plan \"No changes\"\n"
+    )
 }
 
 pub(crate) fn run_import(tf_tool: &str, working_dir: &std::path::Path, resource_address: &str, resource_id: &str) -> bool {
@@ -1040,6 +1073,31 @@ pub(crate) fn run_import(tf_tool: &str, working_dir: &std::path::Path, resource_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- what follows bootstrap ----------------------------------------------
+
+    /// Operator feedback from a greenfield run: the lines that end `init` and
+    /// `interview` carried it forward, and bootstrap ended silent at the fork with the
+    /// most choices. And the Groups Admin role, which no check can test, surfaced only
+    /// as a refused apply.
+    #[test]
+    fn bootstrap_ends_with_the_next_commands_in_this_estate_s_values() {
+        let text = next_steps("C0example.satz", Some("svc-iac-001@acme-infra-001.iam.gserviceaccount.com"), "acme-infra-001-state");
+        let order = [
+            "satz update-prerequisites C0example.satz",
+            "satz transpile C0example.satz --apply",
+            "Groups Admin",
+            "satz migrate C0example.satz --mode cloud",
+            "satz whoami C0example.satz",
+        ];
+        let at: Vec<usize> = order.iter().map(|n| text.find(n).unwrap_or_else(|| panic!("no `{n}` in:\n{text}"))).collect();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "out of order:\n{text}");
+        assert!(text.contains("Assign service accounts: svc-iac-001@acme-infra-001.iam.gserviceaccount.com"), "{text}");
+        assert!(text.contains("gs://acme-infra-001-state"), "{text}");
+        assert!(text.contains("not an IAM grant"), "{text}");
+        // an estate without the param says so instead of printing an address it made up
+        assert!(next_steps("e.satz", None, "b").contains("declares no svc_iac_account"));
+    }
 
     // --- greenfield write-back ---------------------------------------------
 
