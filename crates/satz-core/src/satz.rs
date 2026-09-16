@@ -1250,8 +1250,20 @@ fn note_key(seen: &mut Vec<(String, Option<String>, usize)>, key: &Key, name: Op
     Ok(())
 }
 
+/// Satz text as the language reads it: a CRLF line ending is a line ending. A file
+/// checked out on Windows compiles to exactly what its LF twin does — without this, a
+/// `\r` survived inside `"""` strings and `hcl { }` bodies and moved the emission.
+pub fn lf(src: &str) -> std::borrow::Cow<'_, str> {
+    if src.contains('\r') {
+        std::borrow::Cow::Owned(src.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(src)
+    }
+}
+
 pub fn parse(src: &str) -> Result<File, SatzError> {
-    let toks = lex(src)?;
+    let src = lf(src);
+    let toks = lex(&src)?;
     let mut p = P { toks, i: 0 };
     let mut file = File::default();
     loop {

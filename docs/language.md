@@ -293,6 +293,10 @@ Where HCL is shown, it is the emitted text.
 
 ### 6.1 Lexical structure
 
+**Line endings** — a CRLF line ending is a line ending: a file checked out with CRLF
+compiles, formats and compares exactly as its LF twin, triple-quoted strings and
+`hcl { }` bodies included. Every file satz writes has LF line endings.
+
 **Comments**
 
 ```
