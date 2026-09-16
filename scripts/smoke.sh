@@ -511,8 +511,34 @@ step "a format a command cannot produce is refused, not quietly rendered as some
 if "$satz" --config . require cis-gcp-4.0 smoke.satz --format pdf --out tmp/fmt.pdf >tmp/fmt.txt 2>&1; then
   fail "require accepted --format pdf"
 fi
-grep -q 'not available here' tmp/fmt.txt || fail "the refusal does not name the problem:\n$(cat tmp/fmt.txt)"
-grep -q 'text or json' tmp/fmt.txt || fail "the refusal does not name what it can do:\n$(cat tmp/fmt.txt)"
+grep -q "invalid value 'pdf' for '--format" tmp/fmt.txt || fail "the refusal does not name the problem:\n$(cat tmp/fmt.txt)"
+grep -q 'possible values: text, json' tmp/fmt.txt || fail "the refusal does not name what it can do:\n$(cat tmp/fmt.txt)"
+# the help lists the same two, from the same declaration
+"$satz" require --help > tmp/fmt-help.txt 2>/dev/null
+grep -qE '^ +- pdf' tmp/fmt-help.txt && fail "require --help lists a format require refuses:\n$(cat tmp/fmt-help.txt)"
+grep -qE '^ +- json' tmp/fmt-help.txt || fail "require --help does not list json:\n$(cat tmp/fmt-help.txt)"
+
+step "a command that writes markdown writes pdf, and --out may leave the extension off"
+rm -f tmp/sheet tmp/sheet.pdf tmp/sheet.md
+"$satz" --config . questions smoke.satz --format pdf --out tmp/sheet > tmp/sheet.txt 2>&1 \
+  || fail "questions --format pdf failed:\n$(cat tmp/sheet.txt)"
+[ -s tmp/sheet.pdf ] || fail "--out tmp/sheet did not become tmp/sheet.pdf:\n$(cat tmp/sheet.txt)"
+head -c 5 tmp/sheet.pdf | grep -q '%PDF-' || fail "tmp/sheet.pdf is not a PDF"
+grep -q 'wrote tmp/sheet.pdf' tmp/sheet.txt || fail "the wrote line does not name the path written:\n$(cat tmp/sheet.txt)"
+if "$satz" --config . questions smoke.satz --format pdf --out tmp/sheet.md > tmp/sheet-md.txt 2>&1; then
+  fail "--format pdf --out tmp/sheet.md was accepted"
+fi
+grep -q 'names a markdown file' tmp/sheet-md.txt || fail "the contradicting extension is not named:\n$(cat tmp/sheet-md.txt)"
+[ -e tmp/sheet.md ] && fail "a refused run wrote tmp/sheet.md"
+
+step "the global options are listed once, by satz --help, and not under each command"
+"$satz" --help > tmp/help-root.txt 2>/dev/null
+grep -q 'Global options' tmp/help-root.txt || fail "satz --help does not list the global options"
+"$satz" transpile --help > tmp/help-transpile.txt 2>/dev/null
+grep -q '^Usage: satz transpile' tmp/help-transpile.txt || fail "transpile --help printed no help:\n$(cat tmp/help-transpile.txt)"
+grep -q 'Global options' tmp/help-transpile.txt && fail "transpile --help repeats the global options"
+"$satz" transpile smoke.satz --check --config . > tmp/help-global.txt 2>&1 \
+  || fail "a global option after the command no longer parses:\n$(cat tmp/help-global.txt)"
 
 step "require cis-gcp-5.0: the same pack answers both benchmark versions"
 "$satz" --config . require cis-gcp-5.0 smoke.satz --format text --out tmp/require-50.txt 2>/dev/null || true
@@ -835,17 +861,22 @@ grep -q 'declared as `google_storage_bucket' tmp/triage.md || fail "the bucket f
 # --fix turns the buckets into the estate edit they imply, INSIDE the report:
 # one invocation writes one artefact, and a second rendering on the console is one
 # nobody asked for. It is prose, so it is markdown only.
-"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix --format markdown --out tmp/triage-fix.txt 2>/dev/null \
-  || fail "triage --fix failed:\n$(cat tmp/triage-fix.txt)"
+# triage writes markdown, so it writes the same document typeset
+rm -f tmp/triage.pdf
+"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --format pdf --out tmp/triage 2>tmp/triage-pdf.err \
+  || fail "triage --format pdf failed:\n$(cat tmp/triage-pdf.err)"
+head -c 5 tmp/triage.pdf | grep -q '%PDF-' || fail "triage --format pdf --out tmp/triage did not write tmp/triage.pdf"
+"$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix --format markdown --out tmp/triage-fix.md 2>/dev/null \
+  || fail "triage --fix failed:\n$(cat tmp/triage-fix.md)"
 if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix --format json --out tmp/triage-fix.json >tmp/triage-fix-json.txt 2>&1; then
   fail "triage --fix --format json was accepted; the delta is prose"
 fi
 grep -q 'use --format markdown' tmp/triage-fix-json.txt || fail "the refusal does not name the format that works:\n$(cat tmp/triage-fix-json.txt)"
-grep -q 'proposed estate delta' tmp/triage-fix.txt || fail "--fix printed no delta:\n$(cat tmp/triage-fix.txt)"
+grep -q 'proposed estate delta' tmp/triage-fix.md || fail "--fix printed no delta:\n$(cat tmp/triage-fix.md)"
 # The buckets with nothing to edit are still reported — a list naming only the
 # actionable ones reads as "nothing else to do".
-grep -q 'nothing to edit for' tmp/triage-fix.txt \
-  || fail "--fix said nothing about the buckets that have no edit:\n$(cat tmp/triage-fix.txt)"
+grep -q 'nothing to edit for' tmp/triage-fix.md \
+  || fail "--fix said nothing about the buckets that have no edit:\n$(cat tmp/triage-fix.md)"
 # It proposes; it never writes. The estate must be byte-identical afterwards.
 cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" \
   || fail "triage --fix modified the estate — it proposes, it does not apply"
@@ -1192,11 +1223,12 @@ for case in "gate-billing billing_account_infra" "gate-org customer_organization
   if grep -qi 'DOCTYPE html' "tmp/$1.txt"; then fail "an HTML error page reached the operator again"; fi
 done
 
-step "help fits the terminal: no line wider than the width, globals under their own heading"
+step "help fits the terminal: no line wider than the width, globals under their own heading at the root only"
 # clap reads the tty width; there is none in CI, so COLUMNS pins it
 long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80' | head -3)
 [ -z "$long" ] || fail "adopt --help at 80 columns has lines wider than 80:\n$long"
-COLUMNS=80 "$satz" adopt -h 2>&1 | grep -q '^Global options:' || fail "the global options are not under their own heading"
+COLUMNS=80 "$satz" -h 2>&1 | grep -q '^Global options:' || fail "the global options are not under their own heading in satz -h"
+COLUMNS=80 "$satz" adopt -h 2>&1 | grep -q '^Global options:' && fail "adopt -h repeats the global options that satz -h lists"
 COLUMNS=80 "$satz" import -h 2>&1 | grep -q "see more with '--help'" || fail "-h did not become the short form (no summary/details split?)"
 
 step "the root help is grouped, on every path that prints it"

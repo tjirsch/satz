@@ -119,9 +119,9 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 ## CLI Usage
 
-All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below). `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
+All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below), before the command or after it. `satz --help` lists them; a command's own help lists only that command's options. `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
-Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out /dev/stdout | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
+Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out /dev/stdout | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
 
 **Estate**
 
@@ -882,8 +882,8 @@ One table per pack, opened by that pack's own description, in the estate's order
 
 1. **After choosing the packs, before the organisation is touched** — the
    "these are your decisions, shall we start?" page. Pair it with `--unanswered` for the
-   interview's worklist, and with `--xlsx` when the customer should fill the answers in
-   and send them back:
+   interview's worklist, with `--format pdf` for the same sheet typeset, and with
+   `--format xlsx` when the customer should fill the answers in and send them back:
    ```bash
    satz questions C0example.satz --format markdown --unanswered --out open.md
    satz questions C0example.satz --format xlsx --out decisions.xlsx
@@ -920,8 +920,9 @@ satz require cis-gcp-4.0 C0example.satz --format text --out /dev/stdout
 #   ✗ 2.11 Storage IAM change alerts    — unmet. Provides: monitoring/organization-cis-log-alerts-central
 ```
 
-Every reporting command answers in one vocabulary — `--format text|markdown|json|pdf`,
-each command accepting the subset it can produce and **refusing the rest by name**.
+Every reporting command answers in one vocabulary — `--format text|markdown|pdf|json|xlsx`,
+each command accepting the subset it can produce, listing exactly that subset in its
+`--help` and **refusing the rest by name**.
 `require --format json` gives the same verdicts as data:
 
 ```bash

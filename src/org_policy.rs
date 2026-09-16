@@ -1266,18 +1266,25 @@ pub async fn diff_org_policies(
 
     // The JSON contract is the DiffReport itself (nodes/tree_summary ride inside it);
     // console and markdown additionally need the full tree to draw collapsed subtrees.
-    let mut rendered = render_report(&report_obj, format);
+    // pdf is the markdown typeset
+    let rendering = if format == crate::OutFormat::Pdf { crate::OutFormat::Markdown } else { format };
+    let mut rendered = render_report(&report_obj, rendering);
     if let (Some(t), Some(nodes), Some(summary)) =
         (&tree, &report_obj.nodes, &report_obj.tree_summary)
     {
-        match format.as_str() {
-            "json" => {}
-            "markdown" => rendered.push_str(&crate::policy_tree::render_markdown_nodes(nodes, summary)),
+        match rendering {
+            crate::OutFormat::Json => {}
+            crate::OutFormat::Markdown => rendered.push_str(&crate::policy_tree::render_markdown_nodes(nodes, summary)),
             _ => rendered.push_str(&crate::policy_tree::render_console_tree(t, nodes, summary)),
         }
     }
 
-    crate::write_report(out, rendered.as_bytes(), &format!("{} entr(y/ies)", report_obj.entries.len()))?;
+    let what = format!("{} entr(y/ies)", report_obj.entries.len());
+    if format == crate::OutFormat::Pdf {
+        crate::pdf_from_markdown(&rendered, out, &what)?;
+    } else {
+        crate::write_report(out, rendered.as_bytes(), &what)?;
+    }
     Ok(())
 }
 
