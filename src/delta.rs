@@ -483,7 +483,7 @@ folder:
     fn a_failed_lookup_blocks_the_delta_instead_of_reading_as_undeclared() {
         use crate::adopt::{Outcome, Resolution};
         let mk = |a: &str, o: Outcome| Resolution {
-            address: a.into(), tf_type: "google_storage_bucket".into(), natural_key: String::new(), outcome: o, origin: None, org_policy: None,
+            address: a.into(), tf_type: "google_storage_bucket".into(), natural_key: String::new(), outcome: o, origin: None, org_policy: None, note: None,
         };
         let d = declared_from(&[
             mk("google_storage_bucket.a", Outcome::Resolved { id: "a".into(), verified: true }),

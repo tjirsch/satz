@@ -130,9 +130,48 @@
     ]
     cloud_product = "all"
     enrollment_level = "BLOCK_ALL"
-    google_org_policy_custom_constraint.cis_dns_logging
-    google_org_policy_custom_constraint.cis_sql_deletion_protection
-    google_org_policy_custom_constraint.cis_sql_iam_authentication
+    google_org_policy_custom_constraint.cis_dns_logging,
+    google_org_policy_custom_constraint.cis_sql_deletion_protection,
+    google_org_policy_custom_constraint.cis_sql_iam_authentication,
+    google_org_policy_policy.compute_managed_blockProjectSshKeys
+    google_org_policy_policy.compute_managed_disableSerialPortAccess
+    google_org_policy_policy.compute_managed_requireOsLogin
+    google_org_policy_policy.compute_managed_restrictNonConfidentialComputing
+    google_org_policy_policy.compute_managed_restrictProtocolForwardingCreationForTypes
+    google_org_policy_policy.compute_managed_vmCanIpForward
+    google_org_policy_policy.compute_managed_vmExternalIpAccess
+    google_org_policy_policy.compute_requireOsLogin_superseded
+    google_org_policy_policy.compute_requireShieldedVm
+    google_org_policy_policy.compute_requireVpcFlowLogs
+    google_org_policy_policy.compute_restrictProtocolForwardingCreationForTypes_superseded
+    google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly
+    google_org_policy_policy.compute_skipDefaultNetworkCreation
+    google_org_policy_policy.custom_cisCloudSqlDeletionProtection
+    google_org_policy_policy.custom_cisCloudSqlIamAuthentication
+    google_org_policy_policy.custom_cisDnsPolicyLogging
+    google_org_policy_policy.essentialcontacts_allowedContactDomains_superseded
+    google_org_policy_policy.essentialcontacts_managed_allowedContactDomains
+    google_org_policy_policy.gcp_detailedAuditLoggingMode
+    google_org_policy_policy.gcp_resourceLocations
+    google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects
+    google_org_policy_policy.gcp_restrictNonCmekServices
+    google_org_policy_policy.iam_allowedPolicyMemberDomains_superseded
+    google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts
+    google_org_policy_policy.iam_disableAuditLoggingExemption
+    google_org_policy_policy.iam_disableServiceAccountKeyCreation_superseded
+    google_org_policy_policy.iam_disableServiceAccountKeyUpload_superseded
+    google_org_policy_policy.iam_managed_allowedPolicyMembers
+    google_org_policy_policy.iam_managed_disableServiceAccountApiKeyCreation
+    google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation
+    google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload
+    google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts
+    google_org_policy_policy.sql_managed_restrictAuthorizedNetworks
+    google_org_policy_policy.sql_managed_restrictPublicIp
+    google_org_policy_policy.sql_restrictAuthorizedNetworks
+    google_org_policy_policy.sql_restrictPublicIp
+    google_org_policy_policy.storage_managed_retentionPolicySeconds
+    google_org_policy_policy.storage_publicAccessPrevention
+    google_org_policy_policy.storage_retentionPolicySeconds
     layer4_configs {
     layer4_configs {
     layer4_configs {
@@ -232,6 +271,42 @@
     }
     }
     }
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
   ]
   ]
   ]
@@ -253,6 +328,42 @@
   condition = "resource.databaseVersion.startsWith('SQLSERVER') || resource.settings.databaseFlags.exists(f, (f.name == 'cloudsql.iam_authentication' || f.name == 'cloudsql_iam_authentication') && f.value == 'on')"
   condition = "resource.enableLogging == true"
   condition = "resource.settings.deletionProtectionEnabled == true"
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
   depends_on = [
   depends_on = [
   depends_on = [

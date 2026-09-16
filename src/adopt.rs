@@ -45,7 +45,9 @@ pub(crate) trait Live {
     async fn project(&mut self, project_id: &str) -> Result<Option<String>, String>;
     async fn group(&mut self, email: &str) -> Result<Option<String>, String>;
     async fn membership(&mut self, group_name: &str, email: &str) -> Result<Option<String>, String>;
-    async fn org_policy_exists(&mut self, parent: &str, constraint: &str) -> Result<bool, String>;
+    /// Is a policy on `constraint` live under `parent`? `Some(holds_rules)` when it is,
+    /// `None` when it is not.
+    async fn org_policy(&mut self, parent: &str, constraint: &str) -> Result<Option<bool>, String>;
     /// Every live asset of `asset_type` under `scope` (`organizations/<n>`,
     /// `folders/<n>`, `projects/<id>`): its resource path (the CAI name without
     /// the `//<service>/` prefix — which is the Terraform import id for the
@@ -98,6 +100,8 @@ pub(crate) struct Resolution {
     pub origin: Option<(String, u32)>,
     /// For org policies: (parent, constraint) — needed by activation and import.
     pub org_policy: Option<(String, String)>,
+    /// A second line the table prints under the verdict.
+    pub note: Option<String>,
 }
 
 pub(crate) struct Options {
@@ -143,6 +147,7 @@ pub(crate) async fn resolve<L: Live>(
             outcome: Outcome::NoRule,
             origin: r.origin.clone(),
             org_policy: None,
+        note: None,
         };
         if let Some(id) = &r.import_id {
             resolved_ids.insert(r.address(), id.clone());
@@ -531,16 +536,28 @@ async fn resolve_org_policy<L: Live>(
     };
     res.org_policy = Some((parent.clone(), constraint.clone()));
     let id = crate::org_policy::full_policy_name(&parent, &constraint);
-    match live.org_policy_exists(&parent, &constraint).await {
-        Ok(true) => (constraint, Outcome::Resolved { id, verified: true }),
-        Ok(false) if crate::org_policy::is_managed(&constraint) => {
+    match live.org_policy(&parent, &constraint).await {
+        Ok(Some(holds_rules)) => {
+            // Imported, the state holds the live rules under an address that declares
+            // reset — the one shape the API refuses to update. A new organisation has
+            // such policies before anything was set by hand: Google enforces a
+            // secure-by-default set on it.
+            if holds_rules && r.reset {
+                res.note = Some(format!(
+                    "holds rules live and is declared reset — the next `satz plan` / `satz apply` replaces it; a bare `tofu apply` needs `-replace={}`",
+                    r.address()
+                ));
+            }
+            (constraint, Outcome::Resolved { id, verified: true })
+        }
+        Ok(None) if crate::org_policy::is_managed(&constraint) => {
             if opts.activate {
                 (constraint, Outcome::NeedsActivation { id, enforce: r.enforce })
             } else {
                 (constraint, Outcome::NeedsLookup("managed constraint is not live — activate it first (--activate)".into()))
             }
         }
-        Ok(false) => (constraint, Outcome::OnApply),
+        Ok(None) => (constraint, Outcome::OnApply),
         Err(e) => (constraint, Outcome::Failed(e)),
     }
 }
@@ -701,6 +718,7 @@ pub(crate) fn rows(
             Outcome::Skipped => continue,
         };
         let mut resolved = row(r, verdict, detail);
+        resolved.note = r.note.clone();
         if !r.natural_key.is_empty() && !matches!(r.outcome, Outcome::Resolved { verified: false, .. } | Outcome::AlreadyAdopted(_)) {
             resolved.matched_on = Some(r.natural_key.clone());
         }
@@ -1037,13 +1055,15 @@ impl Live for RealLive {
         Ok(out)
     }
 
-    async fn org_policy_exists(&mut self, parent: &str, constraint: &str) -> Result<bool, String> {
+    async fn org_policy(&mut self, parent: &str, constraint: &str) -> Result<Option<bool>, String> {
         if !self.policies.contains_key(parent) {
             let client = self.org_policy_client().await?;
             let current = crate::org_policy::fetch_current(client, parent).await.map_err(|e| e.to_string())?;
             self.policies.insert(parent.to_string(), current);
         }
-        Ok(self.policies[parent].contains_key(constraint))
+        Ok(self.policies[parent].get(constraint).map(|policy| {
+            policy.pointer("/spec/rules").and_then(|r| r.as_array()).is_some_and(|r| !r.is_empty())
+        }))
     }
 
     async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String> {
@@ -1071,6 +1091,8 @@ mod tests {
         groups: BTreeMap<String, String>,
         memberships: BTreeMap<(String, String), String>,
         policies: BTreeSet<(String, String)>,
+        /// live policies that hold rules — a subset of `policies`
+        policies_with_rules: BTreeSet<(String, String)>,
         searches: BTreeMap<(String, String), Vec<(String, serde_json::Value)>>,
         budgets: BTreeMap<String, Vec<(String, String)>>,
         calls: Vec<String>,
@@ -1097,9 +1119,10 @@ mod tests {
             self.calls.push(format!("membership {} {}", group_name, email));
             Ok(self.memberships.get(&(group_name.to_string(), email.to_string())).cloned())
         }
-        async fn org_policy_exists(&mut self, parent: &str, constraint: &str) -> Result<bool, String> {
+        async fn org_policy(&mut self, parent: &str, constraint: &str) -> Result<Option<bool>, String> {
             self.calls.push(format!("policy {} {}", parent, constraint));
-            Ok(self.policies.contains(&(parent.to_string(), constraint.to_string())))
+            let key = (parent.to_string(), constraint.to_string());
+            Ok(self.policies.contains(&key).then(|| self.policies_with_rules.contains(&key)))
         }
         async fn search(&mut self, scope: &str, asset_type: &str) -> Result<Vec<(String, serde_json::Value)>, String> {
             self.calls.push(format!("search {} {}", scope, asset_type));
@@ -1221,6 +1244,7 @@ import {
             groups: BTreeMap::new(),
             memberships: BTreeMap::new(),
             policies: BTreeSet::new(),
+            policies_with_rules: BTreeSet::new(),
             searches: BTreeMap::new(),
             budgets: BTreeMap::new(),
             calls: vec![],
@@ -1352,6 +1376,32 @@ import {
         );
     }
 
+    /// Found on a vanilla organisation: adopt imported a live policy with rules onto
+    /// the `-superseded` address, which declares reset, and the next apply was refused
+    /// with "Cannot set PolicyRules if reset is true". The import is right; the row says
+    /// what the apply will have to do with it.
+    #[tokio::test]
+    async fn importing_live_rules_onto_a_reset_declaration_says_the_apply_replaces_it() {
+        let manifest = Manifest::parse(
+            "resource \"google_org_policy_policy\" \"iam_disableServiceAccountKeyUpload_superseded\" {\n  name = \"organizations/123456789012/policies/iam.disableServiceAccountKeyUpload\"\n  parent = \"organizations/123456789012\"\n  spec {\n    reset = true\n  }\n}\n\
+             resource \"google_org_policy_policy\" \"iam_allowedPolicyMemberDomains_superseded\" {\n  name = \"organizations/123456789012/policies/iam.allowedPolicyMemberDomains\"\n  parent = \"organizations/123456789012\"\n  spec {\n    reset = true\n  }\n}\n",
+        );
+        let mut live = fake();
+        for c in ["iam.disableServiceAccountKeyUpload", "iam.allowedPolicyMemberDomains"] {
+            live.policies.insert(("organizations/123456789012".into(), c.into()));
+        }
+        live.policies_with_rules.insert(("organizations/123456789012".into(), "iam.disableServiceAccountKeyUpload".into()));
+        let rs = resolve(&manifest, &rules(&[]), &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+        let table = render_table(&rs, &crate::bootstrap::StateIndex::default(), &manifest);
+        assert!(
+            table.contains("holds rules live and is declared reset")
+                && table.contains("-replace=google_org_policy_policy.iam_disableServiceAccountKeyUpload_superseded"),
+            "{table}"
+        );
+        // a live policy already reset imports without a note
+        assert_eq!(table.matches("holds rules live").count(), 1, "{table}");
+    }
+
     #[tokio::test]
     async fn only_filters_and_absent_group_makes_memberships_on_apply() {
         let rules = rules(&[]);
@@ -1424,10 +1474,10 @@ import {
         let pack = presets.join("cis.satz");
         std::fs::write(&pack, "pack cis version \"1.0\"\n\n\"x\" {\n  name = \"compute.x\"\n}\n").unwrap();
         let rs = vec![
-            Resolution { address: "google_folder.workloads".into(), tf_type: "google_folder".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111".into(), verified: true }, origin: Some((file.clone(), 2)), org_policy: None },
-            Resolution { address: "google_folder.one".into(), tf_type: "google_folder".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/1".into(), verified: true }, origin: Some((file.clone(), 5)), org_policy: None },
-            Resolution { address: "google_folder_iam_member.g".into(), tf_type: "google_folder_iam_member".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111 r m".into(), verified: false }, origin: None, org_policy: None },
-            Resolution { address: "google_org_policy_policy.x".into(), tf_type: "google_org_policy_policy".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "organizations/1/policies/compute.x".into(), verified: false }, origin: Some((pack.to_string_lossy().to_string(), 3)), org_policy: None },
+            Resolution { address: "google_folder.workloads".into(), tf_type: "google_folder".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111".into(), verified: true }, origin: Some((file.clone(), 2)), org_policy: None, note: None },
+            Resolution { address: "google_folder.one".into(), tf_type: "google_folder".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/1".into(), verified: true }, origin: Some((file.clone(), 5)), org_policy: None, note: None },
+            Resolution { address: "google_folder_iam_member.g".into(), tf_type: "google_folder_iam_member".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111 r m".into(), verified: false }, origin: None, org_policy: None, note: None },
+            Resolution { address: "google_org_policy_policy.x".into(), tf_type: "google_org_policy_policy".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "organizations/1/policies/compute.x".into(), verified: false }, origin: Some((pack.to_string_lossy().to_string(), 3)), org_policy: None, note: None },
         ];
         let (written, hints) = write_import_ids(&rs, Some(&presets)).unwrap();
         let text = std::fs::read_to_string(&tmp).unwrap();
@@ -1501,6 +1551,7 @@ mod state_aware_tests {
             outcome,
             origin: None,
             org_policy: None,
+        note: None,
         }
     }
 

@@ -328,8 +328,9 @@ pub(crate) struct StateIndex {
     /// `(type, live id)` → the address managing it. Keyed by type as well as
     /// id because an id is only unique within its type.
     by_object: std::collections::BTreeMap<(String, String), String>,
-    /// Org policies whose state holds rules and no `reset`. Switching one of
-    /// these to `reset = true` in place is refused by the API.
+    /// Org policies whose state holds rules. Switching one of these to
+    /// `reset = true` in place is refused by the API — whatever `reset` the state
+    /// records beside the rules.
     holding_rules: std::collections::BTreeSet<String>,
 }
 
@@ -345,7 +346,7 @@ impl StateIndex {
         self.by_object.get(&(tf_type.to_string(), id.to_string())).map(String::as_str)
     }
 
-    /// Whether the state holds this org policy with rules and not reset.
+    /// Whether the state holds this org policy with rules.
     pub(crate) fn holds_rules(&self, address: &str) -> bool {
         self.holding_rules.contains(address)
     }
@@ -412,10 +413,14 @@ fn index_module(module: &serde_json::Value, idx: &mut StateIndex) {
                 continue;
             }
             if res.get("type").and_then(|t| t.as_str()) == Some("google_org_policy_policy") {
+                // Rules in the state are what the API refuses to update into a reset,
+                // and `reset` beside them does not change that. `adopt` imports a live
+                // policy that holds rules onto the `-superseded` address, whose state
+                // then reads `reset = true` WITH rules — the one shape that needs the
+                // replace, and the one a `!reset` term here filtered out.
                 let spec = res.get("values").and_then(|v| v.get("spec")).and_then(|s| s.get(0));
-                let reset = spec.and_then(|s| s.get("reset")).and_then(|r| r.as_bool()) == Some(true);
                 let rules = spec.and_then(|s| s.get("rules")).and_then(|r| r.as_array()).is_some_and(|r| !r.is_empty());
-                if rules && !reset {
+                if rules {
                     idx.holding_rules.insert(address.to_string());
                 }
             }
@@ -1125,13 +1130,19 @@ mod tests {
               {"address": "google_org_policy_policy.reset", "mode": "managed", "type": "google_org_policy_policy",
                "values": {"id": "organizations/1/policies/b", "spec": [{"reset": true, "rules": []}]}},
               {"address": "google_org_policy_policy.empty", "mode": "managed", "type": "google_org_policy_policy",
-               "values": {"id": "organizations/1/policies/c", "spec": [{"reset": false, "rules": []}]}}
+               "values": {"id": "organizations/1/policies/c", "spec": [{"reset": false, "rules": []}]}},
+              {"address": "google_org_policy_policy.imported_superseded", "mode": "managed", "type": "google_org_policy_policy",
+               "values": {"id": "organizations/1/policies/d", "spec": [{"reset": true, "rules": [{"enforce": "TRUE"}]}]}}
             ]}}}"#,
         )
         .unwrap();
         assert!(idx.holds_rules("google_org_policy_policy.ruled"));
         assert!(!idx.holds_rules("google_org_policy_policy.reset"));
         assert!(!idx.holds_rules("google_org_policy_policy.empty"));
+        // found on a vanilla organisation: adopt imported a live policy with rules onto
+        // the `-superseded` address, and the state holds `reset` AND rules — the update
+        // is refused ("Cannot set PolicyRules if reset is true"), so it must be replaced
+        assert!(idx.holds_rules("google_org_policy_policy.imported_superseded"));
     }
 
     #[test]

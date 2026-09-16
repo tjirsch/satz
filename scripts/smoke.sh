@@ -1195,8 +1195,10 @@ grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did no
 # where no credentials let this run reach the pre-flight
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.satz --dry-run --no-default-grants \
   > tmp/boot-nogrants.txt 2>&1 || fail "bootstrap --no-default-grants must be accepted:\n$(cat tmp/boot-nogrants.txt)"
-"$satz" bootstrap --help 2>&1 | grep -q -- '--no-default-grants' || fail "--no-default-grants is not in bootstrap's help"
-"$satz" init --help 2>&1 | grep -q -- '--interview' || fail "--interview is not in init's help"
+"$satz" bootstrap --help > tmp/help-bootstrap.txt 2>&1
+grep -q -- '--no-default-grants' tmp/help-bootstrap.txt || fail "--no-default-grants is not in bootstrap's help"
+"$satz" init --help > tmp/help-init.txt 2>&1
+grep -q -- '--interview' tmp/help-init.txt || fail "--interview is not in init's help"
 
 # The day-0 gate: a malformed param is refused BEFORE any credential is asked
 # for. An empty billing account used to reach Google inside a URL and come back
@@ -1227,9 +1229,14 @@ step "help fits the terminal: no line wider than the width, globals under their 
 # clap reads the tty width; there is none in CI, so COLUMNS pins it
 long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80' | head -3)
 [ -z "$long" ] || fail "adopt --help at 80 columns has lines wider than 80:\n$long"
-COLUMNS=80 "$satz" -h 2>&1 | grep -q '^Global options:' || fail "the global options are not under their own heading in satz -h"
-COLUMNS=80 "$satz" adopt -h 2>&1 | grep -q '^Global options:' && fail "adopt -h repeats the global options that satz -h lists"
-COLUMNS=80 "$satz" import -h 2>&1 | grep -q "see more with '--help'" || fail "-h did not become the short form (no summary/details split?)"
+# to a file first: `grep -q` stops reading at the match, and under pipefail the help
+# still being written then fails the pipeline with SIGPIPE
+COLUMNS=80 "$satz" -h > tmp/help-root-short.txt 2>&1
+grep -q '^Global options:' tmp/help-root-short.txt || fail "the global options are not under their own heading in satz -h"
+COLUMNS=80 "$satz" adopt -h > tmp/help-adopt-short.txt 2>&1
+grep -q '^Global options:' tmp/help-adopt-short.txt && fail "adopt -h repeats the global options that satz -h lists"
+COLUMNS=80 "$satz" import -h > tmp/help-import-short.txt 2>&1
+grep -q "see more with '--help'" tmp/help-import-short.txt || fail "-h did not become the short form (no summary/details split?)"
 
 step "the root help is grouped, on every path that prints it"
 # clap cannot group subcommands, so satz renders the root help itself. Four

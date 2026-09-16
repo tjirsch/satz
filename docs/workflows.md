@@ -806,7 +806,11 @@ record of where the fork branched.
   it under its old address — which deletes it in the cloud. Only an exact type-and-id
   match is a move; anything else is an import. A move onto an address the estate
   declares reset, with rules in the state, gets a second line on its row: `holds rules
-  and is declared reset — satz plan and satz apply replace it`.
+  and is declared reset — satz plan and satz apply replace it`. So does an IMPORT of a
+  live policy that holds rules onto an address declared reset — a new organisation
+  enforces some legacy constraints before anything is set by hand: `holds rules live and
+  is declared reset — the next satz plan / satz apply replaces it; a bare tofu apply
+  needs -replace=<address>`.
 
   If the estate declares **both** ends — the old address as well as the new one — adopt
   stops and names the pair. A move cannot resolve one live object with two

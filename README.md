@@ -1063,7 +1063,8 @@ prints the corrected command.
 
 `plan` and `apply` add one argument of their own: `-replace=<address>` for each org
 policy the state holds with rules while the estate declares it `spec { reset = true }`,
-with a note naming it. The provider would update such a policy by sending its rules
+with a note naming it — whatever `reset` the state records beside the rules. An `adopt`
+of a policy a new organisation already enforces puts exactly that pair in the state. The provider would update such a policy by sending its rules
 together with `reset`, which the API refuses (`400 Cannot set PolicyRules if reset is
 true`); the replace deletes the policy and creates it reset. They read the state for
 this only when `main.tf` declares a reset policy. Nothing is added to an apply of a
