@@ -547,6 +547,13 @@ constraint (`google_org_policy_custom_constraint` with the same `name`), the
 emitted policy carries `depends_on` on it, so the apply creates the constraint
 first: the API refuses a policy on a constraint that does not exist yet.
 
+**The policies on one parent apply one at a time.** The Org Policy API refuses a write
+to a parent's policies while another is in flight (`409 CONCURRENT_POLICY_CHANGES`), and
+`tofu` writes ten resources at once. So every `google_org_policy_policy` carries
+`depends_on` on the policy before it on the same `parent`, in address order — whichever
+pack or file declared it. Policies on different parents, and every other resource, still
+apply in parallel; `depends_on` changes no plan.
+
 **Nested blocks** — a bucket with a nested block, a single block, and a
 *repeated* block:
 

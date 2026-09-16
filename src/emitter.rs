@@ -268,6 +268,47 @@ fn order_after_custom_constraints(blocks: &mut [hcl::Block]) {
     }
 }
 
+/// The Org Policy API serialises the writes to one parent's policies, and refuses a
+/// second one that arrives while the first is in flight: `409 Creating policy failed.
+/// Please retry the request … reason: CONCURRENT_POLICY_CHANGES`. tofu writes ten
+/// resources at a time, and the CIS baseline alone puts thirty policies on one
+/// organisation with nothing ordering them, so a fresh apply collides with itself by
+/// construction — and a retry clears it, which is why it read as a fluke.
+///
+/// The collision is a property of the PARENT, not of a pack: the baseline's policies,
+/// its extensions' and the estate's own all land on the same organisation, and only
+/// the emitter sees all of them. So the policies on one parent are chained, each
+/// waiting for the one before it in address order. `depends_on` changes no plan; it
+/// serialises the policy writes on that parent and nothing else — policies on
+/// different parents, and every other resource, still apply in parallel.
+fn order_org_policies_per_parent(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let mut by_parent: std::collections::BTreeMap<&str, Vec<String>> = std::collections::BTreeMap::new();
+    for r in manifest.of_type("google_org_policy_policy") {
+        let Some(parent) = r.attrs.get("parent") else { continue };
+        by_parent.entry(parent.as_str()).or_default().push(r.address());
+    }
+    let mut previous: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for addresses in by_parent.into_values() {
+        // `resources` is a BTreeMap, so each parent's addresses arrive sorted
+        for pair in addresses.windows(2) {
+            // an edge into what the earlier policy already reaches would close a loop
+            if !manifest.closure_of(&pair[0]).contains(&pair[1]) {
+                previous.insert(pair[1].clone(), pair[0].clone());
+            }
+        }
+    }
+    if previous.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        if let Some(before) = previous.get(&address) {
+            add_depends_on(b, before);
+        }
+    }
+}
+
 /// A resource whose API is not on yet fails the apply, and `google_project_service`
 /// carries no ordering of its own: inside one apply Terraform can create the
 /// resource before the service that enables it. Bootstrap escapes that race by
@@ -673,6 +714,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     order_after_groups(&mut blocks);
     order_after_custom_constraints(&mut blocks);
     order_after_project_services(&mut blocks, &ctx.infra_project);
+    order_org_policies_per_parent(&mut blocks);
 
     let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
     manifest.attach_imports(&imports);
@@ -1166,6 +1208,45 @@ mod service_account_order_tests {
 
     fn depends_on(b: &hcl::Block) -> Option<String> {
         b.body().attributes().find(|a| a.key() == "depends_on").map(|a| hcl::format::to_string(a.expr()).unwrap().split_whitespace().collect())
+    }
+
+    /// Found applying the CIS baseline to a customer organisation: `409
+    /// CONCURRENT_POLICY_CHANGES` on one of twenty-eight unordered policies.
+    #[test]
+    fn the_policies_on_one_parent_apply_one_at_a_time() {
+        let mut bs = blocks(
+            r#"
+resource "google_org_policy_policy" "c_policy" {
+  name = "organizations/123456789012/policies/c"
+  parent = "organizations/123456789012"
+}
+resource "google_org_policy_policy" "a_policy" {
+  name = "organizations/123456789012/policies/a"
+  parent = "organizations/123456789012"
+}
+resource "google_org_policy_policy" "b_policy" {
+  name = "organizations/123456789012/policies/b"
+  parent = "organizations/123456789012"
+  depends_on = [google_org_policy_custom_constraint.b]
+}
+resource "google_org_policy_policy" "folder_policy" {
+  name = "folders/111/policies/a"
+  parent = "folders/111"
+}
+resource "google_storage_bucket" "state" {
+  name = "acme-infra-001-state"
+}
+"#,
+        );
+        order_org_policies_per_parent(&mut bs);
+        let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
+        // in address order, each waits for the one before it on the same parent
+        assert_eq!(depends_on(by("a_policy")), None);
+        assert_eq!(depends_on(by("b_policy")).as_deref(), Some("[google_org_policy_custom_constraint.b,google_org_policy_policy.a_policy]"));
+        assert_eq!(depends_on(by("c_policy")).as_deref(), Some("[google_org_policy_policy.b_policy]"));
+        // another parent is another queue, and nothing else is ordered
+        assert_eq!(depends_on(by("folder_policy")), None);
+        assert_eq!(depends_on(by("state")), None);
     }
 
     #[test]
