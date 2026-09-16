@@ -1328,7 +1328,7 @@ satz self-update --no-open-readme
 **Self-update options:** `--no-open-readme` (do not open the documentation site after installing), `--check-only`, `--skip-checksum`. The program can also check for updates on start-up (`self_update_frequency` in the global settings).
 
 **Under the Hood:**
-- Fetches the latest release from the GitHub API and compares versions. When a newer version is available it downloads `satz-installer.sh` and `satz-installer.sh.sha256` from that same release, verifies the SHA-256 digest, and only then runs the installer. A checksum mismatch aborts; a release without the sidecar aborts too, unless you pass `--skip-checksum`. On success, prints the documentation URL and opens it unless `--no-open-readme` is given.
+- Fetches the latest release from the GitHub API and compares versions. When a newer version is available it downloads `satz-installer.sh` and `satz-installer.sh.sha256` from that same release, verifies the SHA-256 digest, and only then runs the installer. A checksum mismatch aborts; a release without the sidecar aborts too, unless you pass `--skip-checksum`. The installer verifies the archive it downloads with `sha256sum`: where that command is missing (macOS before 14) and `shasum` is present, `self-update` puts a `sha256sum` that runs `shasum -a 256` first on the installer's PATH; with neither it refuses, unless `--skip-checksum`. The documented `curl … | sh` install has no such shim, and there the installer prints that it skipped the check. On success, prints the documentation URL and opens it unless `--no-open-readme` is given.
 
 ### Open the documentation (`open-readme`)
 

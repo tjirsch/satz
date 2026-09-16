@@ -5180,6 +5180,47 @@ async fn maybe_check_for_updates(settings: &mut GlobalSettings) -> Result<(), Bo
     Ok(())
 }
 
+/// The installer verifies the archive it downloads with `sha256sum`, and SKIPS that check —
+/// printing one line — when the command is not on PATH, which is the case on macOS before
+/// 14 and on a minimal Linux. The installer script itself is verified here against its
+/// sidecar; the archive is the installer's business. So where `sha256sum` is missing and
+/// `shasum` is present, a shim that runs `shasum -a 256` goes first on the installer's PATH
+/// (`Some(PATH)`), and where both are missing the update is refused unless the operator
+/// asked to skip checksums. `None`: the PATH as it is.
+#[cfg(unix)]
+fn installer_checksum_path(
+    temp_dir: &Path,
+    path: &std::ffi::OsStr,
+    skip_checksum: bool,
+) -> Result<Option<std::ffi::OsString>, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let on_path = |name: &str| {
+        std::env::split_paths(path).any(|d| {
+            std::fs::metadata(d.join(name)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
+    };
+    if on_path("sha256sum") {
+        return Ok(None);
+    }
+    if on_path("shasum") {
+        let bin = temp_dir.join("checksum-bin");
+        std::fs::create_dir_all(&bin).map_err(|e| format!("{}: {}", bin.display(), e))?;
+        let shim = bin.join("sha256sum");
+        fsx::write(&shim, b"#!/bin/sh\nexec shasum -a 256 \"$@\"\n").map_err(|e| e.to_string())?;
+        fsx::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+        let mut dirs = vec![bin];
+        dirs.extend(std::env::split_paths(path));
+        return std::env::join_paths(dirs).map(Some).map_err(|e| e.to_string());
+    }
+    if skip_checksum {
+        eprintln!("⚠️  neither sha256sum nor shasum is on PATH: the installer cannot verify the archive (--skip-checksum)");
+        return Ok(None);
+    }
+    Err("neither sha256sum nor shasum is on PATH, so the installer cannot verify the archive it downloads — \
+         install one (coreutils provides sha256sum), or re-run with --skip-checksum to update without the check"
+        .to_string())
+}
+
 async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     let current_version = env!("CARGO_PKG_VERSION");
@@ -5319,9 +5360,23 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
             use std::os::unix::fs::PermissionsExt;
             fsx::set_permissions(&temp_file, std::fs::Permissions::from_mode(0o755))?;
 
-            let status = std::process::Command::new("sh")
-                .arg(&temp_file)
-                .status()?;
+            let path_for_installer = match installer_checksum_path(
+                &temp_dir,
+                &std::env::var_os("PATH").unwrap_or_default(),
+                skip_checksum,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    return Err(e.into());
+                }
+            };
+            let mut installer = std::process::Command::new("sh");
+            installer.arg(&temp_file);
+            if let Some(path) = path_for_installer {
+                installer.env("PATH", path);
+            }
+            let status = installer.status()?;
             let _ = std::fs::remove_dir_all(&temp_dir);
 
             if status.success() {
@@ -7901,6 +7956,66 @@ mod constraint_equivalents {
     }
 }
 
+
+#[cfg(all(test, unix))]
+mod self_update_checksum_tests {
+    //! The installer skips its archive check when `sha256sum` is not on PATH, which
+    //! was the case on macOS before 14. `self-update` makes the check run wherever
+    //! `shasum` exists, and refuses where neither does.
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn dir_with(name: &str, tools: &[(&str, &str)]) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("satz-checksum-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for (tool, body) in tools {
+            let p = d.join(tool);
+            fsx::write(&p, body.as_bytes()).unwrap();
+            fsx::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn with_sha256sum_the_path_stays_as_it_is() {
+        let tools = dir_with("has", &[("sha256sum", "#!/bin/sh\n")]);
+        let temp = dir_with("has-temp", &[]);
+        assert_eq!(installer_checksum_path(&temp, tools.as_os_str(), false).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&tools);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn with_only_shasum_a_shim_runs_it_with_the_installer_s_arguments() {
+        let tools = dir_with("shasum", &[("shasum", "#!/bin/sh\necho \"shasum $*\"\n")]);
+        let temp = dir_with("shasum-temp", &[]);
+        let path = installer_checksum_path(&temp, tools.as_os_str(), false).unwrap().expect("a PATH with the shim");
+        let first = std::env::split_paths(&path).next().unwrap();
+        assert_eq!(first, temp.join("checksum-bin"));
+        // exactly the installer's call: `sha256sum -b "$_file" | awk '{printf $1}'`
+        // `/bin/sh` by path: the PATH under test holds only the two tool directories
+        let out = std::process::Command::new("/bin/sh")
+            .args(["-c", "sha256sum -b archive.tar.xz"])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "shasum -a 256 -b archive.tar.xz");
+        let _ = std::fs::remove_dir_all(&tools);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn with_neither_the_update_is_refused_unless_the_check_is_skipped() {
+        let empty = dir_with("none", &[]);
+        let temp = dir_with("none-temp", &[]);
+        let err = installer_checksum_path(&temp, empty.as_os_str(), false).unwrap_err();
+        assert!(err.contains("cannot verify the archive") && err.contains("--skip-checksum"), "{err}");
+        assert_eq!(installer_checksum_path(&temp, empty.as_os_str(), true).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&empty);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+}
 
 #[cfg(test)]
 mod agent_guide_tests {
