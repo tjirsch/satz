@@ -230,6 +230,7 @@ pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) ->
         }
         return Ok(out);
     }
+    check_shape(row, value)?;
     if let Some(s) = value.as_str() {
         if s.contains('{') || s.contains('}') {
             return Err(format!(
@@ -271,29 +272,62 @@ pub(crate) fn uncomment_pack(src: &str, gate: &str, value: &serde_yaml::Value) -
     out
 }
 
-/// Read a typed answer in the shape of the value it replaces: a boolean stays a
-/// boolean, a number a number, a list a comma-separated list. Anything else is a
-/// string — and a param nobody has typed before is a string too.
-pub(crate) fn parse_answer(text: &str, like: Option<&serde_yaml::Value>) -> Result<serde_yaml::Value, String> {
+/// Read a typed answer in the shape the pack declares for the param — or, where the
+/// report names none, the shape of the value it replaces: a boolean stays a boolean, a
+/// number a number, a list a comma-separated list, one entry a one-element list. With no
+/// shape at all it is a string. The declared shape comes first because a param declared
+/// `[]` offers nothing to replace, and one address typed there was written as a string.
+pub(crate) fn parse_answer(text: &str, like: Option<&serde_yaml::Value>, shape: Option<&str>) -> Result<serde_yaml::Value, String> {
     let t = text.trim();
-    Ok(match like {
-        Some(serde_yaml::Value::Bool(_)) => match t.to_ascii_lowercase().as_str() {
+    Ok(match shape.or_else(|| like.and_then(crate::questions::value_shape)) {
+        Some("bool") => match t.to_ascii_lowercase().as_str() {
             "true" | "yes" | "y" => serde_yaml::Value::Bool(true),
             "false" | "no" | "n" => serde_yaml::Value::Bool(false),
             _ => return Err(format!("`{}`: this one is yes or no", t)),
         },
-        Some(serde_yaml::Value::Number(_)) => serde_yaml::from_str::<serde_yaml::Number>(t)
+        Some("number") => serde_yaml::from_str::<serde_yaml::Number>(t)
             .map(serde_yaml::Value::Number)
             .map_err(|_| format!("`{}`: this one is a number", t))?,
-        Some(serde_yaml::Value::Sequence(_)) => serde_yaml::Value::Sequence(
+        Some("list") => serde_yaml::Value::Sequence(
             t.split(',')
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .map(|s| serde_yaml::Value::String(s.to_string()))
                 .collect(),
         ),
+        Some("map") => return Err(format!("`{}`: this one is a map — write it into the estate's params by hand", t)),
         _ => serde_yaml::Value::String(t.to_string()),
     })
+}
+
+/// Refuse an answer whose shape contradicts the one the pack declares: a string where
+/// the pack declares a list, `"true"` where it declares a bool. The provider refuses
+/// that value at `tofu apply`, naming an attribute in generated HCL; here the question
+/// names the param. A number or a bool for a string is a string Terraform converts, and
+/// passes.
+pub(crate) fn check_shape(row: &QuestionRow, value: &serde_yaml::Value) -> Result<(), String> {
+    let Some(declared) = row.shape else { return Ok(()) };
+    let given = crate::questions::value_shape(value);
+    let fits = match declared {
+        "string" => matches!(given, Some("string" | "number" | "bool")),
+        other => given == Some(other),
+    };
+    if fits {
+        return Ok(());
+    }
+    let hint = match declared {
+        "list" => " — answer with a list, even of one: [\"security@example.com\"]",
+        "bool" => " — answer true or false, unquoted",
+        "number" => " — answer with a number, unquoted",
+        _ => "",
+    };
+    Err(format!(
+        "{}: the pack declares a {}, and this answer is a {}{}",
+        row.subject,
+        declared,
+        given.unwrap_or("null"),
+        hint
+    ))
 }
 
 /// Bind a set of answers, each validated against a question the estate asks, and
@@ -443,7 +477,7 @@ pub(crate) fn run(
                 }
             }
         } else {
-            match parse_answer(t, offered) {
+            match parse_answer(t, offered, q.shape) {
                 Ok(v) => v,
                 Err(e) => {
                     w(out, &format!("  {}\n", e))?;
@@ -666,16 +700,61 @@ google_folder {
     #[test]
     fn parse_answer_follows_the_shape_of_what_it_replaces() {
         let b = serde_yaml::Value::Bool(true);
-        assert_eq!(parse_answer("no", Some(&b)).unwrap(), serde_yaml::Value::Bool(false));
-        assert!(parse_answer("maybe", Some(&b)).is_err());
+        assert_eq!(parse_answer("no", Some(&b), None).unwrap(), serde_yaml::Value::Bool(false));
+        assert!(parse_answer("maybe", Some(&b), None).is_err());
         let n = serde_yaml::from_str::<serde_yaml::Value>("30").unwrap();
-        assert_eq!(parse_answer("400", Some(&n)).unwrap(), serde_yaml::from_str::<serde_yaml::Value>("400").unwrap());
+        assert_eq!(parse_answer("400", Some(&n), None).unwrap(), serde_yaml::from_str::<serde_yaml::Value>("400").unwrap());
         let l = serde_yaml::from_str::<serde_yaml::Value>("[]").unwrap();
         assert_eq!(
-            parse_answer("in:eu-locations, in:us-locations", Some(&l)).unwrap(),
+            parse_answer("in:eu-locations, in:us-locations", Some(&l), None).unwrap(),
             serde_yaml::from_str::<serde_yaml::Value>("[\"in:eu-locations\", \"in:us-locations\"]").unwrap()
         );
-        assert_eq!(parse_answer("true", None).unwrap(), yaml("true"));
+        assert_eq!(parse_answer("true", None, None).unwrap(), yaml("true"));
+    }
+
+    /// Found on a customer estate: a param declared `[]` offers no default, and one
+    /// address typed at the prompt was written as a string — `tofu apply` then refused
+    /// "set of string required, but have string". The declared shape decides, with
+    /// nothing offered as well.
+    #[test]
+    fn with_nothing_offered_the_declared_shape_decides() {
+        let one = parse_answer("security@example.com", None, Some("list")).unwrap();
+        assert_eq!(one, serde_yaml::from_str::<serde_yaml::Value>("[\"security@example.com\"]").unwrap());
+        assert_eq!(parse_answer("yes", None, Some("bool")).unwrap(), serde_yaml::Value::Bool(true));
+        assert!(parse_answer("{ a = 1 }", None, Some("map")).is_err());
+        // the declared shape outranks a wrongly shaped value already in the estate
+        assert_eq!(
+            parse_answer("a@example.com", Some(&yaml("old@example.com")), Some("list")).unwrap(),
+            serde_yaml::from_str::<serde_yaml::Value>("[\"a@example.com\"]").unwrap()
+        );
+    }
+
+    #[test]
+    fn an_answer_that_contradicts_the_declared_shape_is_refused_by_name() {
+        let row = |shape: &'static str| QuestionRow {
+            subject: "access_approval_notification_emails".into(),
+            kind: "param",
+            prompt: String::new(),
+            why: None,
+            reversal: "edit",
+            blast: "low",
+            state: "unanswered",
+            current: None,
+            default: None,
+            blocking: true,
+            shape: Some(shape),
+            pack_description: String::new(),
+            recommend: None,
+            options: vec![],
+            from: String::new(),
+            pack: String::new(),
+        };
+        let err = check_shape(&row("list"), &yaml("security@example.com")).unwrap_err();
+        assert!(err.contains("declares a list") && err.contains("[\"security@example.com\"]"), "{err}");
+        // a gate answered with the string "true" never switched its pack on
+        assert!(check_shape(&row("bool"), &yaml("true")).unwrap_err().contains("unquoted"));
+        assert!(check_shape(&row("list"), &serde_yaml::from_str("[a]").unwrap()).is_ok());
+        assert!(check_shape(&row("string"), &serde_yaml::from_str("400").unwrap()).is_ok());
     }
 
     // ---- a fixture estate with a pack that asks -------------------------------

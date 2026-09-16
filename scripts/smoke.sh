@@ -1387,6 +1387,20 @@ if "$satz" --config . --validation error transpile tmp/api-gap.satz --check > tm
 fi
 "$satz" --config . --validation none transpile tmp/api-gap.satz --check > tmp/api-none.txt 2>&1
 if grep -q 'monitoring.googleapis.com' tmp/api-none.txt; then fail "--validation none still checked the APIs"; fi
+# A value the provider refuses by its shape: a param bound as one address, feeding an
+# attribute the schema types as a set — the customer apply that stopped at `tofu apply`
+# naming main.tf. The compile names the attribute, the type and the param to change.
+sed -e 's/^params {/params {\n  security_contacts = "security@example.com"/' yaml/smoke.satz > tmp/shape-gap.satz
+printf '\ngoogle_organization_access_approval_settings {\n  approvals {\n    organization_id     = customer_organization_id\n    notification_emails = security_contacts\n\n    enrolled_services {\n      cloud_product = "all"\n    }\n  }\n}\n' >> tmp/shape-gap.satz
+"$satz" --config . transpile tmp/shape-gap.satz --check > tmp/shape-warn.txt 2>&1 \
+  || fail "a wrongly shaped value failed the compile at the default level:\n$(cat tmp/shape-warn.txt)"
+grep -q '`notification_emails` is a string, and the provider wants set(string)' tmp/shape-warn.txt \
+  || fail "the warning does not name the attribute and its type:\n$(cat tmp/shape-warn.txt)"
+grep -q 'the param `security_contacts`' tmp/shape-warn.txt \
+  || fail "the warning does not name the param the estate changes:\n$(cat tmp/shape-warn.txt)"
+if "$satz" --config . --validation error transpile tmp/shape-gap.satz --check > tmp/shape-err.txt 2>&1; then
+  fail "--validation error compiled a value the provider refuses"
+fi
 # A pack enabling an API on ITS OWN project has not enabled it on the billed one.
 "$satz" --config . transpile smoke.satz --check > tmp/api-clean.txt 2>&1
 if grep -q 'API(s) this estate' tmp/api-clean.txt; then fail "a complete estate warned about APIs:\n$(cat tmp/api-clean.txt)"; fi

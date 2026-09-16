@@ -1522,10 +1522,18 @@ with `min_items > 0` (a VM's `boot_disk`) must be present. The check reads what 
 emitted, so an argument satz derives — a project from its position, a group's
 `parent` — counts. A resource type the loaded schemas do not know is not checked.
 
-`validation_level` in `config.toml`, or `--validation`, sets what a missing one does:
-`warn` (the default) prints one warning per resource with the file and line that
-declares it, `error` refuses the compile, `none` skips the check. Any other value
-is refused. `tofu plan` refuses such a resource either way.
+It also checks each emitted literal against the type the schema gives its attribute,
+nested blocks included: a string where the schema types a list, set or map, a list or
+map where it types a scalar, and a string that spells no number or bool where one is
+wanted. What Terraform converts — a number or a bool into a string — passes, and a
+reference or an interpolation is known only at plan and is not judged. Where the
+declaring file binds the attribute to a bare param, the finding names the param, which
+is what the estate changes.
+
+`validation_level` in `config.toml`, or `--validation`, sets what a missing argument or a
+refused value does: `warn` (the default) prints one warning per resource with the file
+and line that declares it, `error` refuses the compile, `none` skips the check. Any other
+value is refused. `tofu plan` refuses such a resource either way.
 
 The same level governs the check that the IaC service account holds the roles the
 emitted resource types need — see
