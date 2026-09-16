@@ -376,6 +376,44 @@ pub(crate) fn review(
         ));
     }
 
+    // 10. whether `adopt` can find what this pack creates, once it exists for any
+    //     reason — a console click, a partial apply, a re-run after a failure. A type
+    //     with no adoption rule leaves `tofu import` by hand as the only way back: the
+    //     SCC notification config 409'd on a re-run and adopt answered "no rule".
+    match crate::load_import_config(None, tool_config, &runtime_config.presets_dir) {
+        Ok(Some(rules)) => {
+            let unadoptable: Vec<&str> = mine
+                .iter()
+                .map(|r| r.tf_type.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .filter(|t| !crate::adopt::adoptable(&rules, t))
+                .collect();
+            if !unadoptable.is_empty() {
+                f.push(at(
+                    &pack,
+                    None,
+                    Severity::Warning,
+                    format!(
+                        "emits {} — `satz adopt` has no rule for {}, so an object that already exists cannot be \
+                         brought under management except by `tofu import` by hand. Add `import_id:` (the id \
+                         follows from what the pack declares) or `match_on:` (a live lookup) to the row in \
+                         import-config.yaml",
+                        unadoptable.join(", "),
+                        if unadoptable.len() == 1 { "it" } else { "them" }
+                    ),
+                ));
+            }
+        }
+        Ok(None) => f.push(at(
+            &pack,
+            None,
+            Severity::Warning,
+            "adoption rules not checked: <presets_dir>/import-config.yaml is not there — `satz get-presets` writes it".to_string(),
+        )),
+        Err(e) => f.push(at(&pack, None, Severity::Error, format!("adoption rules not checked: {}", e))),
+    }
+
     // What the compile said that names this pack's own file — raw HCL it carries, an
     // action it declares. The estate-wide findings are about the scratch estate.
     for finding in out.findings.iter().filter(|x| x.file.as_deref().is_some_and(|file| same_file(file, &pack))) {

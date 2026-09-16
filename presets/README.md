@@ -39,7 +39,8 @@ against everything on this page — it parses, it is formatted, its header opens
 sentence the index can print, its version has a changelog row below, it declares no
 membership, it runs no legacy constraint beside its managed replacement, every resource
 type it emits has a row in satz's prerequisite table, and it compiles inside an estate —
-and says what adopting it would cost that estate in roles and APIs. It is the same bar
+and says what adopting it would cost that estate in roles and APIs. It warns on a type
+`satz adopt` has no rule for. It is the same bar
 this repository's gates hold, reachable without a checkout.
 
 **Per-pack reference:** [`docs/README.md`](docs/README.md) — one page per pack,

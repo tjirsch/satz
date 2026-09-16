@@ -283,7 +283,9 @@ row in the library's `## Changelog`; it declares **no membership** — presets d
 groups, humans grant membership; it runs **no legacy org-policy constraint beside its
 managed replacement** (`presets/managed-constraint-equivalents.txt`); every **resource
 type it emits has a row** in satz's prerequisite table, so the roles and the API it needs
-are known; and it **compiles**. It also says what adopting the pack costs an estate — the
+are known; and it **compiles**. A type `satz adopt` has no rule for (no `import_id:` or
+`match_on:` in `import-config.yaml`) is a warning: once such an object exists — a console
+click, a partial apply — only `tofu import` by hand brings it under management. It also says what adopting the pack costs an estate — the
 roles and the APIs `satz update-prerequisites` would write — and names the questions a
 customer must answer because no default is possible.
 

@@ -992,6 +992,14 @@ grep -q 'the pack clears the bar' tmp/review-good.txt || fail "the review does n
 grep -q 'emits: google_billing_budget' tmp/review-good.txt || fail "the review did not fold the pack into an estate:\n$(cat tmp/review-good.txt)"
 # and it says what adopting it costs — the roles and APIs update-prerequisites writes
 grep -q 'billingbudgets.googleapis.com' tmp/review-good.txt || fail "the review does not say what the pack costs an estate:\n$(cat tmp/review-good.txt)"
+# a pack whose objects adopt can find carries no adoption warning — the SCC notification
+# config had no rule, and a re-run that 409'd had no way back but `tofu import` by hand
+"$satz" --config . review-pack "$root/presets/scc/scc-notifications.satz" --format text --out tmp/review-scc.txt 2>/dev/null || true
+grep -q 'has no rule for' tmp/review-scc.txt && fail "review-pack says adopt cannot find what scc-notifications creates:\n$(cat tmp/review-scc.txt)"
+# and a pack emitting a type whose id the server assigns is told so, by type
+"$satz" --config . review-pack "$root/presets/exemptions/exemption-tag.satz" --format text --out tmp/review-tags.txt 2>/dev/null || true
+grep -q 'google_tags_tag_key.*has no rule for' tmp/review-tags.txt \
+  || fail "review-pack does not name the type adopt cannot find:\n$(cat tmp/review-tags.txt)"
 
 # The rules, each broken on purpose: no header, no version, a membership, unformatted.
 mkdir -p tmp/packs
