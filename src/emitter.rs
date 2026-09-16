@@ -983,7 +983,28 @@ pub(crate) fn emit_providers(
     hcl::to_string(&body.build()).map_err(|e| e.to_string())
 }
 
-/// variables.tf: one declaration per accumulated param, typed by value shape.
+/// The type `variables.tf` declares for a param, from its value — the element
+/// shapes as well as the container's. A collection of scalars is `list(string)` or
+/// `map(string)`, into which Terraform converts a bool or a number. A collection
+/// holding a collection is `any`: `terraform.tfvars` carries the value as it is,
+/// and its elements need not share one shape — the CIS baseline's
+/// `cis_sa_key_creation_rules` is `[ { enforce = "TRUE" } ]`, and an exemption
+/// adds a second rule with a `condition` the first does not have, which no single
+/// `object({…})` accepts.
+pub(crate) fn variable_type(v: &serde_yaml::Value) -> &'static str {
+    use serde_yaml::Value;
+    let scalar = |v: &Value| !matches!(v, Value::Sequence(_) | Value::Mapping(_) | Value::Tagged(_));
+    match v {
+        Value::Sequence(items) if items.iter().all(scalar) => "list(string)",
+        Value::Mapping(m) if m.values().all(scalar) => "map(string)",
+        Value::Sequence(_) | Value::Mapping(_) => "any",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        _ => "string",
+    }
+}
+
+/// variables.tf: one declaration per accumulated param, typed by `variable_type`.
 /// `descriptions` comes from the questions the packs declare: a param worth
 /// asking about is worth describing in the generated `variables.tf`, and the
 /// prompt is already the one-line human sentence for it. `why` stays out — it is
@@ -994,13 +1015,7 @@ pub(crate) fn emit_variables(
 ) -> String {
     let mut body = hcl::Body::builder();
     for (name, v) in tfvars {
-        let ty = match v {
-            serde_yaml::Value::Sequence(_) => "list(string)",
-            serde_yaml::Value::Mapping(_) => "map(string)",
-            serde_yaml::Value::Bool(_) => "bool",
-            serde_yaml::Value::Number(_) => "number",
-            _ => "string",
-        };
+        let ty = variable_type(v);
         let mut blk = hcl::Block::builder("variable")
             .add_label(name.replace('_', "-"))
             .add_attribute(("type", ty.parse::<hcl::Expression>().unwrap()));

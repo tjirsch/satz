@@ -437,15 +437,21 @@ Resolution rules:
    that adds to a pack's list repeats the entries it keeps.
 
 What the compiler does with them: every param becomes a typed `variable` in
-`variables.tf` (underscores → hyphens; `[]` is typed `list(string)`) with its
-resolved value in `terraform.tfvars`, for anyone reading the HCL — but a
-resource that references a param is emitted with the **literal**, never `var.x`:
+`variables.tf` (underscores → hyphens) with its resolved value in
+`terraform.tfvars`, for anyone reading the HCL — but a resource that references a
+param is emitted with the **literal**, never `var.x`. The type follows the value: a
+string, a number or a bool is its own type; a list or a map of scalars is
+`list(string)` or `map(string)`; a list or a map holding lists or objects is `any`,
+because its elements need not share one shape — the CIS baseline's
+`cis_sa_key_creation_rules` is a list of rules, and an exemption rule carries a
+`condition` the enforcing rule does not.
 
 ```hcl
 # variables.tf
 variable "audit-bucket-name" { type = string }
 variable "retention-days"    { type = number }
 variable "extra-members"     { type = list(string) }
+variable "sa-key-rules"      { type = any }
 
 # terraform.tfvars
 audit-bucket-name = "acme-audit-001"

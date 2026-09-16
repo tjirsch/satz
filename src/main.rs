@@ -6676,6 +6676,76 @@ mod prerequisites_gate {
 }
 
 #[cfg(test)]
+mod variables_gate {
+    //! `variables.tf` and `terraform.tfvars` come out of one walk, and `tofu` checks
+    //! one against the other before it does anything: a declared type that does not
+    //! accept the value beside it refuses the apply, and the operator can fix neither
+    //! file. The CIS baseline shipped that way — `cis_sa_key_creation_rules`, a list of
+    //! objects, declared `list(string)` — and nothing failed until a customer's first
+    //! apply. Here every param of every case, the `tests/iac/` cases using every pack,
+    //! meets its declaration.
+    use std::path::Path;
+
+    /// Terraform's conversion, for the types `emitter::variable_type` declares: a
+    /// string takes any scalar, a bool or a number its own kind or the string that
+    /// spells one, a list or a map of strings a collection of scalars, `any` anything.
+    fn accepts(ty: &str, v: &serde_yaml::Value) -> bool {
+        use serde_yaml::Value;
+        let scalar = |v: &Value| matches!(v, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_));
+        match ty {
+            "any" => true,
+            "string" => scalar(v),
+            "bool" => matches!(v, Value::Bool(_)) || matches!(v.as_str(), Some("true" | "false")),
+            "number" => matches!(v, Value::Number(_)) || v.as_str().is_some_and(|s| s.parse::<f64>().is_ok()),
+            "list(string)" => v.as_sequence().is_some_and(|items| items.iter().all(scalar)),
+            "map(string)" => v.as_mapping().is_some_and(|m| m.values().all(scalar)),
+            other => panic!("no conversion rule for `{other}` — emitter::variable_type declares a type this gate does not know"),
+        }
+    }
+
+    #[test]
+    fn the_model_refuses_what_tofu_refused() {
+        let rules: serde_yaml::Value = serde_yaml::from_str("[{enforce: 'TRUE'}]").unwrap();
+        assert!(!accepts("list(string)", &rules), "the declaration the CIS baseline shipped with");
+        assert!(accepts(crate::emitter::variable_type(&rules), &rules));
+        let names: serde_yaml::Value = serde_yaml::from_str("[a, true, 3]").unwrap();
+        assert_eq!(crate::emitter::variable_type(&names), "list(string)", "a list of scalars keeps its type");
+    }
+
+    #[test]
+    fn every_param_s_declared_type_accepts_its_value() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let reg = super::corpus::registry();
+        let mut checked = 0;
+        let mut collections = 0;
+        for dir in ["tests/iac", "tests/corpus"] {
+            for entry in std::fs::read_dir(root.join(dir)).expect("case directory").flatten() {
+                let case = entry.path();
+                if !case.join("main.satz").exists() {
+                    continue;
+                }
+                let (_, fe) = super::manifest_gate::emit_case(&case, &reg);
+                for (name, value) in &fe.tfvars {
+                    let ty = crate::emitter::variable_type(value);
+                    assert!(
+                        accepts(ty, value),
+                        "{}: `{}` is declared `{}` and its value is {:?} — tofu refuses the apply",
+                        case.display(),
+                        name,
+                        ty,
+                        value
+                    );
+                    checked += 1;
+                    collections += usize::from(value.is_sequence() || value.is_mapping());
+                }
+            }
+        }
+        // a gate over scalars alone would not have met the list of objects
+        assert!(checked >= 100 && collections >= 10, "checked {checked} params, {collections} collections");
+    }
+}
+
+#[cfg(test)]
 mod reset_replace {
     //! E14's first apply after the 2.7 pass: adopt had moved a legacy twin onto
     //! its `-superseded` address, the plan updated it in place with its old rules
