@@ -116,6 +116,26 @@ grep -qE '^  customer_organization_id += "123456789012"' tmp/init-iv/yaml/C0exam
   || fail "the answer did not land:\n$(grep organization tmp/init-iv/yaml/C0example.satz)"
 grep -qE '^  customer_longname +=  *"Acme Corporation"' tmp/init-iv/yaml/C0example.satz || fail "the longname did not land"
 "$satz" fmt --check tmp/init-iv/yaml/C0example.satz || fail "the interview left the init estate uncanonical"
+# The same door without a shortname, which is how a fresh organisation met it: init
+# writes "" for the project and bucket it derives FROM the shortname, the shortname is
+# answered later, and the two derived names were never asked. Bound to nothing, a
+# derived param is open, and its derivation is offered once its input is answered.
+rm -rf tmp/init-derived && mkdir -p tmp/init-derived && seed_schemas tmp/init-derived
+cp -R "$root/presets" tmp/init-derived/presets
+(cd tmp/init-derived && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
+  "$satz" init --customer-id C0example > ../init-derived.txt 2>&1) \
+  || fail "the init without a shortname failed:\n$(cat tmp/init-derived.txt)"
+sed -i.bak 's|^// use "presets/estate-core.satz"|use "presets/estate-core.satz"|; s|^\(  customer_shortname *= *\)""|\1"acme"|' \
+  tmp/init-derived/yaml/C0example.satz
+"$satz" --config tmp/init-derived questions C0example.satz --unanswered --format text --out tmp/init-derived-q.txt 2>/dev/null || true
+grep -qE '^  \? infra_project_name ' tmp/init-derived-q.txt \
+  || fail "a derived project id bound to nothing is not offered its derivation:\n$(cat tmp/init-derived-q.txt)"
+printf '' | "$satz" --config tmp/init-derived interview C0example.satz --accept-defaults > tmp/init-derived-iv.txt 2>&1 \
+  || fail "accepting the defaults failed:\n$(cat tmp/init-derived-iv.txt)"
+grep -qE '^  infra_project_name += "acme-infra-001"' tmp/init-derived/yaml/C0example.satz \
+  || fail "the derived project id was not bound:\n$(grep infra_project_name tmp/init-derived/yaml/C0example.satz | head -1)"
+grep -qE '^  infra_bucket_name += "acme-infra-001-state"' tmp/init-derived/yaml/C0example.satz \
+  || fail "the derived bucket name was not bound"
 # a re-run MERGES what it names and leaves the rest alone (it used to skip silently)
 cp tmp/init/yaml/C0example.satz tmp/init-before.satz
 (cd tmp/init && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent "$satz" init \
