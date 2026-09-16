@@ -129,6 +129,8 @@ pub fn create_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
     File::create(path).map_err(|e| ctx("create file", path, e))
 }
 
+/// Unix only: every caller sets an executable bit, which Windows does not have.
+#[cfg(unix)]
 pub fn set_permissions<P: AsRef<Path>>(path: P, perm: Permissions) -> io::Result<()> {
     let path = path.as_ref();
     std::fs::set_permissions(path, perm).map_err(|e| ctx("set permissions on", path, e))

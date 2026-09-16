@@ -33,6 +33,20 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: tests
         run: cargo test --workspace --locked
+  windows-checks:
+    # the same two gates on Windows: satz ships a Windows build, so clippy and the tests
+    # run there on every push — the smoke matrix is bash and stays on Linux
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: tests
+        run: cargo test --workspace --locked
   smoke:
     runs-on: ubuntu-latest
     steps:
