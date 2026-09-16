@@ -1824,6 +1824,14 @@ Thumbs.db
                 return Err("Failed to regenerate HCL".into());
             }
 
+            // From here the IaC service account manages the estate's Cloud Identity
+            // groups, and that needs Groups Admin — a Workspace role IAM can neither grant
+            // nor test. Assigned as the operator, because the account cannot give itself
+            // an admin role; when the login may not, the migration goes on and says how.
+            if target_mode == "cloud" {
+                assign_groups_admin(&input_path, &runtime_config).await;
+            }
+
             // Run Init with migrate-state
             println!("Running {} init -migrate-state...", tool_config.tf_tool);
             let res = std::process::Command::new(&tool_config.tf_tool)
@@ -2884,6 +2892,40 @@ fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crat
     }
 }
 
+/// `migrate --mode cloud`: give the estate's IaC service account Groups Admin when the
+/// regenerated HCL manages Cloud Identity groups. Never fails the migration: the state
+/// move is independent of it, and every outcome is printed with what to do.
+async fn assign_groups_admin(estate: &Path, runtime_config: &ToolConfig) {
+    let main_tf = Path::new(&runtime_config.hcl_dir).join("main.tf");
+    let manages_groups = std::fs::read_to_string(&main_tf).is_ok_and(|t| {
+        t.contains("resource \"google_cloud_identity_group\"") || t.contains("resource \"google_cloud_identity_group_membership\"")
+    });
+    if !manages_groups {
+        return;
+    }
+    let params = match estate_param_strings(estate, runtime_config) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("⚠️  Groups Admin not checked: {}", e);
+            return;
+        }
+    };
+    let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
+    let Some(sa) = crate::prerequisites::service_account_of(get) else {
+        eprintln!("⚠️  Groups Admin not checked: the estate names no IaC service account (svc_iac_account, infra_project_name)");
+        return;
+    };
+    let customer = get("customer_id").unwrap_or_else(|| "my_customer".to_string());
+    println!("Checking Groups Admin for {} (the groups are its to manage from here)...", sa);
+    match crate::gcp::workspace::groups_admin(&customer, &sa, true).await {
+        crate::gcp::workspace::GroupsAdmin::Held => println!("Groups Admin: {} holds it", sa),
+        crate::gcp::workspace::GroupsAdmin::Assigned => println!("Groups Admin: assigned to {}", sa),
+        crate::gcp::workspace::GroupsAdmin::NotDone(why) => {
+            eprintln!("⚠️  Groups Admin not assigned — until it is, an apply that touches a group is refused:\n  {}", why)
+        }
+    }
+}
+
 /// What `whoami <estate>` tests live: the estate's needs, and its organization,
 /// infra project and billing account to test them on.
 pub(crate) fn iac_probe(
@@ -2901,6 +2943,8 @@ pub(crate) fn iac_probe(
         scope_root: get("customer_organization_id").map(|o| crate::org_policy::normalize_parent(&o)),
         project: get("infra_project_name").map(|p| format!("projects/{}", p)),
         billing_account: get("billing_account_infra"),
+        service_account: crate::prerequisites::service_account_of(get),
+        customer: get("customer_id"),
     })
 }
 
@@ -5794,7 +5838,10 @@ mod command_groups {
         ("hcl-init", Identity::NoGoogleApi),
         ("plan", Identity::NoGoogleApi),
         ("apply", Identity::NoGoogleApi),
-        ("migrate", Identity::NoGoogleApi),
+        (
+            "migrate",
+            Identity::Human("--mode cloud assigns Groups Admin to the IaC service account, which cannot give itself an admin role"),
+        ),
         ("scan-plan", Identity::NoGoogleApi),
         ("generate-migration", Identity::NoGoogleApi),
         ("run-actions", Identity::NoGoogleApi),

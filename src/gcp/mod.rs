@@ -9,6 +9,7 @@ pub(crate) mod identity;
 pub(crate) mod resourcemanager;
 pub(crate) mod serviceusage;
 pub(crate) mod storage;
+pub(crate) mod workspace;
 
 /// What the process has been bound to.
 ///
@@ -143,6 +144,22 @@ pub(crate) async fn base_access_token() -> Result<String, String> {
             Err(e.to_string())
         }
     }
+}
+
+/// A token of the credential's OWN identity requesting `scopes` — a separate credential,
+/// so the one every command mints through keeps its cloud-platform scope. A user's ADC
+/// carries the scopes chosen at login whatever is requested here; a service account or
+/// an external account gets exactly these. For the one call satz makes outside
+/// cloud-platform: assigning a Workspace admin role.
+pub(crate) async fn scoped_base_token(scopes: &[&str]) -> Result<String, String> {
+    google_cloud_auth::credentials::Builder::default()
+        .with_scopes(scopes.iter().map(|s| s.to_string()))
+        .build_access_token_credentials()
+        .map_err(|e| e.to_string())?
+        .access_token()
+        .await
+        .map(|t| t.token)
+        .map_err(|e| e.to_string())
 }
 
 static BASE_CREDENTIALS: std::sync::Mutex<Option<google_cloud_auth::credentials::AccessTokenCredentials>> =
