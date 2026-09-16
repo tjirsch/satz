@@ -55,6 +55,7 @@ typst-pdf = "0.15.1"
 typst-kit = { version = "0.15.1", default-features = false, features = ["embedded-fonts"] }
 pulldown-cmark = "0.13.4"
 typst-layout = "0.15.1"
+futures-util = "0.3.34"
 
 [dev-dependencies]
 # the workbook test opens the xlsx package; the same zip rust_xlsxwriter writes with
