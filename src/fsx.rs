@@ -21,7 +21,9 @@
 //! disallows `std::fs::write` outside this module, so no non-test code writes a
 //! file except through it.
 
-use std::fs::{DirEntry, File, Permissions};
+#[cfg(unix)]
+use std::fs::Permissions;
+use std::fs::{DirEntry, File};
 use std::io;
 use std::path::Path;
 
