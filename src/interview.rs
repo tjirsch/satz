@@ -89,8 +89,11 @@ fn params_block(src: &str) -> Result<(usize, usize), String> {
 /// Bind `name = value` in the estate's `params {}`: replace an existing binding in
 /// place, else append before the closing brace. Text surgery rather than a re-emit,
 /// so the comments and the ordering of a hand-edited file survive the interview —
-/// the VALUE alone is replaced, so the line keeps its indentation, its `=` column and
-/// its trailing comment.
+/// the VALUE alone is replaced, and the line keeps its indentation and its trailing
+/// comment. When the answer is APPENDED, the `params` block is re-aligned by the
+/// formatter's own rule, because a new `name = value` would otherwise break the `=`
+/// column of every binding around it; a replaced value changes no width and touches
+/// nothing but itself. Everything outside the block stays as the author laid it out.
 pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<String, String> {
     let (open, close) = params_block(src)?;
     let lit = literal(value);
@@ -121,7 +124,26 @@ pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<S
         out.push_str(&format!("  {name} = {lit}\n"));
     }
     out.push_str(&src[close..]);
-    Ok(out)
+    // A replaced value changes no name's width, so the author's columns — and their
+    // hand-placed trailing comments — are left exactly as they were. Only an APPENDED
+    // line has to fit a column, and only then is the block re-laid.
+    Ok(if replaced { out } else { align_params(&out) })
+}
+
+/// The `params` block as `satz fmt` lays it out, spliced back into text whose rest is
+/// left alone. `write_edited_satz` re-formats only a file that was canonical before
+/// the edit, so a block a person already touched by hand — a line deleted, which
+/// leaves the others padded for a name that is gone — kept its broken columns and
+/// gained unaligned ones. Text the formatter cannot parse is returned as it came:
+/// the writer refuses it next, and says why.
+fn align_params(text: &str) -> String {
+    let Ok(formatted) = satz_core::fmt::format(text) else { return text.to_string() };
+    match (params_block(text), params_block(&formatted)) {
+        (Ok((open, close)), Ok((fopen, fclose))) => {
+            format!("{}{}{}", &text[..open], &formatted[fopen..fclose], &text[close..])
+        }
+        _ => text.to_string(),
+    }
 }
 
 /// The value of `name = …` on this line, as a byte range: from the first character
@@ -541,6 +563,24 @@ fn open_names(r: &QuestionsReport) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Found on a live estate: the `= ""` lines were deleted by hand so the interview
+    /// would ask them, which left the rest padded for a name that was gone; the
+    /// answers were appended unaligned, and the columns never came back.
+    #[test]
+    fn an_answer_appended_to_a_hand_edited_block_leaves_it_aligned() {
+        let src = "estate e\n\nparams {\n  customer_id              = \"C0example\"\n  customer_shortname       = \"acme\"\n}\n\n\
+                   google_folder {\n  infra_folder {\n    display_name   =   \"Infrastructure\"\n  }\n}\n";
+        let out = bind(src, "customer_organization_id", &serde_yaml::Value::String("123456789012".into())).unwrap();
+        assert!(
+            out.contains(
+                "params {\n  customer_id              = \"C0example\"\n  customer_shortname       = \"acme\"\n  customer_organization_id = \"123456789012\"\n}"
+            ),
+            "{out}"
+        );
+        // outside the block the author's layout is untouched, odd spacing included
+        assert!(out.contains("    display_name   =   \"Infrastructure\""), "{out}");
+    }
     use std::path::PathBuf;
 
     fn yaml(s: &str) -> serde_yaml::Value {
@@ -556,7 +596,8 @@ mod tests {
         assert_eq!(two, "estate x\n\nparams {\n  customer_id = \"C0other\"\n}\n\nuse \"p.satz\"\n");
         // a longer name that starts the same is not the same binding
         let three = bind(&two, "customer_id_x", &serde_yaml::Value::Bool(true)).unwrap();
-        assert!(three.contains("customer_id = \"C0other\"\n  customer_id_x = true\n"), "{}", three);
+        // and an appended binding joins the `=` column of the one already there
+        assert!(three.contains("customer_id   = \"C0other\"\n  customer_id_x = true\n"), "{}", three);
     }
 
     #[test]
