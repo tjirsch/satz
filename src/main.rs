@@ -5328,6 +5328,9 @@ fn installer_checksum_path(
         .to_string())
 }
 
+// On Windows the update is refused before any download, so the installer's options are
+// never read there.
+#[cfg_attr(windows, allow(unused_variables))]
 async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     let current_version = env!("CARGO_PKG_VERSION");
@@ -5378,6 +5381,17 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
         if check_only {
             println!("\nRun `satz self-update` to install.");
             return Ok(());
+        }
+        // The release's installer is a shell script. Refused before anything is
+        // downloaded, rather than after a download and a checksum it then cannot run.
+        #[cfg(windows)]
+        {
+            return Err(format!(
+                "self-update installs through a shell script and does not run on Windows — install {} with PowerShell:\n  \
+                 powershell -ExecutionPolicy Bypass -c \"irm https://github.com/{}/releases/latest/download/satz-installer.ps1 | iex\"",
+                latest_version, REPO
+            )
+            .into());
         }
         println!("\n📥 Installing update...");
 
@@ -5499,10 +5513,6 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
             }
         }
 
-        #[cfg(windows)]
-        {
-            return Err("Automatic installation on Windows is not yet supported. Please download and run the installer manually.".into());
-        }
     } else {
         println!("✅ You are running the latest version!");
     }
