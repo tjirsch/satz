@@ -1027,12 +1027,10 @@ pub(crate) fn next_steps(estate: &str, sa_email: Option<&str>, bucket: &str) -> 
          \x20      writes the roles and APIs the estate's packs need into the estate\n\
          \x20 2. satz transpile {estate} --plan, then satz transpile {estate} --apply\n\
          \x20      as you, in local mode: creates the groups, {sa} and its roles\n\
-         \x20 3. Google Workspace admin console → Account → Admin roles → Groups Admin → Admins → Assign service accounts: {sa}\n\
-         \x20      a Workspace role, not an IAM grant: from the migrate on, the service account manages the estate's groups,\n\
-         \x20      and without it the first apply that touches a group is refused\n\
-         \x20 4. satz migrate {estate} --mode cloud\n\
-         \x20      moves the state into gs://{bucket} and makes every run impersonate {sa}\n\
-         \x20 5. satz whoami {estate}, then satz transpile {estate} --plan\n\
+         \x20 3. satz migrate {estate} --mode cloud\n\
+         \x20      moves the state into gs://{bucket}, makes every run impersonate {sa},\n\
+         \x20      and assigns it Groups Admin (a Workspace role, not an IAM grant) when your login may — else it says how\n\
+         \x20 4. satz whoami {estate}, then satz transpile {estate} --plan\n\
          \x20      must name {sa} and plan \"No changes\"\n"
     )
 }
@@ -1086,13 +1084,13 @@ mod tests {
         let order = [
             "satz update-prerequisites C0example.satz",
             "satz transpile C0example.satz --apply",
-            "Groups Admin",
             "satz migrate C0example.satz --mode cloud",
+            "Groups Admin",
             "satz whoami C0example.satz",
         ];
         let at: Vec<usize> = order.iter().map(|n| text.find(n).unwrap_or_else(|| panic!("no `{n}` in:\n{text}"))).collect();
         assert!(at.windows(2).all(|w| w[0] < w[1]), "out of order:\n{text}");
-        assert!(text.contains("Assign service accounts: svc-iac-001@acme-infra-001.iam.gserviceaccount.com"), "{text}");
+        assert!(text.contains("impersonate svc-iac-001@acme-infra-001.iam.gserviceaccount.com"), "{text}");
         assert!(text.contains("gs://acme-infra-001-state"), "{text}");
         assert!(text.contains("not an IAM grant"), "{text}");
         // an estate without the param says so instead of printing an address it made up

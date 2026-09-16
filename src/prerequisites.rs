@@ -510,6 +510,9 @@ pub(crate) struct Probe {
     /// project, hand-made ones included
     pub project: Option<String>,
     pub billing_account: Option<String>,
+    /// the IaC service account and the directory customer (`C0…`), for Groups Admin
+    pub service_account: Option<String>,
+    pub customer: Option<String>,
 }
 
 /// The permissions an estate's resource types need, tested with the credential
@@ -565,7 +568,20 @@ pub(crate) async fn test_live(probe: &Probe) -> PermissionCheck {
         }
     }
     if probe.needs.iter().any(|n| n.scope == Scope::Workspace) {
-        check.not_tested.push("Groups Admin (Google Workspace admin console) — not an IAM role".to_string());
+        // Not an IAM role, so testIamPermissions cannot see it: the Admin SDK can, when
+        // the login carries its scope. Read-only here — `migrate --mode cloud` assigns it.
+        match &probe.service_account {
+            Some(sa) => {
+                let customer = probe.customer.as_deref().unwrap_or("my_customer");
+                match crate::gcp::workspace::groups_admin(customer, sa, false).await {
+                    crate::gcp::workspace::GroupsAdmin::Held | crate::gcp::workspace::GroupsAdmin::Assigned => check.tested += 1,
+                    crate::gcp::workspace::GroupsAdmin::NotDone(why) => {
+                        check.not_tested.push(format!("Groups Admin (Google Workspace, not an IAM role): {}", why))
+                    }
+                }
+            }
+            None => check.not_tested.push("Groups Admin (Google Workspace): the estate names no IaC service account".to_string()),
+        }
     }
     check
 }

@@ -193,12 +193,11 @@ the estate and come into being on the first `tofu apply`.
 **What follows.** `bootstrap` ends by naming the next commands with the estate's own
 values, in this order: `satz update-prerequisites <estate>`; `satz transpile <estate>
 --plan`, then `--apply`, as you in local mode, which creates the groups, the IaC service
-account and its roles; assigning **Groups Admin** to that service account's full address
-in the Google Workspace admin console (Account → Admin roles → Groups Admin → Admins →
-Assign service accounts) — a Workspace role, not an IAM grant, so no check can test it,
-and from the migrate on the service account manages the estate's groups; `satz migrate
-<estate> --mode cloud`, which moves the state into the bucket; and `satz whoami <estate>`
-followed by a plan that must read "No changes". `migrate`, `get-presets` and `adopt
+account and its roles; `satz migrate <estate> --mode cloud`, which moves the state into
+the bucket and assigns the service account **Groups Admin** — a Workspace role, not an IAM
+grant — through the Admin SDK when your login carries the role-management scope, and
+otherwise says what is missing and names the admin-console path; and `satz whoami
+<estate>` followed by a plan that must read "No changes". `migrate`, `get-presets` and `adopt
 --execute` end with their next command the same way.
 
 **Credential line.** Every live command prints one line before its first API call —
