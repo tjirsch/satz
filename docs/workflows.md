@@ -233,7 +233,10 @@ resource for a Workspace/Cloud Identity domain when a NEW Google Cloud user sign
 to the console and accepts the terms, or when an EXISTING user creates their first
 project or billing account
 ([documented](https://docs.cloud.google.com/resource-manager/docs/creating-managing-organization)).
-satz uses the second trigger:
+A customer new to Google Cloud whose admin has signed in to the console and accepted
+the terms therefore already has an organization: `satz init` derives its id, and plain
+`satz bootstrap` is the path. `--greenfield` is for a tenant where nobody has signed in
+yet, and uses the second trigger:
 
 1. `satz init --customer-id <C0…>` — derives every derivable init value
    from the ADC alone (identity → `first_admin` + `customer_domain`,

@@ -186,27 +186,72 @@ pub(crate) async fn download_presets(dest: &Path) -> Result<u32, BoxErr> {
         return download_presets_via_contents(&http, dest).await;
     }
 
-    let mut count = 0u32;
-    for entry in &tree.tree {
-        if entry.typ != "blob" {
-            continue;
+    // owned: the downloads run concurrently inside a future the MCP tools must be
+    // able to send, and borrowed entries make that future not general enough
+    let blobs: Vec<String> = tree
+        .tree
+        .into_iter()
+        .filter(|e| e.typ == "blob" && e.path.starts_with("presets/"))
+        .map(|e| e.path)
+        .collect();
+    // A hundred-odd files one request at a time, with nothing printed until the last
+    // one landed, looked exactly like a hang. Say what is happening, once, and fetch
+    // several at a time — raw.githubusercontent.com is not the API quota.
+    // stderr: `satz_check_presets` reaches this, and over MCP stdout is the protocol.
+    eprintln!("fetching {} preset file(s) from github.com/{REPO} …", blobs.len());
+    let progress = std::sync::Arc::new(Progress::new(blobs.len()));
+
+    use futures_util::stream::{self, StreamExt, TryStreamExt};
+    let fetched: Vec<()> = stream::iter(blobs.into_iter().map(|path| {
+        let http = http.clone();
+        let progress = progress.clone();
+        let dest = dest.to_path_buf();
+        async move {
+            let raw = format!("https://raw.githubusercontent.com/{REPO}/main/{}", path);
+            let resp = http.get(&raw).send().await.map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                return Err(format!("Failed to download {}: {}", path, resp.status()));
+            }
+            let content = resp.bytes().await.map_err(|e| e.to_string())?;
+            let rel = path.strip_prefix("presets/").unwrap_or(&path);
+            write_blob(&dest, rel, &content).map_err(|e| e.to_string())?;
+            progress.tick();
+            Ok::<(), String>(())
         }
-        let Some(rel) = entry.path.strip_prefix("presets/") else {
-            continue;
-        };
-        let raw = format!(
-            "https://raw.githubusercontent.com/{REPO}/main/{}",
-            entry.path
-        );
-        let resp = http.get(&raw).send().await?;
-        if !resp.status().is_success() {
-            return Err(format!("Failed to download {}: {}", entry.path, resp.status()).into());
-        }
-        let content = resp.bytes().await?;
-        write_blob(dest, rel, &content)?;
-        count += 1;
+    }))
+    .buffer_unordered(8)
+    .try_collect()
+    .await?;
+    progress.done();
+    Ok(fetched.len() as u32)
+}
+
+/// One line that counts, on a terminal; nothing per file anywhere else, because a log
+/// or an MCP client's stderr is not a place for a hundred carriage returns.
+struct Progress {
+    total: usize,
+    done: std::sync::atomic::AtomicUsize,
+    live: bool,
+}
+
+impl Progress {
+    fn new(total: usize) -> Self {
+        use std::io::IsTerminal;
+        Progress { total, done: std::sync::atomic::AtomicUsize::new(0), live: std::io::stderr().is_terminal() }
     }
-    Ok(count)
+
+    fn tick(&self) {
+        let n = self.done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if self.live {
+            eprint!("\r  {n}/{}", self.total);
+        }
+    }
+
+    fn done(&self) {
+        if self.live {
+            eprintln!();
+        }
+    }
 }
 
 fn write_blob(dest: &Path, rel: &str, content: &[u8]) -> Result<(), BoxErr> {

@@ -270,6 +270,12 @@ impl ResourceRegistry {
 
         crate::fsx::write(format!("{}/main.tf", work_dir), main_tf)?;
 
+        // the provider download is the long part, and the schema dump after it is
+        // captured, so without this line the run goes quiet for a minute
+        eprintln!(
+            "generating the {} schema: `{} init` downloads the provider {} once, then `{} providers schema` reads it …",
+            provider, tool, version, tool
+        );
         let status = Command::new(tool)
             .arg("init")
             .current_dir(&work_dir)
