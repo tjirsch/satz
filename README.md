@@ -340,7 +340,8 @@ satz update-prerequisites --format json          # the table: per resource type,
   `roles/owner` there meets all of them. Billing-account needs are met by a grant on
   the billing account (`google_billing_account_iam_member`).
 - `google_cloud_identity_group` needs the Groups Admin role of the Google Workspace
-  admin console. It is not an IAM role, so it is named and not checked.
+  admin console. It is not an IAM role, so it is named and not checked; `bootstrap` ends
+  by naming the service account's full address and where to assign it.
 - No role in the table deletes a project. Google makes a project's creator its owner,
   so the account deletes the projects it created; a project it did not create is
   deleted by a person, or with `roles/resourcemanager.projectDeleter` granted for the

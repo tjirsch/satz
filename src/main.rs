@@ -1838,6 +1838,12 @@ Thumbs.db
             }
 
             println!("Migration to {} mode complete.", target_mode);
+            match estate_impersonation_target(&input_path, &runtime_config) {
+                Some(sa) => println!(
+                    "next: `satz whoami {input}` — must name {sa} — then `satz transpile {input} --plan`, which must plan \"No changes\" as the service account"
+                ),
+                None => println!("next: `satz transpile {input} --plan` — your own credentials again, against the local state"),
+            }
             Ok(())
         }
         Commands::SelfUpdate { no_open_readme, check_only, skip_checksum } => {
@@ -4454,8 +4460,8 @@ async fn run_adopt(
             }
         }
         println!(
-            "\nadopt: {} activated, {} imported, {} moved, {} already managed (skipped), {} failed. Now run `satz plan` — it should show no create for what was imported and no destroy for what was moved.",
-            activated, imported, moved, already_managed, failed
+            "\nadopt: {} activated, {} imported, {} moved, {} already managed (skipped), {} failed.\nnext: `satz transpile {} --plan` — no create for what was imported and no destroy for what was moved.",
+            activated, imported, moved, already_managed, failed, input
         );
         if failed > 0 {
             return Err(format!("adopt: {} activation(s)/import(s)/move(s) failed — see above", failed).into());
