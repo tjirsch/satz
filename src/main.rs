@@ -1892,7 +1892,12 @@ Thumbs.db
                 crate::prowler::plan(&manifest, &included_claims, org_id.as_deref(), &today);
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&plan)?),
-                _ => print!("{}", crate::prowler::render(&plan)),
+                // stdout is the command and nothing else, so it can be piped into a
+                // shell or a clipboard; what the line does not say goes to stderr.
+                _ => {
+                    print!("{}", crate::prowler::render(&plan));
+                    eprint!("{}", crate::prowler::notes(&plan));
+                }
             }
             Ok(())
         }
