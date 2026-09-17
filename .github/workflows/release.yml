@@ -312,3 +312,5 @@ jobs:
     with:
       plan: ${{ needs.plan.outputs.val }}
     secrets: inherit
+    permissions:
+      "actions": "write"
