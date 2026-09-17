@@ -1,7 +1,0 @@
-# Steps cargo-dist runs in every build job before `dist build` (`github-build-setup` in
-# dist-workspace.toml). The ARM64 Windows build runs in the messense/cargo-xwin container,
-# whose rustc lags behind the dependencies' minimum; the other targets build on runners
-# that already carry the current stable.
-- name: Update the container's Rust toolchain
-  if: ${{ matrix.container }}
-  run: rustup update stable --no-self-update && rustup default stable
