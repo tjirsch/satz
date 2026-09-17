@@ -102,6 +102,10 @@ impl World for Report {
 /// replaces is `pandoc` plus whatever PDF engine it was configured with.
 pub(crate) fn write(markdown: &str, path: &Path, what: &str) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = render(markdown)?;
+    if crate::out::to_stdout(path, &bytes)? {
+        eprintln!("wrote stdout — {}", what);
+        return Ok(());
+    }
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             crate::fsx::create_dir_all(dir)?;

@@ -1,0 +1,4 @@
+# Every text file is LF in the repository and in every checkout, Windows included:
+# the corpus snapshots, the formatter's corpus test and the `include_str!` fixtures
+# compare bytes, and a checkout that turned them into CRLF fails them.
+* text=auto eol=lf

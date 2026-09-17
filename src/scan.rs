@@ -34,18 +34,36 @@ pub(crate) struct Report {
 
 /// How to invoke Checkov on this machine.
 fn runner() -> Result<(String, Vec<String>), String> {
-    let on_path = |bin: &str| {
-        std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
-            .unwrap_or(false)
+    // The file found, by its full path: on Windows `checkov` is `checkov.exe` or a
+    // `checkov.cmd` shim, and a bare name spawns only an `.exe`.
+    let found = |bin: &str| {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .flat_map(|d| executable_names(bin).into_iter().map(move |n| d.join(n)))
+            .find(|p| p.is_file())
+            .map(|p| p.to_string_lossy().into_owned())
     };
-    if on_path("checkov") {
-        return Ok(("checkov".into(), vec![]));
+    if let Some(checkov) = found("checkov") {
+        return Ok((checkov, vec![]));
     }
-    if on_path("uvx") {
-        return Ok(("uvx".into(), vec!["checkov".into()]));
+    if let Some(uvx) = found("uvx") {
+        return Ok((uvx, vec!["checkov".into()]));
     }
     Err("Checkov not found: install it (`pipx install checkov`) or install uv — `uvx checkov` runs it on demand".into())
+}
+
+/// The file names `bin` may have on PATH: itself, and on Windows with each `PATHEXT`
+/// extension.
+fn executable_names(bin: &str) -> Vec<String> {
+    names_for(bin, cfg!(windows).then(|| std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".into())))
+}
+
+fn names_for(bin: &str, pathext: Option<String>) -> Vec<String> {
+    let mut names = vec![bin.to_string()];
+    if let Some(exts) = pathext {
+        names.extend(exts.split(';').filter(|e| !e.is_empty()).map(|e| format!("{}{}", bin, e.to_ascii_lowercase())));
+    }
+    names
 }
 
 /// Run Checkov (terraform framework, JSON) over `hcl_dir`.
@@ -141,6 +159,12 @@ pub(crate) fn render(r: &Report, manifest: Option<&Manifest>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_windows_checkov_is_looked_for_by_its_pathext_names() {
+        assert_eq!(names_for("checkov", None), vec!["checkov"]);
+        assert_eq!(names_for("checkov", Some(".EXE;.CMD".into())), vec!["checkov", "checkov.exe", "checkov.cmd"]);
+    }
 
     #[test]
     fn checkov_json_parses_in_both_shapes_and_findings_sort_by_resource() {

@@ -347,7 +347,7 @@ pub(crate) fn apply(
         let row = report.questions.iter().find(|q| q.subject == *name).ok_or_else(|| {
             format!(
                 "{}: no pack this estate uses asks that. An answer names a question's subject — \
-                 `satz questions {} --format text --out /dev/stdout` lists them",
+                 `satz questions {} --format text --out -` lists them",
                 name,
                 estate.display()
             )
