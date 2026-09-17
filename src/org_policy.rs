@@ -1478,6 +1478,19 @@ mod tests {
         assert_eq!(adc_file_path_from(None, None), None);
     }
 
+    /// AIP-4113 on Windows: gcloud writes under `%APPDATA%\gcloud`, with no `.config`.
+    #[cfg(windows)]
+    #[test]
+    fn the_well_known_path_is_under_appdata_on_windows() {
+        assert_eq!(
+            adc_file_path_from(None, Some(r"C:\Users\op\AppData\Roaming")),
+            Some(PathBuf::from(
+                r"C:\Users\op\AppData\Roaming\gcloud\application_default_credentials.json"
+            ))
+        );
+        assert_eq!(adc_file_path_from(None, None), None);
+    }
+
     /// The regression this replaced: satz honoured `CLOUDSDK_CONFIG` while the
     /// auth crate and tofu's Go SDK did not, so `satz whoami` named one file
     /// while every token came from another. Resolution takes exactly two inputs

@@ -5,8 +5,9 @@ name: Attach Checksum to Release
 # sidecar is attached in the same run — no workflow_run chaining, no window
 # in which the release is visible but unverifiable.
 #
-# satz self-update fetches and verifies this sidecar before executing the
-# installer — if the file is absent, self-update aborts.
+# satz self-update fetches and verifies the shell installer's sidecar before executing
+# it — if the file is absent, self-update aborts. The PowerShell installer gets one too,
+# for whoever checks it by hand (and for satz-studio on Windows).
 
 on:
   workflow_call:
@@ -24,11 +25,13 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ github.ref_name }}
     steps:
-      - name: Download installer from release
-        run: gh release download "$TAG" --pattern "satz-installer.sh" --repo "$GITHUB_REPOSITORY"
+      - name: Download installers from release
+        run: gh release download "$TAG" --pattern "satz-installer.sh" --pattern "satz-installer.ps1" --repo "$GITHUB_REPOSITORY"
 
-      - name: Generate SHA-256 sidecar
-        run: sha256sum satz-installer.sh > satz-installer.sh.sha256
+      - name: Generate SHA-256 sidecars
+        run: |
+          sha256sum satz-installer.sh > satz-installer.sh.sha256
+          sha256sum satz-installer.ps1 > satz-installer.ps1.sha256
 
-      - name: Upload sidecar to release
-        run: gh release upload "$TAG" satz-installer.sh.sha256 --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Upload sidecars to release
+        run: gh release upload "$TAG" satz-installer.sh.sha256 satz-installer.ps1.sha256 --clobber --repo "$GITHUB_REPOSITORY"

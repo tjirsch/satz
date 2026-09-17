@@ -200,8 +200,8 @@ platforms, which is the scope that puts an estate's server in the estate's own r
 ```
 
 `command` is looked up on `PATH`, so the installer's `~/.local/bin/satz` resolves by
-name; an absolute path resolves anywhere. The release archives are macOS and Linux, so on
-Windows `command` names a binary built from source. A Windows path is JSON, so its
+name; an absolute path resolves anywhere. On Windows the PowerShell installer puts
+`satz.exe` in `%USERPROFILE%\.local\bin` and on the user PATH. A Windows path is JSON, so its
 separators are escaped — `"C:\\Users\\you\\estates"` — or written as `/`.
 
 **Give `--root` an absolute path.** The client starts the server, so the working
