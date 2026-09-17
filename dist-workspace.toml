@@ -20,3 +20,4 @@ install-path = "~/.local/bin"
 hosting = "github"
 install-updater = false
 post-announce-jobs = ["./attach-checksum"]
+github-build-setup = "../build-setup.yml"
