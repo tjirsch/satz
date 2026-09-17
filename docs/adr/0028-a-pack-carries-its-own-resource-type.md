@@ -53,7 +53,15 @@ attributes, which the emitter accepts without a word.
   the same machinery as every other pack.
 - A self-typed pack used as a resource map's content is REFUSED, in all three forms that
   make it one, naming the pack's own typed map and the line to write instead.
-- The CIS files live in `presets/cis/`, the baseline beside the extensions it gates.
+- The CIS files live in `presets/cis/`, the baseline beside the extensions it gates. `cis` is
+  the umbrella for every CIS benchmark, not one of them: a Google Workspace Foundation pack
+  and a GKE or Kubernetes pack go in beside the GCP Foundation one, and each pack's file name
+  carries what it covers (`CIS-GCP-Foundation-4.0.satz`). `presets/cis-foundation/` was
+  considered and rejected for that reason — the GCP and Workspace benchmarks are both
+  *Foundation* benchmarks, so it would have read correctly for those two while leaving the
+  CIS benchmarks that are not Foundation ones needing a sibling folder. `presets/cis-gcp/`
+  was rejected the same way: it names one platform. The cost accepted is that `presets/cis/`
+  is one character from `presets/ci/`, the verification-runner packs.
 - The move is migrated by satz, not by hand: `MOVED_PACKS` in `crates/satz-core/src/pipeline.rs`
   is an old→new table that the compile refuses against by name, and that `merge-presets`
   repoints estate lines from — one table, so the refusal and the migration cannot disagree.
