@@ -476,6 +476,74 @@ pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<Pipel
     })
 }
 
+/// A pack the library MOVED, and where it lives now. `from` is either an exact
+/// path or a directory prefix ending in `/`, which covers the forks and adoption
+/// deltas beside it (`<x>.local.satz`, `<x>.diff.satz`) without a row each.
+///
+/// The table is public because `merge-presets` repoints estate lines from exactly
+/// these entries: one table, so the migration and the refusal cannot disagree
+/// about where a pack went. Like a renamed param, an entry stays for one release
+/// line and is removed once the fleet is past it.
+#[derive(Debug)]
+pub struct MovedPack {
+    pub from: &'static str,
+    pub to: &'static str,
+    pub why: &'static str,
+    /// The file at `to` is not a copy of the one at `from` — the same release
+    /// reshaped it, so an old copy that differs is stale rather than a fork worth
+    /// keeping. `merge-presets` reads this to decide between retiring a pristine
+    /// copy and preserving it as an explicit fork.
+    pub reshaped: bool,
+}
+
+pub const MOVED_PACKS: &[MovedPack] = &[
+    MovedPack {
+        from: "presets/cis-extensions/",
+        to: "presets/cis/",
+        why: "the CIS packs live in one folder, the baseline beside the extensions it gates",
+        reshaped: false,
+    },
+    MovedPack {
+        from: "presets/CIS-GCP-Foundation-4.0.satz",
+        to: "presets/cis/CIS-GCP-Foundation-4.0.satz",
+        why: "the CIS packs live in one folder, and the baseline declares its own `google_org_policy_policy { … }` now, so it is `use`d bare at the top level",
+        reshaped: true,
+    },
+];
+
+/// Where a `use` path lives now, if the library moved it.
+pub fn moved_to(use_path: &str) -> Option<(String, &'static MovedPack)> {
+    MOVED_PACKS.iter().find_map(|m| {
+        if let Some(rest) = m.from.strip_suffix('/') {
+            use_path
+                .strip_prefix(m.from)
+                .filter(|_| !rest.is_empty())
+                .map(|tail| (format!("{}{}", m.to, tail), m))
+        } else if use_path == m.from {
+            Some((m.to.to_string(), m))
+        } else {
+            None
+        }
+    })
+}
+
+/// `Some(error)` if this `use` names a pack that moved.
+///
+/// Refused rather than followed: the old file is still on disk in every estate
+/// that fetched it, so a `use` of the old path keeps compiling against a copy
+/// nothing will ever update again — a pack frozen at the version it had the day
+/// the library moved it, with no sign that anything is wrong.
+fn moved_pack(use_path: &str, file: &str, line: usize) -> Option<PipelineError> {
+    moved_to(use_path).map(|(to, m)| PipelineError {
+        file: file.to_string(),
+        line,
+        msg: format!(
+            "use \"{}\": this pack moved to \"{}\" — {}. Run `satz get-presets`, then `satz merge-presets`: together they repoint this line and carry over any `.local.satz` fork beside it.",
+            use_path, to, m.why
+        ),
+    })
+}
+
 /// Compile an estate source to per-file fragments plus the estate environment.
 pub fn compile_estate(
     file_name: &str,
@@ -1128,6 +1196,11 @@ impl Walk<'_> {
                     );
                 }
                 Entry::Use { path: use_path, as_key, when, line } => {
+                    // Before the `when` guard: a line gated off still points at a
+                    // stale copy, and the fleet migrates once.
+                    if let Some(e) = moved_pack(use_path, file_name, *line) {
+                        return Err(e);
+                    }
                     if let Some(p) = when {
                         if !self.when_holds(p, file_name, *line)? {
                             continue;
@@ -1222,6 +1295,9 @@ impl Walk<'_> {
                         // `google_folder { use "…" }` — the pack's items are folder-map
                         // content (named folder nodes), in their own fragment.
                         Entry::Use { path: use_path, as_key, when, line } => {
+                            if let Some(e) = moved_pack(use_path, file_name, *line) {
+                                return Err(e);
+                            }
                             if let Some(p) = when {
                                 if !self.when_holds(p, file_name, *line)? {
                                     continue;
@@ -1527,6 +1603,9 @@ impl Walk<'_> {
                             continue;
                         }
                         Entry::Use { path: use_path, as_key, when, line } => {
+                            if let Some(e) = moved_pack(use_path, file_name, *line) {
+                                return Err(e);
+                            }
                             if let Some(p) = when {
                                 if !self.when_holds(p, file_name, *line)? {
                                     continue;
@@ -2116,6 +2195,68 @@ google_org_policy_policy {
                 err.msg
             );
         }
+    }
+
+    /// A moved pack is refused wherever it is `use`d, and whether or not its gate
+    /// holds. A line gated off still names a path whose local copy nothing will
+    /// update again, so letting it pass would migrate the fleet in two rounds:
+    /// one for the lines that are on, another whenever somebody answers yes.
+    #[test]
+    fn a_moved_pack_is_refused_at_every_use_site() {
+        let load = |p: &str| Err(format!("no load: {}", p));
+        let forms = [
+            ("top level", "estate t\n\nuse \"presets/cis-extensions/cmek.satz\"\n"),
+            (
+                "inside the map",
+                "estate t\n\ngoogle_org_policy_policy {\n  use \"presets/cis-extensions/cmek.satz\"\n}\n",
+            ),
+            (
+                "inside a folder",
+                "estate t\n\ngoogle_folder {\n  use \"presets/cis-extensions/cmek.satz\"\n}\n",
+            ),
+            (
+                "gated off",
+                "estate t\n\nparams { cis_cmek_required = false }\n\nuse \"presets/cis-extensions/cmek.satz\" when cis_cmek_required\n",
+            ),
+        ];
+        for (form, estate) in forms {
+            let Err(err) = compile_estate("t.satz", estate, &Table, &load) else {
+                panic!("{}: a moved pack must be refused", form);
+            };
+            assert!(
+                err.msg.contains("moved to \"presets/cis/cmek.satz\""),
+                "{}: the refusal must name where the pack lives now — got {}",
+                form,
+                err.msg
+            );
+            assert!(
+                err.msg.contains("satz merge-presets"),
+                "{}: the refusal must name the command that migrates it — got {}",
+                form,
+                err.msg
+            );
+        }
+    }
+
+    /// The directory entry covers what sits BESIDE a moved pack: a `.local` fork
+    /// and the adoption delta move with it, and an estate pointing at the old
+    /// fork is refused by the same rule rather than compiling a copy that is now
+    /// orphaned.
+    #[test]
+    fn a_moved_fork_path_is_refused_too() {
+        let estate = "estate t\n\nuse \"presets/cis-extensions/cmek.local.satz\"\n";
+        let Err(err) = compile_estate("t.satz", estate, &Table, &|p| Err(format!("no load: {}", p)))
+        else {
+            panic!("a fork under a moved directory must be refused");
+        };
+        assert!(err.msg.contains("presets/cis/cmek.local.satz"), "{}", err.msg);
+        // The baseline's exact-path entry resolves as well, and says why the shape
+        // changed with the move.
+        assert_eq!(
+            moved_to("presets/CIS-GCP-Foundation-4.0.satz").map(|(to, _)| to),
+            Some("presets/cis/CIS-GCP-Foundation-4.0.satz".to_string())
+        );
+        assert!(moved_to("presets/scc/scc-export.satz").is_none(), "a pack that did not move is not rewritten");
     }
 
     /// A pack the `when` guard skipped was never pulled in, so its claims must

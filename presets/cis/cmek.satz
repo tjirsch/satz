@@ -1,6 +1,6 @@
 // CIS 7.2, 7.3 and 8.1 — customer-managed encryption keys.
 //
-//   use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+//   use "presets/cis/cmek.satz" when cis_cmek_required
 //
 // Opt-in because once a service is listed, every NEW resource of that service
 // must be created with a CMEK, so

@@ -3766,7 +3766,7 @@ mod fix_plan_tests {
         let paths = pack_use_paths(&presets());
         assert_eq!(
             paths.get("CIS_GCP_Foundation_4_0").map(String::as_str),
-            Some("presets/CIS-GCP-Foundation-4.0.satz"),
+            Some("presets/cis/CIS-GCP-Foundation-4.0.satz"),
             "the shipped baseline should resolve to its use path"
         );
     }
@@ -3779,7 +3779,7 @@ mod fix_plan_tests {
         ];
         let out = fix_plan(&rows, &presets());
         assert_eq!(
-            out.matches("presets/CIS-GCP-Foundation-4.0.satz").count(),
+            out.matches("presets/cis/CIS-GCP-Foundation-4.0.satz").count(),
             1,
             "one pack, one line — not one per finding:\n{}",
             out

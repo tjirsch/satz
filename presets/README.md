@@ -7,8 +7,12 @@ Presets are **read-only building blocks**: use them from a customer's estate and
 set every org-specific value there — never by editing a preset.
 
 `use "presets/<pack>.satz"` at top level for packs that declare their own
-resource-type maps, under a key (`use … as google_org_policy_policy`) or inside a
-resource map for content packs. Pack `params` are overridable defaults; define
+resource-type maps — the CIS baseline and its extensions, and most of the library —
+or inside a resource map for the content packs that are a bare list of labels
+(`google_essential_contacts_contact { use … }`, or `use … as <type>` written flat).
+Each pack's header states its own line and `presets/docs/` prints it; the shapes are
+not interchangeable, and using one the wrong way round is refused rather than
+emitted. Pack `params` are overridable defaults; define
 the same name in the estate `params` block to override (the using document
 always wins). When a needed customization is not expressible as a param, fork:
 copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains the
@@ -719,7 +723,7 @@ activates managed constraints via the Org Policy API and imports existing polici
 into state — see "Adopting what already exists" in the main README):
 
 ```
-google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 ```
 ```bash
 satz adopt C0example.satz --only google_org_policy_policy --activate --execute --import
@@ -1184,7 +1188,7 @@ external CI on GitHub or GitLab can all use Workload Identity Federation or impe
 and leave the control intact. The tag route is the exception with a named owner, never the
 default.
 
-## cis-extensions/
+## cis/
 
 **Two of these are ON by default: `cis_dns_logging` and `cis_block_internet_ssh_rdp`.**
 Every other fragment here is off until a customer asks for it, because each one restricts
@@ -1224,8 +1228,8 @@ turns one on and `use`s its fragment:
 
 ```
 cis_require_shielded_vm = true
-use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
-use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
+use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis/dns-logging.satz" when cis_dns_logging
 ```
 
 Each is opt-in because it can break a running workload: Confidential Computing is limited to particular machine families,
@@ -1246,7 +1250,7 @@ fragments ship a **dry-run twin** that does exactly that:
 
 ```
 cis_cloud_sql_hardening_dry_run = true
-use "presets/cis-extensions/cloud-sql-dry-run.satz" when cis_cloud_sql_hardening_dry_run
+use "presets/cis/cloud-sql-dry-run.satz" when cis_cloud_sql_hardening_dry_run
 ```
 
 Apply it, let the organisation run, then read the violations:

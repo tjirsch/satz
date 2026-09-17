@@ -102,8 +102,8 @@ order is a path:
 use "presets/estate-core.satz"
 use "presets/estate-map.satz"
 
-google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
-use "presets/cis-extensions/cmek.satz" when cis_cmek_required
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
+use "presets/cis/cmek.satz" when cis_cmek_required
 …
 use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
 use "presets/security-group-models/s2-security-groups.satz" when security_model_s2

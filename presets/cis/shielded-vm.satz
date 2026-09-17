@@ -1,6 +1,6 @@
 // CIS 4.8 — Shielded VM.
 //
-//   use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+//   use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
 //
 // Opt-in because not every image supports Shielded VM; an org with custom or older
 // images will fail instance creation until those images are rebuilt. This is

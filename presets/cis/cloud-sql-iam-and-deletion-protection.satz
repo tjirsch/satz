@@ -1,7 +1,7 @@
 // CIS 5.0 §6.6 / §6.9 — Cloud SQL instances sign database users in through IAM,
 // and cannot be deleted while deletion protection is on. Both are new in 5.0.
 //
-//   use "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz" when cis_cloud_sql_iam_and_deletion_protection
+//   use "presets/cis/cloud-sql-iam-and-deletion-protection.satz" when cis_cloud_sql_iam_and_deletion_protection
 //
 // Two custom constraints on `sqladmin.googleapis.com/Instance`, each enforced by a
 // policy on the organisation. A custom constraint is checked when an instance is

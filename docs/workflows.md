@@ -661,17 +661,17 @@ claims to be:
 
 ```bash
 # what release does the local file claim to be?
-grep -m1 '^pack' <estate>/presets/CIS-GCP-Foundation-4.0.satz     # -> version "1.5"
+grep -m1 '^pack' <estate>/presets/cis/CIS-GCP-Foundation-4.0.satz     # -> version "1.5"
 
 # is it byte-identical to that release?
 cd ~/projects/satz
-git log --format=%H -- presets/CIS-GCP-Foundation-4.0.satz \
+git log --format=%H -- presets/cis/CIS-GCP-Foundation-4.0.satz \
   | while read c; do
-      v=$(git show $c:presets/CIS-GCP-Foundation-4.0.satz | grep -m1 '^pack')
+      v=$(git show $c:presets/cis/CIS-GCP-Foundation-4.0.satz | grep -m1 '^pack')
       echo "$c $v"
     done | head           # find the commit that carried v1.5
-git show <that-commit>:presets/CIS-GCP-Foundation-4.0.satz > /tmp/pristine-1.5.satz
-diff /tmp/pristine-1.5.satz <estate>/presets/CIS-GCP-Foundation-4.0.satz
+git show <that-commit>:presets/cis/CIS-GCP-Foundation-4.0.satz > /tmp/pristine-1.5.satz
+diff /tmp/pristine-1.5.satz <estate>/presets/cis/CIS-GCP-Foundation-4.0.satz
 ```
 
 | result | meaning | what to run |

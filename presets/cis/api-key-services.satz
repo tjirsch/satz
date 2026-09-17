@@ -1,6 +1,6 @@
 // CIS 4.0 §1.14 / 5.0 §1.15 — API keys restricted to the APIs an application needs.
 //
-//   use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
+//   use "presets/cis/api-key-services.satz" when cis_api_key_services
 //
 // Opt-in because an API key that today calls anything stops working the moment
 // this is enforced, unless its API targets are already narrowed. Set the

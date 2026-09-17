@@ -253,7 +253,7 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
         "google_folder.infra_folder",
     ),
     (
-        "presets/CIS-GCP-Foundation-4.0.satz",
+        "presets/cis/CIS-GCP-Foundation-4.0.satz",
         "use_cis_baseline",
         "once the estate runs as the service account — the CIS baseline, what the estate is\n\
          // for and what everything below extends. Thirty organisation policies in one apply,\n\
@@ -261,30 +261,30 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
         "",
     ),
     (
-        "presets/cis-extensions/block-project-ssh-keys.satz",
+        "presets/cis/block-project-ssh-keys.satz",
         "cis_block_project_ssh_keys",
         "the baseline's own extensions, gated on params it declares, so they do not compile\n\
          // without it. Each restricts what may be created; two are on by default (DNS query\n\
          // logging, and the admin ports closed to the internet).",
         "",
     ),
-    ("presets/cis-extensions/shielded-vm.satz", "cis_require_shielded_vm", "", ""),
-    ("presets/cis-extensions/dns-logging.satz", "cis_dns_logging", "", ""),
-    ("presets/cis-extensions/confidential-computing.satz", "cis_confidential_computing", "", ""),
-    ("presets/cis-extensions/cloud-sql.satz", "cis_cloud_sql_hardening", "", ""),
-    ("presets/cis-extensions/cmek.satz", "cis_cmek_required", "", ""),
-    ("presets/cis-extensions/api-key-services.satz", "cis_api_key_services", "", ""),
-    ("presets/cis-extensions/bucket-retention.satz", "cis_bucket_retention", "", ""),
-    ("presets/cis-extensions/access-approval.satz", "cis_access_approval", "", ""),
-    ("presets/cis-extensions/internet-ssh-rdp.satz", "cis_block_internet_ssh_rdp", "", ""),
+    ("presets/cis/shielded-vm.satz", "cis_require_shielded_vm", "", ""),
+    ("presets/cis/dns-logging.satz", "cis_dns_logging", "", ""),
+    ("presets/cis/confidential-computing.satz", "cis_confidential_computing", "", ""),
+    ("presets/cis/cloud-sql.satz", "cis_cloud_sql_hardening", "", ""),
+    ("presets/cis/cmek.satz", "cis_cmek_required", "", ""),
+    ("presets/cis/api-key-services.satz", "cis_api_key_services", "", ""),
+    ("presets/cis/bucket-retention.satz", "cis_bucket_retention", "", ""),
+    ("presets/cis/access-approval.satz", "cis_access_approval", "", ""),
+    ("presets/cis/internet-ssh-rdp.satz", "cis_block_internet_ssh_rdp", "", ""),
     (
-        "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz",
+        "presets/cis/cloud-sql-iam-and-deletion-protection.satz",
         "cis_cloud_sql_iam_and_deletion_protection",
         "",
         "",
     ),
     (
-        "presets/cis-extensions/api-key-services-dry-run.satz",
+        "presets/cis/api-key-services-dry-run.satz",
         "cis_api_key_services_dry_run",
         "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the\n\
          // same policy with `dry_run_spec`: Google logs every action it would have blocked and\n\
@@ -293,21 +293,21 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
         "",
     ),
     (
-        "presets/cis-extensions/block-project-ssh-keys-dry-run.satz",
+        "presets/cis/block-project-ssh-keys-dry-run.satz",
         "cis_block_project_ssh_keys_dry_run",
         "",
         "",
     ),
-    ("presets/cis-extensions/bucket-retention-dry-run.satz", "cis_bucket_retention_dry_run", "", ""),
-    ("presets/cis-extensions/cloud-sql-dry-run.satz", "cis_cloud_sql_hardening_dry_run", "", ""),
+    ("presets/cis/bucket-retention-dry-run.satz", "cis_bucket_retention_dry_run", "", ""),
+    ("presets/cis/cloud-sql-dry-run.satz", "cis_cloud_sql_hardening_dry_run", "", ""),
     (
-        "presets/cis-extensions/cloud-sql-iam-and-deletion-protection-dry-run.satz",
+        "presets/cis/cloud-sql-iam-and-deletion-protection-dry-run.satz",
         "cis_cloud_sql_iam_and_deletion_protection_dry_run",
         "",
         "",
     ),
     (
-        "presets/cis-extensions/confidential-computing-dry-run.satz",
+        "presets/cis/confidential-computing-dry-run.satz",
         "cis_confidential_computing_dry_run",
         "",
         "",

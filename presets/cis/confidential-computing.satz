@@ -1,6 +1,6 @@
 // CIS 4.11 — Confidential Computing.
 //
-//   use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
+//   use "presets/cis/confidential-computing.satz" when cis_confidential_computing
 //
 // Opt-in because Confidential VMs are limited to particular machine families and cost
 // more; enforcing this org-wide stops most ordinary workloads from starting.

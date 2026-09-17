@@ -462,7 +462,7 @@ with deterministic ordering (snapshot-gated by `tests/corpus/`).
 An estate can remove something a used pack contributes — without forking:
 
 ```
-use "presets/CIS-GCP-Foundation-4.0.satz" as google_org_policy_policy
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 
 // drop one pack resource; grant-edge form removes a single role
 suppress google_org_policy_policy "compute-skipDefaultNetworkCreation"
@@ -557,7 +557,7 @@ The `bootstrap` command automatically handles the import of core infrastructure 
 
 ### Organization Policy Alignment
 
-Curated Organization Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) are normally
+Curated Organization Policy sets (e.g. `presets/cis/CIS-GCP-Foundation-4.0.satz`) are normally
 pulled into an estate with `use` and rendered as `google_org_policy_policy` resources
 like any other. GCP **managed** constraints (their name contains `.managed.`, e.g.
 `iam.managed.disableServiceAccountKeyCreation`) differ: depending on org state they
@@ -1844,7 +1844,7 @@ dots turned into dashes ([docs/language.md §12.2](docs/language.md)).
 - **IAM mapping**: maps IAM policies to member resources (e.g. `google_storage_bucket_iam_member`) and generates their keys.
 
 #### 6. Organization Policy Engine (`src/org_policy.rs`)
-Aligns curated Org Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) with the live organization via the GCP Org Policy API v2.
+Aligns curated Org Policy sets (e.g. `presets/cis/CIS-GCP-Foundation-4.0.satz`) with the live organization via the GCP Org Policy API v2.
 - **Adoption** (`satz adopt --activate`): activates managed constraints that are missing (API create), then imports the existing policies into state — no manual console activation and no `import-id` editing. Adoption is a separate command, never part of `transpile` (`src/adopt.rs` drives it through this module's `OrgPolicyClient`).
 - **CLI commands**: `export-organizational-policies` (snapshot live state to a re-importable preset), `diff-organizational-policies` (semantic current-vs-desired report), `report-organizational-policies` (markdown/JSON/PDF inventory with constraint descriptions).
 - **Managed constraints**: constraints whose name contains `.managed.` must be *activated* (API create), then *imported as-is* (`tofu import`), then *modified* (`tofu apply`). `satz adopt --activate` sequences the activate+import; `tofu apply` does the modify.

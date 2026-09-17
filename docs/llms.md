@@ -163,10 +163,10 @@ not add `google_cloud_identity_group_membership` to a pack.
 ## Packs
 
 ```satz
-use "presets/CIS-GCP-Foundation-4.0.satz"                      // top level
+use "presets/cis/CIS-GCP-Foundation-4.0.satz"                      // top level
 google_org_policy_policy { use "presets/x.satz" }               // as a map's content
 use "presets/x.satz" as google_org_policy_policy                // same, written flat
-use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
 ```
 
 `when` takes a **boolean param that must exist** — an unknown one is an error, never

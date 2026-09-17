@@ -6,7 +6,7 @@
 // organisation ends up with both forms of a constraint enforcing. Some policies
 // have to be activated before they can be imported.
 //
-//   use "presets/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
+//   use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 //
 // The benchmark: https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
 // Google's constraint catalogue:
@@ -17,7 +17,7 @@ pack CIS_GCP_Foundation_4_0 version "2.14"
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
   // a workload that was legitimate the day before. Turn one on and `use` its
-  // fragment from presets/cis-extensions/ — see presets/README.md. Constraint
+  // fragment from presets/cis/ — see presets/README.md. Constraint
   // names and shapes were verified against a live organisation's OrgPolicy
   // ListConstraints, not transcribed from documentation.
   cis_block_project_ssh_keys                = false

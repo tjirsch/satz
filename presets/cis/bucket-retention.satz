@@ -1,6 +1,6 @@
 // CIS 4.0 §2.3 / 5.0 §2.4 — retention on the log-export bucket.
 //
-//   use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
+//   use "presets/cis/bucket-retention.satz" when cis_bucket_retention
 //
 // Opt-in because it constrains EVERY bucket in the organisation, not only the
 // log sink's: once a duration list is set, a bucket may carry a retention

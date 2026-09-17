@@ -37,11 +37,11 @@ terraform {
 
 use "presets/estate-core.satz"
 
-use "presets/CIS-GCP-Foundation-4.0.satz"
+use "presets/cis/CIS-GCP-Foundation-4.0.satz"
 
-use "presets/cis-extensions/api-key-services-dry-run.satz"
-use "presets/cis-extensions/block-project-ssh-keys-dry-run.satz"
-use "presets/cis-extensions/bucket-retention-dry-run.satz"
-use "presets/cis-extensions/cloud-sql-dry-run.satz"
-use "presets/cis-extensions/cloud-sql-iam-and-deletion-protection-dry-run.satz"
-use "presets/cis-extensions/confidential-computing-dry-run.satz"
+use "presets/cis/api-key-services-dry-run.satz"
+use "presets/cis/block-project-ssh-keys-dry-run.satz"
+use "presets/cis/bucket-retention-dry-run.satz"
+use "presets/cis/cloud-sql-dry-run.satz"
+use "presets/cis/cloud-sql-iam-and-deletion-protection-dry-run.satz"
+use "presets/cis/confidential-computing-dry-run.satz"
