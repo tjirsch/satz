@@ -253,12 +253,19 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
         "google_folder.infra_folder",
     ),
     (
+        "presets/CIS-GCP-Foundation-4.0.satz",
+        "use_cis_baseline",
+        "once the estate runs as the service account — the CIS baseline, what the estate is\n\
+         // for and what everything below extends. Thirty organisation policies in one apply,\n\
+         // so it goes in on its own, with its plan read before it is applied.",
+        "",
+    ),
+    (
         "presets/cis-extensions/block-project-ssh-keys.satz",
         "cis_block_project_ssh_keys",
-        "once the CIS baseline is in — its extensions are gated on params the baseline\n\
-         // declares, so they do not compile without it. Each restricts what may be created;\n\
-         // two are on by default (DNS query logging, and the admin ports closed to the\n\
-         // internet).",
+        "the baseline's own extensions, gated on params it declares, so they do not compile\n\
+         // without it. Each restricts what may be created; two are on by default (DNS query\n\
+         // logging, and the admin ports closed to the internet).",
         "",
     ),
     ("presets/cis-extensions/shielded-vm.satz", "cis_require_shielded_vm", "", ""),
@@ -556,11 +563,6 @@ params {{
 use "presets/estate-core.satz"
 
 {menu}
-// The CIS baseline. Not a choice — it is what the estate is for — but it is also thirty
-// organisation policies, so it goes in deliberately, after the switch to the service
-// account, with its own plan read before it is applied.
-// use "presets/CIS-GCP-Foundation-4.0.satz"
-
 google_essential_contacts_contact {{
 }}
 
@@ -613,11 +615,6 @@ params {{
 // use "presets/estate-core.satz"
 
 {menu}
-// The CIS baseline. Not a choice — it is what the estate is for — but it is also thirty
-// organisation policies, so it goes in deliberately, after the switch to the service
-// account, with its own plan read before it is applied.
-// use "presets/CIS-GCP-Foundation-4.0.satz"
-
 google_essential_contacts_contact {{
 }}
 

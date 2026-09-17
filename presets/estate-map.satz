@@ -11,19 +11,23 @@
 // that gates a pack cannot live in the pack it gates, which is why they all live
 // here.
 //
-// Not a choice: the CIS baseline. The skeleton always uses it, and its opt-in
-// extensions are the baseline pack's own questions. Not on the map: the
-// per-project alert pack (the central one covers every project), Defender's plan
-// fragments (added by hand once Defender is on, per that pack's header), and the
-// MSP-hosted runner shape (the grant alone in the customer's estate, the runner in
-// the MSP's — wired by hand).
+// The CIS baseline is the first choice and barely one: the estate exists for it,
+// and its opt-in extensions are the baseline pack's own questions. It is asked
+// because it is thirty organisation policies in one apply, not because an estate
+// is expected to go without. Not on the map: the per-project alert pack (the
+// central one covers every project), Defender's plan fragments (added by hand once
+// Defender is on, per that pack's header), and the MSP-hosted runner shape (the
+// grant alone in the customer's estate, the runner in the MSP's — wired by hand).
 //
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.7"
+pack estate_map version "1.8"
 
 params {
+  // ---- what the estate is for ---------------------------------------------
+  use_cis_baseline = true
+
   // ---- the security-group model: exactly one ------------------------------
   security_model_s1 = true
   security_model_s2 = false
@@ -51,6 +55,13 @@ params {
   use_sentinel_network_logs = use_sentinel
   use_verification_runner   = false
   use_exemption_tag         = false
+}
+
+question use_cis_baseline {
+  prompt   = "Put the CIS GCP Foundation baseline — thirty organisation policies — in this estate?"
+  why      = "This is what the estate is FOR, not an addition to it: every CIS claim the compliance report makes rests on these policies, and the opt-in extensions below are gated on params this pack declares. It is asked rather than assumed because it is thirty policies at the organisation node in one apply, which goes in deliberately — after the state and the identity have moved to the service account, with its plan read first. Turning it off later takes every one of those policies off the organisation."
+  reversal = recreate
+  blast    = high
 }
 
 question oneof security_model {

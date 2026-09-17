@@ -60,7 +60,7 @@ params {
 use "presets/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 ```
 
-`use_cis_baseline` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. The param must be DECLARED somewhere — a `when` on a param nobody declares is an error, not `false`.
+`use_cis_baseline` is the gate: while it is falsy the pack contributes nothing — no resources, no params, no claims. It is declared by `estate_map`, and the estate's own binding wins.
 
 **Needs from outside the pack:**
 
