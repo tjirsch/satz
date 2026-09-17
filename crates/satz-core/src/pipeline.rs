@@ -1035,6 +1035,53 @@ impl Walk<'_> {
         Ok(truthy(self.genv.get(param)))
     }
 
+    /// The first resource-type map a `use`d pack declares itself, with its line.
+    ///
+    /// A pack is one of two shapes. Either it IS a resource map's content — a
+    /// bare list of labels, which the using estate keys with its own
+    /// `google_x { use … }` — or it declares its own types and is `use`d bare.
+    /// Only an identifier key can be a type: a bare label is a quoted string,
+    /// so a pack's labels are never mistaken for one here.
+    fn typed_map_in(&self, file: &satz::File) -> Option<(String, usize)> {
+        file.items.iter().find_map(|e| match e {
+            Entry::Map { key: Key::Ident(k), name: None, line, .. } => {
+                self.types.resolve(k).map(|rt| (rt.tf_type, *line))
+            }
+            _ => None,
+        })
+    }
+
+    /// `google_x { use "pack" }`, or `use "pack" as google_x`, where the pack
+    /// declares `google_x { … }` itself.
+    ///
+    /// The two shapes above are not interchangeable and this pairing fails
+    /// SILENTLY: as a map's content every name-less child is read as
+    /// `(label, body)`, so the pack's own type key becomes a label and the whole
+    /// pack collapses into one resource carrying its policies as attributes. The
+    /// emitter takes unknown attributes without complaint, so the first sign
+    /// would be a plan that destroys everything the pack used to emit.
+    fn refuse_typed_pack_as_map_content(
+        &self,
+        file: &satz::File,
+        use_path: &str,
+        file_name: &str,
+        line: usize,
+    ) -> Result<(), PipelineError> {
+        let Some((ty, at)) = self.typed_map_in(file) else {
+            return Ok(());
+        };
+        perr(
+            file_name,
+            line,
+            format!(
+                "use \"{path}\" as the content of a resource map: that pack declares `{ty} {{ … }}` itself ({path}:{at}), so here its type key is read as a LABEL and the pack collapses into one resource `{ty}.{ty}` carrying its contents as attributes. Write it bare at the top level: `use \"{path}\"`",
+                path = use_path,
+                ty = ty,
+                at = at
+            ),
+        )
+    }
+
     /// Load and parse a `use`d file, absorb its params/hcl/claims, and put it
     /// on the chain. A path already on the chain is a cycle, named in full.
     /// The caller pops the chain after descending.
@@ -1092,7 +1139,10 @@ impl Walk<'_> {
                         // `use "…" as key`: the pack's top-level entries are the
                         // CONTENT of a resource map keyed by `key`.
                         Some(k) => match self.types.resolve(k) {
-                            Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?,
+                            Some(rt) => {
+                                self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
+                                self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?
+                            }
                             None => {
                                 return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as"))
                             }
@@ -1183,7 +1233,10 @@ impl Walk<'_> {
                                 // `use "…" as <type>` inside a folder: the pack is the
                                 // content of that resource map, scoped to the folder
                                 Some(k) => match self.types.resolve(k) {
-                                    Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?,
+                                    Some(rt) => {
+                                        self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
+                                        self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?
+                                    }
                                     None => return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as")),
                                 },
                                 None => self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?,
@@ -1491,6 +1544,7 @@ impl Walk<'_> {
                                 }
                             }
                             let file = self.enter_use(use_path, file_name, *line)?;
+                            self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
                             // pack content lands in this same fragment-map scope;
                             // its own file identity is preserved via provenance.
                             self.resource_map(rt, None, &file.items, use_path, own, *line, path, pin)?;
@@ -1985,6 +2039,83 @@ google_org_policy_policy {
         assert_eq!(fe.claims[0].pack, "cis");
         assert_eq!(fe.claims[0].version, "1.2");
         assert_eq!(fe.claims[0].claims[0].control, "1.4");
+    }
+
+    /// The other half of the same absorption: an estate keys a bare-list pack
+    /// with its own resource map, and the questions that pack declares have to
+    /// reach the front end from there — they are what the interview asks and
+    /// what satz-studio lists. Pinned beside the claims case because the
+    /// nested arm is the one an estate actually uses.
+    #[test]
+    fn questions_are_absorbed_from_a_nested_use() {
+        let pack = r#"pack cis version "1.2"
+
+params { cis_dns_logging = true }
+
+question cis_dns_logging {
+  prompt   = "Log DNS queries?"
+  reversal = edit
+  blast    = low
+}
+
+"no_keys" { name = "iam.disableServiceAccountKeyCreation" }
+"#;
+        let estate = r#"estate t
+
+google_org_policy_policy {
+  use "cis.satz"
+}
+"#;
+        let fe = compile_estate("t.satz", estate, &Table, &|p| {
+            if p == "cis.satz" { Ok(pack.to_string()) } else { Err(format!("no load: {}", p)) }
+        })
+        .unwrap();
+        assert_eq!(fe.questions.len(), 1, "a nested `use` must absorb the pack's questions");
+        assert_eq!(fe.questions[0].pack, "cis");
+        assert_eq!(fe.questions[0].questions[0].subject, "cis_dns_logging");
+    }
+
+    /// A pack that declares its own resource type cannot also be a resource
+    /// map's content, in ANY of the three forms that make it one. The pairing
+    /// is silent otherwise: every name-less child of a map is read as
+    /// `(label, body)`, so the pack's type key becomes a label and 25 policies
+    /// collapse into one resource the emitter accepts without a word.
+    #[test]
+    fn a_typed_pack_used_as_map_content_is_refused_in_every_form() {
+        let pack = r#"pack cis version "2.14"
+
+google_org_policy_policy {
+  "no_keys" { name = "iam.disableServiceAccountKeyCreation" }
+}
+"#;
+        let load = |p: &str| {
+            if p == "cis.satz" { Ok(pack.to_string()) } else { Err(format!("no load: {}", p)) }
+        };
+        let forms = [
+            ("inside the map", "estate t\n\ngoogle_org_policy_policy {\n  use \"cis.satz\"\n}\n"),
+            ("as at the top level", "estate t\n\nuse \"cis.satz\" as google_org_policy_policy\n"),
+            (
+                "as inside a folder",
+                "estate t\n\ngoogle_folder {\n  use \"cis.satz\" as google_org_policy_policy\n}\n",
+            ),
+        ];
+        for (form, estate) in forms {
+            let Err(err) = compile_estate("t.satz", estate, &Table, &load) else {
+                panic!("{}: a self-typed pack as map content must be refused", form);
+            };
+            assert!(
+                err.msg.contains("declares `google_org_policy_policy { … }` itself"),
+                "{}: the refusal must name the pack's own typed map — got {}",
+                form,
+                err.msg
+            );
+            assert!(
+                err.msg.contains("Write it bare at the top level"),
+                "{}: the refusal must name the line to write instead — got {}",
+                form,
+                err.msg
+            );
+        }
     }
 
     /// A pack the `when` guard skipped was never pulled in, so its claims must
