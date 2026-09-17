@@ -109,6 +109,28 @@ This will install `satz` to `~/.local/bin` and automatically add it to your PATH
 > curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tjirsch/satz/releases/latest/download/satz-installer.sh | CARGO_DIST_FORCE_INSTALL_DIR=/your/custom/path sh
 > ```
 
+### On Windows
+
+satz builds for Windows (x86_64 and ARM64) and installs with PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/tjirsch/satz/releases/latest/download/satz-installer.ps1 | iex"
+```
+
+It installs `satz.exe` to `%USERPROFILE%\.local\bin` and adds that directory to your user
+PATH. The PowerShell installer does not verify the archive it downloads; check it against
+the release's `sha256.sum` with `Get-FileHash <file> -Algorithm SHA256`.
+
+What differs on Windows:
+
+- **Settings** are read from `%USERPROFILE%\.config\satz\satz.toml`.
+- **`satz self-update`** refuses and names the PowerShell command above; `--check-only` works.
+- **`--out -`** writes a report to stdout; a `/dev/…` path is refused.
+- **An action** whose `run` is a script (`.sh`) is refused before it runs, naming the
+  `bash …` line to run it by hand from Git Bash or WSL; an `.exe`, `.cmd` or `.bat` runs.
+- **`generate-migration`** writes a bash script.
+- **Line endings:** a CRLF checkout compiles, formats and compares like its LF twin.
+
 ### From Source
 
 Install directly with cargo:
@@ -121,7 +143,7 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below), before the command or after it. `satz --help` lists them; a command's own help lists only that command's options. `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
-Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out /dev/stdout | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
+Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out - | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
 
 **Estate**
 
@@ -271,9 +293,9 @@ at all — its author found out by opening a pull request, or never. `review-pac
 bar as a command.
 
 ```bash
-satz review-pack my-pack.satz --format text --out /dev/stdout
+satz review-pack my-pack.satz --format text --out -
 satz review-pack my-pack.satz --format json --out review.json      # the findings as data
-satz review-pack my-pack.satz --against C0example.satz --format text --out /dev/stdout
+satz review-pack my-pack.satz --against C0example.satz --format text --out -
 ```
 
 It checks, in the order a pack fails them: it **parses**; it is **formatted** (`satz fmt
@@ -907,8 +929,8 @@ One table per pack, opened by that pack's own description, in the estate's order
    ```
    `--format` and `--out` are both required and the command writes exactly one file
    ([ADR 0021](docs/adr/0021-one-format-one-file-one-artefact.md)); the line naming the
-   path goes to stderr, so `--out /dev/stdout` is a clean pipe. `questions` has no `pdf`
-   form — that belongs to `report-compliance` and `report-organizational-policies`.
+   path goes to stderr, so `--out -` is a clean pipe. `--format pdf` writes the same
+   sheet typeset.
 
 Because the estate is the answer record ([ADR 0006](docs/adr/0006-an-answer-is-a-param-the-estate-binds.md)),
 the sheet is always derived, never maintained — it cannot drift from what will actually
@@ -922,7 +944,7 @@ IDs with this project's own paraphrases; preset packs declare **claims** inline
 these resources". `require` is the goal view over both:
 
 ```bash
-satz require cis-gcp-4.0 C0example.satz --format text --out /dev/stdout
+satz require cis-gcp-4.0 C0example.satz --format text --out -
 #   ✓ 2.2  Sinks for all log entries    — google_logging_organization_sink.…
 #   ◐ 2.3  Retention on the log bucket  — open duty: validate-then-lock
 #   ✗ 2.11 Storage IAM change alerts    — unmet. Provides: monitoring/organization-cis-log-alerts-central
@@ -934,7 +956,7 @@ each command accepting the subset it can produce, listing exactly that subset in
 `require --format json` gives the same verdicts as data:
 
 ```bash
-satz require cis-gcp-4.0 C0example.satz --format json --out /dev/stdout | jq '.summary'
+satz require cis-gcp-4.0 C0example.satz --format json --out - | jq '.summary'
 #   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 14, "broken": 0, "contradicted": 0, … }
 ```
 
@@ -949,7 +971,7 @@ as that evidence; `require iso27001-2022` folds those verdicts rather than askin
 to claim a second framework:
 
 ```bash
-satz require iso27001-2022 C0example.satz --format text --out /dev/stdout
+satz require iso27001-2022 C0example.satz --format text --out -
 #   ✓ A.8.3  Information access restriction  — google_org_policy_policy.storage_publicAccessPrevention, …
 #   ◐ A.5.3  Segregation of duties           — open duties: role-matrix-reviewed
 #   ○ A.5.1  Policies for information security — organizational control (no IaC witness)
@@ -1049,7 +1071,7 @@ from any working directory:
 
 ```bash
 satz transpile C0example.satz --config ~/estates/acme
-satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme --format text --out /dev/stdout
+satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme --format text --out -
 satz plan  --config ~/estates/acme
 satz apply --config ~/estates/acme
 ```
@@ -1289,7 +1311,7 @@ Presets are read-only building blocks — per-org values belong in the estate's 
 edited locally and prints how to migrate them:
 
 ```bash
-satz check-presets C0example.satz --format text --out /dev/stdout   # compares against upstream (downloads a pristine copy)
+satz check-presets C0example.satz --format text --out -   # compares against upstream (downloads a pristine copy)
 satz check-presets C0example.satz --pristine-dir /path/to/pristine/presets --format text --out drift.txt
 ```
 

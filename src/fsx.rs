@@ -21,7 +21,9 @@
 //! disallows `std::fs::write` outside this module, so no non-test code writes a
 //! file except through it.
 
-use std::fs::{DirEntry, File, Permissions};
+#[cfg(unix)]
+use std::fs::Permissions;
+use std::fs::{DirEntry, File};
 use std::io;
 use std::path::Path;
 
@@ -31,6 +33,40 @@ fn ctx(action: &str, path: &Path, e: io::Error) -> io::Error {
         e.kind(),
         format!("failed to {action} '{}': {e}", path.display()),
     )
+}
+
+/// The canonical absolute path, without the `\\?\` verbatim prefix Windows puts on it —
+/// that prefix reached output (`satz_open`), and inside a Satz string its `\C` of `C:\` is
+/// an escape, so a `use` of it did not parse. Identical to `std::fs::canonicalize` elsewhere.
+pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<std::path::PathBuf> {
+    let p = std::fs::canonicalize(path.as_ref())?;
+    Ok(std::path::PathBuf::from(without_verbatim_prefix(&p.to_string_lossy())))
+}
+
+/// `\\?\C:\x` → `C:\x`, `\\?\UNC\host\share` → `\\host\share`; anything else unchanged.
+fn without_verbatim_prefix(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{}", rest);
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_string(),
+        _ => s.to_string(),
+    }
+}
+
+/// A path as Satz text writes it: `/` between components on every platform. A `\` in a
+/// Satz string is an escape, and Windows accepts `/`. On Unix a `\` is part of a name
+/// and stays.
+pub fn slash(path: &Path) -> String {
+    to_slash(&path.to_string_lossy(), cfg!(windows))
+}
+
+fn to_slash(s: &str, windows: bool) -> String {
+    if windows {
+        s.replace('\\', "/")
+    } else {
+        s.to_string()
+    }
 }
 
 /// Read a file. Satz source comes back with LF line endings, whatever the checkout
@@ -136,6 +172,8 @@ pub fn create_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
     File::create(path).map_err(|e| ctx("create file", path, e))
 }
 
+/// Unix only: every caller sets an executable bit, which Windows does not have.
+#[cfg(unix)]
 pub fn set_permissions<P: AsRef<Path>>(path: P, perm: Permissions) -> io::Result<()> {
     let path = path.as_ref();
     std::fs::set_permissions(path, perm).map_err(|e| ctx("set permissions on", path, e))
@@ -176,6 +214,15 @@ mod tests {
         std::fs::write(dir.join("notes.md"), "a\r\nb\r\n").unwrap();
         assert_eq!(read_to_string(dir.join("e.satz")).unwrap(), "estate x\nparams {\n}\n");
         assert_eq!(read_to_string(dir.join("notes.md")).unwrap(), "a\r\nb\r\n");
+    }
+
+    #[test]
+    fn a_windows_path_loses_its_verbatim_prefix_and_writes_slashes() {
+        assert_eq!(without_verbatim_prefix(r"\\?\C:\estates\acme\pack.satz"), r"C:\estates\acme\pack.satz");
+        assert_eq!(without_verbatim_prefix(r"\\?\UNC\files\share\pack.satz"), r"\\files\share\pack.satz");
+        assert_eq!(without_verbatim_prefix("/home/op/pack.satz"), "/home/op/pack.satz");
+        assert_eq!(to_slash(r"C:\estates\acme\pack.satz", true), "C:/estates/acme/pack.satz");
+        assert_eq!(to_slash(r"odd\name.satz", false), r"odd\name.satz");
     }
 
     #[test]

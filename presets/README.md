@@ -34,7 +34,7 @@ back as `"import-id"`. Pack headers that mention adoption mean that command.
 
 ---
 
-**Writing one:** `satz review-pack <file> --format text --out /dev/stdout` judges a pack
+**Writing one:** `satz review-pack <file> --format text --out -` judges a pack
 against everything on this page — it parses, it is formatted, its header opens with a
 sentence the index can print, its version has a changelog row below, it declares no
 membership, it runs no legacy constraint beside its managed replacement, every resource

@@ -964,7 +964,7 @@ pub async fn bootstrap(
     // component — defeating the absolute paths bootstrap explicitly accepts — and
     // panicked outright on a path ending in "..".
     let transpile_target =
-        std::fs::canonicalize(&config_file).unwrap_or_else(|_| config_file.clone());
+        crate::fsx::canonicalize(&config_file).unwrap_or_else(|_| config_file.clone());
 
     let status = cmd
         .arg("transpile")

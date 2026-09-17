@@ -177,9 +177,24 @@ fn check_executable(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Windows runs an executable, not a script: a `.sh` spawned directly fails with an OS
+/// error that names neither. Refused before the spawn, naming how to run it by hand.
 #[cfg(not(unix))]
-fn check_executable(_path: &Path) -> Result<(), String> {
-    Ok(())
+fn check_executable(path: &Path) -> Result<(), String> {
+    windows_runnable(path)
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn windows_runnable(path: &Path) -> Result<(), String> {
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    if matches!(ext.as_deref(), Some("exe" | "cmd" | "bat" | "com")) {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is not a Windows executable, and satz runs an action's `run` directly — run it in a shell that can, e.g. `bash {}` from Git Bash or WSL",
+        path.display(),
+        path.display()
+    ))
 }
 
 /// Render one argument for display so a printed command line can be pasted back into
@@ -347,6 +362,14 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_windows_a_script_is_refused_and_an_executable_is_not() {
+        let err = windows_runnable(Path::new("presets/scc/scc-enable-all.sh")).unwrap_err();
+        assert!(err.contains("not a Windows executable") && err.contains("bash presets/scc/scc-enable-all.sh"), "{err}");
+        assert!(windows_runnable(Path::new("tools/enable.EXE")).is_ok());
+        assert!(windows_runnable(Path::new("tools/enable.cmd")).is_ok());
+    }
 
     fn action(name: &str, file: &str, run: &str, from_pack: bool) -> ResolvedAction {
         ResolvedAction {

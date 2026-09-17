@@ -909,7 +909,7 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
 fn is_pristine_pack(file: &str, presets_dir: Option<&std::path::Path>) -> bool {
     let Some(dir) = presets_dir else { return false };
     let f = std::path::Path::new(file);
-    let under = match (std::fs::canonicalize(f), std::fs::canonicalize(dir)) {
+    let under = match (crate::fsx::canonicalize(f), crate::fsx::canonicalize(dir)) {
         (Ok(a), Ok(b)) => a.starts_with(&b),
         _ => f.starts_with(dir),
     };

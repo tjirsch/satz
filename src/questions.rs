@@ -261,7 +261,7 @@ pub(crate) fn require_complete(input: &Path, runtime: &ToolConfig, action: &str)
         .collect();
     Err(format!(
         "{} refused: {} question(s) unanswered — {}. Every question must be answered before the \
-         estate touches an organisation. `satz questions {} --unanswered --format text --out /dev/stdout` \
+         estate touches an organisation. `satz questions {} --unanswered --format text --out -` \
          lists them with their \
          defaults; write the answer (or the default) into the estate's params.",
         action,

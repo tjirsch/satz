@@ -847,13 +847,9 @@ impl SatzMcp {
     }
 
     fn confine(&self, p: PathBuf) -> Result<PathBuf, CallToolResult> {
-        let resolved = p
-            .canonicalize()
+        let resolved = crate::fsx::canonicalize(&p)
             .map_err(|e| refused(format!("{}: {}", p.display(), e)))?;
-        let root = self
-            .ctx
-            .root
-            .canonicalize()
+        let root = crate::fsx::canonicalize(&self.ctx.root)
             .map_err(|e| refused(format!("server root {}: {}", self.ctx.root.display(), e)))?;
         if !resolved.starts_with(&root) {
             return Err(refused(format!(

@@ -3,7 +3,7 @@
 //! A reporting command takes two arguments and no more: `--format`, the rendering,
 //! and `--out`, the file it lands in. One invocation produces exactly one artefact
 //! at exactly one named path, and the console carries nothing but the line saying
-//! where it went — on stderr, so `--format json --out /dev/stdout | jq` is a clean
+//! where it went — on stderr, so `--format json --out - | jq` is a clean
 //! pipe. There is no format default, no second destination flag that means "also
 //! write", and no rendering nobody asked for.
 //!
@@ -102,6 +102,15 @@ pub(crate) fn formats(allowed: &'static [OutFormat]) -> impl clap::builder::Type
 ///
 /// The line saying where the artefact went names the resulting path.
 pub(crate) fn target(out: PathBuf, format: OutFormat) -> Result<PathBuf, String> {
+    // `-` is stdout, on every platform
+    if out.as_os_str() == "-" {
+        return Ok(out);
+    }
+    // Windows has no `/dev`: the path would be a file named `\dev\stdout.json` on the
+    // current drive
+    if cfg!(windows) && out.to_string_lossy().starts_with("/dev/") {
+        return Err(format!("--out {}: Windows has no /dev — `--out -` writes to stdout", out.display()));
+    }
     if std::fs::symlink_metadata(&out).is_ok_and(|m| !m.is_file()) {
         return Ok(out);
     }
@@ -131,6 +140,10 @@ pub(crate) fn target(out: PathBuf, format: OutFormat) -> Result<PathBuf, String>
 /// stderr. The parent directory is created: a report named into a directory that
 /// does not exist yet is a path the caller meant, not a mistake.
 pub(crate) fn write_report(path: &Path, bytes: &[u8], what: &str) -> Result<(), BoxErr> {
+    if to_stdout(path, bytes)? {
+        eprintln!("wrote stdout — {}", what);
+        return Ok(());
+    }
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             crate::fsx::create_dir_all(dir)?;
@@ -139,6 +152,18 @@ pub(crate) fn write_report(path: &Path, bytes: &[u8], what: &str) -> Result<(), 
     crate::fsx::write(path, bytes)?;
     eprintln!("wrote {} — {}", path.display(), what);
     Ok(())
+}
+
+/// `--out -`: the bytes go to stdout. `Ok(false)` for any other path.
+pub(crate) fn to_stdout(path: &Path, bytes: &[u8]) -> Result<bool, BoxErr> {
+    if path.as_os_str() != "-" {
+        return Ok(false);
+    }
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    out.write_all(bytes)?;
+    out.flush()?;
+    Ok(true)
 }
 
 /// A PDF from markdown, typeset by satz itself (`src/pdf.rs`). It used to shell out
@@ -214,6 +239,12 @@ mod tests {
         let err = t("report.md", OutFormat::Pdf).unwrap_err();
         assert!(err.contains("names a markdown file") && err.contains("--format pdf"), "{err}");
         assert!(err.contains(".pdf or with no extension"), "{err}");
+    }
+
+    #[test]
+    fn a_dash_is_stdout() {
+        assert_eq!(target(PathBuf::from("-"), OutFormat::Json).unwrap(), PathBuf::from("-"));
+        assert_eq!(target(PathBuf::from("-"), OutFormat::Pdf).unwrap(), PathBuf::from("-"));
     }
 
     #[cfg(unix)]

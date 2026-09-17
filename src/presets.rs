@@ -171,7 +171,7 @@ fn used_preset_files(
     presets_dir: &str,
     include_dirs: &[String],
 ) -> Result<BTreeSet<PathBuf>, BoxErr> {
-    let canon_presets = std::fs::canonicalize(presets_dir)
+    let canon_presets = crate::fsx::canonicalize(presets_dir)
         .unwrap_or_else(|_| PathBuf::from(presets_dir));
     let mut used = BTreeSet::new();
 
@@ -184,7 +184,7 @@ fn used_preset_files(
     let mut queue = vec![input.to_path_buf()];
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
     while let Some(path) = queue.pop() {
-        let canon = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let canon = crate::fsx::canonicalize(&path).unwrap_or_else(|_| path.clone());
         if !seen.insert(canon.clone()) {
             continue;
         }
@@ -1726,7 +1726,7 @@ fn rewrite_estate_uses(
     fork_rel: &Path,
 ) -> Option<String> {
     let est_dir = estate.parent().unwrap_or(Path::new("."));
-    let canon_target = std::fs::canonicalize(target).ok()?;
+    let canon_target = crate::fsx::canonicalize(target).ok()?;
     let fork_name = fork_rel.file_name()?.to_string_lossy().to_string();
     let mut out = String::with_capacity(text.len());
     let mut hit = false;
@@ -1738,7 +1738,7 @@ fn rewrite_estate_uses(
                 let mut candidates = vec![est_dir.join(written)];
                 candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(written)));
                 if candidates.iter().any(|c| {
-                    std::fs::canonicalize(c).map(|cc| cc == canon_target).unwrap_or(false)
+                    crate::fsx::canonicalize(c).map(|cc| cc == canon_target).unwrap_or(false)
                 }) {
                     let new_written = match written.rfind('/') {
                         Some(i) => format!("{}/{}", &written[..i], fork_name),
