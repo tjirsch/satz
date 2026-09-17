@@ -968,8 +968,17 @@ grep -q 'dry_run_spec' "$root/presets/cis/cloud-sql-dry-run.satz" \
 # row. The shell loop that checked the last one lived here; the tool knows both
 # halves, so its message can name the line and `cargo test` runs it too.
 step "prowler: the invocation this estate needs, printed and never run"
-"$satz" --config . prowler smoke.satz > tmp/prowler-plan.txt 2>&1 \
+"$satz" --config . prowler smoke.satz > tmp/prowler-plan.txt 2> tmp/prowler-notes.txt \
   || fail "satz prowler failed on the smoke estate"
+# stdout is the command and nothing else: it gets pasted into a shell or piped to a
+# clipboard, so a heading above it would have to be edited out every time.
+[ "$(wc -l < tmp/prowler-plan.txt)" -eq 1 ] \
+  || fail "satz prowler printed more than the command line:\n$(cat tmp/prowler-plan.txt)"
+grep -q '^prowler gcp ' tmp/prowler-plan.txt \
+  || fail "stdout does not start with the invocation:\n$(cat tmp/prowler-plan.txt)"
+# what the line cannot say rides on stderr
+grep -q '^then: satz report-compliance ' tmp/prowler-notes.txt \
+  || fail "the fold-back command is not named on stderr:\n$(cat tmp/prowler-notes.txt)"
 grep -q 'prowler gcp --organization-id' tmp/prowler-plan.txt || fail "no invocation printed"
 grep -q -- '--compliance cis_4.0_gcp cis_5.0_gcp' tmp/prowler-plan.txt \
   || fail "the frameworks the estate CLAIMS did not reach --compliance"

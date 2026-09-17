@@ -165,57 +165,37 @@ fn shell_join(argv: &[String]) -> String {
 
 /// The plan for a terminal: the command first, because that is what the reader came for.
 pub(crate) fn render(p: &ProwlerPlan) -> String {
-    let mut out = String::from("\nRun Prowler against this estate:\n\n");
-    out.push_str(&format!("  {}\n\n", p.command));
-    out.push_str("Then fold the export back in:\n\n");
-    out.push_str(&format!("  {}\n\n", p.then));
+    format!("{}\n", p.command)
+}
 
-    out.push_str("Why these arguments:\n");
-    match &p.organization_id {
-        Some(o) => out.push_str(&format!(
-            "  --organization-id {}   the organisation this estate declares\n",
-            o
-        )),
-        None => out.push_str(
-            "  (no --organization-id)   this estate declares no organisation; Prowler will scan what the credential reaches\n",
-        ),
+/// What the command line does not say, for stderr — so stdout stays a line that runs.
+///
+/// Only what would otherwise be a silent loss. The argument-by-argument rationale this
+/// used to print belongs in `docs/workflows.md`, and `--format json` carries every field
+/// for an agent; what cannot be left out is a scan that turns out to be narrower or
+/// wider than the estate, and what to run once it has finished.
+pub(crate) fn notes(p: &ProwlerPlan) -> String {
+    let mut out = String::new();
+    if p.organization_id.is_none() {
+        out.push_str(
+            "note: this estate declares no organisation, so the scan reaches whatever the credential does\n",
+        );
     }
     if p.projects.is_empty() {
         out.push_str(
-            "  (no --project-ids)   this estate emits no project with a literal id — a project id built from a param cannot be resolved here\n",
+            "note: no --project-ids — this estate emits no project with a literal id (one built from a param cannot be resolved here), so the scan is not narrowed\n",
         );
-    } else {
-        out.push_str(&format!(
-            "  --project-ids   the {} project(s) this estate emits, so the scan does not walk the whole organisation\n",
-            p.projects.len()
-        ));
     }
     if p.compliance.is_empty() {
-        out.push_str(
-            "  (no --compliance)   this estate claims no framework Prowler has; every check runs\n",
-        );
-    } else {
-        out.push_str(&format!(
-            "  --compliance {}   the framework(s) this estate CLAIMS — this also FILTERS which checks run\n",
-            p.compliance.join(" ")
-        ));
+        out.push_str("note: no --compliance — this estate claims no framework Prowler has, so every check runs\n");
     }
-    out.push_str("  --output-formats json-ocsf   the only shape `report-compliance --prowler` reads\n");
-    out.push_str(&format!(
-        "  --output-directory / --output-filename   makes the path deterministic: {}\n",
-        p.output_path
-    ));
-
     if !p.unmapped_frameworks.is_empty() {
         out.push_str(&format!(
-            "\nClaimed here, and Prowler has no framework for it: {}.\nThose controls are not in this scan; `require` and `report-compliance` still judge them.\n",
+            "note: claimed here, and Prowler has no framework for it: {} — those controls are not in this scan; `require` and `report-compliance` still judge them\n",
             p.unmapped_frameworks.join(", ")
         ));
     }
-
-    out.push_str(
-        "\nsatz does not run Prowler: the scan spends API quota in every project above, so it is yours to start.\nThe credential is yours too — Prowler reads as whoever is logged in, not as the estate's service account.\n",
-    );
+    out.push_str(&format!("then: {}\n", p.then));
     out
 }
 
@@ -309,6 +289,13 @@ mod tests {
         );
         assert_eq!(p.output_path, "evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json");
         assert!(p.then.contains(&p.output_path));
+
+        // The whole of stdout is the line to run: `satz prowler <estate>` is pasted
+        // into a shell or piped to a clipboard, so a heading or a blank line above it
+        // would have to be edited out every time.
+        assert_eq!(render(&p), format!("{}\n", p.command));
+        // Nothing surprising about this plan, so the only note is what to run after.
+        assert_eq!(notes(&p), format!("then: {}\n", p.then));
     }
 
     #[test]
@@ -319,9 +306,13 @@ mod tests {
         assert!(p.compliance.is_empty());
         assert_eq!(p.unmapped_frameworks, vec!["iso27001 2022"]);
         assert!(!p.command.contains("--compliance"));
-        let text = render(&p);
-        assert!(text.contains("Prowler has no framework for it: iso27001 2022"), "{text}");
-        assert!(text.contains("every check runs"), "{text}");
+        // The warning cannot ride on stdout, which is the command line, so it is a
+        // note — dropping it would leave a scan that silently covers less than the
+        // estate claims.
+        let notes = notes(&p);
+        assert!(notes.contains("Prowler has no framework for it: iso27001 2022"), "{notes}");
+        assert!(notes.contains("every check runs"), "{notes}");
+        assert_eq!(render(&p), format!("{}\n", p.command));
     }
 
     #[test]
@@ -333,7 +324,8 @@ mod tests {
         let p = plan(&m, &[], None, "2026-09-13");
         assert!(p.projects.is_empty());
         assert!(!p.command.contains("--project-ids"));
-        assert!(render(&p).contains("cannot be resolved here"));
+        assert!(notes(&p).contains("cannot be resolved here"));
+        assert!(!render(&p).contains("cannot be resolved here"), "stdout stays the command line");
     }
 
     #[test]

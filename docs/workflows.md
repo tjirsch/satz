@@ -533,7 +533,10 @@ at this estate:
 satz prowler C0example.satz
 ```
 
-It prints a ready-to-paste command line and the command to run afterwards. Every argument
+Stdout is the command line and nothing else — paste it, or pipe it: `satz prowler
+C0example.satz | pbcopy`. What the line cannot say goes to stderr: the command to run
+afterwards, a scan that is not narrowed to projects because no project id resolved, and a
+framework this estate claims that Prowler has no equivalent of. Every argument
 comes from what the estate declares — the organisation id, the project ids, and the
 frameworks its claims name. A framework satz ships a catalog for but Prowler has no
 equivalent of is NAMED as unmapped rather than mapped to something that looks close: a
