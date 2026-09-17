@@ -887,6 +887,7 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 - GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/workflows.md](docs/workflows.md#when-upstream-stops-answering-the-github-quota).
 - Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. A changed pack the estate deploys changes the organization; `merge-presets` reports that change before any `tofu plan`. `--force` overwrites anyway, listing each in-use pack as it does.
 - `X.local.*` files have no upstream counterpart, so nothing here can touch them.
+- A pack the library **moved** is carried over here and by `merge-presets`: a `use` of the old path is refused naming the new one, and one run repoints the estate's `use` lines (a commented line stays commented, a `when <gate>` stays), moves any `.local.satz` fork and `.diff.satz` delta, installs the upstream copy at the new path and retires the old pristine copy. A pack that only moved emits what it emitted before, so the generated HCL is unchanged — see [docs/workflows.md](docs/workflows.md#when-a-release-moves-a-pack).
 
 ### The decisions sheet (`questions --format markdown`)
 
