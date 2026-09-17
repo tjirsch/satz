@@ -1685,7 +1685,12 @@ fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
     let mut block = String::new();
     let mut nested = src.clone();
     for (path, gate, phase, at) in crate::template::PACK_LINES {
-        if src.contains(&format!("use \"{}\"", path)) {
+        // The estate may hold this pack under its pristine name or under a FORK of
+        // it — a fork is that pack, with the estate's own content. Offering a line
+        // for the pristine name beside a fork in use invites somebody to uncomment
+        // it and declare the same resources twice.
+        let fork = crate::fsx::slash(&fork_sibling(Path::new(path)));
+        if src.contains(&format!("use \"{}\"", path)) || src.contains(&format!("use \"{}\"", fork)) {
             continue;
         }
         // the phase text carries its own `//` continuations; the first line is the summary
@@ -1937,57 +1942,44 @@ fn migrate_moved_packs(
             continue;
         }
 
-        // A pristine copy is upstream-owned. Install the upstream file at the new
-        // path, then retire the old one — unless it was edited by hand, in which
-        // case the bytes are preserved as an explicit fork rather than dropped.
+        // A pristine copy MOVES, content and version untouched. A move must not
+        // change what the estate deploys: whether the pack that arrived upstream
+        // should replace this copy is the same question `get-presets` and
+        // `merge-presets` already answer for a pack whose upstream changed, and
+        // they answer it in this same run, after this.
+        //
+        // The exception is a pack the release RESHAPED. There the old copy is not
+        // a version of the new file, it is the shape the new one replaced — an
+        // estate carrying it forward would keep the very shape this release
+        // refuses. It is retired and the upstream file installed; the reshape
+        // moves no addresses, so the estate still emits what it emitted.
         let up_new = pristine.join(&new_rel);
-        let old_text = crate::fsx::read_to_string(p)?;
-        let edited = match crate::fsx::read_to_string(&up_new) {
-            Ok(up) => {
-                up != old_text
-                    && match (satz_core::satz::parse(&old_text), satz_core::satz::parse(&up)) {
-                        (Ok(a), Ok(b)) => satz_core::satz::canonical(&a) != satz_core::satz::canonical(&b),
-                        _ => true,
-                    }
-            }
-            // upstream has no file there: nothing to install, so the copy moves
-            Err(_) => {
-                said.push(format!("moved   presets/{} -> {} (upstream has no copy there)", name, to));
+        let upstream = crate::fsx::read_to_string(&up_new).ok();
+        match (moved.reshaped, &upstream) {
+            (true, Some(up)) => {
+                said.push(format!("retired presets/{} — reshaped upstream, installed as {}", name, to));
                 if !report_only {
                     if let Some(d) = new_path.parent() {
                         crate::fsx::create_dir_all(d)?;
                     }
-                    crate::fsx::write_verbatim(&new_path, old_text.as_bytes())?;
+                    if !new_path.exists() {
+                        crate::fsx::write_verbatim(&new_path, up.as_bytes())?;
+                    }
                     crate::fsx::remove_file(p)?;
                 }
-                continue;
             }
-        };
-
-        if !report_only {
-            if let Some(d) = new_path.parent() {
-                crate::fsx::create_dir_all(d)?;
-            }
-            if !new_path.exists() {
-                crate::fsx::write_verbatim(&new_path, crate::fsx::read_to_string(&up_new)?.as_bytes())?;
-            }
-        }
-        if edited && !moved.reshaped {
-            let fork = fork_sibling(&new_rel);
-            said.push(format!(
-                "forked  presets/{} -> presets/{} (it differs from upstream, so the edit is kept as a fork rather than retired)",
-                name,
-                crate::fsx::slash(&fork)
-            ));
-            if !report_only {
-                crate::fsx::write_verbatim(local_base.join(&fork), old_text.as_bytes())?;
-                crate::fsx::remove_file(p)?;
-            }
-        } else {
-            let why = if edited { " (upstream reshaped it in this release, so the old copy is stale)" } else { "" };
-            said.push(format!("retired presets/{}{}", name, why));
-            if !report_only {
-                crate::fsx::remove_file(p)?;
+            _ => {
+                let why = if moved.reshaped { " (upstream has no copy there)" } else { "" };
+                said.push(format!("moved   presets/{} -> {}{}", name, to, why));
+                if !report_only {
+                    if let Some(d) = new_path.parent() {
+                        crate::fsx::create_dir_all(d)?;
+                    }
+                    if !new_path.exists() {
+                        crate::fsx::write_verbatim(&new_path, crate::fsx::read_to_string(p)?.as_bytes())?;
+                    }
+                    crate::fsx::remove_file(p)?;
+                }
             }
         }
     }

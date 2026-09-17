@@ -512,18 +512,29 @@ pub const MOVED_PACKS: &[MovedPack] = &[
 ];
 
 /// Where a `use` path lives now, if the library moved it.
+///
+/// A directory entry carries everything under it. An exact entry carries the
+/// pack's own siblings too — `<stem>.local.satz`, the estate's fork, and
+/// `<stem>.diff.satz`, its adoption delta — because a fork left behind at the old
+/// path is the worst case of all: nothing would refuse it, and the estate would
+/// compile that copy forever.
 pub fn moved_to(use_path: &str) -> Option<(String, &'static MovedPack)> {
     MOVED_PACKS.iter().find_map(|m| {
         if let Some(rest) = m.from.strip_suffix('/') {
-            use_path
+            return use_path
                 .strip_prefix(m.from)
                 .filter(|_| !rest.is_empty())
-                .map(|tail| (format!("{}{}", m.to, tail), m))
-        } else if use_path == m.from {
-            Some((m.to.to_string(), m))
-        } else {
-            None
+                .map(|tail| (format!("{}{}", m.to, tail), m));
         }
+        if use_path == m.from {
+            return Some((m.to.to_string(), m));
+        }
+        let from_stem = m.from.strip_suffix(".satz")?;
+        let to_stem = m.to.strip_suffix(".satz")?;
+        let sibling = use_path
+            .strip_prefix(from_stem)
+            .filter(|s| s.starts_with('.') && s.ends_with(".satz"))?;
+        Some((format!("{}{}", to_stem, sibling), m))
     })
 }
 
@@ -2250,12 +2261,17 @@ google_org_policy_policy {
             panic!("a fork under a moved directory must be refused");
         };
         assert!(err.msg.contains("presets/cis/cmek.local.satz"), "{}", err.msg);
-        // The baseline's exact-path entry resolves as well, and says why the shape
-        // changed with the move.
-        assert_eq!(
-            moved_to("presets/CIS-GCP-Foundation-4.0.satz").map(|(to, _)| to),
-            Some("presets/cis/CIS-GCP-Foundation-4.0.satz".to_string())
-        );
+        // The baseline's exact-path entry resolves as well, and carries the fork
+        // and the adoption delta beside it: an estate that forked the baseline
+        // points at `…local.satz`, and a fork left behind at the old path would
+        // compile forever with nothing to refuse it.
+        for (from, to) in [
+            ("presets/CIS-GCP-Foundation-4.0.satz", "presets/cis/CIS-GCP-Foundation-4.0.satz"),
+            ("presets/CIS-GCP-Foundation-4.0.local.satz", "presets/cis/CIS-GCP-Foundation-4.0.local.satz"),
+            ("presets/CIS-GCP-Foundation-4.0.diff.satz", "presets/cis/CIS-GCP-Foundation-4.0.diff.satz"),
+        ] {
+            assert_eq!(moved_to(from).map(|(t, _)| t), Some(to.to_string()), "{}", from);
+        }
         assert!(moved_to("presets/scc/scc-export.satz").is_none(), "a pack that did not move is not rewritten");
     }
 
