@@ -303,3 +303,12 @@ jobs:
     with:
       plan: ${{ needs.plan.outputs.val }}
     secrets: inherit
+
+  custom-prune-artifacts:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/prune-artifacts.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
