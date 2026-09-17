@@ -18,6 +18,13 @@ hosting = "github"
 install-updater = false
 post-announce-jobs = ["./attach-checksum", "./prune-artifacts"]
 
+# The Release workflow grants `contents: write` and a called workflow can only NARROW
+# what its caller granted, so prune-artifacts asking for `actions: write` on its own
+# failed the whole run before a job started. The grant has to come from the caller, and
+# in a generated file that means from here.
+[dist.github-custom-job-permissions.prune-artifacts]
+actions = "write"
+
 # ARM64 Windows builds natively: cargo-dist's default cross-build (cargo-xwin in a Linux
 # container) assembles psm's ARM64 source with clang-cl, which rejects it
 [dist.github-custom-runners.aarch64-pc-windows-msvc]
