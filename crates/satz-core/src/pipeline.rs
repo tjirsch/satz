@@ -476,6 +476,85 @@ pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<Pipel
     })
 }
 
+/// A pack the library MOVED, and where it lives now. `from` is either an exact
+/// path or a directory prefix ending in `/`, which covers the forks and adoption
+/// deltas beside it (`<x>.local.satz`, `<x>.diff.satz`) without a row each.
+///
+/// The table is public because `merge-presets` repoints estate lines from exactly
+/// these entries: one table, so the migration and the refusal cannot disagree
+/// about where a pack went. Like a renamed param, an entry stays for one release
+/// line and is removed once the fleet is past it.
+#[derive(Debug)]
+pub struct MovedPack {
+    pub from: &'static str,
+    pub to: &'static str,
+    pub why: &'static str,
+    /// The file at `to` is not a copy of the one at `from` — the same release
+    /// reshaped it, so an old copy that differs is stale rather than a fork worth
+    /// keeping. `merge-presets` reads this to decide between retiring a pristine
+    /// copy and preserving it as an explicit fork.
+    pub reshaped: bool,
+}
+
+pub const MOVED_PACKS: &[MovedPack] = &[
+    MovedPack {
+        from: "presets/cis-extensions/",
+        to: "presets/cis/",
+        why: "the CIS packs live in one folder, the baseline beside the extensions it gates",
+        reshaped: false,
+    },
+    MovedPack {
+        from: "presets/CIS-GCP-Foundation-4.0.satz",
+        to: "presets/cis/CIS-GCP-Foundation-4.0.satz",
+        why: "the CIS packs live in one folder, and the baseline declares its own `google_org_policy_policy { … }` now, so it is `use`d bare at the top level",
+        reshaped: true,
+    },
+];
+
+/// Where a `use` path lives now, if the library moved it.
+///
+/// A directory entry carries everything under it. An exact entry carries the
+/// pack's own siblings too — `<stem>.local.satz`, the estate's fork, and
+/// `<stem>.diff.satz`, its adoption delta — because a fork left behind at the old
+/// path is the worst case of all: nothing would refuse it, and the estate would
+/// compile that copy forever.
+pub fn moved_to(use_path: &str) -> Option<(String, &'static MovedPack)> {
+    MOVED_PACKS.iter().find_map(|m| {
+        if let Some(rest) = m.from.strip_suffix('/') {
+            return use_path
+                .strip_prefix(m.from)
+                .filter(|_| !rest.is_empty())
+                .map(|tail| (format!("{}{}", m.to, tail), m));
+        }
+        if use_path == m.from {
+            return Some((m.to.to_string(), m));
+        }
+        let from_stem = m.from.strip_suffix(".satz")?;
+        let to_stem = m.to.strip_suffix(".satz")?;
+        let sibling = use_path
+            .strip_prefix(from_stem)
+            .filter(|s| s.starts_with('.') && s.ends_with(".satz"))?;
+        Some((format!("{}{}", to_stem, sibling), m))
+    })
+}
+
+/// `Some(error)` if this `use` names a pack that moved.
+///
+/// Refused rather than followed: the old file is still on disk in every estate
+/// that fetched it, so a `use` of the old path keeps compiling against a copy
+/// nothing will ever update again — a pack frozen at the version it had the day
+/// the library moved it, with no sign that anything is wrong.
+fn moved_pack(use_path: &str, file: &str, line: usize) -> Option<PipelineError> {
+    moved_to(use_path).map(|(to, m)| PipelineError {
+        file: file.to_string(),
+        line,
+        msg: format!(
+            "use \"{}\": this pack moved to \"{}\" — {}. Run `satz get-presets`, then `satz merge-presets`: together they repoint this line and carry over any `.local.satz` fork beside it.",
+            use_path, to, m.why
+        ),
+    })
+}
+
 /// Compile an estate source to per-file fragments plus the estate environment.
 pub fn compile_estate(
     file_name: &str,
@@ -1035,6 +1114,53 @@ impl Walk<'_> {
         Ok(truthy(self.genv.get(param)))
     }
 
+    /// The first resource-type map a `use`d pack declares itself, with its line.
+    ///
+    /// A pack is one of two shapes. Either it IS a resource map's content — a
+    /// bare list of labels, which the using estate keys with its own
+    /// `google_x { use … }` — or it declares its own types and is `use`d bare.
+    /// Only an identifier key can be a type: a bare label is a quoted string,
+    /// so a pack's labels are never mistaken for one here.
+    fn typed_map_in(&self, file: &satz::File) -> Option<(String, usize)> {
+        file.items.iter().find_map(|e| match e {
+            Entry::Map { key: Key::Ident(k), name: None, line, .. } => {
+                self.types.resolve(k).map(|rt| (rt.tf_type, *line))
+            }
+            _ => None,
+        })
+    }
+
+    /// `google_x { use "pack" }`, or `use "pack" as google_x`, where the pack
+    /// declares `google_x { … }` itself.
+    ///
+    /// The two shapes above are not interchangeable and this pairing fails
+    /// SILENTLY: as a map's content every name-less child is read as
+    /// `(label, body)`, so the pack's own type key becomes a label and the whole
+    /// pack collapses into one resource carrying its policies as attributes. The
+    /// emitter takes unknown attributes without complaint, so the first sign
+    /// would be a plan that destroys everything the pack used to emit.
+    fn refuse_typed_pack_as_map_content(
+        &self,
+        file: &satz::File,
+        use_path: &str,
+        file_name: &str,
+        line: usize,
+    ) -> Result<(), PipelineError> {
+        let Some((ty, at)) = self.typed_map_in(file) else {
+            return Ok(());
+        };
+        perr(
+            file_name,
+            line,
+            format!(
+                "use \"{path}\" as the content of a resource map: that pack declares `{ty} {{ … }}` itself ({path}:{at}), so here its type key is read as a LABEL and the pack collapses into one resource `{ty}.{ty}` carrying its contents as attributes. Write it bare at the top level: `use \"{path}\"`",
+                path = use_path,
+                ty = ty,
+                at = at
+            ),
+        )
+    }
+
     /// Load and parse a `use`d file, absorb its params/hcl/claims, and put it
     /// on the chain. A path already on the chain is a cycle, named in full.
     /// The caller pops the chain after descending.
@@ -1081,6 +1207,11 @@ impl Walk<'_> {
                     );
                 }
                 Entry::Use { path: use_path, as_key, when, line } => {
+                    // Before the `when` guard: a line gated off still points at a
+                    // stale copy, and the fleet migrates once.
+                    if let Some(e) = moved_pack(use_path, file_name, *line) {
+                        return Err(e);
+                    }
                     if let Some(p) = when {
                         if !self.when_holds(p, file_name, *line)? {
                             continue;
@@ -1092,7 +1223,10 @@ impl Walk<'_> {
                         // `use "…" as key`: the pack's top-level entries are the
                         // CONTENT of a resource map keyed by `key`.
                         Some(k) => match self.types.resolve(k) {
-                            Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?,
+                            Some(rt) => {
+                                self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
+                                self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?
+                            }
                             None => {
                                 return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as"))
                             }
@@ -1172,6 +1306,9 @@ impl Walk<'_> {
                         // `google_folder { use "…" }` — the pack's items are folder-map
                         // content (named folder nodes), in their own fragment.
                         Entry::Use { path: use_path, as_key, when, line } => {
+                            if let Some(e) = moved_pack(use_path, file_name, *line) {
+                                return Err(e);
+                            }
                             if let Some(p) = when {
                                 if !self.when_holds(p, file_name, *line)? {
                                     continue;
@@ -1183,7 +1320,10 @@ impl Walk<'_> {
                                 // `use "…" as <type>` inside a folder: the pack is the
                                 // content of that resource map, scoped to the folder
                                 Some(k) => match self.types.resolve(k) {
-                                    Some(rt) => self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?,
+                                    Some(rt) => {
+                                        self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
+                                        self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?
+                                    }
                                     None => return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as")),
                                 },
                                 None => self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?,
@@ -1474,6 +1614,9 @@ impl Walk<'_> {
                             continue;
                         }
                         Entry::Use { path: use_path, as_key, when, line } => {
+                            if let Some(e) = moved_pack(use_path, file_name, *line) {
+                                return Err(e);
+                            }
                             if let Some(p) = when {
                                 if !self.when_holds(p, file_name, *line)? {
                                     continue;
@@ -1491,6 +1634,7 @@ impl Walk<'_> {
                                 }
                             }
                             let file = self.enter_use(use_path, file_name, *line)?;
+                            self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
                             // pack content lands in this same fragment-map scope;
                             // its own file identity is preserved via provenance.
                             self.resource_map(rt, None, &file.items, use_path, own, *line, path, pin)?;
@@ -1985,6 +2129,150 @@ google_org_policy_policy {
         assert_eq!(fe.claims[0].pack, "cis");
         assert_eq!(fe.claims[0].version, "1.2");
         assert_eq!(fe.claims[0].claims[0].control, "1.4");
+    }
+
+    /// The other half of the same absorption: an estate keys a bare-list pack
+    /// with its own resource map, and the questions that pack declares have to
+    /// reach the front end from there — they are what the interview asks and
+    /// what satz-studio lists. Pinned beside the claims case because the
+    /// nested arm is the one an estate actually uses.
+    #[test]
+    fn questions_are_absorbed_from_a_nested_use() {
+        let pack = r#"pack cis version "1.2"
+
+params { cis_dns_logging = true }
+
+question cis_dns_logging {
+  prompt   = "Log DNS queries?"
+  reversal = edit
+  blast    = low
+}
+
+"no_keys" { name = "iam.disableServiceAccountKeyCreation" }
+"#;
+        let estate = r#"estate t
+
+google_org_policy_policy {
+  use "cis.satz"
+}
+"#;
+        let fe = compile_estate("t.satz", estate, &Table, &|p| {
+            if p == "cis.satz" { Ok(pack.to_string()) } else { Err(format!("no load: {}", p)) }
+        })
+        .unwrap();
+        assert_eq!(fe.questions.len(), 1, "a nested `use` must absorb the pack's questions");
+        assert_eq!(fe.questions[0].pack, "cis");
+        assert_eq!(fe.questions[0].questions[0].subject, "cis_dns_logging");
+    }
+
+    /// A pack that declares its own resource type cannot also be a resource
+    /// map's content, in ANY of the three forms that make it one. The pairing
+    /// is silent otherwise: every name-less child of a map is read as
+    /// `(label, body)`, so the pack's type key becomes a label and 25 policies
+    /// collapse into one resource the emitter accepts without a word.
+    #[test]
+    fn a_typed_pack_used_as_map_content_is_refused_in_every_form() {
+        let pack = r#"pack cis version "2.14"
+
+google_org_policy_policy {
+  "no_keys" { name = "iam.disableServiceAccountKeyCreation" }
+}
+"#;
+        let load = |p: &str| {
+            if p == "cis.satz" { Ok(pack.to_string()) } else { Err(format!("no load: {}", p)) }
+        };
+        let forms = [
+            ("inside the map", "estate t\n\ngoogle_org_policy_policy {\n  use \"cis.satz\"\n}\n"),
+            ("as at the top level", "estate t\n\nuse \"cis.satz\" as google_org_policy_policy\n"),
+            (
+                "as inside a folder",
+                "estate t\n\ngoogle_folder {\n  use \"cis.satz\" as google_org_policy_policy\n}\n",
+            ),
+        ];
+        for (form, estate) in forms {
+            let Err(err) = compile_estate("t.satz", estate, &Table, &load) else {
+                panic!("{}: a self-typed pack as map content must be refused", form);
+            };
+            assert!(
+                err.msg.contains("declares `google_org_policy_policy { … }` itself"),
+                "{}: the refusal must name the pack's own typed map — got {}",
+                form,
+                err.msg
+            );
+            assert!(
+                err.msg.contains("Write it bare at the top level"),
+                "{}: the refusal must name the line to write instead — got {}",
+                form,
+                err.msg
+            );
+        }
+    }
+
+    /// A moved pack is refused wherever it is `use`d, and whether or not its gate
+    /// holds. A line gated off still names a path whose local copy nothing will
+    /// update again, so letting it pass would migrate the fleet in two rounds:
+    /// one for the lines that are on, another whenever somebody answers yes.
+    #[test]
+    fn a_moved_pack_is_refused_at_every_use_site() {
+        let load = |p: &str| Err(format!("no load: {}", p));
+        let forms = [
+            ("top level", "estate t\n\nuse \"presets/cis-extensions/cmek.satz\"\n"),
+            (
+                "inside the map",
+                "estate t\n\ngoogle_org_policy_policy {\n  use \"presets/cis-extensions/cmek.satz\"\n}\n",
+            ),
+            (
+                "inside a folder",
+                "estate t\n\ngoogle_folder {\n  use \"presets/cis-extensions/cmek.satz\"\n}\n",
+            ),
+            (
+                "gated off",
+                "estate t\n\nparams { cis_cmek_required = false }\n\nuse \"presets/cis-extensions/cmek.satz\" when cis_cmek_required\n",
+            ),
+        ];
+        for (form, estate) in forms {
+            let Err(err) = compile_estate("t.satz", estate, &Table, &load) else {
+                panic!("{}: a moved pack must be refused", form);
+            };
+            assert!(
+                err.msg.contains("moved to \"presets/cis/cmek.satz\""),
+                "{}: the refusal must name where the pack lives now — got {}",
+                form,
+                err.msg
+            );
+            assert!(
+                err.msg.contains("satz merge-presets"),
+                "{}: the refusal must name the command that migrates it — got {}",
+                form,
+                err.msg
+            );
+        }
+    }
+
+    /// The directory entry covers what sits BESIDE a moved pack: a `.local` fork
+    /// and the adoption delta move with it, and an estate pointing at the old
+    /// fork is refused by the same rule rather than compiling a copy that is now
+    /// orphaned.
+    #[test]
+    fn a_moved_fork_path_is_refused_too() {
+        let estate = "estate t\n\nuse \"presets/cis-extensions/cmek.local.satz\"\n";
+        let Err(err) = compile_estate("t.satz", estate, &Table, &|p| Err(format!("no load: {}", p)))
+        else {
+            panic!("a fork under a moved directory must be refused");
+        };
+        assert!(err.msg.contains("presets/cis/cmek.local.satz"), "{}", err.msg);
+        // The baseline's exact-path entry resolves as well, and carries the fork
+        // and the adoption delta beside it: an estate that forked the baseline
+        // points at `…local.satz`, and a fork left behind at the old path would
+        // compile forever with nothing to refuse it.
+        for (from, to) in [
+            ("presets/CIS-GCP-Foundation-4.0.satz", "presets/cis/CIS-GCP-Foundation-4.0.satz"),
+            ("presets/CIS-GCP-Foundation-4.0.local.satz", "presets/cis/CIS-GCP-Foundation-4.0.local.satz"),
+            ("presets/CIS-GCP-Foundation-4.0.diff.satz", "presets/cis/CIS-GCP-Foundation-4.0.diff.satz"),
+        ] {
+            assert_eq!(moved_to(from).map(|(t, _)| t), Some(to.to_string()), "{}", from);
+        }
+        assert!(moved_to("presets/scc/scc-export.satz").is_none(), "a pack that did not move is not rewritten");
     }
 
     /// A pack the `when` guard skipped was never pulled in, so its claims must

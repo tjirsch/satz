@@ -157,9 +157,7 @@ addition is one line or a few, shown against the shipped CIS pack.
 **Include a pack** — the CIS baseline, one line:
 
 ```
-google_org_policy_policy {
-  use "presets/CIS-GCP-Foundation-4.0.satz"
-}
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 ```
 
 **Tune it without forking** — the pack declares a default, the estate binds it.
@@ -934,14 +932,19 @@ providers {
 ### 6.9 `use` — composition
 
 ```
-google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }   # inside a map
-use "presets/CIS-GCP-Foundation-4.0.satz" as google_org_policy_policy    # as: same thing
+use "presets/cis/CIS-GCP-Foundation-4.0.satz"                            # a pack that carries its own types
+google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }   # inside a map
+use "presets/essential-contacts-organization.satz" as google_essential_contacts_contact    # as: same thing
 use "showcase-optional.satz" when want_optional                          # conditionally
 ```
 
-(The CIS pack is a bare list of policy labels, so it needs the map — bare at
-the top level it is `unknown resource type`; a pack whose entries are typed
-maps, like `showcase-pack.satz`, is `use`d bare.)
+(The pack's own shape decides which form it takes. A pack that declares its
+resource types — the CIS baseline and its extensions — is `use`d bare, and as a
+map's content it is refused: there its type key would be read as a label and the
+whole pack would collapse into one resource. A pack that is a BARE LIST of labels,
+like the contacts pack above or `showcase-policies.satz`, needs the map to supply
+the type; bare at the top level it is `unknown resource type`. Each pack states
+its own line in its header comment, and `presets/docs/` prints it.)
 
 - **Path** is a plain string, never interpolated. Resolved relative to the using
   file first, then the configured `include_dirs`.

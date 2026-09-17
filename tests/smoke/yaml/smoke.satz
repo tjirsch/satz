@@ -52,9 +52,7 @@ google_essential_contacts_contact {
   use "presets/essential-contacts-organization.satz"
 }
 
-google_org_policy_policy {
-  use "presets/CIS-GCP-Foundation-4.0.satz"
-}
+use "presets/cis/CIS-GCP-Foundation-4.0.satz"
 
 google_cloud_identity_group {
   "{svc_iac_users_group}" {

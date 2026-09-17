@@ -462,7 +462,7 @@ with deterministic ordering (snapshot-gated by `tests/corpus/`).
 An estate can remove something a used pack contributes — without forking:
 
 ```
-use "presets/CIS-GCP-Foundation-4.0.satz" as google_org_policy_policy
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 
 // drop one pack resource; grant-edge form removes a single role
 suppress google_org_policy_policy "compute-skipDefaultNetworkCreation"
@@ -557,7 +557,7 @@ The `bootstrap` command automatically handles the import of core infrastructure 
 
 ### Organization Policy Alignment
 
-Curated Organization Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) are normally
+Curated Organization Policy sets (e.g. `presets/cis/CIS-GCP-Foundation-4.0.satz`) are normally
 pulled into an estate with `use` and rendered as `google_org_policy_policy` resources
 like any other. GCP **managed** constraints (their name contains `.managed.`, e.g.
 `iam.managed.disableServiceAccountKeyCreation`) differ: depending on org state they
@@ -887,6 +887,7 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 - GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/workflows.md](docs/workflows.md#when-upstream-stops-answering-the-github-quota).
 - Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. A changed pack the estate deploys changes the organization; `merge-presets` reports that change before any `tofu plan`. `--force` overwrites anyway, listing each in-use pack as it does.
 - `X.local.*` files have no upstream counterpart, so nothing here can touch them.
+- A pack the library **moved** is carried over here and by `merge-presets`: a `use` of the old path is refused naming the new one, and one run repoints the estate's `use` lines (a commented line stays commented, a `when <gate>` stays), moves any `.local.satz` fork and `.diff.satz` delta, installs the upstream copy at the new path and retires the old pristine copy. A pack that only moved emits what it emitted before, so the generated HCL is unchanged — see [docs/workflows.md](docs/workflows.md#when-a-release-moves-a-pack).
 
 ### The decisions sheet (`questions --format markdown`)
 
@@ -1844,7 +1845,7 @@ dots turned into dashes ([docs/language.md §12.2](docs/language.md)).
 - **IAM mapping**: maps IAM policies to member resources (e.g. `google_storage_bucket_iam_member`) and generates their keys.
 
 #### 6. Organization Policy Engine (`src/org_policy.rs`)
-Aligns curated Org Policy sets (e.g. `presets/CIS-GCP-Foundation-4.0.satz`) with the live organization via the GCP Org Policy API v2.
+Aligns curated Org Policy sets (e.g. `presets/cis/CIS-GCP-Foundation-4.0.satz`) with the live organization via the GCP Org Policy API v2.
 - **Adoption** (`satz adopt --activate`): activates managed constraints that are missing (API create), then imports the existing policies into state — no manual console activation and no `import-id` editing. Adoption is a separate command, never part of `transpile` (`src/adopt.rs` drives it through this module's `OrgPolicyClient`).
 - **CLI commands**: `export-organizational-policies` (snapshot live state to a re-importable preset), `diff-organizational-policies` (semantic current-vs-desired report), `report-organizational-policies` (markdown/JSON/PDF inventory with constraint descriptions).
 - **Managed constraints**: constraints whose name contains `.managed.` must be *activated* (API create), then *imported as-is* (`tofu import`), then *modified* (`tofu apply`). `satz adopt --activate` sequences the activate+import; `tofu apply` does the modify.

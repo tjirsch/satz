@@ -7,8 +7,12 @@ Presets are **read-only building blocks**: use them from a customer's estate and
 set every org-specific value there — never by editing a preset.
 
 `use "presets/<pack>.satz"` at top level for packs that declare their own
-resource-type maps, under a key (`use … as google_org_policy_policy`) or inside a
-resource map for content packs. Pack `params` are overridable defaults; define
+resource-type maps — the CIS baseline and its extensions, and most of the library —
+or inside a resource map for the content packs that are a bare list of labels
+(`google_essential_contacts_contact { use … }`, or `use … as <type>` written flat).
+Each pack's header states its own line and `presets/docs/` prints it; the shapes are
+not interchangeable, and using one the wrong way round is refused rather than
+emitted. Pack `params` are overridable defaults; define
 the same name in the estate `params` block to override (the using document
 always wins). When a needed customization is not expressible as a param, fork:
 copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains the
@@ -719,7 +723,7 @@ activates managed constraints via the Org Policy API and imports existing polici
 into state — see "Adopting what already exists" in the main README):
 
 ```
-google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 ```
 ```bash
 satz adopt C0example.satz --only google_org_policy_policy --activate --execute --import
@@ -1184,7 +1188,7 @@ external CI on GitHub or GitLab can all use Workload Identity Federation or impe
 and leave the control intact. The tag route is the exception with a named owner, never the
 default.
 
-## cis-extensions/
+## cis/
 
 **Two of these are ON by default: `cis_dns_logging` and `cis_block_internet_ssh_rdp`.**
 Every other fragment here is off until a customer asks for it, because each one restricts
@@ -1224,8 +1228,8 @@ turns one on and `use`s its fragment:
 
 ```
 cis_require_shielded_vm = true
-use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
-use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
+use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis/dns-logging.satz" when cis_dns_logging
 ```
 
 Each is opt-in because it can break a running workload: Confidential Computing is limited to particular machine families,
@@ -1246,7 +1250,7 @@ fragments ship a **dry-run twin** that does exactly that:
 
 ```
 cis_cloud_sql_hardening_dry_run = true
-use "presets/cis-extensions/cloud-sql-dry-run.satz" when cis_cloud_sql_hardening_dry_run
+use "presets/cis/cloud-sql-dry-run.satz" when cis_cloud_sql_hardening_dry_run
 ```
 
 Apply it, let the organisation run, then read the violations:
@@ -1446,9 +1450,11 @@ the private history recorded them.
 | pack | version | date | change |
 |---|---|---|---|
 | `exemptions.exemption_tag` | 2.0 | 2026-09-13 | one value per exemption CLASS instead of a single `not_enforced`: `service-account-keys`, `public-endpoint`, `public-storage`, `vm-image`, `vm-access`, `data-residency`, `encryption`, `network-appliance`. IAM is set on a tag VALUE, so one blanket value meant anyone allowed to exempt anything could exempt everything — the team needing a public bucket could switch off customer-managed encryption just as easily. The classes are deliberately narrow: a wide class is a grant that hands over more than the person asking described. Audit logging, flow logs, DNS logging and domain-restricted sharing carry NO class on purpose — exempting the record of what happened, or letting an outside identity in, is a decision for whoever owns the baseline, not a delegation. The `enforced` value is GONE: its only job was leaving a trace instead of deleting a binding, which the estate's own history already does, and it had no meaning once values became classes |
+| `CIS_GCP_Foundation_4_0` | 2.14 | 2026-09-17 | the pack declares its own `google_org_policy_policy { … }` and is `use`d bare at the top level, gated on `use_cis_baseline`, exactly like every CIS extension. Nothing emitted changes — both `use` forms resolve to the same addresses and the same manifest — so an estate's plan does not move. What changes is that the baseline is a pack like the others: the interview can switch it on, the compile reports it when its answer is true and its line is not in, and satz-studio lists it. An estate that keeps the old `google_org_policy_policy { use … }` wrapper is refused, because as a map's content the pack's type key would be read as a label and the whole baseline would collapse into one resource |
 | `CIS_GCP_Foundation_4_0` | 2.13 | 2026-09-13 | claims CIS 5.0 §2.14, Cloud Asset Inventory enabled — the last technical control of CIS 5.0 with no claim anywhere in the library. The estate already satisfied it: the scaffold enables `cloudasset.googleapis.com` in every infrastructure project, so the witness is the scaffold's own `google_project_service.infra_cloudasset_googleapis_com` rather than a second `google_project_service` declared here — two resources enabling one API on one project is a duplicate, not a merge. The address depends on the `infra` project label, which is already a contract (`bootstrap` imports by it) and is now held by the init-template test, so renaming it breaks a test rather than a customer's report |
 | `CIS_GCP_Foundation_4_0` | 2.12 | 2026-09-13 | `iam.managed.disableServiceAccountKeyCreation` takes its rules from `cis_sa_key_creation_rules` instead of writing them in place, so an estate can let ONE service account out with a tag condition without forking the pack. The default is the plain enforcing rule and the emitted policy is unchanged for an estate that says nothing. The one constraint here with a rules param, because it is the one organisations actually have to exempt — Google ships their own built-in exemption tag for it — and because a param per constraint would put forty list-of-object blocks into every estate's `terraform.tfvars` for a case nobody has |
 | `exemptions.exemption_tag` | 1.0 | 2026-09-13 | first version: the VOCABULARY for a tag-conditional exemption — one organisation tag key `<shortname>-exemption` with the values `enforced` and `not_enforced`, and nothing bound to either. An organisation policy is all-or-nothing per node, so letting one service account out of a control means lowering the policy for a whole folder and raising it again — a window during which nothing is enforced. A Resource Manager tag is IAM-governed and a policy rule can condition on it, which is how Google ships `iam.disableServiceAccountKeyCreation` themselves. The pack ships the ABILITY and no exemptions: a library that ships convenient exemptions lowers the baseline by default. The binding that exempts a resource and the condition on the constraint that honours it are the estate's, and the pack header shows both |
+| `estate_map` | 1.8 | 2026-09-17 | the CIS baseline joins the map as `use_cis_baseline`, defaulting to true. It was the one pack the map did not declare — the skeleton wrote its line as fixed text, so the interview could not switch it on, `merge-presets` could not add it to an estate that lacked it, and the compile could not report it missing. Framing it as a choice does not make it optional: the question says the estate exists for these thirty policies, and its `why` says what turning it off would take off the organisation. What it buys is that the baseline is adopted, reported and listed by the same machinery as every other pack |
 | `estate_map` | 1.7 | 2026-09-13 | one more choice: `use_exemption_tag`, gating `exemptions/exemption-tag.satz`. Its `why` carries the question that usually ends the conversation — does the consumer need a key at all, when a workload in Google Cloud, a Cloud Run service and external CI can all federate instead |
 | `CIS_GCP_Foundation_4_0` | 2.11 | 2026-09-13 | six dry-run params and their questions: `cis_api_key_services_dry_run`, `cis_block_project_ssh_keys_dry_run`, `cis_bucket_retention_dry_run`, `cis_cloud_sql_hardening_dry_run`, `cis_cloud_sql_iam_and_deletion_protection_dry_run`, `cis_confidential_computing_dry_run`. Each gates the dry-run twin of the extension it names, to be turned on INSTEAD of the enforcing flag — both at once declares the same policy twice and is refused. The other five extensions have no dry-run form: Shielded VM and both CMEK constraints are legacy, Access Approval is not an org policy, and the two on-by-default extensions have nothing to size |
 | `cis_extensions.api_key_services_dry_run` | 1.1 | 2026-09-13 | first version, GENERATED by `scripts/build_dry_run_fragments.py` from `api-key-services.satz` — do not edit. The same constraint with `dry_run_spec` instead of `spec` and every claim dropped: Google evaluates each rule, logs every action it would have blocked, and blocks none, so the violation count sizes the control against a live organisation before it bites. It discharges nothing while it runs and carries no claim, so `require` reports the control unmet, which is the truth. Its version tracks the fragment it is derived from |

@@ -619,6 +619,33 @@ that fork, proves the repoint by transpile identity, refreshes the pristine
 `X.satz`, and writes `X.diff.satz` — the exact delta adopting upstream would make.
 Comment and formatting churn upgrades silently instead of forking.
 
+### When a release moves a pack
+
+A `use` of a path the library moved is **refused**, naming the path the pack lives at
+now. It has to be: the old file is still in the estate's `presets/`, so following it
+would compile a copy nothing updates again, frozen at the version it had the day the
+library moved.
+
+One pass carries an estate over:
+
+```bash
+satz --config <estate-dir> get-presets
+satz --config <estate-dir> merge-presets
+satz --config <estate-dir> transpile <estate>.satz
+git -C <estate-dir> diff        # the generated HCL must be unchanged
+```
+
+`merge-presets` repoints every `use` — a line still commented stays commented, an
+indentation stays, a `when <gate>` stays — moves a `.local.satz` fork and its
+`.diff.satz` delta to the new path, installs the upstream copy there, retires the
+pristine copy at the old path and removes the directory left empty. It prints every
+line it changed, before and after; a line it could not rewrite is named as needing a
+hand edit. A pristine copy someone had edited is kept as an explicit `.local.satz`
+fork rather than dropped. Running it twice changes nothing the second time.
+
+The generated HCL is the check that matters: a pack that only moved emits exactly what
+it emitted before, so `tofu plan` reads no changes.
+
 ### Is it stale, or edited?
 
 Find out first, without touching anything:
@@ -661,17 +688,17 @@ claims to be:
 
 ```bash
 # what release does the local file claim to be?
-grep -m1 '^pack' <estate>/presets/CIS-GCP-Foundation-4.0.satz     # -> version "1.5"
+grep -m1 '^pack' <estate>/presets/cis/CIS-GCP-Foundation-4.0.satz     # -> version "1.5"
 
 # is it byte-identical to that release?
 cd ~/projects/satz
-git log --format=%H -- presets/CIS-GCP-Foundation-4.0.satz \
+git log --format=%H -- presets/cis/CIS-GCP-Foundation-4.0.satz \
   | while read c; do
-      v=$(git show $c:presets/CIS-GCP-Foundation-4.0.satz | grep -m1 '^pack')
+      v=$(git show $c:presets/cis/CIS-GCP-Foundation-4.0.satz | grep -m1 '^pack')
       echo "$c $v"
     done | head           # find the commit that carried v1.5
-git show <that-commit>:presets/CIS-GCP-Foundation-4.0.satz > /tmp/pristine-1.5.satz
-diff /tmp/pristine-1.5.satz <estate>/presets/CIS-GCP-Foundation-4.0.satz
+git show <that-commit>:presets/cis/CIS-GCP-Foundation-4.0.satz > /tmp/pristine-1.5.satz
+diff /tmp/pristine-1.5.satz <estate>/presets/cis/CIS-GCP-Foundation-4.0.satz
 ```
 
 | result | meaning | what to run |

@@ -163,10 +163,12 @@ against in CI. In about a hundred lines it carries:
   terms of another (`cis_central_bucket_project = logsink_project_id`);
 - **`terraform` and `providers` blocks**, which become `providers.tf` and the
   backend;
-- **three pristine packs**, each in the position its shape calls for: the contacts
-  pack and the CIS baseline as the *content* of a resource map
-  (`google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }`), the
-  two monitoring packs at the top level of a folder;
+- **three pristine packs**, each in the position its shape calls for: the CIS
+  baseline at the top level, because it declares its own resource type; the contacts
+  pack as the *content* of a resource map
+  (`google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }`),
+  because it is a bare list of labels; the two monitoring packs at the top level of a
+  folder;
 - **a Cloud Identity group with a member**, and **organization IAM grants** in the
   member → roles form;
 - **a folder holding a project**, that project holding its enabled services and a

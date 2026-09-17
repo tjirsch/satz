@@ -1,7 +1,7 @@
 // CIS 3.6 / 3.7 — SSH and RDP closed to the internet, for every network in the
 // organisation at once.
 //
-//   use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
+//   use "presets/cis/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
 //
 // HOW IT WORKS. A hierarchical firewall policy attached to the organisation is read
 // before any VPC firewall rule. It passes TCP 22 and 3389 from

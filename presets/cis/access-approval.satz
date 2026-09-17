@@ -1,7 +1,7 @@
 // CIS 4.0 §2.15 / 5.0 §2.16 — Access Approval: Google personnel reach the
 // organisation's content only after someone approves the request.
 //
-//   use "presets/cis-extensions/access-approval.satz" when cis_access_approval
+//   use "presets/cis/access-approval.satz" when cis_access_approval
 //
 // Opt-in because it changes every support case: a Google engineer who needs to
 // look at the customer's content waits until someone on the notification list

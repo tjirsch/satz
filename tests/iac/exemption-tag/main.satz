@@ -66,9 +66,7 @@ terraform {
 
 use "presets/estate-core.satz"
 
-google_org_policy_policy {
-  use "presets/CIS-GCP-Foundation-4.0.satz"
-}
+use "presets/cis/CIS-GCP-Foundation-4.0.satz"
 
 use "presets/exemptions/exemption-tag.satz"
 

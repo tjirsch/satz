@@ -1,6 +1,6 @@
 // CIS 5.0 §2.13 — DNS query logging, as far as an org policy can carry it.
 //
-//   use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
+//   use "presets/cis/dns-logging.satz" when cis_dns_logging
 //
 // WHAT THE CONTROL ASKS. Every VPC network has a Cloud DNS policy with logging enabled,
 // so name resolution is auditable — which is how a compromised host asking for its

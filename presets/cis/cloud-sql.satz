@@ -1,6 +1,6 @@
 // CIS 6.5 and 6.6/6.7 — Cloud SQL network exposure.
 //
-//   use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
+//   use "presets/cis/cloud-sql.satz" when cis_cloud_sql_hardening
 //
 // Opt-in because an estate with existing Cloud SQL instances on public IPs loses
 // connectivity the moment this is enforced; the private path has to exist

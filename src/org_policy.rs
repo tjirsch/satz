@@ -1706,7 +1706,7 @@ mod tests {
         let estate = tmp.join("main.satz");
         std::fs::write(
             &estate,
-            "estate cis_test\n\nparams {\n  customer_organization_id = \"123456789\"\n  customer_id = \"C0abcd123\"\n  customer_domain = \"example.com\"\n}\n\nterraform {\n  backend {\n    local { path = \"t.tfstate\" }\n  }\n}\n\ngoogle_org_policy_policy {\n  use \"presets/CIS-GCP-Foundation-4.0.satz\"\n}\n",
+            "estate cis_test\n\nparams {\n  customer_organization_id = \"123456789\"\n  customer_id = \"C0abcd123\"\n  customer_domain = \"example.com\"\n}\n\nterraform {\n  backend {\n    local { path = \"t.tfstate\" }\n  }\n}\n\nuse \"presets/cis/CIS-GCP-Foundation-4.0.satz\"\n",
         )
         .unwrap();
         let mut cfg: crate::ToolConfig = toml::from_str("").unwrap();

@@ -42,18 +42,16 @@ terraform {
   }
 }
 
-google_org_policy_policy {
-  use "presets/CIS-GCP-Foundation-4.0.satz"
-}
+use "presets/cis/CIS-GCP-Foundation-4.0.satz"
 
-use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
-use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
-use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
-use "presets/cis-extensions/confidential-computing.satz" when cis_confidential_computing
-use "presets/cis-extensions/cloud-sql.satz" when cis_cloud_sql_hardening
-use "presets/cis-extensions/cmek.satz" when cis_cmek_required
-use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
-use "presets/cis-extensions/bucket-retention.satz" when cis_bucket_retention
-use "presets/cis-extensions/access-approval.satz" when cis_access_approval
-use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
-use "presets/cis-extensions/cloud-sql-iam-and-deletion-protection.satz" when cis_cloud_sql_iam_and_deletion_protection
+use "presets/cis/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
+use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis/dns-logging.satz" when cis_dns_logging
+use "presets/cis/confidential-computing.satz" when cis_confidential_computing
+use "presets/cis/cloud-sql.satz" when cis_cloud_sql_hardening
+use "presets/cis/cmek.satz" when cis_cmek_required
+use "presets/cis/api-key-services.satz" when cis_api_key_services
+use "presets/cis/bucket-retention.satz" when cis_bucket_retention
+use "presets/cis/access-approval.satz" when cis_access_approval
+use "presets/cis/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
+use "presets/cis/cloud-sql-iam-and-deletion-protection.satz" when cis_cloud_sql_iam_and_deletion_protection

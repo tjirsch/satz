@@ -6,7 +6,7 @@
 
 ## Context
 
-`presets/cis-extensions/internet-ssh-rdp.satz` attaches a hierarchical firewall policy to
+`presets/cis/internet-ssh-rdp.satz` attaches a hierarchical firewall policy to
 the organisation that denies TCP 22 and 3389 from the internet and passes listed ranges to
 the VPC firewall rules. It satisfies CIS 4.0 / 5.0 §3.6 and §3.7.
 

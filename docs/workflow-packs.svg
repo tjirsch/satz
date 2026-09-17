@@ -59,7 +59,7 @@
   <text x="534" y="200" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">the estate file</text>
   <text x="534" y="220" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430">use "presets/estate-core.satz"</text>
   <text x="534" y="234" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430" opacity="0.6">// after the switch to the service account</text>
-  <text x="534" y="248" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430" opacity="0.6">// use "presets/CIS-GCP-Foundation-4.0.satz"</text>
+  <text x="534" y="248" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430" opacity="0.6">// use "presets/cis/CIS-GCP-Foundation-4.0.satz"</text>
   <text x="534" y="262" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430">params { … }</text>
   <text x="534" y="284" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">a pack is on when its use line is uncommented; answering</text>
   <text x="534" y="298" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">its question true uncomments it, and nothing re-comments it</text>

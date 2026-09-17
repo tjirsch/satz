@@ -479,7 +479,7 @@ step "require cis-gcp-4.0 (goal view, offline)"
 cat tmp/require.txt
 grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
 # 14 unmet: 2.12 DNS logging and 2.13 CAI, which no pack covers, plus the twelve
-# controls the cis-extensions fragments cover and this estate does not turn on.
+# controls the CIS extension fragments cover and this estate does not turn on.
 # The catalog carries the full CIS surface, so an unclaimed control is visible
 # rather than absent — that is what makes the number meaningful.
 grep -q '14 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the twelve opt-in extension controls unmet:\n$(tail -3 tmp/require.txt)"
@@ -595,7 +595,7 @@ grep -q 'policies/compute.managed.restrictProtocolForwardingCreationForTypes"' h
 grep -q 'parameters = "{\\"allowedSchemes\\":\[\\"INTERNAL\\"\]}"' hcl/main.tf \
   || fail "the managed protocol-forwarding constraint lost its parameters"
 
-step "cis-extensions: opt-in coverage, off by default and on when asked"
+step "CIS extensions: opt-in coverage, off by default and on when asked"
 # off by default: the baseline must not enforce any of them
 grep -q 'compute.requireShieldedVm' hcl/main.tf && fail "an opt-in extension leaked into the baseline"
 grep -q 'gcp.restrictNonCmekServices' hcl/main.tf && fail "an opt-in extension leaked into the baseline"
@@ -604,9 +604,9 @@ grep -q 'gcp.restrictNonCmekServices' hcl/main.tf && fail "an opt-in extension l
 # each one, not just that something was emitted.
 sed -e 's/^params {/params {\n  cis_require_shielded_vm = true\n  cis_cmek_required = true\n  cis_api_key_services = true\n  allowed_api_key_services = ["storage.googleapis.com"]/' yaml/smoke.satz > tmp/ext.satz
 cat >> tmp/ext.satz <<'SATZ'
-use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm
-use "presets/cis-extensions/cmek.satz" when cis_cmek_required
-use "presets/cis-extensions/api-key-services.satz" when cis_api_key_services
+use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
+use "presets/cis/cmek.satz" when cis_cmek_required
+use "presets/cis/api-key-services.satz" when cis_api_key_services
 SATZ
 "$satz" --config . transpile tmp/ext.satz --output "$PWD/tmp/ext-hcl" > tmp/ext.txt 2>&1 || fail "the extensions do not transpile:\n$(cat tmp/ext.txt)"
 grep -q 'name = "organizations/123456789012/policies/compute.requireShieldedVm"' tmp/ext-hcl/main.tf || fail "the plain boolean constraint is missing"
@@ -620,11 +620,11 @@ if command -v tofu >/dev/null 2>&1; then
 fi
 
 step "org firewall: the admin ports are closed to the internet and open to the inside"
-grep -q 'cis_block_internet_ssh_rdp = true' ../../presets/CIS-GCP-Foundation-4.0.satz \
+grep -q 'cis_block_internet_ssh_rdp = true' ../../presets/cis/CIS-GCP-Foundation-4.0.satz \
   || fail "cis_block_internet_ssh_rdp no longer defaults to true"
 cp yaml/smoke.satz tmp/fw.satz
 cat >> tmp/fw.satz <<'SATZ'
-use "presets/cis-extensions/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
+use "presets/cis/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
 SATZ
 "$satz" --config . transpile tmp/fw.satz --output "$PWD/tmp/fw-hcl" > tmp/fw.txt 2>&1 || fail "the admin-port pack does not transpile:\n$(cat tmp/fw.txt)"
 grep -q 'resource "google_compute_firewall_policy" "cis_admin_ports"' tmp/fw-hcl/main.tf || fail "no firewall policy"
@@ -656,11 +656,11 @@ step "dns logging: the one extension that is on by default, and what it claims"
 grep -q 'name = "organizations/123456789012/policies/compute.requireVpcFlowLogs"' hcl/main.tf || fail "the baseline lost its flow-log constraint"
 # The flag defaults TRUE — the only extension that does — but a flag alone emits
 # nothing: the estate carries the `use … when` line (ADR 0007), and the skeleton writes it.
-grep -q 'cis_dns_logging            = true' ../../presets/CIS-GCP-Foundation-4.0.satz \
+grep -q 'cis_dns_logging            = true' ../../presets/cis/CIS-GCP-Foundation-4.0.satz \
   || fail "cis_dns_logging no longer defaults to true"
 cp yaml/smoke.satz tmp/dns.satz
 cat >> tmp/dns.satz <<'SATZ'
-use "presets/cis-extensions/dns-logging.satz" when cis_dns_logging
+use "presets/cis/dns-logging.satz" when cis_dns_logging
 SATZ
 "$satz" --config . transpile tmp/dns.satz --output "$PWD/tmp/dns-hcl" > tmp/dns.txt 2>&1 || fail "the dns-logging fragment does not transpile:\n$(cat tmp/dns.txt)"
 # a CUSTOM constraint, because Google publishes no predefined one for DNS logging
@@ -670,7 +670,7 @@ grep -q 'condition = "resource.enableLogging == true"' tmp/dns-hcl/main.tf \
   || fail "the DNS constraint's condition is not the one measured against the live API"
 grep -q '"dns.googleapis.com/Policy"' tmp/dns-hcl/main.tf || fail "the DNS constraint names the wrong resource type"
 # it CONTRIBUTES, never implements: no org policy can require that a network HAS a policy
-grep -q 'contributes' ../../presets/cis-extensions/dns-logging.satz || fail "the DNS claim must not be an implements"
+grep -q 'contributes' ../../presets/cis/dns-logging.satz || fail "the DNS claim must not be an implements"
 "$satz" --config . require cis-gcp-5.0 tmp/dns.satz --format text --out tmp/dnsreq.txt 2>/dev/null || true
 grep -q '0 broken claim' tmp/dnsreq.txt || fail "the DNS claim names a witness the estate does not emit:\n$(grep -i broken tmp/dnsreq.txt)"
 
@@ -943,7 +943,7 @@ step "a tag-conditional exemption keeps the verdict and is reported beside it"
 # claim is the pack's rather than one this step wrote to make the assertion pass.
 cp "$root/tests/iac/exemption-tag/main.satz" tmp/exemption.satz
 "$satz" --config . require cis-gcp-4.0 ../tmp/exemption.satz --format text --out tmp/exemption.txt 2>/dev/null || true
-grep -q 'cis_sa_key_creation_rules' "$root/presets/CIS-GCP-Foundation-4.0.satz" \
+grep -q 'cis_sa_key_creation_rules' "$root/presets/cis/CIS-GCP-Foundation-4.0.satz" \
   || fail "the baseline no longer takes the SA-key rules from a param — the exemption needs a fork again"
 grep -qE '^  . 1\.4 ' tmp/exemption.txt || fail "the exempted control is not in the goal view at all"
 grep -q '✓ 1.4' tmp/exemption.txt \
@@ -958,9 +958,9 @@ uv run "$root/scripts/build_dry_run_fragments.py" --check \
   || fail "a dry-run twin is stale — run scripts/build_dry_run_fragments.py and commit"
 # A twin claims nothing: a dry run discharges no control while it measures, so a claim
 # over it would be contradicted by its own witness (ADR 0013).
-grep -l '^claim ' "$root"/presets/cis-extensions/*-dry-run.satz 2>/dev/null \
+grep -l '^claim ' "$root"/presets/cis/*-dry-run.satz 2>/dev/null \
   && fail "a dry-run fragment carries a claim — a dry run discharges nothing"
-grep -q 'dry_run_spec' "$root/presets/cis-extensions/cloud-sql-dry-run.satz" \
+grep -q 'dry_run_spec' "$root/presets/cis/cloud-sql-dry-run.satz" \
   || fail "the dry-run twin does not declare dry_run_spec"
 
 # doc-packs carries three gates now: the pages match the packs, every claim
@@ -1115,6 +1115,56 @@ grep -q 'satz get-presets --force' tmp/deadlock-merge.txt || fail "the refusal d
 (cd tmp/deadlock && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm refreshed)
 "$satz" --config tmp/deadlock/config.toml merge-presets --pristine-dir tmp/deadlock/pristine > tmp/deadlock-merge2.txt 2>&1 \
   || fail "merge-presets still fails after the refresh:\n$(cat tmp/deadlock-merge2.txt)"
+
+step "a pack the library moved: the old path is refused, merge-presets repoints the estate"
+# The CIS files moved to presets/cis/ and the baseline carries its own resource type now.
+# An estate on the old paths must be REFUSED rather than compiled against local copies
+# nothing will update again, and one merge-presets run must carry it over: the `use` lines
+# repointed, the fork moved, the retired pristine copies gone, and the baseline lifted out
+# of the resource map it used to be keyed with.
+rm -rf tmp/moved && mkdir -p tmp/moved/yaml tmp/moved/presets/cis-extensions
+cp -R "$root/tests/schemas" tmp/moved/schemas
+cat > tmp/moved/config.toml <<'CFGEOF'
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+include_dirs = [".", "yaml"]
+schema_dir = "schemas"
+presets_dir = "presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+CFGEOF
+cp "$root/presets/cis/CIS-GCP-Foundation-4.0.satz" tmp/moved/presets/CIS-GCP-Foundation-4.0.satz
+cp "$root/presets/cis/shielded-vm.satz" tmp/moved/presets/cis-extensions/shielded-vm.satz
+cp "$root/presets/cis/cmek.satz" tmp/moved/presets/cis-extensions/cmek.local.satz
+printf 'estate moved\n\nparams {\n  customer_organization_id = "123456789012"\n  customer_domain          = "example.com"\n  cis_require_shielded_vm  = true\n}\n\nterraform {\n  backend {\n    local { path = "terraform.tfstate" }\n  }\n}\n\nproviders {\n  google {\n    alias   = "google"\n    project = "acme-infra-001"\n    region  = "europe-west3"\n  }\n}\n\ngoogle_org_policy_policy {\n  use "presets/CIS-GCP-Foundation-4.0.satz"\n}\nuse "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm\nuse "presets/cis-extensions/cmek.local.satz"\n' > tmp/moved/yaml/moved.satz
+(cd tmp/moved && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
+
+if "$satz" --config tmp/moved/config.toml transpile moved.satz --check > tmp/moved-refused.txt 2>&1; then
+  fail "an estate on the moved paths compiled instead of being refused"
+fi
+grep -q 'presets/cis/CIS-GCP-Foundation-4.0.satz' tmp/moved-refused.txt \
+  || fail "the refusal does not name where the pack lives now:\n$(cat tmp/moved-refused.txt)"
+grep -q 'satz merge-presets' tmp/moved-refused.txt \
+  || fail "the refusal does not name the command that migrates it:\n$(cat tmp/moved-refused.txt)"
+
+"$satz" --config tmp/moved/config.toml merge-presets --pristine-dir "$root/presets" > tmp/moved-merge.txt 2>&1 \
+  || fail "merge-presets could not migrate the estate:\n$(cat tmp/moved-merge.txt)"
+grep -q 'repointed use "' tmp/moved-merge.txt || fail "merge-presets did not report the repointed lines:\n$(cat tmp/moved-merge.txt)"
+test -f tmp/moved/presets/cis/cmek.local.satz || fail "the fork was not carried over to presets/cis/"
+test ! -f tmp/moved/presets/cis-extensions/cmek.local.satz || fail "the fork was left at the old path as well"
+test ! -f tmp/moved/presets/CIS-GCP-Foundation-4.0.satz || fail "the retired baseline copy is still at the old path"
+test ! -d tmp/moved/presets/cis-extensions || fail "the emptied cis-extensions directory was not removed"
+grep -q '^use "presets/cis/CIS-GCP-Foundation-4.0.satz"' tmp/moved/yaml/moved.satz \
+  || fail "the baseline was not lifted out of its resource map:\n$(cat tmp/moved/yaml/moved.satz)"
+grep -q 'use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm' tmp/moved/yaml/moved.satz \
+  || fail "the extension line was not repointed:\n$(cat tmp/moved/yaml/moved.satz)"
+"$satz" --config tmp/moved/config.toml transpile moved.satz --check > tmp/moved-after.txt 2>&1 \
+  || fail "the migrated estate does not compile:\n$(cat tmp/moved-after.txt)"
+# idempotent: a second run has nothing left to carry over
+"$satz" --config tmp/moved/config.toml merge-presets --pristine-dir "$root/presets" > tmp/moved-merge2.txt 2>&1 \
+  || fail "the second merge-presets run failed:\n$(cat tmp/moved-merge2.txt)"
+grep -q 'repointed use "' tmp/moved-merge2.txt && fail "the migration ran twice on the same estate"
 
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
@@ -2086,7 +2136,7 @@ assert merged["attention"] is False, merged
 # with no IaC service account cannot be prerequisite-checked, and says so)
 assert all(e["kind"] in ("pack", "note") for e in merged["events"]), [e["kind"] for e in merged["events"]][:5]
 PYEOF
-[ -s tmp/gp/presets/CIS-GCP-Foundation-4.0.satz ] || fail "satz_get_presets did not install the library"
+[ -s tmp/gp/presets/cis/CIS-GCP-Foundation-4.0.satz ] || fail "satz_get_presets did not install the library"
 
 step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"
 # V1 is the only check that catches an estate which quietly stopped compiling or

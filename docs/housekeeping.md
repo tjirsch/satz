@@ -22,7 +22,7 @@ ships it).
 | `presets/type-map.yaml` — in an estate's `presets_dir`, not in this repository | `satz map-types`, from the Discovery Documents and the provider schema | the provider pin moves; Google changes an API | **nothing** |
 | `presets/managed-constraint-equivalents.txt` | `scripts/update_constraint_equivalents.py` | Google ships a new managed twin | `cargo test` catches the *effect*, not the table |
 | `presets/docs/*.md` | `satz doc-packs` | any pack changes | smoke: `doc-packs --check` |
-| `presets/cis-extensions/*-dry-run.satz` | `scripts/build_dry_run_fragments.py` | the enforcing fragment it is derived from changes | smoke: `--check`, which compares byte for byte |
+| `presets/cis/*-dry-run.satz` | `scripts/build_dry_run_fragments.py` | the enforcing fragment it is derived from changes | smoke: `--check`, which compares byte for byte |
 | `presets/README.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
 | `presets/catalogs/*.yaml` | by hand, from the benchmark | a benchmark release | **nothing** |
 | `src/prerequisites.rs` (the prerequisite table: roles and APIs per type) | by hand, from Google's predefined roles | a pack emits a new resource type; Google changes a role | a new type: `cargo test` (`prerequisites_gate`); a changed role: **nothing** — run `scripts/check_prerequisites.py` |
