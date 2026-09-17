@@ -47,3 +47,8 @@ failed `fmt --check` and `get-presets`; `.sh` actions died with an OS error.
   hash check — so the README shows the manual `Get-FileHash` check against `sha256.sum`.
 - What stays unsupported on Windows is refused by name, not approximated: `self-update`,
   script actions, `/dev/…` outputs; `generate-migration` writes bash.
+- ARM64 builds on GitHub's native `windows-11-arm` runner (`github-custom-runners` in
+  `dist-workspace.toml`). cargo-dist's default for that target, cargo-xwin in a Linux
+  container, fails twice: the container's rustc is older than typst and the Google client
+  crates require, and with a current rustc clang-cl rejects the GNU-syntax ARM64 assembly
+  of `psm` (under typst's `stacker`). Removing the runner line brings both back.
