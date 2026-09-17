@@ -1116,6 +1116,56 @@ grep -q 'satz get-presets --force' tmp/deadlock-merge.txt || fail "the refusal d
 "$satz" --config tmp/deadlock/config.toml merge-presets --pristine-dir tmp/deadlock/pristine > tmp/deadlock-merge2.txt 2>&1 \
   || fail "merge-presets still fails after the refresh:\n$(cat tmp/deadlock-merge2.txt)"
 
+step "a pack the library moved: the old path is refused, merge-presets repoints the estate"
+# The CIS files moved to presets/cis/ and the baseline carries its own resource type now.
+# An estate on the old paths must be REFUSED rather than compiled against local copies
+# nothing will update again, and one merge-presets run must carry it over: the `use` lines
+# repointed, the fork moved, the retired pristine copies gone, and the baseline lifted out
+# of the resource map it used to be keyed with.
+rm -rf tmp/moved && mkdir -p tmp/moved/yaml tmp/moved/presets/cis-extensions
+cp -R "$root/tests/schemas" tmp/moved/schemas
+cat > tmp/moved/config.toml <<'CFGEOF'
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+include_dirs = [".", "yaml"]
+schema_dir = "schemas"
+presets_dir = "presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+CFGEOF
+cp "$root/presets/cis/CIS-GCP-Foundation-4.0.satz" tmp/moved/presets/CIS-GCP-Foundation-4.0.satz
+cp "$root/presets/cis/shielded-vm.satz" tmp/moved/presets/cis-extensions/shielded-vm.satz
+cp "$root/presets/cis/cmek.satz" tmp/moved/presets/cis-extensions/cmek.local.satz
+printf 'estate moved\n\nparams {\n  customer_organization_id = "123456789012"\n  customer_domain          = "example.com"\n  cis_require_shielded_vm  = true\n}\n\nterraform {\n  backend {\n    local { path = "terraform.tfstate" }\n  }\n}\n\nproviders {\n  google {\n    alias   = "google"\n    project = "acme-infra-001"\n    region  = "europe-west3"\n  }\n}\n\ngoogle_org_policy_policy {\n  use "presets/CIS-GCP-Foundation-4.0.satz"\n}\nuse "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm\nuse "presets/cis-extensions/cmek.local.satz"\n' > tmp/moved/yaml/moved.satz
+(cd tmp/moved && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
+
+if "$satz" --config tmp/moved/config.toml transpile moved.satz --check > tmp/moved-refused.txt 2>&1; then
+  fail "an estate on the moved paths compiled instead of being refused"
+fi
+grep -q 'presets/cis/CIS-GCP-Foundation-4.0.satz' tmp/moved-refused.txt \
+  || fail "the refusal does not name where the pack lives now:\n$(cat tmp/moved-refused.txt)"
+grep -q 'satz merge-presets' tmp/moved-refused.txt \
+  || fail "the refusal does not name the command that migrates it:\n$(cat tmp/moved-refused.txt)"
+
+"$satz" --config tmp/moved/config.toml merge-presets --pristine-dir "$root/presets" > tmp/moved-merge.txt 2>&1 \
+  || fail "merge-presets could not migrate the estate:\n$(cat tmp/moved-merge.txt)"
+grep -q 'repointed use "' tmp/moved-merge.txt || fail "merge-presets did not report the repointed lines:\n$(cat tmp/moved-merge.txt)"
+test -f tmp/moved/presets/cis/cmek.local.satz || fail "the fork was not carried over to presets/cis/"
+test ! -f tmp/moved/presets/cis-extensions/cmek.local.satz || fail "the fork was left at the old path as well"
+test ! -f tmp/moved/presets/CIS-GCP-Foundation-4.0.satz || fail "the retired baseline copy is still at the old path"
+test ! -d tmp/moved/presets/cis-extensions || fail "the emptied cis-extensions directory was not removed"
+grep -q '^use "presets/cis/CIS-GCP-Foundation-4.0.satz"' tmp/moved/yaml/moved.satz \
+  || fail "the baseline was not lifted out of its resource map:\n$(cat tmp/moved/yaml/moved.satz)"
+grep -q 'use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm' tmp/moved/yaml/moved.satz \
+  || fail "the extension line was not repointed:\n$(cat tmp/moved/yaml/moved.satz)"
+"$satz" --config tmp/moved/config.toml transpile moved.satz --check > tmp/moved-after.txt 2>&1 \
+  || fail "the migrated estate does not compile:\n$(cat tmp/moved-after.txt)"
+# idempotent: a second run has nothing left to carry over
+"$satz" --config tmp/moved/config.toml merge-presets --pristine-dir "$root/presets" > tmp/moved-merge2.txt 2>&1 \
+  || fail "the second merge-presets run failed:\n$(cat tmp/moved-merge2.txt)"
+grep -q 'repointed use "' tmp/moved-merge2.txt && fail "the migration ran twice on the same estate"
+
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"
