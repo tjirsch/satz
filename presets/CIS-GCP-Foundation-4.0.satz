@@ -6,13 +6,13 @@
 // organisation ends up with both forms of a constraint enforcing. Some policies
 // have to be activated before they can be imported.
 //
-//   google_org_policy_policy { use "presets/CIS-GCP-Foundation-4.0.satz" }
+//   use "presets/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 //
 // The benchmark: https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.13"
+pack CIS_GCP_Foundation_4_0 version "2.14"
 
 params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
@@ -335,374 +335,378 @@ question allowed_policy_member_subjects {
   blast    = high
 }
 
-// CIS 4.5 — interactive serial console access is off org-wide. Safe enough for
-// the baseline: nothing routine reaches a VM this way, and the exemption path
-// is a tag condition rather than switching the constraint off.
-"compute-managed-disableSerialPortAccess" {
-  name   = "compute.managed.disableSerialPortAccess"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+// The policies themselves. The pack carries its own resource type, so an estate
+// `use`s this line as it uses every other pack's — bare, at the top level.
+google_org_policy_policy {
+  // CIS 4.5 — interactive serial console access is off org-wide. Safe enough for
+  // the baseline: nothing routine reaches a VM this way, and the exemption path
+  // is a tag condition rather than switching the constraint off.
+  "compute-managed-disableSerialPortAccess" {
+    name   = "compute.managed.disableSerialPortAccess"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-// The one constraint in this baseline whose rules are a PARAM rather than written
-// here, because it is the one an organisation actually has to let a single principal
-// out of — Google ships their own built-in exemption tag for exactly this constraint.
-// The default below is the plain enforcing rule, so an estate that says nothing gets
-// what it got before. See `cis_sa_key_creation_rules` in this pack's params for the
-// exempting form, and `presets/exemptions/exemption-tag.satz` for the tag it names.
-"iam-managed-disableServiceAccountKeyCreation" {
-  name   = "iam.managed.disableServiceAccountKeyCreation"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = cis_sa_key_creation_rules
+  // The one constraint in this baseline whose rules are a PARAM rather than written
+  // here, because it is the one an organisation actually has to let a single principal
+  // out of — Google ships their own built-in exemption tag for exactly this constraint.
+  // The default below is the plain enforcing rule, so an estate that says nothing gets
+  // what it got before. See `cis_sa_key_creation_rules` in this pack's params for the
+  // exempting form, and `presets/exemptions/exemption-tag.satz` for the tag it names.
+  "iam-managed-disableServiceAccountKeyCreation" {
+    name   = "iam.managed.disableServiceAccountKeyCreation"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = cis_sa_key_creation_rules
+    }
   }
-}
 
-"iam-managed-disableServiceAccountKeyUpload" {
-  name   = "iam.managed.disableServiceAccountKeyUpload"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "iam-managed-disableServiceAccountKeyUpload" {
+    name   = "iam.managed.disableServiceAccountKeyUpload"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"iam-managed-preventPrivilegedBasicRolesForDefaultServiceAccounts" {
-  name   = "iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "iam-managed-preventPrivilegedBasicRolesForDefaultServiceAccounts" {
+    name   = "iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"iam-automaticIamGrantsForDefaultServiceAccounts" {
-  name   = "iam.automaticIamGrantsForDefaultServiceAccounts"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "iam-automaticIamGrantsForDefaultServiceAccounts" {
+    name   = "iam.automaticIamGrantsForDefaultServiceAccounts"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"storage-uniformBucketLevelAccess" {
-  name   = "storage.uniformBucketLevelAccess"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "storage-uniformBucketLevelAccess" {
+    name   = "storage.uniformBucketLevelAccess"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"compute-setNewProjectDefaultToZonalDNSOnly" {
-  name   = "compute.setNewProjectDefaultToZonalDNSOnly"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "compute-setNewProjectDefaultToZonalDNSOnly" {
+    name   = "compute.setNewProjectDefaultToZonalDNSOnly"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-// CIS protocol forwarding, MANAGED form. Google replaces the legacy list
-// constraint with this one; the legacy twin is switched off in the same breath
-// (see the superseded section below) so the two never both apply. Same effect:
-// only INTERNAL protocol forwarding may be created. A managed constraint is
-// configured through `parameters` — the legacy form's `allowed_values` has no
-// meaning here.
-"compute-managed-restrictProtocolForwardingCreationForTypes" {
-  name   = "compute.managed.restrictProtocolForwardingCreationForTypes"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-        parameters = {
-          allowedSchemes = allowed_protocol_forwarding_schemes
-        }
-      },
-    ]
+  // CIS protocol forwarding, MANAGED form. Google replaces the legacy list
+  // constraint with this one; the legacy twin is switched off in the same breath
+  // (see the superseded section below) so the two never both apply. Same effect:
+  // only INTERNAL protocol forwarding may be created. A managed constraint is
+  // configured through `parameters` — the legacy form's `allowed_values` has no
+  // meaning here.
+  "compute-managed-restrictProtocolForwardingCreationForTypes" {
+    name   = "compute.managed.restrictProtocolForwardingCreationForTypes"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+          parameters = {
+            allowedSchemes = allowed_protocol_forwarding_schemes
+          }
+        },
+      ]
+    }
   }
-}
 
-"compute-skipDefaultNetworkCreation" {
-  name   = "compute.skipDefaultNetworkCreation"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "compute-skipDefaultNetworkCreation" {
+    name   = "compute.skipDefaultNetworkCreation"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"gcp-resourceLocations" {
-  name   = "gcp.resourceLocations"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        values {
-          allowed_values = allowed_resource_locations
-        }
-      },
-    ]
+  "gcp-resourceLocations" {
+    name   = "gcp.resourceLocations"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          values {
+            allowed_values = allowed_resource_locations
+          }
+        },
+      ]
+    }
   }
-}
 
-"compute-managed-requireOsLogin" {
-  name   = "compute.managed.requireOsLogin"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "compute-managed-requireOsLogin" {
+    name   = "compute.managed.requireOsLogin"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"gcp-detailedAuditLoggingMode" {
-  name   = "gcp.detailedAuditLoggingMode"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "gcp-detailedAuditLoggingMode" {
+    name   = "gcp.detailedAuditLoggingMode"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"iam-disableAuditLoggingExemption" {
-  name   = "iam.disableAuditLoggingExemption"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "iam-disableAuditLoggingExemption" {
+    name   = "iam.disableAuditLoggingExemption"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"compute-requireVpcFlowLogs" {
-  name   = "compute.requireVpcFlowLogs"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        values {
-          allowed_values = [
-            "ESSENTIAL",
-            "LIGHT",
-            "COMPREHENSIVE",
-          ]
-        }
-      },
-    ]
+  "compute-requireVpcFlowLogs" {
+    name   = "compute.requireVpcFlowLogs"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          values {
+            allowed_values = [
+              "ESSENTIAL",
+              "LIGHT",
+              "COMPREHENSIVE",
+            ]
+          }
+        },
+      ]
+    }
   }
-}
 
-"storage-publicAccessPrevention" {
-  name   = "storage.publicAccessPrevention"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "storage-publicAccessPrevention" {
+    name   = "storage.publicAccessPrevention"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"compute-managed-vmCanIpForward" {
-  name   = "compute.managed.vmCanIpForward"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "compute-managed-vmCanIpForward" {
+    name   = "compute.managed.vmCanIpForward"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"compute-managed-vmExternalIpAccess" {
-  name   = "compute.managed.vmExternalIpAccess"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-      },
-    ]
+  "compute-managed-vmExternalIpAccess" {
+    name   = "compute.managed.vmExternalIpAccess"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
   }
-}
 
-"essentialcontacts-managed-allowedContactDomains" {
-  name   = "essentialcontacts.managed.allowedContactDomains"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-        parameters = {
-          allowedDomains = essential_contacts_allowed_domains
-        }
-      },
-    ]
+  "essentialcontacts-managed-allowedContactDomains" {
+    name   = "essentialcontacts.managed.allowedContactDomains"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+          parameters = {
+            allowedDomains = essential_contacts_allowed_domains
+          }
+        },
+      ]
+    }
   }
-}
 
-"iam-managed-allowedPolicyMembers" {
-  name   = "iam.managed.allowedPolicyMembers"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [
-      {
-        enforce = "TRUE"
-        parameters = {
-          allowedPrincipalSets  = allowed_policy_member_principal_sets
-          allowedMemberSubjects = allowed_policy_member_subjects
-        }
-      },
-    ]
+  "iam-managed-allowedPolicyMembers" {
+    name   = "iam.managed.allowedPolicyMembers"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+          parameters = {
+            allowedPrincipalSets  = allowed_policy_member_principal_sets
+            allowedMemberSubjects = allowed_policy_member_subjects
+          }
+        },
+      ]
+    }
   }
-}
 
-// ---------------------------------------------------------------------------
-// Control claims. Each org policy below is the enforcement mechanism for a CIS
-// control; the claim names the emitted resource so `require` and
-// `report-compliance` can find the witness. Control IDs verified against
-// Google's inspec-gcp-cis-benchmark 4.0.0 profile; paraphrases are ours (CIS
-// prose is licence-restricted).
-// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Control claims. Each org policy below is the enforcement mechanism for a CIS
+  // control; the claim names the emitted resource so `require` and
+  // `report-compliance` can find the witness. Control IDs verified against
+  // Google's inspec-gcp-cis-benchmark 4.0.0 profile; paraphrases are ours (CIS
+  // prose is licence-restricted).
+  // ---------------------------------------------------------------------------
 
-// 5.0 introduced §1.1 "Organization resources". 1.1.4 asks whether the
-// organization constrains its projects centrally at all — which is what this
-// pack IS, so the witness is the whole baseline rather than any one policy.
-// The five constraints the benchmark names as the baseline (resource
-// locations, OS Login, external IPs, uniform bucket access, allowed member
-// domains) are all in the list below.
-// ---------------------------------------------------------------------------
-// SUPERSEDED LEGACY CONSTRAINTS — declared OFF, on purpose.
-//
-// Where Google replaces a legacy constraint with a managed one, this pack runs
-// the REPLACEMENT ALONE. Both forms in force is the defect, not a belt-and-
-// braces win: org-policy constraints AND together, so every exemption would
-// have to lift TWO policies — and for several of these Google's only documented
-// exemption path is to disable the constraint org-wide, grant, and re-enable,
-// which is a window with the control switched off.
-//
-// Absence is not enough. A legacy policy already set on an organisation is
-// invisible to an apply that does not declare it: it keeps enforcing, and has
-// to be deleted by hand, on every estate, forever. Declaring it with
-// `reset = true` — restore the constraint's default, which is ALLOW for every
-// constraint below, verified against a live organisation — lets the estate say
-// it, the apply do it, and a later re-enabling revert on the next apply.
-//
-// On an organisation where one of these is already set, run
-// `satz adopt --only google_org_policy_policy --execute --import` before the
-// apply, so the existing policy is imported rather than created twice.
-//
-// WHY THE ADDRESSES CARRY `-superseded` (v2.6). Switching a policy from rules to
-// `reset = true` cannot be an in-place update: the provider PATCHes the rules it
-// still holds in state together with `reset`, and the API refuses the pair —
-// `400 Cannot set PolicyRules if reset is true`. v2.5 kept the legacy addresses
-// and called the switch an in-place update; it is not, and every estate upgrading
-// needed `tofu apply -replace=…` by hand for each of these.
-//
-// The address is therefore deliberately DIFFERENT from the one a pre-2.6 estate
-// carries. tofu then plans a destroy of the old address and a create of the new
-// one — the replace, by construction, with no manual step and nothing to
-// remember. The policy NAME is unchanged, so this is one org policy being
-// reset, not two. The managed replacement is already enforcing throughout, which
-// is what makes the moment between destroy and create uneventful.
-//
-// A constraint is listed here ONLY when this pack enables its managed
-// replacement; `cis-extensions/` carries its own, next to the fragment that
-// enables them. Managed constraints with no legacy form — most of them, 45 of
-// the 60 a live organisation offers — need nothing.
-// ---------------------------------------------------------------------------
+  // 5.0 introduced §1.1 "Organization resources". 1.1.4 asks whether the
+  // organization constrains its projects centrally at all — which is what this
+  // pack IS, so the witness is the whole baseline rather than any one policy.
+  // The five constraints the benchmark names as the baseline (resource
+  // locations, OS Login, external IPs, uniform bucket access, allowed member
+  // domains) are all in the list below.
+  // ---------------------------------------------------------------------------
+  // SUPERSEDED LEGACY CONSTRAINTS — declared OFF, on purpose.
+  //
+  // Where Google replaces a legacy constraint with a managed one, this pack runs
+  // the REPLACEMENT ALONE. Both forms in force is the defect, not a belt-and-
+  // braces win: org-policy constraints AND together, so every exemption would
+  // have to lift TWO policies — and for several of these Google's only documented
+  // exemption path is to disable the constraint org-wide, grant, and re-enable,
+  // which is a window with the control switched off.
+  //
+  // Absence is not enough. A legacy policy already set on an organisation is
+  // invisible to an apply that does not declare it: it keeps enforcing, and has
+  // to be deleted by hand, on every estate, forever. Declaring it with
+  // `reset = true` — restore the constraint's default, which is ALLOW for every
+  // constraint below, verified against a live organisation — lets the estate say
+  // it, the apply do it, and a later re-enabling revert on the next apply.
+  //
+  // On an organisation where one of these is already set, run
+  // `satz adopt --only google_org_policy_policy --execute --import` before the
+  // apply, so the existing policy is imported rather than created twice.
+  //
+  // WHY THE ADDRESSES CARRY `-superseded` (v2.6). Switching a policy from rules to
+  // `reset = true` cannot be an in-place update: the provider PATCHes the rules it
+  // still holds in state together with `reset`, and the API refuses the pair —
+  // `400 Cannot set PolicyRules if reset is true`. v2.5 kept the legacy addresses
+  // and called the switch an in-place update; it is not, and every estate upgrading
+  // needed `tofu apply -replace=…` by hand for each of these.
+  //
+  // The address is therefore deliberately DIFFERENT from the one a pre-2.6 estate
+  // carries. tofu then plans a destroy of the old address and a create of the new
+  // one — the replace, by construction, with no manual step and nothing to
+  // remember. The policy NAME is unchanged, so this is one org policy being
+  // reset, not two. The managed replacement is already enforcing throughout, which
+  // is what makes the moment between destroy and create uneventful.
+  //
+  // A constraint is listed here ONLY when this pack enables its managed
+  // replacement; `cis-extensions/` carries its own, next to the fragment that
+  // enables them. Managed constraints with no legacy form — most of them, 45 of
+  // the 60 a live organisation offers — need nothing.
+  // ---------------------------------------------------------------------------
 
-// Superseded by iam.managed.allowedPolicyMembers (CIS 1.1 / 5.0 1.2). Google
-// declares no equivalence between these two names, so the pairing is ours; the
-// reasoning is in the claim's duty_legacy_superseded.
-"iam-allowedPolicyMemberDomains-superseded" {
-  name   = "iam.allowedPolicyMemberDomains"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    reset = true
+  // Superseded by iam.managed.allowedPolicyMembers (CIS 1.1 / 5.0 1.2). Google
+  // declares no equivalence between these two names, so the pairing is ours; the
+  // reasoning is in the claim's duty_legacy_superseded.
+  "iam-allowedPolicyMemberDomains-superseded" {
+    name   = "iam.allowedPolicyMemberDomains"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
+    }
   }
-}
 
-// Superseded by compute.managed.requireOsLogin.
-"compute-requireOsLogin-superseded" {
-  name   = "compute.requireOsLogin"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    reset = true
+  // Superseded by compute.managed.requireOsLogin.
+  "compute-requireOsLogin-superseded" {
+    name   = "compute.requireOsLogin"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
+    }
   }
-}
 
-// Superseded by essentialcontacts.managed.allowedContactDomains.
-"essentialcontacts-allowedContactDomains-superseded" {
-  name   = "essentialcontacts.allowedContactDomains"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    reset = true
+  // Superseded by essentialcontacts.managed.allowedContactDomains.
+  "essentialcontacts-allowedContactDomains-superseded" {
+    name   = "essentialcontacts.allowedContactDomains"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
+    }
   }
-}
 
-// Superseded by iam.managed.disableServiceAccountKeyCreation.
-"iam-disableServiceAccountKeyCreation-superseded" {
-  name   = "iam.disableServiceAccountKeyCreation"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    reset = true
+  // Superseded by iam.managed.disableServiceAccountKeyCreation.
+  "iam-disableServiceAccountKeyCreation-superseded" {
+    name   = "iam.disableServiceAccountKeyCreation"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
+    }
   }
-}
 
-// Superseded by iam.managed.disableServiceAccountKeyUpload.
-"iam-disableServiceAccountKeyUpload-superseded" {
-  name   = "iam.disableServiceAccountKeyUpload"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    reset = true
+  // Superseded by iam.managed.disableServiceAccountKeyUpload.
+  "iam-disableServiceAccountKeyUpload-superseded" {
+    name   = "iam.disableServiceAccountKeyUpload"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
+    }
   }
-}
 
-// Superseded by compute.managed.restrictProtocolForwardingCreationForTypes as of
-// v2.5. The address carries `-superseded` since v2.6: the switch to `reset` is a
-// REPLACE, never an in-place update — see the section note above for why the API
-// refuses the in-place form.
-"compute-restrictProtocolForwardingCreationForTypes-superseded" {
-  name   = "compute.restrictProtocolForwardingCreationForTypes"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    reset = true
+  // Superseded by compute.managed.restrictProtocolForwardingCreationForTypes as of
+  // v2.5. The address carries `-superseded` since v2.6: the switch to `reset` is a
+  // REPLACE, never an in-place update — see the section note above for why the API
+  // refuses the in-place form.
+  "compute-restrictProtocolForwardingCreationForTypes-superseded" {
+    name   = "compute.restrictProtocolForwardingCreationForTypes"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      reset = true
+    }
   }
 }
 

@@ -42,9 +42,7 @@ terraform {
   }
 }
 
-google_org_policy_policy {
-  use "presets/CIS-GCP-Foundation-4.0.satz"
-}
+use "presets/CIS-GCP-Foundation-4.0.satz"
 
 use "presets/cis-extensions/block-project-ssh-keys.satz" when cis_block_project_ssh_keys
 use "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm

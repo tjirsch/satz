@@ -559,9 +559,7 @@ use "presets/estate-core.satz"
 // The CIS baseline. Not a choice — it is what the estate is for — but it is also thirty
 // organisation policies, so it goes in deliberately, after the switch to the service
 // account, with its own plan read before it is applied.
-google_org_policy_policy {{
-  // use "presets/CIS-GCP-Foundation-4.0.satz"
-}}
+// use "presets/CIS-GCP-Foundation-4.0.satz"
 
 google_essential_contacts_contact {{
 }}
@@ -618,9 +616,7 @@ params {{
 // The CIS baseline. Not a choice — it is what the estate is for — but it is also thirty
 // organisation policies, so it goes in deliberately, after the switch to the service
 // account, with its own plan read before it is applied.
-google_org_policy_policy {{
-  // use "presets/CIS-GCP-Foundation-4.0.satz"
-}}
+// use "presets/CIS-GCP-Foundation-4.0.satz"
 
 google_essential_contacts_contact {{
 }}
