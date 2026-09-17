@@ -33,9 +33,16 @@ fn ctx(action: &str, path: &Path, e: io::Error) -> io::Error {
     )
 }
 
+/// Read a file. Satz source comes back with LF line endings, whatever the checkout
+/// wrote — every edit satz makes to it is computed on LF and written as LF, and a
+/// comparison with an upstream pack compares text, not a checkout's line endings.
 pub fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
     let path = path.as_ref();
-    std::fs::read_to_string(path).map_err(|e| ctx("read file", path, e))
+    let text = std::fs::read_to_string(path).map_err(|e| ctx("read file", path, e))?;
+    if is_satz_source(path) && text.contains('\r') {
+        return Ok(text.replace("\r\n", "\n"));
+    }
+    Ok(text)
 }
 
 /// A Satz source file: `.satz`, but not the `.diff.satz` a merge writes, which is
@@ -160,6 +167,16 @@ mod tests {
 
     const MESSY: &str = "estate x\nparams {\na = 1\n  long_name=2\n}\n";
     const CANON: &str = "estate x\nparams {\n  a         = 1\n  long_name = 2\n}\n";
+
+    /// A Windows checkout: satz edits and compares the text, not the line endings.
+    #[test]
+    fn satz_source_reads_with_lf_line_endings_and_other_files_as_they_are() {
+        let dir = scratch("crlf");
+        std::fs::write(dir.join("e.satz"), "estate x\r\nparams {\r\n}\r\n").unwrap();
+        std::fs::write(dir.join("notes.md"), "a\r\nb\r\n").unwrap();
+        assert_eq!(read_to_string(dir.join("e.satz")).unwrap(), "estate x\nparams {\n}\n");
+        assert_eq!(read_to_string(dir.join("notes.md")).unwrap(), "a\r\nb\r\n");
+    }
 
     #[test]
     fn generated_satz_lands_formatted() {

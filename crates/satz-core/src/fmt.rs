@@ -20,6 +20,8 @@ const INDENT: &str = "  ";
 /// Format one Satz source. A file the parser refuses is not formatted: the
 /// error is the parser's.
 pub fn format(src: &str) -> Result<String, SatzError> {
+    // the layout is LF: a CRLF file formats to what its LF twin formats to
+    let src = &*crate::satz::lf(src);
     parse(src)?;
     let chars: Vec<char> = src.chars().collect();
     let toks = lex_spanned(src, true)?;
@@ -31,7 +33,8 @@ pub fn format(src: &str) -> Result<String, SatzError> {
 
 /// Whether the file is already in its canonical layout.
 pub fn is_formatted(src: &str) -> Result<bool, SatzError> {
-    Ok(format(src)? == src)
+    // line endings are not layout: a formatted file checked out with CRLF is formatted
+    Ok(format(src)? == crate::satz::lf(src))
 }
 
 // ---------------------------------------------------------------------------

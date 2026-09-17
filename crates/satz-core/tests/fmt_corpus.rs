@@ -51,3 +51,35 @@ fn every_corpus_file_formats_idempotently_and_keeps_its_meaning() {
     // matrix says the same from the outside.
     assert!(unformatted.is_empty(), "not formatted (run `satz fmt` on them): {unformatted:#?}");
 }
+
+/// A Windows checkout with CRLF line endings is the same Satz: the same canonical form,
+/// the same questions, the same formatted text, and formatted exactly when its LF twin
+/// is. For every tracked file.
+#[test]
+fn every_corpus_file_reads_the_same_with_crlf_line_endings() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+    for f in tracked_satz_files(&root) {
+        let src = std::fs::read_to_string(&f).unwrap();
+        let crlf = src.replace('\n', "\r\n");
+        let name = f.strip_prefix(&root).unwrap().display().to_string();
+        let (a, b) = (parse(&src).unwrap(), parse(&crlf).unwrap_or_else(|e| panic!("{name} with CRLF: {e}")));
+        assert_eq!(canonical(&a), canonical(&b), "{name}: CRLF changed the canonical form");
+        assert_eq!(canonical_questions(&a), canonical_questions(&b), "{name}: CRLF changed the questions");
+        assert_eq!(format(&src).unwrap(), format(&crlf).unwrap(), "{name}: CRLF formats differently");
+        assert_eq!(
+            satz_core::fmt::is_formatted(&src).unwrap(),
+            satz_core::fmt::is_formatted(&crlf).unwrap(),
+            "{name}: CRLF changed whether the file counts as formatted"
+        );
+    }
+}
+
+/// The two places a `\r` used to survive into the emission.
+#[test]
+fn a_crlf_heredoc_and_hcl_body_carry_no_carriage_return() {
+    let lf = "estate e\n\nparams {\n  note = \"\"\"\n    one\n    two\n  \"\"\"\n}\n\nhcl trust \"reviewed\" {\n  output \"x\" {\n    value = 1\n  }\n}\n";
+    let crlf = lf.replace('\n', "\r\n");
+    let (a, b) = (parse(lf).unwrap(), parse(&crlf).unwrap());
+    assert_eq!(canonical(&a), canonical(&b));
+    assert!(!canonical(&b).contains('\r'), "{}", canonical(&b));
+}
