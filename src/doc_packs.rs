@@ -48,7 +48,9 @@ pub(crate) fn packs(presets_dir: &Path) -> Result<Vec<(PathBuf, File, String)>, 
             if !file.is_pack {
                 return Err(format!("{}: not a pack (no `pack` header) — an estate does not belong in the preset library", p.display()).into());
             }
-            out.push((p.strip_prefix(presets_dir)?.to_path_buf(), file, src));
+            // `/` between components on every platform: the path is written into `use`
+            // lines and the pages, and compared with what the library's docs say
+            out.push((PathBuf::from(crate::fsx::slash(p.strip_prefix(presets_dir)?)), file, src));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));

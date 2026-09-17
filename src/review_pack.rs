@@ -66,7 +66,8 @@ pub(crate) fn synthetic_estate(pack: &Path) -> String {
     // to be one: a local backend, which is what a fresh estate carries before its
     // state moves to a bucket
     s.push_str("terraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n\n");
-    s.push_str(&format!("use \"{}\"\n", pack.display()));
+    // `/` between components: a `\` in a Satz string is an escape
+    s.push_str(&format!("use \"{}\"\n", crate::fsx::slash(pack)));
     s
 }
 
@@ -125,7 +126,7 @@ pub(crate) fn review(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<Review, BoxErr> {
-    let pack = pack.canonicalize().map_err(|e| format!("{}: {}", pack.display(), e))?;
+    let pack = crate::fsx::canonicalize(pack).map_err(|e| format!("{}: {}", pack.display(), e))?;
     let src = crate::fsx::read_to_string(&pack)?;
     let mut f: Vec<Finding> = Vec::new();
 
@@ -458,7 +459,7 @@ fn same_file(a: &str, b: &Path) -> bool {
     if a == b {
         return true;
     }
-    match (a.canonicalize(), b.canonicalize()) {
+    match (crate::fsx::canonicalize(a), crate::fsx::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => a.file_name() == b.file_name(),
     }

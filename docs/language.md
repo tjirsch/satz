@@ -1471,7 +1471,7 @@ Suffix carries meaning; the tooling enforces it.
 *as written* discharges; a claim whose witness is not emitted reads as broken.
 
 ```
-satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme --format text --out /dev/stdout
+satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme --format text --out -
 ```
 
 ```
@@ -1693,7 +1693,7 @@ these properties was verified at this time".
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere. A command
 that produces a report takes `--format`, the rendering, and `--out`, the file it lands in:
 one invocation, one artefact, one named path, and nothing on the console but the line on
-stderr saying where it went — `--out /dev/stdout` pipes. `update-prerequisites` and `prowler` answer
+stderr saying where it went — `--out -` pipes. `update-prerequisites` and `prowler` answer
 on the console instead: an exit code and a command line to paste are not documents.
 The estate file is a positional argument, relative to `yaml_dir`.
 

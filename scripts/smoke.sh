@@ -491,6 +491,11 @@ step "require --format json: the file carries the answer and the console nothing
 "$satz" --config . require cis-gcp-4.0 smoke.satz --format json --out tmp/require.json > tmp/require-stdout.txt 2>tmp/require-stderr.txt || true
 [ -s tmp/require-stdout.txt ] && fail "require printed to stdout: $(cat tmp/require-stdout.txt)"
 grep -q "wrote tmp/require.json" tmp/require-stderr.txt || fail "the command did not say where it put the report:\n$(cat tmp/require-stderr.txt)"
+# `--out -` is stdout on every platform: the report alone, the rest on stderr
+"$satz" --config . require cis-gcp-4.0 smoke.satz --format json --out - > tmp/require-dash.json 2>tmp/require-dash-stderr.txt || true
+cmp -s tmp/require.json tmp/require-dash.json || fail "--out - did not write the same report to stdout"
+grep -q "wrote stdout" tmp/require-dash-stderr.txt || fail "--out - does not say it wrote stdout:\n$(cat tmp/require-dash-stderr.txt)"
+[ -e ./- ] && fail "--out - wrote a file named -"
 python3 - <<'PY' || fail "require --format json did not write parseable JSON"
 import json, sys
 d = json.load(open("tmp/require.json"))

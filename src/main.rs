@@ -382,7 +382,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
@@ -408,7 +408,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Inventory declared policies across the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory
@@ -560,7 +560,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
@@ -576,7 +576,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Prowler 5 OCSF export to ingest as corroboration (`prowler gcp --output-formats json-ocsf`)
@@ -609,7 +609,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
@@ -688,7 +688,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Add the estate delta the findings imply — `use` lines to add, resources
@@ -759,7 +759,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
@@ -793,7 +793,7 @@ enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json, OutFormat::Xlsx]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
-        /// when the name has none (`/dev/stdout` to pipe it)
+        /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
         /// Only the questions the estate has not answered yet — the interview's worklist
@@ -924,8 +924,19 @@ fn default_self_update_frequency() -> String {
 }
 
 fn global_settings_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".config").join("satz").join("satz.toml"))
+    Some(home_dir()?.join(".config").join("satz").join("satz.toml"))
+}
+
+/// The user's home: `HOME`, and on Windows `USERPROFILE` first — native Windows sets no
+/// `HOME`, so satz read no settings there and checked for updates on every command.
+/// `%USERPROFILE%\.config\satz\satz.toml` is where satz-studio writes them too.
+fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) {
+        std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+    } else {
+        std::env::var_os("HOME")
+    };
+    var.filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
 /// Load global settings. If the file does not exist, create ~/.config/satz/satz.toml with default values.
@@ -2186,7 +2197,7 @@ Thumbs.db
                 Some(r) => r,
                 None => std::env::current_dir()?,
             };
-            let root = root.canonicalize().map_err(|e| format!("{}: {}", root.display(), e))?;
+            let root = crate::fsx::canonicalize(&root).map_err(|e| format!("{}: {}", root.display(), e))?;
             crate::mcp::serve(root, ceiling, self_gated).await
         }
         Commands::OpenReadme => open_url(DOCS_URL),
@@ -4812,7 +4823,7 @@ fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
     }
     if estate.exists() {
         let in_yaml_dir = PathBuf::from(&runtime_config.yaml_dir).join(&estate);
-        if in_yaml_dir.exists() && in_yaml_dir.canonicalize().ok() != estate.canonicalize().ok() {
+        if in_yaml_dir.exists() && crate::fsx::canonicalize(&in_yaml_dir).ok() != crate::fsx::canonicalize(&estate).ok() {
             eprintln!(
                 "note: using ./{} (a different {} also exists inside yaml_dir)",
                 estate.display(),
@@ -6905,7 +6916,7 @@ mod prerequisites_gate {
         let packs: BTreeSet<String> = crate::doc_packs::packs(&root.join("presets"))
             .expect("the preset library")
             .into_iter()
-            .map(|(p, _, _)| format!("presets/{}", p.to_string_lossy()))
+            .map(|(p, _, _)| format!("presets/{}", crate::fsx::slash(&p)))
             .collect();
         let unused: Vec<&String> = packs.difference(&used).collect();
         assert!(unused.is_empty(), "packs no case under tests/iac/ uses: {:?}", unused);
