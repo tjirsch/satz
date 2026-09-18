@@ -1044,11 +1044,32 @@ fn emit_project(
 /// The estate's `deployment_mode`, which selects the backend `providers.tf` carries:
 /// `local` the state file, `cloud` the `gcs` bucket, and `local` when the estate binds
 /// none. Any other value is refused naming the two — the emitter has no backend for it.
+///
+/// `cloud` is refused, naming what is missing, when `svc_iac_account` or
+/// `infra_project_name` has no value: cloud mode runs as the account the two name, and
+/// without them it would run as whoever is logged in.
 pub(crate) fn deployment_mode(env: &Env) -> Result<&'static str, String> {
     match env.get("deployment_mode") {
         None => Ok("local"),
         Some(serde_yaml::Value::String(s)) if s == "local" => Ok("local"),
-        Some(serde_yaml::Value::String(s)) if s == "cloud" => Ok("cloud"),
+        Some(serde_yaml::Value::String(s)) if s == "cloud" => {
+            let named = |k: &str| env.get(k).and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty());
+            let missing: Vec<String> = ["svc_iac_account", "infra_project_name"]
+                .into_iter()
+                .filter(|k| !named(k))
+                .map(|k| format!("`{}`", k))
+                .collect();
+            if missing.is_empty() {
+                return Ok("cloud");
+            }
+            Err(format!(
+                "`deployment_mode = \"cloud\"` without a value for {}: cloud mode runs every live call and \
+                 `tofu` as `{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com`, so the estate \
+                 binds both — bind {} in `params {{}}`, or keep `deployment_mode = \"local\"`",
+                missing.join(" or "),
+                if missing.len() == 1 { "it" } else { "them" }
+            ))
+        }
         Some(v) => {
             let given = match v {
                 serde_yaml::Value::String(s) => format!("\"{}\"", s),
@@ -1076,14 +1097,9 @@ pub(crate) fn emit_providers(
     let mode = deployment_mode(env)?;
     let deps = crate::emit_shared::GoogleProviderDeps {
         infra_project: env.get("infra_project_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        // `deployment_mode` refuses cloud mode without both params, so cloud mode always names one
         impersonate: if mode == "cloud" {
-            match (
-                env.get("svc_iac_account").and_then(|v| v.as_str()),
-                env.get("infra_project_name").and_then(|v| v.as_str()),
-            ) {
-                (Some(a), Some(p)) => Some(format!("{}@{}.iam.gserviceaccount.com", a, p)),
-                _ => None,
-            }
+            crate::prerequisites::service_account_of(|k| env.get(k).and_then(|v| v.as_str()).map(str::to_string))
         } else {
             None
         },
@@ -1376,7 +1392,7 @@ mod backend_identity_tests {
         let bound = |v: serde_yaml::Value| BTreeMap::from([("deployment_mode".to_string(), v)]);
         assert_eq!(deployment_mode(&Env::new()), Ok("local"));
         assert_eq!(deployment_mode(&bound("local".into())), Ok("local"));
-        assert_eq!(deployment_mode(&bound("cloud".into())), Ok("cloud"));
+        assert_eq!(deployment_mode(&env("cloud")), Ok("cloud"));
         for (v, shown) in [
             (serde_yaml::Value::from("boot"), "`deployment_mode = \"boot\"`"),
             (serde_yaml::Value::from(""), "`deployment_mode = \"\"`"),
@@ -1397,16 +1413,38 @@ mod backend_identity_tests {
         assert!(e.contains("\"boot\""), "{}", e);
     }
 
-    /// Cloud mode without the two params that name the account: there is no
-    /// identity to impersonate, so the backend keeps what the estate gave it
-    /// rather than emitting a half-formed address.
+    /// Cloud mode without the two params that name the account has no identity to run
+    /// as — it would run as whoever is logged in — so it is refused naming what is
+    /// missing, and `providers.tf` is not emitted. An empty value names nothing either.
     #[test]
-    fn cloud_mode_without_the_params_adds_nothing() {
-        let env =
-            BTreeMap::from([("deployment_mode".to_string(), serde_yaml::Value::from("cloud"))]);
-        let out = providers_tf(&config_with_both_backends(), &env);
-        assert!(out.contains(r#"backend "gcs""#), "{}", out);
-        assert!(!out.contains("impersonate_service_account"), "{}", out);
+    fn cloud_mode_without_the_params_is_refused() {
+        let cloud = |pairs: &[(&str, &str)]| -> Env {
+            let mut env = BTreeMap::from([("deployment_mode".to_string(), serde_yaml::Value::from("cloud"))]);
+            for (k, v) in pairs {
+                env.insert(k.to_string(), serde_yaml::Value::from(*v));
+            }
+            env
+        };
+        for (env, missing) in [
+            (cloud(&[]), "without a value for `svc_iac_account` or `infra_project_name`: "),
+            (cloud(&[("infra_project_name", "corp-infra-001")]), "without a value for `svc_iac_account`: "),
+            (cloud(&[("svc_iac_account", "svc-iac-001")]), "without a value for `infra_project_name`: "),
+            (
+                cloud(&[("svc_iac_account", "svc-iac-001"), ("infra_project_name", "")]),
+                "without a value for `infra_project_name`: ",
+            ),
+        ] {
+            let e = deployment_mode(&env).unwrap_err();
+            assert!(e.starts_with("`deployment_mode = \"cloud\"` ") && e.contains(missing), "{}", e);
+            let emitted = emit_providers(
+                &config_with_both_backends(),
+                &Folded { slots: BTreeMap::new() },
+                &env,
+                &HashMap::new(),
+                &HashMap::new(),
+            );
+            assert_eq!(emitted, Err(e));
+        }
     }
 }
 

@@ -182,7 +182,8 @@ impl EstateDeclaration {
     }
 
     /// The account live calls impersonate: the declared one, in cloud mode only —
-    /// the emitter's provider rule.
+    /// the emitter's provider rule. Cloud mode always declares one: the mode reader
+    /// refuses it without both params.
     pub(crate) fn impersonation_target(&self) -> Option<&str> {
         if self.mode == "cloud" { self.service_account.as_deref() } else { None }
     }
@@ -1112,9 +1113,28 @@ mod whoami_render_tests {
         let cloud = read(&[both[0].clone(), both[1].clone(), ("deployment_mode", "cloud".into())]);
         assert_eq!(cloud.impersonation_target(), Some(SA));
 
-        let half = read(&[both[0].clone(), ("infra_project_name", "".into()), ("deployment_mode", "cloud".into())]);
+        let half = read(&[both[0].clone(), ("infra_project_name", "".into())]);
         assert_eq!(half.service_account, None);
         assert_eq!(half.impersonation_target(), None);
+    }
+
+    /// Cloud mode without both halves of the account names nobody to run as: the
+    /// declaration is refused with the compile's reason, never read as "impersonates
+    /// nothing" — which would run every live call as the credentials themselves.
+    #[test]
+    fn cloud_mode_without_the_account_is_refused_by_the_declaration() {
+        for pairs in [
+            vec![("svc_iac_account", "svc-iac-001".into()), ("infra_project_name", "".into())],
+            vec![("infra_project_name", "acme-infra-001".into())],
+            vec![],
+        ] {
+            let mut pairs: Vec<(&str, serde_yaml::Value)> = pairs;
+            pairs.push(("deployment_mode", "cloud".into()));
+            let e = env(&pairs);
+            let err = EstateDeclaration::from_env("e.satz".into(), &e).expect_err("no account, no identity");
+            assert_eq!(Err(err.clone()), crate::emitter::deployment_mode(&e), "the compile's reason, word for word");
+            assert!(err.contains("without a value for"), "{err}");
+        }
     }
 
     /// A mode the compile refuses has no identity: the declaration is refused with the

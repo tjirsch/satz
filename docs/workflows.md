@@ -134,7 +134,9 @@ estate binds, and nothing below runs while one is missing.
 `--dry-run` warns instead.
 
 Before it asks for a credential, `bootstrap` checks the params it is about to use:
-`customer_shortname` and `billing_account_infra` are present, the organisation id is
+`customer_shortname`, `billing_account_infra`, `infra_project_name` and
+`infra_bucket_name` are present (the bucket takes the project id when the estate sets
+no bucket), the organisation id is
 a number, the billing account reads `XXXXXX-XXXXXX-XXXXXX`, and the project id and
 bucket name are shaped the way Google accepts them. A failure names the param and the
 flag that sets it, and nothing is called — an empty value used to travel into a URL
@@ -143,7 +145,9 @@ organisation itself is resolved: one that is not visible to the caller is report
 that, with the ones that are listed, rather than as a wall of missing permissions.
 Where the estate binds `customer_id` as well, the two are cross-checked, so an
 organisation belonging to a different directory customer is named before anything is
-created.
+created. The state bucket is created in `default_region`; an estate that binds none
+gets `europe-west3`, the default `presets/estate-core.satz` declares, and bootstrap
+prints the line `default_region not set — using europe-west3, the documented default`.
 
 `bootstrap` creates the day-0 infrastructure — the infrastructure folder, the
 management project, the billing link, the foundation APIs (which `tofu` needs
@@ -246,8 +250,8 @@ identity `tofu` applies with — so the human needs no org-wide read roles, only
 `svc-iac-users`). `--no-impersonate` opts out; `bootstrap` never impersonates (day
 0, the SA may not exist yet); an ADC that already impersonates is used as-is. The
 credential line names the SA the calls actually run as. An estate whose params do
-not parse, or whose `deployment_mode` is neither `local` nor `cloud`, names no
-identity: `whoami`, `migrate` and every live command refuse it with the reason, and
+not parse, whose `deployment_mode` is neither `local` nor `cloud`, or whose cloud mode
+has no value for `svc_iac_account` or `infra_project_name`, names no identity: `whoami`, `migrate` and every live command refuse it with the reason, and
 none runs as the logged-in user instead.
 
 **Greenfield: a tenant with no organization yet.** Google creates the Organization
@@ -329,7 +333,9 @@ satz migrate C0example.satz --mode cloud
 ```
 
 `migrate` rewrites the estate's `deployment_mode`, switches to service-account
-impersonation and runs `tofu init -migrate-state`. Impersonation applies to both
+impersonation and runs `tofu init -migrate-state`. An estate without `svc_iac_account`
+or `infra_project_name` is refused before the file is touched, naming the param: the
+service account is the one those two name. Impersonation applies to both
 halves of the run: every provider block gets `impersonate_service_account`, and so
 does the `gcs` backend, so the state bucket is read and written as the service
 account rather than as the logged-in user.

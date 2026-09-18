@@ -66,7 +66,7 @@ every `satz` block in the guide.
 
 | tool | group | what it answers |
 |---|---|---|
-| `satz_estates` | `read` | which estates this server can open: every `config.toml` under its root, with the estate files beside it |
+| `satz_estates` | `read` | which estates this server can open: every `config.toml` under its root, with the estate files beside it — each with its `deployment_mode` as the compile reads it, or, for one `satz_open` refuses, `refused` with the reason and no mode |
 | `satz_open` | `read` | open one for the session — its `config.toml` and its main `.satz`. Answers with what it resolved, including the identity that estate's live tools will run as |
 | `satz_require` | `read` | which controls of a catalog the **declared** estate satisfies, from its packs' claims. Offline |
 | `satz_questions` | `read` | every question the estate's packs declare with its state — `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible, and each param question's declared `shape` (`string` \| `number` \| `bool` \| `list` \| `map`) — and `summary.complete`, the gate bootstrap and apply refuse on |
@@ -276,8 +276,10 @@ emitted provider block uses — read from the estate as it stands when the call 
 itself; its `deployment_mode` is the mode the compile reads, `local` when the estate
 declares none.
 
-An estate whose params do not parse, or whose `deployment_mode` is neither `local` nor
-`cloud`, names no identity. `satz_open` refuses to open it, and `satz_whoami`,
+An estate whose params do not parse, whose `deployment_mode` is neither `local` nor
+`cloud`, or whose `deployment_mode = "cloud"` has no value for `svc_iac_account` or
+`infra_project_name`, names no identity. `satz_estates` lists it with that reason as
+`refused`, `satz_open` refuses to open it, and `satz_whoami`,
 `satz_adopt` and `satz_report_compliance` refuse a call that names it, each with the
 estate and the reason; none runs as the ADC identity in its place.
 

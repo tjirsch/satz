@@ -49,6 +49,11 @@ is opened, and each live MCP tool before its first call.
   provider schema, which makes it a small cost next to the API calls that follow.
 - `satz_open`'s `deployment_mode` is the mode the compile reads, `local` when the estate
   declares none, where it was the raw param and null when absent.
+- `deployment_mode = "cloud"` without a value for `svc_iac_account` or
+  `infra_project_name` is refused the same way, by the same reader: cloud mode runs as the
+  account those two name, so without them it names no identity. The compile reports it at
+  the `deployment_mode` line, `migrate --mode cloud` refuses before touching the file, and
+  `satz_estates` lists every refused estate with its reason instead of a mode.
 
 ## Pros and cons of the options
 

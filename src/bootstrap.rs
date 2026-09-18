@@ -68,6 +68,10 @@ impl RunSummary {
     }
 }
 
+/// `default_region` as `presets/estate-core.satz` declares it — the region bootstrap
+/// creates the state bucket in when the estate binds none.
+const DEFAULT_REGION: &str = "europe-west3";
+
 /// One shared hint for quota-class 403s: the failure names the billed project,
 /// not the caller's permissions, and the fix is one gcloud command.
 const QUOTA_HINT: &str = "this 403 is about the billed (quota) project, not a missing permission — \
@@ -562,7 +566,12 @@ pub async fn bootstrap(
         .ok_or_else(|| format!("Missing 'customer-shortname' in {}", config_file.display()))?;
     let bid = lookup_str(&["billing-account-infra", "billing_id"])
         .ok_or_else(|| format!("Missing 'billing-account-infra' in {}", config_file.display()))?;
-    let r = lookup_str(&["default-region", "region"]).unwrap_or_else(|| "europe-west3".to_string());
+    // the default `presets/estate-core.satz` declares, taken — and said — for an estate
+    // that binds none and does not use the pack
+    let r = lookup_str(&["default-region", "region"]).unwrap_or_else(|| {
+        println!("default_region not set — using {}, the documented default", DEFAULT_REGION);
+        DEFAULT_REGION.to_string()
+    });
     // Empty = greenfield territory: allowed only with --greenfield, checked
     // below before any credentials are needed.
     let oid_val = lookup_str(&["customer-organization-id"]).unwrap_or_default();
@@ -590,21 +599,24 @@ pub async fn bootstrap(
         return Err("no organization id in the estate (see the greenfield guidance above)".into());
     }
 
-    let project_id = final_proj_id.unwrap_or_else(|| format!("{}-iac-infra", sn));
-    let bucket_name = final_bucket.unwrap_or_else(|| project_id.clone());
+    // No default for the project id: the estate declares the project under its own
+    // `infra_project_name`, so a project bootstrap named itself is one the estate does
+    // not know. Unset, it is refused by the gate below, by name.
+    let bucket_name = final_bucket.or_else(|| final_proj_id.clone());
     // the address the provider impersonates once the estate is in cloud mode — the
     // emitter's own derivation, so what bootstrap prints is what every later run acts as
     let sa_email = lookup_str(&["svc-iac-account"])
         .filter(|a| !a.trim().is_empty())
-        .map(|a| format!("{}@{}.iam.gserviceaccount.com", a, project_id));
+        .zip(final_proj_id.as_deref())
+        .map(|(a, p)| format!("{}@{}.iam.gserviceaccount.com", a, p));
 
     println!("--- Bootstrap Plan ---");
     println!("Parent:          {}", parent);
     println!("Shortname:       {}", sn);
     println!("Billing ID:      {}", bid);
     println!("Region:          {}", r);
-    println!("Project ID:      {}", project_id);
-    println!("Bucket:          {}", bucket_name);
+    println!("Project ID:      {}", final_proj_id.as_deref().unwrap_or("(not set)"));
+    println!("Bucket:          {}", bucket_name.as_deref().unwrap_or("(not set)"));
     println!("Service Account: {}", sa_email.as_deref().unwrap_or("(the estate declares no svc_iac_account)"));
     println!("----------------------");
 
@@ -617,14 +629,17 @@ pub async fn bootstrap(
         organization_id: oid_val.trim(),
         greenfield,
         billing_account: &bid,
-        project_id: &project_id,
-        bucket_name: &bucket_name,
+        project_id: final_proj_id.as_deref(),
+        bucket_name: bucket_name.as_deref(),
     }) {
         // printed, not returned: `main` renders a returned error with `Debug`,
         // which escapes the newlines into one unreadable line
         eprintln!("\n{}", detail);
         return Err("the estate is not ready to bootstrap (the params are listed above)".into());
     }
+    let (Some(project_id), Some(bucket_name)) = (final_proj_id, bucket_name) else {
+        unreachable!("the gate refuses an estate that sets no infra_project_name or infra_bucket_name")
+    };
 
     if dry_run {
         println!("Dry run: nothing will be created; the identity check and permission pre-flight are read-only.");
