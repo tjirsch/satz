@@ -32,6 +32,7 @@ mod mcp;
 mod dossier;
 mod presets;
 mod doc_packs;
+mod pack_graph;
 mod github;
 mod policy_tree;
 mod prowler;
@@ -201,7 +202,7 @@ static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::At
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
-    ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "review-pack"]),
+    ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
     (
         "Policies",
         &[
@@ -743,6 +744,17 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Check the library's packs and write `<presets_dir>/pack-graph.json`: every pack, its gate, phase, block and adoption order from the map's `offers` entries, and the edges between them — derived from the packs' param references and `ask_when`, declared in the map where the packs do not show them
+    ///
+    /// Nothing is written while a check fails; `--check` fails when the file is behind the library
+    PackGraph {
+        /// The library to read and write into (default: presets_dir from the config)
+        #[arg(long, value_name = "DIR")]
+        presets_dir: Option<PathBuf>,
+        /// Verify instead of write: exit 1 when pack-graph.json is behind the library
+        #[arg(long)]
+        check: bool,
+    },
     /// Judge one pack against the library's own bar: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles
     ///
     /// A pack is a fragment, so satz folds it into an estate to see what it emits:
@@ -1048,6 +1060,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::ReviewPack { .. }
+                | Commands::PackGraph { presets_dir: None, .. }
                 | Commands::UpdatePrerequisites { input: Some(_), .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1062,7 +1075,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
                 Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Fmt { .. } | Commands::Lsp
-                | Commands::UpdatePrerequisites { input: None, .. } => {
+                | Commands::UpdatePrerequisites { input: None, .. }
+                | Commands::PackGraph { presets_dir: Some(_), .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }
@@ -1980,6 +1994,10 @@ Thumbs.db
             let presets = PathBuf::from(&runtime_config.presets_dir);
             let out_dir = out_dir.unwrap_or_else(|| presets.join("docs"));
             crate::doc_packs::run(&presets, &out_dir, check)
+        }
+        Commands::PackGraph { presets_dir, check } => {
+            let presets = presets_dir.unwrap_or_else(|| PathBuf::from(&runtime_config.presets_dir));
+            crate::pack_graph::run(&presets, check)
         }
         Commands::RunActions { input, check, execute, only, phase } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -6001,6 +6019,7 @@ mod command_groups {
         ("merge-presets", Identity::NoGoogleApi),
         ("check-presets", Identity::NoGoogleApi),
         ("doc-packs", Identity::NoGoogleApi),
+        ("pack-graph", Identity::NoGoogleApi),
         ("require", Identity::NoGoogleApi),
         ("prowler", Identity::NoGoogleApi),
         ("fmt", Identity::NoGoogleApi),

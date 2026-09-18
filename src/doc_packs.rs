@@ -353,70 +353,81 @@ fn invocation(rel: &Path, file: &File, sh: &Shape, h: &Header) -> Result<String,
 // Params a pack reads but does not declare
 // ---------------------------------------------------------------------------
 
-fn refs_in_str(parts: &[StrPart], out: &mut BTreeSet<String>) {
+/// A param reference and the first line of the file it appears on.
+type Refs = BTreeMap<String, usize>;
+
+fn note(out: &mut Refs, name: &str, line: usize) {
+    let at = out.entry(name.to_string()).or_insert(line);
+    *at = (*at).min(line);
+}
+
+fn refs_in_str(parts: &[StrPart], line: usize, out: &mut Refs) {
     for p in parts {
         if let StrPart::Param(r) = p {
-            out.insert(r.clone());
+            note(out, r, line);
         }
     }
 }
 
-fn refs_in_key(k: &Key, out: &mut BTreeSet<String>) {
+fn refs_in_key(k: &Key, line: usize, out: &mut Refs) {
     if let Key::Str(parts) = k {
-        refs_in_str(parts, out);
+        refs_in_str(parts, line, out);
     }
 }
 
-fn refs_in_value(v: &Value, out: &mut BTreeSet<String>) {
+fn refs_in_value(v: &Value, line: usize, out: &mut Refs) {
     match v {
-        Value::Str(parts) => refs_in_str(parts, out),
+        Value::Str(parts) => refs_in_str(parts, line, out),
         // a bare identifier in value position is a param; a reference to another
         // resource is `${{…}}`, which reaches here as literal string text
-        Value::Ref(r) if r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => {
-            out.insert(r.clone());
-        }
-        Value::List(items) => items.iter().for_each(|i| refs_in_value(i, out)),
+        Value::Ref(r) if r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => note(out, r, line),
+        Value::List(items) => items.iter().for_each(|i| refs_in_value(i, line, out)),
         Value::Obj(entries) => entries.iter().for_each(|e| refs_in_entry(e, out)),
         _ => {}
     }
 }
 
-fn refs_in_entry(e: &Entry, out: &mut BTreeSet<String>) {
+fn refs_in_entry(e: &Entry, out: &mut Refs) {
     match e {
-        Entry::Attr { key, value, .. } => {
-            refs_in_key(key, out);
-            refs_in_value(value, out);
+        Entry::Attr { key, value, line } => {
+            refs_in_key(key, *line, out);
+            refs_in_value(value, *line, out);
         }
-        Entry::Map { key, name, body, .. } => {
-            refs_in_key(key, out);
+        Entry::Map { key, name, body, line } => {
+            refs_in_key(key, *line, out);
             if let Some(n) = name {
-                refs_in_key(n, out);
+                refs_in_key(n, *line, out);
             }
             body.iter().for_each(|b| refs_in_entry(b, out));
         }
-        Entry::Use { when, .. } => {
+        Entry::Use { when, line, .. } => {
             if let Some(w) = when {
-                out.insert(w.clone());
+                note(out, w, *line);
             }
         }
     }
 }
 
-/// Params the pack reads and does not declare. Exact, not a heuristic: an
-/// unresolved reference is a pipeline error, so "not declared here" is precisely
-/// "the estate, or another pack, must supply it".
-pub(crate) fn needs(file: &File) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
+/// Params the pack reads and does not declare, each with the first line that reads
+/// it. Exact, not a heuristic: an unresolved reference is a pipeline error, so "not
+/// declared here" is precisely "the estate, or another pack, must supply it".
+pub(crate) fn needs_at(file: &File) -> Refs {
+    let mut out = Refs::new();
     file.items.iter().for_each(|e| refs_in_entry(e, &mut out));
-    for (_, v, _) in &file.params {
-        refs_in_value(v, &mut out);
+    for (_, v, line) in &file.params {
+        refs_in_value(v, *line, &mut out);
     }
     for a in &file.actions {
-        a.args.iter().chain(&a.execute_args).for_each(|p| refs_in_str(p, &mut out));
+        a.args.iter().chain(&a.execute_args).for_each(|p| refs_in_str(p, a.line, &mut out));
     }
     let declared: BTreeSet<&str> = file.params.iter().map(|(n, _, _)| n.as_str()).collect();
-    out.retain(|n| !declared.contains(n.as_str()));
+    out.retain(|n, _| !declared.contains(n.as_str()));
     out
+}
+
+/// The names `needs_at` finds, without their lines.
+pub(crate) fn needs(file: &File) -> BTreeSet<String> {
+    needs_at(file).into_keys().collect()
 }
 
 /// Which pack declares which param, across the whole library.
@@ -748,6 +759,33 @@ fn render(
             }
             md.push('\n');
         }
+    }
+
+    // The map's menu of the library, in adoption order. `satz pack-graph` turns the
+    // same entries into `presets/pack-graph.json`; the page shows what the map says.
+    if !file.offers.is_empty() {
+        md.push_str("## Offers\n\n");
+        md.push_str("The packs the library offers an estate, in the order they can be adopted. Edges the packs show by their param references are derived by `satz pack-graph` and are not listed here.\n\n");
+        md.push_str("| # | pack | gate | line | declared edges |\n|---|---|---|---|---|\n");
+        for (i, o) in file.offers.iter().enumerate() {
+            let line = match (&o.by_hand, &o.block, o.after_scaffold) {
+                (Some(why), _, _) => format!("by hand — {}", why),
+                (None, Some(b), _) => format!("in `{}`", b),
+                (None, None, true) => "after the scaffold".to_string(),
+                (None, None, false) => "menu".to_string(),
+            };
+            let mut edges: Vec<String> = o.requires.iter().map(|p| format!("requires `{}`", p)).collect();
+            edges.extend(o.excludes.iter().map(|p| format!("excludes `{}`", p)));
+            md.push_str(&format!(
+                "| {} | `{}` | {} | {} | {} |\n",
+                i + 1,
+                o.path,
+                o.when.as_ref().map(|w| format!("`{}`", w)).unwrap_or_else(|| "—".into()),
+                line.replace('|', "\\|"),
+                if edges.is_empty() { "—".to_string() } else { edges.join("<br>") }
+            ));
+        }
+        md.push('\n');
     }
 
     let off: BTreeSet<&str> = sh.resources.iter().filter(|r| r.off).map(|r| r.label.as_str()).collect();

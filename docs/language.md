@@ -385,6 +385,7 @@ item    := "params" "{" { param } "}"
          | "suppress" IDENT STRING [ "role" STRING ]
          | "hcl" [ "trust" STRING ] "{" … "}"
          | "action" STRING "{" { action-entry } "}"
+         | "offers" STRING "{" { offers-entry } "}"      # the map only
          | block
 ```
 
@@ -510,7 +511,7 @@ are otherwise indistinguishable from a nested attribute block such as
 `labels { … }` — the schema is what tells the two apart.
 
 The only bare block keywords are Satz's own: `estate`, `pack`, `params`,
-`terraform`, `providers`, `use`, `suppress`, `claim`, `question`, `action`, `hcl`.
+`terraform`, `providers`, `use`, `suppress`, `claim`, `question`, `action`, `offers`, `hcl`.
 
 **Simple** — one org policy:
 
@@ -1454,7 +1455,51 @@ Composition follows from that: a choice between two packs is two booleans plus t
   change — a `recreate → edit` downgrade included — is still listed. Questions are
   canonicalised separately from the body for that reason.
 
-### 6.15 Provenance: pristine, fork, ledger
+### 6.15 `offers` — what the library offers an estate
+
+`presets/estate-map.satz` — the map, `pack estate_map` — carries one `offers` entry per
+pack in the library. The entry says what an estate's line for that pack looks like and
+where it goes; the entries' order is the order the packs can be adopted.
+
+```
+offers "presets/monitoring/organization-audit-logsink.satz" {
+  when  = use_audit_logsink
+  phase = """once the estate runs as the service account — the audit archive, which every later
+logging pack points at"""
+  block = "google_folder.infra_folder"
+}
+
+offers "presets/cis/cloud-sql-dry-run.satz" {
+  when     = cis_cloud_sql_hardening_dry_run
+  excludes = ["presets/cis/cloud-sql.satz"]
+}
+```
+
+| key | value | meaning |
+|---|---|---|
+| `when` | a param | the gate the pack's line carries (`use "…" when <param>`); every entry but the map's own has one |
+| `phase` | a string | opens a group of lines: what has to be finished before they can go in, written as the comment above them |
+| `block` | a block path | the line is written inside that block of the estate (`google_folder.infra_folder`) rather than in the menu at the top |
+| `after_scaffold` | `true` | the line is written after the scaffold — for a pack that reads a param of a pack inside it |
+| `by_hand` | a string | satz writes no line for the pack; the string says how it is used. Takes no `phase`, `block` or `after_scaffold` |
+| `requires` | a list of pack paths | packs this one needs in a way its params do not show |
+| `excludes` | a list of pack paths | packs this one never goes in beside |
+
+An entry emits nothing and the compile never reads one. An `offers` entry anywhere but
+in `pack estate_map` is refused at parse time.
+
+`satz pack-graph` reads the entries and writes `presets/pack-graph.json`: every library
+file as a node, and the edges between them. Most edges are derived from the packs — a
+param one pack reads and another declares (`data`), a gate a pack declares for another
+(`gate`), an `ask_when` (`asks`), the options of one `question oneof` (`excludes`) — so
+`requires` and `excludes` on an entry name only what the packs cannot show, and
+`pack-graph` refuses a declared edge it derives. Several `requires` on packs that exclude
+one another are one requirement: any of them meets it.
+
+`check-presets` reports a map whose entries changed like one whose questions changed:
+the map emits the same, so the estate is not forked, and the change is listed.
+
+### 6.16 Provenance: pristine, fork, ledger
 
 Suffix carries meaning; the tooling enforces it.
 
@@ -1673,6 +1718,7 @@ these properties was verified at this time".
 | declare a step no resource can express | `action "scc" { reason = "…" run = "../scripts/x.sh" args = ["--org", "{customer_organization_id}"] }` |
 | run a script inside the apply instead | `hcl trust "…" { resource "terraform_data" … provisioner "local-exec" { … } }` |
 | multi-line string | `"""…"""` |
+| offer a pack from the map | `offers "presets/x.satz" { when = use_x phase = "…" }` |
 | comment | `#`, `//`, `/* … */` |
 
 ### Commands that consume this language
@@ -1697,6 +1743,7 @@ these properties was verified at this time".
 | `triage <framework> <estate>.satz --prowler f --format markdown\|pdf\|json --out f` | Evidence | every Prowler FAIL sorted into buckets A–E (a pack covers it / Satz declares it / declared exception / unmanaged / manual) — the remediation plan's skeleton; `--fix` adds the estate delta the buckets imply to the report (markdown only) |
 | `scan [<estate>.satz]` | HCL | Checkov over `hcl_dir`, findings pointed at the Satz line that declared the resource; failed checks exit 1 |
 | `review-pack <pack>.satz --format text\|json --out f [--against <estate>.satz]` | Satz | one pack against the library's bar — parses, formatted, a header sentence, a version with its changelog row, no membership, no legacy constraint beside its managed replacement, a prerequisite row for every type it emits, and it compiles. A pack is a fragment, so it is folded into a synthesised estate (the documented example params, the pack's own defaults) unless `--against` names a real one |
+| `pack-graph [--presets-dir d] [--check]` | Satz | builds the library's pack graph from the map's `offers` entries and the packs' own param references and `ask_when`, checks it, and writes `<presets_dir>/pack-graph.json`; nothing is written while a check fails, and `--check` fails when the file is behind the library |
 | `doc-packs [--out-dir d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
 | `map-types [--only t,…]` | — | derive the API→Terraform field map per type into `presets/type-map.yaml` (from the Discovery Documents and the provider schema) |
 | `bootstrap <estate>.satz [--dry-run] [--greenfield]` | Satz | first apply for a new organisation: management project, state bucket, service account |

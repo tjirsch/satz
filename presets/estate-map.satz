@@ -4,27 +4,30 @@
 //
 //   use "presets/estate-map.satz"
 //
-// The map declares the choices and nothing else. The estate carries the matching
-// `use … when` lines, one per choice, in the order the packs can be adopted — each
-// written commented under the phase that has to be finished before it can go in.
-// `satz init`, `satz interview --create` and the MCP tool `satz_interview` write
-// them; answering a choice yes in the interview uncomments its line. A pack
-// switched on brings its own questions with it; one switched off asks nothing and
-// emits nothing. A question that gates a pack cannot live in the pack it gates,
-// which is why they all live here.
+// The map declares the choices, and at the bottom of the file one `offers` entry
+// per pack in the library: the gate that switches it on, the phase that has to be
+// finished before it can go in, the block its line belongs in, and — in file
+// order — the order the packs can be adopted. `satz pack-graph` reads the entries,
+// derives who needs whom from the packs' own param references and `ask_when`, and
+// writes `presets/pack-graph.json`; an entry declares `requires` or `excludes` only
+// for an edge the packs do not show. The estate carries the matching `use … when`
+// lines, each written commented under its phase. `satz init`, `satz interview
+// --create` and the MCP tool `satz_interview` write them; answering a choice yes in
+// the interview uncomments its line. A pack switched on brings its own questions
+// with it; one switched off asks nothing and emits nothing. A question that gates a
+// pack cannot live in the pack it gates, which is why they all live here.
 //
 // The CIS baseline is the first choice and barely one: the estate exists for it,
 // and its opt-in extensions are the baseline pack's own questions. It is asked
 // because it is thirty organisation policies in one apply, not because an estate
-// is expected to go without. Not on the map: the per-project alert pack (the
-// central one covers every project), Defender's plan fragments (added by hand once
-// Defender is on, per that pack's header), and the MSP-hosted runner shape (the
-// grant alone in the customer's estate, the runner in the MSP's — wired by hand).
+// is expected to go without. Defender's plan fragments and the second spelling of
+// the S1 model are offered with `by_hand`: their gates are the Defender pack's own
+// and the S1 model's, and their lines are written by hand, as their headers show.
 //
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.9"
+pack estate_map version "2.0"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -41,22 +44,27 @@ params {
   use_essential_contacts  = true
 
   // ---- optional: off until the customer asks --------------------------------
-  use_budget                = false
-  use_scc_enablement        = false
-  use_scc_notifications     = false
-  use_scc_findings_mail     = false
-  use_scc_findings_siem     = false
-  use_scc_export            = false
-  use_security_audit_sa     = false
-  use_defender              = false
-  use_sentinel              = false
+  use_budget                    = false
+  use_project_cis_log_alerts    = false
+  use_scc_enablement            = false
+  use_scc_notifications         = false
+  use_scc_findings_mail         = false
+  use_scc_findings_siem         = false
+  use_scc_export                = false
+  use_security_audit_sa         = false
+  use_defender                  = false
+  use_sentinel                  = false
   // Both log paths follow the Sentinel choice BY REFERENCE: a customer who
   // connects Sentinel and accepts the defaults gets the logs Sentinel exists to
   // read. Answer either one `false` to leave that path out.
-  use_sentinel_auditlogs    = use_sentinel
-  use_sentinel_network_logs = use_sentinel
-  use_verification_runner   = false
-  use_exemption_tag         = false
+  use_sentinel_auditlogs        = use_sentinel
+  use_sentinel_network_logs     = use_sentinel
+  use_verification_runner       = false
+  // The grant follows the runner BY REFERENCE: the customer-hosted shape uses
+  // both. An MSP-hosted runner lives in the MSP's estate, and the customer's
+  // estate answers the grant alone `true`.
+  use_verification_runner_grant = use_verification_runner
+  use_exemption_tag             = false
 }
 
 question use_cis_baseline {
@@ -109,6 +117,13 @@ question use_budget {
   why      = "The one alarm on runaway cost. The pack carries an import-id placeholder for adopting a budget that already exists — delete it for a fresh one, as its header says."
   reversal = recreate
   blast    = none
+}
+
+question use_project_cis_log_alerts {
+  prompt   = "Alert on the CIS log events inside one project of its own as well?"
+  why      = "The central alerts cover every project from the logging project. This pack puts the same eight metrics and alert policies, and a channel, into ONE project — for a project with its own on-call, delegated ownership or tenant isolation, or an organisation without the central logging bucket. One project per line: a second project is a fork, because the labels are fixed. Turning it off later destroys the project's metrics, policies and channel, and their alert history."
+  reversal = recreate
+  blast    = low
 }
 
 question use_scc_enablement {
@@ -190,8 +205,15 @@ question use_sentinel_network_logs {
 
 question use_verification_runner {
   prompt   = "Run continuous verification from this estate's own project — transpile --check on every push, report-compliance every night?"
-  why      = "The customer-hosted shape: Cloud Build triggers and a runner account in the infrastructure project, plus the grant that lets the runner read as the estate. An MSP-hosted runner is the grant alone here and the runner in the MSP's estate, wired by hand."
+  why      = "The customer-hosted shape: Cloud Build triggers and a runner account in the infrastructure project. The grant that lets the runner read as the estate is the next choice, and follows this one. An MSP-hosted runner lives in the MSP's estate: answer this one no here and the grant yes."
   reversal = recreate
+  blast    = low
+}
+
+question use_verification_runner_grant {
+  prompt   = "Let a verification runner act as this estate's IaC service account?"
+  why      = "One binding: the runner's account may mint tokens for the estate's account, the right a human operator holds through the IaC users group. It follows the runner choice, because a runner in this estate needs it; with the runner in another estate — an MSP's — it is answered on its own, and the grant's own question names that runner's account. Whoever holds the runner account reads the estate as its service account."
+  reversal = edit
   blast    = low
 }
 
@@ -200,4 +222,261 @@ question use_exemption_tag {
   why      = "An organisation policy is all-or-nothing per node: letting ONE service account or ONE project out of a control today means lowering the policy for a whole folder and raising it again afterwards, a window during which nothing is enforced and which nobody remembers to close. A Resource Manager tag is IAM-governed and an organisation policy's rule can condition on it, so the policy stays enforced everywhere and named resources are let out one at a time — visible in the compliance report and listable organisation-wide through Cloud Asset Inventory. Creating the tag exempts nothing on its own: a binding does, and each binding is written in the estate with its owner and its reason. Before granting any exemption, ask whether the consumer needs it at all — a workload in Google Cloud, a Cloud Run service and external CI can all federate instead."
   reversal = edit
   blast    = none
+}
+
+// ---- what the library offers, in the order the packs can be adopted ---------
+// One entry per pack. `when` is the gate its line carries; `phase` opens a group
+// of lines and says what has to be finished before they can go in; `block` puts
+// the line inside that block of the estate and `after_scaffold` after the
+// scaffold; `by_hand` offers a pack whose line is written by hand, with the
+// reason. `requires` and `excludes` name the edges the packs do not show by
+// their param references — `satz pack-graph` derives the rest and refuses a
+// declared edge it can derive.
+
+offers "presets/estate-map.satz" {
+  phase = """once the estate runs as the service account — the map, which declares the questions
+every line below is gated on. This is the one to uncomment first."""
+}
+
+offers "presets/security-group-models/s1-security-groups.satz" {
+  when  = security_model_s1
+  phase = """once the map is in — the security-group model, whose groups later grants name.
+Exactly one of the two."""
+}
+
+offers "presets/security-group-models/s2-security-groups.satz" {
+  when = security_model_s2
+}
+
+// The S1 model's second spelling: two content packs, each `use`d under the
+// resource type it fills. It shares the model's gate and replaces the one-file
+// spelling, never beside it.
+offers "presets/security-group-models/s1-group-definitions.satz" {
+  when     = security_model_s1
+  by_hand  = "the S1 model's second spelling, `use`d inside the `google_cloud_identity_group` block in place of s1-security-groups"
+  excludes = ["presets/security-group-models/s1-security-groups.satz"]
+}
+
+offers "presets/security-group-models/s1-group-permissions.satz" {
+  when     = security_model_s1
+  by_hand  = "the S1 model's second spelling, `use`d inside the `google_organization_iam_member` block in place of s1-security-groups"
+  excludes = ["presets/security-group-models/s1-security-groups.satz"]
+}
+
+// It grants to the model's billing-admins group by the group's address, which is
+// a literal, not a param the model declares — so the edge is declared. Any one
+// of the three satisfies it: they exclude one another.
+offers "presets/billing-account-permissions.satz" {
+  when  = use_billing_permissions
+  phase = """once the groups exist — this grants to the model's billing-admins group by name, so
+the grant has nothing to land on until they are applied"""
+  requires = [
+    "presets/security-group-models/s1-security-groups.satz",
+    "presets/security-group-models/s2-security-groups.satz",
+    "presets/security-group-models/s1-group-definitions.satz",
+  ]
+}
+
+offers "presets/organization-budget.satz" {
+  when  = use_budget
+  phase = "once the estate runs as the service account — these stand alone"
+}
+
+offers "presets/security-audit/sa-security-audit.satz" {
+  when = use_security_audit_sa
+}
+
+offers "presets/scc/scc-service-enablement.satz" {
+  when = use_scc_enablement
+}
+
+offers "presets/monitoring/project-cis-log-alerts.satz" {
+  when = use_project_cis_log_alerts
+}
+
+offers "presets/essential-contacts-organization.satz" {
+  when  = use_essential_contacts
+  phase = "once the estate runs as the service account — one contact for Google's notices"
+  block = "google_essential_contacts_contact"
+}
+
+offers "presets/monitoring/organization-audit-logsink.satz" {
+  when  = use_audit_logsink
+  phase = """once the estate runs as the service account — the audit archive, which every later
+logging pack points at"""
+  block = "google_folder.infra_folder"
+}
+
+offers "presets/monitoring/organization-cis-log-alerts-central.satz" {
+  when  = use_central_alerts
+  phase = """once the archive exists — the alert project defaults to the logsink's, so this does
+not compile without it"""
+  block = "google_folder.infra_folder"
+}
+
+offers "presets/cis/CIS-GCP-Foundation-4.0.satz" {
+  when  = use_cis_baseline
+  phase = """once the estate runs as the service account — the CIS baseline, what the estate is
+for and what everything below extends. Thirty organisation policies in one apply,
+so it goes in on its own, with its plan read before it is applied."""
+}
+
+offers "presets/cis/block-project-ssh-keys.satz" {
+  when  = cis_block_project_ssh_keys
+  phase = """the baseline's own extensions, gated on params it declares, so they do not compile
+without it. Each restricts what may be created; two are on by default (DNS query
+logging, and the admin ports closed to the internet)."""
+}
+
+offers "presets/cis/shielded-vm.satz" {
+  when = cis_require_shielded_vm
+}
+
+offers "presets/cis/dns-logging.satz" {
+  when = cis_dns_logging
+}
+
+offers "presets/cis/confidential-computing.satz" {
+  when = cis_confidential_computing
+}
+
+offers "presets/cis/cloud-sql.satz" {
+  when = cis_cloud_sql_hardening
+}
+
+offers "presets/cis/cmek.satz" {
+  when = cis_cmek_required
+}
+
+offers "presets/cis/api-key-services.satz" {
+  when = cis_api_key_services
+}
+
+offers "presets/cis/bucket-retention.satz" {
+  when = cis_bucket_retention
+}
+
+offers "presets/cis/access-approval.satz" {
+  when = cis_access_approval
+}
+
+offers "presets/cis/internet-ssh-rdp.satz" {
+  when = cis_block_internet_ssh_rdp
+}
+
+offers "presets/cis/cloud-sql-iam-and-deletion-protection.satz" {
+  when = cis_cloud_sql_iam_and_deletion_protection
+}
+
+// A dry-run twin declares the same policies as its enforcing extension, so the
+// two never go in together.
+offers "presets/cis/api-key-services-dry-run.satz" {
+  when     = cis_api_key_services_dry_run
+  phase    = """INSTEAD of the enforcing extension above it, never beside it. A dry run declares the
+same policy with `dry_run_spec`: Google logs every action it would have blocked and
+blocks none, so the violation count sizes the control against this organisation
+before it bites. Nothing is enforced while it runs."""
+  excludes = ["presets/cis/api-key-services.satz"]
+}
+
+offers "presets/cis/block-project-ssh-keys-dry-run.satz" {
+  when     = cis_block_project_ssh_keys_dry_run
+  excludes = ["presets/cis/block-project-ssh-keys.satz"]
+}
+
+offers "presets/cis/bucket-retention-dry-run.satz" {
+  when     = cis_bucket_retention_dry_run
+  excludes = ["presets/cis/bucket-retention.satz"]
+}
+
+offers "presets/cis/cloud-sql-dry-run.satz" {
+  when     = cis_cloud_sql_hardening_dry_run
+  excludes = ["presets/cis/cloud-sql.satz"]
+}
+
+offers "presets/cis/cloud-sql-iam-and-deletion-protection-dry-run.satz" {
+  when     = cis_cloud_sql_iam_and_deletion_protection_dry_run
+  excludes = ["presets/cis/cloud-sql-iam-and-deletion-protection.satz"]
+}
+
+offers "presets/cis/confidential-computing-dry-run.satz" {
+  when     = cis_confidential_computing_dry_run
+  excludes = ["presets/cis/confidential-computing.satz"]
+}
+
+offers "presets/scc/scc-notifications.satz" {
+  when  = use_scc_notifications
+  phase = """once Security Command Center is switched on — findings have to exist before anything
+can carry them"""
+}
+
+offers "presets/scc/scc-export.satz" {
+  when = use_scc_export
+}
+
+offers "presets/scc/scc-findings-siem.satz" {
+  when  = use_scc_findings_siem
+  phase = "once the findings topic exists — this reads from it"
+}
+
+offers "presets/scc/scc-findings-mail.satz" {
+  when           = use_scc_findings_mail
+  phase          = "once the central alerts are in as well — the mailbox defaults to their address"
+  after_scaffold = true
+}
+
+offers "presets/integrations/microsoft-defender-for-cloud.satz" {
+  when  = use_defender
+  phase = """once the estate runs as the service account — Defender's plan fragments are added by
+hand once this line is in; see that pack's header"""
+}
+
+offers "presets/integrations/microsoft-defender-for-cloud-cspm.satz" {
+  when    = mdc_plan_cspm
+  by_hand = "a Defender plan fragment, written beside the Defender line once the plan is licensed, as that pack's header shows"
+}
+
+offers "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" {
+  when    = mdc_cspm_default_access
+  by_hand = "the CSPM plan's custom role in the default access mode, written with the plan fragment"
+}
+
+offers "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz" {
+  when    = mdc_cspm_least_privilege
+  by_hand = "the CSPM plan's custom role in the least-privilege mode, written with the plan fragment"
+}
+
+offers "presets/integrations/microsoft-sentinel.satz" {
+  when           = use_sentinel
+  phase          = "once the audit archive exists — Sentinel's project defaults to the logsink's"
+  after_scaffold = true
+}
+
+offers "presets/integrations/microsoft-sentinel-auditlogs.satz" {
+  when           = use_sentinel_auditlogs
+  phase          = "once Sentinel's federation is in — these read as the account it creates"
+  after_scaffold = true
+}
+
+offers "presets/integrations/microsoft-sentinel-network-logs.satz" {
+  when           = use_sentinel_network_logs
+  after_scaffold = true
+}
+
+offers "presets/ci/verification-runner.satz" {
+  when  = use_verification_runner
+  phase = """once the estate runs as the service account — the runner, then the grant that trusts
+it by naming the runner's own account"""
+}
+
+offers "presets/ci/verification-runner-grant.satz" {
+  when = use_verification_runner_grant
+}
+
+offers "presets/exemptions/exemption-tag.satz" {
+  when  = use_exemption_tag
+  phase = """any time after the organisation policies — it creates the tag an exemption is bound to
+and exempts nothing on its own. The BINDING that lets one resource out, and the
+condition on the constraint that honours it, are the estate's to write; the pack's
+header shows both"""
 }

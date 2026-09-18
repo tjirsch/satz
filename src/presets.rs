@@ -130,7 +130,8 @@ pub(crate) enum Drift {
     /// pack emits is byte-identical, so treating this as an emission change would
     /// auto-fork every estate using it over a prompt typo — and call it "resource
     /// lines differ", which is a lie. Leaving it invisible would be worse: a
-    /// `reversal: recreate → edit` downgrade is a governance fact.
+    /// `reversal: recreate → edit` downgrade is a governance fact. The map's
+    /// `offers` entries are judged the same way: they emit nothing either.
     QuestionsOnly { summary: String },
 }
 
@@ -226,6 +227,7 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
         _ => return Drift::Structural { summary: "differs from upstream and does not parse".into() },
     };
     let questions_differ = satz_core::satz::canonical_questions(&lf) != satz_core::satz::canonical_questions(&pf);
+    let offers_differ = satz_core::satz::canonical_offers(&lf) != satz_core::satz::canonical_offers(&pf);
     let (l, p) = (satz_core::satz::canonical_parts(&lf), satz_core::satz::canonical_parts(&pf));
     if l.body != p.body {
         let lb: BTreeSet<&str> = l.body.lines().collect();
@@ -263,6 +265,11 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
                 } else {
                     format!("questions differ: {} here, {} upstream", lq, pq)
                 },
+            };
+        }
+        if offers_differ {
+            return Drift::QuestionsOnly {
+                summary: format!("the offered packs differ: {} here, {} upstream", lf.offers.len(), pf.offers.len()),
             };
         }
         Drift::Clean
@@ -727,10 +734,10 @@ pub(crate) async fn get_presets(
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
             // the library is more than packs: docs, the import config and
-            // catalogs (.yaml), the CAI asset-type list (.txt) — and the script a
-            // pack binds as an `action`, without which that pack is an action that
-            // cannot find what it runs
-            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") || name.ends_with(".sh") {
+            // catalogs (.yaml), the CAI asset-type list (.txt), the pack graph
+            // (.json) — and the script a pack binds as an `action`, without which
+            // that pack is an action that cannot find what it runs
+            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".json") || name.ends_with(".txt") || name.ends_with(".sh") {
                 extra.push(p.strip_prefix(&tmp)?.to_path_buf());
             }
         }
@@ -1230,7 +1237,7 @@ pub(crate) async fn run_merge_presets(
             if name.ends_with(".local.satz") || name.ends_with(".diff.satz") {
                 return Err(format!("merge-presets: {} is a local fork/delta inside the pristine dir — upstream carries pristine packs only", p.display()).into());
             }
-            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".txt") || name.ends_with(".sh") {
+            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".json") || name.ends_with(".txt") || name.ends_with(".sh") {
                 upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
             }
         }
@@ -1274,9 +1281,9 @@ pub(crate) async fn run_merge_presets(
         }
 
         let fname = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
-        // docs and data (catalogs, import-config) are artifacts: upstream
-        // owns them, nothing to fork
-        let is_artifact = fname.ends_with(".md") || fname.ends_with(".yaml");
+        // docs and data (catalogs, import-config, the pack graph) are artifacts:
+        // upstream owns them, nothing to fork
+        let is_artifact = fname.ends_with(".md") || fname.ends_with(".yaml") || fname.ends_with(".json");
         if is_artifact {
             events.push(pack(MergeAction::ArtifactUpdated, rel));
             if report_only { continue; }

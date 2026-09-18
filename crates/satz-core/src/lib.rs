@@ -58,6 +58,7 @@ pub mod algebra;
 pub mod condense;
 pub mod fmt;
 pub mod migrate;
+pub mod pack_graph;
 pub mod pipeline;
 pub mod satz;
 

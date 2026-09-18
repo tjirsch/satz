@@ -194,6 +194,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("scan-plan", Parity::Off("plan-JSON plumbing for a tofu workflow MCP does not drive")),
     ("generate-migration", Parity::Off("it writes a state-mv script for a human to read and run")),
     ("doc-packs", Parity::Off("it regenerates the pack pages in the repository; `--check` is a repository gate")),
+    ("pack-graph", Parity::Off("an authoring tool: it checks the library and writes the graph that ships with the presets; an estate reads the shipped file, and `--check` is a repository gate")),
     ("self-update", Parity::Off("it replaces the binary")),
     ("completion", Parity::Off("a shell affordance")),
     ("open-readme", Parity::Off("it opens a browser")),

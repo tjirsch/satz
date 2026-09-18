@@ -100,7 +100,7 @@ the human (`init`, `bootstrap`), the ones that write to an organisation
 (`run-actions`, `adopt-org-policies`), the live sweep that rewrites an estate
 (`import`), the specialist org-policy tools the compliance plane answers for
 (`export-`, `diff-` and `report-organizational-policies`), the maintainer refreshes
-of shipped data (`map-types`, `update-schema`, `doc-packs`), the `tofu`-workflow
+of shipped data (`map-types`, `update-schema`, `doc-packs`, `pack-graph`), the `tofu`-workflow
 plumbing (`scan-plan`, `generate-migration`, `migrate`), and the terminal
 affordances (`completion`, `open-readme`, `self-update`). The table in `src/mcp.rs`
 is the full list, with a reason per command. The tools
