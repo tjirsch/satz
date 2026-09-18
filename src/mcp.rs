@@ -2484,7 +2484,13 @@ mod confine_tests {
             Ok(Json(report)) => report.estates,
             Err(r) => panic!("satz_estates refused: {}", text(&r)),
         };
-        let entry = |name: &str| listed.iter().find(|e| e.estate.ends_with(&format!("yaml/{name}"))).unwrap_or_else(|| panic!("{name} is not listed: {listed:?}"));
+        // by file name, not by text: the separator is the platform's
+        let entry = |name: &str| {
+            listed
+                .iter()
+                .find(|e| Path::new(&e.estate).file_name() == Some(std::ffi::OsStr::new(name)))
+                .unwrap_or_else(|| panic!("{name} is not listed: {listed:?}"))
+        };
         for (reason, name) in [boot, unreadable, noaccount] {
             let e = entry(name);
             assert_eq!(e.deployment_mode, None, "{e:?}");
