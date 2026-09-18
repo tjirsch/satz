@@ -71,10 +71,7 @@ EXPECTED_TOOLS = {
 # MCP 2025-06-18 requires an object `outputSchema` (`type: "object"`) and an object
 # `structuredContent`. A deviation listed here is reported as KNOWN instead of failing;
 # one listed that no longer occurs FAILS, so the entry leaves with the fix.
-KNOWN_DEVIATIONS = {
-    ("satz_triage", "outputSchema"): "the rows are published as a JSON array",
-    ("satz_triage", "structuredContent"): "the rows are returned as a JSON array",
-}
+KNOWN_DEVIATIONS: dict[tuple[str, str], str] = {}
 
 OUTSIDE = "outside the server's root"
 NO_IDENTITY = "satz cannot tell which identity this estate runs as"

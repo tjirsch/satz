@@ -1267,7 +1267,7 @@ assert iv["created"] is False and iv["written"] == 0 and iv["summary"]["complete
 assert len(iv["questions"]) == 3, "filter: all returns every question"
 create = msgs[14]["result"]
 assert create["isError"] is True and "needs 'write'" in create["content"][0]["text"], create
-rows = msgs[7]["result"]["structuredContent"]
+rows = msgs[7]["result"]["structuredContent"]["rows"]
 assert rows and {"bucket", "control"} <= set(rows[0]), rows[:1]
 ev = msgs[8]["result"]["structuredContent"]
 assert ev["rows"], "the evidence report came back empty"

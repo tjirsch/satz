@@ -139,9 +139,9 @@ report's **`outputSchema`** in `tools/list`. A client gets a typed value it can 
 and knows the shape before it calls. The text block of the same result carries the same
 JSON, for a client that reads only text.
 
-Each report is a JSON object with an object schema, as MCP `2025-06-18` requires, except
-`satz_triage`'s: its rows are a JSON array, the value `satz triage --format json` prints,
-and its schema is an array schema.
+Each report is a JSON object with an object schema, as MCP `2025-06-18` requires, and is
+the value the command's `--format json` prints: `satz_triage` returns `{"rows": […]}`,
+as `satz triage --format json` does.
 
 ## Annotations
 

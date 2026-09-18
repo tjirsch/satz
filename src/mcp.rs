@@ -1202,7 +1202,7 @@ impl SatzMcp {
 
     #[tool(
         name = "satz_triage",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<Vec<crate::compliance::TriageRow>>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::compliance::TriageReport>(),
         description = "Sort a Prowler export's FAILs into buckets A–E against what the estate CLAIMS: \
                        who fixes each finding, and whether a pack already covers it. Offline; the \
                        Prowler JSON is read from a path under the server's root.",
@@ -1211,7 +1211,7 @@ impl SatzMcp {
     async fn triage(
         &self,
         Parameters(args): Parameters<TriageArgs>,
-    ) -> Result<Result<Json<Vec<crate::compliance::TriageRow>>, CallToolResult>, McpError> {
+    ) -> Result<Result<Json<crate::compliance::TriageReport>, CallToolResult>, McpError> {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
@@ -1234,7 +1234,7 @@ impl SatzMcp {
             &manifest,
             &prowler,
         ) {
-            Ok(t) => Ok(Ok(Json(t.rows))),
+            Ok(t) => Ok(Ok(Json(crate::compliance::TriageReport { rows: t.rows }))),
             Err(e) => Ok(Err(refused(format!("triage: {}", e)))),
         }
     }

@@ -347,9 +347,9 @@ duration and size are recorded.
 
 **Where MCP `2025-06-18` is not met.** The protocol requires an object `outputSchema`
 and an object `structuredContent`. `KNOWN_DEVIATIONS` in the script lists the tools
-that do not meet it (`satz_triage`, whose rows are an array); a deviation it lists is
-reported as `KNOWN`, one it does not list fails, and one it lists that no longer occurs
-fails too, so the list shrinks with the fix.
+that do not meet it, and is empty; a deviation it lists is reported as `KNOWN`, one it
+does not list fails, and one it lists that no longer occurs fails too, so the list
+shrinks with the fix.
 
 **The servers.** One `satz mcp` process per concern, each over a copy of `presets/`,
 `tests/smoke/` and `tests/schemas/` staged into one root, so `presets_dir` sits inside
