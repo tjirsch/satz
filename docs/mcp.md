@@ -144,8 +144,8 @@ it may run without asking:
 
 | annotation | on |
 |---|---|
-| `readOnlyHint: true` | `satz_open`, `satz_estates`, `satz_require`, `satz_questions`, `satz_triage`, `satz_prowler`, `satz_transpile_check`, `satz_check_presets`, `satz_review_pack`, `satz_fmt`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_remediation_items` |
-| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_update_prerequisites` — `report_only` is free, the default writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_restrict` — it lowers this session's level and nothing else |
+| `readOnlyHint: true` | `satz_open`, `satz_estates`, `satz_require`, `satz_questions`, `satz_triage`, `satz_prowler`, `satz_transpile_check`, `satz_check_presets`, `satz_review_pack`, `satz_fmt`, `satz_report_compliance`, `satz_whoami`, `satz_remediation_items` |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_update_prerequisites` — `report_only` is free, the default writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_scan_checkov` — it runs an external program, and `uvx` downloads it first, so a client asks before running it; `satz_restrict` — it lowers this session's level and nothing else |
 | `destructiveHint: true` | `satz_get_presets` — with `force` it overwrites packs the estate uses |
 | `openWorldHint: true` (also) | `satz_merge_presets` — without `pristine_dir` it fetches the upstream library |
 | `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_adopt`, `satz_get_presets`, `satz_merge_presets` — the ones that can reach the network (`uvx checkov` fetches Checkov) |
@@ -253,6 +253,15 @@ config and estate a tool resolves must live inside it, and anything outside is r
 name. It is the only thing the server is started with: estates do not share a
 `config.toml`, so each estate's own config comes with `satz_open`, and `satz mcp` takes
 no `--config`.
+
+A path is judged against the root before anything else is said about it. A path outside
+the root gets the same refusal whether or not something exists there, and the refusal
+names the path as it was asked, not where a symlink leads; only a path inside the root is
+told that it is missing. A path that does not exist yet — an output directory, an estate
+`satz_interview` creates — is judged where creating it leads, with `..` applied the way a
+directory walk applies it. A relative estate name is read from the server's working
+directory when a file of that name is there and inside the root; otherwise it names a
+file in the config's `yaml_dir`.
 
 ### Which identity, and who decides
 

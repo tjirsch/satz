@@ -1514,7 +1514,7 @@ pub(crate) async fn run_merge_presets(
     // prerequisite write legitimately changes the emission, and the proof above
     // compares the estate with itself.
     if let Some(est) = &estate {
-        match crate::prerequisites_report(est, tool_config, runtime_config) {
+        match crate::prerequisites_report(est, tool_config, runtime_config, crate::PrerequisiteFindings::Report) {
             Ok(report) => {
                 let missing: Vec<String> = crate::prerequisites::describe(&report.write)
                     .into_iter()
@@ -1526,7 +1526,7 @@ pub(crate) async fn run_merge_presets(
                     events.push(MergeEvent::Prerequisites { wrote: Vec::new(), missing, refused: None });
                     needs_attention = true;
                 } else {
-                    match crate::prerequisites_write(est, &report, tool_config, runtime_config) {
+                    match crate::prerequisites_write(est, &report, tool_config, runtime_config, crate::PrerequisiteFindings::Report) {
                         Ok((wrote, _)) => events.push(MergeEvent::Prerequisites { wrote, missing: Vec::new(), refused: None }),
                         Err(e) => {
                             events.push(MergeEvent::Prerequisites {
