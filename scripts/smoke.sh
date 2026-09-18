@@ -1751,6 +1751,23 @@ fi
 grep -q -- '--greenfield' tmp/boot-green.txt || fail "the failure did not explain --greenfield:\n$(cat tmp/boot-green.txt)"
 grep -q 'init --from-live' tmp/boot-green.txt || fail "the failure did not name init --from-live:\n$(cat tmp/boot-green.txt)"
 
+step "bootstrap names the default it takes and refuses a param that has none"
+# `default_region` has a documented default (presets/estate-core.satz), which bootstrap
+# takes and says so; the project id has none — the estate declares the project under its
+# own `infra_project_name` — so an estate that sets neither it nor the bucket is refused by name.
+sed -e '/^  default_region *=/d' -e '/^  infra_project_name *=/d' -e '/^  infra_bucket_name *=/d' yaml/greenfield.satz > tmp/boot-defaults.satz
+grep -Eq '^  (default_region|infra_project_name|infra_bucket_name) *=' tmp/boot-defaults.satz && fail "the defaults fixture still binds a param"
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap tmp/boot-defaults.satz --greenfield --dry-run > tmp/boot-defaults.txt 2>&1; then
+  fail "bootstrap ran without infra_project_name:\n$(cat tmp/boot-defaults.txt)"
+fi
+grep -q '^default_region not set — using europe-west3, the documented default$' tmp/boot-defaults.txt \
+  || fail "bootstrap took the region default without saying so:\n$(cat tmp/boot-defaults.txt)"
+grep -q 'infra_project_name — is not set' tmp/boot-defaults.txt \
+  || fail "bootstrap did not refuse the unset project id by name:\n$(cat tmp/boot-defaults.txt)"
+grep -q 'satz init --infra-project-name' tmp/boot-defaults.txt \
+  || fail "the refusal does not name the flag that sets the project id:\n$(cat tmp/boot-defaults.txt)"
+grep -q 'iac-infra' tmp/boot-defaults.txt && fail "bootstrap still made up a project id:\n$(cat tmp/boot-defaults.txt)"
+
 step "whoami: refuses without credentials naming the fix; reads an impersonated-SA ADC offline"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" whoami --offline > tmp/who.txt 2>&1; then
   fail "whoami --offline must fail without an ADC file:\n$(cat tmp/who.txt)"
@@ -1818,19 +1835,27 @@ step "an estate whose identity cannot be derived is refused by whoami, migrate a
 # `deployment_mode` the compile refuses has no backend and no identity, and params that
 # do not parse have neither: each command refuses, naming the estate and the reason,
 # and nothing runs as the login instead. tmp/mode-boot.satz is the compile step's fixture.
+# Cloud mode without `svc_iac_account` names no account to run as, and is refused the same way.
 sed 's/^\(  infra_project_name *= *\)"corp-infra-001"/\1"corp-infra-001/' yaml/smoke.satz > tmp/mode-unreadable.satz
 grep -q '^  infra_project_name *= *"corp-infra-001$' tmp/mode-unreadable.satz || fail "the unreadable fixture was not written"
+# (bound empty rather than removed: the estate's grants reference the param)
+sed -e 's/^\(  deployment_mode *= *\)"local"/\1"cloud"/' -e 's/^\(  svc_iac_account *= *\)"svc-iac-001"/\1""/' \
+  yaml/smoke.satz > tmp/mode-noaccount.satz
+grep -q '^  deployment_mode *= *"cloud"' tmp/mode-noaccount.satz || fail "the no-account fixture was not written"
+grep -q '^  svc_iac_account *= *""$' tmp/mode-noaccount.satz || fail "the no-account fixture still names an account"
 cp tmp/mode-boot.satz tmp/mode-boot.before
 cp tmp/mode-unreadable.satz tmp/mode-unreadable.before
+cp tmp/mode-noaccount.satz tmp/mode-noaccount.before
 # (the refusal reaches stderr in its Debug form, quotes escaped: the patterns take both)
 boot_reason='mode-boot\.satz:[0-9]+: `deployment_mode = \\?"boot\\?"`: the mode is \\?"local\\?"'
 unreadable_reason='mode-unreadable\.satz:[0-9]+: newline in single-line string'
+noaccount_reason='mode-noaccount\.satz:[0-9]+: `deployment_mode = \\?"cloud\\?"` without a value for `svc_iac_account`'
 identity_refused() {  # <output> <reason pattern> <what was run>
   grep -Eq "$2" "$1" || fail "$3 does not name the estate and the reason:\n$(cat "$1")"
   grep -q 'satz cannot tell which identity this estate runs as, and runs nothing for it' "$1" \
     || fail "$3 does not say that the identity cannot be derived:\n$(cat "$1")"
 }
-for fixture in boot unreadable; do
+for fixture in boot unreadable noaccount; do
   estate="tmp/mode-$fixture.satz"
   reason="${fixture}_reason"
   reason="${!reason}"
@@ -1855,6 +1880,28 @@ for fixture in boot unreadable; do
   fi
   identity_refused "tmp/id-$fixture-adopt.txt" "$reason" "adopt $estate"
 done
+# The compile refuses the same estate with the same words (the line is the finding's own
+# field, pinned by `cloud_mode_without_the_account_is_an_error_at_the_mode_line`).
+if "$satz" --config . transpile tmp/mode-noaccount.satz --check > tmp/mode-noaccount-compile.txt 2>&1; then
+  fail "a cloud-mode estate without svc_iac_account compiled:\n$(cat tmp/mode-noaccount-compile.txt)"
+fi
+grep -Eq 'deployment_mode = \\?"cloud\\?"` without a value for `svc_iac_account`' tmp/mode-noaccount-compile.txt \
+  || fail "the compile does not refuse cloud mode without svc_iac_account:\n$(cat tmp/mode-noaccount-compile.txt)"
+# `migrate --mode cloud` on a local estate without the account is refused before the file
+# is touched, naming the param — it would otherwise write a mode the compile refuses.
+sed 's/^\(  svc_iac_account *= *\)"svc-iac-001"/\1""/' yaml/smoke.satz > tmp/mode-tocloud.satz
+grep -q '^  svc_iac_account *= *""$' tmp/mode-tocloud.satz || fail "the to-cloud fixture still names an account"
+cp tmp/mode-tocloud.satz tmp/mode-tocloud.before
+if "$satz" --config . migrate tmp/mode-tocloud.satz --mode cloud > tmp/mode-tocloud.txt 2>&1; then
+  fail "migrate switched an estate without svc_iac_account to cloud mode:\n$(cat tmp/mode-tocloud.txt)"
+fi
+grep -q 'without a value for `svc_iac_account`' tmp/mode-tocloud.txt \
+  || fail "the refused migrate does not name the missing param:\n$(cat tmp/mode-tocloud.txt)"
+grep -q 'the estate stays in local mode, and nothing was changed' tmp/mode-tocloud.txt \
+  || fail "the refused migrate does not say the estate is unchanged:\n$(cat tmp/mode-tocloud.txt)"
+cmp -s tmp/mode-tocloud.satz tmp/mode-tocloud.before || fail "the refused migrate edited the estate"
+# satz_estates (the MCP step below) lists this one with its refusal
+cp tmp/mode-noaccount.satz yaml/identity-noaccount.satz
 
 step "the privacy gate judges tokens, not lines, and refuses an unusable range"
 # the private-looking address is assembled at runtime so the fixture itself
@@ -2030,6 +2077,12 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
 found = msgs[11]["result"]["structuredContent"]
 assert any(e["estate"].endswith("smoke.satz") for e in found["estates"]), found
 assert any(e["deployment_mode"] == "local" for e in found["estates"]), found
+# an estate satz_open would refuse is listed with the reason, and no mode
+noaccount = [e for e in found["estates"] if e["estate"].endswith("identity-noaccount.satz")]
+assert len(noaccount) == 1, found
+assert noaccount[0]["deployment_mode"] is None, noaccount
+assert "without a value for `svc_iac_account`" in noaccount[0]["refused"], noaccount
+assert all("refused" not in e for e in found["estates"] if e["deployment_mode"] is not None), found
 # satz_fmt: text in, canonical text out, and satz wrote no file
 fmt = msgs[20]["result"]["structuredContent"]
 assert fmt["changed"] is True, fmt

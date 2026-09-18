@@ -274,10 +274,11 @@ The loop, in order:
    one — it is started with a root directory, not a config. `satz_estates` lists every
    `config.toml` under that root with the estate files beside it; `satz_open` names one
    config and one `.satz`, and every later call works on that estate under its own
-   config. Its answer includes `runs_as`: the service account the estate's live tools
+   config. Each listed estate carries its `deployment_mode`, or `refused` with the reason
+   `satz_open` would give. Its answer includes `runs_as`: the service account the estate's live tools
    run as. Call it again to move to the next estate; nothing else changes. An estate
-   whose params do not parse, or whose `deployment_mode` is neither `local` nor `cloud`,
-   is refused, naming the file and the reason — no tool can say which identity it runs
+   whose params do not parse, whose `deployment_mode` is neither `local` nor `cloud`, or
+   whose cloud mode has no `svc_iac_account` or `infra_project_name`, is refused, naming the file and the reason — no tool can say which identity it runs
    as, so the file is fixed first.
 1. **`satz_questions`** — what this customer still has to decide. Start here for
    anything that touches params. For a new estate, `satz_interview {create: true}`

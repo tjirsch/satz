@@ -4849,19 +4849,6 @@ pub(crate) fn resolved_config(tool: &ToolConfig, config_dir: &Path) -> ToolConfi
     rc
 }
 
-/// One declared parameter of an estate, in the dialect's kebab-case spelling.
-pub(crate) fn estate_param(
-    input_path: &Path,
-    runtime_config: &ToolConfig,
-    key: &str,
-) -> Option<String> {
-    satz_estate_params(input_path, &runtime_config.include_dirs)
-        .ok()?
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-}
-
 /// A relative estate path that already names `yaml_dir`, and the bare form it should have
 /// been. Paths resolve INSIDE `yaml_dir`, so `estate_path` joins it a second time: naming it
 /// yourself writes `yaml/yaml/x.satz`, which every later command misses because they all look
@@ -5001,7 +4988,14 @@ fn mode_switch(
     if from == to {
         return Ok(ModeSwitch { from, to, before, after: None });
     }
-    let after = crate::interview::bind(&before, "deployment_mode", &serde_yaml::Value::String(to.clone()))
+    // the mode the estate would run in is judged by the compile's reader before the file
+    // is touched: cloud mode without `svc_iac_account` and `infra_project_name` is refused
+    let (_, mut env) = satz_estate_env(input_path, &runtime_config.include_dirs)?;
+    env.insert("deployment_mode".to_string(), serde_yaml::Value::String(to.clone()));
+    crate::emitter::deployment_mode(&env).map_err(|e| {
+        format!("{}: {} — the estate stays in {} mode, and nothing was changed", input_path.display(), e, from)
+    })?;
+    let after =crate::interview::bind(&before, "deployment_mode", &serde_yaml::Value::String(to.clone()))
         .map_err(|e| format!("{}: deployment_mode cannot be written: {}", input_path.display(), e))?;
     Ok(ModeSwitch { from, to, before, after: Some(after) })
 }
@@ -7678,6 +7672,35 @@ mod migrate_mode {
         refused_everywhere(&path, &cfg, &format!("{}:6: newline in single-line string", path.display()));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
+
+    /// Cloud mode without the account is refused at the line that binds the mode, by
+    /// every reader, with the compile's words.
+    #[test]
+    fn cloud_mode_without_the_account_is_refused_by_every_reader() {
+        let (path, cfg) = estate("no-account", "  deployment_mode    = \"cloud\"\n", "", &[]);
+        std::fs::write(&path, fsx::read_to_string(&path).unwrap().replace("  svc_iac_account    = \"svc-iac-001\"\n", "")).unwrap();
+        refused_everywhere(
+            &path,
+            &cfg,
+            &format!("{}:5: `deployment_mode = \"cloud\"` without a value for `svc_iac_account`: ", path.display()),
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// `migrate --mode cloud` on a local estate that names no account is refused before
+    /// the file is touched, naming the params — not written and then refused by the compile.
+    #[test]
+    fn migrating_to_cloud_without_the_account_is_refused_before_the_file_is_touched() {
+        let (path, cfg) = estate("migrate-no-account", "", "", &[]);
+        let text = fsx::read_to_string(&path).unwrap().replace("  infra_project_name = \"acme-infra-001\"\n", "");
+        std::fs::write(&path, &text).unwrap();
+        assert_eq!(estate_declaration(&path, path.display().to_string(), &cfg).unwrap().mode, "local");
+        let e = mode_switch(&path, &cfg, Some("cloud".into())).map(|_| ()).unwrap_err().to_string();
+        assert!(e.contains("`deployment_mode = \"cloud\"` without a value for `infra_project_name`: "), "{e}");
+        assert!(e.contains("the estate stays in local mode, and nothing was changed"), "{e}");
+        assert_eq!(fsx::read_to_string(&path).unwrap(), text, "the refused switch edited the estate");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 }
 
 #[cfg(test)]
@@ -8663,6 +8686,29 @@ action "step" {
         assert!(refused.contains("deployment_mode = \"boot\""), "{}", refused);
         // the estate binds no mode: local, and the compile goes through
         assert!(tail("warn").findings.iter().all(|f| f.kind != Kind::DeploymentMode));
+    }
+
+    /// Cloud mode runs as `{svc_iac_account}@{infra_project_name}`: an estate that binds
+    /// it without both is an error at the `deployment_mode` line naming what is missing,
+    /// at every validation level — it would otherwise run as whoever is logged in.
+    #[test]
+    fn cloud_mode_without_the_account_is_an_error_at_the_mode_line() {
+        let src = ESTATE.replacen(
+            "  use_budget               = true\n",
+            "  use_budget               = true\n  infra_project_name       = \"acme-infra-001\"\n  deployment_mode          = \"cloud\"\n",
+            1,
+        );
+        let line = src.lines().position(|l| l.contains("deployment_mode")).map(|i| i as u32 + 1);
+        for level in ["warn", "error", "none"] {
+            let t = tail_of(&src, level);
+            let f = t.findings.iter().find(|f| f.kind == Kind::DeploymentMode).expect("cloud mode without an account");
+            assert_eq!(f.severity, Severity::Error, "level {}", level);
+            assert!(f.message.starts_with("`deployment_mode = \"cloud\"` without a value for `svc_iac_account`: "), "{}", f.message);
+            assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), line));
+            assert!(t.providers_tf.is_none(), "providers.tf was emitted for an estate that runs as nobody");
+        }
+        let both = src.replacen("  deployment_mode", "  svc_iac_account          = \"svc-iac-001\"\n  deployment_mode", 1);
+        assert!(tail_of(&both, "warn").findings.iter().all(|f| f.kind != Kind::DeploymentMode));
     }
 }
 

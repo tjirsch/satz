@@ -287,7 +287,7 @@ satz bootstrap <ESTATE> [options]
 **Under the Hood:**
 1.  **Authentication**: Uses Application Default Credentials (ADC).
 2.  **Infrastructure Folder**: Lists every folder under the parent (all pages) and reuses the one whose display name matches — exactly one; two folders with that name is an error, not a guess — or creates it (requires `Folder Admin`).
-3.  **Project Shell**: Creates the management project (project-id defaults to `shortname-iac-infra`) inside the folder, or reuses an existing one, and prints its **project number**.
+3.  **Project Shell**: Creates the management project — its id is the estate's `infra_project_name`, which bootstrap refuses to go without — inside the folder, or reuses an existing one, and prints its **project number**.
 4.  **Billing Link**: Links the project to the specified Billing Account.
 5.  **Enable APIs**: Enables the foundation APIs (Service Usage, Cloud Resource Manager, IAM, IAM Credentials, Storage, Cloud Billing, Cloud Identity, Cloud Asset, Logging, Org Policy, Essential Contacts).
 6.  **State Bucket**: Creates the GCS bucket for Terraform state (with versioning, uniform access).
@@ -758,7 +758,7 @@ satz migrate <INPUT> --mode <MODE>
 - `--mode <MODE>`: Target mode, `local` or `cloud`; without it, the other of the two. Any other value is refused before the estate is read.
 
 **Under the Hood:**
-- **Update the estate**: Binds `deployment_mode` in the estate's `params` block — the value is replaced where the estate binds it, and the line is added where it does not. An estate with no mode in its params — neither its own nor a pack's default — runs in `local` mode, as the emitter and `whoami` read it.
+- **Update the estate**: Binds `deployment_mode` in the estate's `params` block — the value is replaced where the estate binds it, and the line is added where it does not. An estate with no mode in its params — neither its own nor a pack's default — runs in `local` mode, as the emitter and `whoami` read it. `--mode cloud` on an estate that sets no `svc_iac_account` or no `infra_project_name` is refused before the file is touched, naming the param: cloud mode runs as the account the two name.
 - **Regenerate**: Runs `transpile` to update the backend configuration (Local vs GCS) and provider authentication (ADC vs Impersonation).
 - **Groups Admin** (`--mode cloud`, when the estate manages Cloud Identity groups): from here the IaC service account manages them, which needs the Workspace Groups Admin role. `migrate` checks for it and assigns it through the Admin SDK Directory API, as you — the service account cannot give itself an admin role. That needs a login carrying the role-management scope — `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/admin.directory.rolemanagement` — the Admin SDK API (`admin.googleapis.com`) on your quota project, and a Workspace admin who may assign roles. When any is missing, the migration goes on and prints which one, with the admin-console path (Account → Admin roles → Groups Admin → Admins → Assign service accounts).
 - **Migrate State**: Executes `tofu init -migrate-state` to move the Terraform state to the new backend.
@@ -1493,7 +1493,7 @@ Protocol over stdio. What the editor gets is what satz knows, from satz's own fr
   the provider needs, a reference to a resource the estate does not emit, an IaC role
   the service account lacks, a pack a true answer asks for that is still commented out,
   a resource outside the project its type takes, a `deployment_mode` other than `local`
-  or `cloud`, the actions and passthrough blocks the compile warns about — each at the
+  or `cloud`, a `cloud` one without `svc_iac_account` and `infra_project_name`, the actions and passthrough blocks the compile warns about — each at the
   line it names, as a warning or an error.
 - **Completion.** Inside a resource type, its attributes and nested blocks (from the
   provider schema in `schema_dir`), then `use`, then every resource type; at the top
@@ -1917,8 +1917,9 @@ estate's service account.** Every exception is listed here with its reason.
 
 `--no-impersonate` pins the process to the plain ADC and outranks every estate.
 
-An estate whose params do not parse, or whose `deployment_mode` is neither `local` nor
-`cloud`, names no identity: `whoami <estate>`, `migrate` and every command in the table that
+An estate whose params do not parse, whose `deployment_mode` is neither `local` nor
+`cloud`, or whose `deployment_mode = "cloud"` has no value for `svc_iac_account` or
+`infra_project_name`, names no identity: `whoami <estate>`, `migrate` and every command in the table that
 runs as the estate refuse it, naming the estate and the reason, and run nothing as the login
 in its place. Under `satz mcp`, `satz_open` refuses to open it and a live tool refuses a call
 that names it.

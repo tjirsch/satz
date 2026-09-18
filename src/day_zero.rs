@@ -101,8 +101,10 @@ pub(crate) struct DayZero<'a> {
     pub organization_id: &'a str,
     pub greenfield: bool,
     pub billing_account: &'a str,
-    pub project_id: &'a str,
-    pub bucket_name: &'a str,
+    /// `None` when the estate does not set it: there is no default to take.
+    pub project_id: Option<&'a str>,
+    /// `None` when the estate sets neither it nor the project id it falls back to.
+    pub bucket_name: Option<&'a str>,
 }
 
 /// Everything wrong with it, in the order an operator would fix it.
@@ -120,10 +122,10 @@ pub(crate) fn check(d: &DayZero<'_>) -> Vec<Problem> {
     if let Err(why) = billing_account(d.billing_account) {
         out.push(problem("billing_account_infra", "billing-account-infra", why));
     }
-    if let Err(why) = project_id(d.project_id) {
+    if let Err(why) = d.project_id.map_or(Err("is not set".to_string()), project_id) {
         out.push(problem("infra_project_name", "infra-project-name", why));
     }
-    if let Err(why) = bucket_name(d.bucket_name) {
+    if let Err(why) = d.bucket_name.map_or(Err("is not set".to_string()), bucket_name) {
         out.push(problem("infra_bucket_name", "infra-bucket-name", why));
     }
     out
@@ -157,8 +159,8 @@ mod tests {
             organization_id: "123456789012",
             greenfield: false,
             billing_account: "012345-6789AB-CDEF01",
-            project_id: "acme-infra-001",
-            bucket_name: "acme-infra-001-state",
+            project_id: Some("acme-infra-001"),
+            bucket_name: Some("acme-infra-001-state"),
         }
     }
 
@@ -201,8 +203,8 @@ mod tests {
             organization_id: "12-34",
             greenfield: false,
             billing_account: "012345-6789AB",
-            project_id: "Acme_Infra",
-            bucket_name: "-nope-",
+            project_id: Some("Acme_Infra"),
+            bucket_name: Some("-nope-"),
         };
         let problems = check(&d);
         assert_eq!(problems.len(), 5, "{:?}", problems);
@@ -211,6 +213,17 @@ mod tests {
             params,
             ["customer_shortname", "customer_organization_id", "billing_account_infra", "infra_project_name", "infra_bucket_name"]
         );
+    }
+
+    /// A project id the estate does not set is refused by name: bootstrap has no default
+    /// for it, since the compile declares the project under the estate's own value.
+    #[test]
+    fn a_project_id_the_estate_does_not_set_is_refused_by_name() {
+        let d = DayZero { project_id: None, bucket_name: None, ..ok() };
+        let err = gate(&d).unwrap_err();
+        assert!(err.contains("infra_project_name — is not set"), "{}", err);
+        assert!(err.contains("satz init --infra-project-name"), "the flag that sets it:\n{}", err);
+        assert!(err.contains("infra_bucket_name — is not set"), "{}", err);
     }
 
     #[test]

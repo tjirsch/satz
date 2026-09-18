@@ -907,7 +907,9 @@ required** — an estate without it does not compile (`Missing 'terraform' block
 A backend may list both `local` and `gcs`; the emitter writes the ONE that
 `deployment_mode` selects (`"local"` / `"cloud"`, see the `migrate` command;
 an estate with no `deployment_mode` is `"local"`), never both. Any other value is
-an error at the line that binds it, and the compile refuses. The mode also decides
+an error at the line that binds it, and the compile refuses. So is `"cloud"` without a
+value for `svc_iac_account` or `infra_project_name`: cloud mode runs as the account the
+two name, and the error names the one missing. The mode also decides
 which identity the estate's live commands run as, so `whoami`, `migrate` and every
 command that runs as the estate refuse the same value with the same reason:
 
@@ -1744,6 +1746,7 @@ composition conflicts: <type>.<label>: 2 disagreeing definitions
   - a.satz:12
   - b.satz:40
 `deployment_mode = "boot"`: the mode is "local" (the state in a file) or "cloud" (the state in the gcs bucket), and no backend is emitted for anything else
+`deployment_mode = "cloud"` without a value for `svc_iac_account`: cloud mode runs every live call and `tofu` as `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`, so the estate binds both — bind it in `params {}`, or keep `deployment_mode = "local"`
 transpile: `estate.yaml` is the legacy YAML dialect — convert it: `satz import estate.yaml --kind estate`
 ```
 

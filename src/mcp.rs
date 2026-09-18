@@ -354,7 +354,15 @@ pub(crate) struct OpenReport {
 pub(crate) struct EstateEntry {
     pub config: String,
     pub estate: String,
+    /// `cloud` or `local`, as the compile reads it: `local` when the estate declares
+    /// none. Null when the estate is refused.
     pub deployment_mode: Option<String>,
+    /// Why `satz_open` and every tool that would act as this estate refuse it — its
+    /// params do not parse, the compile refuses its `deployment_mode`, or cloud mode
+    /// names no service account — in the words they refuse it with. Absent when it can
+    /// be opened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
@@ -1009,8 +1017,9 @@ impl SatzMcp {
         name = "satz_estates",
         output_schema = rmcp::handler::server::tool::schema_for_output::<EstatesReport>(),
         description = "Which estates this server can open: every `config.toml` under its root, \
-                       with the estate files beside it. Read this before `satz_open` rather than \
-                       guessing a path.",
+                       with the estate files beside it, each with its `deployment_mode` — or \
+                       `refused` with the reason `satz_open` would refuse it. Read this before \
+                       `satz_open` rather than guessing a path.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn estates(&self) -> Result<Result<Json<EstatesReport>, CallToolResult>, McpError> {
@@ -1033,10 +1042,17 @@ impl SatzMcp {
                 .collect();
             found.sort();
             for estate in found {
+                // the identity derivation `satz_open` refuses with, so the list says what the open would
+                let (deployment_mode, refused) =
+                    match crate::estate_declaration(&estate, estate.display().to_string(), &runtime) {
+                        Ok(d) => (Some(d.mode), None),
+                        Err(e) => (None, Some(e)),
+                    };
                 estates.push(EstateEntry {
                     config: config.display().to_string(),
-                    deployment_mode: crate::estate_param(&estate, &runtime, "deployment-mode"),
                     estate: estate.display().to_string(),
+                    deployment_mode,
+                    refused,
                 });
             }
         }
@@ -2418,8 +2434,14 @@ mod confine_tests {
         let f = fixture("identity");
         std::fs::write(f.root.join("yaml/boot.satz"), "estate boot\n\nparams {\n  deployment_mode = \"boot\"\n}\n").unwrap();
         std::fs::write(f.root.join("yaml/unreadable.satz"), "estate unreadable\n\nparams {\n  deployment_mode = \"cloud\n}\n").unwrap();
+        std::fs::write(
+            f.root.join("yaml/noaccount.satz"),
+            "estate noaccount\n\nparams {\n  infra_project_name = \"acme-infra-001\"\n  deployment_mode = \"cloud\"\n}\n",
+        )
+        .unwrap();
         let boot = ("boot.satz:4: `deployment_mode = \"boot\"`", "boot.satz");
         let unreadable = ("unreadable.satz:4: newline in single-line string", "unreadable.satz");
+        let noaccount = ("noaccount.satz:5: `deployment_mode = \"cloud\"` without a value for `svc_iac_account`: ", "noaccount.satz");
         let underivable = "satz cannot tell which identity this estate runs as, and runs nothing for it";
         let says = |r: CallToolResult, (reason, _): (&str, &str)| {
             let t = text(&r);
@@ -2427,7 +2449,7 @@ mod confine_tests {
         };
         let open = |estate: &str| -> OpenArgs { serde_json::from_value(json!({"config": ".", "estate": estate})).unwrap() };
 
-        for bad in [boot, unreadable] {
+        for bad in [boot, unreadable, noaccount] {
             match f.server.open(Parameters(open(bad.1))).await.unwrap() {
                 Ok(Json(report)) => panic!("{} opened, running as {:?}", bad.1, report.runs_as),
                 Err(r) => says(r, bad),
@@ -2437,7 +2459,7 @@ mod confine_tests {
 
         let opened = f.server.open(Parameters(open("e.satz"))).await.unwrap();
         assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
-        for bad in [boot, unreadable] {
+        for bad in [boot, unreadable, noaccount] {
             let who = serde_json::from_value(json!({"estate": bad.1, "offline": true})).unwrap();
             match f.server.whoami(Parameters(who)).await.unwrap() {
                 Ok(Json(report)) => panic!("whoami answered for {}: {:?}", bad.1, report.estate),
@@ -2456,6 +2478,23 @@ mod confine_tests {
         }
         let still = f.server.opened().ok().map(|o| o.estate);
         assert!(still.as_ref().is_some_and(|e| e.ends_with("yaml/e.satz")), "the open estate moved: {still:?}");
+
+        // `satz_estates` lists each with the refusal `satz_open` gives it, and no mode
+        let listed = match f.server.estates().await.unwrap() {
+            Ok(Json(report)) => report.estates,
+            Err(r) => panic!("satz_estates refused: {}", text(&r)),
+        };
+        let entry = |name: &str| listed.iter().find(|e| e.estate.ends_with(&format!("yaml/{name}"))).unwrap_or_else(|| panic!("{name} is not listed: {listed:?}"));
+        for (reason, name) in [boot, unreadable, noaccount] {
+            let e = entry(name);
+            assert_eq!(e.deployment_mode, None, "{e:?}");
+            let why = e.refused.as_deref().unwrap_or_else(|| panic!("{name} is listed without its refusal: {e:?}"));
+            assert!(why.contains(reason) && why.contains(underivable), "{why}");
+        }
+        let fine = entry("e.satz");
+        assert_eq!((fine.deployment_mode.as_deref(), fine.refused.as_deref()), (Some("local"), None), "{fine:?}");
+        let shown = serde_json::to_value(fine).unwrap();
+        assert!(shown.get("refused").is_none(), "an estate that opens carries no `refused`: {shown}");
     }
 
     /// Checkov runs in one tool and is read by another. `satz_scan_checkov` runs it,
