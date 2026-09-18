@@ -1,7 +1,6 @@
 # everything scripts/smoke.sh generates
 hcl/
-imported-*/
 tmp/
 yaml/imported-*.satz
-yaml/discovered*.satz
+yaml/identity-*.satz
 evidence/

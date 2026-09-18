@@ -114,8 +114,7 @@ is refused the same way: an `isError` result that says what did not deserialize
 
 **`satz_report_compliance` reads live and writes nothing.** The CLI command appends
 every run to the append-only evidence history, the audit trail of reports someone ran;
-the tool does not append. The smoke matrix compares the evidence directory across a
-call.
+the tool does not append.
 
 **The rows are data, not a rendered table.** Each witness is an object — address,
 live state, the id it matched, and `declared_at`, the `file:line` of the Satz that

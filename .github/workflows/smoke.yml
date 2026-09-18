@@ -74,5 +74,14 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: build
         run: cargo build --release --quiet --locked
+      # every `tofu init` in the matrix reads the providers from this cache
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/tofu-plugins
+          key: tofu-plugins-${{ runner.os }}-${{ hashFiles('tests/smoke/config.toml', 'tests/smoke/tf/**') }}
       - name: smoke matrix
+        # the checks job runs cargo test on the same commit
+        env:
+          SMOKE_SKIP_CARGO_TEST: "1"
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tofu-plugins
         run: bash scripts/smoke.sh

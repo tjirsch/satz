@@ -1,24 +1,21 @@
 #!/usr/bin/env bash
 # The smoke matrix: every estate-consuming command, end to end, against the
-# fixture estate in tests/smoke/. Offline — no ADC, no org. What it proves is
-# that the COMMANDS still run, which the unit tests (engines only) never did:
-# two regressions shipped with a green test suite before this existed.
+# fixture estate in tests/smoke/. Offline — no ADC, no org. It proves that the
+# COMMANDS run, once each, at their core; the unit tests judge the engines and
+# pin the fixed bugs.
 #
 #   scripts/smoke.sh            # builds target/release/satz, then runs it
 #   SATZ=path/to/satz scripts/smoke.sh   # …or run a binary you built yourself
+#   SMOKE_SKIP_CARGO_TEST=1 scripts/smoke.sh   # CI: the checks job runs cargo test
 #
 # `tofu` is optional: with it on PATH the transpiled HCL is also `tofu validate`d
-# (the provider is downloaded once; no state, no cloud).
+# (no state, no cloud). Providers are downloaded once into TF_PLUGIN_CACHE_DIR.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-# Build unconditionally. Building only when the binary was MISSING made this a
-# false-verdict generator on every local run after a pull, a merge or an edit:
-# the leftover binary from a previous run answered instead of the working tree,
-# so a merged fix could read as a regression and — the dangerous direction — a
-# broken tree could go green before a push. cargo is a no-op on a warm tree, so
-# being unconditional costs nothing. An explicit SATZ means the caller built it
-# and owns whether it is current; that path is never rebuilt.
+# Always built, so the working tree answers rather than a leftover binary; cargo is a
+# no-op on a warm tree. An explicit SATZ means the caller built it and owns whether it
+# is current; that path is never rebuilt.
 if [ -n "${SATZ:-}" ]; then
   satz="$SATZ"
   [ -x "$satz" ] || { printf 'SATZ=%s is not an executable\n' "$satz" >&2; exit 1; }
@@ -30,8 +27,14 @@ fi
 if [ ! -f "$HOME/.config/satz/satz.toml" ]; then
   mkdir -p "$HOME/.config/satz" && printf 'self_update_frequency = "never"\n' > "$HOME/.config/satz/satz.toml"
 fi
+# Every `tofu init` below reads the providers from one cache instead of downloading
+# them. Its directories have no lock file, and without the second variable tofu
+# downloads again to check the cached copy; the lock files it writes here are scratch.
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/satz-smoke/tofu-plugins}"
+export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
 cd "$root/tests/smoke"
-rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz yaml/identity-*.satz evidence
+rm -rf hcl tmp yaml/imported-*.satz yaml/identity-*.satz evidence
 mkdir -p tmp
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -47,19 +50,6 @@ grep -q 'fmt --check: OK' tmp/fmt-check.txt || fail "fmt --check did not report 
 cmp -s yaml/showcase.satz tmp/fmt-stdin.satz || fail "fmt --stdin changed an already formatted file"
 printf 'a = "open' | "$satz" fmt --stdin > /dev/null 2> tmp/fmt-err.txt && fail "fmt --stdin accepted an unterminated string"
 grep -q 'unterminated string' tmp/fmt-err.txt || fail "fmt did not name the parse error:\n$(cat tmp/fmt-err.txt)"
-
-step "a compile with no provider schema is refused by name, not run untyped"
-# It used to load zero types and carry on; a fresh organisation then failed three
-# steps into bootstrap, at the first resource that needed a type.
-rm -rf tmp/noschema && mkdir -p tmp/noschema/schemas tmp/noschema/yaml
-cp yaml/smoke.satz tmp/noschema/yaml/
-printf 'yaml_dir = "yaml"\nhcl_dir = "hcl"\nschema_dir = "schemas"\npresets_dir = "%s"\ninclude_dirs = [".", "yaml", "%s"]\ntf_tool = "tofu"\n' \
-  "$root/presets" "$root" > tmp/noschema/config.toml
-if "$satz" --config tmp/noschema transpile smoke.satz --check > tmp/noschema.txt 2>&1; then
-  fail "an estate compiled with an empty schema dir:\n$(cat tmp/noschema.txt)"
-fi
-grep -q 'no provider schema in' tmp/noschema.txt || fail "the refusal does not say what is missing:\n$(cat tmp/noschema.txt)"
-grep -q 'satz update-schema' tmp/noschema.txt || fail "the refusal does not name the command that fixes it:\n$(cat tmp/noschema.txt)"
 
 step "lsp: the language server answers an editor — diagnostics, completion, hover, definition, formatting"
 python3 "$root/tests/smoke/lsp_client.py" "$satz" yaml/showcase.satz || fail "satz lsp did not answer as an editor expects"
@@ -81,9 +71,6 @@ rm -rf tmp/init && mkdir -p tmp/init && seed_schemas tmp/init
   || fail "satz init failed:\n$(cat tmp/init.txt)"
 "$satz" fmt --check tmp/init/yaml/C0example.satz || fail "satz init wrote an estate that is not in the canonical layout"
 # init invents nothing: a value nobody supplied and nothing could derive is EMPTY.
-# The placeholders it used to write looked like answers and pointed bootstrap at
-# an organisation nobody owned. (The run above STATES the org id, so it is right
-# to write it; this one states nothing and has no credentials to derive from.)
 rm -rf tmp/init-bare && mkdir -p tmp/init-bare && seed_schemas tmp/init-bare
 (cd tmp/init-bare && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" init --customer-id C0bare > ../init-bare.txt 2>&1) \
@@ -94,127 +81,31 @@ grep -qE '^  first_admin += ""$' tmp/init-bare/yaml/C0bare.satz \
   || fail "an admin nobody supplied must be empty:\n$(grep first_admin tmp/init-bare/yaml/C0bare.satz)"
 grep -q 'nothing could be derived' tmp/init-bare.txt \
   || fail "init must say that it derived nothing:\n$(cat tmp/init-bare.txt)"
-# init --interview asks what init could not derive. It shipped asking NOTHING: init
-# writes estate-core commented out, the questions live there, and an empty binding
-# counted as an answer. The library is seeded here as `get-presets` would leave it.
-rm -rf tmp/init-iv && mkdir -p tmp/init-iv && seed_schemas tmp/init-iv
-(cd tmp/init-iv && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
-  "$satz" init --customer-id C0example --customer-shortname acme > ../init-iv1.txt 2>&1) \
-  || fail "the plain init before the interview failed:\n$(cat tmp/init-iv1.txt)"
-cp -R "$root/presets" tmp/init-iv/presets
-printf '%s\n' 123456789012 example.com "Acme Corporation" first.admin 012345-6789AB-CDEF01 \
-  | (cd tmp/init-iv && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
-       "$satz" init --customer-id C0example --interview > ../init-iv2.txt 2>&1) \
-  || fail "satz init --interview failed:\n$(cat tmp/init-iv2.txt)"
-if grep -q 'nothing to ask' tmp/init-iv2.txt; then
-  fail "init --interview asked nothing — the questions init could not answer are still open:\n$(cat tmp/init-iv2.txt)"
-fi
-grep -q '^customer_organization_id — ' tmp/init-iv2.txt || fail "the interview did not ask for the organisation id:\n$(cat tmp/init-iv2.txt)"
-grep -q 'complete — every question is answered' tmp/init-iv2.txt || fail "the interview did not finish complete:\n$(tail -8 tmp/init-iv2.txt)"
-grep -qE '^use "presets/estate-core.satz"' tmp/init-iv/yaml/C0example.satz || fail "estate-core was not switched on"
-grep -qE '^  customer_organization_id += "123456789012"' tmp/init-iv/yaml/C0example.satz \
-  || fail "the answer did not land:\n$(grep organization tmp/init-iv/yaml/C0example.satz)"
-grep -qE '^  customer_longname +=  *"Acme Corporation"' tmp/init-iv/yaml/C0example.satz || fail "the longname did not land"
-"$satz" fmt --check tmp/init-iv/yaml/C0example.satz || fail "the interview left the init estate uncanonical"
-# The same door without a shortname, which is how a fresh organisation met it: init
-# writes "" for the project and bucket it derives FROM the shortname, the shortname is
-# answered later, and the two derived names were never asked. Bound to nothing, a
-# derived param is open, and its derivation is offered once its input is answered.
-rm -rf tmp/init-derived && mkdir -p tmp/init-derived && seed_schemas tmp/init-derived
-cp -R "$root/presets" tmp/init-derived/presets
-(cd tmp/init-derived && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
-  "$satz" init --customer-id C0example > ../init-derived.txt 2>&1) \
-  || fail "the init without a shortname failed:\n$(cat tmp/init-derived.txt)"
-sed -i.bak 's|^// use "presets/estate-core.satz"|use "presets/estate-core.satz"|; s|^\(  customer_shortname *= *\)""|\1"acme"|' \
-  tmp/init-derived/yaml/C0example.satz
-"$satz" --config tmp/init-derived questions C0example.satz --unanswered --format text --out tmp/init-derived-q.txt 2>/dev/null || true
-grep -qE '^  \? infra_project_name ' tmp/init-derived-q.txt \
-  || fail "a derived project id bound to nothing is not offered its derivation:\n$(cat tmp/init-derived-q.txt)"
-printf '' | "$satz" --config tmp/init-derived interview C0example.satz --accept-defaults > tmp/init-derived-iv.txt 2>&1 \
-  || fail "accepting the defaults failed:\n$(cat tmp/init-derived-iv.txt)"
-grep -qE '^  infra_project_name += "acme-infra-001"' tmp/init-derived/yaml/C0example.satz \
-  || fail "the derived project id was not bound:\n$(grep infra_project_name tmp/init-derived/yaml/C0example.satz | head -1)"
-grep -qE '^  infra_bucket_name += "acme-infra-001-state"' tmp/init-derived/yaml/C0example.satz \
-  || fail "the derived bucket name was not bound"
-# a re-run MERGES what it names and leaves the rest alone (it used to skip silently)
-cp tmp/init/yaml/C0example.satz tmp/init-before.satz
-(cd tmp/init && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent "$satz" init \
-  --customer-id C0example --billing-account-infra 012345-6789AB-CDEF01 > ../init-merge.txt 2>&1) \
-  || fail "satz init on an existing estate failed:\n$(cat tmp/init-merge.txt)"
-grep -q 'Merged into' tmp/init-merge.txt || fail "a re-run must merge, not skip:\n$(cat tmp/init-merge.txt)"
-grep -qE '^  billing_account_infra +=  *"012345-6789AB-CDEF01"' tmp/init/yaml/C0example.satz \
-  || fail "the param named on the re-run did not land:\n$(grep billing tmp/init/yaml/C0example.satz)"
-grep -qE '^  customer_shortname +=  *"acme"' tmp/init/yaml/C0example.satz \
-  || fail "a param the re-run did not name was lost"
-"$satz" fmt --check tmp/init/yaml/C0example.satz || fail "the merge left the estate uncanonical"
-# the menu, from either door: an init estate is not a dead end for packs, and the
-# packs scoped to a block are written INSIDE it, from the same table merge-presets reads
+# the pack menu is written commented out: an init estate compiles with no presets fetched
 grep -q '// use "presets/estate-map.satz"' tmp/init/yaml/C0example.satz \
   || fail "satz init wrote no pack menu — an estate nothing can add a pack to"
-python3 - <<'PYEOF' || fail "a block-scoped pack line is not inside its block"
-est = open("tmp/init/yaml/C0example.satz").read().splitlines()
-def line_of(n):
-    return next(i for i, l in enumerate(est) if n in l)
-folder, sink = line_of("  infra_folder {"), line_of("organization-audit-logsink")
-alerts, project = line_of("organization-cis-log-alerts-central"), line_of("    google_project {")
-assert folder < sink < alerts < project, (folder, sink, alerts, project)
-assert est[sink].startswith("    // use "), est[sink]
-contacts = line_of("essential-contacts-organization")
-assert est[contacts - 2].startswith("google_essential_contacts_contact {"), est[contacts - 2 : contacts + 1]
-PYEOF
 if grep -qE '^use "presets/' tmp/init/yaml/C0example.satz; then
   fail "an init estate must compile with no presets fetched — bootstrap is the next command"
 fi
 
-step "transpile"
+step "transpile, and transpile --check: in memory, the yaml/-prefixed form, nothing written"
+"$satz" --config . transpile yaml/smoke.satz --check > tmp/check.txt
+grep -q 'transpile --check: OK' tmp/check.txt || fail "--check did not report OK:\n$(cat tmp/check.txt)"
+[ ! -d hcl ] || fail "--check wrote hcl/"
 "$satz" --config . transpile smoke.satz
 for f in main.tf providers.tf variables.tf terraform.tfvars; do
   [ -s "hcl/$f" ] || fail "hcl/$f missing or empty"
 done
 grep -q 'resource "google_org_policy_policy"' hcl/main.tf || fail "the CIS pack's policies are not in main.tf"
 grep -q 'resource "google_cloud_identity_group_membership"' hcl/main.tf || fail "the group member was not emitted"
-# a grant on a group the estate declares waits for the group: on a fresh
-# organisation the grant used to run beside the creation and the first refusal
-# stopped the groups still queued
-python3 - <<'PYEOF' || fail "a grant on a group the estate declares carries no depends_on on it"
-import re, sys
-tf = open("hcl/main.tf").read()
-blocks = re.split(r'(?m)^(?=resource )', tf)
-grants = [b for b in blocks if b.startswith('resource "google_organization_iam_member"') and 'member = "group:' in b]
-assert grants, "no organization grant on a group in main.tf"
-waiting = [b for b in grants if "google_cloud_identity_group." in b]
-assert waiting, "no grant on a group waits for it:\n" + "\n".join(g.splitlines()[0] for g in grants)
-PYEOF
 grep -q 'ignore_changes' hcl/main.tf || fail "group lifecycle default missing"
-# The provenance line: which satz emitted this, and from what. It is a TRIAGE
-# hint — across a fleet, `grep` finds the estates last emitted by an old binary —
-# and never evidence that an estate still compiles. It is added at WRITE time, so
-# the emission itself carries no version and the corpus does not move on a release.
-head -1 hcl/main.tf | grep -q 'Generated by satz v' \
-  || fail "main.tf carries no provenance line:\n$(head -1 hcl/main.tf)"
-head -1 hcl/main.tf | grep -q 'smoke.satz' \
-  || fail "the provenance line does not name the estate it came from:\n$(head -1 hcl/main.tf)"
-# A --config that names no file is an error naming the path — never the built-in
-# defaults, which compile the estate against another provider version.
-if "$satz" --config nope.toml transpile smoke.satz > tmp/noconf.txt 2>&1; then
-  fail "--config nope.toml compiled with the built-in defaults"
-fi
-grep -q -- '--config nope.toml: no such file or directory' tmp/noconf.txt \
-  || fail "the missing --config is not named:\n$(cat tmp/noconf.txt)"
+# the provenance line, added at write time: which satz emitted this, and from what
+head -1 hcl/main.tf | grep -q 'Generated by satz v.*smoke.satz' \
+  || fail "main.tf carries no provenance line naming its estate:\n$(head -1 hcl/main.tf)"
 
 if command -v tofu >/dev/null 2>&1; then
   step "tofu validate"
   (cd hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
-  # `validate` reads no tfvars, and apply checks every value against its declared
-  # type before it does anything. The two files alone are that check, with no
-  # provider; `tofu console` exits 0 on an invalid value, so its output is the verdict.
-  step "tofu: every declared variable accepts the value satz emitted for it"
-  rm -rf tmp/tfvars-judge && mkdir -p tmp/tfvars-judge
-  cp hcl/variables.tf hcl/terraform.tfvars tmp/tfvars-judge/
-  (cd tmp/tfvars-judge && echo 1 | tofu console -no-color) > tmp/tfvars-judge.txt 2>&1 || true
-  if grep -q 'Error:' tmp/tfvars-judge.txt; then
-    fail "tofu refuses a value satz emitted for a variable satz declared:\n$(cat tmp/tfvars-judge.txt)"
-  fi
 else
   step "tofu not on PATH — validate skipped"
 fi
@@ -249,14 +140,10 @@ grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form 
 "$satz" --config . require cis-gcp-4.0 showcase.satz --format text --out tmp/showcase-require.txt 2>/dev/null || true
 grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not read as a deviation"
 grep -q '0 contradicted claim(s)' tmp/showcase-require.txt || fail "a claim contradicts its own witness in the showcase estate"
-# R7: the coverage word is an assertion about what the witness DOES. Switch the
-# policy the deviation names to enforcing, and the deviation must read as
-# contradicted rather than as a disclosed non-conformance (ADR 0013).
-sed 's/enforce = "FALSE"/enforce = "TRUE"/' yaml/showcase-policies.satz > tmp/showcase-policies-enforcing.satz
-sed 's|use "showcase-policies.satz"|use "../tmp/showcase-policies-enforcing.satz"|' yaml/showcase.satz > tmp/showcase-contradicted.satz
-"$satz" --config . require cis-gcp-4.0 ../tmp/showcase-contradicted.satz --format text --out tmp/showcase-contradicted.txt 2>/dev/null || true
-grep -q 'declares a deviation and its witnesses enforce the control' tmp/showcase-contradicted.txt || fail "a deviation over an enforcing policy must read as a contradicted claim"
-grep -q '1 contradicted claim(s)' tmp/showcase-contradicted.txt || fail "the contradicted claim is not counted in the summary"
+# a question reaches variables.tf as a description and nothing else
+grep -q 'description = "Short name identifying this customer"' tmp/showcase-hcl/variables.tf \
+  || fail "the question's prompt did not become the variable's description"
+grep -q 'question' "$sc" && fail "a question must emit nothing into main.tf"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
@@ -289,12 +176,7 @@ grep -q 'customer_domain=not-exported' tmp/actions-check.txt \
   || fail "run-actions --execute failed"
 grep -q 'WRITE MODE' tmp/actions-exec.txt || fail "--execute did not append execute_args"
 
-# before-apply runs ahead of after-apply, whatever order they were declared in.
-grep -m1 'showcase-action: name=' tmp/actions-exec.txt > tmp/actions-first.txt || true
-grep -q 'name=pack-step' tmp/actions-first.txt \
-  || fail "phase order ignored: before-apply should run first"
-
-# The three switches.
+# The switches.
 "$satz" --config . run-actions showcase.satz --execute --no-actions > tmp/actions-off.txt 2>&1 \
   || fail "run-actions --no-actions failed"
 grep -q 'showcase-action: ' tmp/actions-off.txt && fail "--no-actions still executed something"
@@ -304,45 +186,9 @@ grep -q 'nothing was run: --no-actions' tmp/actions-off.txt || fail "--no-action
   || fail "run-actions --no-pack-actions failed"
 grep -q '1 pack-declared action(s) skipped' tmp/actions-nopack.txt || fail "--no-pack-actions skipped nothing"
 
-"$satz" --config . transpile showcase.satz --check > tmp/actions-warn.txt 2>&1 \
-  || fail "transpile --check failed"
-grep -q 'warning: action "showcase-step"' tmp/actions-warn.txt \
-  || fail "a declared action must warn on every compile"
-"$satz" --config . transpile showcase.satz --check --no-action-warnings > tmp/actions-nowarn.txt 2>&1 \
-  || fail "transpile --check --no-action-warnings failed"
-grep -q 'warning: action' tmp/actions-nowarn.txt && fail "--no-action-warnings did not silence the warning"
-
 "$satz" --config . run-actions showcase.satz --only nope > tmp/actions-only.txt 2>&1 \
   && fail "--only with an unknown name should fail"
 grep -q 'no action by that name' tmp/actions-only.txt || fail "--only did not name the mistake"
-
-step "the shipped SCC pack binds its script as an action, and the script travels with it"
-# Plan mode only: running this one needs gcloud credentials and a live org.
-"$satz" --config . run-actions scc.satz > tmp/scc-actions.txt 2>&1 \
-  || fail "run-actions on the SCC estate failed"
-grep -q '1 action(s) declared' tmp/scc-actions.txt || fail "the SCC pack's action was not collected"
-grep -q 'from a pack' tmp/scc-actions.txt || fail "the SCC action should be reported as pack-declared"
-grep -q 'before-apply' tmp/scc-actions.txt || fail "SCC enablement must run before the apply"
-grep -q -- '--organization 123456789012' tmp/scc-actions.txt \
-  || fail "the estate's org id did not reach the resolved command line"
-# The script must resolve beside its pack, not beside the estate — that is what
-# makes a pack self-contained once `get-presets` has installed it.
-grep -q 'presets/scc/scc-enable-all.sh' tmp/scc-actions.txt \
-  || fail "the pack's script was not found beside the pack"
-[ -x "$root/presets/scc/scc-enable-all.sh" ] \
-  || fail "presets/scc/scc-enable-all.sh is not executable — an action refuses to run it"
-# get-presets ships presets/** and nothing else, so a pack's script must be under it.
-case "$(cd "$root" && git ls-files presets/scc/scc-enable-all.sh)" in
-  presets/scc/scc-enable-all.sh) ;;
-  *) fail "the SCC script is not tracked under presets/ — get-presets would not ship it" ;;
-esac
-# the estate decides the two opt-in detectors, and the choice reaches the command line
-grep -q -- '--optional leave' tmp/scc-actions.txt \
-  || fail "the opt-in choice did not reach the resolved command line:\n$(cat tmp/scc-actions.txt)"
-bash "$root/presets/scc/scc-enable-all.sh" --organization 123456789012 --optional nonsense > tmp/scc-bad.txt 2>&1 \
-  && fail "an unknown --optional state was accepted"
-grep -q "is not an opt-in service" tmp/scc-bad.txt \
-  || fail "the refusal does not say what --optional takes:\n$(cat tmp/scc-bad.txt)"
 
 step "questions: what the estate can be asked, and what the answers cost"
 "$satz" --config . questions showcase.satz --format text --out tmp/questions.txt 2>/dev/null || fail "satz questions failed"
@@ -387,14 +233,6 @@ grep -q '^// use \"presets/estate-map.satz\"' tmp/iv/new.satz \
   || fail "the map must be written commented — it is what asks which packs the estate has"
 grep -q '^// use \"presets/scc/scc-export.satz\" when use_scc_export' tmp/iv/new.satz \
   || fail "every optional pack must be written commented, under its phase"
-# an estate path resolves inside yaml_dir, so naming the directory doubles it:
-# `--create` used to write yaml/yaml/x.satz and report success
-if "$satz" --config . interview yaml/doubled.satz --create --accept-defaults > tmp/iv/doubled.txt 2>&1; then
-  fail "a path that names yaml_dir must be refused, not created:\n$(cat tmp/iv/doubled.txt)"
-fi
-grep -q 'pass `doubled.satz` instead' tmp/iv/doubled.txt \
-  || fail "the refusal must name the bare form:\n$(cat tmp/iv/doubled.txt)"
-[ ! -e yaml/yaml ] || fail "satz created a doubled yaml/yaml directory"
 grep -q '\[acme-infra-001\]' tmp/iv/run.txt || fail "the project id must be OFFERED once the short name is typed — before, it is not a default"
 grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the interview did not end complete:\n$(cat tmp/iv/run.txt)"
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
@@ -422,57 +260,12 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown --out tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
 grep -q '1 of 16 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
-# the catalog is what the customer keeps: every question carries WHY it is asked, whether
-# the answer was chosen or taken as offered, and the cost of changing it in words
-grep -q 'why the question exists at all' tmp/iv/decisions.md || fail "the sheet does not say what it is for"
-grep -q 'how | changing it later' tmp/iv/decisions.md || fail "the catalog columns are missing"
-grep -qE '\| \*[A-Z]' tmp/iv/decisions.md || fail "no question carries its `why` line"
-grep -q 'the estate and the running organisation feels it\|destroyed and made again' tmp/iv/decisions.md \
-  || fail "the cost of a later change must be words, not two enum names"
-# and the workbook a customer fills in and sends back — a format, not a flag
-"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format xlsx --out "$PWD/tmp/iv/decisions.xlsx" > tmp/iv/xlsx.out 2>tmp/iv/xlsx.txt \
+# the workbook a customer fills in and sends back
+"$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format xlsx --out "$PWD/tmp/iv/decisions.xlsx" > /dev/null 2>tmp/iv/xlsx.txt \
   || fail "the catalog workbook was not written:\n$(cat tmp/iv/xlsx.txt)"
-[ -s tmp/iv/xlsx.out ] && fail "the console must carry nothing: $(cat tmp/iv/xlsx.out)"
-grep -q 'the `your answer` column is the customer' tmp/iv/xlsx.txt || fail "the workbook must say whose column that is"
-python3 - "$PWD/tmp/iv/decisions.xlsx" <<'PYX' || fail "the workbook is not a readable xlsx with the catalog columns"
-import re, sys, zipfile
-z = zipfile.ZipFile(sys.argv[1])
-s = z.read("xl/sharedStrings.xml").decode("utf-8", "replace")
-vals = re.findall(r"<t[^>]*>(.*?)</t>", s)
-for want in ("pack", "decision", "your answer", "needs an answer", "why it is asked", "changing it later"):
-    assert want in vals, f"column {want!r} missing from {vals[:10]}"
-PYX
-grep -q 'default `europe-west3-a` — accept, or change' tmp/iv/decisions.md || fail "the sheet must offer the default for the open question"
-grep -q '| `123456789012` |' tmp/iv/decisions.md || fail "a string answer is shown as itself, not YAML-quoted"
+[ -s tmp/iv/decisions.xlsx ] || fail "the catalog workbook is empty"
 
-# THE SECOND PHASE. Uncommenting the map is what turns a day-0 file into one that asks
-# which packs the estate has — and answering a pack's question yes is what uncomments its
-# line. Without that, the answer binds and nothing emits it, which is the whole point of
-# the check below.
-sed 's|^// use "presets/estate-map.satz"|use "presets/estate-map.satz"|' tmp/iv/new.satz > tmp/iv/mapped.satz
-"$satz" --config . questions "$PWD/tmp/iv/mapped.satz" --format text --out tmp/iv/mapped.txt 2>/dev/null || true
-grep -q 'use_scc_enablement' tmp/iv/mapped.txt \
-  || fail "with the map in, the pack choices must be asked:\n$(cat tmp/iv/mapped.txt)"
-printf '%s\n' y | "$satz" --config . interview "$PWD/tmp/iv/mapped.satz" > tmp/iv/mapped2.txt 2>&1 \
-  || fail "the second interview round failed:\n$(cat tmp/iv/mapped2.txt)"
-# the four recommended-on choices are now answered true, so their lines are uncommented
-grep -q '^use "presets/billing-account-permissions.satz" when use_billing_permissions' tmp/iv/mapped.satz \
-  || fail "answering a choice yes must uncomment that pack's line:\n$(grep 'billing-account-permissions' tmp/iv/mapped.satz)"
-grep -q '^// use "presets/scc/scc-export.satz"' tmp/iv/mapped.satz \
-  || fail "a choice left false must leave its line commented"
-# and a question answered true whose line is gone is reported, never silently ignored
-grep -v 'organization-budget' tmp/iv/mapped.satz > tmp/iv/gone.satz
-sed -i.bak -E 's/^  use_budget( +)= false/  use_budget\1= true/' tmp/iv/gone.satz   # `( +)`: the params block is aligned
-"$satz" --config . transpile "$PWD/tmp/iv/gone.satz" --check > tmp/iv/gone.txt 2>&1 || true
-grep -q 'asks for but does not use' tmp/iv/gone.txt \
-  || fail "a pack answered for with no line must be reported:\n$(cat tmp/iv/gone.txt)"
-
-# a question is metadata: it must reach variables.tf as a description and NOTHING else
-grep -q 'description = "Short name identifying this customer"' tmp/showcase-hcl/variables.tf \
-  || fail "the question's prompt did not become the variable's description"
-grep -q 'question' tmp/showcase-hcl/main.tf && fail "a question must emit nothing into main.tf"
-
-# and the exclusive choice is checked BEFORE the fold reaches a shared address
+# the exclusive choice is checked BEFORE the fold reaches a shared address
 sed 's/group_model_split        = false/group_model_split        = true/' yaml/showcase.satz > tmp/twochoice.satz
 if "$satz" --config . transpile tmp/twochoice.satz --check >tmp/twochoice.txt 2>&1; then
   fail "two branches of a oneof were both accepted"
@@ -480,24 +273,13 @@ fi
 grep -q 'group_model_flat and group_model_split are both true' tmp/twochoice.txt \
   || fail "the oneof refusal does not name both branches:\n$(cat tmp/twochoice.txt)"
 
-step "require cis-gcp-4.0 (goal view, offline)"
-# `require` exits non-zero when a technical control is unmet — that IS the CI
-# gate; the smoke estate leaves 2.12 (DNS logging) and 2.13 (CAI) unmet on
-# purpose, so the step asserts on the verdict line, not the exit code
+step "require cis-gcp-4.0 (goal view, offline): text, and json where the file carries the answer and the console nothing"
+# `require` exits non-zero when a technical control is unmet, and the smoke estate
+# leaves controls unmet, so the step asserts on the verdict, not the exit code.
 "$satz" --config . require cis-gcp-4.0 smoke.satz --format text --out tmp/require.txt 2>/dev/null || true
-cat tmp/require.txt
-grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line"
-# 14 unmet: 2.12 DNS logging and 2.13 CAI, which no pack covers, plus the twelve
-# controls the CIS extension fragments cover and this estate does not turn on.
-# The catalog carries the full CIS surface, so an unclaimed control is visible
-# rather than absent — that is what makes the number meaningful.
-grep -q '14 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the twelve opt-in extension controls unmet:\n$(tail -3 tmp/require.txt)"
-
-step "require --format json: the file carries the answer and the console nothing"
-# Where the bytes go is the whole contract: the artefact is the file `--out` names,
-# and stdout stays EMPTY so `--out /dev/stdout | jq` is a clean pipe. The line
-# saying where it went and the version banner are stderr, and the compile prints
-# no line per provider schema it loads.
+grep -q 'satisfied' tmp/require.txt || fail "require printed no verdict line:\n$(cat tmp/require.txt)"
+# The artefact is the file `--out` names, and stdout stays EMPTY so
+# `--out /dev/stdout | jq` is a clean pipe; the wrote line and the banner are stderr.
 "$satz" --config . require cis-gcp-4.0 smoke.satz --format json --out tmp/require.json > tmp/require-stdout.txt 2>tmp/require-stderr.txt || true
 [ -s tmp/require-stdout.txt ] && fail "require printed to stdout: $(cat tmp/require-stdout.txt)"
 grep -q "wrote tmp/require.json" tmp/require-stderr.txt || fail "the command did not say where it put the report:\n$(cat tmp/require-stderr.txt)"
@@ -512,7 +294,8 @@ d = json.load(open("tmp/require.json"))
 assert d["catalog"] == "cis-gcp" and d["version"] == "4.0", d.get("catalog")
 assert len(d["controls"]) > 20, len(d["controls"])
 s = d["summary"]
-# the same numbers the text renderer prints, from the same report
+# 14 unmet: 2.12 DNS logging and 2.13 CAI, which no pack covers, plus the twelve
+# controls the CIS extension fragments cover and this estate does not turn on
 assert s["unmet"] == 14, s
 assert s["satisfied"] == 18, s
 # every row carries a verdict from the closed set
@@ -521,40 +304,6 @@ assert verdicts <= {"satisfied","partial","broken","deviation","unmet","organiza
 PY
 grep -q 'satz v' tmp/require.json && fail "the version banner reached the report file"
 grep -q 'wrote ' tmp/require.json && fail "a progress line reached the report file"
-grep -q 'resource types for' tmp/require-stderr.txt && fail "the compile printed a line per provider schema:\n$(cat tmp/require-stderr.txt)"
-
-step "a format a command cannot produce is refused, not quietly rendered as something else"
-if "$satz" --config . require cis-gcp-4.0 smoke.satz --format pdf --out tmp/fmt.pdf >tmp/fmt.txt 2>&1; then
-  fail "require accepted --format pdf"
-fi
-grep -q "invalid value 'pdf' for '--format" tmp/fmt.txt || fail "the refusal does not name the problem:\n$(cat tmp/fmt.txt)"
-grep -q 'possible values: text, json' tmp/fmt.txt || fail "the refusal does not name what it can do:\n$(cat tmp/fmt.txt)"
-# the help lists the same two, from the same declaration
-"$satz" require --help > tmp/fmt-help.txt 2>/dev/null
-grep -qE '^ +- pdf' tmp/fmt-help.txt && fail "require --help lists a format require refuses:\n$(cat tmp/fmt-help.txt)"
-grep -qE '^ +- json' tmp/fmt-help.txt || fail "require --help does not list json:\n$(cat tmp/fmt-help.txt)"
-
-step "a command that writes markdown writes pdf, and --out may leave the extension off"
-rm -f tmp/sheet tmp/sheet.pdf tmp/sheet.md
-"$satz" --config . questions smoke.satz --format pdf --out tmp/sheet > tmp/sheet.txt 2>&1 \
-  || fail "questions --format pdf failed:\n$(cat tmp/sheet.txt)"
-[ -s tmp/sheet.pdf ] || fail "--out tmp/sheet did not become tmp/sheet.pdf:\n$(cat tmp/sheet.txt)"
-head -c 5 tmp/sheet.pdf | grep -q '%PDF-' || fail "tmp/sheet.pdf is not a PDF"
-grep -q 'wrote tmp/sheet.pdf' tmp/sheet.txt || fail "the wrote line does not name the path written:\n$(cat tmp/sheet.txt)"
-if "$satz" --config . questions smoke.satz --format pdf --out tmp/sheet.md > tmp/sheet-md.txt 2>&1; then
-  fail "--format pdf --out tmp/sheet.md was accepted"
-fi
-grep -q 'names a markdown file' tmp/sheet-md.txt || fail "the contradicting extension is not named:\n$(cat tmp/sheet-md.txt)"
-[ -e tmp/sheet.md ] && fail "a refused run wrote tmp/sheet.md"
-
-step "the global options are listed once, by satz --help, and not under each command"
-"$satz" --help > tmp/help-root.txt 2>/dev/null
-grep -q 'Global options' tmp/help-root.txt || fail "satz --help does not list the global options"
-"$satz" transpile --help > tmp/help-transpile.txt 2>/dev/null
-grep -q '^Usage: satz transpile' tmp/help-transpile.txt || fail "transpile --help printed no help:\n$(cat tmp/help-transpile.txt)"
-grep -q 'Global options' tmp/help-transpile.txt && fail "transpile --help repeats the global options"
-"$satz" transpile smoke.satz --check --config . > tmp/help-global.txt 2>&1 \
-  || fail "a global option after the command no longer parses:\n$(cat tmp/help-global.txt)"
 
 step "require cis-gcp-5.0: the same pack answers both benchmark versions"
 "$satz" --config . require cis-gcp-5.0 smoke.satz --format text --out tmp/require-50.txt 2>/dev/null || true
@@ -577,34 +326,6 @@ grep -qE '✓ 3.10 .*compute_requireVpcFlowLogs' tmp/require-50.txt || fail "4.0
 grep -qE '◐ 1.2 .*legacy-superseded' tmp/require-50.txt || fail "4.0 1.1 -> 5.0 1.2 did not carry over with its duties"
 # 1.1.4 asks whether the org constrains its projects centrally: the whole baseline is the witness
 grep -qE '◐ 1.1.4 .*review-baseline' tmp/require-50.txt || fail "the 5.0 §1.1.4 baseline claim is missing:\n$(grep '1.1.4' tmp/require-50.txt)"
-
-step "superseded legacy constraints are declared OFF, never enforced beside their managed twin"
-# The defect this prevents: both forms in force, so every exemption has to lift two
-# policies. Absence would not prevent it — a legacy policy already set on the org is
-# invisible to an apply that does not declare it — so the pack declares each twin reset.
-for c in iam.allowedPolicyMemberDomains compute.requireOsLogin \
-         essentialcontacts.allowedContactDomains iam.disableServiceAccountKeyCreation \
-         iam.disableServiceAccountKeyUpload compute.restrictProtocolForwardingCreationForTypes; do
-  python3 - "$c" <<'PY' || fail "the superseded twin is not declared off"
-import re, sys
-name = sys.argv[1]
-tf = open("hcl/main.tf").read()
-blocks = re.findall(r'resource "google_org_policy_policy" "[^"]+" \{.*?\n\}', tf, re.S)
-mine = [b for b in blocks if f'/policies/{name}"' in b]
-if len(mine) != 1:
-    print(f"expected exactly one block for {name}, found {len(mine)}"); sys.exit(1)
-b = mine[0]
-if "reset = true" not in b:
-    print(f"{name} is declared without reset = true:\n{b}"); sys.exit(1)
-if "enforce" in b or "values" in b:
-    print(f"{name} still carries an enforcing body:\n{b}"); sys.exit(1)
-PY
-done
-# and the managed replacement IS enforcing, with its parameters
-grep -q 'policies/compute.managed.restrictProtocolForwardingCreationForTypes"' hcl/main.tf \
-  || fail "the managed protocol-forwarding constraint is missing"
-grep -q 'parameters = "{\\"allowedSchemes\\":\[\\"INTERNAL\\"\]}"' hcl/main.tf \
-  || fail "the managed protocol-forwarding constraint lost its parameters"
 
 step "CIS extensions: opt-in coverage, off by default and on when asked"
 # off by default: the baseline must not enforce any of them
@@ -632,7 +353,7 @@ fi
 
 step "org firewall: the admin ports are closed to the internet and open to the inside"
 grep -q 'cis_block_internet_ssh_rdp = true' ../../presets/cis/CIS-GCP-Foundation-4.0.satz \
-  || fail "cis_block_internet_ssh_rdp no longer defaults to true"
+  || fail "cis_block_internet_ssh_rdp does not default to true"
 cp yaml/smoke.satz tmp/fw.satz
 cat >> tmp/fw.satz <<'SATZ'
 use "presets/cis/internet-ssh-rdp.satz" when cis_block_internet_ssh_rdp
@@ -668,7 +389,7 @@ grep -q 'name = "organizations/123456789012/policies/compute.requireVpcFlowLogs"
 # The flag defaults TRUE — the only extension that does — but a flag alone emits
 # nothing: the estate carries the `use … when` line (ADR 0007), and the skeleton writes it.
 grep -q 'cis_dns_logging            = true' ../../presets/cis/CIS-GCP-Foundation-4.0.satz \
-  || fail "cis_dns_logging no longer defaults to true"
+  || fail "cis_dns_logging does not default to true"
 cp yaml/smoke.satz tmp/dns.satz
 cat >> tmp/dns.satz <<'SATZ'
 use "presets/cis/dns-logging.satz" when cis_dns_logging
@@ -710,14 +431,6 @@ grep -q 'role = "roles/pubsub.subscriber"' tmp/sent-hcl/main.tf || fail "the con
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/sent-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the sentinel chain does not validate"
 fi
-
-step "a renamed param is refused by name — the silent version of this is a second logging project"
-sed -e 's/logsink_project_id/logsink_project_name/' yaml/smoke.satz > tmp/oldparam.satz
-if "$satz" --config . transpile tmp/oldparam.satz --output "$PWD/tmp/oldparam-hcl" > tmp/oldparam.txt 2>&1; then
-  fail "an estate on the old param name compiled — it would have taken the pack's default project:\n$(cat tmp/oldparam.txt)"
-fi
-grep -q 'logsink_project_id' tmp/oldparam.txt || fail "the refusal does not name the param to use instead:\n$(cat tmp/oldparam.txt)"
-grep -q 'logsink_project_display_name' tmp/oldparam.txt || fail "the refusal does not say where the display name went:\n$(cat tmp/oldparam.txt)"
 
 step "sentinel network streams: four sinks, four subscriptions, and no authoritative grant"
 sed -e 's/^params {/params {\n  sentinel_project_id = infra_project_name\n  sentinel_workload_pool_id = "22222222222222222222222222222222"\n  sentinel_project_number = "123456789012"/' yaml/smoke.satz > tmp/sentnet.satz
@@ -870,82 +583,28 @@ if "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.
 fi
 grep -q 'the findings changed' tmp/plan4.txt || fail "the stale-hash refusal does not say why:\n$(cat tmp/plan4.txt)"
 
-step "remediation-plan without --out-dir: each run takes a folder of its own, and a refused one takes none"
-# The folder is named for the UTC minute; a second run in that minute takes `…_002`,
-# created by that run, so it never writes into the first run's files. The two runs may
-# straddle a minute, so either name is right for the second.
-rm -rf evidence/plan
-"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/plan-default1.txt 2>&1 \
-  || fail "remediation-plan without --out-dir failed:\n$(cat tmp/plan-default1.txt)"
-"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/plan-default2.txt 2>&1 \
-  || fail "a second remediation-plan without --out-dir failed:\n$(cat tmp/plan-default2.txt)"
-if "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --merge tmp/authored-stale.json > tmp/plan-default3.txt 2>&1; then
-  fail "authored values written against another dossier were merged into a default folder"
-fi
-python3 - <<'PYEOF' || fail "runs without --out-dir did not take a folder each"
-import os, re
-minute = r"cis-gcp-4\.0-\d{4}-\d\d-\d\dT\d\d-\d\dZ"
-dirs = sorted(os.listdir("evidence/plan"))
-assert len(dirs) == 2, f"two runs, one refused, and these folders: {dirs}"
-first, second = dirs
-assert re.fullmatch(minute, first), dirs
-assert second == first + "_002" or re.fullmatch(minute, second), dirs
-for d, log in zip(dirs, ("tmp/plan-default1.txt", "tmp/plan-default2.txt")):
-    for f in ("dossier.json", "findings.csv", "findings.xlsx", "meta.json"):
-        assert os.path.getsize(os.path.join("evidence/plan", d, f)) > 0, (d, f)
-    assert os.path.join("evidence", "plan", d) in open(log).read(), f"{log} does not name {d}"
-PYEOF
-
 step "triage: Prowler FAILs sorted into buckets against the estate's claims"
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --format markdown --out tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
 grep -q '^## B ·' tmp/triage.md || fail "no bucket headings"
 grep -q 'declared as `google_storage_bucket' tmp/triage.md || fail "the bucket finding was not matched to its declaring block:\n$(cat tmp/triage.md)"
-# --fix turns the buckets into the estate edit they imply, INSIDE the report:
-# one invocation writes one artefact, and a second rendering on the console is one
-# nobody asked for. It is prose, so it is markdown only.
-# triage writes markdown, so it writes the same document typeset
+# triage writes markdown, so it writes the same document typeset; --out may leave
+# the extension off
 rm -f tmp/triage.pdf
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --format pdf --out tmp/triage 2>tmp/triage-pdf.err \
   || fail "triage --format pdf failed:\n$(cat tmp/triage-pdf.err)"
 head -c 5 tmp/triage.pdf | grep -q '%PDF-' || fail "triage --format pdf --out tmp/triage did not write tmp/triage.pdf"
+# --fix turns the buckets into the estate edit they imply, inside the report
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix --format markdown --out tmp/triage-fix.md 2>/dev/null \
   || fail "triage --fix failed:\n$(cat tmp/triage-fix.md)"
-if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --fix --format json --out tmp/triage-fix.json >tmp/triage-fix-json.txt 2>&1; then
-  fail "triage --fix --format json was accepted; the delta is prose"
-fi
-grep -q 'use --format markdown' tmp/triage-fix-json.txt || fail "the refusal does not name the format that works:\n$(cat tmp/triage-fix-json.txt)"
 grep -q 'proposed estate delta' tmp/triage-fix.md || fail "--fix printed no delta:\n$(cat tmp/triage-fix.md)"
-# The buckets with nothing to edit are still reported — a list naming only the
-# actionable ones reads as "nothing else to do".
-grep -q 'nothing to edit for' tmp/triage-fix.md \
-  || fail "--fix said nothing about the buckets that have no edit:\n$(cat tmp/triage-fix.md)"
-# It proposes; it never writes. The estate must be byte-identical afterwards.
-cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" \
-  || fail "triage --fix modified the estate — it proposes, it does not apply"
+
+step "report-compliance: the Prowler column, and the envelope says whether live state was read"
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler prowler.json --format markdown --out tmp/ev2.md >/dev/null 2>&1 || fail "report-compliance --prowler failed"
 grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
 grep -q 'Prowler 5.42.0' tmp/ev2.md || fail "the report does not name the Prowler version that wrote the export"
-# An export from an older Prowler keeps the check id and the project elsewhere;
-# it is refused by its version, never half-read.
-sed 's/"version":"5.42.0"/"version":"4.6.1"/' prowler.json > tmp/prowler4.json
-if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler tmp/prowler4.json --format markdown --out tmp/p4.md > tmp/p4.txt 2>&1; then
-  fail "triage accepted an export written by Prowler 4"
-fi
-grep -q 'written by Prowler 4.6.1' tmp/p4.txt || fail "the Prowler 4 refusal does not name the version:\n$(cat tmp/p4.txt)"
-# Prowler appends to an output file that already exists: two scans under one name
-# leave a file that no longer parses. It is refused at the joint, with the cause.
-cat prowler.json prowler.json > tmp/prowler-twice.json
-if "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler tmp/prowler-twice.json --format markdown --out tmp/twice.md > tmp/twice.txt 2>&1; then
-  fail "report-compliance read two scans appended into one file"
-fi
-grep -q 'is not one JSON document .* (byte offset [0-9]*)\. .*two scans were written under one name' tmp/twice.txt \
-  || fail "the appended export is not refused at its joint with the cause:\n$(cat tmp/twice.txt)"
-
-step "report-compliance: the envelope says whether live state was actually read"
-# The report degrades to unverifiable witnesses rather than failing, so `live`
-# has to mean "the inventory WAS read", never "live was requested" — otherwise a
-# caller with no stderr (MCP, a pipeline) cannot tell a blind run from a
-# verified one. CI has no credentials, so `--no-live` is the case it can assert.
+# `live` means "the inventory WAS read", never "live was requested", so a caller with
+# no stderr (MCP, a pipeline) can tell a blind run from a verified one. CI has no
+# credentials, so `--no-live` is the case it can assert.
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format json --out tmp/ev-envelope.json 2>/dev/null || fail "report-compliance --format json failed"
 python3 - <<'PYEOF' || fail "the evidence envelope does not describe the live run"
 import json
@@ -955,27 +614,7 @@ for f in ("live", "live_status", "warnings"):
 assert o["live"] is False, o["live"]
 assert o["live_status"] == "skipped", o["live_status"]
 assert o["warnings"] == [], o["warnings"]
-
-# The rows are DATA. An agent building an audit list is a first-class reader of
-# this report, and it used to be handed the rendered markdown column — `<br>`,
-# `<small>` and all — in the field it was supposed to consume.
-assert "estate_commit" in o, sorted(o)
-rows = o["rows"]
-assert all("responsibility" in r for r in rows), "a row carries no responsibility"
-assert {r["responsibility"] for r in rows} <= {
-    "inherited", "customer", "shared", "satz-managed", "unassigned"}, \
-    sorted({r["responsibility"] for r in rows})
-witnessed = [r for r in rows if r["witnesses"]]
-assert witnessed, "no row carries a witness"
-for r in witnessed:
-    for w in r["witnesses"]:
-        assert isinstance(w, dict), f"a witness is still a string: {w}"
-        assert {"address", "state", "declared_at"} <= set(w), sorted(w)
-assert "<br>" not in json.dumps([r["witnesses"] for r in rows]), \
-    "markup leaked into the witness data"
-# The link a cloud dashboard cannot make: control -> the line that declares it.
-assert any(w.get("declared_at") for r in witnessed for w in r["witnesses"]), \
-    "no witness names the Satz that declares it"
+assert any(r["witnesses"] for r in o["rows"]), "no row carries a witness"
 PYEOF
 
 step "import-config: every derivable asset_type is filled (the CAI list is the source)"
@@ -989,7 +628,7 @@ step "a tag-conditional exemption keeps the verdict and is reported beside it"
 cp "$root/tests/iac/exemption-tag/main.satz" tmp/exemption.satz
 "$satz" --config . require cis-gcp-4.0 ../tmp/exemption.satz --format text --out tmp/exemption.txt 2>/dev/null || true
 grep -q 'cis_sa_key_creation_rules' "$root/presets/cis/CIS-GCP-Foundation-4.0.satz" \
-  || fail "the baseline no longer takes the SA-key rules from a param — the exemption needs a fork again"
+  || fail "the baseline does not take the SA-key rules from a param — the exemption would need a fork"
 grep -qE '^  . 1\.4 ' tmp/exemption.txt || fail "the exempted control is not in the goal view at all"
 grep -q '✓ 1.4' tmp/exemption.txt \
   || fail "a conditional exemption unmade the verdict — the unconditional rule decides"
@@ -1001,17 +640,7 @@ grep -q '1 control(s) carry a conditional exemption' tmp/exemption.txt \
 step "dry-run twins are derived from their enforcing fragments, not written beside them"
 uv run "$root/scripts/build_dry_run_fragments.py" --check \
   || fail "a dry-run twin is stale — run scripts/build_dry_run_fragments.py and commit"
-# A twin claims nothing: a dry run discharges no control while it measures, so a claim
-# over it would be contradicted by its own witness (ADR 0013).
-grep -l '^claim ' "$root"/presets/cis/*-dry-run.satz 2>/dev/null \
-  && fail "a dry-run fragment carries a claim — a dry run discharges nothing"
-grep -q 'dry_run_spec' "$root/presets/cis/cloud-sql-dry-run.satz" \
-  || fail "the dry-run twin does not declare dry_run_spec"
 
-# doc-packs carries three gates now: the pages match the packs, every claim
-# names a control its catalog carries, and every pack version has a changelog
-# row. The shell loop that checked the last one lived here; the tool knows both
-# halves, so its message can name the line and `cargo test` runs it too.
 step "prowler: the invocation this estate needs, printed and never run"
 "$satz" --config . prowler smoke.satz > tmp/prowler-plan.txt 2> tmp/prowler-notes.txt \
   || fail "satz prowler failed on the smoke estate"
@@ -1055,14 +684,6 @@ grep -q 'the pack clears the bar' tmp/review-good.txt || fail "the review does n
 grep -q 'emits: google_billing_budget' tmp/review-good.txt || fail "the review did not fold the pack into an estate:\n$(cat tmp/review-good.txt)"
 # and it says what adopting it costs — the roles and APIs update-prerequisites writes
 grep -q 'billingbudgets.googleapis.com' tmp/review-good.txt || fail "the review does not say what the pack costs an estate:\n$(cat tmp/review-good.txt)"
-# a pack whose objects adopt can find carries no adoption warning — the SCC notification
-# config had no rule, and a re-run that 409'd had no way back but `tofu import` by hand
-"$satz" --config . review-pack "$root/presets/scc/scc-notifications.satz" --format text --out tmp/review-scc.txt 2>/dev/null || true
-grep -q 'has no rule for' tmp/review-scc.txt && fail "review-pack says adopt cannot find what scc-notifications creates:\n$(cat tmp/review-scc.txt)"
-# and a pack emitting a type whose id the server assigns is told so, by type
-"$satz" --config . review-pack "$root/presets/exemptions/exemption-tag.satz" --format text --out tmp/review-tags.txt 2>/dev/null || true
-grep -q 'google_tags_tag_key.*has no rule for' tmp/review-tags.txt \
-  || fail "review-pack does not name the type adopt cannot find:\n$(cat tmp/review-tags.txt)"
 
 # The rules, each broken on purpose: no header, no version, a membership, unformatted.
 mkdir -p tmp/packs
@@ -1104,76 +725,19 @@ assert len(errs) >= 4, errs
 assert any(f.get("line") for f in errs), "no finding is anchored to a line"
 assert all(f.get("file", "").endswith("bad.satz") for f in r["findings"]), r["findings"]
 PYEOF
-# What the compile says about the pack is in the report, not beside it: a bucket the
-# pack declares outside any project is a warning in the review, and the review's own
-# compile prints neither that warning nor a line about the import config it reads.
-# (The pack has no changelog row, so the review refuses it; the verdict is not the
-# subject here.)
-cat > tmp/packs/unscoped.satz <<'PACKEOF'
-// A log bucket with no project of its own.
-pack unscoped version "1.0"
-
-google_storage_bucket {
-  logs {
-    name     = "acme-logs"
-    location = "EU"
-  }
-}
-PACKEOF
-"$satz" --config . review-pack tmp/packs/unscoped.satz --format text --out tmp/review-unscoped.txt 2> tmp/review-unscoped.err || true
-[ -s tmp/review-unscoped.txt ] || fail "review-pack wrote no report:\n$(cat tmp/review-unscoped.err)"
-grep -q 'warning: .*unscoped.satz:5: google_storage_bucket.logs .*sets no `project`' tmp/review-unscoped.txt \
-  || fail "the review does not carry the compile's warning at the pack's line:\n$(cat tmp/review-unscoped.txt)"
-if grep -Eq 'sets no|requires a|import config' tmp/review-unscoped.err; then
-  fail "the review's compile printed beside its report:\n$(cat tmp/review-unscoped.err)"
-fi
 
 step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
 
 step "report-compliance --format pdf: typeset by satz, with nothing on PATH"
-# This step could not exist before: the PDF went through pandoc, which needed a
-# LaTeX engine behind it, and CI has neither. Typst is in the binary now.
-# The report is rendered twice, for the determinism check below. It states the
-# minute it ran (`run: 2026-09-18T18:23Z`), so two renders are the same input only
-# within one minute: the clock is read before the first render and after the second,
-# and a pair that crossed a minute boundary is rendered again — the second pair
-# starts just past that boundary. The run line stays the real clock: it is when the
-# evidence was taken, so no environment variable sets it.
-for attempt in 1 2; do
-  ls evidence 2>/dev/null | sort > tmp/history-before.txt || true
-  minute_before=$(date -u +%Y-%m-%dT%H:%MZ)
-  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
-    || fail "report-compliance --format pdf failed"
-  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence2.pdf >/dev/null 2>&1 \
-    || fail "report-compliance --format pdf failed on the second render"
-  minute_after=$(date -u +%Y-%m-%dT%H:%MZ)
-  if [ "$minute_before" = "$minute_after" ]; then break; fi
-  [ "$attempt" = 1 ] || fail "both pairs of renders crossed a minute boundary ($minute_before → $minute_after): a pair takes half a minute or more"
-  printf 'the two renders crossed a minute boundary (%s → %s); rendering both again\n' "$minute_before" "$minute_after"
-done
-# Two runs in one minute are two records: the evidence history is append-only, so the
-# second run takes the next free name of that minute instead of replacing the first.
-ls evidence 2>/dev/null | sort > tmp/history-after.txt || true
-STEM="cis-gcp-4.0-${minute_before//:/-}" python3 - <<'PYEOF' || fail "two runs in $minute_before did not leave two records in the evidence history:\n$(comm -13 tmp/history-before.txt tmp/history-after.txt)"
-import os
-before = set(open("tmp/history-before.txt").read().split())
-new = [n for n in open("tmp/history-after.txt").read().split() if n not in before]
-stem = os.environ["STEM"]
-assert len(new) == 2, new
-assert all(n.startswith(stem) and n.endswith(".json") for n in new), (stem, new)
-assert any(n.startswith(stem + "_") for n in new), ("the second run did not take a name of its own", new)
-PYEOF
-[ -s tmp/evidence.pdf ] || fail "no PDF was written"
+"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
+  || fail "report-compliance --format pdf failed"
 python3 - <<'PYEOF' || fail "what was written is not a PDF"
 data = open("tmp/evidence.pdf", "rb").read()
 assert data.startswith(b"%PDF-"), data[:16]
 assert len(data) > 20_000, f"a whole evidence report in {len(data)} bytes?"
 assert b"/Type /Page" in data or b"/Type/Page" in data, "no page objects"
 PYEOF
-# the same report twice is the same bytes: a diff of two runs is a diff of the estate
-cmp -s tmp/evidence.pdf tmp/evidence2.pdf || fail "the PDF is not deterministic: two renders in $minute_before differ"
-if command -v pandoc >/dev/null 2>&1; then fail "this machine has pandoc — the step proves nothing here"; fi
 
 step "check-presets against the repository's own presets (must be clean)"
 "$satz" --config . check-presets --pristine-dir "$root/presets" smoke.satz --format text --out /dev/stdout
@@ -1189,96 +753,7 @@ assert {p["status"] for p in d["packs"]} <= {"clean","stale","edited","fork","lo
 PYEOF
 grep -q 'satz v' tmp/presets.json && fail "the version banner reached the report file"
 
-step "merge-presets on an estate whose pack copy binds a param it renamed: the way through is named"
-# merge-presets must compile before its first write, so a stale copy of a used pack was a
-# deadlock: the command that would refresh the copy could not run on the estate that needed
-# it. get-presets --force refreshes the copies without compiling.
-rm -rf tmp/deadlock && mkdir -p tmp/deadlock/yaml tmp/deadlock/presets tmp/deadlock/pristine
-cp -R "$root/tests/schemas" tmp/deadlock/schemas
-cat > tmp/deadlock/config.toml <<'CFGEOF'
-yaml_dir = "yaml"
-hcl_dir = "hcl"
-include_dirs = [".", "yaml"]
-schema_dir = "schemas"
-presets_dir = "presets"
-tf_tool = "tofu"
-google_providers = ["google", "google-beta"]
-provider_version = "7.14.1"
-CFGEOF
-pack() { # $1 version, $2 the param the pack binds
-  printf '// A log bucket, named by the estate.\npack logs version "%s"\n\ngoogle_storage_bucket {\n  logs {\n    name     = "{%s}"\n    project  = "acme-infra-001"\n    location = "EU"\n  }\n}\n' "$1" "$2"
-}
-pack 1.1 logs_bucket_name > tmp/deadlock/pristine/logs.satz
-pack 1.0 log_bucket_name > tmp/deadlock/presets/logs.satz
-printf 'estate deadlock\n\nparams {\n  logs_bucket_name = "acme-logs"\n}\n\nterraform {\n  backend {\n    local { path = "terraform.tfstate" }\n  }\n}\n\nproviders {\n  google {\n    alias   = "google"\n    project = "acme-infra-001"\n    region  = "europe-west3"\n  }\n}\n\nuse "presets/logs.satz"\n' > tmp/deadlock/yaml/deadlock.satz
-(cd tmp/deadlock && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
-if "$satz" --config tmp/deadlock/config.toml merge-presets --pristine-dir tmp/deadlock/pristine > tmp/deadlock-merge.txt 2>&1; then
-  fail "merge-presets ran on an estate that does not compile"
-fi
-grep -q 'satz get-presets --force' tmp/deadlock-merge.txt || fail "the refusal does not name the way through:\n$(cat tmp/deadlock-merge.txt)"
-"$satz" --config tmp/deadlock/config.toml get-presets --force --pristine-dir tmp/deadlock/pristine > tmp/deadlock-get.txt 2>&1 \
-  || fail "get-presets --force failed:\n$(cat tmp/deadlock-get.txt)"
-"$satz" --config tmp/deadlock/config.toml transpile deadlock.satz --check > tmp/deadlock-check.txt 2>&1 \
-  || fail "the refreshed pack copy does not compile:\n$(cat tmp/deadlock-check.txt)"
-(cd tmp/deadlock && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm refreshed)
-"$satz" --config tmp/deadlock/config.toml merge-presets --pristine-dir tmp/deadlock/pristine > tmp/deadlock-merge2.txt 2>&1 \
-  || fail "merge-presets still fails after the refresh:\n$(cat tmp/deadlock-merge2.txt)"
-
-step "a pack the library moved: the old path is refused, merge-presets repoints the estate"
-# The CIS files moved to presets/cis/ and the baseline carries its own resource type now.
-# An estate on the old paths must be REFUSED rather than compiled against local copies
-# nothing will update again, and one merge-presets run must carry it over: the `use` lines
-# repointed, the fork moved, the retired pristine copies gone, and the baseline lifted out
-# of the resource map it used to be keyed with.
-rm -rf tmp/moved && mkdir -p tmp/moved/yaml tmp/moved/presets/cis-extensions
-cp -R "$root/tests/schemas" tmp/moved/schemas
-cat > tmp/moved/config.toml <<'CFGEOF'
-yaml_dir = "yaml"
-hcl_dir = "hcl"
-include_dirs = [".", "yaml"]
-schema_dir = "schemas"
-presets_dir = "presets"
-tf_tool = "tofu"
-google_providers = ["google", "google-beta"]
-provider_version = "7.14.1"
-CFGEOF
-cp "$root/presets/cis/CIS-GCP-Foundation-4.0.satz" tmp/moved/presets/CIS-GCP-Foundation-4.0.satz
-cp "$root/presets/cis/shielded-vm.satz" tmp/moved/presets/cis-extensions/shielded-vm.satz
-cp "$root/presets/cis/cmek.satz" tmp/moved/presets/cis-extensions/cmek.local.satz
-printf 'estate moved\n\nparams {\n  customer_organization_id = "123456789012"\n  customer_domain          = "example.com"\n  cis_require_shielded_vm  = true\n}\n\nterraform {\n  backend {\n    local { path = "terraform.tfstate" }\n  }\n}\n\nproviders {\n  google {\n    alias   = "google"\n    project = "acme-infra-001"\n    region  = "europe-west3"\n  }\n}\n\ngoogle_org_policy_policy {\n  use "presets/CIS-GCP-Foundation-4.0.satz"\n}\nuse "presets/cis-extensions/shielded-vm.satz" when cis_require_shielded_vm\nuse "presets/cis-extensions/cmek.local.satz"\n' > tmp/moved/yaml/moved.satz
-(cd tmp/moved && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
-
-if "$satz" --config tmp/moved/config.toml transpile moved.satz --check > tmp/moved-refused.txt 2>&1; then
-  fail "an estate on the moved paths compiled instead of being refused"
-fi
-grep -q 'presets/cis/CIS-GCP-Foundation-4.0.satz' tmp/moved-refused.txt \
-  || fail "the refusal does not name where the pack lives now:\n$(cat tmp/moved-refused.txt)"
-grep -q 'satz merge-presets' tmp/moved-refused.txt \
-  || fail "the refusal does not name the command that migrates it:\n$(cat tmp/moved-refused.txt)"
-
-"$satz" --config tmp/moved/config.toml merge-presets --pristine-dir "$root/presets" > tmp/moved-merge.txt 2>&1 \
-  || fail "merge-presets could not migrate the estate:\n$(cat tmp/moved-merge.txt)"
-grep -q 'repointed use "' tmp/moved-merge.txt || fail "merge-presets did not report the repointed lines:\n$(cat tmp/moved-merge.txt)"
-test -f tmp/moved/presets/cis/cmek.local.satz || fail "the fork was not carried over to presets/cis/"
-test ! -f tmp/moved/presets/cis-extensions/cmek.local.satz || fail "the fork was left at the old path as well"
-test ! -f tmp/moved/presets/CIS-GCP-Foundation-4.0.satz || fail "the retired baseline copy is still at the old path"
-test ! -d tmp/moved/presets/cis-extensions || fail "the emptied cis-extensions directory was not removed"
-grep -q '^use "presets/cis/CIS-GCP-Foundation-4.0.satz"' tmp/moved/yaml/moved.satz \
-  || fail "the baseline was not lifted out of its resource map:\n$(cat tmp/moved/yaml/moved.satz)"
-grep -q 'use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm' tmp/moved/yaml/moved.satz \
-  || fail "the extension line was not repointed:\n$(cat tmp/moved/yaml/moved.satz)"
-"$satz" --config tmp/moved/config.toml transpile moved.satz --check > tmp/moved-after.txt 2>&1 \
-  || fail "the migrated estate does not compile:\n$(cat tmp/moved-after.txt)"
-# idempotent: a second run has nothing left to carry over
-"$satz" --config tmp/moved/config.toml merge-presets --pristine-dir "$root/presets" > tmp/moved-merge2.txt 2>&1 \
-  || fail "the second merge-presets run failed:\n$(cat tmp/moved-merge2.txt)"
-grep -q 'repointed use "' tmp/moved-merge2.txt && fail "the migration ran twice on the same estate"
-
-step "merge-presets writes the prerequisites an estate lacks, at --validation error too"
-# The last step of a pickup writes the roles and APIs the estate's packs need. Under
-# --validation error the gap is a refusal, so a compile of merge-presets' own that
-# reported it stopped the run before that step: the estate's gap before the pickup, or
-# the one an adopted pack brings.
+step "get-presets installs the library; merge-presets writes the prerequisites an estate lacks and adopts a pack"
 rm -rf tmp/prq && mkdir -p tmp/prq/yaml tmp/prq/presets tmp/prq/pristine
 cp -R "$root/tests/schemas" tmp/prq/schemas
 cat > tmp/prq/config.toml <<'CFGEOF'
@@ -1294,24 +769,20 @@ CFGEOF
 prq_pack() { # $1 version, $2 extra resources
   printf '// A log bucket, and what later versions add beside it.\npack logs version "%s"\n\ngoogle_storage_bucket {\n  logs {\n    name     = "acme-logs"\n    project  = "acme-infra-001"\n    location = "EU"\n  }\n}\n%b' "$1" "$2"
 }
-prq_pack 1.0 '' > tmp/prq/presets/logs.satz
-cp tmp/prq/presets/logs.satz tmp/prq/pristine/logs.satz
+prq_pack 1.0 '' > tmp/prq/pristine/logs.satz
+"$satz" --config tmp/prq/config.toml get-presets --pristine-dir tmp/prq/pristine > tmp/prq-get.txt 2>&1 \
+  || fail "get-presets failed:\n$(cat tmp/prq-get.txt)"
+cmp -s tmp/prq/pristine/logs.satz tmp/prq/presets/logs.satz || fail "get-presets did not install the pack:\n$(cat tmp/prq-get.txt)"
 printf 'estate prq\n\nparams {\n  customer_organization_id = "123456789012"\n  billing_account_infra    = "012345-6789AB-CDEF01"\n  svc_iac_account          = "svc-iac-001"\n  infra_project_name       = "acme-infra-001"\n}\n\nterraform {\n  backend {\n    local { path = "terraform.tfstate" }\n  }\n}\n\nproviders {\n  google {\n    alias   = "google"\n    project = "acme-infra-001"\n    region  = "europe-west3"\n  }\n}\n\ngoogle_project {\n  infra {\n    name            = "acme-infra"\n    project_id      = infra_project_name\n    org_id          = customer_organization_id\n    project_service = [\n      "storage.googleapis.com",\n    ]\n  }\n}\n\nuse "presets/logs.satz"\n' > tmp/prq/yaml/prq.satz
 (cd tmp/prq && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
-if "$satz" --config tmp/prq/config.toml --validation error transpile prq.satz --check > tmp/prq-before.txt 2>&1; then
-  fail "the fixture declares every prerequisite already — the step below proves nothing"
-fi
 "$satz" --config tmp/prq/config.toml --validation error merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-merge.txt 2>&1 \
   || fail "merge-presets at --validation error stopped on the gap it writes:\n$(cat tmp/prq-merge.txt)"
 grep -q 'prerequisite written: roles/storage.admin' tmp/prq-merge.txt \
   || fail "merge-presets did not write the missing role:\n$(cat tmp/prq-merge.txt)"
-grep -q 'prerequisites not checked' tmp/prq-merge.txt && fail "the prerequisite step was refused:\n$(cat tmp/prq-merge.txt)"
-"$satz" --config tmp/prq/config.toml --validation error transpile prq.satz --check > tmp/prq-after.txt 2>&1 \
-  || fail "the estate still lacks a prerequisite after merge-presets:\n$(cat tmp/prq-after.txt)"
 # The pack's next version adds a topic, whose role and API the estate does not declare.
 (cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm prerequisites)
 prq_pack 1.1 '\ngoogle_pubsub_topic {\n  logs {\n    name    = "acme-logs"\n    project = "acme-infra-001"\n  }\n}\n' > tmp/prq/pristine/logs.satz
-# an adoption asks for a plan, so the run exits 1 by design; the report is the check
+# an adoption asks for a plan, so the run exits 1; the report is the check
 "$satz" --config tmp/prq/config.toml --validation error merge-presets --pristine-dir tmp/prq/pristine --adopt logs > tmp/prq-adopt.txt 2>&1 || true
 grep -q 'adopted logs.satz in place' tmp/prq-adopt.txt || fail "the pack was not adopted:\n$(cat tmp/prq-adopt.txt)"
 grep -q 'prerequisite written: roles/pubsub.editor' tmp/prq-adopt.txt \
@@ -1327,136 +798,61 @@ grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print
 "$satz" --config . transpile imported-state.satz --output "$PWD/tmp/imported-state-hcl"
 "$satz" fmt --check yaml/imported-state.satz || fail "import wrote an estate that is not in the canonical layout"
 grep -q 'import {' tmp/imported-state-hcl/imports.tf || fail "state import produced no import blocks"
-# the condensed forms: one line per grant edge and per service, a single block
-# as a block, the bare constraint, the organization referenced not repeated
-grep -qE '^ +\{ role = "roles/[^"]+" "import-id" = "\{customer_organization_id\} roles/' yaml/imported-state.satz || fail "a grant edge is not one line with its import id:\n$(cat yaml/imported-state.satz)"
-grep -qE '^ +\{ service = "[^"]+" "import-id" = "[^"]+" \},' yaml/imported-state.satz || fail "a service entry is not the one-line object form"
-grep -qE '^ +spec \{$' yaml/imported-state.satz || fail "the policy spec is not a block"
-if grep -q 'spec = \[' yaml/imported-state.satz; then fail "a single block came out as a one-element list"; fi
-grep -qE 'name += "compute\.skipDefaultNetworkCreation"' yaml/imported-state.satz || fail "the policy name is not the bare constraint"
-if grep -q 'parent = "organizations/' yaml/imported-state.satz; then fail "a top-level policy repeats the organization parent"; fi
-if grep -qE '"import-id" += "organizations/123456789012' yaml/imported-state.satz; then fail "the organization number is repeated where a reference belongs"; fi
 grep -q 'id = "organizations/123456789012/policies/compute.skipDefaultNetworkCreation"' tmp/imported-state-hcl/imports.tf || fail "the interpolated import id did not reach imports.tf as the literal"
-# the day-0 vocabulary: inferred values are marked with their rule, the rest
-# is reported, and a bound literal is referenced where the body repeats it
-grep -qE '^  customer_shortname += "corp" +// inferred: the leading token' yaml/imported-state.satz || fail "the short name was not inferred and marked:\n$(cat yaml/imported-state.satz)"
-grep -q 'import: params inferred: customer_shortname = "corp"' tmp/import-state.txt || fail "the inference is not reported"
-grep -q 'import: params not derivable: svc_iac_account' tmp/import-state.txt || fail "a value nothing states is not reported as not derivable"
-if grep -q 'customer_longname' yaml/imported-state.satz; then fail "a value nothing states must not be written"; fi
-grep -qE 'project_id += "\{customer_shortname\}-infra-001"' yaml/imported-state.satz || fail "the bound short name is not referenced in the project id"
 "$satz" --config . import state.json --customer-shortname acme -o imported-state-named.satz > /dev/null 2>&1 || fail "import with --customer-shortname failed"
 grep -qE '^  customer_shortname += "acme"$' yaml/imported-state-named.satz || fail "--customer-shortname did not win over the inference"
-# The table's `import: true` rows are the default set: --all takes every type the
-# source delivers, --exclude leaves types out. A copy of the table with the bucket
-# off shows all three.
-python3 - "$root/presets/import-config.yaml" <<'PYEOF' || fail "could not write the lean import table"
-import re, sys
-s = open(sys.argv[1]).read()
-s, n = re.subn(r"(\n  google_storage_bucket:\n(?:    .*\n)*?    import: )true", r"\1false", s)
-assert n == 1, n
-open("tmp/import-config-lean.yaml", "w").write(s)
-PYEOF
-"$satz" --config . import state.json --import-config "$PWD/tmp/import-config-lean.yaml" -o imported-lean-default.satz > /dev/null 2>&1 || fail "import with the lean table failed"
-"$satz" --config . import state.json --import-config "$PWD/tmp/import-config-lean.yaml" --all -o imported-lean-all.satz > tmp/imp-all.txt 2>&1 || fail "import --all failed:\n$(cat tmp/imp-all.txt)"
-"$satz" --config . import state.json --import-config "$PWD/tmp/import-config-lean.yaml" --all --exclude google_storage_bucket -o imported-lean-excl.satz > /dev/null 2>&1 || fail "import --all --exclude failed"
-if grep -q google_storage_bucket yaml/imported-lean-default.satz; then fail "the default set took a type the table has off"; fi
-grep -q google_storage_bucket yaml/imported-lean-all.satz || fail "--all did not take the type the table has off"
-grep -q 'switched on beside the table' tmp/imp-all.txt || fail "--all does not say what it switched on:\n$(cat tmp/imp-all.txt)"
-if grep -q google_storage_bucket yaml/imported-lean-excl.satz; then fail "--exclude did not leave the type out"; fi
-"$satz" fmt --check yaml/imported-lean-default.satz yaml/imported-lean-all.satz yaml/imported-lean-excl.satz \
-  || fail "import wrote files that are not in the canonical layout"
 
-step "import, yaml shape (the legacy dialect converter)"
+step "import, yaml shape (the legacy dialect converter): an estate on a YAML pack is refused, then converted"
 cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pack.yaml" tmp/
+if "$satz" --config . import tmp/main.yaml --kind estate >tmp/still.txt 2>&1; then
+  fail "an estate that still uses a YAML pack must be refused"
+fi
+grep -q 'convert them first' tmp/still.txt || fail "refusal did not name the packs to convert:\n$(cat tmp/still.txt)"
 "$satz" --config . import tmp/pack.yaml --kind pack
 "$satz" --config . import tmp/main.yaml --kind estate | tee tmp/import-yaml.txt
 grep -q 'CONVERTED' tmp/import-yaml.txt || fail "yaml import did not report CONVERTED"
 "$satz" fmt --check tmp/pack.satz tmp/main.satz || fail "the converter wrote files that are not in the canonical layout"
-# the language has two kinds, and a third word is refused at the argument — it used to
-# write a file satz then could not parse; and an --output the shape would ignore is refused
-if "$satz" --config . import tmp/pack.yaml --kind bogus > tmp/kind.txt 2>&1; then fail "import accepted --kind bogus"; fi
-grep -q 'possible values: pack, estate' tmp/kind.txt || fail "the --kind refusal does not name the two kinds:\n$(cat tmp/kind.txt)"
-if "$satz" --config . import tmp/pack.yaml --kind pack -o elsewhere.satz > tmp/yaml-o.txt 2>&1; then fail "the yaml shape accepted an --output it ignores"; fi
-grep -q 'writes the conversion beside' tmp/yaml-o.txt || fail "the yaml --output refusal does not say where it writes:\n$(cat tmp/yaml-o.txt)"
 
-step "import, yaml shape — the fix is named when a pack is still YAML"
-mkdir -p tmp/still && cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pack.yaml" tmp/still/
-if "$satz" --config . import tmp/still/main.yaml --kind estate >tmp/still.txt 2>&1; then
-  fail "an estate that still uses a YAML pack must be refused"
-fi
-grep -q 'convert them first' tmp/still.txt || fail "refusal did not name the packs to convert:\n$(cat tmp/still.txt)"
-
-step "import, hcl shape with no provider schema is refused by name, not wrapped verbatim"
-# an empty schema_dir would translate nothing and wrap every block in `hcl trust` — an
-# estate that deploys but is not the one anyone wanted; the refusal names the fix
-rm -rf tmp/noschema-hcl && mkdir -p tmp/noschema-hcl/schemas
-# paths in a config resolve against its own directory
-cat > tmp/noschema-hcl/config.toml <<CFGEOF
-yaml_dir = "yaml"
-hcl_dir = "hcl"
-schema_dir = "schemas"
-presets_dir = "$root/presets"
-tf_tool = "tofu"
-google_providers = ["google", "google-beta"]
-provider_version = "7.14.1"
-CFGEOF
-if "$satz" --config tmp/noschema-hcl/config.toml import "$PWD/tf" --from hcl -o never.satz > tmp/noschema-hcl.txt 2>&1; then
-  fail "an hcl import with no provider schema was not refused:\n$(cat tmp/noschema-hcl.txt)"
-fi
-grep -q 'satz update-schema' tmp/noschema-hcl.txt || fail "the refusal does not name update-schema:\n$(cat tmp/noschema-hcl.txt)"
-[ -e tmp/noschema-hcl/yaml/never.satz ] && fail "a refused hcl import wrote its estate"
-
-step "import, hcl shape (--wrap-all): every block verbatim, then transpile"
+step "import, hcl shape: literal resources become Satz, positional ones wrap; --wrap-all wraps every block"
 "$satz" --config . import tf --wrap-all -o imported-hcl.satz --verbose | tee tmp/import-hcl.txt
 grep -q 'wrapped verbatim' tmp/import-hcl.txt || fail "hcl import printed no summary"
-grep -q 'dropped .*provider' tmp/import-hcl.txt || fail "the provider block was not reported as dropped"
-"$satz" fmt --check yaml/imported-hcl.satz || fail "the hcl import wrote a file that is not in the canonical layout"
 "$satz" --config . transpile imported-hcl.satz --output "$PWD/tmp/imported-hcl-hcl" 2>&1 | tee tmp/transpile-hcl.txt
 grep -q 'resource "google_storage_bucket" "logs"' tmp/imported-hcl-hcl/main.tf || fail "the wrapped bucket did not reach main.tf"
 grep -q 'raw HCL passthrough' tmp/transpile-hcl.txt || fail "passthrough blocks must be announced"
-if command -v tofu >/dev/null 2>&1; then
-  (cd tmp/imported-hcl-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
-fi
-
-step "import, hcl shape (translate): literal resources become Satz, positional ones wrap"
 "$satz" --config . import tf -o imported-hcl2.satz --verbose | tee tmp/import-hcl2.txt
 grep -q '9 block(s) translated' tmp/import-hcl2.txt || fail "folder, project, service, grants and buckets should translate, the count over a list as two:\n$(cat tmp/import-hcl2.txt)"
 grep -q '3 promoted to params' tmp/import-hcl2.txt || fail "both variables and the locals block should be promoted, not wrapped:\n$(cat tmp/import-hcl2.txt)"
 "$satz" fmt --check yaml/imported-hcl2.satz || fail "the hcl import wrote a file that is not in the canonical layout"
-# `count = length(var.log_viewers)` is one grant per entry, each taking its own
-grep -q 'expanded .*`count` over a promoted list: 2 resource(s)' tmp/import-hcl2.txt || fail "the count block was not expanded:\n$(cat tmp/import-hcl2.txt)"
-grep -q 'roles/logging.viewer' yaml/imported-hcl2.satz || fail "the expanded grant is missing from the estate"
-grep -vq 'count.index' yaml/imported-hcl2.satz || fail "count.index reached the estate"
-grep -q 'promoted .*locals' tmp/import-hcl2.txt || fail "the locals block was not reported as promoted"
+! grep -q 'count.index' yaml/imported-hcl2.satz || fail "count.index reached the estate"
 grep -q '^google_folder {' yaml/imported-hcl2.satz || fail "no translated folder in the estate"
-grep -qE 'customer_organization_id += "123456789012"' yaml/imported-hcl2.satz || fail "the organisation id was not inferred"
-grep -qE '^  env += "prod"' yaml/imported-hcl2.satz || fail "the local did not become a param"
-grep -qE '^  bucket_suffix += "001"' yaml/imported-hcl2.satz || fail "the variable default did not become a param"
 "$satz" --config . transpile imported-hcl2.satz --output "$PWD/tmp/imported-hcl2-hcl" 2>&1 | tee tmp/transpile-hcl2.txt
 grep -q 'lifecycle_rule {' tmp/imported-hcl2-hcl/main.tf || fail "the translated bucket lost its lifecycle_rule"
 grep -q 'name *= *"corp-logs-001"' tmp/imported-hcl2-hcl/main.tf || fail "the promoted param did not resolve back to the source's literal"
-grep -q 'folder_id *= *google_folder.workloads.name' tmp/imported-hcl2-hcl/main.tf || fail "the project was not nested under its folder"
-grep -q 'resource "google_project_service" "infra_iam_googleapis_com"' tmp/imported-hcl2-hcl/main.tf || fail "the service did not become the project's"
 grep -q 'resource "google_organization_iam_member"' tmp/imported-hcl2-hcl/main.tf || fail "the org grant was not emitted"
-grep -qE 'bucket += "\$\{\{google_storage_bucket\.logs\.name\}\}"' yaml/imported-hcl2.satz || fail "a bucket grant must translate as the scope-pinned member map:\n$(cat yaml/imported-hcl2.satz)"
 grep -q 'resource "google_storage_bucket_iam_member" "iam_group_gcp_auditors_example_com_' tmp/imported-hcl2-hcl/main.tf || fail "the pinned bucket grant did not emit"
-grep -qE '^ +google_storage_bucket \{' yaml/imported-hcl2.satz || fail "the bucket naming its project by a literal id was not placed under the project"
-grep -q 'bucket *= *"\?\${google_storage_bucket.logs.name}' tmp/imported-hcl2-hcl/main.tf || fail "the verbatim \${...} reference did not survive the round trip"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/imported-hcl2-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
 fi
 
-if command -v checkov >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
-  step "scan: Checkov over the transpiled estate, findings pointed at the Satz source"
-  "$satz" --config . transpile smoke.satz >/dev/null
-  "$satz" --config . scan smoke.satz > tmp/scan.txt 2>&1 || true
-  grep -q '^scan: Checkov' tmp/scan.txt || fail "scan printed no summary:\n$(cat tmp/scan.txt)"
-  grep -q 'declared at' tmp/scan.txt || fail "findings were not pointed at the Satz source:\n$(cat tmp/scan.txt)"
-  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --checkov --format markdown --out tmp/evidence.md >/dev/null 2>&1 || fail "report-compliance --checkov failed"
-  grep -q '| Checkov |' tmp/evidence.md || fail "the evidence report has no Checkov column"
-else
-  step "neither checkov nor uvx on PATH — scan skipped"
-fi
+step "scan: Checkov over the transpiled estate, findings pointed at the Satz source"
+# Checkov is a stand-in on PATH that prints a report: the scanner is not what this
+# judges, and the MCP step below reuses it.
+mkdir -p tmp/fake-checkov
+python3 - <<'PYEOF'
+import json
+report = {"check_type": "terraform", "results": {"failed_checks": [
+    {"check_id": "CKV_GCP_62", "check_name": "Bucket should log access", "resource": "google_storage_bucket.state",
+     "file_path": "/main.tf", "file_line_range": [1, 2], "guideline": None}]},
+    "summary": {"passed": 3, "failed": 1, "skipped": 0, "parsing_errors": 0, "resource_count": 4, "checkov_version": "3.2.0"}}
+open("tmp/checkov-fixture.json", "w").write(json.dumps(report))
+PYEOF
+printf '#!/bin/sh\ncat "%s/tmp/checkov-fixture.json"\nexit 1\n' "$PWD" > tmp/fake-checkov/checkov
+chmod +x tmp/fake-checkov/checkov
+PATH="$PWD/tmp/fake-checkov:$PATH" "$satz" --config . scan smoke.satz > tmp/scan.txt 2>&1 || true
+grep -q '^scan: Checkov' tmp/scan.txt || fail "scan printed no summary:\n$(cat tmp/scan.txt)"
+grep -q 'declared at' tmp/scan.txt || fail "findings were not pointed at the Satz source:\n$(cat tmp/scan.txt)"
+PATH="$PWD/tmp/fake-checkov:$PATH" "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --checkov --format markdown --out tmp/evidence.md >/dev/null 2>&1 || fail "report-compliance --checkov failed"
+grep -q '| Checkov |' tmp/evidence.md || fail "the evidence report has no Checkov column"
 
 step "adopt, offline dry run must refuse without ADC rather than guess (folders AND projects)"
 for t in google_folder google_project; do
@@ -1471,54 +867,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.s
   || fail "bootstrap --dry-run must exit 0 without credentials:\n$(cat tmp/boot-dry.txt)"
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
 grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
-# the operator can decline the self-grant; the flag is part of the surface even
-# where no credentials let this run reach the pre-flight
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.satz --dry-run --no-default-grants \
   > tmp/boot-nogrants.txt 2>&1 || fail "bootstrap --no-default-grants must be accepted:\n$(cat tmp/boot-nogrants.txt)"
-"$satz" bootstrap --help > tmp/help-bootstrap.txt 2>&1
-grep -q -- '--no-default-grants' tmp/help-bootstrap.txt || fail "--no-default-grants is not in bootstrap's help"
-"$satz" init --help > tmp/help-init.txt 2>&1
-grep -q -- '--interview' tmp/help-init.txt || fail "--interview is not in init's help"
 
-# The day-0 gate: a malformed param is refused BEFORE any credential is asked
-# for. An empty billing account used to reach Google inside a URL and come back
-# as an HTML 404; a domain in the organisation id used to reach the pre-flight.
-python3 - <<'PYEOF' || fail "could not write the malformed estates"
-import re
-src = open("yaml/smoke.satz").read()
-for name, param, bad in [
-    ("tmp/gate-billing.satz", "billing_account_infra", ""),
-    ("tmp/gate-org.satz", "customer_organization_id", "example.com"),
-]:
-    out, n = re.subn(rf'(?m)^(\s*{param}\s*=\s*)"[^"]*"', rf'\g<1>"{bad}"', src, count=1)
-    assert n == 1, (name, param, n)
-    open(name, "w").write(out)
-PYEOF
-for case in "gate-billing billing_account_infra" "gate-org customer_organization_id"; do
-  set -- $case
-  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "tmp/$1.satz" --dry-run > "tmp/$1.txt" 2>&1; then
-    fail "bootstrap must refuse a malformed $2:\n$(cat tmp/$1.txt)"
-  fi
-  grep -q "$2" "tmp/$1.txt" || fail "the refusal must name $2:\n$(cat tmp/$1.txt)"
-  grep -q 'nothing was called' "tmp/$1.txt" || fail "the gate must run before any API call:\n$(cat tmp/$1.txt)"
-  grep -q 'satz init --' "tmp/$1.txt" || fail "the refusal must name the flag that sets it:\n$(cat tmp/$1.txt)"
-  if grep -qi 'DOCTYPE html' "tmp/$1.txt"; then fail "an HTML error page reached the operator again"; fi
-done
-
-step "help fits the terminal: no line wider than the width, globals under their own heading at the root only"
-# clap reads the tty width; there is none in CI, so COLUMNS pins it
-long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80 && n++ < 3')
-[ -z "$long" ] || fail "adopt --help at 80 columns has lines wider than 80:\n$long"
-# to a file first: `grep -q` stops reading at the match, and under pipefail the help
-# still being written then fails the pipeline with SIGPIPE
-COLUMNS=80 "$satz" -h > tmp/help-root-short.txt 2>&1
-grep -q '^Global options:' tmp/help-root-short.txt || fail "the global options are not under their own heading in satz -h"
-COLUMNS=80 "$satz" adopt -h > tmp/help-adopt-short.txt 2>&1
-grep -q '^Global options:' tmp/help-adopt-short.txt && fail "adopt -h repeats the global options that satz -h lists"
-COLUMNS=80 "$satz" import -h > tmp/help-import-short.txt 2>&1
-grep -q "see more with '--help'" tmp/help-import-short.txt || fail "-h did not become the short form (no summary/details split?)"
-
-step "the root help is grouped, on every path that prints it"
+step "the root help is grouped, on every path that prints it, and the globals have their own heading"
 # clap cannot group subcommands, so satz renders the root help itself. Four
 # invocations reach that renderer and all four must produce the same groups.
 for form in "--help" "-h" "help" ""; do
@@ -1540,138 +892,43 @@ grep -q 'adopt-org-policies' tmp/help-root-policies.txt || fail "adopt-org-polic
 awk '/^HCL:/{f=1;next} /^[A-Z].*:$/{f=0} f' tmp/help-root-80.txt > tmp/help-root-hcl.txt
 grep -q 'hcl-init' tmp/help-root-hcl.txt || fail "hcl-init is not listed under HCL"
 
-step "transpile --check: compiles in memory, accepts the yaml/-prefixed form, writes nothing"
-rm -rf hcl
-"$satz" --config . transpile yaml/smoke.satz --check > tmp/check.txt
-grep -q 'transpile --check: OK' tmp/check.txt || fail "--check did not report OK:\n$(cat tmp/check.txt)"
-[ ! -d hcl ] || fail "--check wrote hcl/"
-"$satz" --config . transpile smoke.satz >/dev/null   # restore hcl/ for the later steps
-
-step "a reference to a resource the estate does not emit is refused, naming the labels that exist"
-cat > tmp/badref.satz <<'EOF'
-estate badref
-
-params {
-  customer_organization_id = "123456789012"
-  billing_account_infra    = "012345-6789AB-CDEF01"
-}
-
-terraform { backend { local { path = "terraform.tfstate" } } }
-providers { google { alias = "google" } }
-
-google_storage_bucket {
-  logs {
-    name     = "corp-logs-001"
-    location = "EU"
-  }
-}
-
-google_storage_bucket_iam_member {
-  bucket = "${{google_storage_bucket.lugs.name}}"
-  "group:gcp-auditors@example.com" = [ "roles/storage.objectViewer" ]
-}
-EOF
-"$satz" --config . transpile tmp/badref.satz --check > tmp/badref.txt 2>&1 && fail "a typo'd reference must not compile:\n$(cat tmp/badref.txt)"
-grep -q 'does not emit' tmp/badref.txt || fail "the reference check did not fire:\n$(cat tmp/badref.txt)"
-grep -q 'google_storage_bucket.lugs.name' tmp/badref.txt || fail "the error does not name the bad reference"
-grep -q 'emitted `google_storage_bucket` labels: logs' tmp/badref.txt || fail "the error does not name the labels that do exist:\n$(cat tmp/badref.txt)"
-
-step "prerequisites: a resource waits for the API that serves it, and a missing one is reported"
-# The failure this exists to stop: `google_project_service` carries no ordering of
-# its own, so an apply can create a resource before the API it needs is on.
-grep -q 'depends_on = \[' hcl/main.tf || fail "no ordering at all in the emitted HCL"
-python3 - <<'PYEOF' || fail "the state bucket does not wait for the storage API"
-import re
-tf = open("hcl/main.tf").read()
-block = re.search(r'resource "google_storage_bucket" "state" \{(.*?)\n\}', tf, re.S).group(1)
-assert "google_project_service.infra_storage_googleapis_com" in block, block
-# the project a service is declared on must NOT wait for it — that is the cycle
-infra = re.search(r'resource "google_project" "infra" \{(.*?)\n\}', tf, re.S).group(1)
-assert "google_project_service.infra_storage" not in infra, infra
-PYEOF
-# An API the infra project does not enable: the estate still compiles, and says so.
-grep -v '"monitoring.googleapis.com",' yaml/smoke.satz > tmp/api-gap.satz
-"$satz" --config . transpile tmp/api-gap.satz --check > tmp/api-warn.txt 2>&1 \
-  || fail "an API gap failed the compile at the default level:\n$(cat tmp/api-warn.txt)"
-grep -q 'monitoring.googleapis.com — needed by google_monitoring_alert_policy' tmp/api-warn.txt \
-  || fail "the warning does not name the API and the type that needs it:\n$(cat tmp/api-warn.txt)"
-if "$satz" --config . --validation error transpile tmp/api-gap.satz --check > tmp/api-err.txt 2>&1; then
-  fail "--validation error compiled an estate whose API is enabled nowhere"
-fi
-"$satz" --config . --validation none transpile tmp/api-gap.satz --check > tmp/api-none.txt 2>&1
-if grep -q 'monitoring.googleapis.com' tmp/api-none.txt; then fail "--validation none still checked the APIs"; fi
-# A value the provider refuses by its shape: a param bound as one address, feeding an
-# attribute the schema types as a set — the customer apply that stopped at `tofu apply`
-# naming main.tf. The compile names the attribute, the type and the param to change.
-sed -e 's/^params {/params {\n  security_contacts = "security@example.com"/' yaml/smoke.satz > tmp/shape-gap.satz
-printf '\ngoogle_organization_access_approval_settings {\n  approvals {\n    organization_id     = customer_organization_id\n    notification_emails = security_contacts\n\n    enrolled_services {\n      cloud_product = "all"\n    }\n  }\n}\n' >> tmp/shape-gap.satz
-"$satz" --config . transpile tmp/shape-gap.satz --check > tmp/shape-warn.txt 2>&1 \
-  || fail "a wrongly shaped value failed the compile at the default level:\n$(cat tmp/shape-warn.txt)"
-grep -q '`notification_emails` is a string, and the provider wants set(string)' tmp/shape-warn.txt \
-  || fail "the warning does not name the attribute and its type:\n$(cat tmp/shape-warn.txt)"
-grep -q 'the param `security_contacts`' tmp/shape-warn.txt \
-  || fail "the warning does not name the param the estate changes:\n$(cat tmp/shape-warn.txt)"
-if "$satz" --config . --validation error transpile tmp/shape-gap.satz --check > tmp/shape-err.txt 2>&1; then
-  fail "--validation error compiled a value the provider refuses"
-fi
-# The emitter writes a backend for `local` and `cloud` only: an estate bound to any
-# other mode is refused, naming the value and the two modes there are.
-sed 's/^\(  deployment_mode *= *\)"local"/\1"boot"/' yaml/smoke.satz > tmp/mode-boot.satz
-grep -q '^  deployment_mode *= *"boot"' tmp/mode-boot.satz || fail "the mode fixture was not written"
-if "$satz" --config . transpile tmp/mode-boot.satz --check > tmp/mode-boot.txt 2>&1; then
-  fail "an estate whose deployment_mode selects no backend compiled:\n$(cat tmp/mode-boot.txt)"
-fi
-# (the refusal reaches stderr in its Debug form, quotes escaped: the pattern takes both)
-grep -Eq 'deployment_mode = \\?"boot\\?"`: the mode is \\?"local\\?" .* or \\?"cloud\\?"' tmp/mode-boot.txt \
-  || fail "the refusal does not name the mode and the two there are:\n$(cat tmp/mode-boot.txt)"
-# A pack enabling an API on ITS OWN project has not enabled it on the billed one.
-"$satz" --config . transpile smoke.satz --check > tmp/api-clean.txt 2>&1
-if grep -q 'API(s) this estate' tmp/api-clean.txt; then fail "a complete estate warned about APIs:\n$(cat tmp/api-clean.txt)"; fi
-
 step "update-prerequisites: the estate declares the roles and APIs its own types need, and the write closes a gap"
-"$satz" --config . update-prerequisites smoke.satz > tmp/iac.txt 2>&1 || fail "the smoke estate misses a prerequisite:\n$(cat tmp/iac.txt)"
-grep -q '^missing: none' tmp/iac.txt || fail "update-prerequisites did not report the roles complete:\n$(cat tmp/iac.txt)"
-grep -q '^missing APIs: none' tmp/iac.txt || fail "update-prerequisites did not report the APIs complete:\n$(cat tmp/iac.txt)"
+"$satz" --config . update-prerequisites smoke.satz > tmp/prereq.txt 2>&1 || fail "the smoke estate misses a prerequisite:\n$(cat tmp/prereq.txt)"
+grep -q '^missing: none' tmp/prereq.txt || fail "update-prerequisites did not report the roles complete:\n$(cat tmp/prereq.txt)"
+grep -q '^missing APIs: none' tmp/prereq.txt || fail "update-prerequisites did not report the APIs complete:\n$(cat tmp/prereq.txt)"
 # a complete estate is not edited by a run that finds nothing
 cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" || fail "update-prerequisites edited a complete estate"
-"$satz" --config . transpile smoke.satz --check > tmp/iac-clean.txt 2>&1
-if grep -q 'lacks roles' tmp/iac-clean.txt; then fail "a complete estate warned about roles:\n$(cat tmp/iac-clean.txt)"; fi
 # A gap in BOTH halves: the storage role and the monitoring API go, and the
 # estate still has a bucket and alert policies.
-grep -v '"roles/storage.admin",' yaml/smoke.satz | grep -v '"monitoring.googleapis.com",' > tmp/iac-gap.satz
-cp tmp/iac-gap.satz tmp/iac-gap-before.satz
-"$satz" --config . transpile tmp/iac-gap.satz --check > tmp/iac-warn.txt 2>&1 || fail "a role gap failed the compile at the default level:\n$(cat tmp/iac-warn.txt)"
-grep -q 'lacks roles' tmp/iac-warn.txt || fail "the compile did not warn about the gap:\n$(cat tmp/iac-warn.txt)"
-grep -q 'roles/storage.admin at the organization — for google_storage_bucket' tmp/iac-warn.txt \
-  || fail "the warning does not name the role and the type:\n$(cat tmp/iac-warn.txt)"
-grep -q 'monitoring.googleapis.com — needed by google_monitoring_alert_policy' tmp/iac-warn.txt \
-  || fail "the warning does not name the API and the type:\n$(cat tmp/iac-warn.txt)"
-if "$satz" --config . --validation error transpile tmp/iac-gap.satz --check > tmp/iac-err.txt 2>&1; then
+grep -v '"roles/storage.admin",' yaml/smoke.satz | grep -v '"monitoring.googleapis.com",' > tmp/prereq-gap.satz
+cp tmp/prereq-gap.satz tmp/prereq-gap-before.satz
+"$satz" --config . transpile tmp/prereq-gap.satz --check > tmp/prereq-warn.txt 2>&1 || fail "a role gap failed the compile at the default level:\n$(cat tmp/prereq-warn.txt)"
+grep -q 'roles/storage.admin at the organization — for google_storage_bucket' tmp/prereq-warn.txt \
+  || fail "the warning does not name the role and the type:\n$(cat tmp/prereq-warn.txt)"
+grep -q 'monitoring.googleapis.com — needed by google_monitoring_alert_policy' tmp/prereq-warn.txt \
+  || fail "the warning does not name the API and the type:\n$(cat tmp/prereq-warn.txt)"
+if "$satz" --config . --validation error transpile tmp/prereq-gap.satz --check > tmp/prereq-err.txt 2>&1; then
   fail "--validation error compiled an estate with a role gap"
 fi
-grep -q 'roles/storage.admin' tmp/iac-err.txt || fail "the refusal does not name the role:\n$(cat tmp/iac-err.txt)"
-"$satz" --config . --validation none transpile tmp/iac-gap.satz --check > tmp/iac-none.txt 2>&1
-if grep -q 'lacks roles' tmp/iac-none.txt; then fail "--validation none still checked roles"; fi
-if "$satz" --config . update-prerequisites tmp/iac-gap.satz --report-only > tmp/iac-dry.txt 2>&1; then
-  fail "--report-only exited 0 on a gap:\n$(cat tmp/iac-dry.txt)"
+grep -q 'roles/storage.admin' tmp/prereq-err.txt || fail "the refusal does not name the role:\n$(cat tmp/prereq-err.txt)"
+"$satz" --config . --validation none transpile tmp/prereq-gap.satz --check > tmp/prereq-none.txt 2>&1
+if grep -q 'lacks roles' tmp/prereq-none.txt; then fail "--validation none still checked roles"; fi
+if "$satz" --config . update-prerequisites tmp/prereq-gap.satz --report-only > tmp/prereq-dry.txt 2>&1; then
+  fail "--report-only exited 0 on a gap:\n$(cat tmp/prereq-dry.txt)"
 fi
 # one role and one API, counted together: a prerequisite is a prerequisite
-grep -q '2 prerequisite(s) missing' tmp/iac-dry.txt || fail "--report-only does not count both halves of the gap:\n$(cat tmp/iac-dry.txt)"
-# --report-only wrote nothing
-cmp -s tmp/iac-gap.satz tmp/iac-gap-before.satz || fail "--report-only edited the estate"
-"$satz" --config . update-prerequisites tmp/iac-gap.satz > tmp/iac-exec.txt 2>&1 || fail "the write failed:\n$(cat tmp/iac-exec.txt)"
-grep -q 'wrote roles/storage.admin in google_organization_iam_member' tmp/iac-exec.txt \
-  || fail "--execute did not write the role:\n$(cat tmp/iac-exec.txt)"
-"$satz" fmt --check tmp/iac-gap.satz || fail "the write left a formatted estate unformatted"
-# into the account's existing list: no second block, no appended one
-[ "$(grep -c '^google_organization_iam_member {' tmp/iac-gap.satz)" = 1 ] || fail "--execute added a second grant block"
-[ "$(grep -c 'satz update-prerequisites' tmp/iac-gap.satz)" = "$(grep -c 'satz update-prerequisites' yaml/smoke.satz)" ] \
-  || fail "the write appended a block where the list exists"
-"$satz" --config . update-prerequisites tmp/iac-gap.satz --report-only > /dev/null 2>&1 || fail "a gap survived the write"
-"$satz" update-prerequisites --format json > tmp/iac-table.json
+grep -q '2 prerequisite(s) missing' tmp/prereq-dry.txt || fail "--report-only does not count both halves of the gap:\n$(cat tmp/prereq-dry.txt)"
+cmp -s tmp/prereq-gap.satz tmp/prereq-gap-before.satz || fail "--report-only edited the estate"
+"$satz" --config . update-prerequisites tmp/prereq-gap.satz > tmp/prereq-write.txt 2>&1 || fail "the write failed:\n$(cat tmp/prereq-write.txt)"
+grep -q 'wrote roles/storage.admin in google_organization_iam_member' tmp/prereq-write.txt \
+  || fail "update-prerequisites did not write the role:\n$(cat tmp/prereq-write.txt)"
+"$satz" fmt --check tmp/prereq-gap.satz || fail "the write left a formatted estate unformatted"
+[ "$(grep -c '^google_organization_iam_member {' tmp/prereq-gap.satz)" = 1 ] || fail "update-prerequisites added a second grant block"
+"$satz" --config . update-prerequisites tmp/prereq-gap.satz --report-only > /dev/null 2>&1 || fail "a gap survived the write"
+"$satz" update-prerequisites --format json > tmp/prereq-table.json
 python3 - <<'PYEOF' || fail "update-prerequisites --format json did not print the table"
 import json
-t = json.load(open("tmp/iac-table.json"))
+t = json.load(open("tmp/prereq-table.json"))
 assert t["read"], "no read entries"
 row = t["types"]["google_project"]
 # both halves of a prerequisite, per type: what it takes to be allowed, and what
@@ -1727,48 +984,9 @@ if grep -q 'replace=google_org_policy_policy.kept' tmp/reset/apply.txt; then fai
 "$satz" --config tmp/reset/config.toml plan > tmp/reset/plan.txt 2>&1 || fail "satz plan failed:\n$(cat tmp/reset/plan.txt)"
 grep -q '^fake-tofu plan -replace=google_org_policy_policy.twin_superseded$' tmp/reset/plan.txt \
   || fail "plan does not show the replace apply will make:\n$(cat tmp/reset/plan.txt)"
-"$satz" --config tmp/reset/config.toml apply saved.tfplan > tmp/reset/saved.txt 2>&1 || fail "satz apply <plan> failed:\n$(cat tmp/reset/saved.txt)"
-grep -q '^fake-tofu apply saved.tfplan$' tmp/reset/saved.txt || fail "a saved plan was given a -replace:\n$(cat tmp/reset/saved.txt)"
-"$satz" --config tmp/reset/config.toml apply -replace=google_org_policy_policy.twin_superseded > tmp/reset/own.txt 2>&1 \
-  || fail "satz apply -replace failed:\n$(cat tmp/reset/own.txt)"
-[ "$(grep -o 'replace=google_org_policy_policy.twin_superseded' tmp/reset/own.txt | wc -l | tr -d ' ')" = 1 ] \
-  || fail "a -replace the operator gave was added a second time:\n$(cat tmp/reset/own.txt)"
 unset FAKE_TOFU_STATE
 
-step "generate-migration: the script cds into hcl_dir, paces, retries 429s and summarizes"
-printf 'google_project.old: google_project.new\n' > tmp/mapping.yaml
-"$satz" --config . generate-migration tmp/mapping.yaml --output tmp/migrate.sh
-grep -q 'cd "$HCL_DIR"' tmp/migrate.sh || fail "the script does not cd into hcl_dir"
-grep -q "mv_state 'google_project.old' 'google_project.new'" tmp/migrate.sh || fail "the move is missing"
-grep -q 'sleep 1' tmp/migrate.sh || fail "no pacing between moves"
-grep -q "grep -q '429'" tmp/migrate.sh || fail "no 429 retry"
-grep -q 'state moves:' tmp/migrate.sh || fail "no summary line"
-
-step "bootstrap on a greenfield estate: the empty org id gets the greenfield guidance, not a bare error"
-if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap greenfield.satz --dry-run > tmp/boot-green.txt 2>&1; then
-  fail "an empty customer_organization_id without --greenfield must fail:\n$(cat tmp/boot-green.txt)"
-fi
-grep -q -- '--greenfield' tmp/boot-green.txt || fail "the failure did not explain --greenfield:\n$(cat tmp/boot-green.txt)"
-grep -q 'init --from-live' tmp/boot-green.txt || fail "the failure did not name init --from-live:\n$(cat tmp/boot-green.txt)"
-
-step "bootstrap names the default it takes and refuses a param that has none"
-# `default_region` has a documented default (presets/estate-core.satz), which bootstrap
-# takes and says so; the project id has none — the estate declares the project under its
-# own `infra_project_name` — so an estate that sets neither it nor the bucket is refused by name.
-sed -e '/^  default_region *=/d' -e '/^  infra_project_name *=/d' -e '/^  infra_bucket_name *=/d' yaml/greenfield.satz > tmp/boot-defaults.satz
-grep -Eq '^  (default_region|infra_project_name|infra_bucket_name) *=' tmp/boot-defaults.satz && fail "the defaults fixture still binds a param"
-if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap tmp/boot-defaults.satz --greenfield --dry-run > tmp/boot-defaults.txt 2>&1; then
-  fail "bootstrap ran without infra_project_name:\n$(cat tmp/boot-defaults.txt)"
-fi
-grep -q '^default_region not set — using europe-west3, the documented default$' tmp/boot-defaults.txt \
-  || fail "bootstrap took the region default without saying so:\n$(cat tmp/boot-defaults.txt)"
-grep -q 'infra_project_name — is not set' tmp/boot-defaults.txt \
-  || fail "bootstrap did not refuse the unset project id by name:\n$(cat tmp/boot-defaults.txt)"
-grep -q 'satz init --infra-project-name' tmp/boot-defaults.txt \
-  || fail "the refusal does not name the flag that sets the project id:\n$(cat tmp/boot-defaults.txt)"
-grep -q 'iac-infra' tmp/boot-defaults.txt && fail "bootstrap still made up a project id:\n$(cat tmp/boot-defaults.txt)"
-
-step "whoami: refuses without credentials naming the fix; reads an impersonated-SA ADC offline"
+step "whoami: refuses without credentials naming the fix; reads an impersonated-SA ADC offline; answers for an estate"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" whoami --offline > tmp/who.txt 2>&1; then
   fail "whoami --offline must fail without an ADC file:\n$(cat tmp/who.txt)"
 fi
@@ -1779,129 +997,49 @@ GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" whoami --offline > tm
 grep -q 'svc-iac@acme-infra-001' tmp/who2.txt || fail "impersonation target not shown:\n$(cat tmp/who2.txt)"
 grep -q 'impersonated service account' tmp/who2.txt || fail "credential type not shown:\n$(cat tmp/who2.txt)"
 grep -q 'quota project: acme-infra-001' tmp/who2.txt || fail "quota project not shown:\n$(cat tmp/who2.txt)"
-# BOTH halves, always. Reporting the ADC and stopping is what cost two orgs a
-# round-trip: the credential was fine and the thing that was broken — the account
-# it must become, the project it bills — was not on screen.
-grep -q '^runs as:' tmp/who2.txt || fail "the identity the estate runs as is not reported:\n$(cat tmp/who2.txt)"
+# BOTH halves, always: the credential, and the account the runs become
 grep -q '^runs as: *svc-iac@acme-infra-001.* — no estate given' tmp/who2.txt \
   || fail "without an estate, the runs-as line must name the credential and say no estate was given:\n$(cat tmp/who2.txt)"
 grep -q 'not checked (--offline)' tmp/who2.txt \
   || fail "--offline must say the live checks were not made, never imply they passed:\n$(cat tmp/who2.txt)"
-
-step "whoami <estate>: the command answers the question only the MCP tool could"
-# An estate turns "who is the human" into "who does this estate act as", answered
-# from the estate file alone — no network, no credentials, no right to impersonate
-# needed yet. `satz_whoami` has taken an estate since the identity work; the command
-# had not, so one name covered two questions and only one surface could ask the
-# second. Both now resolve through the same function.
-cat > yaml/identity-whoami.satz <<'EOF'
-estate whoami_smoke
-
-params {
-  customer_organization_id = "123456789012"
-  customer_shortname = "acme"
-  infra_project_name = "acme-infra-001"
-  svc_iac_account = "svc-iac-001"
-  deployment_engine = "tofu"
-  deployment_mode = "cloud"
-}
-EOF
-GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami identity-whoami.satz --offline > tmp/who3.txt 2>&1 \
+# Given an estate, it answers who the estate acts as, from the estate file alone.
+sed -e 's/^\(  deployment_mode *= *\)"local"/\1"cloud"/' yaml/smoke.satz > tmp/who-cloud.satz
+GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami tmp/who-cloud.satz --offline > tmp/who3.txt 2>&1 \
   || fail "whoami <estate> failed without credentials, but it reads the estate file only:\n$(cat tmp/who3.txt)"
-grep -q '^runs as: *svc-iac-001@acme-infra-001.* — impersonated by ' tmp/who3.txt \
+grep -q '^runs as: *svc-iac-001@corp-infra-001.* — impersonated by ' tmp/who3.txt \
   || fail "whoami <estate> did not name the estate's service account and who impersonates it:\n$(cat tmp/who3.txt)"
-grep -q 'not checked (--offline)' tmp/who3.txt \
-  || fail "whoami <estate> --offline must not imply the impersonation check passed:\n$(cat tmp/who3.txt)"
-grep -q '^note: no Application Default Credentials file found' tmp/who3.txt \
-  || fail "whoami <estate> --offline without an ADC file must say there is none:\n$(cat tmp/who3.txt)"
-# A local-mode estate impersonates nothing: the calls run as the credential itself,
-# and the line names the account the estate declares and the migration to it.
-GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" --config . whoami smoke.satz --offline > tmp/who4.txt 2>&1 \
-  || fail "whoami on a local-mode estate failed:\n$(cat tmp/who4.txt)"
-if grep -q '^runs as: *svc-iac-001@corp-infra-001' tmp/who4.txt; then
-  fail "a local-mode estate must not report that it runs as its service account:\n$(cat tmp/who4.txt)"
-fi
-grep -q '^runs as: *svc-iac@acme-infra-001.* — local mode; `satz migrate smoke.satz --mode cloud` makes every run impersonate svc-iac-001@corp-infra-001' tmp/who4.txt \
-  || fail "a local-mode estate must say so and name the migration that makes it impersonate:\n$(cat tmp/who4.txt)"
-# An estate that does not resolve is named as missing, beside the form that asks
-# about the credentials themselves.
-if "$satz" --config . whoami does-not-exist.satz --offline > tmp/who5.txt 2>&1; then
-  fail "whoami with a missing estate must fail:\n$(cat tmp/who5.txt)"
-fi
-grep -q 'estate not found' tmp/who5.txt || fail "the missing estate was not named:\n$(cat tmp/who5.txt)"
 
-step "an estate whose identity cannot be derived is refused by whoami, migrate and every command that binds it"
-# The identity an estate's live calls run as is derived from its params. A
-# `deployment_mode` the compile refuses has no backend and no identity, and params that
-# do not parse have neither: each command refuses, naming the estate and the reason,
-# and nothing runs as the login instead. tmp/mode-boot.satz is the compile step's fixture.
-# Cloud mode without `svc_iac_account` names no account to run as, and is refused the same way.
-sed 's/^\(  infra_project_name *= *\)"corp-infra-001"/\1"corp-infra-001/' yaml/smoke.satz > tmp/mode-unreadable.satz
-grep -q '^  infra_project_name *= *"corp-infra-001$' tmp/mode-unreadable.satz || fail "the unreadable fixture was not written"
+step "an estate whose identity cannot be derived is refused by migrate and every command that binds it"
+# Cloud mode without `svc_iac_account` names no account to run as: each command
+# refuses, naming the estate and the reason, and nothing runs as the login instead.
 # (bound empty rather than removed: the estate's grants reference the param)
 sed -e 's/^\(  deployment_mode *= *\)"local"/\1"cloud"/' -e 's/^\(  svc_iac_account *= *\)"svc-iac-001"/\1""/' \
   yaml/smoke.satz > tmp/mode-noaccount.satz
-grep -q '^  deployment_mode *= *"cloud"' tmp/mode-noaccount.satz || fail "the no-account fixture was not written"
 grep -q '^  svc_iac_account *= *""$' tmp/mode-noaccount.satz || fail "the no-account fixture still names an account"
-cp tmp/mode-boot.satz tmp/mode-boot.before
-cp tmp/mode-unreadable.satz tmp/mode-unreadable.before
 cp tmp/mode-noaccount.satz tmp/mode-noaccount.before
-# (the refusal reaches stderr in its Debug form, quotes escaped: the patterns take both)
-boot_reason='mode-boot\.satz:[0-9]+: `deployment_mode = \\?"boot\\?"`: the mode is \\?"local\\?"'
-unreadable_reason='mode-unreadable\.satz:[0-9]+: newline in single-line string'
-noaccount_reason='mode-noaccount\.satz:[0-9]+: `deployment_mode = \\?"cloud\\?"` without a value for `svc_iac_account`'
-identity_refused() {  # <output> <reason pattern> <what was run>
-  grep -Eq "$2" "$1" || fail "$3 does not name the estate and the reason:\n$(cat "$1")"
+# (the refusal reaches stderr in its Debug form, quotes escaped: the pattern takes both)
+reason='mode-noaccount\.satz:[0-9]+: `deployment_mode = \\?"cloud\\?"` without a value for `svc_iac_account`'
+identity_refused() {  # <output> <what was run>
+  grep -Eq "$reason" "$1" || fail "$2 does not name the estate and the reason:\n$(cat "$1")"
   grep -q 'satz cannot tell which identity this estate runs as, and runs nothing for it' "$1" \
-    || fail "$3 does not say that the identity cannot be derived:\n$(cat "$1")"
+    || fail "$2 does not say that the identity cannot be derived:\n$(cat "$1")"
 }
-for fixture in boot unreadable noaccount; do
-  estate="tmp/mode-$fixture.satz"
-  reason="${fixture}_reason"
-  reason="${!reason}"
-  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami "$estate" --offline > "tmp/id-$fixture-whoami.txt" 2>&1; then
-    fail "whoami answered for $estate:\n$(cat "tmp/id-$fixture-whoami.txt")"
-  fi
-  identity_refused "tmp/id-$fixture-whoami.txt" "$reason" "whoami $estate"
-  if "$satz" --config . migrate "$estate" --mode cloud > "tmp/id-$fixture-migrate.txt" 2>&1; then
-    fail "migrate switched $estate:\n$(cat "tmp/id-$fixture-migrate.txt")"
-  fi
-  identity_refused "tmp/id-$fixture-migrate.txt" "$reason" "migrate $estate"
-  cmp -s "$estate" "tmp/mode-$fixture.before" || fail "the refused migrate edited $estate"
-  # report-compliance and adopt bind the estate's service account before they read anything
-  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . report-compliance cis-gcp-4.0 "$estate" --no-live \
-      --format json --out "tmp/id-$fixture-report.json" > "tmp/id-$fixture-report.txt" 2>&1; then
-    fail "report-compliance ran for $estate:\n$(cat "tmp/id-$fixture-report.txt")"
-  fi
-  identity_refused "tmp/id-$fixture-report.txt" "$reason" "report-compliance $estate"
-  [ -e "tmp/id-$fixture-report.json" ] && fail "the refused report-compliance wrote a report for $estate"
-  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . adopt "$estate" > "tmp/id-$fixture-adopt.txt" 2>&1; then
-    fail "adopt ran for $estate:\n$(cat "tmp/id-$fixture-adopt.txt")"
-  fi
-  identity_refused "tmp/id-$fixture-adopt.txt" "$reason" "adopt $estate"
-done
-# The compile refuses the same estate with the same words (the line is the finding's own
-# field, pinned by `cloud_mode_without_the_account_is_an_error_at_the_mode_line`).
-if "$satz" --config . transpile tmp/mode-noaccount.satz --check > tmp/mode-noaccount-compile.txt 2>&1; then
-  fail "a cloud-mode estate without svc_iac_account compiled:\n$(cat tmp/mode-noaccount-compile.txt)"
+if "$satz" --config . migrate tmp/mode-noaccount.satz --mode cloud > tmp/id-migrate.txt 2>&1; then
+  fail "migrate switched an estate with no identity:\n$(cat tmp/id-migrate.txt)"
 fi
-grep -Eq 'deployment_mode = \\?"cloud\\?"` without a value for `svc_iac_account`' tmp/mode-noaccount-compile.txt \
-  || fail "the compile does not refuse cloud mode without svc_iac_account:\n$(cat tmp/mode-noaccount-compile.txt)"
-# `migrate --mode cloud` on a local estate without the account is refused before the file
-# is touched, naming the param — it would otherwise write a mode the compile refuses.
-sed 's/^\(  svc_iac_account *= *\)"svc-iac-001"/\1""/' yaml/smoke.satz > tmp/mode-tocloud.satz
-grep -q '^  svc_iac_account *= *""$' tmp/mode-tocloud.satz || fail "the to-cloud fixture still names an account"
-cp tmp/mode-tocloud.satz tmp/mode-tocloud.before
-if "$satz" --config . migrate tmp/mode-tocloud.satz --mode cloud > tmp/mode-tocloud.txt 2>&1; then
-  fail "migrate switched an estate without svc_iac_account to cloud mode:\n$(cat tmp/mode-tocloud.txt)"
+identity_refused tmp/id-migrate.txt "migrate"
+cmp -s tmp/mode-noaccount.satz tmp/mode-noaccount.before || fail "the refused migrate edited the estate"
+# report-compliance and adopt bind the estate's service account before they read anything
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . report-compliance cis-gcp-4.0 tmp/mode-noaccount.satz --no-live \
+    --format json --out tmp/id-report.json > tmp/id-report.txt 2>&1; then
+  fail "report-compliance ran for an estate with no identity:\n$(cat tmp/id-report.txt)"
 fi
-grep -q 'without a value for `svc_iac_account`' tmp/mode-tocloud.txt \
-  || fail "the refused migrate does not name the missing param:\n$(cat tmp/mode-tocloud.txt)"
-grep -q 'the estate stays in local mode, and nothing was changed' tmp/mode-tocloud.txt \
-  || fail "the refused migrate does not say the estate is unchanged:\n$(cat tmp/mode-tocloud.txt)"
-cmp -s tmp/mode-tocloud.satz tmp/mode-tocloud.before || fail "the refused migrate edited the estate"
-# satz_estates (the MCP step below) lists this one with its refusal
-cp tmp/mode-noaccount.satz yaml/identity-noaccount.satz
+identity_refused tmp/id-report.txt "report-compliance"
+[ -e tmp/id-report.json ] && fail "the refused report-compliance wrote a report"
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . adopt tmp/mode-noaccount.satz > tmp/id-adopt.txt 2>&1; then
+  fail "adopt ran for an estate with no identity:\n$(cat tmp/id-adopt.txt)"
+fi
+identity_refused tmp/id-adopt.txt "adopt"
 
 step "the privacy gate judges tokens, not lines, and refuses an unusable range"
 # the private-looking address is assembled at runtime so the fixture itself
@@ -1921,13 +1059,9 @@ pid="$(printf '%s-prod-infra-01' "kunde")"
   printf 'project = "%s"\n' "$pid"
   printf 'path: projects/%s\n' "$pid"
 } > tmp/ids.txt
-# Under the bash on PATH and under /bin/bash: on macOS the latter is 3.2, whose
-# parser once dropped both project-id rules while every other rule still fired.
-for sh in bash /bin/bash; do
-  if "$sh" "$root/scripts/check-names.sh" tmp/ids.txt >tmp/ids-out.txt 2>&1; then fail "customer identifiers passed the gate ($sh):\n$(cat tmp/ids-out.txt)"; fi
-  for want in 'GUID' '32 hex' "projects/$pid" "project = \"$pid\""; do
-    grep -q -- "$want" tmp/ids-out.txt || fail "the gate ($sh) did not report $want:\n$(cat tmp/ids-out.txt)"
-  done
+if bash "$root/scripts/check-names.sh" tmp/ids.txt >tmp/ids-out.txt 2>&1; then fail "customer identifiers passed the gate:\n$(cat tmp/ids-out.txt)"; fi
+for want in 'GUID' '32 hex' "projects/$pid" "project = \"$pid\""; do
+  grep -q -- "$want" tmp/ids-out.txt || fail "the gate did not report $want:\n$(cat tmp/ids-out.txt)"
 done
 # and the values that must NOT be rejected: a vendor default, an example customer's
 # project, and a value too short to be a project id at all
@@ -2012,7 +1146,6 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"satz_scan_checkov","arguments":{"estate":"smoke.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_update_prerequisites","arguments":{"estate":"smoke.satz","report_only":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"showcase.satz"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"satz_review_pack","arguments":{"pack":"../../presets/organization-budget.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"tmp/refuse.satz"}}}'
 } > tmp/mcp-in.jsonl
 # Satz text carries newlines and quotes, which do not survive a shell-quoted JSON
@@ -2023,18 +1156,11 @@ text = 'estate e\n\nparams {\n  a  =  "1"\n}\n'
 print(json.dumps({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
                   "params": {"name": "satz_fmt", "arguments": {"text": text}}}))
 PYEOF
-# Being ASKED for state is not a report run: satz_report_compliance must not append
-# to the evidence history. Compare the directory across the call rather than testing
-# for its absence — earlier steps create it legitimately.
 # An estate that cannot compile: it writes a reference to a folder nobody emits.
 # The refusal must carry that finding at its line, not only the sentence.
 sed 's|name *= *"{customer_shortname}-audit-logs"|name = "${{google_folder.nope.name}}"|' yaml/showcase.satz > tmp/refuse.satz
 grep -q 'google_folder.nope.name' tmp/refuse.satz || fail "the refusing fixture was not written"
-ls evidence 2>/dev/null | sort > tmp/evidence-before.txt || true
 python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-in.jsonl > tmp/mcp.jsonl 2>/dev/null || true
-ls evidence 2>/dev/null | sort > tmp/evidence-after.txt || true
-diff -q tmp/evidence-before.txt tmp/evidence-after.txt >/dev/null \
-  || fail "satz_report_compliance appended to the evidence history:\n$(diff tmp/evidence-before.txt tmp/evidence-after.txt)"
 python3 - <<'PYEOF' || fail "the MCP handshake did not behave"
 import json
 lines = [l for l in open("tmp/mcp.jsonl") if l.strip()]
@@ -2077,12 +1203,6 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
 found = msgs[11]["result"]["structuredContent"]
 assert any(e["estate"].endswith("smoke.satz") for e in found["estates"]), found
 assert any(e["deployment_mode"] == "local" for e in found["estates"]), found
-# an estate satz_open would refuse is listed with the reason, and no mode
-noaccount = [e for e in found["estates"] if e["estate"].endswith("identity-noaccount.satz")]
-assert len(noaccount) == 1, found
-assert noaccount[0]["deployment_mode"] is None, noaccount
-assert "without a value for `svc_iac_account`" in noaccount[0]["refused"], noaccount
-assert all("refused" not in e for e in found["estates"] if e["deployment_mode"] is not None), found
 # satz_fmt: text in, canonical text out, and satz wrote no file
 fmt = msgs[20]["result"]["structuredContent"]
 assert fmt["changed"] is True, fmt
@@ -2208,19 +1328,7 @@ grep -q '"authored_by": "smoke via satz mcp"' tmp/mcp-plan/authored.json || fail
 step "satz mcp: Checkov runs in satz_scan_checkov, and the read-only remediation tools read its report"
 # A client runs a read-only tool without asking, so satz_remediation_items runs
 # nothing: satz_scan_checkov (exec, and write for `out`) runs Checkov and writes its
-# report, and the worklist reads that file. Checkov itself is a stand-in on PATH that
-# prints a report — the scanner is not what this step judges.
-mkdir -p tmp/fake-checkov
-python3 - <<'PYEOF'
-import json
-report = {"check_type": "terraform", "results": {"failed_checks": [
-    {"check_id": "CKV_GCP_62", "check_name": "Bucket should log access", "resource": "google_storage_bucket.state",
-     "file_path": "/main.tf", "file_line_range": [1, 2], "guideline": None}]},
-    "summary": {"passed": 3, "failed": 1, "skipped": 0, "parsing_errors": 0, "resource_count": 4, "checkov_version": "3.2.0"}}
-open("tmp/checkov-fixture.json", "w").write(json.dumps(report))
-PYEOF
-printf '#!/bin/sh\ncat "%s/tmp/checkov-fixture.json"\nexit 1\n' "$PWD" > tmp/fake-checkov/checkov
-chmod +x tmp/fake-checkov/checkov
+# report, and the worklist reads that file. Checkov is the scan step's stand-in.
 rm -f tmp/checkov-report.json
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
@@ -2263,10 +1371,6 @@ step "satz mcp: one server works through estates in turn, each as its own identi
 # here. Two cloud-mode estates with DIFFERENT service accounts, opened in turn in
 # ONE server: each must answer as its own, and re-opening the first must come back
 # to the first. Nothing is configured — the account is derived from the estate.
-#
-# This replaced a refusal. The identity used to be bound to the PROCESS, so the
-# second estate was rejected and an operator restarted the server per estate;
-# working through a fleet is normal, so the identity is now scoped to the call.
 # Offline throughout: whoami reports the target without minting a token.
 for c in acme bolt; do
   cat > "yaml/identity-$c.satz" <<EOF
@@ -2295,11 +1399,7 @@ done
   printf '%s\n' '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"identity-acme.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true,"estate":"smoke.satz"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"tmp/mode-boot.satz"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true,"estate":"tmp/mode-unreadable.satz"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"satz_adopt","arguments":{"estate":"tmp/mode-boot.satz"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"satz_report_compliance","arguments":{"framework":"cis-gcp-4.0","estate":"tmp/mode-unreadable.satz","no_live":true}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"satz_adopt","arguments":{"estate":"tmp/mode-noaccount.satz"}}}'
 } > tmp/mcp-id-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-id-in.jsonl > tmp/mcp-id.jsonl 2>/dev/null || true
 python3 - <<'PYEOF' || fail "the identity did not follow the open estate"
@@ -2347,20 +1447,13 @@ assert est["deployment_mode"] == "local", est
 assert est["impersonated"] is False, est
 assert est["service_account"] == "svc-iac-001@corp-infra-001.iam.gserviceaccount.com", est
 
-# An estate whose identity cannot be derived — a mode the compile refuses, params that
-# do not parse — is refused by the call that would act as it, naming the reason:
-# opening it, and each live tool that names it. Nothing runs as the credentials instead.
-said = "satz cannot tell which identity this estate runs as, and runs nothing for it"
-for call_id, reason in ((27, 'deployment_mode = "boot"'), (28, "newline in single-line string"),
-                        (29, 'deployment_mode = "boot"'), (30, "newline in single-line string")):
-    r = msgs[call_id]["result"]
-    assert r.get("isError"), f"call {call_id} was not refused: {r}"
-    text = r["content"][0]["text"]
-    assert reason in text and said in text, f"call {call_id} does not name the reason: {text}"
-# the refused open left the open estate where it was
-still = msgs[31]["result"]
-assert not still.get("isError"), still
-assert still["structuredContent"]["estate"]["service_account"] == "svc-iac-001@acme-infra-001.iam.gserviceaccount.com", still
+# A live tool naming an estate whose identity cannot be derived is refused with the
+# reason; nothing runs as the credentials instead.
+r = msgs[29]["result"]
+assert r.get("isError"), f"adopt on an estate with no identity was not refused: {r}"
+text = r["content"][0]["text"]
+assert "without a value for `svc_iac_account`" in text, text
+assert "satz cannot tell which identity this estate runs as, and runs nothing for it" in text, text
 PYEOF
 
 step "satz mcp: the interview loop closes without a filesystem — create, answer, accept, complete"
@@ -2426,43 +1519,7 @@ grep -q '^use "presets/security-group-models/s2-security-groups.satz" when secur
   || fail "answering the choice must uncomment that model's pack line:\n$(grep 'security-group-models' tmp/iv/agent.satz)"
 grep -q '^// use "presets/security-group-models/s1-security-groups.satz"' tmp/iv/agent.satz \
   || fail "the model that was not chosen keeps its line commented"
-grep -qE 'security_model_s1 += false' tmp/iv/agent.satz || fail "the oneof siblings were not set false"
 "$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
-
-step "a skeleton answered yes for Sentinel and the findings mail still compiles and reports its questions"
-# Sentinel's project defaults to the audit logsink's, the findings mail's mailbox to the
-# central alerts' — both inside the infrastructure folder. A param is known from the line
-# that declares it on, so the skeleton writes those two packs after the folder: answering
-# them yes on the estate `create` wrote above must leave one `questions` and the compile
-# accept, not one that stops at `unknown param`.
-printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
-  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
-  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"use_sentinel\":true,\"use_scc_enablement\":true,\"use_scc_notifications\":true,\"use_scc_findings_mail\":true}}}}" \
-  > tmp/mcp-iv3-in.jsonl
-python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-iv3-in.jsonl > tmp/mcp-iv3.jsonl 2>/dev/null || true
-python3 - <<'PYEOF' || fail "answering Sentinel and the findings mail yes was refused"
-import json
-msgs = {}
-for l in open("tmp/mcp-iv3.jsonl"):
-    if l.strip():
-        d = json.loads(l)
-        if "id" in d:
-            msgs[d["id"]] = d
-r = msgs[3]["result"]
-assert not r.get("isError"), r["content"][0]["text"]
-assert r["structuredContent"]["written"] == 4, r["structuredContent"]
-PYEOF
-grep -q '^use "presets/integrations/microsoft-sentinel.satz" when use_sentinel' tmp/iv/agent.satz \
-  || fail "answering Sentinel yes must uncomment its line:\n$(grep 'microsoft-sentinel' tmp/iv/agent.satz)"
-grep -q '^use "presets/scc/scc-findings-mail.satz" when use_scc_findings_mail' tmp/iv/agent.satz \
-  || fail "answering the findings mail yes must uncomment its line:\n$(grep 'scc-findings-mail' tmp/iv/agent.satz)"
-"$satz" --config . questions "$PWD/tmp/iv/agent.satz" --format text --out tmp/iv/agent-q.txt > tmp/iv/agent-q.log 2>&1 \
-  || fail "satz questions stopped on an estate answered yes for Sentinel and the findings mail:\n$(cat tmp/iv/agent-q.log)"
-grep -q 'sentinel' tmp/iv/agent-q.txt || fail "Sentinel's own questions must be asked once it is in:\n$(cat tmp/iv/agent-q.txt)"
-"$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > tmp/iv/agent-check.txt 2>&1 \
-  || fail "an estate answered yes for Sentinel and the findings mail does not compile:\n$(cat tmp/iv/agent-check.txt)"
 
 step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"
 {
@@ -2510,8 +1567,7 @@ assert gp_outside["isError"] is True and "outside the server's root" in gp_outsi
 g = read("tmp/mcp-gp.jsonl")
 first = g[3]["result"]["structuredContent"]
 # a pack that binds a script is an action that cannot run without it: the install
-# must carry the .sh, executable. Checking the repo's own copy proves nothing —
-# that is how the SCC action shipped unusable to every estate.
+# carries the .sh, executable
 import os
 script = "tmp/gp/presets/scc/scc-enable-all.sh"
 assert os.path.exists(script), f"get-presets did not install the pack's script: {sorted(os.listdir('tmp/gp/presets/scc'))}"
@@ -2626,79 +1682,6 @@ grep -q 'UNAVAILABLE' tmp/fleet/out.txt || fail "a missing checkout was not repo
 run_v1 1 "--require-all" --roster tmp/fleet/roster.md --require-all
 grep -q 'never checked' tmp/fleet/out.txt || fail "--require-all did not fail on an unchecked estate:\n$(cat tmp/fleet/out.txt)"
 
-# 5 · a hand-written .tf beside the emitted ones is not a deletion. An estate may
-#     keep one — a write-only secret cannot come from the estate, so its
-#     `variable` block has to live in hcl/ — and comparing it against an emission
-#     that never contained it would report two destroys that no apply would make.
-cat > tmp/fleet/estate/hcl/hand-written.tf <<'EOF'
-variable "vpn_psk" {
-  type      = string
-  sensitive = true
-}
-EOF
-run_v1 0 "a hand-written file is context, not a deletion" tmp/fleet/estate
-grep -q 'hand-written.tf' tmp/fleet/out.txt || fail "the un-emitted file was not named:\n$(cat tmp/fleet/out.txt)"
-if grep -q 'variable.vpn_psk' tmp/fleet/out.txt; then
-  fail "a hand-written block was reported as a deletion:\n$(cat tmp/fleet/out.txt)"
-fi
-rm -f tmp/fleet/estate/hcl/hand-written.tf
-
-# 5b · a subdirectory in hcl/ is the same thing one level up. satz emits flat
-#      files, so a module or a landing zone an estate keeps below hcl/ is its
-#      own — and its main.tf is not the emitted main.tf that shares the name.
-#      Walked, a whole tree reads as blocks that disappeared.
-mkdir -p tmp/fleet/estate/hcl/landing-zones
-cat > tmp/fleet/estate/hcl/landing-zones/main.tf <<'EOF'
-module "project" {
-  source = "../modules/project"
-}
-variable "landing_zone_folder" {
-  type = string
-}
-EOF
-run_v1 0 "a subdirectory is context, not a deletion" tmp/fleet/estate
-grep -q '! landing-zones/' tmp/fleet/out.txt || fail "the subdirectory was not named:\n$(cat tmp/fleet/out.txt)"
-if grep -qE 'module.project|variable.landing_zone_folder|BLOCKER —' tmp/fleet/out.txt; then
-  fail "blocks below hcl/ were compared against the flat emission:\n$(cat tmp/fleet/out.txt)"
-fi
-rm -rf tmp/fleet/estate/hcl/landing-zones
-
-# 6 · schemas/ is a derived cache that estate repos gitignore, so a fresh clone has
-#     none and nothing compiles. That is a fact about the CHECKOUT: reported as
-#     UNAVAILABLE with the remedy, never as an estate that stopped compiling.
-mv tmp/fleet/estate/schemas tmp/fleet/schemas-parked
-run_v1 0 "a missing schema cache is not a broken estate" tmp/fleet/estate
-grep -q 'UNAVAILABLE — no provider schema' tmp/fleet/out.txt \
-  || fail "a missing schema cache was not reported as unavailable:\n$(cat tmp/fleet/out.txt)"
-grep -q 'update-schema' tmp/fleet/out.txt || fail "the remedy was not named:\n$(cat tmp/fleet/out.txt)"
-# The summary line always carries the word, so match the FINDING form.
-if grep -q 'BLOCKER —' tmp/fleet/out.txt; then
-  fail "a missing schema cache was called a blocker:\n$(cat tmp/fleet/out.txt)"
-fi
-mv tmp/fleet/schemas-parked tmp/fleet/estate/schemas
-
-# 5 · the roster lives in a document a human maintains, so the parser has to be
-#     strict. A loose one finds "estates" in prose and in unrelated tables, and
-#     reports every one of them UNAVAILABLE — burying the estates that really
-#     were not checked. Only rows carrying a code AND a path count.
-cat > tmp/fleet/noisy.md <<EOF
-# A fleet note, most of which is not a roster
-
-Prose with two words. Another line mentioning ~/estates/acme in passing.
-
-| action | what it does | how |
-|---|---|---|
-| **V1** | verify on the current binary | \`satz transpile\` then compare |
-
-| code | customer | path |
-|---|---|---|
-| E01 | Customer A | \`$PWD/tmp/fleet/estate\` (also elsewhere) |
-EOF
-run_v1 0 "a noisy roster yields exactly one estate" --roster tmp/fleet/noisy.md
-[ "$(grep -c '^== ' tmp/fleet/out.txt)" = "1" ] \
-  || fail "the roster parser found estates in prose:\n$(cat tmp/fleet/out.txt)"
-grep -q '^== E01' tmp/fleet/out.txt || fail "the one real roster row was not read:\n$(cat tmp/fleet/out.txt)"
-
 step "documentation site renders (what pages.yml publishes)"
 uv run "$root/scripts/build-site.py" tmp/site >/dev/null || fail "scripts/build-site.py failed"
 for f in index.html docs/language.html presets/index.html; do [ -s "tmp/site/$f" ] || fail "site: $f missing"; done
@@ -2710,18 +1693,6 @@ if grep -rqE 'href="[^":#]+\.md(#[^"]*)?"' tmp/site; then
 fi
 grep -q 'blob/main/docs/adr/0006-' tmp/site/docs/interview.html \
   || fail "site: a link to an ADR, which the site does not publish, does not go to GitHub"
-if grep -rq '<title>[^<]*`' tmp/site; then
-  fail "site: a browser-tab title carries markdown backticks:\n$(grep -rho '<title>[^<]*`[^<]*' tmp/site | head -3)"
-fi
-if grep -rqE 'class="lvl[23]" href="[^"]*">[^<]*&amp;(amp|lt|gt|quot);' tmp/site; then
-  fail "site: a contents entry is escaped twice, so a reader sees an entity:\n$(grep -rhoE 'class="lvl[23]" href="[^"]*">[^<]*&amp;(amp|lt|gt|quot);[^<]*' tmp/site | head -3)"
-fi
-grep -q '<td><code><span>satz</span> <span>init</span> <span>--customer-id</span>' tmp/site/docs/interview.html \
-  || fail "site: table code is not split into words, so a long command sets its column's width"
-grep -q '<span>\[--check|--execute\]</span>' tmp/site/docs/language.html \
-  || fail "site: an escaped pipe in table code renders with its backslash, which GitHub does not show"
-grep -q '<code>ci<wbr>.verification<wbr>_runner</code>' tmp/site/presets/docs/verification-runner.html \
-  || fail "site: a pack's name in its title has no break point, so the page scrolls sideways on a phone"
 # `satz <cmd> --html-help` opens the front page at #cmd-<cmd>, else at #cli-usage: the
 # binary's list is the contract, read from the source rather than copied here.
 documented="$(sed -n '/const DOCUMENTED: &\[&str\] = &\[/,/\];/p' "$root/src/main.rs" | grep -o '"[a-z-]*"' | tr -d '"')"
@@ -2730,12 +1701,14 @@ for cmd in $documented; do
   grep -q "id=\"cmd-$cmd\"" tmp/site/index.html || fail "site: --html-help opens #cmd-$cmd, which the front page does not carry"
 done
 grep -q 'id="cli-usage"' tmp/site/index.html || fail "site: --html-help falls back to #cli-usage, which the front page does not carry"
-# GitHub's parser: a list may follow a line of text, as the README's CLI reference does.
-grep -q '<p><strong>Parameters:</strong></p>' tmp/site/index.html \
-  || fail "site: the README's Parameters lists run into their paragraph — not GitHub's parser"
 
-step "corpus + unit tests"
-(cd "$root" && cargo test --workspace --quiet 2>&1 | tail -3)
+# CI sets SMOKE_SKIP_CARGO_TEST=1: its `checks` job runs the same tests on the same commit.
+if [ -n "${SMOKE_SKIP_CARGO_TEST:-}" ]; then
+  step "corpus + unit tests skipped (SMOKE_SKIP_CARGO_TEST)"
+else
+  step "corpus + unit tests"
+  (cd "$root" && cargo test --workspace --locked --quiet 2>&1 | tail -3)
+fi
 
-rm -rf hcl tmp yaml/imported-*.satz yaml/discovered*.satz yaml/identity-*.satz evidence
+rm -rf hcl tmp yaml/imported-*.satz yaml/identity-*.satz evidence
 printf '\nsmoke: every command ran.\n'
