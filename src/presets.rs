@@ -914,7 +914,8 @@ pub(crate) enum MergeEvent {
     Note { text: String },
     /// what an adoption changes in the emission
     EmissionDelta { lines: Vec<String> },
-    /// the roles and APIs the estate gained because of the packs this run installed
+    /// the roles and APIs the estate's resource types need and it did not declare:
+    /// what an adopted pack brings, or what the estate lacked before the run
     Prerequisites {
         /// one line per declaration written into the estate
         wrote: Vec<String>,
@@ -1010,7 +1011,7 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
             MergeEvent::Note { text } => out.push_str(&format!("{}\n", text)),
             MergeEvent::Warning { file, text } => out.push_str(&format!("  WARNING {}: {}\n", file, text)),
             MergeEvent::Prerequisites { wrote, missing, refused } => {
-                // What the packs this run installed oblige the estate to declare. A
+                // What the estate's packs oblige it to declare and it did not. A
                 // `--report-only` run says what it would write; a refusal says why it
                 // could not, and both set `attention`.
                 for w in wrote {
@@ -1189,8 +1190,12 @@ pub(crate) async fn run_merge_presets(
     // commonest way there is an estate param renamed while a pack copy still binds the
     // old name. `get-presets --force` refreshes the pristine copies without compiling,
     // which is the way through; say it rather than stop at the compile error.
+    //
+    // Every compile in this run is quiet about missing prerequisites: the last step
+    // writes them, and at validation level `error` a compile that reported them would
+    // refuse before that step ran — here, after an adoption, or in the step itself.
     let baseline = match (&estate, report_only) {
-        (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config).map_err(|e| {
+        (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet).map_err(|e| {
             // printed, not returned: `main` renders a returned error with `Debug`,
             // which escapes the newlines
             eprintln!(
@@ -1477,7 +1482,7 @@ pub(crate) async fn run_merge_presets(
     // identity check to make. Show the delta instead, in the terms that matter.
     if adopted > 0 && !report_only {
         if let (Some(est), Some(before)) = (estate.clone(), baseline.clone()) {
-            let after = crate::transpile_sorted_b(&est, tool_config, runtime_config)?;
+            let after = crate::transpile_sorted_b(&est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet)?;
             events.push(MergeEvent::EmissionDelta {
                 lines: emission_delta(&before, &after).lines().map(str::to_string).collect(),
             });
@@ -1494,7 +1499,7 @@ pub(crate) async fn run_merge_presets(
         };
         // a repoint that does not even transpile is rolled back the same way
         // as one that transpiles differently — the estate is never left edited
-        let after = match crate::transpile_sorted_b(&est, tool_config, runtime_config) {
+        let after = match crate::transpile_sorted_b(&est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet) {
             Ok(a) => a,
             Err(e) => {
                 rollback(&journal, &created)?;
@@ -1512,9 +1517,10 @@ pub(crate) async fn run_merge_presets(
     // whose role or API the estate does not declare yet, and the pickup is exactly
     // when that becomes true. It runs here rather than earlier because a
     // prerequisite write legitimately changes the emission, and the proof above
-    // compares the estate with itself.
+    // compares the estate with itself. Its compiles are quiet about the gap, as
+    // `update-prerequisites`' are: the report is this step's output.
     if let Some(est) = &estate {
-        match crate::prerequisites_report(est, tool_config, runtime_config, crate::PrerequisiteFindings::Report) {
+        match crate::prerequisites_report(est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet) {
             Ok(report) => {
                 let missing: Vec<String> = crate::prerequisites::describe(&report.write)
                     .into_iter()
@@ -1526,7 +1532,7 @@ pub(crate) async fn run_merge_presets(
                     events.push(MergeEvent::Prerequisites { wrote: Vec::new(), missing, refused: None });
                     needs_attention = true;
                 } else {
-                    match crate::prerequisites_write(est, &report, tool_config, runtime_config, crate::PrerequisiteFindings::Report) {
+                    match crate::prerequisites_write(est, &report, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet) {
                         Ok((wrote, _)) => events.push(MergeEvent::Prerequisites { wrote, missing: Vec::new(), refused: None }),
                         Err(e) => {
                             events.push(MergeEvent::Prerequisites {

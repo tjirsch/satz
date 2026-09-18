@@ -174,7 +174,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 |---------|---------------------|
 | `hcl-init [ARGS]` | runs `<tf_tool> init` in `hcl_dir`; everything after the command is handed to the tool verbatim, so `--config` must come before it |
 | `plan [ARGS]` | runs `<tf_tool> plan` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
-| `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
+| `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace`, which `main.tf` also names in a comment above that policy for an apply without satz |
 | `migrate <INPUT>` | `--mode` |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
@@ -421,7 +421,9 @@ An infrastructure project declared outside the estate file (in a pack, which the
 
 **Every compile checks the same**, at the [validation level](#schema-validation): `warn`
 (the default) prints the missing roles and APIs with the `update-prerequisites` command
-that writes them, `error` refuses the compile, `none` skips the check. An estate that
+that writes them, `error` refuses the compile, `none` skips the check. The two commands
+that write the gap, `update-prerequisites` and `merge-presets`, report it as what they
+write, so neither refuses on it. An estate that
 names no IaC service account is not role-checked; one that binds no
 `infra_project_name` is not API-checked. A resource type the table has no row for is
 named in a note.
@@ -451,6 +453,8 @@ satz transpile <INPUT> [options]
 - `--print-variables`: After transpilation, print the resolved variable table (`terraform.tfvars`) to stdout. Useful for debugging variable resolution across multiple include files.
 - `--scan`: after transpiling, run Checkov (terraform framework) over `hcl_dir` — `checkov` on PATH, else `uvx checkov` — and print every failed check under the resource it hit, with the Satz file and line that declared it (from the emission manifest) and Checkov's guideline link. Failed checks exit 1, so it gates like a test. `satz scan [<estate>]` does the same without transpiling first.
 - `--plan` / `--apply`: after transpiling, run `<tf_tool> plan` / `apply` in `hcl_dir` — one command from estate to plan. The dir is initialised first when it has no `.terraform`. The same as `satz transpile … && satz plan`; `satz plan`, `satz apply` and `satz hcl-init` remain for running the tool on its own (extra arguments pass through).
+
+Above each org policy the estate declares `reset = true`, `main.tf` carries two comment lines: the API refuses to switch a policy with rules to reset in place (`Cannot set PolicyRules if reset is true`), and an apply that does not run through satz needs `tofu apply -replace=<address>` while the state holds that policy with rules. `satz plan` and `satz apply` add that `-replace` themselves. See [Transpile, plan, apply](docs/workflows.md#transpile-plan-apply).
 
 **Running from subdirectories:**
 You can run the transpile command from any directory (e.g., from within the `hcl/` folder) by specifying the config path. Both styles are supported:
@@ -751,10 +755,10 @@ satz migrate <INPUT> --mode <MODE>
 
 **Parameters:**
 - `<INPUT>`: Name of the estate file (`.satz`).
-- `--mode, -m <MODE>`: Target mode (`local` or `cloud`).
+- `--mode <MODE>`: Target mode (`local` or `cloud`); without it, the other of the two.
 
 **Under the Hood:**
-- **Update the estate**: Rewrites the `deployment_mode` param in the `.satz` file (an estate without one is refused).
+- **Update the estate**: Binds `deployment_mode` in the estate's `params` block — the value is replaced where the estate binds it, and the line is added where it does not. An estate with no mode in its params — neither its own nor a pack's default — runs in `local` mode, as the emitter and `whoami` read it.
 - **Regenerate**: Runs `transpile` to update the backend configuration (Local vs GCS) and provider authentication (ADC vs Impersonation).
 - **Groups Admin** (`--mode cloud`, when the estate manages Cloud Identity groups): from here the IaC service account manages them, which needs the Workspace Groups Admin role. `migrate` checks for it and assigns it through the Admin SDK Directory API, as you — the service account cannot give itself an admin role. That needs a login carrying the role-management scope — `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/admin.directory.rolemanagement` — the Admin SDK API (`admin.googleapis.com`) on your quota project, and a Workspace admin who may assign roles. When any is missing, the migration goes on and prints which one, with the admin-console path (Account → Admin roles → Groups Admin → Admins → Assign service accounts).
 - **Migrate State**: Executes `tofu init -migrate-state` to move the Terraform state to the new backend.
@@ -1308,6 +1312,13 @@ default discovery (the single `estate` .satz in yaml_dir).
 
 A semantic change without a version bump warns (an upstream release bug); a bump
 with identical semantics upgrades in place.
+
+**Last, the prerequisites.** A pack the run adopts can emit a type whose role or API
+the estate does not declare yet, and so can a release whose prerequisite table grew. The
+run ends with the check and the write `update-prerequisites` makes, and reports each role
+and API it wrote; `--report-only` lists them instead, and a gap listed or left unwritten
+needs attention. Its compiles do not report that gap as a finding, so at `--validation
+error` it is written rather than refused.
 
 The exit is non-zero when anything needs attention (a fork was created or its
 upstream moved, or a repoint was refused), so CI can gate on it.

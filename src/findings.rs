@@ -136,33 +136,9 @@ pub(crate) fn refusal_findings(e: &(dyn std::error::Error + 'static)) -> Vec<Fin
     e.downcast_ref::<CompileRefusal>().map(|c| c.findings.clone()).unwrap_or_default()
 }
 
-/// The CLI's rendering: warnings and notes to stderr as they always were, each group's
-/// header once; the errors joined into one message under their headers — `Err` when
-/// there is any, so `?` refuses the compile.
-/// The same verdict `render` reaches, with nothing printed: what a command that
-/// reports the findings in its own output needs, so an internal compile does not
-/// speak over it.
-pub(crate) fn refusal(findings: &[Finding]) -> Result<(), String> {
-    let errors: Vec<&Finding> = findings.iter().filter(|f| f.severity == Severity::Error).collect();
-    if errors.is_empty() {
-        return Ok(());
-    }
-    let mut msg = String::new();
-    let mut group: Option<&str> = None;
-    for f in errors {
-        if let Some(g) = f.group.as_deref() {
-            if group != Some(g) {
-                msg.push_str(g);
-                msg.push('\n');
-                group = Some(g);
-            }
-        }
-        msg.push_str(&f.message);
-        msg.push('\n');
-    }
-    Err(msg.trim_end().to_string())
-}
-
+/// The CLI's rendering: warnings and notes to stderr, each group's header once; then
+/// the verdict `refusal` reaches — `Err` when there is an error, so `?` refuses the
+/// compile.
 pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
     let mut seen: Vec<&str> = Vec::new();
     for f in findings.iter().filter(|f| f.severity != Severity::Error) {
@@ -170,12 +146,40 @@ pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
         match f.group.as_deref() {
             Some(g) if !seen.contains(&g) => {
                 seen.push(g);
-                eprintln!("{}: {}\n  {}", tag, g, f.message);
+                say(format!("{}: {}\n  {}", tag, g, f.message));
             }
-            Some(_) => eprintln!("  {}", f.message),
-            None => eprintln!("{}: {}", tag, f.message),
+            Some(_) => say(format!("  {}", f.message)),
+            None => say(format!("{}: {}", tag, f.message)),
         }
     }
+    refusal(findings)
+}
+
+/// One entry of the CLI's rendering, to stderr. A test reads back what its own thread
+/// printed, which is how it tells a compile that printed its warnings from one that
+/// printed nothing.
+fn say(text: String) {
+    #[cfg(test)]
+    SAID.with(|s| s.borrow_mut().push(text.clone()));
+    eprintln!("{}", text);
+}
+
+#[cfg(test)]
+thread_local! {
+    static SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// What `render` printed on this thread since the last call.
+#[cfg(test)]
+pub(crate) fn take_said() -> Vec<String> {
+    SAID.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// The verdict `render` reaches, with nothing printed: the errors joined into one
+/// message under their headers, `Err` when there is any. A command that reports the
+/// findings in its own output compiles with this, so an internal compile does not
+/// speak over it.
+pub(crate) fn refusal(findings: &[Finding]) -> Result<(), String> {
     let errors: Vec<&Finding> = findings.iter().filter(|f| f.severity == Severity::Error).collect();
     if errors.is_empty() {
         return Ok(());
@@ -246,5 +250,22 @@ mod tests {
         let e = render(&f).unwrap_err();
         assert_eq!(e, "required arguments missing:\n  a: the provider requires b\n  c: the provider requires d\n\nemit: no");
         assert!(render(&f[..1]).is_ok());
+    }
+
+    /// A compile that prints nothing refuses with the same text as one that prints: the
+    /// only difference between the two is the warnings on stderr.
+    #[test]
+    fn the_quiet_verdict_is_the_rendered_one_without_the_printing() {
+        let f = vec![
+            Finding::new(Severity::Warning, Kind::Action, "an action").located("e.satz", 3),
+            Finding::new(Severity::Error, Kind::MissingRequired, "a: the provider requires b").in_group("required arguments missing:"),
+            Finding::new(Severity::Error, Kind::Emit, "emit: no"),
+        ];
+        take_said();
+        assert_eq!(refusal(&f), render(&f));
+        assert_eq!(take_said(), vec!["warning: an action".to_string()], "render printed the warning, once");
+        let _ = refusal(&f);
+        assert!(take_said().is_empty(), "refusal printed something");
+        assert!(refusal(&f[..1]).is_ok(), "a warning alone does not refuse");
     }
 }

@@ -238,9 +238,13 @@ pub(crate) fn review(
     // 5. it compiles, and 9. everything the compile itself checks — raw HCL, actions,
     //    required arguments — arrives as the findings the CLI and the editor already
     //    read. The compile is internal, so it prints nothing: this report is the output.
-    crate::FINDINGS_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
-    let compiled = crate::pipeline_b_generate(&estate, tool_config, runtime_config);
-    crate::FINDINGS_QUIET.store(false, std::sync::atomic::Ordering::Relaxed);
+    let compiled = crate::pipeline_b_compile(
+        &estate,
+        tool_config,
+        runtime_config,
+        crate::PrerequisiteFindings::Report,
+        crate::FindingsOutput::Silent,
+    );
     let out = match compiled {
         Ok(o) => o,
         Err(e) => {

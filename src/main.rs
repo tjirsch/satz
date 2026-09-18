@@ -491,7 +491,7 @@ enum Commands {
 
     /// Migrate state and configuration between local and cloud modes
     Migrate {
-        /// Estate file (inside yaml_dir if relative): rewrites `deployment_mode`
+        /// Estate file (inside yaml_dir if relative): binds `deployment_mode`
         /// in its params
         input: String,
         /// Target mode (local or cloud)
@@ -1779,42 +1779,15 @@ Thumbs.db
             }
 
             reject_yaml_estate(&input_path, "migrate")?;
-            let content = fsx::read_to_string(&input_path)?;
-
-            // Detect current mode from the `deployment_mode` param. Absent is an
-            // error, not "local": the guard used to be the regex itself, so an
-            // estate without the param silently reported "already in local mode".
-            let re_mode = regex::Regex::new(r#"(?m)^\s*deployment_mode\s*=\s*"(\w+)""#).unwrap();
-            let re_line = regex::Regex::new(r#"(?m)^(\s*)deployment_mode(\s*)=\s*"\w+"[^\n]*$"#).unwrap();
-            let current_mode = re_mode
-                .captures(&content)
-                .map(|c| c[1].to_string())
-                .ok_or_else(|| {
-                    format!(
-                        "{} declares no deployment mode (`deployment_mode = \"local\"` in params) — nothing to migrate",
-                        input_path.display()
-                    )
-                })?;
-
-            let target_mode = match mode {
-                Some(m) => m,
-                None => if current_mode == "local" { "cloud".to_string() } else { "local".to_string() }
-            };
-
-            if current_mode == target_mode {
+            let switch = mode_switch(&input_path, &runtime_config, mode)?;
+            let target_mode = switch.to.clone();
+            let Some(after) = &switch.after else {
                 println!("Already in {} mode. No changes needed.", target_mode);
                 return Ok(());
-            }
+            };
 
-            println!("Migrating from {} to {} mode...", current_mode, target_mode);
-
-            // Rewrite the one line, preserving its indentation and formatting.
-            let new_content = re_line
-                .replace(&content, |caps: &regex::Captures| {
-                    format!("{}deployment_mode{}= \"{}\" // switched by `satz migrate`", &caps[1], &caps[2], target_mode)
-                })
-                .to_string();
-            fsx::write_edited_satz(&input_path, &content, &new_content)?;
+            println!("Migrating from {} to {} mode...", switch.from, target_mode);
+            fsx::write_edited_satz(&input_path, &switch.before, after)?;
             println!("Updated estate: {}", input_path.display());
 
             // Transpile
@@ -2368,13 +2341,26 @@ pub(crate) enum PrerequisiteFindings {
     Quiet,
 }
 
-/// The compile every command runs: its findings reported in full.
+/// Whether a compile prints its warnings and notes to stderr, where the CLI shows them.
+/// `review-pack` compiles `Silent`: the findings are its report, and printing them
+/// beside it would say everything twice. A refusal reads the same either way.
+///
+/// A parameter of one compile for the reason `PrerequisiteFindings` is: `satz mcp`
+/// serves `satz_review_pack` beside every other call, concurrently, and a flag one
+/// review set would stop every other compile in the process from printing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FindingsOutput {
+    Stderr,
+    Silent,
+}
+
+/// The compile every command runs: its findings reported in full, and printed.
 fn pipeline_b_generate(
     input_path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
-    pipeline_b_compile(input_path, tool_config, runtime_config, PrerequisiteFindings::Report)
+    pipeline_b_compile(input_path, tool_config, runtime_config, PrerequisiteFindings::Report, FindingsOutput::Stderr)
 }
 
 fn pipeline_b_compile(
@@ -2382,6 +2368,7 @@ fn pipeline_b_compile(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
     prerequisites: PrerequisiteFindings,
+    output: FindingsOutput,
 ) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)?;
 
@@ -2409,10 +2396,9 @@ fn pipeline_b_compile(
         .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
         .filter(|f| !(f.kind == crate::findings::Kind::Prerequisites && prerequisites == PrerequisiteFindings::Quiet))
         .collect();
-    let verdict = if FINDINGS_QUIET.load(std::sync::atomic::Ordering::Relaxed) {
-        crate::findings::refusal(&findings)
-    } else {
-        crate::findings::render(&findings)
+    let verdict = match output {
+        FindingsOutput::Stderr => crate::findings::render(&findings),
+        FindingsOutput::Silent => crate::findings::refusal(&findings),
     };
     if let Err(message) = verdict {
         return Err(Box::new(crate::findings::CompileRefusal { message, findings }));
@@ -2456,10 +2442,6 @@ fn pipeline_b_compile(
         findings,
     })
 }
-
-/// Set by `review-pack`: its compile is internal — the findings are the review's
-/// own output, and printing them beside it would say everything twice.
-static FINDINGS_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A pack whose question is answered YES while its `use` line is still commented out —
 /// or missing from the estate altogether.
@@ -2979,7 +2961,7 @@ pub(crate) fn iac_probe(
     runtime_config: &ToolConfig,
 ) -> Result<crate::prerequisites::Probe, Box<dyn std::error::Error>> {
     // whoami reports the permissions live; the compile's own note would repeat them
-    let out = pipeline_b_compile(path, tool_config, runtime_config, PrerequisiteFindings::Quiet)?;
+    let out = pipeline_b_compile(path, tool_config, runtime_config, PrerequisiteFindings::Quiet, FindingsOutput::Stderr)?;
     let params = estate_param_strings(path, runtime_config)?;
     let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
     Ok(crate::prerequisites::Probe {
@@ -3053,7 +3035,7 @@ pub(crate) fn prerequisites_report(
     runtime_config: &ToolConfig,
     prerequisites: PrerequisiteFindings,
 ) -> Result<PrerequisitesReport, Box<dyn std::error::Error>> {
-    let out = pipeline_b_compile(path, tool_config, runtime_config, prerequisites)?;
+    let out = pipeline_b_compile(path, tool_config, runtime_config, prerequisites, FindingsOutput::Stderr)?;
     let params = estate_param_strings(path, runtime_config)?;
     let sa = crate::prerequisites::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
         format!(
@@ -3322,7 +3304,9 @@ fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
 ///
 /// The one thing it adds: `plan` and `apply` replace an org policy that the
 /// state holds with rules and the estate now declares reset
-/// (`reset_replacements`, ADR 0011), and say so.
+/// (`reset_replacements`, ADR 0011), and say so. The emitted `main.tf` names the
+/// same `-replace` in a comment above each policy declared reset, for an apply
+/// that does not run through satz.
 ///
 /// It does NOT transpile first: `hcl/` is generated, but coupling generation to
 /// the deploy step would change what `plan` means and hide a diff the operator
@@ -4928,6 +4912,37 @@ pub(crate) fn estate_declaration(
     Ok(crate::gcp::identity::EstateDeclaration::from_params(named, get))
 }
 
+/// What `satz migrate` changes in an estate file to switch its deployment mode.
+struct ModeSwitch {
+    /// the mode the estate runs in now
+    from: String,
+    to: String,
+    before: String,
+    /// the file with `deployment_mode` bound to `to`; `None` when it runs in `to` already
+    after: Option<String>,
+}
+
+/// The mode an estate runs in is read as the emitter and `whoami` read it — its
+/// `deployment_mode`, `local` when it declares none — and the switch binds the new one in
+/// the estate's own `params {}`: the value is replaced where the estate binds it, and the
+/// line is added where the mode came from a pack's default or from nowhere. `to` is
+/// `mode`, or the other of `local` and `cloud`.
+fn mode_switch(
+    input_path: &Path,
+    runtime_config: &ToolConfig,
+    mode: Option<String>,
+) -> Result<ModeSwitch, Box<dyn std::error::Error>> {
+    let before = fsx::read_to_string(input_path)?;
+    let from = estate_declaration(input_path, input_path.display().to_string(), runtime_config)?.mode;
+    let to = mode.unwrap_or_else(|| if from == "local" { "cloud" } else { "local" }.to_string());
+    if from == to {
+        return Ok(ModeSwitch { from, to, before, after: None });
+    }
+    let after = crate::interview::bind(&before, "deployment_mode", &serde_yaml::Value::String(to.clone()))
+        .map_err(|e| format!("{}: deployment_mode cannot be written: {}", input_path.display(), e))?;
+    Ok(ModeSwitch { from, to, before, after: Some(after) })
+}
+
 /// The parameter table of a `.satz` estate, in the dialect's kebab-case
 /// spelling.
 ///
@@ -4979,13 +4994,17 @@ pub(crate) fn satz_org_policy_bodies(
     Ok(pipeline_b_generate(input, runtime_config, runtime_config)?.org_policies)
 }
 
-
+/// The emitted files as sorted lines, for comparing two compiles of one estate.
+/// `prerequisites` is what that compile does with a missing role or API: `merge-presets`,
+/// which writes those at its end, passes `Quiet`, so a compile before that step does not
+/// refuse on the gap the step is there to close.
 pub(crate) fn transpile_sorted_b(
     input: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
+    prerequisites: PrerequisiteFindings,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let out = pipeline_b_generate(input, tool_config, runtime_config)?;
+    let out = pipeline_b_compile(input, tool_config, runtime_config, prerequisites, FindingsOutput::Stderr)?;
     fn sorted(s: &str) -> String {
         let mut lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
         lines.sort_unstable();
@@ -7446,16 +7465,86 @@ mod init_template {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+#[cfg(test)]
+mod migrate_mode {
+    //! `satz migrate` reads an estate's deployment mode as `whoami` and the emitter do —
+    //! `local` when the estate declares none — so the migrate `whoami` suggests is one
+    //! `migrate` runs.
+    use super::*;
+
+    const HEAD: &str = "estate migrating\n\nparams {\n  svc_iac_account    = \"svc-iac-001\"\n  infra_project_name = \"acme-infra-001\"\n";
+    const TAIL: &str = "}\n\nterraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n";
+    const SA: &str = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com";
+
+    /// An estate in its own directory, with `packs` beside it; the config reads nothing else.
+    fn estate(case: &str, params: &str, uses: &str, packs: &[(&str, &str)]) -> (PathBuf, ToolConfig) {
+        let dir = std::env::temp_dir().join(format!("satz-migrate-mode-{}-{}", std::process::id(), case));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, text) in packs {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        let path = dir.join("migrating.satz");
+        std::fs::write(&path, format!("{}{}{}{}", HEAD, params, TAIL, uses)).unwrap();
+        let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.include_dirs = Vec::new();
+        (path, cfg)
+    }
+
+    /// What `whoami` reads off the file `migrate` would write.
+    fn written(path: &Path, cfg: &ToolConfig, text: &str) -> crate::gcp::identity::EstateDeclaration {
+        std::fs::write(path, text).unwrap();
+        estate_declaration(path, path.display().to_string(), cfg).unwrap()
+    }
 
     #[test]
-    fn migrate_rewrites_the_satz_param_and_refuses_an_estate_without_one() {
-        let re_mode = regex::Regex::new(r#"(?m)^\s*deployment_mode\s*=\s*"(\w+)""#).unwrap();
-        let re_line = regex::Regex::new(r#"(?m)^(\s*)deployment_mode(\s*)=\s*"\w+"[^\n]*$"#).unwrap();
-        let src = "params {\n  deployment_mode          = \"local\" // switched by `satz migrate`\n  x = 1\n}\n";
-        assert_eq!(&re_mode.captures(src).unwrap()[1], "local");
-        let out = re_line.replace(src, |c: &regex::Captures| format!("{}deployment_mode{}= \"cloud\" // switched by `satz migrate`", &c[1], &c[2])).to_string();
-        assert_eq!(out, "params {\n  deployment_mode          = \"cloud\" // switched by `satz migrate`\n  x = 1\n}\n");
-        assert!(re_mode.captures("params { x = 1 }").is_none());
+    fn an_estate_that_declares_no_mode_is_local_and_the_switch_binds_cloud() {
+        let (path, cfg) = estate("none", "", "", &[]);
+        let whoami = estate_declaration(&path, path.display().to_string(), &cfg).unwrap();
+        let switch = mode_switch(&path, &cfg, None).expect("an estate without the param migrates");
+        assert_eq!((switch.from.as_str(), switch.to.as_str()), (whoami.mode.as_str(), "cloud"));
+        let after = switch.after.expect("local to cloud changes the file");
+        assert!(after.contains("  deployment_mode    = \"cloud\"\n}"), "the binding goes into params:\n{}", after);
+        let now = written(&path, &cfg, &after);
+        assert_eq!(now.impersonation_target(), Some(SA), "the account whoami named is the one now impersonated");
+        // and back: the line is there now, so it is replaced, not added again
+        let back = mode_switch(&path, &cfg, Some("local".into())).unwrap().after.unwrap();
+        assert_eq!(back.matches("deployment_mode").count(), 1, "{}", back);
+        assert_eq!(written(&path, &cfg, &back).mode, "local");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_declared_mode_is_replaced_and_its_comment_kept() {
+        let (path, cfg) = estate("declared", "  deployment_mode    = \"local\" // switched by `satz migrate`\n", "", &[]);
+        let after = mode_switch(&path, &cfg, Some("cloud".into())).unwrap().after.unwrap();
+        assert!(after.contains("  deployment_mode    = \"cloud\" // switched by `satz migrate`\n"), "{}", after);
+        assert_eq!(after.matches("deployment_mode").count(), 1, "{}", after);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// `presets/estate-core.satz` binds `deployment_mode = "local"` as a default: the switch
+    /// binds the new mode in the estate, whose own params come first.
+    #[test]
+    fn a_mode_a_pack_defaults_is_overridden_in_the_estate() {
+        let core = "// Day-0 params.\npack core version \"1.0\"\n\nparams {\n  deployment_mode = \"local\"\n}\n";
+        let (path, cfg) = estate("pack", "", "\nuse \"core.satz\"\n", &[("core.satz", core)]);
+        let switch = mode_switch(&path, &cfg, None).unwrap();
+        assert_eq!(switch.from, "local");
+        let after = switch.after.unwrap();
+        assert_eq!(written(&path, &cfg, &after).mode, "cloud", "the pack's default won over the estate:\n{}", after);
+        assert_eq!(std::fs::read_to_string(path.parent().unwrap().join("core.satz")).unwrap(), core, "the pack was edited");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_mode_the_estate_runs_in_already_changes_nothing() {
+        let (path, cfg) = estate("same", "", "", &[]);
+        let switch = mode_switch(&path, &cfg, Some("local".into())).unwrap();
+        assert!(switch.after.is_none(), "an estate that declares no mode is in local mode already");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
 
@@ -8450,5 +8539,108 @@ google_storage_bucket {
         iac_probe(&estate, &cfg, &cfg).expect("the probe's own compile is quiet, so it does not refuse");
         assert!(refuses_on_the_gap(pipeline_b_generate(&estate, &cfg, &cfg)), "the probe removed a refusal");
         let _ = std::fs::remove_dir_all(estate.parent().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod review_quiet_tests {
+    //! `review-pack` compiles its scratch estate with nothing printed: the findings are
+    //! its report. The silence is that compile's alone — `satz mcp` serves
+    //! `satz_review_pack` beside every other call, concurrently, and a compile running
+    //! beside a review prints its warnings as it would alone.
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// A bucket and no grant for it: at `warn`, the compile prints that the IaC service
+    /// account lacks the storage role.
+    const ESTATE: &str = r#"estate beside_review
+
+params {
+  customer_organization_id = "123456789012"
+  svc_iac_account          = "svc-iac-001"
+  infra_project_name       = "acme-infra-001"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_storage_bucket {
+  logs {
+    name     = "acme-beside-review-logs"
+    location = "EU"
+  }
+}
+"#;
+
+    const PACK: &str = r#"// A log bucket, reviewed while another estate compiles.
+pack beside_compile version "1.0"
+
+google_storage_bucket {
+  review_logs {
+    name     = "acme-review-logs"
+    location = "EU"
+  }
+}
+"#;
+
+    /// Stops the reviewer however the test ends, so a failed assertion does not leave it
+    /// reviewing through every test after this one.
+    struct Stop(Arc<AtomicBool>);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_compile_beside_a_review_still_prints_its_warnings() {
+        let dir = std::env::temp_dir().join(format!("satz-review-beside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let estate = dir.join("beside.satz");
+        std::fs::write(&estate, ESTATE).unwrap();
+        let pack = dir.join("beside-compile.satz");
+        std::fs::write(&pack, PACK).unwrap();
+        let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.schema_dir = super::corpus::schema_dir();
+        cfg.validation_level = "warn".to_string();
+        let prints_the_warning = || {
+            crate::findings::take_said();
+            pipeline_b_generate(&estate, &cfg, &cfg).expect("compiles at warn");
+            let said = crate::findings::take_said();
+            (said.iter().any(|s| s.contains("roles/storage.admin")), said)
+        };
+        let (alone, said) = prints_the_warning();
+        assert!(alone, "the fixture's compile prints no warning even alone: {:?}", said);
+
+        let stop = Stop(Arc::new(AtomicBool::new(false)));
+        let reviews = Arc::new(AtomicUsize::new(0));
+        let reviewer = {
+            let (pack, cfg, stop, reviews) = (pack.clone(), cfg.clone(), stop.0.clone(), reviews.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    crate::findings::take_said();
+                    crate::review_pack::review(&pack, None, &cfg, &cfg).expect("the review runs");
+                    let said = crate::findings::take_said();
+                    assert!(said.is_empty(), "the review printed its compile's findings: {:?}", said);
+                    reviews.fetch_add(1, Ordering::Relaxed);
+                }
+            })
+        };
+        // Compiles back to back for as long as ten whole reviews take: a quiet that any
+        // review could switch for the whole process lands in some of them.
+        let mut n = 0usize;
+        while (n < 20 || reviews.load(Ordering::Relaxed) < 10) && !reviewer.is_finished() {
+            let (printed, said) = prints_the_warning();
+            assert!(printed, "compile {} beside a review printed no warning: {:?}", n, said);
+            n += 1;
+        }
+        drop(stop);
+        reviewer.join().expect("the reviewer failed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

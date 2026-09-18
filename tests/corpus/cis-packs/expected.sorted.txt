@@ -630,6 +630,24 @@
   }
   }
   }
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.compute_requireOsLogin_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.compute_restrictProtocolForwardingCreationForTypes_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.essentialcontacts_allowedContactDomains_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.iam_allowedPolicyMemberDomains_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.iam_disableServiceAccountKeyCreation_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.iam_disableServiceAccountKeyUpload_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.sql_restrictAuthorizedNetworks
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.sql_restrictPublicIp
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.storage_retentionPolicySeconds
 resource "google_compute_firewall_policy" "cis_admin_ports" {
 resource "google_compute_firewall_policy_association" "cis_admin_ports" {
 resource "google_compute_firewall_policy_rule" "cis_admin_ports_internet_ipv4" {
