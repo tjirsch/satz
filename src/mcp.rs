@@ -44,7 +44,7 @@ use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{
     CallToolResult, ContentBlock, ListResourcesResult, PaginatedRequestParams, ProtocolVersion,
     ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
-    ResourceContents, ServerCapabilities, ServerInfo,
+    ResourceContents, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::RoleServer;
@@ -1915,10 +1915,10 @@ impl ServerHandler for SatzMcp {
         }
     }
 
-    fn get_info(&self) -> ServerInfo {
-        // `ServerInfo` and `Implementation` are #[non_exhaustive]: build from the
+    fn get_info(&self) -> ServerConfig {
+        // `ServerConfig` and `Implementation` are #[non_exhaustive]: build from the
         // default and assign, so a field added upstream cannot break this.
-        let mut info = ServerInfo::default();
+        let mut info = ServerConfig::default();
         info.protocol_version = ProtocolVersion::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().enable_resources().build();
         info.server_info.name = "satz".into();

@@ -1,22 +1,27 @@
 [workspace]
 members = ["cargo:."]
 
+# Config for 'dist'
 [dist]
-cargo-dist-version = "0.30.3"
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.33.0"
+# CI backends to support
 ci = "github"
+# The installers to generate for each app
 installers = ["shell", "powershell"]
-targets = [
-    "aarch64-apple-darwin",
-    "aarch64-pc-windows-msvc",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "x86_64-pc-windows-msvc",
-    "x86_64-unknown-linux-gnu"
-]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Path that installers should place binaries in
 install-path = "~/.local/bin"
+# Where to host releases
 hosting = "github"
+# Whether to install an updater program
 install-updater = false
+# Post-announce jobs to run in CI
 post-announce-jobs = ["./attach-checksum", "./prune-artifacts"]
+# dist packs LICENSE and README into every archive by itself, but not NOTICE, which
+# Apache 2.0 §4(d) asks every redistribution to carry (ADR 0022)
+include = ["NOTICE"]
 
 # The Release workflow grants `contents: write` and a called workflow can only NARROW
 # what its caller granted, so prune-artifacts asking for `actions: write` on its own
@@ -24,9 +29,3 @@ post-announce-jobs = ["./attach-checksum", "./prune-artifacts"]
 # in a generated file that means from here.
 [dist.github-custom-job-permissions.prune-artifacts]
 actions = "write"
-
-# ARM64 Windows builds natively: cargo-dist's default cross-build (cargo-xwin in a Linux
-# container) assembles psm's ARM64 source with clang-cl, which rejects it
-[dist.github-custom-runners.aarch64-pc-windows-msvc]
-runner = "windows-11-arm"
-host = "aarch64-pc-windows-msvc"
