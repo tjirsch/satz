@@ -83,20 +83,23 @@ order is a path:
    rest offer one, the two derived names once the short name is in. The pack emits
    nothing. An estate written by `init` does not use it and does not need to: given
    its flags, `init` has answered everything.
-2. **`presets/estate-map.satz`** — which packs make up the estate, as questions: the
-   security-group model (S1, or S2 with a separate network-admins group) as a
-   `question oneof`, and one boolean per optional pack, each with what the pack is
-   for and what turning it off later destroys. Four are on by default — the audit-log
-   archive, the central CIS alerts, the billing permissions, the essential contact —
-   and five off: budget, SCC enablement, the security-audit account, Defender, the
-   verification runner. The map declares the choices and nothing else; the estate
-   carries one `use … when` line per choice, in the map's order.
-3. **The CIS baseline**, always. Its thirteen questions
-   follow the map's, and its ten opt-in extensions are its own questions.
-4. **Every pack a choice switched on**, with its own questions: the group names of
-   the chosen model, the archive's project and retention, the alert mailbox, and so
-   on. Switch a choice and the rest of the interview re-shapes; the report re-reads
-   after every answer.
+2. **`presets/estate-map.satz`** — which packs make up the estate, as questions. The
+   first is the CIS baseline (`use_cis_baseline`, on by default): the estate exists
+   for its thirty organisation policies, and it is asked because they reach the
+   organisation in one apply. Then the security-group model (S1, or S2 with a
+   separate network-admins group) as a `question oneof`, and one boolean per optional
+   pack, each with what the pack is for and what turning it off later destroys. Four
+   more are on by default — the audit-log archive, the central CIS alerts, the billing
+   permissions, the essential contact. The rest are off: budget, SCC enablement and
+   the packs that carry its findings, the security-audit account, Defender, Sentinel
+   and its two log paths (which follow the Sentinel answer), the verification runner,
+   the exemption tag. The map declares the choices and nothing else; the estate
+   carries one `use … when` line per choice.
+3. **Every pack a choice switched on**, with its own questions: the CIS baseline's
+   allowed resource locations and policy members and one switch per opt-in extension
+   and per dry-run twin, the group names of the chosen model, the archive's project
+   and retention, the alert mailbox, and so on. Switch a choice and the rest of the
+   interview re-shapes; the report re-reads after every answer.
 
 ```satz
 use "presets/estate-core.satz"

@@ -904,8 +904,8 @@ for you to pin.
 `terraform` and `providers` are configuration, not resources. **`terraform` is
 required** — an estate without it does not compile (`Missing 'terraform' block`).
 A backend may list both `local` and `gcs`; the emitter writes the ONE that
-`deployment_mode` selects (`"local"` / `"cloud"`, see the `migrate` command),
-never both:
+`deployment_mode` selects (`"local"` / `"cloud"`, see the `migrate` command;
+an estate with no `deployment_mode` is `"local"`), never both:
 
 ```
 terraform {

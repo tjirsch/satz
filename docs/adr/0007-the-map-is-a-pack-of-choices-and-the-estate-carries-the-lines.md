@@ -1,6 +1,7 @@
 # 0007 — the map is a pack of choices, and the estate carries the `use` lines
 
-- **Status:** accepted
+- **Status:** accepted; its "the CIS baseline is not a choice" is superseded by ADR-0028,
+  which makes the baseline the map choice `use_cis_baseline`
 - **Date:** 2026-09-10
 - **Deciders:** the maintainer
 
