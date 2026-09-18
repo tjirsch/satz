@@ -45,8 +45,13 @@ fn prowler_framework(catalog: &str, version: &str) -> Option<&'static str> {
 pub(crate) struct ProwlerPlan {
     /// The organisation the estate declares, when it declares one.
     pub organization_id: Option<String>,
-    /// Every project the estate emits, by project id, sorted.
+    /// Every project the estate emits with a literal id, sorted. A `{param}` in an id
+    /// is resolved by the compile, so a param-built id is literal here.
     pub projects: Vec<String>,
+    /// The projects the estate emits whose id is built from a reference to another
+    /// resource (`"acme-${google_folder.x.folder_id}"`), which only an apply resolves:
+    /// `<address> (<id as written>)`, sorted. They are not in `--project-ids`.
+    pub unresolved_projects: Vec<String>,
     /// Prowler framework ids for the catalogs the estate's claims name.
     pub compliance: Vec<String>,
     /// Catalogs the estate claims that Prowler has no framework for, with why it
@@ -80,15 +85,26 @@ pub(crate) fn plan(
     org_id: Option<&str>,
     now: &str,
 ) -> ProwlerPlan {
-    let projects: Vec<String> = manifest
-        .resources
-        .values()
-        .filter(|r| r.tf_type == "google_project")
-        .filter_map(|r| r.attrs.get("project_id").cloned())
-        .filter(|p| !p.contains('{') && !p.contains("${"))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    // The manifest is the compile's output, so every `{param}` in an id is already its
+    // value. What is left unresolved is a reference to another resource's attribute —
+    // part of the id (an interpolation in `attrs`) or all of it (`refs`) — and only an
+    // apply knows that value. Such a project is left out of the line and NAMED, because
+    // a scan that silently covers fewer projects than the estate reads as a clean one.
+    let mut projects: BTreeSet<String> = BTreeSet::new();
+    let mut unresolved_projects: Vec<String> = Vec::new();
+    for r in manifest.resources.values().filter(|r| r.tf_type == "google_project") {
+        match r.attrs.get("project_id") {
+            Some(id) if !crate::manifest::has_interpolation(id) => {
+                projects.insert(id.clone());
+            }
+            written => {
+                let written = written.or_else(|| r.refs.get("project_id")).map(String::as_str);
+                unresolved_projects.push(format!("{} ({})", r.address(), written.unwrap_or("no project_id")));
+            }
+        }
+    }
+    let projects: Vec<String> = projects.into_iter().collect();
+    unresolved_projects.sort();
 
     let mut compliance: Vec<String> = Vec::new();
     let mut unmapped: Vec<String> = Vec::new();
@@ -140,6 +156,7 @@ pub(crate) fn plan(
     ProwlerPlan {
         organization_id: org_id.map(str::to_string),
         projects,
+        unresolved_projects,
         compliance,
         unmapped_frameworks: unmapped,
         output_directory: dir,
@@ -189,9 +206,13 @@ pub(crate) fn notes(p: &ProwlerPlan) -> String {
         );
     }
     if p.projects.is_empty() {
-        out.push_str(
-            "note: no --project-ids — this estate emits no project with a literal id (one built from a param cannot be resolved here), so the scan is not narrowed\n",
-        );
+        out.push_str("note: no --project-ids — this estate emits no project with a literal id, so the scan is not narrowed\n");
+    }
+    if !p.unresolved_projects.is_empty() {
+        out.push_str(&format!(
+            "note: not in --project-ids — the id is built from a reference only an apply resolves: {}\n",
+            p.unresolved_projects.join(", ")
+        ));
     }
     if p.compliance.is_empty() {
         out.push_str("note: no --compliance — this estate claims no framework Prowler has, so every check runs\n");
@@ -295,16 +316,84 @@ mod tests {
     }
 
     #[test]
-    fn a_project_id_that_is_still_a_param_is_left_out() {
-        // `--project-ids acme-{customer_shortname}-001` would scan nothing. Better to
-        // omit the flag and say so than to emit a line that fails in the terminal.
+    fn a_project_id_built_from_a_reference_is_left_out_and_named() {
+        // `--project-ids acme-${google_folder.x.folder_id}` would scan nothing, and
+        // leaving the project out without a word reads as a clean scan of it. So the
+        // line carries the literal ids and stderr names every project it left out.
         let mut m = Manifest::default();
-        m.resources.extend([project("a", "{customer_shortname}-infra-001")]);
+        let (whole, mut by_ref) = project("c", "");
+        by_ref.attrs.clear();
+        by_ref.refs.insert("project_id".into(), "google_folder.x.folder_id".into());
+        m.resources.extend([
+            project("a", "acme-infra-001"),
+            project("b", "acme-${google_folder.x.folder_id}"),
+            (whole, by_ref),
+        ]);
         let p = plan(&m, &[], None, "2026-09-13T08:30Z");
-        assert!(p.projects.is_empty());
-        assert!(!p.command.contains("--project-ids"));
-        assert!(notes(&p).contains("cannot be resolved here"));
-        assert!(!render(&p).contains("cannot be resolved here"), "stdout stays the command line");
+        assert_eq!(p.projects, vec!["acme-infra-001"]);
+        assert_eq!(
+            p.unresolved_projects,
+            vec!["google_project.b (acme-${google_folder.x.folder_id})", "google_project.c (google_folder.x.folder_id)"]
+        );
+        assert!(p.command.contains("--project-ids acme-infra-001 --output-formats"), "{}", p.command);
+        let notes = notes(&p);
+        assert!(
+            notes.contains("not in --project-ids") && notes.contains("google_project.b") && notes.contains("google_project.c"),
+            "{notes}"
+        );
+        assert!(!notes.contains("no --project-ids"), "the scan is narrowed: {notes}");
+        assert_eq!(render(&p), format!("{}\n", p.command), "stdout stays the command line");
+    }
+
+    /// The plan reads the compile's manifest, where a `{param}` in an id is already its
+    /// value: a param-built id is scanned like a literal one, and only an id built from a
+    /// reference is left out. Compiled through the real front end and emitter.
+    #[test]
+    fn a_param_built_project_id_is_scanned_like_a_literal_one() {
+        let src = r#"estate mixed
+
+params {
+  customer_shortname       = "acme"
+  customer_organization_id = "123456789012"
+}
+
+google_folder {
+  x { display_name = "x" }
+}
+
+google_project {
+  literal {
+    name       = "literal"
+    project_id = "acme-literal-001"
+    org_id     = "123456789012"
+  }
+  built {
+    name       = "built"
+    project_id = "{customer_shortname}-built-001"
+    org_id     = "123456789012"
+  }
+  referenced {
+    name       = "referenced"
+    project_id = "{customer_shortname}-${{google_folder.x.folder_id}}"
+    org_id     = "123456789012"
+  }
+}
+"#;
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("mixed.satz", src, &resolver, &|p| Err(format!("{p}: no packs here")))
+            .expect("the estate compiles");
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).expect("the estate emits");
+
+        let p = plan(&out.manifest, &[], Some("123456789012"), "2026-09-13T08:30Z");
+        assert_eq!(p.projects, vec!["acme-built-001", "acme-literal-001"]);
+        assert_eq!(p.unresolved_projects, vec!["google_project.referenced (acme-${google_folder.x.folder_id})"]);
+        assert!(p.command.contains("--project-ids acme-built-001 acme-literal-001 "), "{}", p.command);
+        assert!(notes(&p).contains("google_project.referenced"), "{}", notes(&p));
+        assert!(render(&p).starts_with("prowler gcp ") && render(&p).lines().count() == 1, "{}", render(&p));
     }
 
     #[test]
