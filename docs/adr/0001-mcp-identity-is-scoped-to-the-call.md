@@ -1,6 +1,7 @@
 # 0001 — the MCP server scopes the identity to each call
 
-- **Status:** accepted
+- **Status:** accepted; deriving the identity once at `satz_open` is superseded by
+  ADR-0030, which derives it per call from the estate the call works on
 - **Date:** 2026-09-05
 - **Shipped in:** v0.46.90
 

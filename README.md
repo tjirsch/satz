@@ -210,7 +210,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
 | `prowler <INPUT>` | `--format` (`text`\|`json`) — the Prowler invocation this estate needs, printed. `text` puts the command line on stdout and NOTHING else, so it can be pasted into a shell or piped to a clipboard; what the line cannot say — a scan not narrowed to projects, a project left out of `--project-ids` because its id is built from a reference to another resource (which only an apply resolves), a claimed framework Prowler has no equivalent of, the command to run afterwards — goes to stderr. The organisation and the project ids the estate declares (a `{param}` in an id is its value), the frameworks it CLAIMS as `--compliance` (which also filters which checks run), `--output-formats json-ocsf`, and an output file under `evidence/prowler/<UTC date>/` named for the scope and the UTC minute (`org-2026-09-13T08-30Z.ocsf.json`) — Prowler appends to an output file that already exists, so each scan needs a name of its own: run `satz prowler` again for the next scan. satz never runs Prowler: the scan spends API quota in every project, and Prowler reads as whoever is logged in rather than as the estate's service account |
 | `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json`), `--out <FILE>`, `--fix` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims, and the checks Prowler maps to no control of the framework counted in a section of their own; `--fix` adds the estate delta they imply to the report (markdown only, proposed, never written) |
-| `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out-dir <DIR>`, `--merge <authored.json>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[Authored]` columns and who authored them, Review dropdown) + `meta.json` under `evidence/plan/<framework>-<UTC minute>/` (`cis-gcp-4.0-2026-09-13T08-30Z`, dashes for colons so the name is valid on every platform) unless `--out-dir` names another; offline and deterministic (the dossier hash names the run). `--merge` fills the `[Authored]` columns from an `authored.json` written against this run's hash — every entry names `authored_by` and `authored_at` — and keeps it beside the run; `dossier.json` and its hash do not change |
+| `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out-dir <DIR>`, `--merge <authored.json>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[Authored]` columns and who authored them, Review dropdown) + `meta.json` under `evidence/plan/<framework>-<UTC minute>/` (`cis-gcp-4.0-2026-09-13T08-30Z`, dashes for colons so the name is valid on every platform) unless `--out-dir` names another — a run in a minute that already has a folder takes the next free name (`…_002`), created by that run, so no run writes into another's; offline and deterministic (the dossier hash names the run). `--merge` fills the `[Authored]` columns from an `authored.json` written against this run's hash — every entry names `authored_by` and `authored_at` — and keeps it beside the run; `dossier.json` and its hash do not change |
 
 **Tool**
 
@@ -977,8 +977,8 @@ satz require cis-gcp-4.0 C0example.satz --format json --out - | jq '.summary'
 #   { "satisfied": 18, "partial": 5, "deviations": 0, "unmet": 14, "broken": 0, "contradicted": 0, … }
 ```
 
-**stdout carries the answer and nothing else.** The version banner, the schema-loader
-line and every other progress message go to stderr, so a report can be piped into a
+**stdout carries the answer and nothing else.** The version banner, the line saying
+where a report went and every other progress message go to stderr, so a report can be piped into a
 parser without filtering, and `satz mcp`, which speaks JSON-RPC over stdout, is not
 corrupted by a stray line.
 
@@ -1912,10 +1912,16 @@ estate's service account.** Every exception is listed here with its reason.
 | `whoami` | the human's ADC | the question *is* who the human is |
 | `whoami <estate>` | the estate's service account in cloud mode; the human's ADC in local mode | a different question — who that estate acts as — so a different answer |
 | `map-types` | no credential at all | Discovery documents are public |
-| `mcp` | per tool call, from the estate that is open | one server, a fleet: `satz_open` moves to the next estate, and the identity follows it |
+| `mcp` | per tool call, from the estate the call works on — the one it names, else the open one | one server, a fleet: `satz_open` moves to the next estate, and the identity follows it |
 | `plan`, `apply`, `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
 
 `--no-impersonate` pins the process to the plain ADC and outranks every estate.
+
+An estate whose params do not parse, or whose `deployment_mode` is neither `local` nor
+`cloud`, names no identity: `whoami <estate>`, `migrate` and every command in the table that
+runs as the estate refuse it, naming the estate and the reason, and run nothing as the login
+in its place. Under `satz mcp`, `satz_open` refuses to open it and a live tool refuses a call
+that names it.
 
 **Where the credential comes from.** AIP-4110 and nothing else:
 `GOOGLE_APPLICATION_CREDENTIALS`, then the well-known path

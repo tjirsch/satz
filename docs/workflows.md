@@ -245,7 +245,10 @@ identity `tofu` applies with — so the human needs no org-wide read roles, only
 `roles/iam.serviceAccountTokenCreator` on the SA (normally via membership in
 `svc-iac-users`). `--no-impersonate` opts out; `bootstrap` never impersonates (day
 0, the SA may not exist yet); an ADC that already impersonates is used as-is. The
-credential line names the SA the calls actually run as.
+credential line names the SA the calls actually run as. An estate whose params do
+not parse, or whose `deployment_mode` is neither `local` nor `cloud`, names no
+identity: `whoami`, `migrate` and every live command refuse it with the reason, and
+none runs as the logged-in user instead.
 
 **Greenfield: a tenant with no organization yet.** Google creates the Organization
 resource for a Workspace/Cloud Identity domain when a NEW Google Cloud user signs in

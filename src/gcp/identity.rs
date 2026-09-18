@@ -171,16 +171,14 @@ pub(crate) struct EstateDeclaration {
 }
 
 impl EstateDeclaration {
-    /// From an estate's params, looked up by their kebab-case names.
-    pub(crate) fn from_params(path: String, get: impl Fn(&str) -> Option<String>) -> Self {
-        let mode = get("deployment-mode").filter(|m| !m.is_empty()).unwrap_or_else(|| "local".into());
-        let service_account = match (get("svc-iac-account"), get("infra-project-name")) {
-            (Some(a), Some(p)) if !a.is_empty() && !p.is_empty() => {
-                Some(format!("{}@{}.iam.gserviceaccount.com", a, p))
-            }
-            _ => None,
-        };
-        Self { path, mode, service_account }
+    /// From an estate's params. The mode is read by the emitter's own reader, so the
+    /// compile, the binding and `whoami` agree: `local` when the estate binds none, and a
+    /// value the compile refuses is refused here with the compile's reason.
+    pub(crate) fn from_env(path: String, env: &satz_core::pipeline::Env) -> Result<Self, String> {
+        let mode = crate::emitter::deployment_mode(env)?.to_string();
+        let service_account =
+            crate::prerequisites::service_account_of(|k| env.get(k).and_then(|v| v.as_str()).map(str::to_string));
+        Ok(Self { path, mode, service_account })
     }
 
     /// The account live calls impersonate: the declared one, in cloud mode only —
@@ -1093,30 +1091,49 @@ mod whoami_render_tests {
         }
     }
 
+    fn env(pairs: &[(&str, serde_yaml::Value)]) -> satz_core::pipeline::Env {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    }
+
     /// The declaration reads the params the way the emitter does: no mode is
     /// local, and only cloud mode with both halves of the account impersonates.
     #[test]
     fn the_declaration_reads_mode_and_account_as_the_emitter_does() {
-        let read = |pairs: &[(&str, &str)]| {
-            let pairs: Vec<(String, String)> =
-                pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-            EstateDeclaration::from_params("e.satz".into(), |k| {
-                pairs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
-            })
+        let read = |pairs: &[(&str, serde_yaml::Value)]| {
+            EstateDeclaration::from_env("e.satz".into(), &env(pairs)).expect("a mode the emitter reads")
         };
-        let both = [("svc-iac-account", "svc-iac-001"), ("infra-project-name", "acme-infra-001")];
+        let both = [("svc_iac_account", "svc-iac-001".into()), ("infra_project_name", "acme-infra-001".into())];
 
         let none = read(&both);
         assert_eq!(none.mode, "local");
         assert_eq!(none.service_account.as_deref(), Some(SA));
         assert_eq!(none.impersonation_target(), None);
 
-        let cloud = read(&[both[0], both[1], ("deployment-mode", "cloud")]);
+        let cloud = read(&[both[0].clone(), both[1].clone(), ("deployment_mode", "cloud".into())]);
         assert_eq!(cloud.impersonation_target(), Some(SA));
 
-        let half = read(&[both[0], ("infra-project-name", ""), ("deployment-mode", "cloud")]);
+        let half = read(&[both[0].clone(), ("infra_project_name", "".into()), ("deployment_mode", "cloud".into())]);
         assert_eq!(half.service_account, None);
         assert_eq!(half.impersonation_target(), None);
+    }
+
+    /// A mode the compile refuses has no identity: the declaration is refused with the
+    /// compile's reason, never read as `local` — which would run every live call as the
+    /// credentials themselves.
+    #[test]
+    fn a_mode_the_compile_refuses_is_refused_by_the_declaration() {
+        let account = [("svc_iac_account", "svc-iac-001".into()), ("infra_project_name", "acme-infra-001".into())];
+        for (mode, named) in [
+            (serde_yaml::Value::from("boot"), "`deployment_mode = \"boot\"`"),
+            (serde_yaml::Value::from(""), "`deployment_mode = \"\"`"),
+            (serde_yaml::Value::from("Cloud"), "`deployment_mode = \"Cloud\"`"),
+            (serde_yaml::Value::Bool(true), "`deployment_mode = true`"),
+        ] {
+            let e = env(&[account[0].clone(), account[1].clone(), ("deployment_mode", mode)]);
+            let err = EstateDeclaration::from_env("e.satz".into(), &e).expect_err("no backend, no identity");
+            assert_eq!(Err(err.clone()), crate::emitter::deployment_mode(&e), "the compile's reason, word for word");
+            assert!(err.contains(named), "{err}");
+        }
     }
 
     #[test]

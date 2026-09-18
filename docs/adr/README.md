@@ -38,7 +38,7 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 
 | | what it decides | status |
 |---|---|---|
-| [0001](0001-mcp-identity-is-scoped-to-the-call.md) | the MCP server scopes the identity to each call, not the process | accepted |
+| [0001](0001-mcp-identity-is-scoped-to-the-call.md) | the MCP server scopes the identity to each call, not the process | accepted; deriving it at `satz_open` superseded by 0030 |
 | [0002](0002-superseded-org-policies-replace-by-construction.md) | superseded org policies change address so the plan is a replace | accepted |
 | [0003](0003-evidence-is-data-the-audit-pack-is-not-satz-s-to-render.md) | evidence is data; the audit pack is the agent's to render | accepted |
 | [0004](0004-the-verification-runner-is-a-pack-and-its-pipeline-is-inline.md) | the verification runner is a pack, and its pipeline is inline | accepted |
@@ -67,3 +67,4 @@ needs no entry in `SITE_DOCS` and implies no navigation decision.
 | [0027](0027-what-windows-support-means.md) | Windows support is a tested x86_64 and ARM64 build with a PowerShell installer that works or refuses clearly — CI runs clippy and the tests on Windows, CRLF reads as LF, script actions and self-update are refused by name; no MSI, no signing yet, the smoke matrix stays on Linux | accepted; ARM64 superseded by 0029 |
 | [0028](0028-a-pack-carries-its-own-resource-type.md) | a pack carries its own resource type and is `use`d bare, or is a bare list of labels the estate keys with a resource map — the shapes are not interchangeable and the wrong pairing is refused; the CIS baseline takes the first shape, joins the map as `use_cis_baseline`, and the CIS files move to `presets/cis/`, migrated by a `MOVED_PACKS` table the compile refuses against and `merge-presets` repoints from | accepted |
 | [0029](0029-four-release-targets.md) | satz is released for four targets — Apple-silicon macOS, Linux on x86_64 and ARM64, Windows on x86_64; an Intel Mac or an ARM64 Windows machine builds from source, because the installers stop rather than fall back | accepted |
+| [0030](0030-an-estate-that-names-no-identity-is-refused-and-mcp-derives-it-per-call.md) | an estate whose params cannot be read, or whose `deployment_mode` the compile refuses, names no identity and every command that would act as it refuses; `satz mcp` derives the identity per call, from the estate the call names or the open one, as it stands | accepted; supersedes 0001's derivation at `satz_open` |

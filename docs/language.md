@@ -906,7 +906,9 @@ required** — an estate without it does not compile (`Missing 'terraform' block
 A backend may list both `local` and `gcs`; the emitter writes the ONE that
 `deployment_mode` selects (`"local"` / `"cloud"`, see the `migrate` command;
 an estate with no `deployment_mode` is `"local"`), never both. Any other value is
-an error at the line that binds it, and the compile refuses:
+an error at the line that binds it, and the compile refuses. The mode also decides
+which identity the estate's live commands run as, so `whoami`, `migrate` and every
+command that runs as the estate refuse the same value with the same reason:
 
 ```
 terraform {

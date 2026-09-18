@@ -191,7 +191,8 @@ with "corroborated by both scanners" and "declared — apply fixes it" as first-
 class numbers. Written under the estate's `evidence/plan/<framework>-<UTC minute>/`
 (`cis-gcp-4.0-2026-09-13T08-30Z`, dashes for colons so the name is valid on every
 platform; git-ignored, gate-rejected) as `dossier.json`, `findings.csv`,
-`findings.xlsx`, `meta.json`.
+`findings.xlsx`, `meta.json`. A run in a minute that already has a folder takes the
+next free name, `…_002`, `…_003`, created by that run, so no run writes into another's.
 
 **Deterministic by construction**: the same inputs give the same JSON byte for
 byte, and its SHA-256 names the run — `meta.json` carries it, and it is the

@@ -179,6 +179,15 @@ pub fn create_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     std::fs::create_dir_all(path).map_err(|e| ctx("create directory", path, e))
 }
 
+/// Create a directory that must not exist yet, in its existing parent: the directory
+/// `write_new` is to a file. An existing one is never entered, and the error's kind is
+/// `AlreadyExists` — the operating system creates it or refuses it atomically, so two
+/// processes taking the next free name cannot both take one.
+pub fn create_dir_new<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    let path = path.as_ref();
+    std::fs::create_dir(path).map_err(|e| ctx("create directory", path, e))
+}
+
 pub fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
     std::fs::remove_file(path).map_err(|e| ctx("delete file", path, e))
@@ -310,5 +319,17 @@ mod tests {
         assert!(e.to_string().contains("record.json"), "{e}");
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "first");
         assert!(write_new(dir.join("x.satz"), "estate x\n").is_err(), "a .satz path is refused");
+    }
+
+    #[test]
+    fn create_dir_new_creates_and_never_enters_an_existing_one() {
+        let dir = scratch("dir-new");
+        let d = dir.join("plan");
+        create_dir_new(&d).unwrap();
+        write(d.join("meta.json"), "{}").unwrap();
+        let e = create_dir_new(&d).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists, "{e}");
+        assert!(e.to_string().contains("plan"), "{e}");
+        assert_eq!(std::fs::read_to_string(d.join("meta.json")).unwrap(), "{}", "the existing folder was touched");
     }
 }

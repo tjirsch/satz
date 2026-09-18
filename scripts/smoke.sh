@@ -220,8 +220,16 @@ else
 fi
 
 step "showcase: every language feature in one estate (the reference cites it)"
-"$satz" --config . transpile showcase.satz --output "$PWD/tmp/showcase-hcl" >/dev/null
+"$satz" --config . transpile showcase.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/showcase-transpile.err \
+  || fail "the showcase does not compile:\n$(cat tmp/showcase-transpile.err)"
 sc=tmp/showcase-hcl/main.tf
+# The reference example puts every resource where it belongs: the pack's bucket is
+# declared outside a project and names its own, so the compile has no scope to warn about.
+grep -q 'sets no `project`' tmp/showcase-transpile.err \
+  && fail "the showcase declares a resource outside a project without naming one:\n$(cat tmp/showcase-transpile.err)"
+awk '/^resource "google_storage_bucket" "pack_bucket"/ { inside = 1 } inside && /^}/ { exit }
+     inside && /project = "corp-infra-001"/ { found = 1 } END { exit !found }' "$sc" \
+  || fail "the pack's bucket does not name its project"
 grep -q 'vmExternalIpAccess' "$sc" && fail "suppressed policy was emitted"
 grep -q 'compute.managed.requireOsLogin' "$sc" || fail "policy from the \`as\` pack missing"
 grep -q 'roles/browser' "$sc" && fail "suppressed role was emitted"
@@ -488,7 +496,8 @@ grep -q '14 unmet' tmp/require.txt || fail "expected 2.12/2.13 plus the twelve o
 step "require --format json: the file carries the answer and the console nothing"
 # Where the bytes go is the whole contract: the artefact is the file `--out` names,
 # and stdout stays EMPTY so `--out /dev/stdout | jq` is a clean pipe. The line
-# saying where it went, the version banner and the schema-loader line are stderr.
+# saying where it went and the version banner are stderr, and the compile prints
+# no line per provider schema it loads.
 "$satz" --config . require cis-gcp-4.0 smoke.satz --format json --out tmp/require.json > tmp/require-stdout.txt 2>tmp/require-stderr.txt || true
 [ -s tmp/require-stdout.txt ] && fail "require printed to stdout: $(cat tmp/require-stdout.txt)"
 grep -q "wrote tmp/require.json" tmp/require-stderr.txt || fail "the command did not say where it put the report:\n$(cat tmp/require-stderr.txt)"
@@ -511,7 +520,8 @@ verdicts = {c["verdict"] for c in d["controls"]}
 assert verdicts <= {"satisfied","partial","broken","deviation","unmet","organizational","inherited"}, verdicts
 PY
 grep -q 'satz v' tmp/require.json && fail "the version banner reached the report file"
-grep -q 'Loaded ' tmp/require.json && fail "a progress line reached the report file"
+grep -q 'wrote ' tmp/require.json && fail "a progress line reached the report file"
+grep -q 'resource types for' tmp/require-stderr.txt && fail "the compile printed a line per provider schema:\n$(cat tmp/require-stderr.txt)"
 
 step "a format a command cannot produce is refused, not quietly rendered as something else"
 if "$satz" --config . require cis-gcp-4.0 smoke.satz --format pdf --out tmp/fmt.pdf >tmp/fmt.txt 2>&1; then
@@ -859,6 +869,32 @@ if "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.
   fail "authored values written against another dossier were merged"
 fi
 grep -q 'the findings changed' tmp/plan4.txt || fail "the stale-hash refusal does not say why:\n$(cat tmp/plan4.txt)"
+
+step "remediation-plan without --out-dir: each run takes a folder of its own, and a refused one takes none"
+# The folder is named for the UTC minute; a second run in that minute takes `…_002`,
+# created by that run, so it never writes into the first run's files. The two runs may
+# straddle a minute, so either name is right for the second.
+rm -rf evidence/plan
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/plan-default1.txt 2>&1 \
+  || fail "remediation-plan without --out-dir failed:\n$(cat tmp/plan-default1.txt)"
+"$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json > tmp/plan-default2.txt 2>&1 \
+  || fail "a second remediation-plan without --out-dir failed:\n$(cat tmp/plan-default2.txt)"
+if "$satz" --config . remediation-plan cis-gcp-4.0 smoke.satz --prowler prowler.json --merge tmp/authored-stale.json > tmp/plan-default3.txt 2>&1; then
+  fail "authored values written against another dossier were merged into a default folder"
+fi
+python3 - <<'PYEOF' || fail "runs without --out-dir did not take a folder each"
+import os, re
+minute = r"cis-gcp-4\.0-\d{4}-\d\d-\d\dT\d\d-\d\dZ"
+dirs = sorted(os.listdir("evidence/plan"))
+assert len(dirs) == 2, f"two runs, one refused, and these folders: {dirs}"
+first, second = dirs
+assert re.fullmatch(minute, first), dirs
+assert second == first + "_002" or re.fullmatch(minute, second), dirs
+for d, log in zip(dirs, ("tmp/plan-default1.txt", "tmp/plan-default2.txt")):
+    for f in ("dossier.json", "findings.csv", "findings.xlsx", "meta.json"):
+        assert os.path.getsize(os.path.join("evidence/plan", d, f)) > 0, (d, f)
+    assert os.path.join("evidence", "plan", d) in open(log).read(), f"{log} does not name {d}"
+PYEOF
 
 step "triage: Prowler FAILs sorted into buckets against the estate's claims"
 "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler prowler.json --format markdown --out tmp/triage.md 2>tmp/triage.err || fail "triage failed:\n$(cat tmp/triage.err)"
@@ -1770,12 +1806,55 @@ if grep -q '^runs as: *svc-iac-001@corp-infra-001' tmp/who4.txt; then
 fi
 grep -q '^runs as: *svc-iac@acme-infra-001.* — local mode; `satz migrate smoke.satz --mode cloud` makes every run impersonate svc-iac-001@corp-infra-001' tmp/who4.txt \
   || fail "a local-mode estate must say so and name the migration that makes it impersonate:\n$(cat tmp/who4.txt)"
-# An estate that does not resolve must say so: binding treats an unreadable estate
-# as "nothing to impersonate", which would quietly answer the other question.
+# An estate that does not resolve is named as missing, beside the form that asks
+# about the credentials themselves.
 if "$satz" --config . whoami does-not-exist.satz --offline > tmp/who5.txt 2>&1; then
   fail "whoami with a missing estate must fail:\n$(cat tmp/who5.txt)"
 fi
 grep -q 'estate not found' tmp/who5.txt || fail "the missing estate was not named:\n$(cat tmp/who5.txt)"
+
+step "an estate whose identity cannot be derived is refused by whoami, migrate and every command that binds it"
+# The identity an estate's live calls run as is derived from its params. A
+# `deployment_mode` the compile refuses has no backend and no identity, and params that
+# do not parse have neither: each command refuses, naming the estate and the reason,
+# and nothing runs as the login instead. tmp/mode-boot.satz is the compile step's fixture.
+sed 's/^\(  infra_project_name *= *\)"corp-infra-001"/\1"corp-infra-001/' yaml/smoke.satz > tmp/mode-unreadable.satz
+grep -q '^  infra_project_name *= *"corp-infra-001$' tmp/mode-unreadable.satz || fail "the unreadable fixture was not written"
+cp tmp/mode-boot.satz tmp/mode-boot.before
+cp tmp/mode-unreadable.satz tmp/mode-unreadable.before
+# (the refusal reaches stderr in its Debug form, quotes escaped: the patterns take both)
+boot_reason='mode-boot\.satz:[0-9]+: `deployment_mode = \\?"boot\\?"`: the mode is \\?"local\\?"'
+unreadable_reason='mode-unreadable\.satz:[0-9]+: newline in single-line string'
+identity_refused() {  # <output> <reason pattern> <what was run>
+  grep -Eq "$2" "$1" || fail "$3 does not name the estate and the reason:\n$(cat "$1")"
+  grep -q 'satz cannot tell which identity this estate runs as, and runs nothing for it' "$1" \
+    || fail "$3 does not say that the identity cannot be derived:\n$(cat "$1")"
+}
+for fixture in boot unreadable; do
+  estate="tmp/mode-$fixture.satz"
+  reason="${fixture}_reason"
+  reason="${!reason}"
+  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami "$estate" --offline > "tmp/id-$fixture-whoami.txt" 2>&1; then
+    fail "whoami answered for $estate:\n$(cat "tmp/id-$fixture-whoami.txt")"
+  fi
+  identity_refused "tmp/id-$fixture-whoami.txt" "$reason" "whoami $estate"
+  if "$satz" --config . migrate "$estate" --mode cloud > "tmp/id-$fixture-migrate.txt" 2>&1; then
+    fail "migrate switched $estate:\n$(cat "tmp/id-$fixture-migrate.txt")"
+  fi
+  identity_refused "tmp/id-$fixture-migrate.txt" "$reason" "migrate $estate"
+  cmp -s "$estate" "tmp/mode-$fixture.before" || fail "the refused migrate edited $estate"
+  # report-compliance and adopt bind the estate's service account before they read anything
+  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . report-compliance cis-gcp-4.0 "$estate" --no-live \
+      --format json --out "tmp/id-$fixture-report.json" > "tmp/id-$fixture-report.txt" 2>&1; then
+    fail "report-compliance ran for $estate:\n$(cat "tmp/id-$fixture-report.txt")"
+  fi
+  identity_refused "tmp/id-$fixture-report.txt" "$reason" "report-compliance $estate"
+  [ -e "tmp/id-$fixture-report.json" ] && fail "the refused report-compliance wrote a report for $estate"
+  if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . adopt "$estate" > "tmp/id-$fixture-adopt.txt" 2>&1; then
+    fail "adopt ran for $estate:\n$(cat "tmp/id-$fixture-adopt.txt")"
+  fi
+  identity_refused "tmp/id-$fixture-adopt.txt" "$reason" "adopt $estate"
+done
 
 step "the privacy gate judges tokens, not lines, and refuses an unusable range"
 # the private-looking address is assembled at runtime so the fixture itself
@@ -1865,7 +1944,7 @@ grep -q 'before the client said hello' tmp/mcp-eof.txt \
 
 step "satz mcp: a real handshake, a real tool call, and the capability gate"
 # stdout IS the protocol here, so the assertion is that EVERY line parses as
-# JSON-RPC — the version banner and the schema-loader line would each be a
+# JSON-RPC — the version banner or an emitter warning would each be a
 # corrupt stream rather than cosmetic noise.
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
@@ -2163,6 +2242,11 @@ done
   printf '%s\n' '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"identity-acme.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true,"estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"tmp/mode-boot.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true,"estate":"tmp/mode-unreadable.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"satz_adopt","arguments":{"estate":"tmp/mode-boot.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"satz_report_compliance","arguments":{"framework":"cis-gcp-4.0","estate":"tmp/mode-unreadable.satz","no_live":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
 } > tmp/mcp-id-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-id-in.jsonl > tmp/mcp-id.jsonl 2>/dev/null || true
 python3 - <<'PYEOF' || fail "the identity did not follow the open estate"
@@ -2209,6 +2293,21 @@ est = local["structuredContent"]["estate"]
 assert est["deployment_mode"] == "local", est
 assert est["impersonated"] is False, est
 assert est["service_account"] == "svc-iac-001@corp-infra-001.iam.gserviceaccount.com", est
+
+# An estate whose identity cannot be derived — a mode the compile refuses, params that
+# do not parse — is refused by the call that would act as it, naming the reason:
+# opening it, and each live tool that names it. Nothing runs as the credentials instead.
+said = "satz cannot tell which identity this estate runs as, and runs nothing for it"
+for call_id, reason in ((27, 'deployment_mode = "boot"'), (28, "newline in single-line string"),
+                        (29, 'deployment_mode = "boot"'), (30, "newline in single-line string")):
+    r = msgs[call_id]["result"]
+    assert r.get("isError"), f"call {call_id} was not refused: {r}"
+    text = r["content"][0]["text"]
+    assert reason in text and said in text, f"call {call_id} does not name the reason: {text}"
+# the refused open left the open estate where it was
+still = msgs[31]["result"]
+assert not still.get("isError"), still
+assert still["structuredContent"]["estate"]["service_account"] == "svc-iac-001@acme-infra-001.iam.gserviceaccount.com", still
 PYEOF
 
 step "satz mcp: the interview loop closes without a filesystem — create, answer, accept, complete"

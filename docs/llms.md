@@ -275,7 +275,10 @@ The loop, in order:
    `config.toml` under that root with the estate files beside it; `satz_open` names one
    config and one `.satz`, and every later call works on that estate under its own
    config. Its answer includes `runs_as`: the service account the estate's live tools
-   run as. Call it again to move to the next estate; nothing else changes.
+   run as. Call it again to move to the next estate; nothing else changes. An estate
+   whose params do not parse, or whose `deployment_mode` is neither `local` nor `cloud`,
+   is refused, naming the file and the reason — no tool can say which identity it runs
+   as, so the file is fixed first.
 1. **`satz_questions`** — what this customer still has to decide. Start here for
    anything that touches params. For a new estate, `satz_interview {create: true}`
    writes the file and returns the open questions; pass what the human decides back

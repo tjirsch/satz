@@ -3020,9 +3020,17 @@ pub(crate) fn file_timestamp(ts: &str) -> String {
     ts.replace(':', "-")
 }
 
-/// Records one framework's evidence history holds for one minute — the name
-/// `<framework>-<minute>.json` and the 998 suffixed ones after it.
-const EVIDENCE_NAMES_PER_MINUTE: u32 = 999;
+/// Names one framework takes in one minute — the plain name and the 998 suffixed ones
+/// after it: evidence records `<framework>-<minute>.json`, remediation-plan folders
+/// `<framework>-<minute>`.
+const NAMES_PER_MINUTE: u32 = 999;
+
+/// The names a run in one minute tries, in order: `<stem><ext>`, then `<stem>_002<ext>`
+/// to `<stem>_999<ext>`. The suffix sorts after the plain name and, padded to three
+/// digits, in order among itself.
+fn minute_names<'a>(stem: &'a str, ext: &'a str) -> impl Iterator<Item = String> + 'a {
+    (1..=NAMES_PER_MINUTE).map(move |n| if n == 1 { format!("{}{}", stem, ext) } else { format!("{}_{:03}{}", stem, n, ext) })
+}
 
 /// Append one run to the evidence history in `dir`, and return where it went.
 ///
@@ -3036,8 +3044,7 @@ const EVIDENCE_NAMES_PER_MINUTE: u32 = 999;
 /// a value a caller sets.
 pub(crate) fn append_evidence(dir: &Path, framework: &str, verified_at: &str, record: &[u8]) -> Result<PathBuf, BoxErr> {
     let stem = format!("{}-{}", framework, file_timestamp(verified_at));
-    for n in 1..=EVIDENCE_NAMES_PER_MINUTE {
-        let name = if n == 1 { format!("{}.json", stem) } else { format!("{}_{:03}.json", stem, n) };
+    for name in minute_names(&stem, ".json") {
         let path = dir.join(name);
         match crate::fsx::write_new(&path, record) {
             Ok(()) => return Ok(path),
@@ -3049,17 +3056,44 @@ pub(crate) fn append_evidence(dir: &Path, framework: &str, verified_at: &str, re
         "{}: {} evidence records of {} already exist for {} — every name this minute has is taken, \
          and a record is never replaced; run it again in the next minute",
         dir.display(),
-        EVIDENCE_NAMES_PER_MINUTE,
+        NAMES_PER_MINUTE,
         framework,
         verified_at
     )
     .into())
 }
 
-/// Where a `remediation-plan` run goes without `--out-dir`:
-/// `<config dir>/evidence/plan/<framework>-<UTC minute>`, the minute in its file form.
-pub(crate) fn remediation_plan_dir(config_dir: &Path, framework: &str, now: &str) -> PathBuf {
-    config_dir.join("evidence").join("plan").join(format!("{}-{}", framework, file_timestamp(now)))
+/// Where a `remediation-plan` run goes without `--out-dir`: a folder of its own under
+/// `<config dir>/evidence/plan`, named `<framework>-<UTC minute>` with the minute in its
+/// file form, created here and returned.
+///
+/// A run in a minute that already has one takes the next free name: `…T08-30Z_002`,
+/// `…T08-30Z_003`. Each name is taken with `fsx::create_dir_new`, which fails on a folder
+/// that exists, so a run never writes into another run's folder, and two runs at once
+/// cannot take one name — the operating system gives it to one and refuses the other,
+/// which moves on to the next.
+pub(crate) fn take_remediation_plan_dir(config_dir: &Path, framework: &str, now: &str) -> Result<PathBuf, BoxErr> {
+    let parent = config_dir.join("evidence").join("plan");
+    crate::fsx::create_dir_all(&parent)?;
+    let stem = format!("{}-{}", framework, file_timestamp(now));
+    for name in minute_names(&stem, "") {
+        let dir = parent.join(name);
+        match crate::fsx::create_dir_new(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(format!(
+        "{}: {} remediation plans of {} already exist for {} — every name this minute has is taken, \
+         and a run never writes into another run's folder; run it again in the next minute, or name \
+         one with --out-dir",
+        parent.display(),
+        NAMES_PER_MINUTE,
+        framework,
+        now
+    )
+    .into())
 }
 
 #[cfg(test)]
@@ -3069,8 +3103,50 @@ mod timestamp_tests {
     /// Windows refuses `:` in a path, so a folder named for the minute carries dashes.
     #[test]
     fn the_default_plan_folder_is_named_for_the_minute_without_a_colon() {
-        let dir = remediation_plan_dir(Path::new("estate"), "cis-gcp-4.0", "2026-09-13T08:30Z");
-        assert_eq!(dir, Path::new("estate").join("evidence").join("plan").join("cis-gcp-4.0-2026-09-13T08-30Z"));
+        let config = history("plan-name");
+        let dir = take_remediation_plan_dir(&config, "cis-gcp-4.0", "2026-09-13T08:30Z").unwrap();
+        assert_eq!(dir, config.join("evidence").join("plan").join("cis-gcp-4.0-2026-09-13T08-30Z"));
+        assert!(dir.is_dir(), "the folder is taken by creating it");
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// A second run in the same minute gets a folder of its own, and the first run's
+    /// files are where it wrote them.
+    #[test]
+    fn two_plans_in_one_minute_take_two_folders() {
+        let config = history("plan-two");
+        let first = take_remediation_plan_dir(&config, "cis-gcp-4.0", "2026-09-13T08:30Z").unwrap();
+        crate::fsx::write(first.join("meta.json"), "{\"run\":1}").unwrap();
+        let second = take_remediation_plan_dir(&config, "cis-gcp-4.0", "2026-09-13T08:30Z").unwrap();
+        assert_eq!(second, config.join("evidence").join("plan").join("cis-gcp-4.0-2026-09-13T08-30Z_002"));
+        assert_eq!(std::fs::read_dir(&second).unwrap().count(), 0, "the second run's folder is new");
+        assert_eq!(std::fs::read_to_string(first.join("meta.json")).unwrap(), "{\"run\":1}");
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// Runs taking a folder at the same moment each get one of their own: the name is
+    /// taken by creating the folder, never by looking first.
+    #[test]
+    fn plans_taken_at_once_never_share_a_folder() {
+        use std::sync::{Arc, Barrier};
+        let config = history("plan-race");
+        let runs = 8;
+        let start = Arc::new(Barrier::new(runs));
+        let takers: Vec<_> = (0..runs)
+            .map(|_| {
+                let (config, start) = (config.clone(), start.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    take_remediation_plan_dir(&config, "cis-gcp-4.0", "2026-09-13T08:30Z").unwrap()
+                })
+            })
+            .collect();
+        let mut taken: Vec<PathBuf> = takers.into_iter().map(|t| t.join().unwrap()).collect();
+        taken.sort();
+        taken.dedup();
+        assert_eq!(taken.len(), runs, "two runs took one folder: {:?}", taken);
+        assert_eq!(names(&config.join("evidence").join("plan")).len(), runs);
+        let _ = std::fs::remove_dir_all(&config);
     }
 
     fn history(name: &str) -> PathBuf {
@@ -3810,7 +3886,9 @@ pub(crate) fn write_remediation(
 }
 
 /// The `remediation-plan` command: the dossier and its renderings, offline, and
-/// with `--merge` the authored values rendered beside them.
+/// with `--merge` the authored values rendered beside them. `out_dir` is `--out-dir`;
+/// without it the run takes a folder of its own under `config_dir` once it has
+/// something to write, so a refused run leaves no empty folder behind.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_remediation_dossier(
     framework: &str,
@@ -3820,7 +3898,8 @@ pub(crate) fn run_remediation_dossier(
     estate_path: &Path,
     prowler_path: &Path,
     checkov: Option<&crate::scan::Report>,
-    out: &Path,
+    out_dir: Option<&Path>,
+    config_dir: &Path,
     merge: Option<&Path>,
 ) -> Result<(), BoxErr> {
     let run = remediation_run(framework, presets_dir, included_claims, manifest, estate_path, prowler_path, checkov)?;
@@ -3832,7 +3911,11 @@ pub(crate) fn run_remediation_dossier(
         }
         None => None,
     };
-    write_remediation(&run, out, authored.as_ref())?;
+    let out = match out_dir {
+        Some(d) => d.to_path_buf(),
+        None => take_remediation_plan_dir(config_dir, framework, &chrono_free_timestamp())?,
+    };
+    write_remediation(&run, &out, authored.as_ref())?;
 
     let s = &run.dossier.summary;
     println!(
