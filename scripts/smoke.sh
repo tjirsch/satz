@@ -2101,6 +2101,41 @@ grep -q '^// use "presets/security-group-models/s1-security-groups.satz"' tmp/iv
 grep -qE 'security_model_s1 += false' tmp/iv/agent.satz || fail "the oneof siblings were not set false"
 "$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
 
+step "a skeleton answered yes for Sentinel and the findings mail still compiles and reports its questions"
+# Sentinel's project defaults to the audit logsink's, the findings mail's mailbox to the
+# central alerts' — both inside the infrastructure folder. A param is known from the line
+# that declares it on, so the skeleton writes those two packs after the folder: answering
+# them yes on the estate `create` wrote above must leave one `questions` and the compile
+# accept, not one that stops at `unknown param`.
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"use_sentinel\":true,\"use_scc_enablement\":true,\"use_scc_notifications\":true,\"use_scc_findings_mail\":true}}}}" \
+  > tmp/mcp-iv3-in.jsonl
+python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-iv3-in.jsonl > tmp/mcp-iv3.jsonl 2>/dev/null || true
+python3 - <<'PYEOF' || fail "answering Sentinel and the findings mail yes was refused"
+import json
+msgs = {}
+for l in open("tmp/mcp-iv3.jsonl"):
+    if l.strip():
+        d = json.loads(l)
+        if "id" in d:
+            msgs[d["id"]] = d
+r = msgs[3]["result"]
+assert not r.get("isError"), r["content"][0]["text"]
+assert r["structuredContent"]["written"] == 4, r["structuredContent"]
+PYEOF
+grep -q '^use "presets/integrations/microsoft-sentinel.satz" when use_sentinel' tmp/iv/agent.satz \
+  || fail "answering Sentinel yes must uncomment its line:\n$(grep 'microsoft-sentinel' tmp/iv/agent.satz)"
+grep -q '^use "presets/scc/scc-findings-mail.satz" when use_scc_findings_mail' tmp/iv/agent.satz \
+  || fail "answering the findings mail yes must uncomment its line:\n$(grep 'scc-findings-mail' tmp/iv/agent.satz)"
+"$satz" --config . questions "$PWD/tmp/iv/agent.satz" --format text --out tmp/iv/agent-q.txt > tmp/iv/agent-q.log 2>&1 \
+  || fail "satz questions stopped on an estate answered yes for Sentinel and the findings mail:\n$(cat tmp/iv/agent-q.log)"
+grep -q 'sentinel' tmp/iv/agent-q.txt || fail "Sentinel's own questions must be asked once it is in:\n$(cat tmp/iv/agent-q.txt)"
+"$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > tmp/iv/agent-check.txt 2>&1 \
+  || fail "an estate answered yes for Sentinel and the findings mail does not compile:\n$(cat tmp/iv/agent-check.txt)"
+
 step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
