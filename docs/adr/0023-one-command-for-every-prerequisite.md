@@ -39,7 +39,7 @@ The failure that made that visible: a customer apply stopped, repeatedly, becaus
 
 ## Decision
 
-Option 3 (Thomas, 2026-09-15).
+Option 3, decided 2026-09-15.
 
 **One command, and it writes.** `satz update-prerequisites <estate>` derives both
 halves from the types the estate emits and writes what is missing into the estate file

@@ -28,7 +28,7 @@ failed `fmt --check` and `get-presets`; `.sh` actions died with an OS error.
 
 ## Decision
 
-(b), with Thomas's decisions on the rest (2026-09-17, the recommended plan):
+(b), with the rest decided 2026-09-17 (the recommended plan):
 
 - x86_64 and ARM64 builds, `installers = ["shell", "powershell"]`, and a `.ps1.sha256`
   sidecar. No MSI (elevation, WiX, nothing self-update or satz-studio could use), no code

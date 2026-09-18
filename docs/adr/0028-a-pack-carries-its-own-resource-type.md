@@ -42,7 +42,7 @@ attributes, which the emitter accepts without a word.
 
 ## Decision
 
-(c), with Thomas's decisions of 2026-09-17:
+(c), with the decisions of 2026-09-17:
 
 - The baseline wraps its labels in `google_org_policy_policy { … }` and is `use`d bare.
   Nothing emitted changes: both forms resolve to the same addresses and the same manifest,
