@@ -895,6 +895,14 @@ if "$satz" --config . triage cis-gcp-4.0 smoke.satz --prowler tmp/prowler4.json 
   fail "triage accepted an export written by Prowler 4"
 fi
 grep -q 'written by Prowler 4.6.1' tmp/p4.txt || fail "the Prowler 4 refusal does not name the version:\n$(cat tmp/p4.txt)"
+# Prowler appends to an output file that already exists: two scans under one name
+# leave a file that no longer parses. It is refused at the joint, with the cause.
+cat prowler.json prowler.json > tmp/prowler-twice.json
+if "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --prowler tmp/prowler-twice.json --format markdown --out tmp/twice.md > tmp/twice.txt 2>&1; then
+  fail "report-compliance read two scans appended into one file"
+fi
+grep -q 'is not one JSON document .* (byte offset [0-9]*)\. .*two scans were written under one name' tmp/twice.txt \
+  || fail "the appended export is not refused at its joint with the cause:\n$(cat tmp/twice.txt)"
 
 step "report-compliance: the envelope says whether live state was actually read"
 # The report degrades to unverifiable witnesses rather than failing, so `live`
@@ -989,10 +997,14 @@ grep -q 'evidence/prowler/' tmp/prowler-plan.txt || fail "the standard output lo
 [ ! -e evidence/prowler ] || fail "satz prowler created something — it prints, it does not run"
 "$satz" --config . prowler smoke.satz --format json > tmp/prowler-plan.json 2>/dev/null || true
 python3 - <<'PYEOF' || fail "satz prowler --format json did not emit parseable JSON"
-import json, pathlib
+import json, pathlib, re
 d = json.loads(pathlib.Path("tmp/prowler-plan.json").read_text())
 assert d["command"].startswith("prowler gcp "), d["command"]
 assert d["output_path"].endswith(".ocsf.json"), d
+# Prowler appends to a file that already exists, so each scan's name carries the UTC minute
+assert re.fullmatch(r"org-\d{4}-\d\d-\d\dT\d\d-\d\dZ", d["output_filename"]), d["output_filename"]
+assert d["output_directory"] == "evidence/prowler/" + d["output_filename"][4:14], d
+assert f"--prowler {d['output_path']} " in d["then"], d["then"]
 assert d["compliance"] == ["cis_4.0_gcp", "cis_5.0_gcp"], d
 assert d["projects"], "no project reached the plan"
 PYEOF

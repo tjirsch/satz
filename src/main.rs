@@ -1862,9 +1862,8 @@ Thumbs.db
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let (manifest, included_claims, org_id) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
-            let today = crate::prowler::today_utc();
-            let plan =
-                crate::prowler::plan(&manifest, &included_claims, org_id.as_deref(), &today);
+            let now = crate::compliance::chrono_free_timestamp();
+            let plan = crate::prowler::plan(&manifest, &included_claims, org_id.as_deref(), &now);
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&plan)?),
                 // stdout is the command and nothing else, so it can be piped into a

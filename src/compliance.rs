@@ -2252,11 +2252,83 @@ impl ProwlerExport {
     }
 }
 
+/// The one export shape satz reads, named in every refusal of any other.
+const PROWLER5_OCSF: &str = "satz reads the OCSF export of Prowler 5 (`prowler gcp --output-formats json-ocsf`)";
+
 /// Read a Prowler export from disk — `prowler gcp --output-formats json-ocsf`.
 pub(crate) fn read_prowler(path: &Path, catalog_name: &str, catalog_version: &str) -> Result<ProwlerExport, BoxErr> {
-    let raw: serde_json::Value = serde_json::from_str(&crate::fsx::read_to_string(path)?)
-        .map_err(|e| format!("{}: prowler json does not parse: {}", path.display(), e))?;
+    let raw = parse_prowler_json(&crate::fsx::read_to_string(path)?)
+        .map_err(|e| format!("{}: {}", path.display(), e))?;
     ingest_prowler(&raw, catalog_name, catalog_version).map_err(|e| format!("{}: {}", path.display(), e).into())
+}
+
+/// A Prowler export's text as the one JSON document it must be, or where and why it
+/// is not.
+///
+/// Prowler APPENDS to an output file that already exists: a second scan written under
+/// the first one's name starts right after the first array's closing `]`
+/// (`…}]{…},{…}]`). That file no longer parses, and read any other way it would mix the
+/// two runs' findings — so the refusal names the joint, as a line, a column and a byte
+/// offset, and says what put it there.
+fn parse_prowler_json(text: &str) -> Result<serde_json::Value, String> {
+    let mut values = serde_json::Deserializer::from_str(text).into_iter::<serde_json::Value>();
+    match values.next() {
+        None => Err(format!("is empty; {}", PROWLER5_OCSF)),
+        Some(Err(e)) => {
+            // serde's message ends in " at line L column C"; the position is stated
+            // here once, with the byte offset beside it
+            let full = e.to_string();
+            let reason = full.rsplit_once(" at line ").map_or(full.as_str(), |(r, _)| r);
+            let (line, column) = (e.line(), e.column());
+            let cause = if e.classify() == serde_json::error::Category::Eof {
+                "the file ends before its array of findings closes — a scan still running, or stopped part-way, leaves this; let it finish or re-run it".to_string()
+            } else {
+                PROWLER5_OCSF.to_string()
+            };
+            Err(format!(
+                "does not parse as JSON at line {}, column {} (byte offset {}): {}; {}",
+                line,
+                column,
+                offset_of(text, line, column),
+                reason,
+                cause
+            ))
+        }
+        Some(Ok(value)) => {
+            let end = values.byte_offset();
+            let Some(skip) = text[end..].find(|c: char| !matches!(c, ' ' | '\t' | '\n' | '\r')) else {
+                return Ok(value);
+            };
+            let at = end + skip;
+            let (line, column) = line_column(text, at);
+            let (what, cause) = if value.is_array() {
+                (
+                    "the array of findings closes",
+                    "Prowler appends to an output file that already exists, so two scans were written under one name and their findings are mixed; re-run the scan into a file of its own — `satz prowler <estate>` prints a name no other scan shares".to_string(),
+                )
+            } else {
+                ("one JSON value ends", format!("{}, one JSON array of findings", PROWLER5_OCSF))
+            };
+            Err(format!(
+                "is not one JSON document — {} and more text begins at line {}, column {} (byte offset {}). {}",
+                what, line, column, at, cause
+            ))
+        }
+    }
+}
+
+/// Line and column of a byte offset, both counted from 1 and the column in bytes —
+/// the convention serde's own positions follow.
+fn line_column(text: &str, at: usize) -> (usize, usize) {
+    let before = &text[..at];
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    (before.matches('\n').count() + 1, at - line_start + 1)
+}
+
+/// The byte offset of a line and column as serde reports them, clamped to the text.
+fn offset_of(text: &str, line: usize, column: usize) -> usize {
+    let line_start: usize = text.split_inclusive('\n').take(line.saturating_sub(1)).map(str::len).sum();
+    (line_start + column.saturating_sub(1)).min(text.len())
 }
 
 /// Prowler ingest: the OCSF export of Prowler 5, the only shape read. Every
@@ -2274,12 +2346,11 @@ pub(crate) fn ingest_prowler(
     catalog_name: &str,
     catalog_version: &str,
 ) -> Result<ProwlerExport, String> {
-    const RERUN: &str = "satz reads the OCSF export of Prowler 5 (`prowler gcp --output-formats json-ocsf`)";
     let findings = raw
         .as_array()
-        .ok_or_else(|| format!("not a Prowler OCSF export — expected a JSON array of findings; {}", RERUN))?;
+        .ok_or_else(|| format!("not a Prowler OCSF export — expected a JSON array of findings; {}", PROWLER5_OCSF))?;
     if findings.is_empty() {
-        return Err(format!("contains no findings; {}", RERUN));
+        return Err(format!("contains no findings; {}", PROWLER5_OCSF));
     }
     // `CIS-4.0`, `cis_4.0_gcp` and `CIS-4.0-GCP` are one framework
     let norm = |x: &str| x.to_lowercase().replace(['-', '_'], ".");
@@ -2295,18 +2366,18 @@ pub(crate) fn ingest_prowler(
         if !text(product.and_then(|p| p.get("name"))).eq_ignore_ascii_case("prowler") || version.is_empty() {
             return Err(format!(
                 "finding {} names no Prowler version in metadata.product — not an OCSF export of Prowler 5; {}",
-                n, RERUN
+                n, PROWLER5_OCSF
             ));
         }
         if !version.split('.').next().and_then(|m| m.parse::<u32>().ok()).is_some_and(|major| major >= 5) {
             return Err(format!(
                 "written by Prowler {} (finding {}); {} — upgrade Prowler and re-run the scan",
-                version, n, RERUN
+                version, n, PROWLER5_OCSF
             ));
         }
         let check = text(metadata.and_then(|m| m.get("event_code")));
         if check.is_empty() {
-            return Err(format!("finding {} has no metadata.event_code, the check id Prowler 5 writes; {}", n, RERUN));
+            return Err(format!("finding {} has no metadata.event_code, the check id Prowler 5 writes; {}", n, PROWLER5_OCSF));
         }
         versions.insert(version);
         let status = text(f.get("status_code"));
@@ -2890,7 +2961,7 @@ pub(crate) async fn run_report_compliance(
     // reading current state (a pipeline, an agent over MCP) must not append to
     // it, and a "read-only" wrapper that silently wrote files would be a lie.
     let hist_dir = config_dir.join("evidence");
-    let hist = hist_dir.join(format!("{}-{}.json", framework, verified_at.replace(':', "-")));
+    let hist = hist_dir.join(format!("{}-{}.json", framework, file_timestamp(&verified_at)));
     if format != crate::OutFormat::Json {
         crate::fsx::create_dir_all(&hist_dir)?;
         crate::fsx::write(&hist, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
@@ -2944,6 +3015,12 @@ pub(crate) fn chrono_free_timestamp() -> String {
     let mth = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if mth <= 2 { y + 1 } else { y };
     format!("{:04}-{:02}-{:02}T{:02}:{:02}Z", y, mth, d, h, m)
+}
+
+/// A `chrono_free_timestamp` as it goes into a file name — `2026-09-13T08-30Z`: the
+/// colons become dashes, because Windows refuses `:` in a path.
+pub(crate) fn file_timestamp(ts: &str) -> String {
+    ts.replace(':', "-")
 }
 
 #[cfg(test)]
@@ -3032,6 +3109,60 @@ mod prowler_ocsf_tests {
         assert!(no_check.contains("finding 3 has no metadata.event_code"), "{no_check}");
         assert!(read("[]", "4.0").unwrap_err().contains("contains no findings"));
         assert!(read(r#"{"findings":[]}"#, "4.0").unwrap_err().contains("expected a JSON array"));
+    }
+
+    #[test]
+    fn one_export_parses_as_it_is() {
+        let text = format!("{}\n", export("5.42.0"));
+        assert_eq!(parse_prowler_json(&text).unwrap(), serde_json::from_str::<serde_json::Value>(&text).unwrap());
+    }
+
+    #[test]
+    fn two_scans_appended_into_one_file_are_refused_at_the_joint() {
+        // Prowler's own append: the second scan's findings start right after the first
+        // array's `]`, and its closing `]` ends the file — `…}]{…},{…}]`.
+        let prowler_append = r#"[{"a":1}]{"b":2},{"c":3}]"#;
+        let e = parse_prowler_json(prowler_append).unwrap_err();
+        assert!(
+            e.starts_with(
+                "is not one JSON document — the array of findings closes and more text begins at line 1, column 10 (byte offset 9). "
+            ),
+            "{e}"
+        );
+        assert!(e.contains("two scans were written under one name"), "{e}");
+        assert!(e.contains("`satz prowler <estate>` prints a name no other scan shares"), "{e}");
+        // Two whole exports one after the other, over several lines: the position is
+        // where the second one starts.
+        let e = parse_prowler_json("[\n  {\"a\": 1}\n]\n[\n  {\"b\": 2}\n]\n").unwrap_err();
+        assert!(e.contains("line 4, column 1 (byte offset 15)"), "{e}");
+        assert!(e.contains("two scans were written under one name"), "{e}");
+        // through the file reader, the path leads the message
+        let dir = std::env::temp_dir().join(format!("satz-prowler-append-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("org.ocsf.json");
+        crate::fsx::write(&file, format!("{}{}", export("5.42.0"), export("5.42.0")).as_bytes()).unwrap();
+        let e = read_prowler(&file, "cis-gcp", "4.0").unwrap_err().to_string();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(e.starts_with(&format!("{}: is not one JSON document", file.display())), "{e}");
+    }
+
+    #[test]
+    fn an_export_that_does_not_parse_says_where_and_why() {
+        // a scan still running, or stopped part-way: the array never closes
+        let e = parse_prowler_json("[\n  {\"a\": 1},\n").unwrap_err();
+        assert!(e.contains("does not parse as JSON at line 3, column 0 (byte offset 14): EOF while parsing"), "{e}");
+        assert!(e.contains("before its array of findings closes"), "{e}");
+        // anything else that is not JSON: serde's reason, stated once, and the shape read
+        let e = parse_prowler_json("[{\"a\": 1} {\"b\": 2}]").unwrap_err();
+        assert!(e.contains("at line 1, column 11 (byte offset 10): expected `,` or `]`;"), "{e}");
+        assert!(!e.contains(" at line 1 column "), "the position is stated once: {e}");
+        assert!(e.contains("OCSF export of Prowler 5"), "{e}");
+        assert!(parse_prowler_json(" \n").unwrap_err().starts_with("is empty"));
+        // one JSON value that is not an array, with more after it, is no export at all
+        let e = parse_prowler_json("{\"a\": 1}\n{\"b\": 2}\n").unwrap_err();
+        assert!(e.contains("one JSON value ends and more text begins at line 2, column 1 (byte offset 9)"), "{e}");
+        assert!(e.contains("one JSON array of findings"), "{e}");
+        assert!(!e.contains("two scans"), "{e}");
     }
 
     #[test]
