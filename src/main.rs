@@ -1390,6 +1390,26 @@ Thumbs.db
 
             // 4. Generate the template estate if customer_id provided
             if let Some(c_id) = customer_id {
+                // Every day-0 question lives in presets/estate-core.satz, and the pack lines
+                // come from the graph beside it: `--interview` fetches the library before the
+                // file is written, so the estate it asks about carries the menu.
+                if interview {
+                    let core = Path::new(&runtime_config.presets_dir).join("estate-core.satz");
+                    if !core.exists() {
+                        println!("\nfetching the preset library — the day-0 questions are read from {}", core.display());
+                        crate::presets::get_presets(&runtime_config.presets_dir, &runtime_config, false, None)
+                            .await
+                            .map_err(|e| {
+                                format!(
+                                    "init --interview: the questions live in {}, which is not here and could not be \
+                                     fetched ({}) — run `satz get-presets`, then `satz interview {}.satz`",
+                                    core.display(),
+                                    e,
+                                    c_id
+                                )
+                            })?;
+                    }
+                }
                 let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", c_id));
                 if yaml_path.exists() && !force {
                     // A re-run MERGES: it used to print "Template already exists",
@@ -1472,7 +1492,12 @@ Thumbs.db
                         bucket_id: infra_bucket_name,
                         first_admin: first_admin.to_string(),
                     };
-                    crate::template::generate_template(&args, &yaml_path)?;
+                    let presets_dir = Path::new(&runtime_config.presets_dir);
+                    let graph = crate::pack_graph::for_writing(presets_dir)?;
+                    crate::template::generate_template(&args, graph.as_ref(), &yaml_path)?;
+                    if graph.is_none() {
+                        println!("{}", crate::pack_graph::no_menu_note(presets_dir));
+                    }
                     println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
                 }
 
@@ -1481,26 +1506,9 @@ Thumbs.db
                 // Stating it is the flag because the interview is interactive
                 // and a scripted run must not block on it.
                 if interview {
-                    // Every day-0 question lives in presets/estate-core.satz, and init
-                    // writes that `use` commented out so the estate compiles before any
-                    // library is fetched. Handed over like that, the interview found no
-                    // pack declaring a question and asked nothing. Asking needs the
-                    // library and the pack: fetch it when it is absent, switch it on.
-                    let core = Path::new(&runtime_config.presets_dir).join("estate-core.satz");
-                    if !core.exists() {
-                        println!("\nfetching the preset library — the day-0 questions are read from {}", core.display());
-                        crate::presets::get_presets(&runtime_config.presets_dir, &runtime_config, false, None)
-                            .await
-                            .map_err(|e| {
-                                format!(
-                                    "init --interview: the questions live in {}, which is not here and could not be \
-                                     fetched ({}) — run `satz get-presets`, then `satz interview {}`",
-                                    core.display(),
-                                    e,
-                                    yaml_path.display()
-                                )
-                            })?;
-                    }
+                    // init writes the estate-core `use` commented out so the estate compiles
+                    // before any library is fetched; the interview switches it on, or it
+                    // finds no pack declaring a question and asks nothing
                     if crate::template::use_estate_core(&yaml_path)? {
                         println!("switched on `use \"presets/estate-core.satz\"` in {}", yaml_path.display());
                     }
@@ -2134,8 +2142,13 @@ Thumbs.db
                 if let Some(dir) = input_path.parent() {
                     crate::fsx::create_dir_all(dir)?;
                 }
-                crate::fsx::write_generated_satz(&input_path, &crate::template::skeleton(stem))?;
+                let presets_dir = Path::new(&runtime_config.presets_dir);
+                let graph = crate::pack_graph::for_writing(presets_dir)?;
+                crate::fsx::write_generated_satz(&input_path, &crate::template::skeleton(stem, graph.as_ref())?)?;
                 eprintln!("wrote {}", input_path.display());
+                if graph.is_none() {
+                    eprintln!("{}", crate::pack_graph::no_menu_note(presets_dir));
+                }
             }
             let stdin = std::io::stdin();
             let mut input = stdin.lock();
@@ -2401,7 +2414,8 @@ fn pipeline_b_compile(
         Err(format!("use \"{}\": file not found", p))
     };
     let fe = satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader)?;
-    let tail = compile_tail(&fe, &resolver, &registry, tool_config, &runtime_config.validation_level, input_path, &src);
+    let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
+    let tail = compile_tail(&fe, &resolver, &registry, tool_config, &graph, &runtime_config.validation_level, input_path, &src);
     // The two silencers: `--no-action-warnings`, and a caller that reports the
     // prerequisites itself.
     let findings: Vec<crate::findings::Finding> = tail
@@ -2497,11 +2511,16 @@ pub(crate) struct Tail {
     pub findings: Vec<crate::findings::Finding>,
 }
 
+/// `graph` is the pack graph of the estate's presets: the checks that read the pack menu —
+/// a dry run and its enforcing pack both on, a pack answered for and not used — run over
+/// it, and a graph that is missing or unreadable is one finding instead.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_tail(
     fe: &satz_core::pipeline::FrontEnd,
     resolver: &EstateResolver,
     registry: &ResourceRegistry,
     tool_config: &ToolConfig,
+    graph: &crate::pack_graph::Shipped,
     level: &str,
     estate: &Path,
     estate_src: &str,
@@ -2510,7 +2529,9 @@ pub(crate) fn compile_tail(
     let mut f: Vec<Finding> = Vec::new();
     // Before the fold, because the fold would refuse the same thing as two disagreeing
     // definitions of one address and name the files instead of the decision.
-    dry_run_conflict_findings(&fe.env, estate, estate_src, &mut f);
+    if let crate::pack_graph::Shipped::Graph(g) = graph {
+        dry_run_conflict_findings(g, &fe.env, estate, estate_src, &mut f);
+    }
     if !f.is_empty() {
         return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, findings: f };
     }
@@ -2542,7 +2563,18 @@ pub(crate) fn compile_tail(
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
-    unadopted_pack_findings(estate, estate_src, &fe.env, level, &mut f);
+    match graph {
+        crate::pack_graph::Shipped::Graph(g) => unadopted_pack_findings(g, estate, estate_src, &fe.env, level, &mut f),
+        crate::pack_graph::Shipped::Missing(_) if crate::findings::at_level(level).is_none() => {}
+        crate::pack_graph::Shipped::Missing(path) => f.push(Finding::new(
+            Severity::Note,
+            Kind::UnadoptedPack,
+            format!("{} is not here, so no pack line is checked against its answer — `satz get-presets` fetches it", path.display()),
+        )),
+        crate::pack_graph::Shipped::Unreadable(why) => {
+            f.push(Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{} — no pack line is checked against its answer", why)))
+        }
+    }
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     // a mode with no backend is already the finding at its line; the providers are not
     // emitted without one
@@ -2571,7 +2603,13 @@ pub(crate) fn compile_tail(
 /// happened and what to do about it, and it is always an error: there is no reading of
 /// "measure it and enforce it" that the estate could have meant. Its line is the dry
 /// run's `param = true` in the estate.
+///
+/// The pairs are the graph's DECLARED `excludes` edges between packs on two different
+/// gates — a dry-run twin declares one to its enforcing pack. The other declared kind, a
+/// second spelling of one pack, shares its gate and cannot clash; the derived ones are the
+/// options of one question, which the interview binds one at a time.
 fn dry_run_conflict_findings(
+    graph: &satz_core::pack_graph::PackGraph,
     env: &satz_core::pipeline::Env,
     estate: &Path,
     estate_src: &str,
@@ -2579,11 +2617,13 @@ fn dry_run_conflict_findings(
 ) {
     use crate::findings::{Finding, Kind, Severity};
     let on = |p: &str| env.get(p).and_then(|v| v.as_bool()) == Some(true);
-    let mut clashes: Vec<(String, &str)> = Vec::new();
-    for (_, gate, _, _) in crate::template::PACK_LINES {
-        let Some(enforcing) = gate.strip_suffix("_dry_run") else { continue };
-        if on(gate) && on(enforcing) {
-            clashes.push((enforcing.to_string(), gate));
+    use satz_core::pack_graph::{EdgeKind, Source};
+    let gate = |path: &str| graph.nodes.iter().find(|n| n.path == path).and_then(|n| n.gate.as_deref());
+    let mut clashes: Vec<(&str, &str)> = Vec::new();
+    for e in graph.edges.iter().filter(|e| e.kind == EdgeKind::Excludes && e.source == Source::Declared) {
+        let (Some(dry), Some(enforcing)) = (gate(&e.from), gate(&e.to)) else { continue };
+        if dry != enforcing && on(dry) && on(enforcing) {
+            clashes.push((enforcing, dry));
         }
     }
     if clashes.is_empty() {
@@ -2882,7 +2922,13 @@ fn prerequisite_findings(
 /// emits nothing because no line uses it. `satz merge-presets` writes the line;
 /// `satz interview` uncomments it; this says so when neither has happened — at the
 /// commented line when there is one.
+///
+/// The packs are the lines `graph` offers; a line written by hand (`by_hand`) is the
+/// estate's to write and is not looked for. A pack an `excludes` neighbour on the same gate
+/// stands in for — the S1 model's two-file spelling for `s1-security-groups` — is in use
+/// when that neighbour's line is.
 fn unadopted_pack_findings(
+    graph: &satz_core::pack_graph::PackGraph,
     estate: &Path,
     estate_src: &str,
     env: &satz_core::pipeline::Env,
@@ -2892,20 +2938,23 @@ fn unadopted_pack_findings(
     use crate::findings::{Finding, Kind};
     let Some(sev) = crate::findings::at_level(level) else { return };
     let mut items: Vec<(String, Option<u32>)> = Vec::new();
-    for (path, gate, _, _) in crate::template::PACK_LINES {
-        if gate.is_empty() || env.get(*gate).and_then(|v| v.as_bool()) != Some(true) {
-            continue;
-        }
-        // a `.local` fork of the pack IS that pack with the estate's own content, as
-        // merge-presets counts it: a fork in use is the pack in use
+    // a `.local` fork of the pack IS that pack with the estate's own content, as
+    // merge-presets counts it: a fork in use is the pack in use
+    let names = |path: &str, l: &str| {
         let fork = crate::fsx::slash(&crate::presets::fork_sibling(Path::new(path)));
-        let needles = [format!("use \"{}\"", path), format!("use \"{}\"", fork)];
-        let names = |l: &str| needles.iter().any(|n| l.contains(n.as_str()));
-        let active = estate_src.lines().map(str::trim).any(|l| l.starts_with("use ") && names(l));
-        if active {
+        l.contains(&format!("use \"{}\"", path)) || l.contains(&format!("use \"{}\"", fork))
+    };
+    let active = |path: &str| estate_src.lines().map(str::trim).any(|l| l.starts_with("use ") && names(path, l));
+    for n in graph.lines() {
+        let Some(gate) = n.gate.as_deref() else { continue };
+        let path = n.path.as_str();
+        if env.get(gate).and_then(|v| v.as_bool()) != Some(true) || active(path) {
             continue;
         }
-        match estate_src.lines().position(names) {
+        if graph.excluded_by(path).iter().any(|o| o.gate.as_deref() == Some(gate) && active(&o.path)) {
+            continue;
+        }
+        match estate_src.lines().position(|l| names(path, l)) {
             Some(i) => items.push((
                 format!("`{}` is true and `{}` is still commented out — uncomment it, or `satz interview` will", gate, path),
                 Some(i as u32 + 1),
@@ -7471,7 +7520,7 @@ mod init_template {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("C0example.satz");
-        crate::template::generate_template(&crate::template::tests::args("first.admin", "example.com"), &path).unwrap();
+        crate::template::generate_template(&crate::template::tests::args("first.admin", "example.com"), Some(&crate::template::tests::shipped()), &path).unwrap();
         let src = std::fs::read_to_string(&path).unwrap();
 
         let reg = super::corpus::registry();
@@ -8598,7 +8647,8 @@ action "step" {
         let fe = satz_core::pipeline::compile_estate("tail.satz", src, &resolver, &|p| Err(format!("no {}", p)))
             .unwrap_or_else(|e| panic!("front-end failed: {}", e));
         let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
-        compile_tail(&fe, &resolver, &reg, &cfg, level, Path::new("tail.satz"), src)
+        let graph = crate::pack_graph::Shipped::Graph(crate::template::tests::shipped());
+        compile_tail(&fe, &resolver, &reg, &cfg, &graph, level, Path::new("tail.satz"), src)
     }
 
     fn line_of(needle: &str) -> u32 {
@@ -8646,7 +8696,7 @@ action "step" {
         env.insert("use_budget".to_string(), serde_yaml::Value::Bool(true));
         let unadopted = |src: &str| {
             let mut f = Vec::new();
-            unadopted_pack_findings(Path::new("e.satz"), src, &env, "warn", &mut f);
+            unadopted_pack_findings(&crate::template::tests::shipped(), Path::new("e.satz"), src, &env, "warn", &mut f);
             f.into_iter().filter(|f| f.kind == Kind::UnadoptedPack).map(|f| (f.message, f.line)).collect::<Vec<_>>()
         };
         assert_eq!(unadopted("use \"presets/organization-budget.local.satz\" when use_budget\n"), []);
@@ -8654,6 +8704,43 @@ action "step" {
         assert_eq!(commented.len(), 1, "{commented:?}");
         assert!(commented[0].0.contains("still commented out"), "{}", commented[0].0);
         assert_eq!(commented[0].1, Some(2));
+    }
+
+    /// The S1 model's two spellings exclude one another under one gate: an estate on the
+    /// two-file form is not missing `s1-security-groups`, and the two files, written by
+    /// hand, are never looked for in an estate on the one-file form.
+    #[test]
+    fn packs_that_exclude_one_another_under_one_gate_are_alternatives() {
+        let mut env = satz_core::pipeline::Env::new();
+        env.insert("security_model_s1".to_string(), serde_yaml::Value::Bool(true));
+        let unadopted = |src: &str| {
+            let mut f = Vec::new();
+            unadopted_pack_findings(&crate::template::tests::shipped(), Path::new("e.satz"), src, &env, "warn", &mut f);
+            f.into_iter().map(|f| f.message).collect::<Vec<_>>()
+        };
+        let split = "google_cloud_identity_group {\n  use \"presets/security-group-models/s1-group-definitions.satz\"\n}\n\
+                     google_organization_iam_member {\n  use \"presets/security-group-models/s1-group-permissions.satz\"\n}\n";
+        assert_eq!(unadopted(split), Vec::<String>::new());
+        assert_eq!(unadopted("use \"presets/security-group-models/s1-security-groups.satz\" when security_model_s1\n"), Vec::<String>::new());
+        let neither = unadopted("");
+        assert_eq!(neither.len(), 1, "{neither:?}");
+        assert!(neither[0].contains("s1-security-groups.satz"), "{}", neither[0]);
+    }
+
+    /// Presets without `pack-graph.json`: the checks that read the menu are skipped, and
+    /// one note says why — never a crash, never silence.
+    #[test]
+    fn a_missing_pack_graph_is_one_note() {
+        let reg = super::corpus::registry();
+        let resolver = EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("tail.satz", ESTATE, &resolver, &|p| Err(format!("no {}", p))).unwrap();
+        let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        let graph = crate::pack_graph::Shipped::Missing(PathBuf::from("presets/pack-graph.json"));
+        let t = compile_tail(&fe, &resolver, &reg, &cfg, &graph, "warn", Path::new("tail.satz"), ESTATE);
+        let menu: Vec<_> = t.findings.iter().filter(|f| f.kind == Kind::UnadoptedPack).collect();
+        assert_eq!(menu.len(), 1, "{menu:?}");
+        assert_eq!(menu[0].severity, Severity::Note);
+        assert!(menu[0].message.contains("presets/pack-graph.json is not here"), "{}", menu[0].message);
     }
 
     #[test]

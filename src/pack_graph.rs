@@ -361,7 +361,7 @@ fn check(g: &PackGraph) -> Vec<Finding> {
     out.extend(provider_is_ancestor(g));
 
     // 7. every block a line is placed in exists in the estate satz writes
-    let skeleton = template::skeleton("x");
+    let skeleton = template::bare_skeleton();
     let mut place: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for n in g.nodes.iter().filter(|n| n.order.is_some() && n.by_hand.is_none()) {
         let order = n.order.unwrap_or_default();
@@ -546,6 +546,64 @@ fn provider_is_ancestor(g: &PackGraph) -> Vec<Finding> {
     out
 }
 
+/// The pack graph an estate's presets arrived with, as the compile reads it: the menu-
+/// dependent checks run over `Graph`, and the other two are one finding each.
+pub(crate) enum Shipped {
+    Graph(PackGraph),
+    /// `<presets_dir>/pack-graph.json` is not there
+    Missing(PathBuf),
+    /// it is there and does not read as a graph; why
+    Unreadable(String),
+}
+
+/// `<presets_dir>/pack-graph.json`: `None` when there is none, an error when it does not
+/// read as a pack graph.
+pub(crate) fn read(presets_dir: &Path) -> Result<Option<PackGraph>, BoxErr> {
+    let path = presets_dir.join(GRAPH_FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {}", path.display(), e).into()),
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| format!("{}: not a pack graph this satz reads ({}) — `satz self-update`, then `satz get-presets`", path.display(), e).into())
+}
+
+/// [`read`], for the compile: never an error, so the menu never stops a compile.
+pub(crate) fn shipped(presets_dir: &Path) -> Shipped {
+    match read(presets_dir) {
+        Ok(Some(g)) => Shipped::Graph(g),
+        Ok(None) => Shipped::Missing(presets_dir.join(GRAPH_FILE)),
+        Err(e) => Shipped::Unreadable(e.to_string()),
+    }
+}
+
+/// [`read`], for a command that WRITES pack lines (`init`, `interview --create`,
+/// `merge-presets`): a graph that places a pack in a block this binary's scaffold does not
+/// have is refused here, before anything is written.
+pub(crate) fn for_writing(presets_dir: &Path) -> Result<Option<PackGraph>, BoxErr> {
+    let Some(g) = read(presets_dir)? else { return Ok(None) };
+    let skeleton = template::bare_skeleton();
+    for n in g.lines() {
+        if let template::Place::Block(b) = template::place(n) {
+            if template::insert_into_block(&skeleton, b, "// pack-graph marker", "").is_none() {
+                return Err(format!("{}: {}", presets_dir.join(GRAPH_FILE).display(), template::unknown_block(&n.path, b)).into());
+            }
+        }
+    }
+    Ok(Some(g))
+}
+
+/// What a command that writes an estate says when the presets carry no graph: the file is
+/// written without pack lines, and these two commands write them.
+pub(crate) fn no_menu_note(presets_dir: &Path) -> String {
+    format!(
+        "no pack menu written: {} is not here — `satz get-presets`, then `satz merge-presets`, write the pack lines",
+        presets_dir.join(GRAPH_FILE).display()
+    )
+}
+
 /// Build, check and write (or with `check`, compare) `<presets_dir>/pack-graph.json`.
 pub(crate) fn run(presets_dir: &Path, check: bool) -> Result<(), BoxErr> {
     let all = doc_packs::packs(presets_dir)?;
@@ -701,35 +759,5 @@ mod tests {
             "offers \"presets/a.satz\" {\n  when = use_a\n}\n\noffers \"presets/b.satz\" {\n  when     = use_b\n  requires = [\"presets/a.satz\"]\n}\n",
         );
         assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", A), ("b.satz", B_READS_A)]), vec![8]);
-    }
-
-    /// Until the estate writers read the graph, `PACK_LINES` and the map's entries say
-    /// the same thing twice; this keeps them equal for as long as both exist.
-    #[test]
-    fn the_offers_entries_and_pack_lines_agree() {
-        let presets = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
-        let src = std::fs::read_to_string(presets.join(MAP)).unwrap();
-        let map = satz_core::satz::parse(&src).unwrap();
-        let offered: Vec<(String, String, String, String)> = map
-            .offers
-            .iter()
-            .filter(|o| o.by_hand.is_none())
-            .map(|o| {
-                let at = match (&o.block, o.after_scaffold) {
-                    (Some(b), _) => b.clone(),
-                    (None, true) => template::AFTER_SCAFFOLD.to_string(),
-                    (None, false) => String::new(),
-                };
-                (o.path.clone(), o.when.clone().unwrap_or_default(), o.phase.clone().unwrap_or_default(), at)
-            })
-            .collect();
-        let lines: Vec<(String, String, String, String)> = template::PACK_LINES
-            .iter()
-            .map(|(p, g, phase, at)| (p.to_string(), g.to_string(), phase.replace("\n// ", "\n"), at.to_string()))
-            .collect();
-        assert_eq!(offered.len(), lines.len(), "the map offers {} lines, PACK_LINES has {}", offered.len(), lines.len());
-        for (o, l) in offered.iter().zip(&lines) {
-            assert_eq!(o, l, "the map's entry and PACK_LINES disagree");
-        }
     }
 }

@@ -71,10 +71,12 @@ becomes the choice `use_project_cis_log_alerts`, off by default.
 
 - The map stops being "the choices and nothing else": it is the library's menu, and a
   new pack cannot reach the library without an entry — `pack-graph` names the file.
-- Until the estate writers read the graph, `PACK_LINES` and the entries say the same
-  thing twice; a test holds them equal, and the follow-up deletes `PACK_LINES`. After
-  that, the lines an estate gets come from the graph that arrived with its packs, so a
-  pack newer than the binary gets its line.
+- The estate writers read the graph: `init`, `interview --create` and `merge-presets`
+  write the lines, and the compile checks them, from the `pack-graph.json` in the
+  estate's `presets_dir` (for `merge-presets`, its pristine source's). The lines an
+  estate gets come from the graph that arrived with its packs, so a pack newer than the
+  binary gets its line. With no graph there, `init` writes no pack menu and the compile
+  skips the menu's checks with one note.
 - An entry emits nothing, so `check-presets` reports a changed entry the way it reports
   a changed question, and `merge-presets` updates the map without forking it. The
   entries are compared through their own canonical form (`canonical_offers`), not the
@@ -86,7 +88,8 @@ becomes the choice `use_project_cis_log_alerts`, off by default.
   runner grant compiles without the runner when the estate binds
   `ci_runner_service_account` itself.
 - Every check needs the skeleton's blocks, which are the binary's; a block the graph
-  names that the binary's scaffold lacks is a failed check, not a panic at `init`.
+  names that the binary's scaffold lacks is a failed check, and `init`, `interview
+  --create` and `merge-presets` refuse such a graph before they write anything.
 
 ## Pros and cons of the options
 

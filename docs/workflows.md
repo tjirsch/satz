@@ -64,7 +64,10 @@ Five steps, in this order. Each one is a section below.
    … --create` to be asked for them one at a time. Either way the file carries the same
    commented pack menu, so a pack is added by uncommenting its line, by answering its
    question, or by `satz merge-presets` writing the line for a pack the library gained
-   since. A pack scoped to a block — the audit logsink and the CIS log alerts to the
+   since. The menu is written from `presets/pack-graph.json`, the pack graph that ships
+   with the presets; with no graph in `presets_dir` the file is written without pack
+   lines, and `satz get-presets` then `satz merge-presets` write the whole menu where it
+   goes. A pack scoped to a block — the audit logsink and the CIS log alerts to the
    infrastructure folder, essential contacts to its own resource map — has its line
    written inside that block, where its resources belong. A pack that reads a param of
    one of those two logging packs — Sentinel, which defaults its project to the
@@ -665,6 +668,11 @@ preserves your current content as `X.local.satz`, repoints the estate's `use` at
 that fork, proves the repoint by transpile identity, refreshes the pristine
 `X.satz`, and writes `X.diff.satz` — the exact delta adopting upstream would make.
 Comment and formatting churn upgrades silently instead of forking.
+It also writes the commented `use` line for every pack the pristine source's
+`pack-graph.json` offers and the estate has no line for, so `--pristine-dir <dir>`
+writes the lines of THAT directory's graph. A pristine source without a graph gets a
+note and no line; a graph that places a pack in a block this binary's scaffold does not
+have is refused before anything changes.
 
 ### When a release moves a pack
 

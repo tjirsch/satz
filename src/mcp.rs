@@ -1166,8 +1166,21 @@ impl SatzMcp {
                 return Ok(Err(r));
             }
             let stem = estate.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
-            if let Err(e) = crate::fsx::write_generated_satz(&estate, &crate::template::skeleton(stem)) {
+            let presets_dir = std::path::Path::new(&open.runtime.presets_dir);
+            let graph = match crate::pack_graph::for_writing(presets_dir) {
+                Ok(g) => g,
+                Err(e) => return Ok(Err(refused(e.to_string()))),
+            };
+            let skeleton = match crate::template::skeleton(stem, graph.as_ref()) {
+                Ok(s) => s,
+                Err(e) => return Ok(Err(refused(e))),
+            };
+            if let Err(e) = crate::fsx::write_generated_satz(&estate, &skeleton) {
                 return Ok(Err(refused(format!("{}: {}", estate.display(), e))));
+            }
+            if graph.is_none() {
+                // stderr: over MCP stdout is the protocol
+                eprintln!("{}", crate::pack_graph::no_menu_note(presets_dir));
             }
             created = true;
         }

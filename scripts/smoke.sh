@@ -63,7 +63,8 @@ seed_schemas() {
   cp "$root/tests/schemas/google.json" "$1/schemas/google.json"
   cp "$root/tests/schemas/google.json" "$1/schemas/google-beta.json"
 }
-rm -rf tmp/init && mkdir -p tmp/init && seed_schemas tmp/init
+# the presets beside the estate carry the pack graph, which is where the menu comes from
+rm -rf tmp/init && mkdir -p tmp/init && seed_schemas tmp/init && ln -s "$root/presets" tmp/init/presets
 (cd tmp/init && "$satz" init --customer-id C0example --customer-shortname acme \
   --billing-account-infra 012345-6789AB-CDEF01 --default-region europe-west3 \
   --customer-organization-id 123456789012 --customer-domain example.com \
@@ -84,6 +85,12 @@ grep -q 'nothing could be derived' tmp/init-bare.txt \
 # the pack menu is written commented out: an init estate compiles with no presets fetched
 grep -q '// use "presets/estate-map.satz"' tmp/init/yaml/C0example.satz \
   || fail "satz init wrote no pack menu — an estate nothing can add a pack to"
+# with no presets there is no graph: no menu, and init says which two commands write it
+if grep -q '// use "presets/estate-map.satz"' tmp/init-bare/yaml/C0bare.satz; then
+  fail "an init estate with no pack graph must carry no pack menu"
+fi
+grep -q 'satz get-presets`, then `satz merge-presets`, write the pack lines' tmp/init-bare.txt \
+  || fail "init without a pack graph must say what writes the menu:\n$(cat tmp/init-bare.txt)"
 if grep -qE '^use "presets/' tmp/init/yaml/C0example.satz; then
   fail "an init estate must compile with no presets fetched — bootstrap is the next command"
 fi
