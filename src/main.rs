@@ -3322,7 +3322,9 @@ fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
 ///
 /// The one thing it adds: `plan` and `apply` replace an org policy that the
 /// state holds with rules and the estate now declares reset
-/// (`reset_replacements`, ADR 0011), and say so.
+/// (`reset_replacements`, ADR 0011), and say so. The emitted `main.tf` names the
+/// same `-replace` in a comment above each policy declared reset, for an apply
+/// that does not run through satz.
 ///
 /// It does NOT transpile first: `hcl/` is generated, but coupling generation to
 /// the deploy step would change what `plan` means and hide a diff the operator
