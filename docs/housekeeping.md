@@ -224,6 +224,7 @@ second kind.
 | `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
 | `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every PR and every push to `main` |
+| `mcp-probe.py` | gate | every tool of `satz mcp` over raw JSON-RPC, per capability group: no stdout byte that is not JSON-RPC, results valid against their published schema, refusals as prose, each tool's largest result. Run by hand, not by CI |
 | `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it emitted before. Not run by CI — CI has no estates. Run it after every release |
 | `update_constraint_equivalents.py` | helper | refresh `presets/managed-constraint-equivalents.txt` — which managed constraint replaces which legacy one — from a live organisation's `ListConstraints` |
 | `update_schema_fixture.py` | helper | keep `tests/schemas/google.json` in step with the types the packs emit; `--check` names what is missing |
@@ -305,6 +306,70 @@ cancels the run it supersedes, in this workflow and in the privacy gate; a run o
 `main` is never cancelled or queued behind another. The Rust jobs restore the cargo
 registry and the dependencies' build from `Swatinem/rust-cache`, so a run compiles only
 satz's own crates. A new command that reads an estate gets a step here in the same PR.
+
+## `mcp-probe.py` — every MCP tool through the raw pipe
+
+`satz mcp` is driven by clients, not by hand, so the probe is the client. It starts the
+server, speaks MCP `2025-06-18` to it and reads its stdout pipe itself. It does not use
+an MCP SDK: an SDK drops a line that is not JSON, so a test built on one passes while a
+real client's stream is corrupt.
+
+```bash
+uv run scripts/mcp-probe.py                          # offline, every group
+uv run scripts/mcp-probe.py --groups read            # only what read allows
+uv run scripts/mcp-probe.py --tools satz_triage,satz_fmt
+uv run scripts/mcp-probe.py --mode net               # + upstream presets, a real Checkov
+uv run scripts/mcp-probe.py --mode live --live-dir <estate-checkout> --live-estate <main>.satz
+```
+
+`--satz` names the binary (default `target/release/satz`, which `cargo build --release`
+writes); `--work` the directory it stages into and logs to (default a new temporary
+one), which holds each server's stderr and `report.json`, every result as data.
+
+**What each call is checked for.** Any stdout line that is not a JSON-RPC message fails
+the run, charged to the call in flight. A success carries `structuredContent` that
+validates against the tool's `outputSchema` and equals the JSON in its text block. A
+refusal is an `isError` result whose text is prose. A missing or mistyped argument is
+refused, and the probe reports the form — `isError` or `invalid_params`. Each call's
+duration and size are recorded.
+
+**Where MCP `2025-06-18` is not met.** The protocol requires an object `outputSchema`
+and an object `structuredContent`. `KNOWN_DEVIATIONS` in the script lists the tools
+that do not meet it (`satz_triage`, whose rows are an array); a deviation it lists is
+reported as `KNOWN`, one it does not list fails, and one it lists that no longer occurs
+fails too, so the list shrinks with the fix.
+
+**The servers.** One `satz mcp` process per concern, each over a copy of `presets/`,
+`tests/smoke/` and `tests/schemas/` staged into one root, so `presets_dir` sits inside
+`--root`, and each staged root a git repository, because `merge-presets` edits an estate
+only where the edit can be undone:
+
+| server | started with | what it proves |
+|---|---|---|
+| `main` | the selected groups | the exact `tools/list` set and each tool's schemas; a call before `satz_open` refused; a missing and a mistyped argument; then each tool once at the level it needs — the interview created and answered, remediation items annotated, transpile and then Checkov over what it wrote; `satz_adopt` refused without credentials (`offline`) |
+| `gp` | `read,write` | `get-presets` from a pristine library into an estate that has none, then `merge-presets` report and write |
+| `ceiling` | `--allow read` | every write and exec tool refused naming the group; every path outside the root refused, an existing and a missing one alike |
+| `gated` | `--self-gated` | `satz_restrict` narrows and never widens again |
+| `identity` | `--allow read` | `runs_as` and `satz_whoami` follow each estate opened in turn; an estate with a mode the compile refuses, or cloud mode without its account, is refused by every call that would act as it |
+| `live` | `--allow read` | `--mode live` only: whoami online answers `runs_as`, report-compliance reads the inventory, adopt resolves without `execute` |
+
+**The modes.** Each includes the one before.
+
+| mode | needs | adds |
+|---|---|---|
+| `offline` | nothing: the ADC path names a file that does not exist, and Checkov is a stand-in on `PATH` that prints a fixed report | every tool that works without credentials, and `satz_adopt`'s refusal without them |
+| `net` | the network | `satz_check_presets` against the upstream library (one GitHub API request), `satz_scan_checkov` with a real Checkov — `checkov`, else `uvx checkov`; skipped, by name, when neither is on `PATH` |
+| `live` | ADC that may impersonate the estate's IaC service account; `--live-dir`, `--live-estate`, `--live-config` (default `config.toml`) | the `live` server over a copy of that estate. It writes nothing to the organisation. Run it on the test organisation, never on a customer's |
+
+**The report.** After the per-call lines come the stray stdout lines, the protocol
+deviations, how each malformed argument was refused, and a table of each tool's largest
+result in bytes and in tokens estimated at four bytes each — the number
+`MAX_MCP_OUTPUT_TOKENS` is set from ([satz mcp](mcp.md#result-size)). The exit status
+is non-zero on any failed check or stray line.
+
+**When to run it.** CI does not: run `offline` before a pull request that changes a tool,
+its arguments or its report type, and `live` on the test organisation before a release
+that changes a live tool.
 
 ## `fleet-v1.sh` — every estate on the current binary
 
