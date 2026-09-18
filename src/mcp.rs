@@ -266,6 +266,17 @@ pub(crate) struct EstateArg {
     pub estate: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct ScanArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Also write Checkov's JSON report here, a path under the server's root — the
+    /// file `satz_remediation_items` and `satz_remediation_annotate` take as
+    /// `checkov`. Writing it needs the 'write' capability as well.
+    #[serde(default)]
+    pub out: Option<String>,
+}
 
 /// Which questions `satz_interview` returns.
 #[derive(Debug, Default, Clone, Copy, PartialEq, serde::Deserialize, schemars::JsonSchema)]
@@ -386,11 +397,12 @@ pub(crate) struct RemediationArgs {
     pub framework: String,
     /// Prowler 5 OCSF export (`--output-formats json-ocsf`), a path under the server's root
     pub prowler: String,
-    /// Also run Checkov over hcl_dir and join its findings — needs the 'exec'
-    /// capability. It changes the dossier and its hash: author and render with the
-    /// same choice.
+    /// A Checkov JSON report, a path under the server's root — what
+    /// `satz_scan_checkov` writes to its `out`, or `checkov -o json` — whose findings
+    /// join the dossier. Read, never run. It changes the dossier and its hash: author
+    /// and render with the same report.
     #[serde(default)]
-    pub checkov: bool,
+    pub checkov: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -402,9 +414,10 @@ pub(crate) struct AnnotateArgs {
     pub framework: String,
     /// Prowler 5 OCSF export, a path under the server's root — the one the items came from
     pub prowler: String,
-    /// Whether the items were built with Checkov joined (needs 'exec' when true)
+    /// The Checkov JSON report the items were built with, when they were — a path
+    /// under the server's root
     #[serde(default)]
-    pub checkov: bool,
+    pub checkov: Option<String>,
     /// The run directory to write into, a path under the server's root; created when absent
     pub out: String,
     /// The dossier sha256 the values were written against, from `satz_remediation_items`
@@ -580,6 +593,9 @@ pub(crate) struct ScanReport {
     pub skipped: u64,
     pub resource_count: u64,
     pub findings: Vec<ScanFinding>,
+    /// where Checkov's JSON report was written, when `out` named a path
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
@@ -1403,32 +1419,36 @@ impl SatzMcp {
     }
 
     /// The dossier for a remediation tool: the estate's compile, the Prowler export,
-    /// and Checkov when asked for (which needs 'exec').
-    async fn remediation(
+    /// and a Checkov report when one is named. Both reports are files a scan already
+    /// wrote; nothing runs here, which is what lets `satz_remediation_items` be
+    /// read-only — a client runs a read-only tool without asking.
+    fn remediation(
         &self,
         estate: Option<&str>,
         framework: &str,
         prowler: &str,
-        checkov: bool,
+        checkov: Option<&str>,
     ) -> Result<crate::compliance::RemediationRun, CallToolResult> {
-        if checkov {
-            self.permits(Group::Exec)?;
-        }
         let (open, estate) = self.target(estate)?;
         let prowler = self.file(prowler)?;
-        let (manifest, claims, _org) = self.inputs(&open, &estate)?;
-        let report = if checkov {
-            let dir = self.confine(PathBuf::from(&open.runtime.hcl_dir))?;
-            match tokio::task::spawn_blocking(move || crate::scan::run(&dir)).await {
-                Ok(Ok(r)) => Some(r),
-                Ok(Err(e)) => return Err(refused(format!("checkov: {}", e))),
-                Err(e) => return Err(refused(format!("checkov did not finish: {}", e))),
+        let checkov = match checkov {
+            Some(path) => {
+                let path = self.file(path)?;
+                let report = crate::scan::read(&path).map_err(|e| refused(format!("checkov: {}", e)))?;
+                Some((path, report))
             }
-        } else {
-            None
+            None => None,
         };
-        crate::compliance::remediation_run(framework, &open.runtime.presets_dir, &claims, &manifest, &estate, &prowler, report.as_ref())
-            .map_err(|e| refused(format!("remediation: {}", e)))
+        let (manifest, claims, _org) = self.inputs(&open, &estate)?;
+        let report = checkov.as_ref().map(|(_, r)| r);
+        let mut run =
+            crate::compliance::remediation_run(framework, &open.runtime.presets_dir, &claims, &manifest, &estate, &prowler, report)
+                .map_err(|e| refused(format!("remediation: {}", e)))?;
+        // The workbook names the Prowler export it read; it names the Checkov report too.
+        if let (Some(line), Some((path, _))) = (run.checkov.as_mut(), &checkov) {
+            line.push_str(&format!(" — {}", path.display()));
+        }
+        Ok(run)
     }
 
     #[tool(
@@ -1437,7 +1457,9 @@ impl SatzMcp {
         description = "The remediation dossier's items for an estate and a Prowler export: every finding \
                        triaged, deduplicated and joined per (control, resource), with the dossier sha256 \
                        authored values must name. The worklist for the [Authored] columns — write them back \
-                       with satz_remediation_annotate. Offline; `checkov: true` joins a Checkov run and needs 'exec'.",
+                       with satz_remediation_annotate. Offline and read-only: `checkov` names a Checkov JSON \
+                       report under the root — the one satz_scan_checkov writes to its `out` — and its findings \
+                       join the dossier; nothing is run.",
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn remediation_items(
@@ -1447,7 +1469,7 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read) {
             return Ok(Err(r));
         }
-        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov).await {
+        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov.as_deref()) {
             Ok(r) => r,
             Err(r) => return Ok(Err(r)),
         };
@@ -1466,7 +1488,8 @@ impl SatzMcp {
         output_schema = rmcp::handler::server::tool::schema_for_output::<AnnotateReport>(),
         description = "Write authored values for dossier items into <out>/authored.json — merged per item id \
                        with what is on file — and render the run there: dossier.json, findings.csv, \
-                       findings.xlsx with the [Authored] columns filled, meta.json. Refused when dossier_sha256 \
+                       findings.xlsx with the [Authored] columns filled, meta.json. Takes the `prowler` export \
+                       and the `checkov` report the items were built from. Refused when dossier_sha256 \
                        is not the current dossier's, an id is unknown, or an entry lacks authored_by or \
                        authored_at. Needs the 'write' capability.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
@@ -1478,7 +1501,7 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Write) {
             return Ok(Err(r));
         }
-        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov).await {
+        let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov.as_deref()) {
             Ok(r) => r,
             Err(r) => return Ok(Err(r)),
         };
@@ -1720,18 +1743,35 @@ impl SatzMcp {
         description = "Run Checkov over the estate's emitted HCL (the hcl_dir satz_transpile writes) and return \
                        every failed check with the Satz block that declared the resource. Scans what is written: \
                        transpile first. Needs the 'exec' capability — it runs an external tool (checkov on PATH, \
-                       else uvx checkov).",
+                       else uvx checkov). `out` also writes Checkov's JSON report to that path under the root, \
+                       for satz_remediation_items and satz_remediation_annotate to read as `checkov`, and needs \
+                       'write' as well.",
         // Not read-only: it runs an external program, and `uvx` downloads it first. A
         // client runs a read-only tool without asking; this one it has to ask for.
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
     async fn scan_checkov(
         &self,
-        Parameters(args): Parameters<EstateArg>,
+        Parameters(args): Parameters<ScanArgs>,
     ) -> Result<Result<Json<ScanReport>, CallToolResult>, McpError> {
         if let Err(r) = self.permits(Group::Exec) {
             return Ok(Err(r));
         }
+        // Both refusals come before Checkov runs: a report that cannot be written is
+        // not worth the scan.
+        let out = match &args.out {
+            Some(out) => {
+                if let Err(r) = self.permits(Group::Write) {
+                    return Ok(Err(r));
+                }
+                // `out` need not exist yet; it is judged where creating it would lead
+                match self.confine(self.ctx.root.join(out)) {
+                    Ok(p) => Some(p),
+                    Err(r) => return Ok(Err(r)),
+                }
+            }
+            None => None,
+        };
         let (open, estate) = match self.target(args.estate.as_deref()) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
@@ -1747,11 +1787,17 @@ impl SatzMcp {
             Err(e) => return Ok(Err(refused(format!("scan: {}", e)))),
         };
         let scan_dir = dir.clone();
-        let report = match tokio::task::spawn_blocking(move || crate::scan::run(&scan_dir)).await {
+        let (report, json) = match tokio::task::spawn_blocking(move || crate::scan::run_with_json(&scan_dir)).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => return Ok(Err(refused(format!("scan: {}", e)))),
             Err(e) => return Ok(Err(refused(format!("scan: Checkov did not finish: {}", e)))),
         };
+        if let Some(out) = &out {
+            let written = out.parent().map_or(Ok(()), crate::fsx::create_dir_all).and_then(|()| crate::fsx::write(out, &json));
+            if let Err(e) = written {
+                return Ok(Err(refused(format!("scan: {}", e))));
+            }
+        }
         let findings = report
             .findings
             .iter()
@@ -1776,6 +1822,7 @@ impl SatzMcp {
             skipped: report.skipped,
             resource_count: report.resource_count,
             findings,
+            written: out.map(|p| p.display().to_string()),
         })))
     }
 
@@ -2346,6 +2393,40 @@ mod confine_tests {
         // inside the root the question is answered, and `create` writes there
         let made = interview(&f, json!({"estate": "new.satz", "create": true})).await.expect("created inside the root");
         assert!(made.created && f.root.join("yaml/new.satz").is_file(), "{made:?}");
+    }
+
+    /// Checkov runs in one tool and is read by another. `satz_scan_checkov` runs it,
+    /// and with `out` writes its report, so it needs `write` too and says so before
+    /// anything runs. `satz_remediation_items` is annotated read-only — a client runs
+    /// it without asking — so it runs nothing: it reads a report by its path, and a
+    /// `checkov: true` is refused rather than read as "no report".
+    #[tokio::test]
+    async fn checkov_runs_in_the_scan_tool_and_the_remediation_tools_read_its_report() {
+        let f = fixture("checkov");
+        let exec_only = SatzMcp::new(f.root.clone(), Level::parse("read,exec").unwrap(), false);
+        let args = serde_json::from_value(json!({"out": "evidence/checkov.json"})).unwrap();
+        match exec_only.scan_checkov(Parameters(args)).await.unwrap() {
+            Ok(_) => panic!("`out` writes a file, and this server does not grant write"),
+            Err(r) => assert!(text(&r).contains("needs 'write'"), "{}", text(&r)),
+        }
+        assert!(!f.root.join("evidence").exists(), "a refused scan wrote its report");
+
+        let tools = SatzMcp::tool_router().list_all();
+        let items = tools.iter().find(|t| t.name == "satz_remediation_items").expect("registered");
+        assert_eq!(items.annotations.as_ref().and_then(|a| a.read_only_hint), Some(true));
+        let bool_switch = json!({"framework": "cis-gcp-4.0", "prowler": "prowler.json", "checkov": true});
+        assert!(serde_json::from_value::<RemediationArgs>(bool_switch).is_err(), "`checkov` is a path, not a switch");
+
+        let opened = f.server.open(Parameters(serde_json::from_value(json!({"config": ".", "estate": "e.satz"})).unwrap())).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
+        std::fs::write(f.root.join("prowler.json"), "[]").unwrap();
+        let said = text(&f.server.remediation(None, "cis-gcp-4.0", "prowler.json", Some("absent.json")).err().expect("no such report"));
+        assert!(said.contains("absent.json") && said.contains("no such file"), "{said}");
+        let said = text(&f.server.remediation(None, "cis-gcp-4.0", "prowler.json", Some("prowler.json")).err().expect("not Checkov's"));
+        assert!(said.contains("not a Checkov JSON report"), "{said}");
+        let outside = f.base.join("outside/present.satz").display().to_string();
+        let said = text(&f.server.remediation(None, "cis-gcp-4.0", "prowler.json", Some(&outside)).err().expect("outside the root"));
+        assert!(said.contains("outside the server's root"), "{said}");
     }
 }
 

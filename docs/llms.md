@@ -287,7 +287,8 @@ The loop, in order:
    it after touching packs, claims or org policies.
 5. **`satz_transpile`** (needs the `write` capability) — writes `hcl/`.
    `satz_scan_checkov` (needs `exec`) then runs Checkov over it and names the Satz block
-   behind each failed check.
+   behind each failed check; with `out` (needs `write` too) it also writes Checkov's
+   report to that path, for the remediation tools.
 6. **`tofu plan` / `apply` — a human runs these.** No tool exposes them.
 7. **`satz_report_compliance`** — the live evidence view, afterwards.
 
@@ -295,8 +296,10 @@ The loop, in order:
 and its `dossier_sha256`; write the judgment per item — what and why in the customer's
 words, the fix, owner, effort, phase, quick win, risk acceptance — and hand it to
 `satz_remediation_annotate` with `authored_by` naming you and the tool, and
-`authored_at`. It renders the workbook. Never author against a hash you did not get
-from `satz_remediation_items` for the same Prowler export.
+`authored_at`. It renders the workbook. For the Checkov column, pass both tools the
+same `checkov` — the report `satz_scan_checkov` wrote to its `out`; they read it and run
+nothing. Never author against a hash you did not get from `satz_remediation_items` for
+the same Prowler export and Checkov report.
 
 **Adopting what exists.** Never invent an id: `satz_adopt` resolves every declared
 resource against the live organisation and says per row what it matched on; with

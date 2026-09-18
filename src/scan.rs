@@ -68,6 +68,12 @@ fn names_for(bin: &str, pathext: Option<String>) -> Vec<String> {
 
 /// Run Checkov (terraform framework, JSON) over `hcl_dir`.
 pub(crate) fn run(hcl_dir: &Path) -> Result<Report, String> {
+    run_with_json(hcl_dir).map(|(report, _)| report)
+}
+
+/// Run Checkov over `hcl_dir`: the report, and the JSON it was read from, as Checkov
+/// wrote it — the file `read` takes back.
+pub(crate) fn run_with_json(hcl_dir: &Path) -> Result<(Report, String), String> {
     if !hcl_dir.is_dir() {
         return Err(format!("hcl dir '{}' does not exist — run `transpile` first", hcl_dir.display()));
     }
@@ -82,7 +88,23 @@ pub(crate) fn run(hcl_dir: &Path) -> Result<Report, String> {
     if text.trim().is_empty() {
         return Err(format!("{} produced no output: {}", bin, String::from_utf8_lossy(&out.stderr).trim()));
     }
-    parse(&text).map_err(|e| format!("could not read Checkov's JSON: {}\n{}", e, String::from_utf8_lossy(&out.stderr).trim()))
+    let report = parse(&text)
+        .map_err(|e| format!("could not read Checkov's JSON: {}\n{}", e, String::from_utf8_lossy(&out.stderr).trim()))?;
+    Ok((report, text.into_owned()))
+}
+
+/// A Checkov JSON report already on disk — what `satz_scan_checkov` writes to its
+/// `out`, or `checkov -o json` run by hand. Reading it runs nothing.
+pub(crate) fn read(path: &Path) -> Result<Report, String> {
+    let text = crate::fsx::read_to_string(path).map_err(|e| e.to_string())?;
+    parse(&text).map_err(|e| {
+        format!(
+            "{}: not a Checkov JSON report ({}) — `satz_scan_checkov` with `out` writes one, \
+             as does `checkov -d <hcl_dir> --framework terraform -o json`",
+            path.display(),
+            e
+        )
+    })
 }
 
 /// Checkov's JSON: one object, or a list of them (one per framework).
@@ -92,6 +114,9 @@ pub(crate) fn parse(text: &str) -> Result<Report, String> {
         serde_json::Value::Array(a) => a.iter().collect(),
         o => vec![o],
     };
+    if objs.is_empty() {
+        return Err("an empty list — no framework's report in it".into());
+    }
     let mut r = Report::default();
     for o in objs {
         let s = o.get("summary").ok_or("no `summary`")?;
@@ -183,5 +208,32 @@ mod tests {
         assert!(text.contains("2 failed"), "{}", text);
         assert!(text.contains("CKV_GCP_62   main.tf:10 — Bucket should log access"), "{}", text);
         assert!(text.contains("https://example.com/g"), "{}", text);
+    }
+
+    /// The remediation tools read a scan that already ran, so a file that is not
+    /// Checkov's JSON is refused by its path, never read as "no findings".
+    #[test]
+    fn a_report_on_disk_is_read_and_one_that_is_not_checkovs_is_refused_by_its_path() {
+        let dir = std::env::temp_dir().join(format!("satz-scan-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("checkov.json");
+        std::fs::write(
+            &good,
+            r#"{"results":{"failed_checks":[{"check_id":"CKV_GCP_62","check_name":"Bucket should log access","resource":"google_storage_bucket.b","file_path":"/main.tf","file_line_range":[10,20]}]},"summary":{"passed":1,"failed":1,"skipped":0,"resource_count":2,"checkov_version":"3.3.15"}}"#,
+        )
+        .unwrap();
+        let r = read(&good).unwrap();
+        assert_eq!((r.failed, r.version.as_str(), r.findings[0].check_id.as_str()), (1, "3.3.15", "CKV_GCP_62"));
+
+        let prowler = dir.join("prowler.json");
+        for not_checkov in [r#"[{"status_code":"FAIL"}]"#, "[]", ""] {
+            std::fs::write(&prowler, not_checkov).unwrap();
+            let e = read(&prowler).unwrap_err();
+            assert!(e.contains("prowler.json") && e.contains("not a Checkov JSON report"), "{not_checkov:?}: {e}");
+        }
+
+        let e = read(&dir.join("absent.json")).unwrap_err();
+        assert!(e.contains("absent.json"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

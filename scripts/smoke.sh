@@ -1962,6 +1962,59 @@ python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-annot
 grep -q 'written through MCP' tmp/mcp-plan/findings.csv 2>/dev/null || fail "satz_remediation_annotate did not render the authored value:\n$(cat tmp/mcp-annotate.jsonl)"
 grep -q '"authored_by": "smoke via satz mcp"' tmp/mcp-plan/authored.json || fail "authored.json does not name the author"
 
+step "satz mcp: Checkov runs in satz_scan_checkov, and the read-only remediation tools read its report"
+# A client runs a read-only tool without asking, so satz_remediation_items runs
+# nothing: satz_scan_checkov (exec, and write for `out`) runs Checkov and writes its
+# report, and the worklist reads that file. Checkov itself is a stand-in on PATH that
+# prints a report — the scanner is not what this step judges.
+mkdir -p tmp/fake-checkov
+python3 - <<'PYEOF'
+import json
+report = {"check_type": "terraform", "results": {"failed_checks": [
+    {"check_id": "CKV_GCP_62", "check_name": "Bucket should log access", "resource": "google_storage_bucket.state",
+     "file_path": "/main.tf", "file_line_range": [1, 2], "guideline": None}]},
+    "summary": {"passed": 3, "failed": 1, "skipped": 0, "parsing_errors": 0, "resource_count": 4, "checkov_version": "3.2.0"}}
+open("tmp/checkov-fixture.json", "w").write(json.dumps(report))
+PYEOF
+printf '#!/bin/sh\ncat "%s/tmp/checkov-fixture.json"\nexit 1\n' "$PWD" > tmp/fake-checkov/checkov
+chmod +x tmp/fake-checkov/checkov
+rm -f tmp/checkov-report.json
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_scan_checkov","arguments":{"out":"tmp/checkov-report.json"}}}'
+} > tmp/mcp-scan-in.jsonl
+PATH="$PWD/tmp/fake-checkov:$PATH" python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write,exec < tmp/mcp-scan-in.jsonl > tmp/mcp-scan.jsonl 2>/dev/null || true
+cmp -s tmp/checkov-fixture.json tmp/checkov-report.json \
+  || fail "satz_scan_checkov with out did not write Checkov's report as Checkov wrote it:\n$(cat tmp/mcp-scan.jsonl)"
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_remediation_items","arguments":{"framework":"cis-gcp-4.0","prowler":"prowler.json","checkov":"tmp/checkov-report.json"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_remediation_items","arguments":{"framework":"cis-gcp-4.0","prowler":"prowler.json","checkov":true}}}'
+} > tmp/mcp-ck-in.jsonl
+python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-ck-in.jsonl > tmp/mcp-ck.jsonl 2>/dev/null || true
+python3 - <<'PYEOF' || fail "the Checkov report did not travel from satz_scan_checkov to satz_remediation_items"
+import json
+scan = {d["id"]: d for d in (json.loads(l) for l in open("tmp/mcp-scan.jsonl") if l.strip()) if "id" in d}
+s = scan[3]["result"]["structuredContent"]
+assert s["written"].endswith("checkov-report.json") and s["checkov_version"] == "3.2.0", s
+assert s["findings"][0]["declared_at"], "the finding was not pointed at the Satz source"
+msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/mcp-ck.jsonl") if l.strip()) if "id" in d}
+tools = {t["name"]: t for t in msgs[3]["result"]["tools"]}
+assert tools["satz_remediation_items"]["annotations"]["readOnlyHint"] is True
+assert tools["satz_scan_checkov"]["annotations"]["readOnlyHint"] is False
+# at the read level: the report is read, and its finding joins the dossier
+items = msgs[4]["result"]["structuredContent"]["items"]
+assert any(src.get("scanner") == "checkov" and src["check_id"] == "CKV_GCP_62" for i in items for src in i["sources"]), items[:2]
+# a switch is not a report: refused, never read as "no Checkov"
+bad = msgs[5]
+assert "error" in bad or bad["result"].get("isError"), bad
+PYEOF
+
 step "satz mcp: one server works through estates in turn, each as its own identity"
 # The identity a live tool runs as is invisible in its output, so it is asserted
 # here. Two cloud-mode estates with DIFFERENT service accounts, opened in turn in
