@@ -1,6 +1,6 @@
 # 0028 — a pack carries its own resource type, and a moved pack repoints an estate's lines
 
-- **Status:** accepted
+- **Status:** accepted; supersedes ADR 0007's "the CIS baseline is not a choice"
 - **Date:** 2026-09-17
 - **Shipped in:** the release that follows
 

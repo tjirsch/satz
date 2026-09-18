@@ -332,6 +332,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 
 | choice | default | pack |
 |---|---|---|
+| `use_cis_baseline` | on | `cis/CIS-GCP-Foundation-4.0` — the thirty organisation policies the estate exists for; its opt-in extensions and their dry-run twins are the baseline's own questions |
 | `security_model` (oneof) | S1 | `security-group-models/s1-security-groups` or `s2-security-groups` |
 | `use_audit_logsink` | on | `monitoring/organization-audit-logsink`, in the infrastructure folder |
 | `use_central_alerts` | on | `monitoring/organization-cis-log-alerts-central`, beside it — needs the archive |
@@ -349,11 +350,13 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_sentinel_auditlogs` | follows `use_sentinel` | `integrations/microsoft-sentinel-auditlogs`, asked only when Sentinel is on |
 | `use_sentinel_network_logs` | follows `use_sentinel` | `integrations/microsoft-sentinel-network-logs` — flow logs, firewall, DNS, NAT: free until the feature is enabled |
 | `use_verification_runner` | off | `ci/verification-runner` and its grant, the customer-hosted shape |
+| `use_exemption_tag` | off | `exemptions/exemption-tag` — the tag an exemption is bound to; it exempts nothing on its own |
 
-**Not a choice:** the CIS baseline — the skeleton always uses it, and its opt-in
-extensions are the baseline pack's own questions. **Not on the map:** the per-project
-alert pack, Defender's plan fragments, the MSP-hosted runner shape; each is wired by
-hand, and the map's header says so.
+The CIS baseline is the map's first choice: the skeleton writes its line commented under
+its phase, like every pack's, and answering `use_cis_baseline` yes puts it in. It is
+asked rather than assumed because its thirty policies reach the organisation in one
+apply. **Not on the map:** the per-project alert pack, Defender's plan fragments, the
+MSP-hosted runner shape; each is wired by hand, and the map's header says so.
 
 ## security-group-models/
 
