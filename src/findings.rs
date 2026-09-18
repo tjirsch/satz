@@ -31,6 +31,11 @@ pub(crate) enum Kind {
     Emit,
     WrittenReference,
     MissingRequired,
+    /// a resource declared outside the project or folder its type is scoped to, which
+    /// sets none itself
+    MissingScope,
+    /// an estate's `deployment_mode` that is neither `local` nor `cloud`
+    DeploymentMode,
     /// an emitted attribute whose value the provider refuses by its shape
     AttributeShape,
     Prerequisites,

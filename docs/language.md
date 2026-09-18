@@ -905,7 +905,8 @@ for you to pin.
 required** — an estate without it does not compile (`Missing 'terraform' block`).
 A backend may list both `local` and `gcs`; the emitter writes the ONE that
 `deployment_mode` selects (`"local"` / `"cloud"`, see the `migrate` command;
-an estate with no `deployment_mode` is `"local"`), never both:
+an estate with no `deployment_mode` is `"local"`), never both. Any other value is
+an error at the line that binds it, and the compile refuses:
 
 ```
 terraform {
@@ -1601,7 +1602,9 @@ An attested duty moves from `open: validate-then-lock` to
 control at partial.
 
 **Evidence history.** Every run appends `evidence/<framework>-<timestamp>.json`
-beside the config — `estate`, `framework`, `version`, `live`, `live_status`,
+beside the config; a run in a minute that already has a record takes the next free
+name, `…_002.json`, `…_003.json`, so no record is ever replaced and the history listed
+by name is in the order the runs wrote it. A record holds `estate`, `framework`, `version`, `live`, `live_status`,
 `warnings`, `verified_at`, `estate_commit` (`sha` + `dirty`) — and one row per
 control with `control`, `title`, `status`, `responsibility`, `duties`,
 `paraphrase`, `interpretation`, `prowler`, `checkov` and `witnesses`, each of
@@ -1737,6 +1740,7 @@ suppress … role on google_organization_iam_member "group:x@example.com": the a
 composition conflicts: <type>.<label>: 2 disagreeing definitions
   - a.satz:12
   - b.satz:40
+`deployment_mode = "boot"`: the mode is "local" (the state in a file) or "cloud" (the state in the gcs bucket), and no backend is emitted for anything else
 transpile: `estate.yaml` is the legacy YAML dialect — convert it: `satz import estate.yaml --kind estate`
 ```
 

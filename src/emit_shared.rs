@@ -440,7 +440,7 @@ pub(crate) fn lifecycle_block(v: &serde_yaml::Value, resolve: ValueResolver) -> 
 /// The generic resource emission: context inheritance (schema-driven narrowest
 /// scope), org-policy name/parent/spec handling, lifecycle, attr-vs-block by
 /// schema. Extracted verbatim from the walk's `transpile_single_resource`; both
-/// pipelines call THIS. Returns (block, import-id, label).
+/// pipelines call THIS.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn single_resource_block(
 tf_type: &str,
@@ -452,8 +452,9 @@ provider_alias: Option<&str>,
 billing_fallback: Option<&serde_yaml::Value>,
 resolve: ValueResolver,
 validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
-) -> Result<(hcl::Block, Option<String>, String), Box<dyn std::error::Error>> {
+) -> Result<ResourceBlock, Box<dyn std::error::Error>> {
     let label = res_name.replace("-", "_");
+    let mut needs_scope: Option<&'static str> = None;
     let mut block_builder = hcl::Block::builder("resource").add_label(tf_type).add_label(&label);
 
     if let Some(alias) = provider_alias {
@@ -606,15 +607,16 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
             }
         }
 
-        // Warning for missing required project/folder context if not set explicitly
+        // A project or folder the type takes, neither inherited nor set: handed back
+        // for the compile to report as a finding, which its caller renders or keeps.
         if !context_set {
             let needs_project = project_params.iter().any(|p| schema.block.attributes.contains_key(*p) && !attrs.contains_key(serde_yaml::Value::String(p.to_string())));
             let needs_folder = folder_params.iter().any(|f| schema.block.attributes.contains_key(*f) && !attrs.contains_key(serde_yaml::Value::String(f.to_string())));
 
             if needs_project {
-                eprintln!("Warning: Resource '{}' ({}) requires a 'project' parameter but is defined outside a project context and no explicit project is provided.", res_name, tf_type);
+                needs_scope = Some("project");
             } else if needs_folder {
-                eprintln!("Warning: Resource '{}' ({}) requires a 'folder' parameter but is defined outside a folder context and no explicit folder is provided.", res_name, tf_type);
+                needs_scope = Some("folder");
             }
         }
     }
@@ -767,7 +769,17 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
         validate(&final_attrs);
     }
 
-    Ok((block_builder.build(), import_id, label))
+    Ok(ResourceBlock { block: block_builder.build(), import_id, label, needs_scope })
+}
+
+/// One resource as `single_resource_block` emits it.
+pub(crate) struct ResourceBlock {
+    pub block: hcl::Block,
+    pub import_id: Option<String>,
+    pub label: String,
+    /// The scope the type takes that the resource neither sets nor inherits —
+    /// `project` or `folder` — for the compile to report as a finding.
+    pub needs_scope: Option<&'static str>,
 }
 
 

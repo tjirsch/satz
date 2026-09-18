@@ -114,6 +114,28 @@ pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> io::Result
     write_bytes(path, contents.as_ref())
 }
 
+/// Write a file that must not exist yet, created and written in one step: an existing
+/// file is never touched, and the error's kind is `AlreadyExists` — which a caller
+/// taking the next free name reads, and two processes cannot both pass, because the
+/// operating system creates the file or refuses it atomically. A `.satz` path is
+/// refused as `write` refuses it.
+pub fn write_new<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> io::Result<()> {
+    use std::io::Write;
+    let path = path.as_ref();
+    if is_satz_source(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to write '{}' through fsx::write_new: it writes no Satz text", path.display()),
+        ));
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| ctx("create file", path, e))?;
+    file.write_all(contents.as_ref()).map_err(|e| ctx("write file", path, e))
+}
+
 /// A Satz file satz composes whole — `init`, a skeleton, `import`,
 /// `export-organizational-policies`: written in the canonical layout, always.
 /// Text the parser refuses is written as it is and the error returned: the file
@@ -278,4 +300,15 @@ mod tests {
         write_verbatim(dir.join("y.satz"), "estate y\n").unwrap();
     }
 
+    #[test]
+    fn write_new_creates_and_never_replaces() {
+        let dir = scratch("new");
+        let p = dir.join("record.json");
+        write_new(&p, "first").unwrap();
+        let e = write_new(&p, "second").unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists, "{e}");
+        assert!(e.to_string().contains("record.json"), "{e}");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "first");
+        assert!(write_new(dir.join("x.satz"), "estate x\n").is_err(), "a .satz path is refused");
+    }
 }

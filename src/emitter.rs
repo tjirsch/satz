@@ -119,6 +119,21 @@ pub(crate) struct EmitOut {
     pub missing_required: Vec<MissingRequired>,
     /// Per emitted attribute the provider will refuse by its shape.
     pub wrong_shapes: Vec<WrongShape>,
+    /// Per resource declared outside the project or folder its type is scoped to, which
+    /// sets none itself.
+    pub unscoped: Vec<Unscoped>,
+}
+
+/// A resource whose type takes a `project` (or a `folder`), declared where no project
+/// (or folder) encloses it, and naming none itself. A project-scoped one goes to the
+/// project the provider block names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unscoped {
+    pub address: String,
+    /// `project` or `folder`
+    pub scope: &'static str,
+    /// where the declaring block starts
+    pub origin: Option<(String, u32)>,
 }
 
 /// A resource the provider will refuse: required arguments or blocks absent.
@@ -528,6 +543,8 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     // (address, file, line): where each directly-declared block came from, so
     // `adopt --write` can put a resolved id back into the source.
     let mut origins: Vec<(String, String, u32)> = Vec::new();
+    // (address, `project` | `folder`): a resource outside the scope its type takes
+    let mut unscoped: Vec<(String, &'static str)> = Vec::new();
     for (addr, slot) in &folded.slots {
         let entity = match slot {
             Slot::Ok(e) => e,
@@ -752,7 +769,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             (t, Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
                 let schema = ctx.registry.and_then(|r| r.find_resource(t)).map(|(_, s)| s);
                 let rc = res_ctx(path, ctx, folded);
-                let (block, import_id, label) = crate::emit_shared::single_resource_block(
+                let crate::emit_shared::ResourceBlock { block, import_id, label, needs_scope } = crate::emit_shared::single_resource_block(
                     t,
                     &addr.label,
                     attrs,
@@ -766,6 +783,9 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 .map_err(|e| e.to_string())?;
                 if let Some(id) = import_id {
                     imports.push(import_block(&format!("{}.{}", t, label), &id));
+                }
+                if let Some(scope) = needs_scope {
+                    unscoped.push((format!("{}.{}", t, label), scope));
                 }
                 blocks.push(block);
             }
@@ -845,6 +865,14 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             .collect(),
         None => Vec::new(),
     };
+    let unscoped: Vec<Unscoped> = unscoped
+        .into_iter()
+        .map(|(address, scope)| Unscoped {
+            origin: manifest.resources.get(&address).and_then(|r| r.origin.clone()),
+            address,
+            scope,
+        })
+        .collect();
     let main_tf = render_main_tf(blocks, &manifest)?;
     // dedup rendered import blocks, like the walk
     let mut import_body = hcl::Body::builder();
@@ -856,7 +884,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
     let imports_tf = hcl::to_string(&import_body.build()).map_err(|e| e.to_string())?;
-    Ok(EmitOut { main_tf, imports_tf, manifest, missing_required, wrong_shapes })
+    Ok(EmitOut { main_tf, imports_tf, manifest, missing_required, wrong_shapes, unscoped })
 }
 
 /// `main.tf` as text: the blocks as `hcl` renders a body of them, one blank line
@@ -1013,6 +1041,28 @@ fn emit_project(
     Ok(())
 }
 
+/// The estate's `deployment_mode`, which selects the backend `providers.tf` carries:
+/// `local` the state file, `cloud` the `gcs` bucket, and `local` when the estate binds
+/// none. Any other value is refused naming the two — the emitter has no backend for it.
+pub(crate) fn deployment_mode(env: &Env) -> Result<&'static str, String> {
+    match env.get("deployment_mode") {
+        None => Ok("local"),
+        Some(serde_yaml::Value::String(s)) if s == "local" => Ok("local"),
+        Some(serde_yaml::Value::String(s)) if s == "cloud" => Ok("cloud"),
+        Some(v) => {
+            let given = match v {
+                serde_yaml::Value::String(s) => format!("\"{}\"", s),
+                other => serde_yaml::to_string(other).map(|s| s.trim().to_string()).unwrap_or_default(),
+            };
+            Err(format!(
+                "`deployment_mode = {}`: the mode is \"local\" (the state in a file) or \"cloud\" \
+                 (the state in the gcs bucket), and no backend is emitted for anything else",
+                given
+            ))
+        }
+    }
+}
+
 /// providers.tf from the estate config + folded projects: terraform block
 /// (mode-matched backend, required_providers), root providers, one alias per
 /// project — the same shapes the walk emits, from the same shared builders.
@@ -1023,11 +1073,7 @@ pub(crate) fn emit_providers(
     provider_sources: &std::collections::HashMap<String, String>,
     provider_versions: &std::collections::HashMap<String, String>,
 ) -> Result<String, String> {
-    let get_env = |k: &str| env.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let mode = {
-        let m = get_env("deployment_mode");
-        if m.is_empty() { "local".to_string() } else { m }
-    };
+    let mode = deployment_mode(env)?;
     let deps = crate::emit_shared::GoogleProviderDeps {
         infra_project: env.get("infra_project_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
         impersonate: if mode == "cloud" {
@@ -1320,6 +1366,35 @@ mod backend_identity_tests {
             "the derived account was added beside the declared one:\n{}",
             out
         );
+    }
+
+    /// `local`, `cloud`, or nothing bound — which is `local`. Every other value, a string
+    /// or not, is refused naming what was bound, and `providers.tf` is not emitted
+    /// without the backend it would have selected.
+    #[test]
+    fn the_mode_is_local_or_cloud_and_nothing_else() {
+        let bound = |v: serde_yaml::Value| BTreeMap::from([("deployment_mode".to_string(), v)]);
+        assert_eq!(deployment_mode(&Env::new()), Ok("local"));
+        assert_eq!(deployment_mode(&bound("local".into())), Ok("local"));
+        assert_eq!(deployment_mode(&bound("cloud".into())), Ok("cloud"));
+        for (v, shown) in [
+            (serde_yaml::Value::from("boot"), "`deployment_mode = \"boot\"`"),
+            (serde_yaml::Value::from(""), "`deployment_mode = \"\"`"),
+            (serde_yaml::Value::from("Cloud"), "`deployment_mode = \"Cloud\"`"),
+            (serde_yaml::Value::Bool(true), "`deployment_mode = true`"),
+        ] {
+            let e = deployment_mode(&bound(v)).unwrap_err();
+            assert!(e.starts_with(shown) && e.contains("\"local\"") && e.contains("\"cloud\""), "{}", e);
+        }
+        let e = emit_providers(
+            &config_with_both_backends(),
+            &Folded { slots: BTreeMap::new() },
+            &bound("boot".into()),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
+        assert!(e.contains("\"boot\""), "{}", e);
     }
 
     /// Cloud mode without the two params that name the account: there is no

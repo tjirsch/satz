@@ -1256,8 +1256,9 @@ Row statuses: **verified** (all witnesses live), `verified* (n of m)` (some witn
 types have no live check), **unverified** (no witness could be checked — no ADC,
 inventory unavailable), **DRIFTED** (declared but not live),
 partial (open/attested duties), unmet, broken claim. Each run appends
-`evidence/<framework>-<timestamp>.json` beside the config — the evidence history —
-and writes the report (`--format pdf` typeset by satz itself, like `report-organizational-policies`). Without
+`evidence/<framework>-<timestamp>.json` beside the config — the evidence history, where
+a second run in the same minute takes the next free name (`…_002.json`) and no record is
+replaced — and writes the report (`--format pdf` typeset by satz itself, like `report-organizational-policies`). Without
 credentials or with `--no-live`, the report shows declared-estate status and
 records why: `live` says whether the inventory was actually read,
 `live_status` says why not (`skipped`, `no-organization-id`, `no-witnesses`,
@@ -1491,8 +1492,9 @@ Protocol over stdio. What the editor gets is what satz knows, from satz's own fr
   it that name it. Everything `transpile --check` checks is in — a required attribute
   the provider needs, a reference to a resource the estate does not emit, an IaC role
   the service account lacks, a pack a true answer asks for that is still commented out,
-  the actions and passthrough blocks the compile warns about — each at the line it
-  names, as a warning or an error by `validation_level`.
+  a resource outside the project its type takes, a `deployment_mode` other than `local`
+  or `cloud`, the actions and passthrough blocks the compile warns about — each at the
+  line it names, as a warning or an error.
 - **Completion.** Inside a resource type, its attributes and nested blocks (from the
   provider schema in `schema_dir`), then `use`, then every resource type; at the top
   level the statements and every type; after `=`, the params in scope with their values,
@@ -1577,6 +1579,11 @@ wanted. What Terraform converts — a number or a bool into a string — passes,
 reference or an interpolation is known only at plan and is not judged. Where the
 declaring file binds the attribute to a bare param, the finding names the param, which
 is what the estate changes.
+
+A resource whose type takes a `project`, declared outside any project and setting none,
+goes to the project the provider block names; the compile says so in a warning at its
+declaring block, at every validation level. A type that takes a `folder` gets the same
+warning outside a folder.
 
 `validation_level` in `config.toml`, or `--validation`, sets what a missing argument or a
 refused value does: `warn` (the default) prints one warning per resource with the file

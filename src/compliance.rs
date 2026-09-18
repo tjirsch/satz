@@ -2960,20 +2960,17 @@ pub(crate) async fn run_report_compliance(
     // data. The history is the audit trail of a deliberate report run; a caller
     // reading current state (a pipeline, an agent over MCP) must not append to
     // it, and a "read-only" wrapper that silently wrote files would be a lie.
-    let hist_dir = config_dir.join("evidence");
-    let hist = hist_dir.join(format!("{}-{}.json", framework, file_timestamp(&verified_at)));
-    if format != crate::OutFormat::Json {
-        crate::fsx::create_dir_all(&hist_dir)?;
-        crate::fsx::write(&hist, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
-    }
-
     let what = format!("{} control(s)", json_rows.len());
-    match format {
-        crate::OutFormat::Json => {
-            crate::write_report(out, serde_json::to_string_pretty(&evidence)?.as_bytes(), &what)?
+    if format == crate::OutFormat::Json {
+        crate::write_report(out, serde_json::to_string_pretty(&evidence)?.as_bytes(), &what)?
+    } else {
+        let hist_dir = config_dir.join("evidence");
+        crate::fsx::create_dir_all(&hist_dir)?;
+        let hist = append_evidence(&hist_dir, framework, &verified_at, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
+        match format {
+            crate::OutFormat::Pdf => crate::pdf_from_markdown(&md, out, &what)?,
+            _ => crate::write_report(out, md.as_bytes(), &format!("{what} (history: {})", hist.display()))?,
         }
-        crate::OutFormat::Pdf => crate::pdf_from_markdown(&md, out, &what)?,
-        _ => crate::write_report(out, md.as_bytes(), &format!("{what} (history: {})", hist.display()))?,
     }
     // the report is written whatever the verdicts; the EXIT CODE is the gate,
     // opted into per status so CI can fail on what the operator decides
@@ -3023,6 +3020,42 @@ pub(crate) fn file_timestamp(ts: &str) -> String {
     ts.replace(':', "-")
 }
 
+/// Records one framework's evidence history holds for one minute — the name
+/// `<framework>-<minute>.json` and the 998 suffixed ones after it.
+const EVIDENCE_NAMES_PER_MINUTE: u32 = 999;
+
+/// Append one run to the evidence history in `dir`, and return where it went.
+///
+/// The record is `<framework>-<minute>.json`. A run in a minute that already has one
+/// takes the next free name: `…T08-30Z_002.json`, `…T08-30Z_003.json`. Each name is
+/// created with `fsx::write_new`, so a record is never replaced, and two runs writing at
+/// once cannot take one name — the operating system gives it to one and refuses the
+/// other, which moves on to the next. The suffix sorts after the plain name and, padded
+/// to three digits, in order among itself, so the history listed by name is in the order
+/// the runs took their names. `verified_at` is the run's own minute: the clock, never
+/// a value a caller sets.
+pub(crate) fn append_evidence(dir: &Path, framework: &str, verified_at: &str, record: &[u8]) -> Result<PathBuf, BoxErr> {
+    let stem = format!("{}-{}", framework, file_timestamp(verified_at));
+    for n in 1..=EVIDENCE_NAMES_PER_MINUTE {
+        let name = if n == 1 { format!("{}.json", stem) } else { format!("{}_{:03}.json", stem, n) };
+        let path = dir.join(name);
+        match crate::fsx::write_new(&path, record) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(format!(
+        "{}: {} evidence records of {} already exist for {} — every name this minute has is taken, \
+         and a record is never replaced; run it again in the next minute",
+        dir.display(),
+        EVIDENCE_NAMES_PER_MINUTE,
+        framework,
+        verified_at
+    )
+    .into())
+}
+
 /// Where a `remediation-plan` run goes without `--out-dir`:
 /// `<config dir>/evidence/plan/<framework>-<UTC minute>`, the minute in its file form.
 pub(crate) fn remediation_plan_dir(config_dir: &Path, framework: &str, now: &str) -> PathBuf {
@@ -3038,6 +3071,75 @@ mod timestamp_tests {
     fn the_default_plan_folder_is_named_for_the_minute_without_a_colon() {
         let dir = remediation_plan_dir(Path::new("estate"), "cis-gcp-4.0", "2026-09-13T08:30Z");
         assert_eq!(dir, Path::new("estate").join("evidence").join("plan").join("cis-gcp-4.0-2026-09-13T08-30Z"));
+    }
+
+    fn history(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("satz-evidence-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut n: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        n.sort();
+        n
+    }
+
+    /// The history is append-only: a second run in the same minute is a second record,
+    /// and the first is still there as it was written.
+    #[test]
+    fn two_runs_in_one_minute_leave_two_records() {
+        let dir = history("two");
+        let first = append_evidence(&dir, "cis-gcp-4.0", "2026-09-13T08:30Z", b"{\"run\":1}").unwrap();
+        let second = append_evidence(&dir, "cis-gcp-4.0", "2026-09-13T08:30Z", b"{\"run\":2}").unwrap();
+        assert_eq!(first, dir.join("cis-gcp-4.0-2026-09-13T08-30Z.json"));
+        assert_eq!(second, dir.join("cis-gcp-4.0-2026-09-13T08-30Z_002.json"));
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "{\"run\":1}");
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "{\"run\":2}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Listed by name, the history is in the order the runs wrote it — past the tenth
+    /// run of a minute, and across into the next minute.
+    #[test]
+    fn the_history_sorted_by_name_is_the_order_it_was_written_in() {
+        let dir = history("order");
+        let name = |p: PathBuf| p.file_name().unwrap().to_string_lossy().into_owned();
+        let mut written: Vec<String> =
+            (0..12).map(|_| name(append_evidence(&dir, "cis-gcp-4.0", "2026-09-13T08:30Z", b"{}").unwrap())).collect();
+        written.push(name(append_evidence(&dir, "cis-gcp-4.0", "2026-09-13T08:31Z", b"{}").unwrap()));
+        assert_eq!(names(&dir), written);
+        assert_eq!(written[10], "cis-gcp-4.0-2026-09-13T08-30Z_011.json");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Runs writing at the same moment each get a name of their own: the name is taken
+    /// by creating the file, never by looking first.
+    #[test]
+    fn runs_writing_at_once_never_share_a_record() {
+        use std::sync::{Arc, Barrier};
+        let dir = history("race");
+        let runs = 8;
+        let start = Arc::new(Barrier::new(runs));
+        let writers: Vec<_> = (0..runs)
+            .map(|i| {
+                let (dir, start) = (dir.clone(), start.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    append_evidence(&dir, "cis-gcp-4.0", "2026-09-13T08:30Z", format!("{{\"run\":{}}}", i).as_bytes()).unwrap()
+                })
+            })
+            .collect();
+        let paths: Vec<PathBuf> = writers.into_iter().map(|w| w.join().unwrap()).collect();
+        assert_eq!(names(&dir).len(), runs, "{:?}", names(&dir));
+        let mut records: Vec<String> = paths.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
+        records.sort();
+        let mut expected: Vec<String> = (0..runs).map(|i| format!("{{\"run\":{}}}", i)).collect();
+        expected.sort();
+        assert_eq!(records, expected, "a record was replaced or mixed with another");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
