@@ -35,7 +35,7 @@ does an agent asked to proofread a pack without a checkout.
 
 ## Decision
 
-Option 3 (Thomas, 2026-09-15): what satz can naturally do, satz does — checking and
+Option 3, decided 2026-09-15: what satz can naturally do, satz does — checking and
 proofreading a pack included. `satz review-pack <file> --format <fmt> --out <file>`
 runs the bar in the order a pack fails it and returns the SAME `Finding` the compile,
 `satz lsp` and `satz_transpile_check` already produce, so an editor or an app that reads

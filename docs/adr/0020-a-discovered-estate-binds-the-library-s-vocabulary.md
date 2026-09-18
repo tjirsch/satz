@@ -19,8 +19,8 @@ params by hand, guessing which ones the library means.
 The question was which literals become params and under which names. Two rules were
 on the table: the attribute's own name (`location`, `org_id` — mechanical, no guessing,
 and an estate whose params are named after attributes accepts no pack), or the
-library's convention, recognised by what the values are. Thomas chose the library's
-convention for the whole vocabulary, heuristics included, on 2026-09-14.
+library's convention, recognised by what the values are. The library's convention was
+chosen for the whole vocabulary, heuristics included, on 2026-09-14.
 
 ## Options
 

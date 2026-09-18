@@ -559,10 +559,13 @@ satz prowler C0example.satz
 
 Stdout is the command line and nothing else — paste it, or pipe it: `satz prowler
 C0example.satz | pbcopy`. What the line cannot say goes to stderr: the command to run
-afterwards, a scan that is not narrowed to projects because no project id resolved, and a
-framework this estate claims that Prowler has no equivalent of. Every argument
-comes from what the estate declares — the organisation id, the project ids, and the
-frameworks its claims name. A framework satz ships a catalog for but Prowler has no
+afterwards, a scan that is not narrowed to projects because no project id resolved, each
+project left out of `--project-ids` by its address because its id is built from a
+reference to another resource (`"acme-${{google_folder.x.folder_id}}"`), which only an
+apply resolves, and a framework this estate claims that Prowler has no equivalent of.
+Every argument comes from what the estate declares — the organisation id, the project ids
+(a `{param}` in an id is its value, as everywhere in the compile), and the frameworks its
+claims name. A framework satz ships a catalog for but Prowler has no
 equivalent of is NAMED as unmapped rather than mapped to something that looks close: a
 wrong `--compliance` argument silently scans the wrong control set.
 

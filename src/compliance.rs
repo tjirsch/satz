@@ -3023,6 +3023,24 @@ pub(crate) fn file_timestamp(ts: &str) -> String {
     ts.replace(':', "-")
 }
 
+/// Where a `remediation-plan` run goes without `--out-dir`:
+/// `<config dir>/evidence/plan/<framework>-<UTC minute>`, the minute in its file form.
+pub(crate) fn remediation_plan_dir(config_dir: &Path, framework: &str, now: &str) -> PathBuf {
+    config_dir.join("evidence").join("plan").join(format!("{}-{}", framework, file_timestamp(now)))
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+
+    /// Windows refuses `:` in a path, so a folder named for the minute carries dashes.
+    #[test]
+    fn the_default_plan_folder_is_named_for_the_minute_without_a_colon() {
+        let dir = remediation_plan_dir(Path::new("estate"), "cis-gcp-4.0", "2026-09-13T08:30Z");
+        assert_eq!(dir, Path::new("estate").join("evidence").join("plan").join("cis-gcp-4.0-2026-09-13T08-30Z"));
+    }
+}
+
 #[cfg(test)]
 mod prowler_ocsf_tests {
     //! Prowler 5 writes the check id to `metadata.event_code`, its own version to

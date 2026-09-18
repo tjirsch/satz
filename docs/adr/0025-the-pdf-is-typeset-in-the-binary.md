@@ -31,7 +31,7 @@ an error, which is honest and still unhelpful.
 
 ## Decision
 
-Option 4 (Thomas, 2026-09-15). `--format pdf` is typeset by satz itself: markdown in,
+Option 4, decided 2026-09-15. `--format pdf` is typeset by satz itself: markdown in,
 PDF bytes out, no process, no PATH, nothing to install. The fonts travel with the
 binary too (Libertinus Serif, New Computer Modern, DejaVu Sans Mono), because a report
 that renders differently on the auditor's machine is not evidence of anything.

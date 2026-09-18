@@ -717,7 +717,7 @@ enum Commands {
         /// Also run Checkov over hcl_dir and join its findings
         #[arg(long)]
         checkov: bool,
-        /// Output directory — several files (default: <config dir>/evidence/plan/<framework>-<timestamp>)
+        /// Output directory — several files (default: <config dir>/evidence/plan/<framework>-<UTC minute>, e.g. cis-gcp-4.0-2026-09-13T08-30Z)
         #[arg(long, value_name = "DIR")]
         out_dir: Option<PathBuf>,
         /// An authored.json written against this run's dossier: its values fill the [Authored] columns
@@ -1965,7 +1965,7 @@ Thumbs.db
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
             let out_dir = out_dir.unwrap_or_else(|| {
-                config_dir.join("evidence").join("plan").join(format!("{}-{}", framework, crate::compliance::chrono_free_timestamp()))
+                crate::compliance::remediation_plan_dir(&config_dir, &framework, &crate::compliance::chrono_free_timestamp())
             });
             crate::compliance::run_remediation_dossier(
                 &framework,
