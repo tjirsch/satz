@@ -1,7 +1,9 @@
 # 0007 — the map is a pack of choices, and the estate carries the `use` lines
 
 - **Status:** accepted; its "the CIS baseline is not a choice" is superseded by ADR-0028,
-  which makes the baseline the map choice `use_cis_baseline`
+  which makes the baseline the map choice `use_cis_baseline`; its "the map declares the
+  choices and nothing else" is superseded by ADR-0031, in which the map also carries one
+  `offers` entry per pack and the pack graph is written from them
 - **Date:** 2026-09-10
 - **Deciders:** the maintainer
 

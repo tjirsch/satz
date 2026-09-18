@@ -317,10 +317,13 @@ offers `acme-infra-001`. See [satz interview](../docs/interview.md).
 Which packs make up the estate, asked as questions — the map an interview follows
 after the day-0 params. One boolean per optional pack plus the S1/S2 model as a
 `question oneof`, each with what the pack is for and what turning it off later
-destroys. The map declares the choices and nothing else; the estate carries one
-`use … when` line per choice, in the order the packs can be adopted: each is written
-commented, under the phase that has to be finished before it can go in (`PACK_LINES` in
-`src/template.rs`). `satz init` and `satz interview --create` write them, `satz interview`
+destroys. Below the choices, one `offers` entry per pack in the library says the gate its
+line carries, the phase that has to be finished before it can go in, the block it
+belongs in and — by the entries' order — the order the packs can be adopted; `satz
+pack-graph` turns them, with the edges it derives from the packs, into
+`presets/pack-graph.json` ([ADR 0031](../docs/adr/0031-the-map-offers-every-pack-and-the-graph-ships-with-the-presets.md)).
+The estate carries one `use … when` line per choice, each written commented under its
+phase. `satz init` and `satz interview --create` write them, `satz interview`
 uncomments a line when its choice is answered yes, and a test fails on a choice with no
 line ([ADR 0007](../docs/adr/0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md)).
 
@@ -342,6 +345,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_billing_permissions` | on | `billing-account-permissions` |
 | `use_essential_contacts` | on | `essential-contacts-organization` |
 | `use_budget` | off | `organization-budget` |
+| `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
 | `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the three below are asked only when it is on |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
 | `use_scc_findings_mail` | off | `scc/scc-findings-mail` — asked only when the topic is on: the subscription, mailbox and alert that tell somebody |
@@ -352,14 +356,16 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_sentinel` | off | `integrations/microsoft-sentinel` — the federation half |
 | `use_sentinel_auditlogs` | follows `use_sentinel` | `integrations/microsoft-sentinel-auditlogs`, asked only when Sentinel is on |
 | `use_sentinel_network_logs` | follows `use_sentinel` | `integrations/microsoft-sentinel-network-logs` — flow logs, firewall, DNS, NAT: free until the feature is enabled |
-| `use_verification_runner` | off | `ci/verification-runner` and its grant, the customer-hosted shape |
+| `use_verification_runner` | off | `ci/verification-runner`, the customer-hosted shape |
+| `use_verification_runner_grant` | follows `use_verification_runner` | `ci/verification-runner-grant` — the binding that lets a runner act as the estate; answered alone when the runner lives in another estate |
 | `use_exemption_tag` | off | `exemptions/exemption-tag` — the tag an exemption is bound to; it exempts nothing on its own |
 
 The CIS baseline is the map's first choice: the skeleton writes its line commented under
 its phase, like every pack's, and answering `use_cis_baseline` yes puts it in. It is
 asked rather than assumed because its thirty policies reach the organisation in one
-apply. **Not on the map:** the per-project alert pack, Defender's plan fragments, the
-MSP-hosted runner shape; each is wired by hand, and the map's header says so.
+apply. Defender's plan fragments and the S1 model's two-file spelling are offered with
+`by_hand`: they are gated on Defender's own params and on the S1 choice, and their lines
+are written by hand, as their headers show.
 
 ## security-group-models/
 
@@ -1460,6 +1466,7 @@ the private history recorded them.
 | `CIS_GCP_Foundation_4_0` | 2.13 | 2026-09-13 | claims CIS 5.0 §2.14, Cloud Asset Inventory enabled — the last technical control of CIS 5.0 with no claim anywhere in the library. The estate already satisfied it: the scaffold enables `cloudasset.googleapis.com` in every infrastructure project, so the witness is the scaffold's own `google_project_service.infra_cloudasset_googleapis_com` rather than a second `google_project_service` declared here — two resources enabling one API on one project is a duplicate, not a merge. The address depends on the `infra` project label, which is already a contract (`bootstrap` imports by it) and is now held by the init-template test, so renaming it breaks a test rather than a customer's report |
 | `CIS_GCP_Foundation_4_0` | 2.12 | 2026-09-13 | `iam.managed.disableServiceAccountKeyCreation` takes its rules from `cis_sa_key_creation_rules` instead of writing them in place, so an estate can let ONE service account out with a tag condition without forking the pack. The default is the plain enforcing rule and the emitted policy is unchanged for an estate that says nothing. The one constraint here with a rules param, because it is the one organisations actually have to exempt — Google ships their own built-in exemption tag for it — and because a param per constraint would put forty list-of-object blocks into every estate's `terraform.tfvars` for a case nobody has |
 | `exemptions.exemption_tag` | 1.0 | 2026-09-13 | first version: the VOCABULARY for a tag-conditional exemption — one organisation tag key `<shortname>-exemption` with the values `enforced` and `not_enforced`, and nothing bound to either. An organisation policy is all-or-nothing per node, so letting one service account out of a control means lowering the policy for a whole folder and raising it again — a window during which nothing is enforced. A Resource Manager tag is IAM-governed and a policy rule can condition on it, which is how Google ships `iam.disableServiceAccountKeyCreation` themselves. The pack ships the ABILITY and no exemptions: a library that ships convenient exemptions lowers the baseline by default. The binding that exempts a resource and the condition on the constraint that honours it are the estate's, and the pack header shows both |
+| `estate_map` | 2.0 | 2026-09-19 | one `offers` entry per pack in the library — its gate, the phase that has to be finished before it can go in, the block its line belongs in, and its adoption order — from which `satz pack-graph` writes `presets/pack-graph.json`. Every library file is offered: the S1 model's second spelling and Defender's plan fragments with `by_hand`, because their lines are written by hand. The edges the packs do not show are declared on the entries: the billing grants require a security model, the S1 split packs and every dry-run twin exclude what they replace. Two new choices: `use_verification_runner_grant`, following `use_verification_runner` by reference, because in the MSP-hosted shape the runner and its grant live in different estates; and `use_project_cis_log_alerts`, off, for a project that alerts on its own beside the central alerts. The grant's line in a newly written estate is gated on its own choice; an estate that carries it gated on the runner's keeps compiling and planning as before |
 | `estate_map` | 1.9 | 2026-09-18 | the header says what order the estate's lines are in: the order the packs can be adopted, each written commented under the phase that has to be finished first, not the map's own order. A comment change: no choice, default or question changes, and an estate that uses the map upgrades without a fork |
 | `estate_map` | 1.8 | 2026-09-17 | the CIS baseline joins the map as `use_cis_baseline`, defaulting to true. It was the one pack the map did not declare — the skeleton wrote its line as fixed text, so the interview could not switch it on, `merge-presets` could not add it to an estate that lacked it, and the compile could not report it missing. Framing it as a choice does not make it optional: the question says the estate exists for these thirty policies, and its `why` says what turning it off would take off the organisation. What it buys is that the baseline is adopted, reported and listed by the same machinery as every other pack |
 | `estate_map` | 1.7 | 2026-09-13 | one more choice: `use_exemption_tag`, gating `exemptions/exemption-tag.satz`. Its `why` carries the question that usually ends the conversation — does the consumer need a key at all, when a workload in Google Cloud, a Cloud Run service and external CI can all federate instead |

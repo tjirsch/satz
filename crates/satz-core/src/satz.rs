@@ -231,6 +231,37 @@ pub struct QuestionDecl {
     pub line: usize,
 }
 
+/// `offers "<pack path>" { … }` — one pack the library offers an estate, in the map.
+///
+/// The map is the one file every estate uses to decide which packs it takes, so it
+/// is where a pack's gate, its phase, its place in the estate and its adoption order
+/// (the entry's position in the file) are written. What a pack needs from another
+/// pack is mostly visible in the packs themselves — a param default that reads
+/// another pack's param — and `satz pack-graph` derives that; `requires` and
+/// `excludes` declare only what the packs cannot show. Emits nothing: the compile
+/// never reads an entry, so it is inert in an estate's fold.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OffersDecl {
+    /// the pack, as a `use` line names it (`presets/…`)
+    pub path: String,
+    /// the param the pack's line is gated on; only the map's own entry has none
+    pub when: Option<String>,
+    /// opens a group of lines: what has to be finished before they can go in
+    pub phase: Option<String>,
+    /// the block the line is written inside (`google_folder.infra_folder`)
+    pub block: Option<String>,
+    /// the line goes after the scaffold rather than in the menu above it
+    pub after_scaffold: bool,
+    /// the line is written by hand, never by satz; the reason why
+    pub by_hand: Option<String>,
+    pub requires: Vec<String>,
+    pub excludes: Vec<String>,
+    pub line: usize,
+}
+
+/// The one pack that may carry `offers` entries.
+pub const MAP_PACK: &str = "estate_map";
+
 #[derive(Debug, Default)]
 pub struct File {
     pub estate: Option<String>,
@@ -250,6 +281,8 @@ pub struct File {
     pub hcl_blocks: Vec<HclBlock>,
     pub actions: Vec<ActionDecl>,
     pub questions: Vec<QuestionDecl>,
+    /// `offers` entries, in file order — only the map (`pack estate_map`) has any
+    pub offers: Vec<OffersDecl>,
 }
 
 /// A control claim as language syntax:
@@ -1178,6 +1211,84 @@ impl P {
         Ok(ActionDecl { name, reason, run, args, execute_args, phase, line })
     }
 
+    fn offers_stmt(&mut self, line: usize) -> Result<OffersDecl, SatzError> {
+        let path = match self.next() {
+            Some(Tok::Str(parts)) => lit_str(&parts, line, "offers: the pack path")?,
+            other => return err(line, format!("offers: expected the pack's path as a quoted string, found {:?}", other)),
+        };
+        if !path.ends_with(".satz") {
+            return err(line, format!("offers \"{}\": the path names a pack, a `.satz` file", path));
+        }
+        self.expect(Tok::LBrace, "'{' after the offered pack's path")?;
+        let body = self.entries()?;
+        let mut o = OffersDecl {
+            path,
+            when: None,
+            phase: None,
+            block: None,
+            after_scaffold: false,
+            by_hand: None,
+            requires: Vec::new(),
+            excludes: Vec::new(),
+            line,
+        };
+        let paths = |items: Vec<Value>, key: &str, path: &str, l: usize| -> Result<Vec<String>, SatzError> {
+            let mut out = Vec::new();
+            for it in items {
+                match it {
+                    Value::Str(parts) => out.push(lit_str(&parts, l, key)?),
+                    other => {
+                        return err(l, format!("offers \"{}\": {} lists pack paths as strings, found {:?}", path, key, other))
+                    }
+                }
+            }
+            Ok(out)
+        };
+        for e in body {
+            match e {
+                Entry::Attr { key: Key::Ident(k), value: Value::Ref(p), .. } if k == "when" => o.when = Some(p),
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "phase" => {
+                    o.phase = Some(lit_str(&parts, l, "offers: phase")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "block" => {
+                    o.block = Some(lit_str(&parts, l, "offers: block")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Bool(b), .. } if k == "after_scaffold" => {
+                    o.after_scaffold = b;
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "by_hand" => {
+                    o.by_hand = Some(lit_str(&parts, l, "offers: by_hand")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::List(items), line: l } if k == "requires" => {
+                    o.requires = paths(items, "requires", &o.path, l)?;
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::List(items), line: l } if k == "excludes" => {
+                    o.excludes = paths(items, "excludes", &o.path, l)?;
+                }
+                other => {
+                    return err(
+                        line,
+                        format!(
+                            "offers \"{}\": unexpected entry {:?} — the keys are when = PARAM, phase, block, \
+                             after_scaffold, by_hand and requires / excludes = [\"<pack path>\", …]",
+                            o.path, other
+                        ),
+                    )
+                }
+            }
+        }
+        if o.block.is_some() && o.after_scaffold {
+            return err(line, format!("offers \"{}\": a line sits in a block or after the scaffold, not both", o.path));
+        }
+        if o.by_hand.is_some() && (o.block.is_some() || o.after_scaffold || o.phase.is_some()) {
+            return err(
+                line,
+                format!("offers \"{}\": a `by_hand` pack has no line satz writes, so it takes no phase, block or after_scaffold", o.path),
+            );
+        }
+        Ok(o)
+    }
+
     fn use_stmt(&mut self, line: usize) -> Result<Entry, SatzError> {
         let path = match self.next() {
             Some(Tok::Str(parts)) => match parts.as_slice() {
@@ -1373,6 +1484,13 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 }
                 file.actions.push(a);
             }
+            // Before the generic arm, which would read `offers "p" { … }` as a
+            // resource map named `offers`.
+            Some(Tok::Ident(id)) if id == "offers" => {
+                p.next();
+                let o = p.offers_stmt(line)?;
+                file.offers.push(o);
+            }
             Some(Tok::Ident(id)) if id == "suppress" => {
                 p.next();
                 let tf_type = match p.next() {
@@ -1438,6 +1556,21 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
     // unrepresentable here rather than documented. (The repo already avoided it by
     // accident: `cis_require_shielded_vm` is declared in the CIS pack, not in the
     // extension it gates.)
+    // What the library offers is the map's to say: an estate or another pack that
+    // offered packs would be a second menu nobody reads.
+    if let Some(o) = file.offers.first() {
+        if !(file.is_pack && file.estate.as_deref() == Some(MAP_PACK)) {
+            return err(
+                o.line,
+                format!(
+                    "offers \"{}\": an `offers` entry belongs in the map (`pack {}`, presets/estate-map.satz) — \
+                     it says what the library offers every estate",
+                    o.path, MAP_PACK
+                ),
+            );
+        }
+    }
+
     let declared: std::collections::BTreeSet<&str> =
         file.params.iter().map(|(n, _, _)| n.as_str()).collect();
     for q in &file.questions {
@@ -1593,6 +1726,28 @@ pub fn canonical_questions(file: &File) -> String {
                 .map(|o| format!("{}={}", o.param, o.label))
                 .collect::<Vec<_>>()
                 .join(",")
+        ));
+    }
+    out
+}
+
+/// The `offers` entries of a file, canonically, in file order (the order is the
+/// adoption order, so it is meaning). A FOURTH product, beside the questions and
+/// for the same reason: an entry emits nothing, so a changed entry is reported and
+/// never forks the map the way an emission change would.
+pub fn canonical_offers(file: &File) -> String {
+    let mut out = String::new();
+    for o in &file.offers {
+        out.push_str(&format!(
+            "offers({}|{}|{}|{}|{}|{}|[{}]|[{}])\n",
+            o.path,
+            o.when.as_deref().unwrap_or(""),
+            o.phase.as_deref().unwrap_or(""),
+            o.block.as_deref().unwrap_or(""),
+            o.after_scaffold,
+            o.by_hand.as_deref().unwrap_or(""),
+            o.requires.join(","),
+            o.excludes.join(",")
         ));
     }
     out
@@ -2192,5 +2347,34 @@ mod review_2026_08_29_tests {
         assert!(e.msg.contains("`name` is given twice"), "{}", e.msg);
         parse("estate e\ngoogle_org_policy_policy { a { name = \"a\" } }\ngoogle_org_policy_policy { b { name = \"b\" } }\n").expect("two groups of one resource type are one map");
         parse("estate e\ngoogle_folder { a { display_name = \"A\" } b { display_name = \"B\" } }\n").expect("different labels");
+    }
+
+    // ---- `offers` ---------------------------------------------------------
+
+    #[test]
+    fn the_map_offers_packs_in_file_order_and_nothing_else_may() {
+        let map = "pack estate_map version \"1.0\"\n\nparams {\n  use_a = true\n}\n\noffers \"presets/a.satz\" {\n  when     = use_a\n  phase    = \"\"\"first\nsecond\"\"\"\n  block    = \"google_folder.infra_folder\"\n  excludes = [\"presets/b.satz\"]\n}\n\noffers \"presets/b.satz\" {\n  when    = use_a\n  by_hand = \"why\"\n}\n";
+        let f = parse(map).unwrap();
+        assert_eq!(f.offers.len(), 2);
+        let a = &f.offers[0];
+        assert_eq!((a.path.as_str(), a.when.as_deref(), a.phase.as_deref()), ("presets/a.satz", Some("use_a"), Some("first\nsecond")));
+        assert_eq!(a.block.as_deref(), Some("google_folder.infra_folder"));
+        assert_eq!(a.excludes, vec!["presets/b.satz".to_string()]);
+        assert_eq!(f.offers[1].by_hand.as_deref(), Some("why"));
+        assert!(f.items.is_empty(), "an entry is no resource map");
+        // the order is the adoption order: swapping two entries is a change
+        let swapped = map.replacen("presets/a.satz\" {", "presets/c.satz\" {", 1);
+        assert_ne!(canonical_offers(&f), canonical_offers(&parse(&swapped).unwrap()));
+        assert_eq!(canonical(&f), canonical(&parse(&swapped).unwrap()), "an entry emits nothing");
+        // anywhere but the map it is refused
+        let e = parse("pack other version \"1.0\"\n\noffers \"presets/a.satz\" {\n  when = x\n}\n").unwrap_err();
+        assert!(e.msg.contains("belongs in the map"), "{}", e.msg);
+        let e = parse("estate e\n\noffers \"presets/a.satz\" {\n  when = x\n}\n").unwrap_err();
+        assert!(e.msg.contains("belongs in the map"), "{}", e.msg);
+        // an unknown key, and a line in two places
+        let e = parse("pack estate_map\n\noffers \"presets/a.satz\" {\n  gate = x\n}\n").unwrap_err();
+        assert!(e.msg.contains("the keys are when"), "{}", e.msg);
+        let e = parse("pack estate_map\n\noffers \"presets/a.satz\" {\n  block = \"b\"\n  after_scaffold = true\n}\n").unwrap_err();
+        assert!(e.msg.contains("not both"), "{}", e.msg);
     }
 }

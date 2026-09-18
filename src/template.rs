@@ -228,11 +228,12 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
     (
         "presets/organization-budget.satz",
         "use_budget",
-        "once the estate runs as the service account — these three stand alone",
+        "once the estate runs as the service account — these stand alone",
         "",
     ),
     ("presets/security-audit/sa-security-audit.satz", "use_security_audit_sa", "", ""),
     ("presets/scc/scc-service-enablement.satz", "use_scc_enablement", "", ""),
+    ("presets/monitoring/project-cis-log-alerts.satz", "use_project_cis_log_alerts", "", ""),
     (
         "presets/essential-contacts-organization.satz",
         "use_essential_contacts",
@@ -365,7 +366,7 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
          // it by naming the runner's own account",
         "",
     ),
-    ("presets/ci/verification-runner-grant.satz", "use_verification_runner", "", ""),
+    ("presets/ci/verification-runner-grant.satz", "use_verification_runner_grant", "", ""),
     (
         "presets/exemptions/exemption-tag.satz",
         "use_exemption_tag",

@@ -729,6 +729,11 @@ PYEOF
 step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
 
+step "the pack graph passes its checks and is current (satz pack-graph --check)"
+"$satz" pack-graph --presets-dir "$root/presets" --check > tmp/pack-graph.txt 2>&1 \
+  || fail "satz pack-graph --check:\n$(cat tmp/pack-graph.txt)"
+grep -q 'pack-graph.json current' tmp/pack-graph.txt || fail "pack-graph --check did not report the graph current"
+
 step "report-compliance --format pdf: typeset by satz, with nothing on PATH"
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
   || fail "report-compliance --format pdf failed"
@@ -1262,7 +1267,7 @@ assert iv["created"] is False and iv["written"] == 0 and iv["summary"]["complete
 assert len(iv["questions"]) == 3, "filter: all returns every question"
 create = msgs[14]["result"]
 assert create["isError"] is True and "needs 'write'" in create["content"][0]["text"], create
-rows = msgs[7]["result"]["structuredContent"]
+rows = msgs[7]["result"]["structuredContent"]["rows"]
 assert rows and {"bucket", "control"} <= set(rows[0]), rows[:1]
 ev = msgs[8]["result"]["structuredContent"]
 assert ev["rows"], "the evidence report came back empty"

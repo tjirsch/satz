@@ -3405,6 +3405,14 @@ impl Bucket {
     }
 }
 
+/// What `satz triage --format json` prints and `satz_triage` returns: the rows in an
+/// object, because MCP structured output is an object — one value for both, so the
+/// tool returns what the command prints.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct TriageReport {
+    pub rows: Vec<TriageRow>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct TriageRow {
     pub bucket: Bucket,
@@ -3708,7 +3716,7 @@ pub(crate) fn run_triage(
     // `--fix` belongs IN the report: the delta is what the operator acts on, and a
     // second rendering on the console is one nobody asked for.
     let text = match format {
-        crate::OutFormat::Json => serde_json::to_string_pretty(&rows)?,
+        crate::OutFormat::Json => serde_json::to_string_pretty(&TriageReport { rows: rows.clone() })?,
         _ => {
             let mut t = render_triage(&catalog, &rows) + &render_unmapped(&catalog, &unmapped);
             if fix {

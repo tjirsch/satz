@@ -748,6 +748,7 @@ const NEVER_A_TYPE_KEY: &[&str] = &[
     "claim",
     "question",
     "action",
+    "offers",
     "suppress",
     "project_service",
 ];

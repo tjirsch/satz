@@ -4,7 +4,7 @@
 //! guarantee that a reformatted pack is not drift.
 
 use satz_core::fmt::format;
-use satz_core::satz::{canonical, canonical_questions, parse};
+use satz_core::satz::{canonical, canonical_offers, canonical_questions, parse};
 use std::path::{Path, PathBuf};
 
 /// The repository's Satz files are the TRACKED ones: the smoke matrix writes
@@ -43,6 +43,7 @@ fn every_corpus_file_formats_idempotently_and_keeps_its_meaning() {
         let after = parse(&once).unwrap_or_else(|e| panic!("{name}: formatted output does not parse: {e}"));
         assert_eq!(canonical(&before), canonical(&after), "{name}: formatting changed the canonical form");
         assert_eq!(canonical_questions(&before), canonical_questions(&after), "{name}: formatting changed the questions");
+        assert_eq!(canonical_offers(&before), canonical_offers(&after), "{name}: formatting changed the offered packs");
         if once != src {
             unformatted.push(name);
         }
@@ -65,6 +66,7 @@ fn every_corpus_file_reads_the_same_with_crlf_line_endings() {
         let (a, b) = (parse(&src).unwrap(), parse(&crlf).unwrap_or_else(|e| panic!("{name} with CRLF: {e}")));
         assert_eq!(canonical(&a), canonical(&b), "{name}: CRLF changed the canonical form");
         assert_eq!(canonical_questions(&a), canonical_questions(&b), "{name}: CRLF changed the questions");
+        assert_eq!(canonical_offers(&a), canonical_offers(&b), "{name}: CRLF changed the offered packs");
         assert_eq!(format(&src).unwrap(), format(&crlf).unwrap(), "{name}: CRLF formats differently");
         assert_eq!(
             satz_core::fmt::is_formatted(&src).unwrap(),

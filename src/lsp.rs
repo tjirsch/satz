@@ -772,6 +772,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("claim", "what a control this file satisfies: `claim FRAMEWORK VERSION CONTROL implements|contributes|deviates { … }`"),
     ("question", "what a customer decides, so a param can be filled: `question [oneof] PARAM { … }`"),
     ("action", "a deployment step with no provider resource: `action \"name\" { reason run args }`"),
+    ("offers", "the map only — one pack the library offers: `offers \"presets/…\" { when phase block … }`"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, emitted as providers.tf"),
@@ -800,6 +801,18 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
             ("args", "arguments; `{param}` interpolates"),
             ("execute_args", "appended with `run-actions --execute`"),
             ("phase", "\"before-apply\" | \"after-apply\""),
+        ],
+    ),
+    (
+        "offers",
+        &[
+            ("when", "the param the pack's line is gated on"),
+            ("phase", "opens a group of lines: what has to be finished before they go in"),
+            ("block", "the block the line is written inside, e.g. \"google_folder.infra_folder\""),
+            ("after_scaffold", "true: the line goes after the scaffold"),
+            ("by_hand", "the line is written by hand; why"),
+            ("requires", "packs it needs that its params do not show"),
+            ("excludes", "packs it never goes in beside"),
         ],
     ),
 ];
