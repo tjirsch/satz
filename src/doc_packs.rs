@@ -405,7 +405,7 @@ fn refs_in_entry(e: &Entry, out: &mut BTreeSet<String>) {
 /// Params the pack reads and does not declare. Exact, not a heuristic: an
 /// unresolved reference is a pipeline error, so "not declared here" is precisely
 /// "the estate, or another pack, must supply it".
-fn needs(file: &File) -> BTreeSet<String> {
+pub(crate) fn needs(file: &File) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     file.items.iter().for_each(|e| refs_in_entry(e, &mut out));
     for (_, v, _) in &file.params {

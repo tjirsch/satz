@@ -66,7 +66,11 @@ Five steps, in this order. Each one is a section below.
    question, or by `satz merge-presets` writing the line for a pack the library gained
    since. A pack scoped to a block — the audit logsink and the CIS log alerts to the
    infrastructure folder, essential contacts to its own resource map — has its line
-   written inside that block, where its resources belong.
+   written inside that block, where its resources belong. A pack that reads a param of
+   one of those two logging packs — Sentinel, which defaults its project to the
+   logsink's, its two log paths, and the findings mail, which defaults its mailbox to the
+   central alerts' — has its line written after the folder, because a param is known
+   from the line that declares it on.
 2. **Bootstrap the organisation** — `satz bootstrap`, which creates the folder, the
    management project, the billing link, the foundation APIs and the state bucket, then
    transpiles and imports what it made.

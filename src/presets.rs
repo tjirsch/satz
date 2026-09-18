@@ -1718,8 +1718,10 @@ fn adopt_pack_lines(estate: &Path) -> Result<PackLines, BoxErr> {
         let summary = phase.lines().next().unwrap_or("").trim().to_string();
         let summary = if summary.is_empty() { "with the group above".to_string() } else { summary };
         // a pack scoped to a block belongs IN that block: appended at the top
-        // level it would be scoped to the organisation instead
-        if !at.is_empty() {
+        // level it would be scoped to the organisation instead. A pack the
+        // skeleton writes after the scaffold is top level, and the end of the
+        // file is after the scaffold too
+        if crate::template::in_block(at) {
             match crate::template::insert_into_block(&nested, at, &crate::template::pack_line(path, gate), phase) {
                 Some(next) => {
                     nested = next;
