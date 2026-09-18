@@ -205,16 +205,10 @@ impl ResourceRegistry {
                     let content = crate::fsx::read_to_string(entry.path())?;
                     let schema: Schema = serde_json::from_str(&content)?;
                     
-                    let file_name = entry.path().file_name().and_then(|f| f.to_str()).unwrap_or_default().to_string();
                     for (prov_name, prov_schema) in schema.provider_schemas {
-                        let count = prov_schema.resource_schemas.len();
                         for (res_name, res_schema) in prov_schema.resource_schemas {
                             resources.insert(res_name.clone(), (prov_name.clone(), res_schema));
                         }
-                        // stderr: progress, not the answer — see the banner note in main().
-                        // Named by provider: the file name says which file, and what an
-                        // operator needs to know is which provider's types this compile has.
-                        eprintln!("Loaded {} resource types for {} ({})", count, prov_name, file_name);
                     }
                 }
             }

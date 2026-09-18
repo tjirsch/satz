@@ -142,10 +142,6 @@ struct Open {
     tool: ToolConfig,
     runtime: ToolConfig,
     estate: PathBuf,
-    /// The service account this estate's live calls run as — derived exactly as
-    /// the CLI and the emitted provider block derive it. `None` for a local-mode
-    /// estate, which impersonates nothing.
-    sa: Option<String>,
 }
 
 struct Ctx {
@@ -346,8 +342,8 @@ pub(crate) struct OpenArgs {
 pub(crate) struct OpenReport {
     pub config: String,
     pub estate: String,
-    /// `cloud` or `local`, as the estate declares it
-    pub deployment_mode: Option<String>,
+    /// `cloud` or `local`, as the compile reads it: `local` when the estate declares none
+    pub deployment_mode: String,
     /// The identity this estate's LIVE tools run as. Null when the estate
     /// impersonates nothing and the calls are the ADC identity itself.
     pub runs_as: Option<String>,
@@ -902,10 +898,15 @@ impl SatzMcp {
     /// The identity is SCOPED to the call rather than bound to the process:
     /// this server works through estates in turn, and a process-wide binding
     /// could only ever be right for the first one. Nothing is configured — the
-    /// account is derived from the estate, the way the emitted provider block
+    /// account is derived from the estate the call works on, the one it names or
+    /// else the open one, as it stands now, the way the emitted provider block
     /// derives it, and the ADC mints it.
-    fn identity_of(open: &Open) -> Option<String> {
-        open.sa.clone()
+    ///
+    /// An estate whose params cannot be read, or whose `deployment_mode` the compile
+    /// refuses, has no identity, and the call is refused naming why before anything
+    /// live runs, rather than run as the credentials themselves.
+    fn identity_for(open: &Open, estate: &std::path::Path) -> Result<Option<String>, CallToolResult> {
+        crate::estate_impersonation_target(estate, &open.runtime).map_err(refused)
     }
 
     /// A path argument, resolved, when it lies inside the root; refused otherwise.
@@ -987,17 +988,20 @@ impl SatzMcp {
             return Ok(Err(refused(format!("no estate file at {}", estate.display()))));
         }
 
-        // Derived here, once, and carried by everything the session does next —
-        // never configured, and never asked for. The estate says who it is.
-        let sa = crate::estate_impersonation_target(&estate, &runtime);
+        // Never configured, and never asked for: the estate says who it is. Each live
+        // call derives it again from the estate it works on; an estate that cannot say
+        // is not opened, because the answer below would be a guess.
+        let declared = match crate::estate_declaration(&estate, estate.display().to_string(), &runtime) {
+            Ok(d) => d,
+            Err(e) => return Ok(Err(refused(e))),
+        };
         let report = OpenReport {
             config: config.display().to_string(),
             estate: estate.display().to_string(),
-            deployment_mode: crate::estate_param(&estate, &runtime, "deployment-mode"),
-            runs_as: sa.clone(),
+            runs_as: declared.impersonation_target().map(str::to_string),
+            deployment_mode: declared.mode,
         };
-        *self.ctx.open.lock().expect("the open lock is never poisoned") =
-            Some(Open { tool, runtime, estate, sa });
+        *self.ctx.open.lock().expect("the open lock is never poisoned") = Some(Open { tool, runtime, estate });
         Ok(Ok(Json(report)))
     }
 
@@ -1561,8 +1565,12 @@ impl SatzMcp {
         };
         // The lookups read the live organisation as THIS estate's service account,
         // for the duration of this call only.
+        let sa = match Self::identity_for(&open, &estate) {
+            Ok(sa) => sa,
+            Err(r) => return Ok(Err(r)),
+        };
         let plan = match crate::gcp::with_identity(
-            Self::identity_of(&open),
+            sa,
             crate::adopt_plan(&estate, args.only, false, &open.tool, &open.runtime),
         )
         .await
@@ -1849,6 +1857,13 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
+        // Everything the report reads — Cloud Asset, the project numbers — mints
+        // as THIS estate's service account for the duration of this call, and
+        // nothing outside the call is affected.
+        let sa = match Self::identity_for(&open, &estate) {
+            Ok(sa) => sa,
+            Err(r) => return Ok(Err(r)),
+        };
         let prowler = match args.prowler.as_deref().map(|p| self.file(p)).transpose() {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
@@ -1857,11 +1872,8 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        // Everything the report reads — Cloud Asset, the project numbers — mints
-        // as THIS estate's service account for the duration of this call, and
-        // nothing outside the call is affected.
         match crate::gcp::with_identity(
-            Self::identity_of(&open),
+            sa,
             crate::compliance::report_compliance_evidence(
             &args.framework,
             &estate,
@@ -1913,7 +1925,7 @@ impl SatzMcp {
         let scoped = match open_now {
             Some(open) if args.estate.is_none() => {
                 let estate = open.estate.clone();
-                Some((Self::identity_of(&open), open, estate))
+                Some((open, estate))
             }
             // Nothing open and nothing named: the question is about the ambient
             // credentials, which is exactly what `satz whoami` answers with no estate.
@@ -1922,19 +1934,20 @@ impl SatzMcp {
             // open, `target` refuses and says how to open one, rather than answering
             // as if no estate had been named.
             _ => match self.target(args.estate.as_deref()) {
-                Ok((open, estate)) => {
-                    Some((crate::estate_impersonation_target(&estate, &open.runtime), open, estate))
-                }
+                Ok(v) => Some(v),
                 Err(r) => return Ok(Err(r)),
             },
         };
         let report = match scoped {
-            Some((sa, open, estate)) => {
+            Some((open, estate)) => {
+                // One read answers both: the identity the scope runs as is the one the
+                // estate declares, derived as every other live tool derives it.
                 let declared =
                     match crate::estate_declaration(&estate, estate.display().to_string(), &open.runtime) {
                         Ok(d) => d,
                         Err(e) => return Ok(Err(refused(format!("whoami: {}", e)))),
                     };
+                let sa = declared.impersonation_target().map(str::to_string);
                 // Online, the estate's resource types say which permissions to test;
                 // an estate that does not compile still gets its identity answered.
                 let probe = if args.offline {
@@ -2063,7 +2076,7 @@ impl ServerHandler for SatzMcp {
 /// Serve on stdio until the client disconnects.
 ///
 /// stdout IS the protocol here. Everything satz says to a human — the version
-/// banner, schema-loader progress, emitter warnings — already goes to stderr for
+/// banner, emitter warnings, the credential line — already goes to stderr for
 /// exactly this reason; a stray line on stdout is a corrupt stream, not noise.
 pub(crate) async fn serve(
     root: PathBuf,
@@ -2393,6 +2406,56 @@ mod confine_tests {
         // inside the root the question is answered, and `create` writes there
         let made = interview(&f, json!({"estate": "new.satz", "create": true})).await.expect("created inside the root");
         assert!(made.created && f.root.join("yaml/new.satz").is_file(), "{made:?}");
+    }
+
+    /// An estate whose identity cannot be derived — a mode the compile refuses, params
+    /// that do not parse — is refused by every call that would act as it, naming the
+    /// estate and the reason: opening it, and each live tool that names it. None of them
+    /// runs as the credentials themselves instead, and a refused open leaves the open
+    /// estate where it was.
+    #[tokio::test]
+    async fn an_estate_whose_identity_cannot_be_derived_is_refused_per_call() {
+        let f = fixture("identity");
+        std::fs::write(f.root.join("yaml/boot.satz"), "estate boot\n\nparams {\n  deployment_mode = \"boot\"\n}\n").unwrap();
+        std::fs::write(f.root.join("yaml/unreadable.satz"), "estate unreadable\n\nparams {\n  deployment_mode = \"cloud\n}\n").unwrap();
+        let boot = ("boot.satz:4: `deployment_mode = \"boot\"`", "boot.satz");
+        let unreadable = ("unreadable.satz:4: newline in single-line string", "unreadable.satz");
+        let underivable = "satz cannot tell which identity this estate runs as, and runs nothing for it";
+        let says = |r: CallToolResult, (reason, _): (&str, &str)| {
+            let t = text(&r);
+            assert!(t.contains(reason) && t.contains(underivable), "the refusal does not name the reason `{reason}`: {t}");
+        };
+        let open = |estate: &str| -> OpenArgs { serde_json::from_value(json!({"config": ".", "estate": estate})).unwrap() };
+
+        for bad in [boot, unreadable] {
+            match f.server.open(Parameters(open(bad.1))).await.unwrap() {
+                Ok(Json(report)) => panic!("{} opened, running as {:?}", bad.1, report.runs_as),
+                Err(r) => says(r, bad),
+            }
+        }
+        assert!(f.server.opened().is_err(), "a refused open opened something");
+
+        let opened = f.server.open(Parameters(open("e.satz"))).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
+        for bad in [boot, unreadable] {
+            let who = serde_json::from_value(json!({"estate": bad.1, "offline": true})).unwrap();
+            match f.server.whoami(Parameters(who)).await.unwrap() {
+                Ok(Json(report)) => panic!("whoami answered for {}: {:?}", bad.1, report.estate),
+                Err(r) => says(r, bad),
+            }
+            let adopt = serde_json::from_value(json!({"estate": bad.1})).unwrap();
+            match f.server.adopt(Parameters(adopt)).await.unwrap() {
+                Ok(_) => panic!("adopt ran for {}", bad.1),
+                Err(r) => says(r, bad),
+            }
+            let report = serde_json::from_value(json!({"estate": bad.1, "framework": "cis-gcp-4.0", "no_live": true})).unwrap();
+            match f.server.report_compliance(Parameters(report)).await.unwrap() {
+                Ok(_) => panic!("report-compliance ran for {}", bad.1),
+                Err(r) => says(r, bad),
+            }
+        }
+        let still = f.server.opened().ok().map(|o| o.estate);
+        assert!(still.as_ref().is_some_and(|e| e.ends_with("yaml/e.satz")), "the open estate moved: {still:?}");
     }
 
     /// Checkov runs in one tool and is read by another. `satz_scan_checkov` runs it,

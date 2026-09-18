@@ -717,7 +717,7 @@ enum Commands {
         /// Also run Checkov over hcl_dir and join its findings
         #[arg(long)]
         checkov: bool,
-        /// Output directory — several files (default: <config dir>/evidence/plan/<framework>-<UTC minute>, e.g. cis-gcp-4.0-2026-09-13T08-30Z)
+        /// Output directory — several files (default: a new folder <config dir>/evidence/plan/<framework>-<UTC minute>, e.g. cis-gcp-4.0-2026-09-13T08-30Z, or cis-gcp-4.0-2026-09-13T08-30Z_002 when that minute has one)
         #[arg(long, value_name = "DIR")]
         out_dir: Option<PathBuf>,
         /// An authored.json written against this run's dossier: its values fill the [Authored] columns
@@ -1831,7 +1831,7 @@ Thumbs.db
             }
 
             println!("Migration to {} mode complete.", target_mode);
-            match estate_impersonation_target(&input_path, &runtime_config) {
+            match estate_impersonation_target(&input_path, &runtime_config)? {
                 Some(sa) => println!(
                     "next: `satz whoami {input}` — must name {sa} — then `satz transpile {input} --plan`, which must plan \"No changes\" as the service account"
                 ),
@@ -1963,9 +1963,6 @@ Thumbs.db
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
-            let out_dir = out_dir.unwrap_or_else(|| {
-                crate::compliance::remediation_plan_dir(&config_dir, &framework, &crate::compliance::chrono_free_timestamp())
-            });
             crate::compliance::run_remediation_dossier(
                 &framework,
                 &runtime_config.presets_dir,
@@ -1974,7 +1971,8 @@ Thumbs.db
                 &input_path,
                 &prowler,
                 checkov_report.as_ref(),
-                &out_dir,
+                out_dir.as_deref(),
+                &config_dir,
                 merge.as_deref(),
             )
         }
@@ -2196,9 +2194,8 @@ Thumbs.db
         }
         Commands::Whoami { input, offline } => {
             // An estate changes the question from "who is the human" to "who
-            // does this estate act as". A path that does not resolve has to say
-            // so: the binding helper reads an unreadable estate as "nothing to
-            // impersonate", which would quietly answer the other question.
+            // does this estate act as". A path that does not resolve says so, with
+            // the form that asks the other question.
             if let Some(estate) = input {
                 let named = estate.display().to_string();
                 let path = estate_path(estate, &runtime_config);
@@ -2210,8 +2207,8 @@ Thumbs.db
                     )
                     .into());
                 }
-                // Read first: an estate whose params cannot be read has no answer,
-                // and binding would take it for one that impersonates nothing.
+                // An estate whose params cannot be read, or whose mode the compile
+                // refuses, has no answer: both refuse, and nothing is bound.
                 let declared = estate_declaration(&path, named, &runtime_config)?;
                 configure_estate_impersonation(&path, &runtime_config)?;
                 // Online, the estate's resource types say which permissions to test.
@@ -4927,17 +4924,23 @@ fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
 /// nor `disable_impersonation` runs as the human by accident, which is what
 /// `the_estate_commands_are_the_ones_that_bind` gates.
 ///
-/// Errors when the process is already acting as a different estate — see
-/// `gcp::configure_impersonation`.
+/// Errors, binding nothing, when the estate's identity cannot be derived — see
+/// `estate_impersonation_target` — and when the process is already acting as a
+/// different estate — see `gcp::configure_impersonation`.
 fn configure_estate_impersonation(
     input_path: &Path,
     runtime_config: &ToolConfig,
 ) -> Result<(), String> {
-    crate::gcp::configure_impersonation(estate_impersonation_target(input_path, runtime_config))
+    crate::gcp::configure_impersonation(estate_impersonation_target(input_path, runtime_config)?)
 }
 
 /// WHICH service account an estate's live calls run as — the derivation alone,
-/// with nothing bound.
+/// with nothing bound. `None` is an answer: a local-mode estate impersonates
+/// nothing.
+///
+/// An estate whose params cannot be read, or whose `deployment_mode` the compile
+/// refuses, has no answer, and the error says why. Every caller refuses on it: a
+/// command that ran on regardless would run as whoever is logged in.
 ///
 /// The CLI binds it for the process; `satz mcp` scopes it to one call, because
 /// it works through estates in turn. Both need the same answer, and deriving it
@@ -4945,25 +4948,31 @@ fn configure_estate_impersonation(
 pub(crate) fn estate_impersonation_target(
     input_path: &Path,
     runtime_config: &ToolConfig,
-) -> Option<String> {
-    estate_declaration(input_path, input_path.display().to_string(), runtime_config)
-        .ok()?
+) -> Result<Option<String>, String> {
+    Ok(estate_declaration(input_path, input_path.display().to_string(), runtime_config)?
         .impersonation_target()
-        .map(str::to_string)
+        .map(str::to_string))
 }
 
 /// What an estate declares about its identity — its `deployment_mode` and its IaC
 /// service account — read off its params. `named` is the estate as the operator
 /// named it, which is what `whoami` repeats in the `satz migrate` it suggests.
+///
+/// Refused, naming the estate and the reason, when its params cannot be read or it
+/// binds a mode the compile refuses.
 pub(crate) fn estate_declaration(
     input_path: &Path,
     named: String,
     runtime_config: &ToolConfig,
 ) -> Result<crate::gcp::identity::EstateDeclaration, String> {
-    let params = satz_estate_params(input_path, &runtime_config.include_dirs)
-        .map_err(|e| format!("{}: {}", input_path.display(), e))?;
-    let get = |k: &str| params.get(k).and_then(|v| v.as_str()).map(str::to_string);
-    Ok(crate::gcp::identity::EstateDeclaration::from_params(named, get))
+    let refused = |e: String| format!("{} — satz cannot tell which identity this estate runs as, and runs nothing for it", e);
+    // a read or parse error names the file and the line already
+    let (src, env) = satz_estate_env(input_path, &runtime_config.include_dirs).map_err(|e| refused(e.to_string()))?;
+    crate::gcp::identity::EstateDeclaration::from_env(named, &env).map_err(|e| {
+        // at the line the estate binds it on — at none when a pack binds it, as the compile says it
+        let at = crate::findings::param_line(&src, "deployment_mode").map(|l| format!(":{}", l)).unwrap_or_default();
+        refused(format!("{}{}: {}", input_path.display(), at, e))
+    })
 }
 
 /// What `satz migrate` changes in an estate file to switch its deployment mode.
@@ -5009,10 +5018,19 @@ pub(crate) fn satz_estate_params(
     input: &Path,
     include_dirs: &[String],
 ) -> Result<HashMap<String, serde_yaml::Value>, Box<dyn std::error::Error>> {
+    Ok(satz_estate_env(input, include_dirs)?.1.into_iter().map(|(k, v)| (k.replace('_', "-"), v)).collect())
+}
+
+/// The source of a `.satz` estate and its parameter table as the compile reads it:
+/// snake_case, every `use`d pack's defaults under the estate's own bindings.
+fn satz_estate_env(
+    input: &Path,
+    include_dirs: &[String],
+) -> Result<(String, satz_core::pipeline::Env), Box<dyn std::error::Error>> {
     let src = fsx::read_to_string(input)?;
     let loader = satz_loader(input, include_dirs);
     let env = satz_core::pipeline::estate_params(&input.to_string_lossy(), &src, &loader)?;
-    Ok(env.into_iter().map(|(k, v)| (k.replace('_', "-"), v)).collect())
+    Ok((src, env))
 }
 
 /// Resolve a `use` path the way the compiler does: beside the using file first,
@@ -7614,6 +7632,50 @@ mod migrate_mode {
         let (path, cfg) = estate("same", "", "", &[]);
         let switch = mode_switch(&path, &cfg, Some("local".into())).unwrap();
         assert!(switch.after.is_none(), "an estate that declares no mode is in local mode already");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    const UNDERIVABLE: &str = "satz cannot tell which identity this estate runs as, and runs nothing for it";
+
+    /// Every reader of an estate's identity refuses one it cannot derive, with the same
+    /// words: `whoami` (the declaration), the CLI's binding and `satz mcp`'s per-call scope
+    /// (the target), and `migrate` (the switch). Reading it as "impersonates nothing" ran
+    /// every live command as whoever was logged in.
+    fn refused_everywhere(path: &Path, cfg: &ToolConfig, reason: &str) {
+        let said = [
+            ("whoami", estate_declaration(path, path.display().to_string(), cfg).map(|_| ()).unwrap_err()),
+            ("the target", estate_impersonation_target(path, cfg).map(|_| ()).unwrap_err()),
+            ("the binding", configure_estate_impersonation(path, cfg).unwrap_err()),
+            ("migrate", mode_switch(path, cfg, Some("cloud".into())).map(|_| ()).unwrap_err().to_string()),
+        ];
+        for (who, e) in said {
+            assert!(e.contains(reason), "{who} does not name the reason `{reason}`: {e}");
+            assert!(e.contains(UNDERIVABLE), "{who} does not say the identity cannot be derived: {e}");
+        }
+    }
+
+    /// A mode the compile refuses is refused at the line the estate binds it on.
+    #[test]
+    fn a_mode_the_compile_refuses_is_refused_by_every_reader() {
+        let (path, cfg) = estate("boot", "  deployment_mode    = \"boot\"\n", "", &[]);
+        refused_everywhere(&path, &cfg, &format!("{}:6: `deployment_mode = \"boot\"`", path.display()));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Bound by a pack, the mode is refused naming the estate, at no line of it.
+    #[test]
+    fn a_refused_mode_a_pack_binds_is_refused_naming_the_estate() {
+        let core = "// Day-0 params.\npack core version \"1.0\"\n\nparams {\n  deployment_mode = \"boot\"\n}\n";
+        let (path, cfg) = estate("boot-pack", "", "\nuse \"core.satz\"\n", &[("core.satz", core)]);
+        refused_everywhere(&path, &cfg, &format!("{}: `deployment_mode = \"boot\"`", path.display()));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Params that do not parse have no mode and no account: the parser's error, at its line.
+    #[test]
+    fn params_that_do_not_parse_are_refused_by_every_reader() {
+        let (path, cfg) = estate("unreadable", "  deployment_mode    = \"cloud\n", "", &[]);
+        refused_everywhere(&path, &cfg, &format!("{}:6: newline in single-line string", path.display()));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

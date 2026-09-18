@@ -7,8 +7,11 @@ params {
   pack_bucket_location = "EU"
 }
 
+// Declared outside a project, so it names the one it belongs in: without `project`
+// it would go to the provider block's, and the compile warns about exactly that.
 google_storage_bucket {
   pack_bucket {
+    project                     = infra_project_name
     name                        = "{customer_shortname}-pack-bucket-001"
     location                    = pack_bucket_location
     uniform_bucket_level_access = true

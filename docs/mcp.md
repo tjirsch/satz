@@ -227,8 +227,8 @@ step of it speaks.
 
 ## stdout is the protocol
 
-Everything satz says to a human — the version banner, schema-loader progress, emitter
-warnings, the `credentials:` line — goes to **stderr**. Under MCP a stray line on
+Everything satz says to a human — the version banner, emitter warnings, the
+`credentials:` line — goes to **stderr**. Under MCP a stray line on
 stdout corrupts the stream, and the client reports nothing useful. The smoke matrix
 asserts that every line the server emits parses as JSON-RPC. The background update
 check does not run under `mcp` or `lsp` at all, and the `Update available` notice
@@ -265,13 +265,21 @@ file in the config's `yaml_dir`.
 
 ### Which identity, and who decides
 
-A live tool runs as the estate it is working on: for `deployment_mode = "cloud"`, that
-estate's IaC service account, exactly as the same command does from the shell. Nothing is
-configured and no tool sets it. The ADC authenticates, and satz's first act is to exchange
-it for the account the estate itself names — `svc_iac_account` + `infra_project_name`, the
-same derivation the emitted provider block uses. `satz_open` reports the result as
-`runs_as` so it is stated rather than assumed, and `null` there means the estate
-impersonates nothing and the calls are the ADC identity itself.
+A live tool runs as the estate it is working on — the one its `estate` argument names,
+else the open one: for `deployment_mode = "cloud"`, that estate's IaC service account,
+exactly as the same command does from the shell. Nothing is configured and no tool sets
+it. The ADC authenticates, and satz's first act is to exchange it for the account the
+estate itself names — `svc_iac_account` + `infra_project_name`, the same derivation the
+emitted provider block uses — read from the estate as it stands when the call is made.
+`satz_open` reports the result as `runs_as` so it is stated rather than assumed, and
+`null` there means the estate impersonates nothing and the calls are the ADC identity
+itself; its `deployment_mode` is the mode the compile reads, `local` when the estate
+declares none.
+
+An estate whose params do not parse, or whose `deployment_mode` is neither `local` nor
+`cloud`, names no identity. `satz_open` refuses to open it, and `satz_whoami`,
+`satz_adopt` and `satz_report_compliance` refuse a call that names it, each with the
+estate and the reason; none runs as the ADC identity in its place.
 
 **The identity is scoped to the call, not bound to the process**, so one server works
 through a fleet. It is a scope rather than a mutable global because the server
