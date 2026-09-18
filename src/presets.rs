@@ -272,7 +272,7 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
 }
 
 /// The `X.local.<ext>` name beside a pristine `X.<ext>`.
-fn fork_sibling(rel: &Path) -> PathBuf {
+pub(crate) fn fork_sibling(rel: &Path) -> PathBuf {
     let name = rel.file_name().unwrap_or_default().to_string_lossy();
     match name.rsplit_once('.') {
         Some((stem, ext)) => rel.with_file_name(format!("{stem}.local.{ext}")),
@@ -1438,21 +1438,30 @@ pub(crate) async fn run_merge_presets(
     // estate was written has no `use` line there, so its question is inert — this is what
     // closes that, and it writes every line the same way, which a person does not.
     if !report_only {
-        match estate.as_deref().map(adopt_pack_lines).unwrap_or_else(|| Ok(Vec::new())) {
-            Ok(added) if !added.is_empty() => {
+        match estate.as_deref().map(adopt_pack_lines).unwrap_or_else(|| Ok(PackLines::default())) {
+            Ok(PackLines { added, unplaced }) => {
                 for (path, phase) in &added {
                     events.push(MergeEvent::Note {
                         text: format!("  wrote a commented `use` line for {} ({})", path, phase),
                     });
                 }
-                events.push(MergeEvent::Note {
-                    text: format!(
-                        "  {} pack line(s) added, commented — uncomment one, or answer its question, to use it",
-                        added.len()
-                    ),
-                });
+                if !added.is_empty() {
+                    events.push(MergeEvent::Note {
+                        text: format!(
+                            "  {} pack line(s) added, commented — uncomment one, or answer its question, to use it",
+                            added.len()
+                        ),
+                    });
+                }
+                for (path, at) in &unplaced {
+                    events.push(MergeEvent::Note {
+                        text: format!(
+                            "  {} needs a `{}` block and this estate has none — add the block, then re-run",
+                            path, at
+                        ),
+                    });
+                }
             }
-            Ok(_) => {}
             Err(e) => events.push(MergeEvent::Note { text: format!("  could not write the new pack lines: {}", e) }),
         }
     }
@@ -1671,17 +1680,29 @@ fn is_git_dirty(path: &Path) -> Result<bool, String> {
     Ok(!out.stdout.is_empty())
 }
 
-/// Repoint every estate `use "..."` that resolves to `target` at `fork_rel`
-/// (written with the same path prefix style the estate already uses).
+/// What [`adopt_pack_lines`] did: the lines it wrote, each with where it went, and the
+/// packs it could not place because the estate lacks the folder block they belong in.
+#[derive(Default)]
+struct PackLines {
+    added: Vec<(String, String)>,
+    /// `(pack path, block)` — a folder is the estate's own structure, so satz does not
+    /// invent one; the operator adds it and re-runs
+    unplaced: Vec<(String, String)>,
+}
+
 /// Append a commented `use` line for every pack in `PACK_LINES` the estate has no line for,
-/// each under the phase comment the skeleton would have written. Returns what was added.
+/// each under the phase comment the skeleton would have written.
 ///
 /// Appends rather than inserts: a `use` at root level is valid anywhere in the file, and
 /// appending cannot damage a structure somebody has since rearranged. The phase is what says
 /// where it belongs in the sequence, which is the part that matters.
-fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
+///
+/// It prints nothing: `merge-presets` is also the `satz_merge_presets` tool, whose stdout
+/// is the MCP stream, so everything it has to say goes back to the caller.
+fn adopt_pack_lines(estate: &Path) -> Result<PackLines, BoxErr> {
     let src = crate::fsx::read_to_string(estate)?;
     let mut added: Vec<(String, String)> = Vec::new();
+    let mut unplaced: Vec<(String, String)> = Vec::new();
     let mut block = String::new();
     let mut nested = src.clone();
     for (path, gate, phase, at) in crate::template::PACK_LINES {
@@ -1712,10 +1733,7 @@ fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
                         block.push_str(&stub);
                         added.push((path.to_string(), format!("{} (in a new `{}` block)", summary, at)));
                     }
-                    None => println!(
-                        "  {} needs a `{}` block and this estate has none — add the block, then re-run",
-                        path, at
-                    ),
+                    None => unplaced.push((path.to_string(), at.to_string())),
                 },
             }
             continue;
@@ -1728,7 +1746,7 @@ fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
         added.push((path.to_string(), summary));
     }
     if added.is_empty() {
-        return Ok(added);
+        return Ok(PackLines { added, unplaced });
     }
     let mut out = nested;
     // the header belongs to the appended group; a run that only placed nested
@@ -1745,9 +1763,11 @@ fn adopt_pack_lines(estate: &Path) -> Result<Vec<(String, String)>, BoxErr> {
         out.push_str(&block);
     }
     crate::fsx::write_edited_satz(estate, &src, &out)?;
-    Ok(added)
+    Ok(PackLines { added, unplaced })
 }
 
+/// Repoint every estate `use "..."` that resolves to `target` at `fork_rel`
+/// (written with the same path prefix style the estate already uses).
 fn rewrite_estate_uses(
     text: &str,
     estate: &Path,

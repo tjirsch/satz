@@ -524,10 +524,10 @@ enum Commands {
         #[arg(long)]
         pristine_dir: Option<PathBuf>,
     },
-    /// Reconciling preset update: install new packs (recording base snapshots),
-    /// silently upgrade unmodified ones, emit variable-migration hints for
-    /// template drift, and for CONTENT packs (edited in place by design) never
-    /// overwrite - write `<pack>.new` plus a three-way merge against the base.
+    /// Reconcile the library with the estate: refresh a pack that is behind upstream,
+    /// turn one edited locally into an `X.local.satz` fork with its delta in
+    /// `X.diff.satz` and repoint the estate at it, and write the commented `use` line
+    /// for every pack the library has and the estate lacks.
     MergePresets {
         /// Compare against this directory instead of downloading upstream
         #[arg(long)]
@@ -2820,12 +2820,16 @@ fn unadopted_pack_findings(
         if gate.is_empty() || env.get(*gate).and_then(|v| v.as_bool()) != Some(true) {
             continue;
         }
-        let needle = format!("use \"{}\"", path);
-        let active = estate_src.lines().map(str::trim).any(|l| l.starts_with("use ") && l.contains(&needle));
+        // a `.local` fork of the pack IS that pack with the estate's own content, as
+        // merge-presets counts it: a fork in use is the pack in use
+        let fork = crate::fsx::slash(&crate::presets::fork_sibling(Path::new(path)));
+        let needles = [format!("use \"{}\"", path), format!("use \"{}\"", fork)];
+        let names = |l: &str| needles.iter().any(|n| l.contains(n.as_str()));
+        let active = estate_src.lines().map(str::trim).any(|l| l.starts_with("use ") && names(l));
         if active {
             continue;
         }
-        match estate_src.lines().position(|l| l.contains(&needle)) {
+        match estate_src.lines().position(names) {
             Some(i) => items.push((
                 format!("`{}` is true and `{}` is still commented out — uncomment it, or `satz interview` will", gate, path),
                 Some(i as u32 + 1),
@@ -8304,6 +8308,24 @@ action "step" {
         let f = t.findings.iter().find(|f| f.kind == Kind::UnadoptedPack).expect("the commented budget line");
         assert!(f.message.contains("use_budget") && f.message.contains("still commented out"), "{}", f.message);
         assert_eq!(f.line, Some(line_of("// use \"presets/organization-budget.satz\"")));
+    }
+
+    /// A `.local` fork is the pack with the estate's own content: in use, it adopts the
+    /// pack; commented out, it is found at its line like the pristine name would be.
+    #[test]
+    fn a_pack_used_through_its_local_fork_is_adopted() {
+        let mut env = satz_core::pipeline::Env::new();
+        env.insert("use_budget".to_string(), serde_yaml::Value::Bool(true));
+        let unadopted = |src: &str| {
+            let mut f = Vec::new();
+            unadopted_pack_findings(Path::new("e.satz"), src, &env, "warn", &mut f);
+            f.into_iter().filter(|f| f.kind == Kind::UnadoptedPack).map(|f| (f.message, f.line)).collect::<Vec<_>>()
+        };
+        assert_eq!(unadopted("use \"presets/organization-budget.local.satz\" when use_budget\n"), []);
+        let commented = unadopted("\n// use \"presets/organization-budget.local.satz\" when use_budget\n");
+        assert_eq!(commented.len(), 1, "{commented:?}");
+        assert!(commented[0].0.contains("still commented out"), "{}", commented[0].0);
+        assert_eq!(commented[0].1, Some(2));
     }
 
     #[test]
