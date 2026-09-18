@@ -1496,13 +1496,37 @@ param one pack reads and another declares (`data`), a gate a pack declares for a
 `pack-graph` refuses a declared edge it derives. Several `requires` on packs that exclude
 one another are one requirement: any of them meets it.
 
-The estate commands read that file from the estate's `presets_dir`: `init` and
-`interview --create` write the pack menu from it, `merge-presets` writes the lines the
-estate lacks from the graph of its pristine source, and the compile reports a gate
-answered `true` whose line is commented or absent — skipping a line written `by_hand`,
-and counting a pack as used when an `excludes` neighbour on the same gate is — and
-refuses a dry-run twin on beside its enforcing pack, by the declared `excludes` edge
-between them. With no graph there, the compile notes it once and skips those checks.
+The estate commands read that file from the estate's `presets_dir`, and one pack logic
+answers them all (`src/packs.rs`). `init` and `interview --create` write the pack menu
+from it. `satz packs` reports every node as the estate has it: the gate's answer and
+default, the line — `active`, `ungated` (active without `when <gate>`), `commented`,
+`absent`, `forked` (naming the `.local` fork) or `misplaced` (outside the block the graph
+places it in) — whether the pack deploys, what it requires and what requires it; a `use`
+the graph does not know is `unmanaged`. `satz add-pack` and `satz remove-pack` switch a
+pack on or off by its gate or its path. A yes in the interview switches a line on as
+`add-pack` does, and `merge-presets` writes the lines the estate lacks from the graph of
+its pristine source. Every line satz writes goes where the graph's order puts it: after
+the line of the pack before it in the same place, inside the block the graph names, after
+the estate-core line — or, in an estate without one, after its top-level `params` — and at
+the end for a pack placed after the scaffold.
+
+A gate's value is the estate's own binding, else the default in the file that declares
+it while that file is used. What a pack needs is read from the edges: its `requires` are
+one requirement, each `gate` edge one, the map one when the map declares its gate, and
+each set of `data` params one. Any pack of a requirement meets it; a `data` requirement is
+also met when the estate binds the params the pack reads, or every param of the pack whose
+default reads them — the runner grant with `ci_runner_service_account` bound to a runner
+that another estate runs. An `asks` edge decides when a question is asked and is no
+requirement.
+
+The compile reports, from the same logic: a gate answered `true` whose line is commented
+or absent — skipping a line written `by_hand`, and counting a pack as used when an
+`excludes` neighbour on the same gate is; an active line of a gated pack without its
+`when`, where the gate is declared; a pack that deploys while something it needs is off;
+and, as an error before the fold, two packs on two gates that exclude one another both
+deploying — a dry-run twin beside its enforcing pack named as the decision it is. A compile that stops
+on `unknown param` adds the requirement that is off. With no graph there, the compile
+notes it once and skips those checks.
 
 `check-presets` reports a map whose entries changed like one whose questions changed:
 the map emits the same, so the estate is not forked, and the change is listed.
@@ -1738,6 +1762,9 @@ these properties was verified at this time".
 | `report-compliance <framework> <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |
 | `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
+| `packs <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it deploys, what it needs and what needs it, and the compile's pack findings; a `use` the graph does not know is `unmanaged` |
+| `add-pack <estate>.satz <gate\|path> [--with-requirements] [--format text\|json]` | Satz | binds the gate true and makes the line active where the graph places it, with the packs that follow its gate; refused, naming them, while a pack it needs is off or one it excludes is on. The edited estate is compiled and restored when it does not compile |
+| `remove-pack <estate>.satz <gate\|path> [--cascade] [--format text\|json]` | Satz | binds the gate false and leaves the line; refused, naming them, while a pack that needs it is on (`--cascade` switches those off too) or while its line is not gated on its gate |
 | `update-prerequisites [<estate>.satz] [--report-only] [--format text\|json]` | Satz | what the estate's resource types oblige it to declare: the roles the IaC service account needs against what it grants, and the APIs the infrastructure project must enable against what it declares. Writes both into the estate; `--report-only` lists them instead |
 | `whoami [<estate>.satz]` | — | the credential satz runs as and, with an estate, what that estate runs as — its service account, impersonated by the credential, in cloud mode; the credential itself in local mode — with the live checks that decide whether the next call works |
 | `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |

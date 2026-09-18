@@ -92,8 +92,11 @@ Five steps, in this order. Each one is a section below.
 
    An estate the interview wrote already lists every pack, each as a commented `use` line
    under the phase it can be adopted in — the map first, then the security-group model,
-   then what depends on the groups, and so on. Uncomment a line to add its pack, or answer
-   that pack's question and `satz interview` uncomments it. `satz merge-presets` writes the
+   then what depends on the groups, and so on. `satz add-pack <estate> <gate>` adds a pack:
+   it binds the gate, makes the line active, and refuses while a pack it needs is off,
+   naming it; `satz remove-pack` binds the gate false. Answering that pack's question in
+   `satz interview` switches its line on the same way, and `satz packs` shows every pack
+   with its answer, its line and what it needs. `satz merge-presets` writes the
    line for a pack the library has gained since the estate was written, so the list stays
    the library's rather than one person's memory of it. A question answered `true` whose
    line is still commented — or missing — is reported at every compile, because otherwise
@@ -669,7 +672,8 @@ that fork, proves the repoint by transpile identity, refreshes the pristine
 `X.satz`, and writes `X.diff.satz` — the exact delta adopting upstream would make.
 Comment and formatting churn upgrades silently instead of forking.
 It also writes the commented `use` line for every pack the pristine source's
-`pack-graph.json` offers and the estate has no line for, so `--pristine-dir <dir>`
+`pack-graph.json` offers and the estate has no line for, each where the graph's order puts
+it — after the pack before it, inside the block the graph names — so `--pristine-dir <dir>`
 writes the lines of THAT directory's graph. A pristine source without a graph gets a
 note and no line; a graph that places a pack in a block this binary's scaffold does not
 have is refused before anything changes.

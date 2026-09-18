@@ -354,14 +354,14 @@ fn invocation(rel: &Path, file: &File, sh: &Shape, h: &Header) -> Result<String,
 // ---------------------------------------------------------------------------
 
 /// A param reference and the first line of the file it appears on.
-type Refs = BTreeMap<String, usize>;
+pub(crate) type Refs = BTreeMap<String, usize>;
 
 fn note(out: &mut Refs, name: &str, line: usize) {
     let at = out.entry(name.to_string()).or_insert(line);
     *at = (*at).min(line);
 }
 
-fn refs_in_str(parts: &[StrPart], line: usize, out: &mut Refs) {
+pub(crate) fn refs_in_str(parts: &[StrPart], line: usize, out: &mut Refs) {
     for p in parts {
         if let StrPart::Param(r) = p {
             note(out, r, line);
@@ -375,7 +375,7 @@ fn refs_in_key(k: &Key, line: usize, out: &mut Refs) {
     }
 }
 
-fn refs_in_value(v: &Value, line: usize, out: &mut Refs) {
+pub(crate) fn refs_in_value(v: &Value, line: usize, out: &mut Refs) {
     match v {
         Value::Str(parts) => refs_in_str(parts, line, out),
         // a bare identifier in value position is a param; a reference to another
@@ -387,7 +387,7 @@ fn refs_in_value(v: &Value, line: usize, out: &mut Refs) {
     }
 }
 
-fn refs_in_entry(e: &Entry, out: &mut Refs) {
+pub(crate) fn refs_in_entry(e: &Entry, out: &mut Refs) {
     match e {
         Entry::Attr { key, value, line } => {
             refs_in_key(key, *line, out);

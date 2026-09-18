@@ -39,7 +39,14 @@ pub(crate) enum Kind {
     /// an emitted attribute whose value the provider refuses by its shape
     AttributeShape,
     Prerequisites,
+    /// a pack whose gate is true and whose line is commented out or absent
     UnadoptedPack,
+    /// an active line of a gated pack without its `when`: a no does not switch it off
+    UngatedPack,
+    /// a pack on while a pack it needs is off
+    PackRequirement,
+    /// two packs that exclude one another, both on
+    ExcludedPacks,
     Providers,
     Action,
     HclPassthrough,

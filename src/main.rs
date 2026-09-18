@@ -33,6 +33,7 @@ mod dossier;
 mod presets;
 mod doc_packs;
 mod pack_graph;
+mod packs;
 mod github;
 mod policy_tree;
 mod prowler;
@@ -200,7 +201,7 @@ static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::At
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
     (
@@ -755,6 +756,56 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Every pack the pack graph offers, as this estate has it: the choice (its gate's answer and default), the line (active, ungated, commented, absent, forked or misplaced), whether it deploys, what it needs and what needs it
+    ///
+    /// Read-only, offline. A `use` the pack graph does not know is listed as
+    /// unmanaged; the findings are the compile's own pack findings.
+    Packs {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Output format — json is the report an agent or satz-studio reads, markdown and
+        /// pdf the table a person reads
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
+        format: OutFormat,
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`-` for stdout)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
+    /// Switch a pack on: bind its gate true and make its `use` line active where the pack graph places it, the packs that follow its gate with it
+    ///
+    /// Refused, naming them, while a pack it needs is off — `--with-requirements`
+    /// switches those on too where there is one to choose — or a pack it excludes is
+    /// on. The edited estate is compiled, and restored when it does not compile.
+    AddPack {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// The pack: its gate (`use_audit_logsink`) or its path (`presets/monitoring/organization-audit-logsink.satz`)
+        pack: String,
+        /// Switch on what the pack needs too, where the pack graph names one pack for it
+        #[arg(long)]
+        with_requirements: bool,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Switch a pack off: bind its gate false and leave its line — a gated line with a false gate deploys nothing
+    ///
+    /// Refused, naming them, while a pack that needs it is on — `--cascade` switches
+    /// those off too — or while its line is not gated on its gate. The edited estate
+    /// is compiled, and restored when it does not compile.
+    RemovePack {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// The pack: its gate or its path
+        pack: String,
+        /// Switch off the packs that need it too
+        #[arg(long)]
+        cascade: bool,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
     /// Judge one pack against the library's own bar: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles
     ///
     /// A pack is a fragment, so satz folds it into an estate to see what it emits:
@@ -1058,6 +1109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
                 Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. }
+                | Commands::Packs { .. } | Commands::AddPack { .. } | Commands::RemovePack { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::ReviewPack { .. }
                 | Commands::PackGraph { presets_dir: None, .. }
@@ -2156,6 +2208,58 @@ Thumbs.db
             crate::interview::run(&input_path, &runtime_config, all, accept_defaults, &mut input, &mut out)?;
             Ok(())
         }
+        Commands::Packs { input, format, out } => {
+            let out = crate::out::target(out, format)?;
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let report = crate::packs::report(&input_path, &runtime_config)?;
+            let text = match format {
+                OutFormat::Json => serde_json::to_string_pretty(&report)?,
+                OutFormat::Markdown | OutFormat::Pdf => crate::packs::render_markdown(&report),
+                _ => crate::packs::render_text(&report),
+            };
+            let deploying = report.packs.iter().filter(|p| p.deploys).count();
+            let what = format!("{} pack(s), {} deploying, {} finding(s)", report.packs.len(), deploying, report.findings.len());
+            if format == OutFormat::Pdf {
+                pdf_from_markdown(&text, &out, &what)?;
+            } else {
+                write_report(&out, text.as_bytes(), &what)?;
+            }
+            Ok(())
+        }
+        Commands::AddPack { input, pack, with_requirements, format } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            // printed rather than returned: `main` renders a returned error with `Debug`,
+            // which escapes the newlines of a refusal that names several packs
+            let change = match crate::packs::add(&input_path, &tool_config, &runtime_config, &pack, with_requirements) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("\n{}\n", e);
+                    return Err(format!("add-pack {}: nothing changed", pack).into());
+                }
+            };
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
+                _ => print!("{}", crate::packs::render_change(&change)),
+            }
+            Ok(())
+        }
+        Commands::RemovePack { input, pack, cascade, format } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            // printed rather than returned: `main` renders a returned error with `Debug`,
+            // which escapes the newlines of a refusal that names several packs
+            let change = match crate::packs::remove(&input_path, &tool_config, &runtime_config, &pack, cascade) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("\n{}\n", e);
+                    return Err(format!("remove-pack {}: nothing changed", pack).into());
+                }
+            };
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
+                _ => print!("{}", crate::packs::render_change(&change)),
+            }
+            Ok(())
+        }
         Commands::Questions { input, format, out, unanswered } => {
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -2413,8 +2517,25 @@ fn pipeline_b_compile(
         }
         Err(format!("use \"{}\": file not found", p))
     };
-    let fe = satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader)?;
     let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
+    let fe = match satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader) {
+        Ok(fe) => fe,
+        // An `unknown param` is most often a pack whose provider is off: the pack graph
+        // names it beside the parser's error.
+        Err(e) => {
+            let hints = match &graph {
+                crate::pack_graph::Shipped::Graph(g, dir) => {
+                    crate::packs::front_end_hints(g, dir, &input_path.to_string_lossy(), &src, &runtime_config.validation_level)
+                }
+                _ => Vec::new(),
+            };
+            if hints.is_empty() {
+                return Err(e.into());
+            }
+            // one line: `main` prints a returned error with `Debug`, newlines escaped
+            return Err(format!("{} — the pack graph: {}", e, hints.join("; ")).into());
+        }
+    };
     let tail = compile_tail(&fe, &resolver, &registry, tool_config, &graph, &runtime_config.validation_level, input_path, &src);
     // The two silencers: `--no-action-warnings`, and a caller that reports the
     // prerequisites itself.
@@ -2471,15 +2592,6 @@ fn pipeline_b_compile(
     })
 }
 
-/// A pack whose question is answered YES while its `use` line is still commented out —
-/// or missing from the estate altogether.
-///
-/// This is the failure the commented menu makes possible, and it is silent without this
-/// check: the param is bound, `satz questions` reports the estate complete, and the pack
-/// emits nothing because no line uses it. It is also how the library's own additions used
-/// to disappear — a pack shipped after an estate was written had no line in that estate, so
-/// answering its question did nothing at all. `satz merge-presets` writes the line;
-/// `satz interview` uncomments it; this says so when neither has happened.
 /// Two of the conflicting files are a fragment and its own dry-run twin, if they are.
 ///
 /// The fold reports one address defined twice and names the files; when those files are
@@ -2511,9 +2623,10 @@ pub(crate) struct Tail {
     pub findings: Vec<crate::findings::Finding>,
 }
 
-/// `graph` is the pack graph of the estate's presets: the checks that read the pack menu —
-/// a dry run and its enforcing pack both on, a pack answered for and not used — run over
-/// it, and a graph that is missing or unreadable is one finding instead.
+/// `graph` is the pack graph of the estate's presets: the estate's pack lines are judged
+/// against it by `crate::packs` — two excluded packs both on, a pack answered for and not
+/// used, a line without its gate, a pack on while one it needs is off — and a graph that
+/// is missing or unreadable is one finding instead.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_tail(
     fe: &satz_core::pipeline::FrontEnd,
@@ -2527,11 +2640,16 @@ pub(crate) fn compile_tail(
 ) -> Tail {
     use crate::findings::{Finding, Kind, Severity};
     let mut f: Vec<Finding> = Vec::new();
-    // Before the fold, because the fold would refuse the same thing as two disagreeing
-    // definitions of one address and name the files instead of the decision.
-    if let crate::pack_graph::Shipped::Graph(g) = graph {
-        dry_run_conflict_findings(g, &fe.env, estate, estate_src, &mut f);
-    }
+    // The estate's pack lines against the pack graph (`crate::packs`). Two packs that
+    // exclude one another are found before the fold, because the fold would refuse the
+    // same thing as two disagreeing definitions of one address and name the files instead
+    // of the decision; the rest are reported after the emitter.
+    let label = estate.to_string_lossy().into_owned();
+    let (exclusions, pack_findings) = match graph {
+        crate::pack_graph::Shipped::Graph(g, dir) => crate::packs::compile_findings(g, dir, &label, estate_src, level),
+        _ => (Vec::new(), Vec::new()),
+    };
+    f.extend(exclusions);
     if !f.is_empty() {
         return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, findings: f };
     }
@@ -2563,8 +2681,9 @@ pub(crate) fn compile_tail(
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
+    f.extend(pack_findings);
     match graph {
-        crate::pack_graph::Shipped::Graph(g) => unadopted_pack_findings(g, estate, estate_src, &fe.env, level, &mut f),
+        crate::pack_graph::Shipped::Graph(..) => {}
         crate::pack_graph::Shipped::Missing(_) if crate::findings::at_level(level).is_none() => {}
         crate::pack_graph::Shipped::Missing(path) => f.push(Finding::new(
             Severity::Note,
@@ -2592,60 +2711,6 @@ pub(crate) fn compile_tail(
     action_findings(&fe.actions, &mut f);
     hcl_findings(&fe.hcl, &mut f);
     Tail { folded, out: Some(out), providers_tf, findings: f }
-}
-
-/// A control cannot be measured and enforced at the same time.
-///
-/// A dry-run twin declares the SAME policy address as the fragment it is derived from,
-/// with `dry_run_spec` where that one has `spec`. Both gates true means both fragments
-/// are used, which the ⊕ fold refuses as two disagreeing definitions of one address —
-/// correctly, but naming files rather than the decision behind them. This says what
-/// happened and what to do about it, and it is always an error: there is no reading of
-/// "measure it and enforce it" that the estate could have meant. Its line is the dry
-/// run's `param = true` in the estate.
-///
-/// The pairs are the graph's DECLARED `excludes` edges between packs on two different
-/// gates — a dry-run twin declares one to its enforcing pack. The other declared kind, a
-/// second spelling of one pack, shares its gate and cannot clash; the derived ones are the
-/// options of one question, which the interview binds one at a time.
-fn dry_run_conflict_findings(
-    graph: &satz_core::pack_graph::PackGraph,
-    env: &satz_core::pipeline::Env,
-    estate: &Path,
-    estate_src: &str,
-    f: &mut Vec<crate::findings::Finding>,
-) {
-    use crate::findings::{Finding, Kind, Severity};
-    let on = |p: &str| env.get(p).and_then(|v| v.as_bool()) == Some(true);
-    use satz_core::pack_graph::{EdgeKind, Source};
-    let gate = |path: &str| graph.nodes.iter().find(|n| n.path == path).and_then(|n| n.gate.as_deref());
-    let mut clashes: Vec<(&str, &str)> = Vec::new();
-    for e in graph.edges.iter().filter(|e| e.kind == EdgeKind::Excludes && e.source == Source::Declared) {
-        let (Some(dry), Some(enforcing)) = (gate(&e.from), gate(&e.to)) else { continue };
-        if dry != enforcing && on(dry) && on(enforcing) {
-            clashes.push((enforcing, dry));
-        }
-    }
-    if clashes.is_empty() {
-        return;
-    }
-    let group = format!("{} control(s) asked to be measured and enforced at once:", clashes.len());
-    let label = estate.to_string_lossy().into_owned();
-    for (enforcing, dry) in &clashes {
-        f.push(
-            Finding::new(
-                Severity::Error,
-                Kind::DryRunConflict,
-                format!(
-                    "`{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n     \
-                     Switch one off: `{}` to size the control against this organisation first, `{}` to enforce it now.",
-                    enforcing, dry, dry, enforcing
-                ),
-            )
-            .in_group(&group)
-            .maybe_at(label.clone(), crate::findings::param_line(estate_src, dry)),
-        );
-    }
 }
 
 /// A `deployment_mode` the emitter has no backend for is an error at the line the
@@ -2911,70 +2976,6 @@ fn prerequisite_findings(
                 unknown.into_iter().collect::<Vec<_>>().join(", ")
             ),
         ));
-    }
-}
-
-/// A pack whose question is answered YES while its `use` line is still commented out —
-/// or missing from the estate altogether.
-///
-/// This is the failure the commented menu makes possible, and it is silent without this
-/// check: the param is bound, `satz questions` reports the estate complete, and the pack
-/// emits nothing because no line uses it. `satz merge-presets` writes the line;
-/// `satz interview` uncomments it; this says so when neither has happened — at the
-/// commented line when there is one.
-///
-/// The packs are the lines `graph` offers; a line written by hand (`by_hand`) is the
-/// estate's to write and is not looked for. A pack an `excludes` neighbour on the same gate
-/// stands in for — the S1 model's two-file spelling for `s1-security-groups` — is in use
-/// when that neighbour's line is.
-fn unadopted_pack_findings(
-    graph: &satz_core::pack_graph::PackGraph,
-    estate: &Path,
-    estate_src: &str,
-    env: &satz_core::pipeline::Env,
-    level: &str,
-    f: &mut Vec<crate::findings::Finding>,
-) {
-    use crate::findings::{Finding, Kind};
-    let Some(sev) = crate::findings::at_level(level) else { return };
-    let mut items: Vec<(String, Option<u32>)> = Vec::new();
-    // a `.local` fork of the pack IS that pack with the estate's own content, as
-    // merge-presets counts it: a fork in use is the pack in use
-    let names = |path: &str, l: &str| {
-        let fork = crate::fsx::slash(&crate::presets::fork_sibling(Path::new(path)));
-        l.contains(&format!("use \"{}\"", path)) || l.contains(&format!("use \"{}\"", fork))
-    };
-    let active = |path: &str| estate_src.lines().map(str::trim).any(|l| l.starts_with("use ") && names(path, l));
-    for n in graph.lines() {
-        let Some(gate) = n.gate.as_deref() else { continue };
-        let path = n.path.as_str();
-        if env.get(gate).and_then(|v| v.as_bool()) != Some(true) || active(path) {
-            continue;
-        }
-        if graph.excluded_by(path).iter().any(|o| o.gate.as_deref() == Some(gate) && active(&o.path)) {
-            continue;
-        }
-        match estate_src.lines().position(|l| names(path, l)) {
-            Some(i) => items.push((
-                format!("`{}` is true and `{}` is still commented out — uncomment it, or `satz interview` will", gate, path),
-                Some(i as u32 + 1),
-            )),
-            None => items.push((
-                format!("`{}` is true and this estate has no line for `{}` — run `satz merge-presets` to write it", gate, path),
-                None,
-            )),
-        }
-    }
-    if items.is_empty() {
-        return;
-    }
-    let group = format!(
-        "{} pack(s) this estate asks for but does not use — the answer is bound and nothing emits it:",
-        items.len()
-    );
-    let label = estate.to_string_lossy().into_owned();
-    for (msg, line) in items {
-        f.push(Finding::new(sev, Kind::UnadoptedPack, msg).in_group(&group).maybe_at(label.clone(), line));
     }
 }
 
@@ -6075,6 +6076,9 @@ mod command_groups {
         ("lsp", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
+        ("packs", Identity::NoGoogleApi),
+        ("add-pack", Identity::NoGoogleApi),
+        ("remove-pack", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),
         ("triage", Identity::NoGoogleApi),
         ("remediation-plan", Identity::NoGoogleApi),
@@ -8647,7 +8651,7 @@ action "step" {
         let fe = satz_core::pipeline::compile_estate("tail.satz", src, &resolver, &|p| Err(format!("no {}", p)))
             .unwrap_or_else(|e| panic!("front-end failed: {}", e));
         let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
-        let graph = crate::pack_graph::Shipped::Graph(crate::template::tests::shipped());
+        let graph = crate::pack_graph::Shipped::Graph(crate::template::tests::shipped(), Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"));
         compile_tail(&fe, &resolver, &reg, &cfg, &graph, level, Path::new("tail.satz"), src)
     }
 
@@ -8686,45 +8690,6 @@ action "step" {
         let f = t.findings.iter().find(|f| f.kind == Kind::UnadoptedPack).expect("the commented budget line");
         assert!(f.message.contains("use_budget") && f.message.contains("still commented out"), "{}", f.message);
         assert_eq!(f.line, Some(line_of("// use \"presets/organization-budget.satz\"")));
-    }
-
-    /// A `.local` fork is the pack with the estate's own content: in use, it adopts the
-    /// pack; commented out, it is found at its line like the pristine name would be.
-    #[test]
-    fn a_pack_used_through_its_local_fork_is_adopted() {
-        let mut env = satz_core::pipeline::Env::new();
-        env.insert("use_budget".to_string(), serde_yaml::Value::Bool(true));
-        let unadopted = |src: &str| {
-            let mut f = Vec::new();
-            unadopted_pack_findings(&crate::template::tests::shipped(), Path::new("e.satz"), src, &env, "warn", &mut f);
-            f.into_iter().filter(|f| f.kind == Kind::UnadoptedPack).map(|f| (f.message, f.line)).collect::<Vec<_>>()
-        };
-        assert_eq!(unadopted("use \"presets/organization-budget.local.satz\" when use_budget\n"), []);
-        let commented = unadopted("\n// use \"presets/organization-budget.local.satz\" when use_budget\n");
-        assert_eq!(commented.len(), 1, "{commented:?}");
-        assert!(commented[0].0.contains("still commented out"), "{}", commented[0].0);
-        assert_eq!(commented[0].1, Some(2));
-    }
-
-    /// The S1 model's two spellings exclude one another under one gate: an estate on the
-    /// two-file form is not missing `s1-security-groups`, and the two files, written by
-    /// hand, are never looked for in an estate on the one-file form.
-    #[test]
-    fn packs_that_exclude_one_another_under_one_gate_are_alternatives() {
-        let mut env = satz_core::pipeline::Env::new();
-        env.insert("security_model_s1".to_string(), serde_yaml::Value::Bool(true));
-        let unadopted = |src: &str| {
-            let mut f = Vec::new();
-            unadopted_pack_findings(&crate::template::tests::shipped(), Path::new("e.satz"), src, &env, "warn", &mut f);
-            f.into_iter().map(|f| f.message).collect::<Vec<_>>()
-        };
-        let split = "google_cloud_identity_group {\n  use \"presets/security-group-models/s1-group-definitions.satz\"\n}\n\
-                     google_organization_iam_member {\n  use \"presets/security-group-models/s1-group-permissions.satz\"\n}\n";
-        assert_eq!(unadopted(split), Vec::<String>::new());
-        assert_eq!(unadopted("use \"presets/security-group-models/s1-security-groups.satz\" when security_model_s1\n"), Vec::<String>::new());
-        let neither = unadopted("");
-        assert_eq!(neither.len(), 1, "{neither:?}");
-        assert!(neither[0].contains("s1-security-groups.satz"), "{}", neither[0]);
     }
 
     /// Presets without `pack-graph.json`: the checks that read the menu are skipped, and
