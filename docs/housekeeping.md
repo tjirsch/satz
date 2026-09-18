@@ -303,8 +303,8 @@ A branch push without a pull request runs nothing, and a release tag runs nothin
 because it tags a commit `main` already tested. A newer push to a pull request
 cancels the run it supersedes, in this workflow and in the privacy gate; a run on
 `main` is never cancelled or queued behind another. The Rust jobs restore the cargo
-registry and the dependencies' build from `Swatinem/rust-cache`, so a run compiles
-satz's own crates only. A new command that reads an estate gets a step here in the same PR.
+registry and the dependencies' build from `Swatinem/rust-cache`, so a run compiles only
+satz's own crates. A new command that reads an estate gets a step here in the same PR.
 
 ## `fleet-v1.sh` — every estate on the current binary
 
