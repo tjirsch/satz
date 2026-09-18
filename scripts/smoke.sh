@@ -1187,6 +1187,53 @@ grep -q 'use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm' tmp/mo
   || fail "the second merge-presets run failed:\n$(cat tmp/moved-merge2.txt)"
 grep -q 'repointed use "' tmp/moved-merge2.txt && fail "the migration ran twice on the same estate"
 
+step "merge-presets writes the prerequisites an estate lacks, at --validation error too"
+# The last step of a pickup writes the roles and APIs the estate's packs need. Under
+# --validation error the gap is a refusal, so a compile of merge-presets' own that
+# reported it stopped the run before that step: the estate's gap before the pickup, or
+# the one an adopted pack brings.
+rm -rf tmp/prq && mkdir -p tmp/prq/yaml tmp/prq/presets tmp/prq/pristine
+cp -R "$root/tests/schemas" tmp/prq/schemas
+cat > tmp/prq/config.toml <<'CFGEOF'
+yaml_dir = "yaml"
+hcl_dir = "hcl"
+include_dirs = [".", "yaml"]
+schema_dir = "schemas"
+presets_dir = "presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+CFGEOF
+prq_pack() { # $1 version, $2 extra resources
+  printf '// A log bucket, and what later versions add beside it.\npack logs version "%s"\n\ngoogle_storage_bucket {\n  logs {\n    name     = "acme-logs"\n    project  = "acme-infra-001"\n    location = "EU"\n  }\n}\n%b' "$1" "$2"
+}
+prq_pack 1.0 '' > tmp/prq/presets/logs.satz
+cp tmp/prq/presets/logs.satz tmp/prq/pristine/logs.satz
+printf 'estate prq\n\nparams {\n  customer_organization_id = "123456789012"\n  billing_account_infra    = "012345-6789AB-CDEF01"\n  svc_iac_account          = "svc-iac-001"\n  infra_project_name       = "acme-infra-001"\n}\n\nterraform {\n  backend {\n    local { path = "terraform.tfstate" }\n  }\n}\n\nproviders {\n  google {\n    alias   = "google"\n    project = "acme-infra-001"\n    region  = "europe-west3"\n  }\n}\n\ngoogle_project {\n  infra {\n    name            = "acme-infra"\n    project_id      = infra_project_name\n    org_id          = customer_organization_id\n    project_service = [\n      "storage.googleapis.com",\n    ]\n  }\n}\n\nuse "presets/logs.satz"\n' > tmp/prq/yaml/prq.satz
+(cd tmp/prq && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
+if "$satz" --config tmp/prq/config.toml --validation error transpile prq.satz --check > tmp/prq-before.txt 2>&1; then
+  fail "the fixture declares every prerequisite already — the step below proves nothing"
+fi
+"$satz" --config tmp/prq/config.toml --validation error merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-merge.txt 2>&1 \
+  || fail "merge-presets at --validation error stopped on the gap it writes:\n$(cat tmp/prq-merge.txt)"
+grep -q 'prerequisite written: roles/storage.admin' tmp/prq-merge.txt \
+  || fail "merge-presets did not write the missing role:\n$(cat tmp/prq-merge.txt)"
+grep -q 'prerequisites not checked' tmp/prq-merge.txt && fail "the prerequisite step was refused:\n$(cat tmp/prq-merge.txt)"
+"$satz" --config tmp/prq/config.toml --validation error transpile prq.satz --check > tmp/prq-after.txt 2>&1 \
+  || fail "the estate still lacks a prerequisite after merge-presets:\n$(cat tmp/prq-after.txt)"
+# The pack's next version adds a topic, whose role and API the estate does not declare.
+(cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm prerequisites)
+prq_pack 1.1 '\ngoogle_pubsub_topic {\n  logs {\n    name    = "acme-logs"\n    project = "acme-infra-001"\n  }\n}\n' > tmp/prq/pristine/logs.satz
+# an adoption asks for a plan, so the run exits 1 by design; the report is the check
+"$satz" --config tmp/prq/config.toml --validation error merge-presets --pristine-dir tmp/prq/pristine --adopt logs > tmp/prq-adopt.txt 2>&1 || true
+grep -q 'adopted logs.satz in place' tmp/prq-adopt.txt || fail "the pack was not adopted:\n$(cat tmp/prq-adopt.txt)"
+grep -q 'prerequisite written: roles/pubsub.editor' tmp/prq-adopt.txt \
+  || fail "merge-presets did not write the role the adopted pack needs:\n$(cat tmp/prq-adopt.txt)"
+grep -q 'prerequisite written: pubsub.googleapis.com' tmp/prq-adopt.txt \
+  || fail "merge-presets did not write the API the adopted pack needs:\n$(cat tmp/prq-adopt.txt)"
+"$satz" --config tmp/prq/config.toml --validation error transpile prq.satz --check > tmp/prq-adopted.txt 2>&1 \
+  || fail "the estate lacks a prerequisite after the adoption:\n$(cat tmp/prq-adopted.txt)"
+
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"

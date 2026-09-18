@@ -421,7 +421,9 @@ An infrastructure project declared outside the estate file (in a pack, which the
 
 **Every compile checks the same**, at the [validation level](#schema-validation): `warn`
 (the default) prints the missing roles and APIs with the `update-prerequisites` command
-that writes them, `error` refuses the compile, `none` skips the check. An estate that
+that writes them, `error` refuses the compile, `none` skips the check. The two commands
+that write the gap, `update-prerequisites` and `merge-presets`, report it as what they
+write, so neither refuses on it. An estate that
 names no IaC service account is not role-checked; one that binds no
 `infra_project_name` is not API-checked. A resource type the table has no row for is
 named in a note.
@@ -753,10 +755,10 @@ satz migrate <INPUT> --mode <MODE>
 
 **Parameters:**
 - `<INPUT>`: Name of the estate file (`.satz`).
-- `--mode, -m <MODE>`: Target mode (`local` or `cloud`).
+- `--mode <MODE>`: Target mode (`local` or `cloud`); without it, the other of the two.
 
 **Under the Hood:**
-- **Update the estate**: Rewrites the `deployment_mode` param in the `.satz` file (an estate without one is refused).
+- **Update the estate**: Binds `deployment_mode` in the estate's `params` block — the value is replaced where the estate binds it, and the line is added where it does not. An estate with no mode in its params — neither its own nor a pack's default — runs in `local` mode, as the emitter and `whoami` read it.
 - **Regenerate**: Runs `transpile` to update the backend configuration (Local vs GCS) and provider authentication (ADC vs Impersonation).
 - **Groups Admin** (`--mode cloud`, when the estate manages Cloud Identity groups): from here the IaC service account manages them, which needs the Workspace Groups Admin role. `migrate` checks for it and assigns it through the Admin SDK Directory API, as you — the service account cannot give itself an admin role. That needs a login carrying the role-management scope — `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/admin.directory.rolemanagement` — the Admin SDK API (`admin.googleapis.com`) on your quota project, and a Workspace admin who may assign roles. When any is missing, the migration goes on and prints which one, with the admin-console path (Account → Admin roles → Groups Admin → Admins → Assign service accounts).
 - **Migrate State**: Executes `tofu init -migrate-state` to move the Terraform state to the new backend.
@@ -1310,6 +1312,13 @@ default discovery (the single `estate` .satz in yaml_dir).
 
 A semantic change without a version bump warns (an upstream release bug); a bump
 with identical semantics upgrades in place.
+
+**Last, the prerequisites.** A pack the run adopts can emit a type whose role or API
+the estate does not declare yet, and so can a release whose prerequisite table grew. The
+run ends with the check and the write `update-prerequisites` makes, and reports each role
+and API it wrote; `--report-only` lists them instead, and a gap listed or left unwritten
+needs attention. Its compiles do not report that gap as a finding, so at `--validation
+error` it is written rather than refused.
 
 The exit is non-zero when anything needs attention (a fork was created or its
 upstream moved, or a repoint was refused), so CI can gate on it.
