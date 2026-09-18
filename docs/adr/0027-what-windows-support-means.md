@@ -1,6 +1,7 @@
 # 0027 — what Windows support means: a tested build that works or refuses clearly
 
-- **Status:** accepted
+- **Status:** accepted; its ARM64 build is superseded by ADR-0029, which releases Windows
+  on x86_64 only
 - **Date:** 2026-09-17
 - **Shipped in:** the release that follows
 

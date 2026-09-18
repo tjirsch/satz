@@ -90,6 +90,10 @@ self_update_frequency = "daily"
 
 ### Using cargo-dist Installer (Recommended)
 
+Releases carry binaries for macOS on Apple silicon, Linux on x86_64 and ARM64, and
+Windows on x86_64. On an Intel Mac or on ARM64 Windows the installers stop with an error;
+build from source there with `cargo install --git https://github.com/tjirsch/satz --locked`.
+
 Install the latest release using the cargo-dist installer:
 
 ```bash
@@ -97,12 +101,20 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tjirsch/satz/releases/l
 ```
 
 This will install `satz` to `~/.local/bin` and automatically add it to your PATH if needed.
+The installer checks the archive it downloads against its sha256 with `sha256sum`, and
+skips that check where the command is missing; check the archive yourself then, against
+the release's `sha256.sum`, with `shasum -a 256 <file>`.
 
 > **Note:** The installer will:
-> - Install the binary to `~/.local/bin`
-> - Check if this directory is on your PATH
-> - If not, add it to your shell profile (e.g., `.bashrc`, `.zshrc`)
+> - Install the binary to `~/.local/bin`, and its PATH helper to `~/.config/satz/env.sh`
+>   (`env.fish` for fish), beside its install receipt
+> - Source that helper from your shell profiles (`.zshrc`, `.bashrc`, `.bash_profile`,
+>   `.profile`, and fish's `conf.d`). A profile line that sources `~/.local/bin/env` — a
+>   helper other installers into `~/.local/bin` share — is rewritten to the new one, and
+>   `~/.local/bin/env` is moved there
 > - Provide instructions to refresh your shell
+>
+> Removing satz means `~/.local/bin/satz`, `~/.config/satz/`, and those profile lines.
 >
 > If you prefer a different location, you can override it:
 > ```bash
@@ -111,7 +123,7 @@ This will install `satz` to `~/.local/bin` and automatically add it to your PATH
 
 ### On Windows
 
-satz builds for Windows (x86_64 and ARM64) and installs with PowerShell:
+satz builds for Windows on x86_64 and installs with PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/tjirsch/satz/releases/latest/download/satz-installer.ps1 | iex"
@@ -1802,7 +1814,7 @@ renamed command or flag, an input format no longer read, an emission change that
 moves a plan. Every other release is `patch`. An upgrade across a minor version
 brings estate work; an upgrade across patches does not.
 
-`cargo-release` (config in `release.toml`) bumps `Cargo.toml`, commits `version bump`, tags `vX.Y.Z` and pushes commit and tag. The tag runs `.github/workflows/release.yml`: build the six targets (macOS, Linux and Windows, each x86_64 and ARM64), create the GitHub release with archives, `sha256.sum`, `satz-installer.sh` and `satz-installer.ps1`, then the `attach-checksum` post-announce job (`dist-workspace.toml`, `.github/workflows/attach-checksum.yml`) uploads `satz-installer.sh.sha256` — the sidecar `self-update` verifies against — and `satz-installer.ps1.sha256`. `prune-releases.yml` afterwards keeps the five newest releases, and the `prune-artifacts` post-announce job (`.github/workflows/prune-artifacts.yml`) deletes the artifacts that run uploaded. Those are only cargo-dist's transport between its own jobs — each target's build goes up, the installer job pulls them all down, `host` pulls them down again to attach them — so once the release exists they are a second copy of the payload, and unlike release assets they count against the Actions storage quota for 90 days. A full multi-platform payload per release kills a 500 MB quota in four releases, and then every workflow in the account fails on artifact upload. `retention-days` cannot be set in `release.yml` instead: it is generated, and the `plan` job's `dist generate --check` fails on a hand-edited line. A release that broke before announcing keeps its artifacts, so it can still be debugged. Re-run `dist generate` after editing `dist-workspace.toml`; the `plan` job runs `dist generate --check` and fails on a hand-edited `release.yml`. ARM64 Windows builds on the native `windows-11-arm` runner; the cross build cargo-dist defaults to for that target does not compile satz (ADR 0027).
+`cargo-release` (config in `release.toml`) bumps `Cargo.toml`, commits `version bump`, tags `vX.Y.Z` and pushes commit and tag. The tag runs `.github/workflows/release.yml`: build the four targets (macOS on Apple silicon, Linux on x86_64 and ARM64, Windows on x86_64; ADR 0029), each archive carrying `LICENSE`, `NOTICE` and the README, create the GitHub release with archives, `sha256.sum`, `satz-installer.sh` and `satz-installer.ps1`, then the `attach-checksum` post-announce job (`dist-workspace.toml`, `.github/workflows/attach-checksum.yml`) uploads `satz-installer.sh.sha256` — the sidecar `self-update` verifies against — and `satz-installer.ps1.sha256`. `prune-releases.yml` afterwards keeps the five newest releases, and the `prune-artifacts` post-announce job (`.github/workflows/prune-artifacts.yml`) deletes the artifacts that run uploaded. Those are only cargo-dist's transport between its own jobs — each target's build goes up, the installer job pulls them all down, `host` pulls them down again to attach them — so once the release exists they are a second copy of the payload, and unlike release assets they count against the Actions storage quota for 90 days. A full multi-platform payload per release kills a 500 MB quota in four releases, and then every workflow in the account fails on artifact upload. `retention-days` cannot be set in `release.yml` instead: it is generated, and the `plan` job's `dist generate --check` fails on a hand-edited line. A release that broke before announcing keeps its artifacts, so it can still be debugged. Re-run `dist generate` after editing `dist-workspace.toml`; the `plan` job runs `dist generate --check` and fails on a hand-edited `release.yml`. The local `dist` must be the version `cargo-dist-version` names, or the file it generates fails that check; `dist selfupdate` moves both together.
 
 The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that exact `version` in `Cargo.toml`. A release does not run when only `main` was pushed, when the tag predates the bump commit, or when the tag and `Cargo.toml` versions differ.
 
