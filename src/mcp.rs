@@ -743,6 +743,29 @@ fn find_configs(root: &std::path::Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Where `p` leads, whether or not it exists: the longest leading part that
+/// resolves, canonicalized with its symlinks followed, then the rest applied by
+/// name. A part that does not exist holds no symlink, and a `..` after it steps back
+/// the way `create_dir_all` walks it — so `missing/../../x` leads out of its
+/// directory here exactly as it does when the directory is created. `None` when no
+/// part of the path resolves.
+fn resolve(p: &std::path::Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let p = std::path::absolute(p).ok()?;
+    let (base, mut at) = p.ancestors().find_map(|a| crate::fsx::canonicalize(a).ok().map(|c| (a, c)))?;
+    for part in p.strip_prefix(base).ok()?.components() {
+        match part {
+            Component::ParentDir => {
+                at.pop();
+            }
+            Component::Normal(name) => at.push(name),
+            // `.`; a prefix or a root cannot follow the part that resolved
+            _ => {}
+        }
+    }
+    Some(at)
+}
+
 /// Whether a `.satz` file is an ESTATE rather than a pack or a fragment. The
 /// statement is the definition, so read for it instead of guessing from a name.
 fn declares_an_estate(path: &std::path::Path) -> bool {
@@ -785,9 +808,6 @@ impl SatzMcp {
         )))
     }
 
-    /// Resolve an estate argument and refuse anything outside the root. Without
-    /// this a tool argument is an arbitrary-file read: `use "…"` resolves
-    /// through include_dirs, so a path is not just a path.
     /// The estate a call works on, and the configuration it works under.
     ///
     /// `None` means the one that is open — which is the normal case, and the
@@ -799,11 +819,32 @@ impl SatzMcp {
         let estate = match name {
             None => open.estate.clone(),
             Some(n) => {
-                let p = crate::estate_path(PathBuf::from(n), &open.runtime);
-                self.confine(p)?
+                let estate = self.estate_arg(n, &open.runtime)?;
+                if !estate.is_file() {
+                    return Err(refused(format!("no estate file at {}", estate.display())));
+                }
+                estate
             }
         };
         Ok((open, estate))
+    }
+
+    /// An estate argument, read as `satz <command> <estate>` reads one — as given when
+    /// absolute, else from the working directory when a file is there, else inside
+    /// `yaml_dir` — and confined. The working directory's reading is taken only when
+    /// it is inside the root: whether a file exists there is otherwise not this
+    /// server's to tell. What comes back may not exist; the caller asks.
+    fn estate_arg(&self, name: &str, runtime: &ToolConfig) -> Result<PathBuf, CallToolResult> {
+        let given = PathBuf::from(name);
+        if given.is_absolute() {
+            return self.confine(given);
+        }
+        if let Ok(here) = self.confine(given.clone()) {
+            if here.exists() {
+                return Ok(here);
+            }
+        }
+        self.confine(PathBuf::from(&runtime.yaml_dir).join(given))
     }
 
     /// What is open, or the refusal that says how to open something. An agent
@@ -824,9 +865,14 @@ impl SatzMcp {
             })
     }
 
-    /// Any other path argument — a Prowler export, a report to read back.
+    /// Any other path argument that must exist — a Prowler export, a pack, a library
+    /// to copy from. Confined first, so only a path inside the root is told it is missing.
     fn file(&self, name: &str) -> Result<PathBuf, CallToolResult> {
-        self.confine(self.ctx.root.join(name))
+        let p = self.confine(self.ctx.root.join(name))?;
+        if !p.exists() {
+            return Err(refused(format!("{}: no such file or directory", p.display())));
+        }
+        Ok(p)
     }
 
     /// Bind the identity before any LIVE call, exactly as the CLI does at
@@ -846,19 +892,27 @@ impl SatzMcp {
         open.sa.clone()
     }
 
+    /// A path argument, resolved, when it lies inside the root; refused otherwise.
+    /// Without this a tool argument is an arbitrary-file read: `use "…"` resolves
+    /// through include_dirs, so a path is not just a path.
+    ///
+    /// It judges the path whether or not it exists, and it is the FIRST thing said
+    /// about it: a path outside the root gets the same refusal, naming the path as
+    /// asked, whether or not something is there — so a client cannot learn what
+    /// exists beyond the root. Whether the path exists is the caller's question,
+    /// asked after this one.
     fn confine(&self, p: PathBuf) -> Result<PathBuf, CallToolResult> {
-        let resolved = crate::fsx::canonicalize(&p)
-            .map_err(|e| refused(format!("{}: {}", p.display(), e)))?;
         let root = crate::fsx::canonicalize(&self.ctx.root)
             .map_err(|e| refused(format!("server root {}: {}", self.ctx.root.display(), e)))?;
-        if !resolved.starts_with(&root) {
-            return Err(refused(format!(
+        match resolve(&p) {
+            Some(resolved) if resolved.starts_with(&root) => Ok(resolved),
+            // a path no part of which resolves cannot be under the root, which does
+            _ => Err(refused(format!(
                 "{} is outside the server's root ({}) — refused",
-                resolved.display(),
+                p.display(),
                 root.display()
-            )));
+            ))),
         }
-        Ok(resolved)
     }
 
     /// The manifest and claims every compliance tool starts from.
@@ -909,8 +963,7 @@ impl SatzMcp {
         let dir = config.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
         let runtime = crate::resolved_config(&tool, &dir);
 
-        let estate = crate::estate_path(PathBuf::from(&args.estate), &runtime);
-        let estate = match self.confine(estate) {
+        let estate = match self.estate_arg(&args.estate, &runtime) {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
@@ -1055,37 +1108,32 @@ impl SatzMcp {
             Ok(o) => o,
             Err(r) => return Ok(Err(r)),
         };
-        let named = match &args.estate {
+        // Confined before anything else is said about it, existence included.
+        let estate = match &args.estate {
             None => open.estate.clone(),
-            Some(n) => crate::estate_path(PathBuf::from(n), &open.runtime),
+            Some(n) => match self.estate_arg(n, &open.runtime) {
+                Ok(p) => p,
+                Err(r) => return Ok(Err(r)),
+            },
         };
         let mut created = false;
-        if !named.exists() {
+        if !estate.exists() {
             if !args.create {
                 return Ok(Err(refused(format!(
                     "{}: no such estate. Pass `create: true` to start the interview there — the file is \
                      written as a skeleton that uses presets/estate-core.satz, and every question is open.",
-                    named.display()
+                    estate.display()
                 ))));
             }
             if let Err(r) = self.permits(Group::Write) {
                 return Ok(Err(r));
             }
-            // The file does not exist yet, so confine its DIRECTORY.
-            let dir = named.parent().map(PathBuf::from).unwrap_or_default();
-            if let Err(r) = self.confine(dir) {
-                return Ok(Err(r));
-            }
-            let stem = named.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
-            if let Err(e) = crate::fsx::write_generated_satz(&named, &crate::template::skeleton(stem)) {
-                return Ok(Err(refused(format!("{}: {}", named.display(), e))));
+            let stem = estate.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
+            if let Err(e) = crate::fsx::write_generated_satz(&estate, &crate::template::skeleton(stem)) {
+                return Ok(Err(refused(format!("{}: {}", estate.display(), e))));
             }
             created = true;
         }
-        let estate = match self.confine(named) {
-            Ok(p) => p,
-            Err(r) => return Ok(Err(r)),
-        };
         let mut written = 0;
         if !args.answers.is_empty() || args.accept_defaults {
             if let Err(r) = self.permits(Group::Write) {
@@ -1262,11 +1310,11 @@ impl SatzMcp {
             return Ok(Err(r));
         }
         // a pack is a file, not an estate, so the server's root is what bounds it
-        let pack = match self.confine(self.ctx.root.join(&args.pack)) {
+        let pack = match self.file(&args.pack) {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
-        let against = match args.against.as_deref().map(|a| self.confine(self.ctx.root.join(a))) {
+        let against = match args.against.as_deref().map(|a| self.file(a)) {
             Some(Ok(p)) => Some(p),
             Some(Err(r)) => return Ok(Err(r)),
             None => None,
@@ -1337,10 +1385,9 @@ impl SatzMcp {
                 return Ok(Err(refused_with_findings(format!("transpile: {}", e), &estate, e.as_ref())));
             }
         };
-        // The directory, or the part of it that exists, must be inside the root.
+        // The directory must be inside the root, whether or not it exists yet.
         let dir = PathBuf::from(&open.runtime.hcl_dir);
-        let existing = dir.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| dir.clone());
-        if let Err(r) = self.confine(existing) {
+        if let Err(r) = self.confine(dir.clone()) {
             return Ok(Err(r));
         }
         let label = estate.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
@@ -1435,9 +1482,9 @@ impl SatzMcp {
             Ok(r) => r,
             Err(r) => return Ok(Err(r)),
         };
+        // `out` need not exist yet; it is judged where creating it would lead
         let out = self.ctx.root.join(&args.out);
-        let existing = out.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| out.clone());
-        if let Err(r) = self.confine(existing) {
+        if let Err(r) = self.confine(out.clone()) {
             return Ok(Err(r));
         }
         let on_file = out.join("authored.json");
@@ -1566,9 +1613,7 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let presets = PathBuf::from(&open.runtime.presets_dir);
-        let existing = presets.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| presets.clone());
-        if let Err(r) = self.confine(existing) {
+        if let Err(r) = self.confine(PathBuf::from(&open.runtime.presets_dir)) {
             return Ok(Err(r));
         }
         let pristine = match args.pristine_dir.as_deref().map(|p| self.file(p)).transpose() {
@@ -1611,9 +1656,7 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let presets = PathBuf::from(&open.runtime.presets_dir);
-        let existing = presets.ancestors().find(|a| a.exists()).map(|a| a.to_path_buf()).unwrap_or_else(|| presets.clone());
-        if let Err(r) = self.confine(existing) {
+        if let Err(r) = self.confine(PathBuf::from(&open.runtime.presets_dir)) {
             return Ok(Err(r));
         }
         let pristine = match args.pristine_dir.as_deref().map(|p| self.file(p)).transpose() {
@@ -1655,14 +1698,17 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let report = match crate::prerequisites_report(&estate, &open.tool, &open.runtime) {
+        // The report is the answer, as it is the command's output: the compile behind
+        // it neither repeats the gap nor refuses on it, at any validation level.
+        let quiet = crate::PrerequisiteFindings::Quiet;
+        let report = match crate::prerequisites_report(&estate, &open.tool, &open.runtime, quiet) {
             Ok(r) => r,
             Err(e) => return Ok(Err(refused(format!("update-prerequisites: {}", e)))),
         };
         if args.report_only || (report.missing.is_empty() && report.missing_apis.is_empty()) {
             return Ok(Ok(Json(PrerequisitesResult { report, written: Vec::new() })));
         }
-        match crate::prerequisites_write(&estate, &report, &open.tool, &open.runtime) {
+        match crate::prerequisites_write(&estate, &report, &open.tool, &open.runtime, quiet) {
             Ok((written, after)) => Ok(Ok(Json(PrerequisitesResult { report: after, written }))),
             Err(e) => Ok(Err(refused(format!("update-prerequisites: {}", e)))),
         }
@@ -1675,7 +1721,9 @@ impl SatzMcp {
                        every failed check with the Satz block that declared the resource. Scans what is written: \
                        transpile first. Needs the 'exec' capability — it runs an external tool (checkov on PATH, \
                        else uvx checkov).",
-        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
+        // Not read-only: it runs an external program, and `uvx` downloads it first. A
+        // client runs a read-only tool without asking; this one it has to ask for.
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
     async fn scan_checkov(
         &self,
@@ -2142,6 +2190,144 @@ mod tests {
             );
             assert!(d.body().len() < d.text.len(), "{}: the trim removed nothing", d.uri);
         }
+    }
+}
+
+#[cfg(test)]
+mod confine_tests {
+    //! The root is a boundary, and asking about a path beyond it teaches a client
+    //! nothing: a path outside is refused as outside whether or not it exists, and a
+    //! path that does not exist yet is judged where creating it would lead.
+    use super::*;
+    use serde_json::json;
+    use std::path::Path;
+
+    struct Fixture {
+        base: PathBuf,
+        root: PathBuf,
+        server: SatzMcp,
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.base);
+        }
+    }
+
+    /// `<base>/root` is the server's root, with a config and an estate in it;
+    /// `<base>/outside/present.satz` exists beyond it. The repository is an include
+    /// dir, so a skeleton's `use "presets/estate-core.satz"` resolves.
+    fn fixture(name: &str) -> Fixture {
+        let base = std::env::temp_dir().join(format!("satz-confine-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        std::fs::create_dir_all(root.join("yaml")).unwrap();
+        std::fs::create_dir_all(base.join("outside")).unwrap();
+        std::fs::write(base.join("outside/present.satz"), "estate present\n").unwrap();
+        std::fs::write(
+            root.join("config.toml"),
+            format!(
+                "yaml_dir = \"yaml\"\nhcl_dir = \"hcl\"\ninclude_dirs = [\".\", \"yaml\", '{}']\npresets_dir = \"presets\"\ntf_tool = \"tofu\"\n",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+        )
+        .unwrap();
+        std::fs::write(root.join("yaml/e.satz"), "estate e\n").unwrap();
+        let server = SatzMcp::new(root.clone(), Level::parse("read,write").unwrap(), false);
+        Fixture { base, root, server }
+    }
+
+    fn text(r: &CallToolResult) -> String {
+        r.content.iter().filter_map(|c| c.as_text().map(|t| t.text.clone())).collect::<Vec<_>>().join("\n")
+    }
+
+    fn outside(r: Result<PathBuf, CallToolResult>) -> String {
+        let r = r.expect_err("a path beyond the root is refused");
+        let t = text(&r);
+        assert!(t.contains("outside the server's root"), "{t}");
+        t
+    }
+
+    #[test]
+    fn a_path_outside_the_root_is_refused_the_same_whether_or_not_it_exists() {
+        let f = fixture("exists");
+        let present = f.base.join("outside/present.satz");
+        let absent = f.base.join("outside/absent.satz");
+        let nowhere = f.base.join("nowhere/at/all.satz");
+        let said: Vec<String> = [&present, &absent, &nowhere]
+            .iter()
+            .map(|p| outside(f.server.confine(p.to_path_buf())).replace(&p.display().to_string(), "<path>"))
+            .collect();
+        assert!(said.iter().all(|s| *s == said[0]), "the refusal depends on the path existing: {said:?}");
+        // and a file argument says the same before it would say "missing"
+        let t = outside(f.server.file("../outside/absent.satz"));
+        assert!(!t.contains("no such file"), "{t}");
+    }
+
+    #[test]
+    fn a_path_that_does_not_exist_yet_is_judged_where_creating_it_leads() {
+        let f = fixture("create");
+        let root = crate::fsx::canonicalize(&f.root).unwrap();
+        // `create_dir_all` walks `missing/..` back out once `missing` exists
+        outside(f.server.confine(f.root.join("missing/../../escaped")));
+        assert_eq!(f.server.confine(f.root.join("missing/../inside")).unwrap(), root.join("inside"));
+        assert_eq!(f.server.confine(f.root.join("hcl/new")).unwrap(), root.join("hcl").join("new"));
+        // inside the root, a missing file is named as missing
+        let r = f.server.file("absent.json").expect_err("a file argument must exist");
+        assert!(text(&r).contains("no such file or directory"), "{}", text(&r));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_out_of_the_root_is_followed_even_to_a_path_that_does_not_exist() {
+        let f = fixture("link");
+        std::os::unix::fs::symlink(f.base.join("outside"), f.root.join("link")).unwrap();
+        let said = outside(f.server.confine(f.root.join("link/absent.satz")));
+        // the refusal names the path as asked, not where the link leads
+        assert!(said.contains("link/absent.satz") && !said.contains("outside/absent.satz"), "{said}");
+        outside(f.server.confine(f.root.join("link/present.satz")));
+    }
+
+    async fn interview(f: &Fixture, args: serde_json::Value) -> Result<InterviewReport, String> {
+        match f.server.interview(Parameters(serde_json::from_value(args).unwrap())).await.unwrap() {
+            Ok(Json(report)) => Ok(report),
+            Err(r) => Err(text(&r)),
+        }
+    }
+
+    /// `satz_interview` confines the estate before it asks whether the file exists:
+    /// the other order lets "no such estate" and "outside the root" tell a client
+    /// which files exist beyond the root.
+    #[tokio::test]
+    async fn the_interview_confines_an_estate_before_it_asks_whether_it_exists() {
+        let f = fixture("interview");
+        let opened = f.server.open(Parameters(serde_json::from_value(json!({"config": ".", "estate": "e.satz"})).unwrap())).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
+        for p in [f.base.join("outside/present.satz"), f.base.join("outside/absent.satz")] {
+            let estate = p.display().to_string();
+            for create in [false, true] {
+                let said = interview(&f, json!({"estate": estate, "create": create})).await.expect_err("outside the root");
+                assert!(said.contains("outside the server's root") && !said.contains("no such estate"), "{said}");
+            }
+        }
+        assert!(!f.base.join("outside/absent.satz").exists(), "create wrote beyond the root");
+        // relative to yaml_dir, the same two
+        for name in ["../../outside/present.satz", "../../outside/absent.satz"] {
+            let said = interview(&f, json!({"estate": name})).await.expect_err("outside the root");
+            assert!(said.contains("outside the server's root"), "{said}");
+        }
+        // A name the working directory holds — the test runs in the crate, which has a
+        // Cargo.toml — is not read there when there is outside the root: it is the
+        // yaml_dir's, and missing, exactly like a name nothing holds.
+        assert!(Path::new("Cargo.toml").exists(), "the test runs in the crate directory");
+        for name in ["Cargo.toml", "Absent.toml"] {
+            let said = interview(&f, json!({"estate": name})).await.expect_err("missing in yaml_dir");
+            let in_yaml = Path::new("yaml").join(name).display().to_string();
+            assert!(said.contains("no such estate") && said.contains(&in_yaml), "{said}");
+        }
+        // inside the root the question is answered, and `create` writes there
+        let made = interview(&f, json!({"estate": "new.satz", "create": true})).await.expect("created inside the root");
+        assert!(made.created && f.root.join("yaml/new.satz").is_file(), "{made:?}");
     }
 }
 
