@@ -5,11 +5,13 @@
 //   use "presets/estate-map.satz"
 //
 // The map declares the choices and nothing else. The estate carries the matching
-// `use … when` lines, one per choice, in this order — `satz interview --create`
-// and the MCP tool `satz_interview` write them. A pack switched on brings its own
-// questions with it; one switched off asks nothing and emits nothing. A question
-// that gates a pack cannot live in the pack it gates, which is why they all live
-// here.
+// `use … when` lines, one per choice, in the order the packs can be adopted — each
+// written commented under the phase that has to be finished before it can go in.
+// `satz init`, `satz interview --create` and the MCP tool `satz_interview` write
+// them; answering a choice yes in the interview uncomments its line. A pack
+// switched on brings its own questions with it; one switched off asks nothing and
+// emits nothing. A question that gates a pack cannot live in the pack it gates,
+// which is why they all live here.
 //
 // The CIS baseline is the first choice and barely one: the estate exists for it,
 // and its opt-in extensions are the baseline pack's own questions. It is asked
@@ -22,7 +24,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "1.8"
+pack estate_map version "1.9"
 
 params {
   // ---- what the estate is for ---------------------------------------------

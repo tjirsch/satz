@@ -482,8 +482,8 @@ from then on the infrastructure is changed through the estate.
 
 The IaC service account reaches the adopted folders and projects, hand-made ones
 included, through the roles it holds at the organization: every folder and project
-inherits them. `satz update-prerequisites <estate>` names each role the adopted resource types need
-that the estate does not grant it yet, and `--execute` writes them.
+inherits them. `satz update-prerequisites <estate>` writes each role the adopted resource types need
+that the estate does not grant it yet into the estate; `--report-only` names them and writes nothing.
 
 ---
 
