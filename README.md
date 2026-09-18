@@ -175,7 +175,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `hcl-init [ARGS]` | runs `<tf_tool> init` in `hcl_dir`; everything after the command is handed to the tool verbatim, so `--config` must come before it |
 | `plan [ARGS]` | runs `<tf_tool> plan` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
 | `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace`, which `main.tf` also names in a comment above that policy for an apply without satz |
-| `migrate <INPUT>` | `--mode` |
+| `migrate <INPUT>` | `--mode` (`local`\|`cloud`; without it, the other of the two) |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `run-actions <INPUT>` | `--check` (each action's own dry-run form), `--execute` (the form that writes), `--only <names>`, `--phase <before-apply\|after-apply>` — prints what it would run and stops by default |
@@ -282,7 +282,7 @@ satz bootstrap <ESTATE> [options]
 - `--greenfield`: materialize an organisation that does not exist yet, for a tenant whose admin has not signed in to the Google Cloud console — a sign-in that accepts the terms creates the organisation, and then `init` derives its id and plain `bootstrap` is the path. The infrastructure project is created without a parent, the organisation Google creates for the estate's directory customer is found by polling, the project is moved under it and the organisation id is written back into the estate.
 **Tip:** Use `--dry-run` to see what resources would be created without making changes.
 
-**Tip:** For a declarative approach, set `deployment_mode = "boot"` in the estate's `params` block and run `transpile`.
+**Tip:** What `bootstrap` creates is declared in the estate — the folder, the management project and the state bucket, under the labels it imports them to — so after the import the estate manages them like any other resource. `deployment_mode` is `local` or `cloud`: `local` until `satz migrate --mode cloud`.
 
 **Under the Hood:**
 1.  **Authentication**: Uses Application Default Credentials (ADC).
@@ -755,7 +755,7 @@ satz migrate <INPUT> --mode <MODE>
 
 **Parameters:**
 - `<INPUT>`: Name of the estate file (`.satz`).
-- `--mode <MODE>`: Target mode (`local` or `cloud`); without it, the other of the two.
+- `--mode <MODE>`: Target mode, `local` or `cloud`; without it, the other of the two. Any other value is refused before the estate is read.
 
 **Under the Hood:**
 - **Update the estate**: Binds `deployment_mode` in the estate's `params` block — the value is replaced where the estate binds it, and the line is added where it does not. An estate with no mode in its params — neither its own nor a pack's default — runs in `local` mode, as the emitter and `whoami` read it.

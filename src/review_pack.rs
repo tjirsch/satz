@@ -216,13 +216,13 @@ pub(crate) fn review(
     }
 
     // The fold: a pack is a fragment, so what it emits is only knowable inside an
-    // estate. Everything below reads that estate.
-    let scratch = std::env::temp_dir().join(format!("satz-review-{}-{}", std::process::id(), name_of(&pack)));
-    crate::fsx::create_dir_all(&scratch)?;
+    // estate. Everything below reads that estate. The synthetic one lives in a scratch
+    // directory this review alone owns, removed on every return below.
+    let mut scratch: Option<Scratch> = None;
     let (estate, folded_into) = match against {
         Some(e) => (e.to_path_buf(), e.display().to_string()),
         None => {
-            let path = scratch.join("review.satz");
+            let path = scratch.insert(Scratch::new(&name_of(&pack))?).0.join("review.satz");
             crate::fsx::write_generated_satz(&path, &synthetic_estate(&pack))?;
             (path, "synthetic".to_string())
         }
@@ -254,7 +254,6 @@ pub(crate) fn review(
                 Severity::Error,
                 format!("does not compile inside an estate: {}", first_line(&e.to_string())),
             ));
-            let _ = std::fs::remove_dir_all(&scratch);
             return Ok(Review { pack: pack.display().to_string(), folded_into, emits: Vec::new(), findings: f });
         }
     };
@@ -439,13 +438,41 @@ pub(crate) fn review(
             .to_string(),
     ));
 
-    let _ = std::fs::remove_dir_all(&scratch);
     Ok(Review {
         pack: pack.display().to_string(),
         folded_into,
         emits: mine.iter().map(|r| r.address()).collect(),
         findings: f,
     })
+}
+
+/// The directory one review folds its pack in, removed when the review returns, however
+/// it returns. `satz mcp` serves reviews concurrently in one process, so the pid and the
+/// pack's file stem do not name a review: the number does, one per directory this process
+/// has made.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(stem: &str) -> Result<Scratch, BoxErr> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        loop {
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("satz-review-{}-{}-{}", std::process::id(), n, stem));
+            // `create_dir`, not `create_dir_all`: a directory that is already there belongs
+            // to someone else — a process before this one that had the same pid
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(Scratch(dir)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(format!("failed to create directory '{}': {}", dir.display(), e).into()),
+            }
+        }
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn name_of(p: &Path) -> String {
@@ -513,6 +540,59 @@ mod tests {
         assert!(e.contains("use \"/tmp/x/my-pack.satz\""), "{}", e);
         // it is a Satz file satz composes whole, so it must be in the canonical layout
         assert!(satz_core::fmt::is_formatted(&e).unwrap(), "{}", e);
+    }
+
+    /// `satz mcp` serves reviews concurrently in one process, and two packs may share a
+    /// file stem. Each review folds its own pack into its own estate: neither reads the
+    /// other's, and neither finds its estate deleted by the other finishing first.
+    #[test]
+    fn two_reviews_of_packs_with_one_stem_run_side_by_side() {
+        use std::sync::{Arc, Barrier};
+        let dir = std::env::temp_dir().join(format!("satz-review-stem-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut cfg = crate::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.schema_dir = crate::corpus::schema_dir();
+        let packs: Vec<(PathBuf, String)> = ["a", "b"]
+            .iter()
+            .map(|side| {
+                std::fs::create_dir_all(dir.join(side)).unwrap();
+                let pack = dir.join(side).join("same-stem.satz");
+                let text = format!(
+                    "// A log bucket, reviewed beside a pack with the same file name.\n\
+                     pack same_stem version \"1.0\"\n\n\
+                     google_storage_bucket {{\n  logs_{side} {{\n    name     = \"acme-logs-{side}\"\n    \
+                     location = \"EU\"\n  }}\n}}\n"
+                );
+                std::fs::write(&pack, text).unwrap();
+                (pack, format!("google_storage_bucket.logs_{side}"))
+            })
+            .collect();
+        let start = Arc::new(Barrier::new(packs.len()));
+        let reviewers: Vec<_> = packs
+            .into_iter()
+            .map(|(pack, address)| {
+                let (cfg, start) = (cfg.clone(), start.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    for n in 0..5 {
+                        let r = review(&pack, None, &cfg, &cfg).expect("the review runs");
+                        let messages: Vec<&str> = r.findings.iter().map(|f| f.message.as_str()).collect();
+                        assert_eq!(r.emits, std::slice::from_ref(&address), "review {} of {}: {:?}", n, pack.display(), messages);
+                        assert!(
+                            !messages.iter().any(|m| m.starts_with("does not compile")),
+                            "review {} of {}: {:?}",
+                            n,
+                            pack.display(),
+                            messages
+                        );
+                    }
+                })
+            })
+            .collect();
+        for reviewer in reviewers {
+            reviewer.join().expect("a review read the other's estate or lost its own");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

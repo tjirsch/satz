@@ -494,8 +494,8 @@ enum Commands {
         /// Estate file (inside yaml_dir if relative): binds `deployment_mode`
         /// in its params
         input: String,
-        /// Target mode (local or cloud)
-        #[arg(long)]
+        /// Target mode; without it, the other of the two
+        #[arg(long, value_parser = ["local", "cloud"])]
         mode: Option<String>,
     },
     /// Check for and install new releases from GitHub
@@ -7537,6 +7537,27 @@ mod migrate_mode {
         assert_eq!(written(&path, &cfg, &after).mode, "cloud", "the pack's default won over the estate:\n{}", after);
         assert_eq!(std::fs::read_to_string(path.parent().unwrap().join("core.satz")).unwrap(), core, "the pack was edited");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The emitter writes a backend for `local` and for `cloud` and for nothing else, so
+    /// those are the values `--mode` takes: the help lists them and clap refuses the rest
+    /// before the estate is touched.
+    #[test]
+    fn the_mode_is_local_or_cloud_and_anything_else_is_refused() {
+        let mut cmd = Cli::command();
+        cmd.build();
+        let migrate = cmd.find_subcommand("migrate").expect("migrate is a command");
+        let mode = migrate.get_arguments().find(|a| a.get_id() == "mode").expect("migrate takes --mode");
+        let values: Vec<String> = mode.get_possible_values().iter().map(|v| v.get_name().to_string()).collect();
+        assert_eq!(values, ["local", "cloud"]);
+        let err = Cli::command()
+            .try_get_matches_from(["satz", "migrate", "x.satz", "--mode", "foo"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid value 'foo'"), "{err}");
+        assert!(err.contains("local, cloud"), "{err}");
+        let parsed = Cli::try_parse_from(["satz", "migrate", "x.satz", "--mode", "cloud"]).expect("parses").command;
+        assert!(matches!(&parsed, Some(Commands::Migrate { mode: Some(m), .. }) if m == "cloud"));
     }
 
     #[test]

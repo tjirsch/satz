@@ -149,9 +149,9 @@ the packs that implement them.
 
 `src/prerequisites.rs` — per resource type, the permission the IaC service account needs
 to manage it and the predefined roles that carry that permission, plus the reads every
-estate needs. `satz update-prerequisites` checks an estate against it and `--execute` writes the
-missing roles; `satz whoami <estate>` tests the permissions live. `satz update-prerequisites
---format json` prints it.
+estate needs. `satz update-prerequisites <estate>` checks an estate against it and writes the
+missing roles into the estate, `--report-only` lists them and writes nothing; `satz whoami
+<estate>` tests the permissions live. `satz update-prerequisites --format json` prints it.
 
 Two triggers make it stale:
 
