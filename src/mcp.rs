@@ -1226,8 +1226,8 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let today = crate::prowler::today_utc();
-        Ok(Ok(Json(crate::prowler::plan(&manifest, &claims, org.as_deref(), &today))))
+        let now = crate::compliance::chrono_free_timestamp();
+        Ok(Ok(Json(crate::prowler::plan(&manifest, &claims, org.as_deref(), &now))))
     }
 
     #[tool(

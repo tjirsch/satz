@@ -52,9 +52,10 @@ pub(crate) struct ProwlerPlan {
     /// Catalogs the estate claims that Prowler has no framework for, with why it
     /// matters — those controls are simply not in the scan.
     pub unmapped_frameworks: Vec<String>,
-    /// Directory the export belongs in, relative to the estate.
+    /// Directory the export belongs in, relative to the estate: one per UTC date.
     pub output_directory: String,
-    /// File name stem; Prowler appends `.ocsf.json`.
+    /// File name stem — the scope and the UTC minute the plan was made
+    /// (`org-2026-09-13T08-30Z`); Prowler appends `.ocsf.json`.
     pub output_filename: String,
     /// The full path `report-compliance --prowler` will read.
     pub output_path: String,
@@ -70,11 +71,14 @@ pub(crate) struct ProwlerPlan {
 /// further and is what makes a two-hundred-project estate's scan finish. Both come from
 /// what the estate ACTUALLY declares, which is the whole reason this is a command rather
 /// than a documentation page.
+///
+/// `now` is a `compliance::chrono_free_timestamp` (`2026-09-13T08:30Z`): the date names
+/// the directory, the whole of it the file.
 pub(crate) fn plan(
     manifest: &Manifest,
     claims: &[(String, Claim)],
     org_id: Option<&str>,
-    today: &str,
+    now: &str,
 ) -> ProwlerPlan {
     let projects: Vec<String> = manifest
         .resources
@@ -103,10 +107,13 @@ pub(crate) fn plan(
     unmapped.sort();
     unmapped.dedup();
 
-    // The name carries the scope and the date, so two scans of one estate never
-    // overwrite each other and a file on its own says what produced it.
+    // The name carries the scope and the UTC minute. Prowler APPENDS to an output file
+    // that already exists, so two scans under one name leave a file that no longer
+    // parses and mixes both runs' findings; a plan made for each scan names a file of
+    // its own. The directory stays per date, so a day's scans sit together.
+    let (today, _) = now.split_once('T').expect("`now` is a chrono_free_timestamp, date T time");
     let scope = org_id.map(|_| "org").unwrap_or("projects");
-    let stem = format!("{}-{}", scope, today);
+    let stem = format!("{}-{}", scope, crate::compliance::file_timestamp(now));
     let dir = format!("{}/{}", EVIDENCE_DIR, today);
 
     let mut argv: Vec<String> = vec!["prowler".into(), "gcp".into()];
@@ -199,34 +206,6 @@ pub(crate) fn notes(p: &ProwlerPlan) -> String {
     out
 }
 
-/// Today, UTC, as `YYYY-MM-DD` — the directory a scan's output goes in.
-///
-/// UTC rather than local time so two people in two time zones scanning the same estate
-/// on the same day write into one directory rather than two that look like two scans.
-pub(crate) fn today_utc() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    civil_date(secs.div_euclid(86_400))
-}
-
-/// Civil date from a day number since the Unix epoch (Howard Hinnant's algorithm).
-/// No date crate for one format string.
-fn civil_date(days: i64) -> String {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{:04}-{:02}-{:02}", y, m, d)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,7 +254,7 @@ mod tests {
         m.resources.extend([project("b", "acme-log-001"), project("a", "acme-infra-001")]);
         let claims = vec![claim("cis-gcp", "4.0"), claim("cis-gcp", "5.0"), claim("cis-gcp", "4.0")];
 
-        let p = plan(&m, &claims, Some("123456789012"), "2026-09-13");
+        let p = plan(&m, &claims, Some("123456789012"), "2026-09-13T08:30Z");
 
         // Projects sorted and de-duplicated, so two runs produce the same line.
         assert_eq!(p.projects, vec!["acme-infra-001", "acme-log-001"]);
@@ -285,9 +264,9 @@ mod tests {
             p.command,
             "prowler gcp --organization-id 123456789012 --project-ids acme-infra-001 acme-log-001 \
              --compliance cis_4.0_gcp cis_5.0_gcp --output-formats json-ocsf \
-             --output-directory evidence/prowler/2026-09-13 --output-filename org-2026-09-13"
+             --output-directory evidence/prowler/2026-09-13 --output-filename org-2026-09-13T08-30Z"
         );
-        assert_eq!(p.output_path, "evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json");
+        assert_eq!(p.output_path, "evidence/prowler/2026-09-13/org-2026-09-13T08-30Z.ocsf.json");
         assert!(p.then.contains(&p.output_path));
 
         // The whole of stdout is the line to run: `satz prowler <estate>` is pasted
@@ -302,7 +281,7 @@ mod tests {
     fn a_framework_prowler_does_not_have_is_named_not_guessed() {
         // A wrong --compliance argument silently scans the wrong control set, so an
         // unmapped catalog is reported rather than mapped to something that looks close.
-        let p = plan(&Manifest::default(), &[claim("iso27001", "2022")], None, "2026-09-13");
+        let p = plan(&Manifest::default(), &[claim("iso27001", "2022")], None, "2026-09-13T08:30Z");
         assert!(p.compliance.is_empty());
         assert_eq!(p.unmapped_frameworks, vec!["iso27001 2022"]);
         assert!(!p.command.contains("--compliance"));
@@ -321,11 +300,43 @@ mod tests {
         // omit the flag and say so than to emit a line that fails in the terminal.
         let mut m = Manifest::default();
         m.resources.extend([project("a", "{customer_shortname}-infra-001")]);
-        let p = plan(&m, &[], None, "2026-09-13");
+        let p = plan(&m, &[], None, "2026-09-13T08:30Z");
         assert!(p.projects.is_empty());
         assert!(!p.command.contains("--project-ids"));
         assert!(notes(&p).contains("cannot be resolved here"));
         assert!(!render(&p).contains("cannot be resolved here"), "stdout stays the command line");
+    }
+
+    #[test]
+    fn two_scans_on_one_day_are_named_apart_in_one_directory() {
+        // Prowler appends to an output file that already exists: a rescan after an
+        // apply, written under the morning's name, would leave one file that no longer
+        // parses and mixes both runs. Each plan names its own file, the day one folder.
+        let morning = plan(&Manifest::default(), &[], Some("123456789012"), "2026-09-13T08:30Z");
+        let after_apply = plan(&Manifest::default(), &[], Some("123456789012"), "2026-09-13T14:05Z");
+        assert_eq!(morning.output_directory, "evidence/prowler/2026-09-13");
+        assert_eq!(after_apply.output_directory, morning.output_directory);
+        assert_eq!(morning.output_filename, "org-2026-09-13T08-30Z");
+        assert_eq!(after_apply.output_filename, "org-2026-09-13T14-05Z");
+        assert_ne!(morning.output_path, after_apply.output_path);
+        // filesystem-safe on every platform, and pasted without quotes
+        assert!(!after_apply.output_path.contains(':'), "{}", after_apply.output_path);
+        assert!(
+            after_apply.command.ends_with("--output-filename org-2026-09-13T14-05Z"),
+            "{}",
+            after_apply.command
+        );
+        // the fold-back command reads the file this scan writes
+        assert!(
+            after_apply.then.contains("--prowler evidence/prowler/2026-09-13/org-2026-09-13T14-05Z.ocsf.json"),
+            "{}",
+            after_apply.then
+        );
+        // a scan narrowed to projects only says so in its name
+        assert_eq!(
+            plan(&Manifest::default(), &[], None, "2026-09-13T14:05Z").output_filename,
+            "projects-2026-09-13T14-05Z"
+        );
     }
 
     #[test]

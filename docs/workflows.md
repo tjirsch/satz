@@ -556,25 +556,33 @@ wrong `--compliance` argument silently scans the wrong control set.
 **Where a scan's output goes:**
 
 ```
-evidence/prowler/<UTC date>/<scope>-<UTC date>.ocsf.json
+evidence/prowler/<UTC date>/<scope>-<UTC date>T<HH>-<MM>Z.ocsf.json
 ```
 
 `evidence/` sits beside the estate and is git-ignored — a scan's output is full of a
 customer's project ids and findings. The date is UTC so two people in two time zones
 scanning on the same day write into one directory rather than two that look like two
-scans, and `<scope>` is `org` or `projects` after how the scan was narrowed. The path is
-deterministic because `--output-directory` and `--output-filename` are both passed:
-without them Prowler names the file after the moment it ran, and nothing downstream can
-predict it.
+scans, and `<scope>` is `org` or `projects` after how the scan was narrowed. The file name
+carries the UTC minute `satz prowler` ran in, the same shape as the history entries
+`report-compliance` writes, with dashes for colons so the name is valid on every
+platform. The path is known before the scan runs because `--output-directory` and
+`--output-filename` are both passed: without them Prowler names the file after the moment
+it ran, and nothing downstream can predict it.
+
+Run `satz prowler` again before each scan — a rescan after an apply included. Prowler
+appends to an output file that already exists: a second scan run from the first one's
+command lands after the first array's closing `]`, and the file holds two runs' findings
+and no longer parses. `report-compliance`, `triage` and `remediation-plan` refuse such a
+file, naming the line, column and byte offset where the second run begins.
 
 Then fold the export back in — any of the three read the same file:
 
 ```bash
-satz report-compliance cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json \
+satz report-compliance cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13T08-30Z.ocsf.json \
   --format markdown --out evidence/cis-4.0.md
-satz triage cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json \
+satz triage cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13T08-30Z.ocsf.json \
   --format markdown --out evidence/triage.md
-satz remediation-plan cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13.ocsf.json
+satz remediation-plan cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13T08-30Z.ocsf.json
 ```
 
 satz reads the OCSF export of Prowler 5 only, and checks the version the export carries:
