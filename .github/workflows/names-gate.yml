@@ -4,11 +4,19 @@ name: privacy gate
 # in it. Rejects anything shaped like private data that is not a documented
 # example value (docs/examples.md), a domain that is neither
 # IANA-reserved nor a known vendor host, and any commit not authored under the
-# maintainer identity or a GitHub noreply address. Runs on every push and PR.
+# maintainer identity or a GitHub noreply address. Runs once per commit: on a
+# pull request, and on the push to main that merges it or bumps the release — a
+# branch push alone is judged by its pull request. A newer push to a pull request
+# cancels the run it supersedes; a run on main is never cancelled or queued.
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -22,37 +30,30 @@ jobs:
           fetch-depth: 0
       - name: whole tree
         run: bash scripts/check-names.sh
-      - name: commit identities and messages in this push / PR
+      - name: commit identities and messages in this pull request / push to main
         # Only the commits this event ADDS are judged — never history that
-        # predates the rule. A pull request: what it adds over its base. A push
-        # to an existing branch: before..sha. A push that creates a branch
-        # (before = 0…0): what the branch adds over main; and a first push to
-        # main itself: just HEAD.
+        # predates the rule. A pull request: what it adds over its base, however
+        # often it was rebased and force-pushed. A push to main: before..sha, the
+        # squash commit that merged a pull request or the release's version bump;
+        # the first push to main: HEAD.
         #
-        # A FORCE-PUSH reports a `before` that no longer exists. Rebasing an open
-        # branch onto a moved main is the documented workflow, so this is routine
-        # rather than exotic. The range would then be unresolvable, and the gate
-        # refuses an unusable range instead of passing it — deliberately, because
-        # a range that silently checks nothing is how a privacy gate starts
-        # lying. So `before` is checked for EXISTENCE, not merely for not being
-        # all-zeros, and the branch-over-main range is the honest fallback: it is
-        # exactly what the branch adds.
+        # `before` is checked for EXISTENCE, not merely for not being all-zeros: a
+        # range that cannot be resolved would check nothing, and a gate that
+        # passes what it did not check is how a privacy gate starts lying. main is
+        # never force-pushed, so an unresolvable `before` is a fault, and the gate
+        # refuses it rather than judging less.
         run: |
           zero=0000000000000000000000000000000000000000
           before="${{ github.event.before }}"
-          if [ -n "$before" ] && [ "$before" != "$zero" ] \
-             && ! git rev-parse -q --verify "$before^{commit}" >/dev/null; then
-            echo "note: $before no longer resolves (force-push); judging the branch over main instead"
-            before="$zero"
-          fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             range="origin/${{ github.base_ref }}..HEAD"
-          elif [ "$before" != "$zero" ]; then
-            range="$before..${{ github.sha }}"
-          elif [ "${{ github.ref }}" != "refs/heads/main" ] && git rev-parse -q --verify origin/main >/dev/null; then
-            range="origin/main..HEAD"
-          else
+          elif [ -z "$before" ] || [ "$before" = "$zero" ]; then
             range="HEAD"
+          elif git rev-parse -q --verify "$before^{commit}" >/dev/null; then
+            range="$before..${{ github.sha }}"
+          else
+            echo "names-gate: $before, the main this push replaced, does not resolve — main was force-pushed" >&2
+            exit 1
           fi
           echo "range: $range"
           bash scripts/check-names.sh --commits "$range"

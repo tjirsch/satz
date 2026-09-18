@@ -2,10 +2,24 @@ name: smoke
 
 # Every estate-consuming command end to end against tests/smoke/ — the
 # commands, not just the engines. Offline: no ADC, no org.
+#
+# Once per commit: on a pull request, and on the push to main that merges it
+# (the squash commit, or the release's version bump). A branch push alone runs
+# nothing — its pull request runs the same jobs on the branch merged into main —
+# and a release tag runs nothing, because it tags a commit main already tested.
+#
+# A newer push to a pull request cancels the run it supersedes. A run on main is
+# never cancelled and never queued behind another: its group is the run itself,
+# since its result is the check of what merged.
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -35,7 +49,8 @@ jobs:
         run: cargo test --workspace --locked
   windows-checks:
     # the same two gates on Windows: satz ships a Windows build, so clippy and the tests
-    # run there on every push — the smoke matrix is bash and stays on Linux
+    # run there on every pull request and push to main — the smoke matrix is bash and
+    # stays on Linux
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

@@ -223,7 +223,7 @@ second kind.
 |---|---|---|
 | `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
 | `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
-| `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every push and PR |
+| `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every PR and every push to `main` |
 | `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it emitted before. Not run by CI — CI has no estates. Run it after every release |
 | `update_constraint_equivalents.py` | helper | refresh `presets/managed-constraint-equivalents.txt` — which managed constraint replaces which legacy one — from a live organisation's `ListConstraints` |
 | `update_schema_fixture.py` | helper | keep `tests/schemas/google.json` in step with the types the packs emit; `--check` names what is missing |
@@ -232,8 +232,8 @@ second kind.
 | `check_prerequisites.py` | gate | hold the prerequisite table's roles (`src/prerequisites.rs`) against Google's predefined role definitions; needs ADC, not run by CI |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
-| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every push (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
-| `check-grammar.sh` | gate | parse every `.satz` under `presets/` and `tests/` with the tree-sitter grammar `editors/zed/extension.toml` pins; any `ERROR` or `MISSING` node fails; CI runs it on every push and PR (`smoke.yml`, job `grammar`) |
+| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
+| `check-grammar.sh` | gate | parse every `.satz` under `presets/` and `tests/` with the tree-sitter grammar `editors/zed/extension.toml` pins; any `ERROR` or `MISSING` node fails; CI runs it on every PR and every push to `main` (`smoke.yml`, job `grammar`) |
 
 ## `check-names.sh` — the privacy gate
 
@@ -274,7 +274,10 @@ the message:
 git config core.hooksPath .githooks
 ```
 
-`.github/workflows/names-gate.yml` runs it on every push and pull request.
+`.github/workflows/names-gate.yml` runs it on every pull request, over the tree
+and the commits the pull request adds, and on every push to `main`, over the
+commits that push adds. `main` is never force-pushed: a push whose previous
+`main` does not resolve fails the gate.
 
 ## `smoke.sh` — the command matrix
 
@@ -294,8 +297,14 @@ scripts/smoke.sh                 # builds target/release/satz first
 SATZ=~/.cargo/bin/satz scripts/smoke.sh   # uses that binary, never rebuilt
 ```
 
-`.github/workflows/smoke.yml` runs it on every push and pull request with OpenTofu
-installed. A new command that reads an estate gets a step here in the same PR.
+`.github/workflows/smoke.yml` runs it with OpenTofu installed, once per commit: on
+every pull request, and on the push to `main` that merges it or bumps the release.
+A branch push without a pull request runs nothing, and a release tag runs nothing,
+because it tags a commit `main` already tested. A newer push to a pull request
+cancels the run it supersedes, in this workflow and in the privacy gate; a run on
+`main` is never cancelled or queued behind another. The Rust jobs restore the cargo
+registry and the dependencies' build from `Swatinem/rust-cache`, so a run compiles only
+satz's own crates. A new command that reads an estate gets a step here in the same PR.
 
 ## `fleet-v1.sh` — every estate on the current binary
 
@@ -649,7 +658,8 @@ parses every `*.satz` under `presets/` and `tests/` with it, failing on any `ERR
 tree-sitter CLI (`brew install tree-sitter-cli`) or `node`, through which it fetches
 the CLI.
 
-CI runs it on every push and PR (`.github/workflows/smoke.yml`, job `grammar`), and the
+CI runs it on every PR and every push to `main` (`.github/workflows/smoke.yml`, job
+`grammar`), and the
 grammar repository's own CI parses a fresh clone of this one on every push and once a
 week. A language change is a grammar commit first, then the pin bump here, in the PR
 that changes the parser; the job fails on a PR that changes the parser without it.
