@@ -1151,7 +1151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 // And the same for an API nothing enables: the apply would run until
                 // it reached that resource and then fail, leaving half an estate.
-                match prerequisites_report(&input_path, &tool_config, &runtime_config)
+                match prerequisites_report(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report)
                     .map_err(|e| e.to_string())
                     .and_then(|r| require_apis_declared(&r, if apply { "apply" } else { "plan" }))
                 {
@@ -1683,7 +1683,7 @@ Thumbs.db
             // before `tofu` runs is what the estate declares, so an estate whose
             // resources need an API it declares nowhere is refused here rather than
             // halfway through the first apply.
-            let services = match prerequisites_report(&config_path, &tool_config, &runtime_config) {
+            let services = match prerequisites_report(&config_path, &tool_config, &runtime_config, PrerequisiteFindings::Report) {
                 Ok(r) => {
                     if let Err(e) = require_apis_declared(&r, "bootstrap") {
                         if dry_run {
@@ -2349,10 +2349,34 @@ impl satz_core::algebra::TypeTable for EstateResolver<'_> {
     }
 }
 
+/// Whether a compile reports the estate's missing prerequisites as findings. A caller
+/// that reports them as its own output — `whoami`'s live permission check,
+/// `update-prerequisites` — compiles with `Quiet`, so the compile neither says the same
+/// thing twice nor refuses on the gap the caller is there to name or close.
+///
+/// A parameter of one compile, never a process-wide flag: `satz mcp` compiles for many
+/// calls in one process, concurrently, and a flag one call set would silence every
+/// other call's findings — at validation level `error`, their refusal too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrerequisiteFindings {
+    Report,
+    Quiet,
+}
+
+/// The compile every command runs: its findings reported in full.
 fn pipeline_b_generate(
     input_path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
+) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
+    pipeline_b_compile(input_path, tool_config, runtime_config, PrerequisiteFindings::Report)
+}
+
+fn pipeline_b_compile(
+    input_path: &Path,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+    prerequisites: PrerequisiteFindings,
 ) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)?;
 
@@ -2372,13 +2396,13 @@ fn pipeline_b_generate(
     };
     let fe = satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader)?;
     let tail = compile_tail(&fe, &resolver, &registry, tool_config, &runtime_config.validation_level, input_path, &src);
-    // The CLI's two silencers: `--no-action-warnings`, and `update-prerequisites`,
-    // which reports the same finding itself and would otherwise print it twice.
+    // The two silencers: `--no-action-warnings`, and a caller that reports the
+    // prerequisites itself.
     let findings: Vec<crate::findings::Finding> = tail
         .findings
         .into_iter()
         .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
-        .filter(|f| !(f.kind == crate::findings::Kind::Prerequisites && PREREQUISITES_QUIET.load(std::sync::atomic::Ordering::Relaxed)))
+        .filter(|f| !(f.kind == crate::findings::Kind::Prerequisites && prerequisites == PrerequisiteFindings::Quiet))
         .collect();
     let verdict = if FINDINGS_QUIET.load(std::sync::atomic::Ordering::Relaxed) {
         crate::findings::refusal(&findings)
@@ -2431,10 +2455,6 @@ fn pipeline_b_generate(
 /// Set by `review-pack`: its compile is internal — the findings are the review's
 /// own output, and printing them beside it would say everything twice.
 static FINDINGS_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Set by `update-prerequisites`, which reports the same finding itself and would otherwise
-/// print it twice.
-static PREREQUISITES_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A pack whose question is answered YES while its `use` line is still commented out —
 /// or missing from the estate altogether.
@@ -2954,8 +2974,7 @@ pub(crate) fn iac_probe(
     runtime_config: &ToolConfig,
 ) -> Result<crate::prerequisites::Probe, Box<dyn std::error::Error>> {
     // whoami reports the permissions live; the compile's own note would repeat them
-    PREREQUISITES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
-    let out = pipeline_b_generate(path, tool_config, runtime_config)?;
+    let out = pipeline_b_compile(path, tool_config, runtime_config, PrerequisiteFindings::Quiet)?;
     let params = estate_param_strings(path, runtime_config)?;
     let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
     Ok(crate::prerequisites::Probe {
@@ -3020,12 +3039,16 @@ fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<Hash
         .collect())
 }
 
+/// `prerequisites` is what the compile behind the report does with the same gap:
+/// `update-prerequisites` (the command and its MCP tool) passes `Quiet`, since the
+/// report IS its output; every other caller keeps the compile's findings.
 pub(crate) fn prerequisites_report(
     path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
+    prerequisites: PrerequisiteFindings,
 ) -> Result<PrerequisitesReport, Box<dyn std::error::Error>> {
-    let out = pipeline_b_generate(path, tool_config, runtime_config)?;
+    let out = pipeline_b_compile(path, tool_config, runtime_config, prerequisites)?;
     let params = estate_param_strings(path, runtime_config)?;
     let sa = crate::prerequisites::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
         format!(
@@ -3124,8 +3147,7 @@ fn run_update_prerequisites(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    PREREQUISITES_QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
-    let report = prerequisites_report(path, tool_config, runtime_config)?;
+    let report = prerequisites_report(path, tool_config, runtime_config, PrerequisiteFindings::Quiet)?;
     let emit = |r: &PrerequisitesReport| -> Result<(), Box<dyn std::error::Error>> {
         match format {
             OutFormat::Json => println!("{}", serde_json::to_string_pretty(r)?),
@@ -3151,7 +3173,7 @@ fn run_update_prerequisites(
         )
         .into());
     }
-    let (written, after) = prerequisites_write(path, &report, tool_config, runtime_config)?;
+    let (written, after) = prerequisites_write(path, &report, tool_config, runtime_config, PrerequisiteFindings::Quiet)?;
     for w in &written {
         println!("wrote {} → {}", w, path.display());
     }
@@ -3163,12 +3185,14 @@ fn run_update_prerequisites(
 /// the write, or an estate that no longer compiles, restores the file and is an
 /// error — the estate is never left half-edited, which is why both halves are
 /// written before anything is verified and one restore covers both. Prints
-/// nothing, so the MCP tool shares it.
+/// nothing, so the MCP tool shares it. `prerequisites` is passed on to the
+/// re-check's compile, as `prerequisites_report` takes it.
 pub(crate) fn prerequisites_write(
     path: &Path,
     report: &PrerequisitesReport,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
+    prerequisites: PrerequisiteFindings,
 ) -> Result<(Vec<String>, PrerequisitesReport), Box<dyn std::error::Error>> {
     let (org, bill) = crate::prerequisites::to_write(&report.write);
     let params = estate_param_strings(path, runtime_config)?;
@@ -3187,7 +3211,7 @@ pub(crate) fn prerequisites_write(
         // rather than leaving the estate half-written
         Err(e) => return Err(restore(e)),
     }
-    match prerequisites_report(path, tool_config, runtime_config) {
+    match prerequisites_report(path, tool_config, runtime_config, prerequisites) {
         Ok(after) if after.missing.is_empty() && after.missing_apis.is_empty() => Ok((written, after)),
         Ok(after) => Err(restore(format!(
             "the declarations were written and {} prerequisite(s) are still missing",
@@ -8336,5 +8360,84 @@ action "step" {
         assert!(f.message.starts_with("action \"step\" declared in tail.satz:"), "{}", f.message);
         // the tail ran to the end: the emitter's output and the providers are there
         assert!(t.out.is_some() && t.providers_tf.is_some());
+    }
+}
+
+#[cfg(test)]
+mod probe_quiet_tests {
+    //! `whoami`'s probe compiles the estate with its prerequisite findings quiet, since
+    //! it tests the permissions live. The quiet is the probe's compile's alone: `satz mcp`
+    //! runs the probe for `satz_whoami` and every later compile in the same process.
+    use super::*;
+    use crate::findings::Kind;
+
+    /// A bucket, and no grant or API for it: the IaC service account lacks the role,
+    /// and the infra project does not enable the storage API.
+    const ESTATE: &str = r#"estate probe_case
+
+params {
+  customer_organization_id = "123456789012"
+  svc_iac_account          = "svc-iac-001"
+  infra_project_name       = "corp-infra-001"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_storage_bucket {
+  logs {
+    name     = "probe-logs"
+    location = "EU"
+  }
+}
+"#;
+
+    fn estate_at(level: &str) -> (PathBuf, ToolConfig) {
+        let dir = std::env::temp_dir().join(format!("satz-probe-quiet-{}-{}", std::process::id(), level));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let estate = dir.join("probe.satz");
+        std::fs::write(&estate, ESTATE).unwrap();
+        let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.schema_dir = super::corpus::schema_dir();
+        cfg.validation_level = level.to_string();
+        (estate, cfg)
+    }
+
+    fn reports_the_gap(out: &PipelineBOut) -> bool {
+        out.findings.iter().any(|f| f.kind == Kind::Prerequisites)
+    }
+
+    fn refuses_on_the_gap(r: Result<PipelineBOut, Box<dyn std::error::Error>>) -> bool {
+        match r {
+            Ok(_) => false,
+            Err(e) => crate::findings::refusal_findings(e.as_ref()).iter().any(|f| f.kind == Kind::Prerequisites),
+        }
+    }
+
+    #[test]
+    fn a_compile_after_the_probe_still_reports_the_missing_prerequisite() {
+        let (estate, cfg) = estate_at("warn");
+        let before = pipeline_b_generate(&estate, &cfg, &cfg).expect("compiles at warn");
+        assert!(reports_the_gap(&before), "the fixture lacks a prerequisite: {:?}", before.findings);
+        let probe = iac_probe(&estate, &cfg, &cfg).expect("the probe compiles");
+        assert!(!probe.needs.is_empty(), "the probe derived no need from the bucket");
+        let after = pipeline_b_generate(&estate, &cfg, &cfg).expect("compiles at warn");
+        assert!(reports_the_gap(&after), "the probe silenced a later compile: {:?}", after.findings);
+        let _ = std::fs::remove_dir_all(estate.parent().unwrap());
+    }
+
+    /// At `error` the finding is a refusal, and the probe that is quiet about it must
+    /// not take the refusal away from the compile that follows.
+    #[test]
+    fn at_level_error_the_refusal_survives_the_probe() {
+        let (estate, cfg) = estate_at("error");
+        assert!(refuses_on_the_gap(pipeline_b_generate(&estate, &cfg, &cfg)), "the gap refuses at error");
+        iac_probe(&estate, &cfg, &cfg).expect("the probe's own compile is quiet, so it does not refuse");
+        assert!(refuses_on_the_gap(pipeline_b_generate(&estate, &cfg, &cfg)), "the probe removed a refusal");
+        let _ = std::fs::remove_dir_all(estate.parent().unwrap());
     }
 }

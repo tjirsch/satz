@@ -1895,8 +1895,9 @@ assert "needs 'write'" in msgs[4]["result"]["content"][0]["text"], msgs[4]
 assert msgs[5]["result"]["isError"] is True, msgs[5]
 assert "outside the server's root" in msgs[5]["result"]["content"][0]["text"], msgs[5]
 
-# Checkov is an external tool: the exec group, refused at read
-assert tools["satz_scan_checkov"]["annotations"]["readOnlyHint"] is True
+# Checkov is an external tool: the exec group, refused at read, and not read-only —
+# a client runs a read-only tool without asking
+assert tools["satz_scan_checkov"]["annotations"]["readOnlyHint"] is False
 assert msgs[15]["result"]["isError"] is True and "needs 'exec'" in msgs[15]["result"]["content"][0]["text"], msgs[15]
 
 PYEOF
