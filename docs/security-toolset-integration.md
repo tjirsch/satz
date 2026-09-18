@@ -188,8 +188,9 @@ library packs that would cover it, the estate's deviation reasons and open
 duties, and the goal view's verdict. Ordered (bucket, severity, control,
 resource), ids `F-0001…`, counted by bucket / severity / control / project,
 with "corroborated by both scanners" and "declared — apply fixes it" as first-
-class numbers. Written under the estate's `evidence/plan/<framework>-<ts>/`
-(git-ignored, gate-rejected) as `dossier.json`, `findings.csv`,
+class numbers. Written under the estate's `evidence/plan/<framework>-<UTC minute>/`
+(`cis-gcp-4.0-2026-09-13T08-30Z`, dashes for colons so the name is valid on every
+platform; git-ignored, gate-rejected) as `dossier.json`, `findings.csv`,
 `findings.xlsx`, `meta.json`.
 
 **Deterministic by construction**: the same inputs give the same JSON byte for
