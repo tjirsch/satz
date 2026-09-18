@@ -245,6 +245,11 @@ A question must be declared in the same file as the param it answers.
 `accept_defaults: true` writes every offer. Offer defaults as defaults, never invent a
 blocking answer, and repeat until `summary.complete`.
 
+**Adding or removing a pack** is `satz_add_pack` / `satz_remove_pack` with the pack's gate
+or path — never an edited `use` line. `satz_packs` lists every pack with its answer, its
+line, whether it deploys and what it needs. A refusal names the pack that is missing or
+still depends on it: ask the human before passing `with_requirements` or `cascade`.
+
 ## Adopting what already exists
 
 ```satz

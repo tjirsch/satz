@@ -17,6 +17,7 @@ use std::path::Path;
 
 use crate::questions::{questions_report, short, QuestionRow, QuestionsReport};
 use crate::ToolConfig;
+use satz_core::pack_graph::PackGraph;
 
 /// A value as a Satz literal, as it goes into `params {}`.
 pub(crate) fn literal(v: &serde_yaml::Value) -> String {
@@ -213,7 +214,15 @@ fn value_span(line: &str, name: &str) -> Result<(usize, usize), String> {
 /// param name and sets the siblings false, so the choice stays exclusive by
 /// construction. A string with braces is refused: braces interpolate in Satz, and
 /// a customer's answer is a value, not a template.
-pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> Result<String, String> {
+///
+/// `graph` is the pack graph of the estate's presets: a yes to a pack's gate switches
+/// that pack's line on through it. Without one, the answer is bound and no line moves.
+pub(crate) fn answer(
+    src: &str,
+    row: &QuestionRow,
+    value: &serde_yaml::Value,
+    graph: Option<&PackGraph>,
+) -> Result<String, String> {
     if row.kind == "oneof" {
         let chosen = value
             .as_str()
@@ -226,7 +235,7 @@ pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) ->
         for o in &row.options {
             let picked = serde_yaml::Value::Bool(o.param == chosen);
             out = bind(&out, &o.param, &picked)?;
-            out = uncomment_pack(&out, &o.param, &picked);
+            out = pack_lines(&out, &o.param, &picked, graph)?;
         }
         return Ok(out);
     }
@@ -240,36 +249,23 @@ pub(crate) fn answer(src: &str, row: &QuestionRow, value: &serde_yaml::Value) ->
         }
     }
     let out = bind(src, &row.subject, value)?;
-    Ok(uncomment_pack(&out, &row.subject, value))
+    pack_lines(&out, &row.subject, value, graph)
 }
 
 /// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
-/// exists. Answering its question YES is what puts the pack in the estate — this is where
-/// that happens, for the interview and for `satz_interview` alike, since both land here.
+/// exists. Answering its question YES is what puts the pack in the estate: the line of
+/// every pack on that gate is switched on as `satz add-pack` switches it — uncommented, or
+/// written where the pack graph places it — for the interview and for `satz_interview`
+/// alike, since both land here.
 ///
-/// Only ever uncomments. Answering a question `false` leaves the line where it is: `use …
-/// when <param>` already emits nothing while the param is false, and silently deleting a
-/// pack line from someone's estate is not a thing an answer should do.
-pub(crate) fn uncomment_pack(src: &str, gate: &str, value: &serde_yaml::Value) -> String {
-    if value.as_bool() != Some(true) {
-        return src.to_string();
+/// Only a yes moves a line. Answering `false` leaves the line where it is: `use … when
+/// <param>` already emits nothing while the param is false, and deleting a pack line from
+/// someone's estate is not a thing an answer should do.
+fn pack_lines(src: &str, gate: &str, value: &serde_yaml::Value, graph: Option<&PackGraph>) -> Result<String, String> {
+    match (value.as_bool(), graph) {
+        (Some(true), Some(g)) => Ok(crate::packs::gate_on(src, g, gate)?.0),
+        _ => Ok(src.to_string()),
     }
-    let suffix = format!(" when {}", gate);
-    let mut out = String::with_capacity(src.len());
-    for line in src.split_inclusive('\n') {
-        let end = line.trim_end_matches('\n');
-        let body = end.trim_start();
-        if body.starts_with("// use \"") && end.ends_with(&suffix) {
-            out.push_str(&end[..end.len() - body.len()]);
-            out.push_str(body.trim_start_matches("// "));
-            if line.ends_with('\n') {
-                out.push('\n');
-            }
-        } else {
-            out.push_str(line);
-        }
-    }
-    out
 }
 
 /// Read a typed answer in the shape the pack declares for the param — or, where the
@@ -340,6 +336,7 @@ pub(crate) fn apply(
     accept_defaults: bool,
 ) -> Result<usize, String> {
     let report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
+    let graph = crate::pack_graph::read(Path::new(&runtime.presets_dir)).map_err(|e| e.to_string())?;
     let mut src = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let before = src.clone();
     let mut n = 0;
@@ -352,7 +349,7 @@ pub(crate) fn apply(
                 estate.display()
             )
         })?;
-        src = answer(&src, row, value)?;
+        src = answer(&src, row, value, graph.as_ref())?;
         n += 1;
     }
     if accept_defaults {
@@ -366,7 +363,7 @@ pub(crate) fn apply(
         };
         for q in now.questions.iter().filter(|q| q.state == "unanswered") {
             if let Some(d) = &q.default {
-                src = answer(&src, q, d)?;
+                src = answer(&src, q, d, graph.as_ref())?;
                 n += 1;
             }
         }
@@ -391,7 +388,18 @@ pub(crate) fn run(
 ) -> Result<(), String> {
     let w = |out: &mut dyn Write, s: &str| out.write_all(s.as_bytes()).map_err(|e| e.to_string());
     let mut report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
+    let presets_dir = Path::new(&runtime.presets_dir);
+    let graph = crate::pack_graph::read(presets_dir).map_err(|e| e.to_string())?;
     w(out, &format!("\ninterview — {}\n", estate.display()))?;
+    if graph.is_none() {
+        w(
+            out,
+            &format!(
+                "  {} is not here: answers are written, and no pack line is switched on — `satz get-presets` fetches it\n",
+                presets_dir.join(crate::pack_graph::GRAPH_FILE).display()
+            ),
+        )?;
+    }
     if report.questions.is_empty() {
         w(out, "  nothing to ask: no pack this estate uses declares a question.\n")?;
         return Ok(());
@@ -486,7 +494,7 @@ pub(crate) fn run(
             }
         };
         let src = crate::fsx::read_to_string(estate).map_err(|e| e.to_string())?;
-        let new_src = match answer(&src, q, &value) {
+        let new_src = match answer(&src, q, &value, graph.as_ref()) {
             Ok(s) => s,
             Err(e) => {
                 w(out, &format!("  {}\n", e))?;
@@ -643,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn answering_yes_uncomments_that_pack_and_nothing_else() {
+    fn answering_yes_switches_on_that_pack_and_nothing_else() {
         let src = "\
 estate e
 
@@ -656,37 +664,36 @@ params {
 // use \"presets/organization-budget.satz\" when use_budget
 
 google_folder {
-  infra {
+  infra_folder {
     // use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink
   }
 }
 ";
+        let graph = crate::template::tests::shipped();
+        let g = Some(&graph);
         let yes = serde_yaml::Value::Bool(true);
         let no = serde_yaml::Value::Bool(false);
 
-        // the gate is matched exactly: `use_sentinel` must not drag in `use_sentinel_auditlogs`
-        let out = uncomment_pack(src, "use_sentinel", &yes);
+        // the pack is matched by path: `use_sentinel` does not drag in the log fragment
+        let out = pack_lines(src, "use_sentinel", &yes, g).unwrap();
         assert!(out.contains("\nuse \"presets/integrations/microsoft-sentinel.satz\" when use_sentinel\n"));
-        assert!(
-            out.contains("// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\""),
-            "a longer param that starts with the same text stays commented:\n{}",
-            out
-        );
+        assert!(out.contains("// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\""), "{}", out);
 
         // answering no changes nothing — a `use … when` already emits nothing, and deleting
         // somebody's pack line is not what an answer does
-        assert_eq!(uncomment_pack(src, "use_budget", &no), src);
+        assert_eq!(pack_lines(src, "use_budget", &no, g).unwrap(), src);
 
         // indentation is kept, so a pack inside a block stays inside it
-        let out = uncomment_pack(src, "use_audit_logsink", &yes);
+        let out = pack_lines(src, "use_audit_logsink", &yes, g).unwrap();
         assert!(
             out.contains("    use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink"),
             "the line keeps its four spaces:\n{}",
             out
         );
 
-        // and a value that is not a boolean true leaves the file alone
-        assert_eq!(uncomment_pack(src, "use_budget", &serde_yaml::Value::String("yes".into())), src);
+        // a value that is not a boolean true, or no graph, leaves the file alone
+        assert_eq!(pack_lines(src, "use_budget", &serde_yaml::Value::String("yes".into()), g).unwrap(), src);
+        assert_eq!(pack_lines(src, "use_budget", &yes, None).unwrap(), src);
     }
 
     #[test]

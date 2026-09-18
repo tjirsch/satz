@@ -152,9 +152,12 @@ uncommented.
 That is why a fresh estate asks sixteen questions and not fifty-six: day 0 is the scaffold
 alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
 move to the service account, and only then does a pack go in — one at a time, each with its
-own plan. Answering a pack's question `true` uncomments its line; `satz merge-presets` writes
-the line for a pack the library has gained since; and the compile reports a question answered
-`true` whose line is still commented or missing, so the three never drift apart.
+own plan. Answering a pack's question `true` switches its line on — uncommented, or written
+where the pack graph places it; `satz add-pack` does the same by the pack's gate or path, and
+first refuses while a pack it needs is off; `satz merge-presets` writes the line for a pack the
+library has gained since; and the compile reports a question answered `true` whose line is
+still commented or missing, so they never drift apart. `satz packs` lists every pack with its
+answer, its line and what it needs.
 
 Then the interview:
 

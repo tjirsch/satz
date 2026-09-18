@@ -549,7 +549,9 @@ fn provider_is_ancestor(g: &PackGraph) -> Vec<Finding> {
 /// The pack graph an estate's presets arrived with, as the compile reads it: the menu-
 /// dependent checks run over `Graph`, and the other two are one finding each.
 pub(crate) enum Shipped {
-    Graph(PackGraph),
+    /// the graph, and the presets folder it came from — the library files the pack logic
+    /// reads beside it
+    Graph(PackGraph, PathBuf),
     /// `<presets_dir>/pack-graph.json` is not there
     Missing(PathBuf),
     /// it is there and does not read as a graph; why
@@ -573,7 +575,7 @@ pub(crate) fn read(presets_dir: &Path) -> Result<Option<PackGraph>, BoxErr> {
 /// [`read`], for the compile: never an error, so the menu never stops a compile.
 pub(crate) fn shipped(presets_dir: &Path) -> Shipped {
     match read(presets_dir) {
-        Ok(Some(g)) => Shipped::Graph(g),
+        Ok(Some(g)) => Shipped::Graph(g, presets_dir.to_path_buf()),
         Ok(None) => Shipped::Missing(presets_dir.join(GRAPH_FILE)),
         Err(e) => Shipped::Unreadable(e.to_string()),
     }

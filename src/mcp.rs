@@ -162,6 +162,9 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("report-compliance", Parity::Tools(&["satz_report_compliance"])),
     ("questions", Parity::Tools(&["satz_questions"])),
     ("interview", Parity::Tools(&["satz_interview"])),
+    ("packs", Parity::Tools(&["satz_packs"])),
+    ("add-pack", Parity::Tools(&["satz_add_pack"])),
+    ("remove-pack", Parity::Tools(&["satz_remove_pack"])),
     ("triage", Parity::Tools(&["satz_triage"])),
     ("prowler", Parity::Tools(&["satz_prowler"])),
     ("remediation-plan", Parity::Tools(&["satz_remediation_items", "satz_remediation_annotate"])),
@@ -548,6 +551,32 @@ pub(crate) struct ReviewPackArgs {
     /// Judge it inside this estate instead of a synthesised one
     #[serde(default)]
     pub against: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct AddPackArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// The pack: its gate (`use_audit_logsink`) or its path (`presets/monitoring/organization-audit-logsink.satz`)
+    pub pack: String,
+    /// Switch on what the pack needs too, where the pack graph names one pack for it.
+    /// Without it, a pack that needs one that is off is refused and the refusal names it
+    #[serde(default)]
+    pub with_requirements: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct RemovePackArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// The pack: its gate or its path
+    pub pack: String,
+    /// Switch off the packs that need it too. Without it, a pack that others on need is
+    /// refused and the refusal names them
+    #[serde(default)]
+    pub cascade: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1211,6 +1240,91 @@ impl SatzMcp {
             report.questions.retain(|q| q.state == "unanswered");
         }
         Ok(Ok(Json(InterviewReport { created, written, rename_to, report })))
+    }
+
+    #[tool(
+        name = "satz_packs",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PacksReport>(),
+        description = "Every pack the pack graph offers, as this estate has it — the rows satz-studio's Packs \
+                       view shows: the choice (the gate, the estate's `answer`, the library's `default`, the \
+                       `value` they give), the `line` (active, ungated, commented, absent, forked, misplaced) \
+                       at its line number, whether it `deploys`, what it `requires` (each with `met`) and what \
+                       it is `required_by`, what it `excludes`, and the compile's findings about it. A `use` the \
+                       graph does not know is `unmanaged`. With no pack-graph.json in the presets, `note` says \
+                       so. Offline and schema-free.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn packs(
+        &self,
+        Parameters(args): Parameters<EstateArg>,
+    ) -> Result<Result<Json<crate::packs::PacksReport>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Read) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::packs::report(&estate, &open.runtime) {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("packs: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_add_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PackChange>(),
+        description = "Switch a pack on, as `satz add-pack` does: bind its gate true (an option of a choice sets \
+                       its siblings false) and make its `use` line active where the pack graph places it, with \
+                       the packs whose gate follows it. Refused, naming them, while a pack it needs is off \
+                       (`with_requirements` switches those on where the graph names one) or a pack it excludes \
+                       is on. The edited estate is compiled and restored when it does not compile. Returns what \
+                       was bound, which lines moved, and the questions that opened — answer them with \
+                       `satz_interview`. Needs 'write'.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn add_pack(
+        &self,
+        Parameters(args): Parameters<AddPackArgs>,
+    ) -> Result<Result<Json<crate::packs::PackChange>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::packs::add(&estate, &open.tool, &open.runtime, &args.pack, args.with_requirements) {
+            Ok(c) => Ok(Ok(Json(c))),
+            Err(e) => Ok(Err(refused(format!("add-pack: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_remove_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PackChange>(),
+        description = "Switch a pack off, as `satz remove-pack` does: bind its gate false and leave its line — a \
+                       gated line with a false gate deploys nothing. Refused, naming them, while a pack that \
+                       needs it is on (`cascade` switches those off too) or while its line is not gated on its \
+                       gate. The edited estate is compiled and restored when it does not compile. The next apply \
+                       destroys what the pack deployed. Needs 'write'.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn remove_pack(
+        &self,
+        Parameters(args): Parameters<RemovePackArgs>,
+    ) -> Result<Result<Json<crate::packs::PackChange>, CallToolResult>, McpError> {
+        if let Err(r) = self.permits(Group::Write) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::packs::remove(&estate, &open.tool, &open.runtime, &args.pack, args.cascade) {
+            Ok(c) => Ok(Ok(Json(c))),
+            Err(e) => Ok(Err(refused(format!("remove-pack: {}", e)))),
+        }
     }
 
     #[tool(

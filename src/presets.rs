@@ -1719,12 +1719,11 @@ struct PackLines {
     unplaced: Vec<(String, String)>,
 }
 
-/// Append a commented `use` line for every pack `graph` offers that the estate has no line
-/// for, each under the phase comment the skeleton would have written.
-///
-/// Appends rather than inserts: a `use` at root level is valid anywhere in the file, and
-/// appending cannot damage a structure somebody has since rearranged. The phase is what says
-/// where it belongs in the sequence, which is the part that matters.
+/// Write a commented `use` line for every pack `graph` offers that the estate has no line
+/// for — active or commented, under its pristine name or its `.local` fork — each where the
+/// graph's order puts it (`crate::packs::place_line`): after the pack before it in the same
+/// place, inside the block the graph names, never at the end of a file whose blocks read
+/// a param the line's pack declares.
 ///
 /// A pack the estate carries in another spelling under the same gate — an `excludes`
 /// neighbour such as the S1 model's two-file form — gets no line: uncommented, it would
@@ -1736,19 +1735,15 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<PackLines, BoxEr
     let src = crate::fsx::read_to_string(estate)?;
     let mut added: Vec<(String, String)> = Vec::new();
     let mut unplaced: Vec<(String, String)> = Vec::new();
-    let mut block = String::new();
-    let mut nested = src.clone();
-    // The estate may hold a pack under its pristine name or under a FORK of it — a fork
-    // is that pack, with the estate's own content. Offering a line for the pristine name
-    // beside a fork in use invites somebody to uncomment it and declare the same
-    // resources twice.
-    let has_line = |path: &str| {
-        let fork = crate::fsx::slash(&fork_sibling(Path::new(path)));
-        src.contains(&format!("use \"{}\"", path)) || src.contains(&format!("use \"{}\"", fork))
+    let has_line = |text: &str, path: &str| {
+        crate::packs::scan(text).uses.iter().any(|l| {
+            let fork = crate::fsx::slash(&fork_sibling(Path::new(path)));
+            l.written == path || l.written == fork
+        })
     };
     // An estate with no pack line at all — `init` wrote it without a graph — gets the whole
     // menu where the skeleton puts it, so it ends as the file `init` writes with one.
-    if graph.lines().iter().all(|n| !has_line(&n.path)) {
+    if graph.lines().iter().all(|n| !has_line(&src, &n.path)) {
         if let Some(out) = crate::template::with_menu(&src, graph)? {
             crate::fsx::write_edited_satz(estate, &src, &out)?;
             let added = graph
@@ -1762,67 +1757,33 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<PackLines, BoxEr
             return Ok(PackLines { added, unplaced });
         }
     }
+    let mut out = src.clone();
     for n in graph.lines() {
         let (path, gate) = (n.path.as_str(), n.gate.as_deref());
-        if has_line(path) {
+        if has_line(&out, path) {
             continue;
         }
-        if graph.excluded_by(path).iter().any(|o| o.gate.is_some() && o.gate.as_deref() == gate && has_line(&o.path)) {
+        if graph.excluded_by(path).iter().any(|o| o.gate.is_some() && o.gate.as_deref() == gate && has_line(&out, &o.path)) {
             continue;
         }
-        let phase = n.phase.as_deref().unwrap_or("");
         // the first line of the phase is the summary
-        let summary = phase.lines().next().unwrap_or("").trim().to_string();
+        let summary = n.phase.as_deref().and_then(|p| p.lines().next()).unwrap_or("").trim().to_string();
         let summary = if summary.is_empty() { "with the group above".to_string() } else { summary };
-        let line = crate::template::pack_line(path, gate);
-        match crate::template::place(n) {
-            // a pack scoped to a block belongs IN that block: appended at the top
-            // level it would be scoped to the organisation instead
-            crate::template::Place::Block(at) => match crate::template::insert_into_block(&nested, at, &line, phase) {
-                Some(next) => {
-                    nested = next;
-                    added.push((path.to_string(), format!("{} (in `{}`)", summary, at)));
-                }
-                // no such block: a resource-type map is content and is written
-                // whole; a folder is the estate's own structure and is reported
-                None => match crate::template::block_stub(at, &line, phase) {
-                    Some(stub) => {
-                        block.push('\n');
-                        block.push_str(&stub);
-                        added.push((path.to_string(), format!("{} (in a new `{}` block)", summary, at)));
-                    }
-                    None => unplaced.push((path.to_string(), at.to_string())),
-                },
-            },
-            // a pack the skeleton writes after the scaffold is top level, and the end
-            // of the file is after the scaffold too
-            crate::template::Place::Menu | crate::template::Place::AfterScaffold => {
-                if !phase.trim().is_empty() {
-                    block.push('\n');
-                    block.push_str(&crate::template::phase_comment(phase, ""));
-                }
-                block.push_str(&line);
-                block.push('\n');
+        match crate::packs::place_line(&out, graph, n, true) {
+            Ok((next, _)) => {
+                out = next;
+                let summary = match crate::template::place(n) {
+                    crate::template::Place::Block(at) => format!("{} (in `{}`)", summary, at),
+                    _ => summary,
+                };
                 added.push((path.to_string(), summary));
             }
+            // a folder is the estate's own structure, and is reported, never invented
+            Err(u) => unplaced.push((path.to_string(), u.block)),
         }
     }
     if added.is_empty() {
         return Ok(PackLines { added, unplaced });
-    }
-    let mut out = nested;
-    // the header belongs to the appended group; a run that only placed nested
-    // lines has nothing to append and must not write an empty section
-    if !block.is_empty() {
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(
-            "\n// ---- packs the library gained since this estate was written -------------------\n\
-             // Written by `satz merge-presets`, commented like every other pack line. Uncomment one\n\
-             // to use it, or answer its question and `satz interview` will.\n",
-        );
-        out.push_str(&block);
     }
     crate::fsx::write_edited_satz(estate, &src, &out)?;
     Ok(PackLines { added, unplaced })

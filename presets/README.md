@@ -324,8 +324,9 @@ pack-graph` turns them, with the edges it derives from the packs, into
 `presets/pack-graph.json` ([ADR 0031](../docs/adr/0031-the-map-offers-every-pack-and-the-graph-ships-with-the-presets.md)).
 The estate carries one `use … when` line per choice, each written commented under its
 phase. `satz init` and `satz interview --create` write them from the pack graph,
-`satz merge-presets` writes a missing one, `satz interview` uncomments a line when its
-choice is answered yes, and a test fails on a choice with no line ([ADR 0007](../docs/adr/0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md)).
+`satz merge-presets` writes a missing one, `satz interview` and `satz add-pack` switch a
+line on when its choice is answered yes, `satz packs` lists every choice with its line, and a
+test fails on a choice with no line ([ADR 0007](../docs/adr/0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md)).
 
 ```
 use "presets/estate-core.satz"

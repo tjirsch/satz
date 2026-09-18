@@ -1208,7 +1208,8 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_transpile_check", "satz_transpile", "satz_report_compliance",
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
-                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_pack", "satz_fmt"}, sorted(tools)
+                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_pack", "satz_fmt",
+                      "satz_packs", "satz_add_pack", "satz_remove_pack"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -1232,12 +1233,15 @@ assert opened["runs_as"] is None, opened
 for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", "satz_prowler", "satz_check_presets",
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
-             "satz_adopt", "satz_get_presets", "satz_update_prerequisites", "satz_merge_presets"):
+             "satz_adopt", "satz_get_presets", "satz_update_prerequisites", "satz_merge_presets",
+             "satz_packs", "satz_add_pack", "satz_remove_pack"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
 assert tools["satz_require"]["annotations"]["readOnlyHint"] is True
 assert tools["satz_transpile"]["annotations"]["readOnlyHint"] is False
+assert tools["satz_packs"]["annotations"]["readOnlyHint"] is True
+assert tools["satz_add_pack"]["annotations"]["readOnlyHint"] is False
 
 # the role gap an agent asks about: the smoke estate grants what it emits, and the
 # answer names the service account it judged
@@ -1532,6 +1536,60 @@ grep -q '^use "presets/security-group-models/s2-security-groups.satz" when secur
 grep -q '^// use "presets/security-group-models/s1-security-groups.satz"' tmp/iv/agent.satz \
   || fail "the model that was not chosen keeps its line commented"
 "$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
+
+step "packs, add-pack and remove-pack: one pack logic over the shipped graph, the same in the CLI, the compile and MCP"
+# The interviewed day-0 estate: the map is commented, so every pack line is inert.
+rm -rf tmp/pk && mkdir -p tmp/pk && cp tmp/iv/new.satz tmp/pk/e.satz
+"$satz" --config . add-pack "$PWD/tmp/pk/e.satz" presets/estate-map.satz > tmp/pk/map.txt 2>&1 || fail "add-pack of the map failed:\n$(cat tmp/pk/map.txt)"
+grep -q '^use "presets/estate-map.satz"' tmp/pk/e.satz || fail "add-pack did not uncomment the map's line"
+# a pack whose provider is off is refused, naming the provider's gate
+if "$satz" --config . add-pack "$PWD/tmp/pk/e.satz" use_central_alerts > tmp/pk/refused.txt 2>&1; then
+  fail "add-pack of the central alerts with the logsink off was not refused"
+fi
+grep -q 'organization-audit-logsink.satz` (`use_audit_logsink`), which is off' tmp/pk/refused.txt \
+  || fail "the refusal must name the logsink's gate:\n$(cat tmp/pk/refused.txt)"
+"$satz" --config . add-pack "$PWD/tmp/pk/e.satz" use_central_alerts --with-requirements > tmp/pk/add.txt 2>&1 \
+  || fail "add-pack --with-requirements failed:\n$(cat tmp/pk/add.txt)"
+grep -qE '^    use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink' tmp/pk/e.satz \
+  || fail "the requirement's line was not switched on inside the folder:\n$(grep -n logsink tmp/pk/e.satz)"
+grep -q 'cis_central_email' tmp/pk/add.txt || fail "add-pack must name the questions the pack opened:\n$(cat tmp/pk/add.txt)"
+"$satz" fmt --check "$PWD/tmp/pk/e.satz" || fail "add-pack left a formatted estate unformatted"
+# a pack others need is refused, naming them; --cascade switches them off too
+if "$satz" --config . remove-pack "$PWD/tmp/pk/e.satz" use_audit_logsink > tmp/pk/rm.txt 2>&1; then
+  fail "remove-pack of the logsink with the central alerts on was not refused"
+fi
+grep -q 'organization-cis-log-alerts-central.satz` needs' tmp/pk/rm.txt || fail "the refusal must name the dependent:\n$(cat tmp/pk/rm.txt)"
+# the compile names the same requirement when the estate is edited by hand
+sed 's/^\(  use_audit_logsink *= \)true/\1false/' tmp/pk/e.satz > tmp/pk/off.satz
+if "$satz" --config . transpile "$PWD/tmp/pk/off.satz" --check > tmp/pk/off.txt 2>&1; then
+  fail "the estate with the logsink off under the central alerts compiled"
+fi
+grep -q 'organization-audit-logsink.satz` (`use_audit_logsink`), which is off' tmp/pk/off.txt \
+  || fail "transpile --check must print the pack graph's sentence:\n$(cat tmp/pk/off.txt)"
+"$satz" --config . packs "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/packs.json > /dev/null 2>&1 || fail "satz packs failed"
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_packs\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\"}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_remove_pack\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"pack\":\"use_audit_logsink\",\"cascade\":true}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_add_pack\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"pack\":\"use_audit_logsink\"}}}" \
+  > tmp/pk/mcp-in.jsonl
+python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/pk/mcp-in.jsonl > tmp/pk/mcp.jsonl 2>/dev/null || true
+python3 - <<'PYEOF' || fail "the pack tools over MCP disagree with the CLI"
+import json
+msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/pk/mcp.jsonl") if l.strip()) if "id" in d}
+cli = json.load(open("tmp/pk/packs.json"))
+served = msgs[3]["result"]["structuredContent"]
+assert served["packs"] == cli["packs"], "satz_packs and `satz packs --format json` report different rows"
+row = {p["path"]: p for p in served["packs"]}
+assert row["presets/monitoring/organization-cis-log-alerts-central.satz"]["deploys"] is True
+assert row["presets/monitoring/organization-cis-log-alerts-central.satz"]["requires"][0]["met"] is True
+removed = msgs[4]["result"]["structuredContent"]
+assert {b["param"] for b in removed["bound"]} == {"use_audit_logsink", "use_central_alerts"}, removed
+added = msgs[5]["result"]["structuredContent"]
+assert added["bound"] == [{"param": "use_audit_logsink", "value": True}], added
+PYEOF
 
 step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"
 {
