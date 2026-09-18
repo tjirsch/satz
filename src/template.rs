@@ -193,8 +193,9 @@ google_folder {
 /// choice with no row here fails `every_map_choice_has_a_phase_and_the_menu_is_inert`, which is what keeps
 /// a new pack from reaching the library without anyone saying when it can be adopted.
 ///
-/// The fourth column is WHERE the line belongs: empty for the top-level menu, else the block
-/// path it sits inside (`google_folder.infra` for a pack scoped to the infra folder,
+/// The fourth column is WHERE the line belongs: empty for the top-level menu, `AFTER_SCAFFOLD`
+/// for the top-level group written after the scaffold, else the block path it sits inside
+/// (`google_folder.infra` for a pack scoped to the infra folder,
 /// `google_essential_contacts_contact` for one that is a resource map's content). Both writers
 /// read it — the skeleton places the line as it composes the file, `merge-presets` splices it
 /// into the named block of an estate that has none. Before the column the three nested packs
@@ -330,7 +331,7 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
         "presets/scc/scc-findings-mail.satz",
         "use_scc_findings_mail",
         "once the central alerts are in as well — the mailbox defaults to their address",
-        "",
+        AFTER_SCAFFOLD,
     ),
     (
         "presets/integrations/microsoft-defender-for-cloud.satz",
@@ -343,15 +344,20 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
         "presets/integrations/microsoft-sentinel.satz",
         "use_sentinel",
         "once the audit archive exists — Sentinel's project defaults to the logsink's",
-        "",
+        AFTER_SCAFFOLD,
     ),
     (
         "presets/integrations/microsoft-sentinel-auditlogs.satz",
         "use_sentinel_auditlogs",
         "once Sentinel's federation is in — these read as the account it creates",
-        "",
+        AFTER_SCAFFOLD,
     ),
-    ("presets/integrations/microsoft-sentinel-network-logs.satz", "use_sentinel_network_logs", "", ""),
+    (
+        "presets/integrations/microsoft-sentinel-network-logs.satz",
+        "use_sentinel_network_logs",
+        "",
+        AFTER_SCAFFOLD,
+    ),
     (
         "presets/ci/verification-runner.satz",
         "use_verification_runner",
@@ -371,10 +377,27 @@ pub(crate) const PACK_LINES: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+/// The fourth column of a top-level pack whose line goes AFTER the scaffold rather than in the
+/// menu above it: a pack that reads a param a pack INSIDE the scaffold declares. The compile
+/// builds one namespace in file order, so a param is known from the line that declares it on;
+/// the audit logsink and the central alerts sit in the infrastructure folder, and a line above
+/// the folder that reads their params stops the compile with `unknown param` the moment it is
+/// uncommented. `merge-presets` treats it as top level: it appends at the end of the file,
+/// which is after the scaffold too. Who reads what is derived from the packs by
+/// `a_pack_line_follows_the_lines_of_the_packs_whose_params_it_reads`, which fails on a line
+/// written before its provider's.
+pub(crate) const AFTER_SCAFFOLD: &str = "after the scaffold";
+
+/// Whether a placement names a block the line is written into — neither the top-level menu
+/// nor the group after the scaffold.
+pub(crate) fn in_block(at: &str) -> bool {
+    !at.is_empty() && at != AFTER_SCAFFOLD
+}
+
 /// The commented menu, as the skeleton writes it: one line per pack, a phase comment above
 /// each group, and the whole thing inert until a line is uncommented.
 pub(crate) fn pack_menu() -> String {
-    let mut out = String::from(
+    pack_group(
         "// ---- the packs, each under the phase that comes before it ----------------------\n\
          //\n\
          // Day 0 is the scaffold alone. Bootstrap it, apply it, then `satz migrate --mode cloud`\n\
@@ -388,10 +411,30 @@ pub(crate) fn pack_menu() -> String {
          // gained since — so the list here stays the library's, not one person's memory of it.\n\
          // Whichever writes it, the compile reports a question answered true whose line is still\n\
          // commented, so the two never drift apart.\n",
-    );
-    // a pack scoped to a block is written into that block, not into this list
-    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| at.is_empty()) {
-        let _ = at;
+        "",
+    )
+}
+
+/// The packs the skeleton writes after the scaffold (`AFTER_SCAFFOLD`), commented like the
+/// menu and under the same phases.
+fn packs_after_scaffold() -> String {
+    pack_group(
+        "\n// ---- the packs that read a param of a pack in the folder above ------------------\n\
+         //\n\
+         // A param is known from the line that declares it on, so a pack whose defaults name\n\
+         // another pack's param comes after that pack's line. These read what the audit logsink\n\
+         // or the central alerts declare — Sentinel's two log paths through Sentinel's own — and\n\
+         // those two sit inside the infrastructure folder above. Uncomment a line, or answer its\n\
+         // question yes, as with the list at the top.\n",
+        AFTER_SCAFFOLD,
+    )
+}
+
+/// One group of commented pack lines: the rows placed `at`, each phase printed once above
+/// the rows it heads. A pack scoped to a block is written into that block, not into a group.
+fn pack_group(header: &str, at: &str) -> String {
+    let mut out = String::from(header);
+    for (path, gate, phase, _) in PACK_LINES.iter().filter(|(_, _, _, placed)| *placed == at) {
         if !phase.is_empty() {
             out.push_str(&format!("\n// {}\n", phase));
         }
@@ -566,16 +609,17 @@ use "presets/estate-core.satz"
 google_essential_contacts_contact {{
 }}
 
-{scaffold}"#,
+{scaffold}{after}"#,
         stem = stem,
         estate = estate_name(stem),
         scaffold = scaffold,
         menu = pack_menu(),
+        after = packs_after_scaffold(),
     );
     // the packs scoped to a block go into that block, from the same table
     // `merge-presets` reads, so a nested pack has one writer and not two
     let mut out = composed;
-    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| !at.is_empty()) {
+    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| in_block(at)) {
         out = insert_into_block(&out, at, &pack_line(path, gate), phase)
             .unwrap_or_else(|| panic!("the skeleton has no `{}` block for {}", at, path));
     }
@@ -618,9 +662,10 @@ params {{
 google_essential_contacts_contact {{
 }}
 
-{scaffold}"#,
+{scaffold}{after}"#,
         scaffold = SCAFFOLD,
         menu = pack_menu(),
+        after = packs_after_scaffold(),
         estate = estate_name(&args.customer_id),
         customer_id = args.customer_id,
         project_id = args.project_id,
@@ -637,7 +682,7 @@ google_essential_contacts_contact {{
     // `interview --create` produce one shape and a pack is adoptable from
     // either door
     let mut content = content;
-    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| !at.is_empty()) {
+    for (path, gate, phase, at) in PACK_LINES.iter().filter(|(_, _, _, at)| in_block(at)) {
         content = insert_into_block(&content, at, &pack_line(path, gate), phase)
             .ok_or_else(|| format!("the init estate has no `{}` block for {}", at, path))?;
     }
@@ -765,6 +810,82 @@ pub(crate) mod tests {
         }
         // the day-0 pack is the exception: it is not in the menu at all
         assert!(sk.contains("\nuse \"presets/estate-core.satz\"\n"), "estate-core is the one pack a day-0 file uses");
+    }
+
+    /// Whether any `use` sits in these items, at any depth.
+    fn uses_a_pack(items: &[satz_core::satz::Entry]) -> bool {
+        use satz_core::satz::Entry;
+        items.iter().any(|e| match e {
+            Entry::Use { .. } => true,
+            Entry::Map { body, .. } => uses_a_pack(body),
+            Entry::Attr { .. } => false,
+        })
+    }
+
+    /// A param is known from the line that declares it on — the compile builds one namespace
+    /// in file order — so a pack whose defaults or resources read another pack's param has to
+    /// come AFTER that pack's line. Written before it, the file compiles while the line is
+    /// commented and stops with `unknown param` the moment its question is answered yes.
+    /// What a pack reads is derived from the packs (`doc_packs::needs`), so a new pack with
+    /// that shape fails here, not in an interview.
+    #[test]
+    fn a_pack_line_follows_the_lines_of_the_packs_whose_params_it_reads() {
+        let presets = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
+        let library = crate::doc_packs::packs(&presets).unwrap();
+        let file = |path: &str| {
+            library
+                .iter()
+                .find(|(rel, _, _)| format!("presets/{}", rel.display()) == path)
+                .map(|(_, f, _)| f)
+                .unwrap_or_else(|| panic!("PACK_LINES names {}, which is not in the library", path))
+        };
+        let declares = |path: &str, param: &str| file(path).params.iter().any(|(n, _, _)| n == param);
+        let dir = scratch("order");
+        let init = dir.join("C0example.satz");
+        generate_template(&args("first.admin", "example.com"), &init).unwrap();
+        let written = [("the interview skeleton", skeleton("x")), ("the init estate", std::fs::read_to_string(&init).unwrap())];
+        let mut early = Vec::new();
+        for (writer, text) in &written {
+            let line_of = |path: &str, gate: &str| {
+                text.lines()
+                    .position(|l| l.trim() == pack_line(path, gate))
+                    .unwrap_or_else(|| panic!("{} has no line for {}", writer, path))
+            };
+            for (path, gate, _, _) in PACK_LINES {
+                // `needs` reads the pack's own file; a pack that used another would bring
+                // that one's reads too, and this test would not see them
+                assert!(!uses_a_pack(&file(path).items), "{} uses another pack; teach this test to follow it", path);
+                let mut reads = crate::doc_packs::needs(file(path));
+                if !gate.is_empty() {
+                    reads.insert(gate.to_string());
+                }
+                for param in &reads {
+                    // the day-0 params come first in both files: estate-core, or init's own params
+                    if declares("presets/estate-core.satz", param) {
+                        continue;
+                    }
+                    let providers: Vec<(&str, &str)> = PACK_LINES
+                        .iter()
+                        .filter(|(p, _, _, _)| p != path && declares(p, param))
+                        .map(|(p, g, _, _)| (*p, *g))
+                        .collect();
+                    // no pack declares it: the estate binds it, wherever the line is
+                    if providers.is_empty() {
+                        continue;
+                    }
+                    if !providers.iter().any(|(p, g)| line_of(p, g) < line_of(path, gate)) {
+                        let by: Vec<&str> = providers.iter().map(|(p, _)| *p).collect();
+                        early.push(format!("{}: `{}` reads `{}` ({}), and its line comes before theirs", writer, path, param, by.join(", ")));
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            early.is_empty(),
+            "a pack line before the line of a pack whose param it reads — answering it yes stops the compile with `unknown param`. A top-level pack that reads a param of a pack inside the scaffold is placed AFTER_SCAFFOLD:\n  {}",
+            early.join("\n  ")
+        );
     }
 
     #[test]

@@ -117,6 +117,10 @@ google_folder {
     google_project { infra { … } }
   }
 }
+
+use "presets/scc/scc-findings-mail.satz" when use_scc_findings_mail
+use "presets/integrations/microsoft-sentinel.satz" when use_sentinel
+…
 ```
 
 Why the lines live in the estate and not in the map — and what stays hand-wired
@@ -133,7 +137,11 @@ satz interview yaml/new-customer.satz --create
 `--create` writes the estate first when it does not exist: an empty `params {}`, the same
 day-0 resources `init` writes — the folder, the project, the state bucket, the IaC group and
 service account — and every pack's `use` line **commented out**, under the phase that has to
-be finished before that pack can go in.
+be finished before that pack can go in. The audit logsink's and the central alerts' lines sit
+inside the infrastructure folder; Sentinel, its two log paths and the findings mail read their
+params, so their lines follow the folder: a param is known from the line that declares it on,
+and a line above the folder that reads one stops the compile with `unknown param` once it is
+uncommented.
 
 That is why a fresh estate asks sixteen questions and not fifty-six: day 0 is the scaffold
 alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
