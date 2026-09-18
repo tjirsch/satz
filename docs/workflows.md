@@ -206,8 +206,13 @@ key), quota project <p>` — so a wrong per-customer login shows before the firs
 instead of as a later 403. `satz whoami` is the explicit check (`--offline` for
 the file-only view; a user ADC file stores no identity, so the online form resolves
 it via token introspection). `satz whoami <estate>` answers the other question — the
-identity that estate's live commands actually run as, which on a cloud-mode estate is
-its IaC service account and not you. Both halves print together, because a live
+identity that estate's live commands actually run as. On a cloud-mode estate that is its
+IaC service account, and the line names the relation: `runs as: svc-iac-…@… —
+impersonated by you@…`. A local-mode estate — the state after `bootstrap`, because the
+first apply creates the account — runs as you, and the line names the account it
+declares and the command that switches to it: `runs as: you@… — local mode; satz
+migrate <estate> --mode cloud makes every run impersonate svc-iac-…@…`. Without an
+estate the line says none was given. Both halves print together, because a live
 command uses both, and online it CHECKS them: one `generateAccessToken` (token
 discarded) for whether this credential may become that account, and one
 `projects.get` for whether the quota project is reachable. Given an estate that
@@ -322,8 +327,8 @@ tofu plan
 
 A plan that reads *No changes* here means the estate, the state and the organisation
 agree, and the estate is ready for its first pack. `satz whoami C0example.satz` prints
-the identity the run used, which from now on is the service account and never the human
-who typed the command.
+the identity the run used, which from now on is the service account, impersonated by the
+human who typed the command: `runs as: svc-iac-…@… — impersonated by you@…`.
 
 ### The params `init` writes
 

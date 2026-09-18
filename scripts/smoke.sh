@@ -1607,6 +1607,8 @@ grep -q 'quota project: acme-infra-001' tmp/who2.txt || fail "quota project not 
 # round-trip: the credential was fine and the thing that was broken — the account
 # it must become, the project it bills — was not on screen.
 grep -q '^runs as:' tmp/who2.txt || fail "the identity the estate runs as is not reported:\n$(cat tmp/who2.txt)"
+grep -q '^runs as: *svc-iac@acme-infra-001.* — no estate given' tmp/who2.txt \
+  || fail "without an estate, the runs-as line must name the credential and say no estate was given:\n$(cat tmp/who2.txt)"
 grep -q 'not checked (--offline)' tmp/who2.txt \
   || fail "--offline must say the live checks were not made, never imply they passed:\n$(cat tmp/who2.txt)"
 
@@ -1630,16 +1632,21 @@ params {
 EOF
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami identity-whoami.satz --offline > tmp/who3.txt 2>&1 \
   || fail "whoami <estate> failed without credentials, but it reads the estate file only:\n$(cat tmp/who3.txt)"
-grep -q '^runs as: *svc-iac-001@acme-infra-001' tmp/who3.txt \
-  || fail "whoami <estate> did not name the estate's service account:\n$(cat tmp/who3.txt)"
+grep -q '^runs as: *svc-iac-001@acme-infra-001.* — impersonated by ' tmp/who3.txt \
+  || fail "whoami <estate> did not name the estate's service account and who impersonates it:\n$(cat tmp/who3.txt)"
 grep -q 'not checked (--offline)' tmp/who3.txt \
   || fail "whoami <estate> --offline must not imply the impersonation check passed:\n$(cat tmp/who3.txt)"
-# A local-mode estate impersonates nothing, so the answer is the human again.
+grep -q '^note: no Application Default Credentials file found' tmp/who3.txt \
+  || fail "whoami <estate> --offline without an ADC file must say there is none:\n$(cat tmp/who3.txt)"
+# A local-mode estate impersonates nothing: the calls run as the credential itself,
+# and the line names the account the estate declares and the migration to it.
 GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" --config . whoami smoke.satz --offline > tmp/who4.txt 2>&1 \
   || fail "whoami on a local-mode estate failed:\n$(cat tmp/who4.txt)"
-if grep -q 'svc-iac-001@acme-infra-001' tmp/who4.txt; then
-  fail "a local-mode estate must not report an estate service account:\n$(cat tmp/who4.txt)"
+if grep -q '^runs as: *svc-iac-001@corp-infra-001' tmp/who4.txt; then
+  fail "a local-mode estate must not report that it runs as its service account:\n$(cat tmp/who4.txt)"
 fi
+grep -q '^runs as: *svc-iac@acme-infra-001.* — local mode; `satz migrate smoke.satz --mode cloud` makes every run impersonate svc-iac-001@corp-infra-001' tmp/who4.txt \
+  || fail "a local-mode estate must say so and name the migration that makes it impersonate:\n$(cat tmp/who4.txt)"
 # An estate that does not resolve must say so: binding treats an unreadable estate
 # as "nothing to impersonate", which would quietly answer the other question.
 if "$satz" --config . whoami does-not-exist.satz --offline > tmp/who5.txt 2>&1; then
@@ -1979,6 +1986,7 @@ done
   printf '%s\n' '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"identity-acme.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"satz_whoami","arguments":{"offline":true,"estate":"smoke.satz"}}}'
 } > tmp/mcp-id-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-id-in.jsonl > tmp/mcp-id.jsonl 2>/dev/null || true
 python3 - <<'PYEOF' || fail "the identity did not follow the open estate"
@@ -2013,6 +2021,18 @@ for open_id, who_id, want in ((20, 21, "acme"), (22, 23, "bolt"), (24, 25, "acme
     assert "adc" in reported and "kind" in reported["adc"], reported
     # Offline: the checks were not made, and must not be reported as passed.
     assert reported["estate"]["may_impersonate"] is None, reported
+    assert reported["estate"]["impersonated"] is True, reported
+    assert reported["estate"]["deployment_mode"] == "cloud", reported
+
+# A local-mode estate named while a cloud-mode one is open: answered for the one
+# named, and the data carries what the terminal line says — its mode, the account it
+# declares, and that nothing impersonates it.
+local = msgs[26]["result"]
+assert not local.get("isError"), f"whoami for a named local-mode estate was refused: {local}"
+est = local["structuredContent"]["estate"]
+assert est["deployment_mode"] == "local", est
+assert est["impersonated"] is False, est
+assert est["service_account"] == "svc-iac-001@corp-infra-001.iam.gserviceaccount.com", est
 PYEOF
 
 step "satz mcp: the interview loop closes without a filesystem — create, answer, accept, complete"

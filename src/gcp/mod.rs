@@ -72,6 +72,12 @@ pub(crate) fn disable_impersonation() {
     let _ = IMPERSONATE.set(Identity::Disabled);
 }
 
+/// Whether `--no-impersonate` pinned the process to the plain ADC — the one reason
+/// a cloud-mode estate's calls run as the credentials themselves.
+pub(crate) fn impersonation_disabled() -> bool {
+    matches!(IMPERSONATE.get(), Some(Identity::Disabled))
+}
+
 /// Pure so the four cases are testable without touching the global.
 fn describe_conflict(current: &Identity, wanted: &Option<String>) -> Result<(), String> {
     match current {
@@ -95,7 +101,7 @@ fn describe_conflict(current: &Identity, wanted: &Option<String>) -> Result<(), 
 /// the plain ADC, and a per-call scope is no more entitled to override that than
 /// an estate binding was.
 pub(crate) fn impersonation_target() -> Option<String> {
-    if matches!(IMPERSONATE.get(), Some(Identity::Disabled)) {
+    if impersonation_disabled() {
         return None;
     }
     if let Ok(scoped) = CALL_IDENTITY.try_with(Clone::clone) {

@@ -311,9 +311,10 @@ project does not enable — it writes both unless `report_only`),
 `satz_review_pack` (judge a pack somebody wrote against the library's bar, findings
 anchored to file and line — offline and read-only),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
-(both halves of the identity — the ADC account and the estate's service account — with
-live checks that the one may become the other and that the quota project is reachable;
-check this first when a live call is refused).
+(both halves of the identity — the ADC account, and the estate's mode, declared service
+account and whether the calls impersonate it — with live checks that the one may become
+the other and that the quota project is reachable; check this first when a live call is
+refused).
 
 **`satz_report_compliance` returns data, not a table.** Read `live_status` before
 trusting the rows: `verified` means the inventory was read; `unavailable` means it was

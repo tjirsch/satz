@@ -224,7 +224,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. 22 tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
-| `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and (with an estate) the service account that estate's live commands run as, checked — may this credential become it, is the quota project reachable, and does it hold the permissions the estate's resource types need |
+| `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and what the estate's live commands run as — in cloud mode its IaC service account, impersonated by the ADC account; in local mode the ADC account itself, with the `satz migrate` that switches to the declared account — checked: may this credential become that account, is the quota project reachable, and does it hold the permissions the estate's resource types need |
 
 Details for each command are below.
 
@@ -1892,7 +1892,7 @@ estate's service account.** Every exception is listed here with its reason.
 | `import` without `--into` | the human's ADC | the output is a new file; there is no estate to be |
 | `bootstrap`, `init` | the human's ADC | day 0 — the service account does not exist yet |
 | `whoami` | the human's ADC | the question *is* who the human is |
-| `whoami <estate>` | the estate's service account | a different question — who that estate acts as — so a different answer |
+| `whoami <estate>` | the estate's service account in cloud mode; the human's ADC in local mode | a different question — who that estate acts as — so a different answer |
 | `map-types` | no credential at all | Discovery documents are public |
 | `mcp` | per tool call, from the estate that is open | one server, a fleet: `satz_open` moves to the next estate, and the identity follows it |
 | `plan`, `apply`, `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
@@ -1918,7 +1918,24 @@ satz whoami e.satz   # who that estate's live commands run as
 
 **`whoami` reports both halves, and checks them.** The ADC account is who you are to
 Google; the estate's service account is who satz then acts as, and after init that
-is what every read and write runs as. `whoami <estate>` prints both, and — online
+is what every read and write runs as. The `runs as:` line names the identity the calls
+use and how it relates to the credential, in one of three forms:
+
+```text
+runs as:     you@example.com — no estate given; name one to see what it runs as
+runs as:     you@example.com — local mode; `satz migrate e.satz --mode cloud` makes every run impersonate svc-iac-001@acme-infra-001.iam.gserviceaccount.com
+runs as:     svc-iac-001@acme-infra-001.iam.gserviceaccount.com — impersonated by you@example.com, checked: allowed
+```
+
+A local-mode estate — every estate from `bootstrap` until `satz migrate --mode cloud`,
+because its first apply is what creates the service account — runs as the credential
+itself. Under `--no-impersonate` a cloud-mode estate does too, and the line says so. An
+estate that declares no `svc_iac_account` and `infra_project_name` pair impersonates
+nothing, and the line says that instead of naming an account. `--offline` reads the
+mode and the account off the estate, so it answers all three without a token, and
+without an ADC file once an estate is given.
+
+`whoami <estate>` prints both halves, and — online
 — makes the two calls that decide whether the next command will work at all: one
 `generateAccessToken` to see whether this credential may become that service
 account (the token is discarded), and one `projects.get` on the quota project.
