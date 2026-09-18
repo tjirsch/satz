@@ -40,14 +40,17 @@ If you have an idea for a new feature or improvement, please create a new issue 
 2.  Clone the repository.
 3.  Run `cargo build` to verify the build.
 4.  Run `cargo test --workspace --locked` to run the test suite.
-5.  CI runs four jobs on every push and pull request, and a pull request
-    merges only when all four pass: the privacy gate (`scripts/check-names.sh`,
+5.  CI runs four jobs on every pull request and on every push to `main`, and
+    a pull request merges only when all four pass: the privacy gate (`scripts/check-names.sh`,
     see below), the grammar parse (`scripts/check-grammar.sh`: every Satz file
     parses with the pinned tree-sitter grammar), `checks` (`cargo clippy
     --workspace --all-targets -- -D warnings`, where a warning is a failure,
     and `cargo test --workspace --locked`), and the smoke matrix
     (`scripts/smoke.sh`, which runs every estate-consuming command end to end
-    against `tests/smoke/`). Run them before opening a pull request.
+    against `tests/smoke/`). Run them before opening a pull request. A push to
+    a branch runs nothing by itself — its pull request runs the jobs on the
+    branch merged into `main` — and a newer push to a pull request cancels
+    the run it supersedes. A run on `main` is never cancelled.
 
 ## Coding Standards
 
@@ -68,8 +71,8 @@ never renumber.
 
 ## Privacy gate
 
-This is a public repository and a privacy gate runs on every push and pull
-request (`scripts/check-names.sh`, `.github/workflows/names-gate.yml`). It is
+This is a public repository and a privacy gate runs on every pull request
+and every push to `main` (`scripts/check-names.sh`, `.github/workflows/names-gate.yml`). It is
 neutral — it names nobody — and rejects:
 
 - identifiers that are not one of the documented example values in

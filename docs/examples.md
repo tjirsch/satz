@@ -3,7 +3,8 @@
 Two kinds of example. First the **register of identifiers** every example in this
 repository is allowed to use — a rule the privacy gate enforces on every commit.
 Then **worked estates**: real files in this repository, transpiled by
-`scripts/smoke.sh` on every push, so each one compiles with the current binary.
+`scripts/smoke.sh` on every pull request and every push to `main`, so each one
+compiles with the current binary.
 
 ## Example customers
 
@@ -114,7 +115,7 @@ customer, so it is allowed by exact name.
 maintainer's address or a GitHub noreply address
 (`<id>+<user>@users.noreply.github.com` — enable "keep my email address
 private" in GitHub settings). Employer or customer addresses are rejected by
-the pre-commit hook and by CI on every push and pull request, so no
+the pre-commit hook and by CI on every pull request and push to `main`, so no
 contributor's affiliation reaches the public history.
 
 **Other allowed identities:** `noreply@anthropic.com` (Claude's co-author
@@ -182,7 +183,7 @@ constructs in one file that produces HCL.
 
 `tests/smoke/yaml/showcase.satz` is the reference's own corpus:
 [`docs/language.md`](language.md) cites this file by section, and
-`scripts/smoke.sh` transpiles it on every push.
+`scripts/smoke.sh` transpiles it on every pull request and push to `main`.
 
 It is annotated in place and walks, in order: params and the `question` blocks that
 say what to ask before one can be filled (including a `oneof` exclusive choice);

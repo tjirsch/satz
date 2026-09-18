@@ -265,7 +265,8 @@ are claims and 60 are questions.
 
 ## 6. Language reference
 
-Two complete estates compile in CI on every push and are the examples the
+Two complete estates compile in CI on every pull request and every push to `main`
+and are the examples the
 sections below cite instead of carrying loose snippets:
 
 - **the smallest complete estate** — `tests/corpus/override-chain/main.satz`
@@ -1318,7 +1319,7 @@ script; satz cannot see what a script does.
 
 A script written to that contract. `tests/smoke/scripts/showcase-action.sh` is
 this shape with a few extra echoes the smoke matrix asserts on, and CI runs it on
-every push:
+every pull request and every push to `main`:
 
 ```bash
 #!/usr/bin/env bash
