@@ -600,7 +600,8 @@ fn compile_for_diagnostics(
     };
     // Everything `transpile --check` checks after the front end, as findings: at the
     // file and line each names, or on the estate's first line when it names none.
-    let tail = crate::compile_tail(&fe, &resolver, registry, config, &config.validation_level, root, src);
+    let graph = crate::pack_graph::shipped(Path::new(&config.presets_dir));
+    let tail = crate::compile_tail(&fe, &resolver, registry, config, &graph, &config.validation_level, root, src);
     for finding in tail.findings {
         let severity = match finding.severity {
             crate::findings::Severity::Error => DiagnosticSeverity::ERROR,

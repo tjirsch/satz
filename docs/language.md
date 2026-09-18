@@ -1496,6 +1496,14 @@ param one pack reads and another declares (`data`), a gate a pack declares for a
 `pack-graph` refuses a declared edge it derives. Several `requires` on packs that exclude
 one another are one requirement: any of them meets it.
 
+The estate commands read that file from the estate's `presets_dir`: `init` and
+`interview --create` write the pack menu from it, `merge-presets` writes the lines the
+estate lacks from the graph of its pristine source, and the compile reports a gate
+answered `true` whose line is commented or absent — skipping a line written `by_hand`,
+and counting a pack as used when an `excludes` neighbour on the same gate is — and
+refuses a dry-run twin on beside its enforcing pack, by the declared `excludes` edge
+between them. With no graph there, the compile notes it once and skips those checks.
+
 `check-presets` reports a map whose entries changed like one whose questions changed:
 the map emits the same, so the estate is not forked, and the change is listed.
 

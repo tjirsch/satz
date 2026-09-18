@@ -12,6 +12,7 @@
 
 // schemars comes through rmcp: one version in the tree, no second dependency to pin
 use rmcp::schemars;
+use satz_core::pack_graph::PackGraph;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -1148,6 +1149,17 @@ pub(crate) async fn run_merge_presets(
     // worse, roll a good repoint back). One run, one kind of operation.
     let adopting = !adopt.is_empty();
     let pristine = pristine_source(pristine_dir).await?;
+    // The pack lines come from the graph that arrived with these packs. One placing a pack
+    // in a block this binary's scaffold lacks is refused before anything changes.
+    let graph = crate::pack_graph::for_writing(&pristine)?;
+    if graph.is_none() && !report_only {
+        events.push(MergeEvent::Note {
+            text: format!(
+                "note: {} is not there — no pack line is written; the packs themselves are merged",
+                pristine.join(crate::pack_graph::GRAPH_FILE).display()
+            ),
+        });
+    }
 
     // .base/ is retired: pristine names are upstream-owned, forks carry the local
     // truth, diffs carry the adoption delta — no third copy needed.
@@ -1450,7 +1462,11 @@ pub(crate) async fn run_merge_presets(
     // estate was written has no `use` line there, so its question is inert — this is what
     // closes that, and it writes every line the same way, which a person does not.
     if !report_only {
-        match estate.as_deref().map(adopt_pack_lines).unwrap_or_else(|| Ok(PackLines::default())) {
+        let lines = match (estate.as_deref(), &graph) {
+            (Some(est), Some(g)) => adopt_pack_lines(est, g),
+            _ => Ok(PackLines::default()),
+        };
+        match lines {
             Ok(PackLines { added, unplaced }) => {
                 for (path, phase) in &added {
                     events.push(MergeEvent::Note {
@@ -1703,46 +1719,73 @@ struct PackLines {
     unplaced: Vec<(String, String)>,
 }
 
-/// Append a commented `use` line for every pack in `PACK_LINES` the estate has no line for,
-/// each under the phase comment the skeleton would have written.
+/// Append a commented `use` line for every pack `graph` offers that the estate has no line
+/// for, each under the phase comment the skeleton would have written.
 ///
 /// Appends rather than inserts: a `use` at root level is valid anywhere in the file, and
 /// appending cannot damage a structure somebody has since rearranged. The phase is what says
 /// where it belongs in the sequence, which is the part that matters.
 ///
+/// A pack the estate carries in another spelling under the same gate — an `excludes`
+/// neighbour such as the S1 model's two-file form — gets no line: uncommented, it would
+/// declare the same resources twice.
+///
 /// It prints nothing: `merge-presets` is also the `satz_merge_presets` tool, whose stdout
 /// is the MCP stream, so everything it has to say goes back to the caller.
-fn adopt_pack_lines(estate: &Path) -> Result<PackLines, BoxErr> {
+fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<PackLines, BoxErr> {
     let src = crate::fsx::read_to_string(estate)?;
     let mut added: Vec<(String, String)> = Vec::new();
     let mut unplaced: Vec<(String, String)> = Vec::new();
     let mut block = String::new();
     let mut nested = src.clone();
-    for (path, gate, phase, at) in crate::template::PACK_LINES {
-        // The estate may hold this pack under its pristine name or under a FORK of
-        // it — a fork is that pack, with the estate's own content. Offering a line
-        // for the pristine name beside a fork in use invites somebody to uncomment
-        // it and declare the same resources twice.
+    // The estate may hold a pack under its pristine name or under a FORK of it — a fork
+    // is that pack, with the estate's own content. Offering a line for the pristine name
+    // beside a fork in use invites somebody to uncomment it and declare the same
+    // resources twice.
+    let has_line = |path: &str| {
         let fork = crate::fsx::slash(&fork_sibling(Path::new(path)));
-        if src.contains(&format!("use \"{}\"", path)) || src.contains(&format!("use \"{}\"", fork)) {
+        src.contains(&format!("use \"{}\"", path)) || src.contains(&format!("use \"{}\"", fork))
+    };
+    // An estate with no pack line at all — `init` wrote it without a graph — gets the whole
+    // menu where the skeleton puts it, so it ends as the file `init` writes with one.
+    if graph.lines().iter().all(|n| !has_line(&n.path)) {
+        if let Some(out) = crate::template::with_menu(&src, graph) {
+            crate::fsx::write_edited_satz(estate, &src, &out)?;
+            let added = graph
+                .lines()
+                .iter()
+                .map(|n| {
+                    let summary = n.phase.as_deref().and_then(|p| p.lines().next()).unwrap_or("with the group above").trim();
+                    (n.path.clone(), summary.to_string())
+                })
+                .collect();
+            return Ok(PackLines { added, unplaced });
+        }
+    }
+    for n in graph.lines() {
+        let (path, gate) = (n.path.as_str(), n.gate.as_deref());
+        if has_line(path) {
             continue;
         }
-        // the phase text carries its own `//` continuations; the first line is the summary
+        if graph.excluded_by(path).iter().any(|o| o.gate.is_some() && o.gate.as_deref() == gate && has_line(&o.path)) {
+            continue;
+        }
+        let phase = n.phase.as_deref().unwrap_or("");
+        // the first line of the phase is the summary
         let summary = phase.lines().next().unwrap_or("").trim().to_string();
         let summary = if summary.is_empty() { "with the group above".to_string() } else { summary };
-        // a pack scoped to a block belongs IN that block: appended at the top
-        // level it would be scoped to the organisation instead. A pack the
-        // skeleton writes after the scaffold is top level, and the end of the
-        // file is after the scaffold too
-        if crate::template::in_block(at) {
-            match crate::template::insert_into_block(&nested, at, &crate::template::pack_line(path, gate), phase) {
+        let line = crate::template::pack_line(path, gate);
+        match crate::template::place(n) {
+            // a pack scoped to a block belongs IN that block: appended at the top
+            // level it would be scoped to the organisation instead
+            crate::template::Place::Block(at) => match crate::template::insert_into_block(&nested, at, &line, phase) {
                 Some(next) => {
                     nested = next;
                     added.push((path.to_string(), format!("{} (in `{}`)", summary, at)));
                 }
                 // no such block: a resource-type map is content and is written
                 // whole; a folder is the estate's own structure and is reported
-                None => match crate::template::block_stub(at, &crate::template::pack_line(path, gate), phase) {
+                None => match crate::template::block_stub(at, &line, phase) {
                     Some(stub) => {
                         block.push('\n');
                         block.push_str(&stub);
@@ -1750,15 +1793,19 @@ fn adopt_pack_lines(estate: &Path) -> Result<PackLines, BoxErr> {
                     }
                     None => unplaced.push((path.to_string(), at.to_string())),
                 },
+            },
+            // a pack the skeleton writes after the scaffold is top level, and the end
+            // of the file is after the scaffold too
+            crate::template::Place::Menu | crate::template::Place::AfterScaffold => {
+                if !phase.trim().is_empty() {
+                    block.push('\n');
+                    block.push_str(&crate::template::phase_comment(phase, ""));
+                }
+                block.push_str(&line);
+                block.push('\n');
+                added.push((path.to_string(), summary));
             }
-            continue;
         }
-        if !phase.is_empty() {
-            block.push_str(&format!("\n// {}\n", phase));
-        }
-        block.push_str(&crate::template::pack_line(path, gate));
-        block.push('\n');
-        added.push((path.to_string(), summary));
     }
     if added.is_empty() {
         return Ok(PackLines { added, unplaced });

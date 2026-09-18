@@ -93,8 +93,8 @@ order is a path:
    permissions, the essential contact. The rest are off: budget, SCC enablement and
    the packs that carry its findings, the security-audit account, Defender, Sentinel
    and its two log paths (which follow the Sentinel answer), the verification runner,
-   the exemption tag. The map declares the choices and nothing else; the estate
-   carries one `use … when` line per choice.
+   the exemption tag. The map declares the choices and offers each pack with an
+   `offers` entry; the estate carries one `use … when` line per choice.
 3. **Every pack a choice switched on**, with its own questions: the CIS baseline's
    allowed resource locations and policy members and one switch per opt-in extension
    and per dry-run twin, the group names of the chosen model, the archive's project
@@ -129,7 +129,10 @@ use "presets/integrations/microsoft-sentinel.satz" when use_sentinel
 Why the lines live in the estate and not in the map — and what stays hand-wired
 (Defender's plan fragments, the MSP-hosted runner, the per-project alert pack) — is
 [ADR 0007](adr/0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md).
-A test keeps the map's params and the skeleton's lines equal.
+The lines the skeleton writes come from `presets/pack-graph.json`, the pack graph that
+ships with the presets, and a test keeps the map's params and the skeleton's lines
+equal. With no graph in `presets_dir`, `--create` writes the skeleton without pack
+lines and says so; `satz get-presets` then `satz merge-presets` write them.
 
 ## At the terminal: `satz interview`
 

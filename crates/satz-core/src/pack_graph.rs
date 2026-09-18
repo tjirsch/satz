@@ -17,6 +17,34 @@ pub struct PackGraph {
     pub edges: Vec<Edge>,
 }
 
+impl PackGraph {
+    /// The packs whose line satz writes into an estate, in adoption order: every
+    /// offered node except those whose line is written by hand.
+    pub fn lines(&self) -> Vec<&Node> {
+        let mut out: Vec<&Node> = self.nodes.iter().filter(|n| n.order.is_some() && n.by_hand.is_none()).collect();
+        out.sort_by_key(|n| n.order);
+        out
+    }
+
+    /// The nodes an `excludes` edge joins to `path`, in either direction.
+    pub fn excluded_by(&self, path: &str) -> Vec<&Node> {
+        self.edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Excludes)
+            .filter_map(|e| {
+                if e.from == path {
+                    Some(e.to.as_str())
+                } else if e.to == path {
+                    Some(e.from.as_str())
+                } else {
+                    None
+                }
+            })
+            .filter_map(|p| self.nodes.iter().find(|n| n.path == p))
+            .collect()
+    }
+}
+
 /// What a library file is to an estate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
