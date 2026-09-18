@@ -174,7 +174,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 |---------|---------------------|
 | `hcl-init [ARGS]` | runs `<tf_tool> init` in `hcl_dir`; everything after the command is handed to the tool verbatim, so `--config` must come before it |
 | `plan [ARGS]` | runs `<tf_tool> plan` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
-| `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
+| `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace`, which `main.tf` also names in a comment above that policy for an apply without satz |
 | `migrate <INPUT>` | `--mode` |
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
@@ -453,6 +453,8 @@ satz transpile <INPUT> [options]
 - `--print-variables`: After transpilation, print the resolved variable table (`terraform.tfvars`) to stdout. Useful for debugging variable resolution across multiple include files.
 - `--scan`: after transpiling, run Checkov (terraform framework) over `hcl_dir` — `checkov` on PATH, else `uvx checkov` — and print every failed check under the resource it hit, with the Satz file and line that declared it (from the emission manifest) and Checkov's guideline link. Failed checks exit 1, so it gates like a test. `satz scan [<estate>]` does the same without transpiling first.
 - `--plan` / `--apply`: after transpiling, run `<tf_tool> plan` / `apply` in `hcl_dir` — one command from estate to plan. The dir is initialised first when it has no `.terraform`. The same as `satz transpile … && satz plan`; `satz plan`, `satz apply` and `satz hcl-init` remain for running the tool on its own (extra arguments pass through).
+
+Above each org policy the estate declares `reset = true`, `main.tf` carries two comment lines: the API refuses to switch a policy with rules to reset in place (`Cannot set PolicyRules if reset is true`), and an apply that does not run through satz needs `tofu apply -replace=<address>` while the state holds that policy with rules. `satz plan` and `satz apply` add that `-replace` themselves. See [Transpile, plan, apply](docs/workflows.md#transpile-plan-apply).
 
 **Running from subdirectories:**
 You can run the transpile command from any directory (e.g., from within the `hcl/` folder) by specifying the config path. Both styles are supported:

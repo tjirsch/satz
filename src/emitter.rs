@@ -845,11 +845,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             .collect(),
         None => Vec::new(),
     };
-    let mut body = hcl::Body::builder();
-    for b in blocks {
-        body = body.add_block(b);
-    }
-    let main_tf = hcl::to_string(&body.build()).map_err(|e| e.to_string())?;
+    let main_tf = render_main_tf(blocks, &manifest)?;
     // dedup rendered import blocks, like the walk
     let mut import_body = hcl::Body::builder();
     let mut seen = std::collections::HashSet::new();
@@ -861,6 +857,41 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     }
     let imports_tf = hcl::to_string(&import_body.build()).map_err(|e| e.to_string())?;
     Ok(EmitOut { main_tf, imports_tf, manifest, missing_required, wrong_shapes })
+}
+
+/// `main.tf` as text: the blocks as `hcl` renders a body of them, one blank line
+/// apart, with a comment above each org policy declared reset.
+///
+/// The HCL is handed over, and whoever applies it without satz meets what `run_tf`
+/// answers for `satz plan` and `satz apply` (ADR 0011): while the state holds the
+/// policy's rules, the API refuses the in-place update, and only a replace switches it
+/// to reset. The comment names that replace. It is decided from the manifest, the
+/// same `reset` `reset_replacements` reads, and being a comment it moves no address,
+/// no attribute and no plan.
+fn render_main_tf(blocks: Vec<hcl::Block>, manifest: &crate::manifest::Manifest) -> Result<String, String> {
+    let mut out = String::new();
+    for b in blocks {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let reset = block_address(&b)
+            .filter(|a| manifest.resources.get(a).is_some_and(|r| r.tf_type == "google_org_policy_policy" && r.reset));
+        if let Some(address) = reset {
+            out.push_str(&reset_replace_comment(&address));
+        }
+        out.push_str(&hcl::to_string(&hcl::Body::builder().add_block(b).build()).map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+/// The two lines above an org policy declared reset: why a bare apply can be refused
+/// on it, and the `-replace` that applies it.
+fn reset_replace_comment(address: &str) -> String {
+    format!(
+        "# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).\n\
+         # satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace={}\n",
+        address
+    )
 }
 
 /// google_project + its google_project_service children — mirrors the walk's
@@ -1761,5 +1792,43 @@ mod billing_grant_tests {
     fn the_conventional_param_is_the_account() {
         let out = emit(&billing_grant(), &ctx(Some("example-billing"))).expect("the param supplies the account");
         assert!(out.main_tf.contains("example-billing"), "{}", out.main_tf);
+    }
+}
+
+#[cfg(test)]
+mod reset_comment_tests {
+    //! `satz plan` and `satz apply` replace an org policy the state holds with rules
+    //! while the estate declares it reset (ADR 0011). A bare `tofu apply` of the
+    //! handed-over HCL does not, so `main.tf` names the replace above the policy.
+
+    use super::*;
+
+    const BLOCKS: &str = "resource \"google_org_policy_policy\" \"twin_superseded\" {\n  name = \"a\"\n  spec {\n    reset = true\n  }\n}\n\
+        resource \"google_org_policy_policy\" \"enforced\" {\n  name = \"c\"\n  spec {\n    rules {\n      enforce = \"TRUE\"\n    }\n  }\n}\n\
+        resource \"google_folder\" \"f\" {\n  display_name = \"f\"\n}\n";
+
+    #[test]
+    fn a_reset_policy_names_its_replace_and_nothing_else_moves() {
+        let blocks: Vec<hcl::Block> = hcl::parse(BLOCKS).unwrap().blocks().cloned().collect();
+        let manifest = crate::manifest::Manifest::from_blocks(&blocks);
+        let text = render_main_tf(blocks.clone(), &manifest).unwrap();
+
+        // directly above the reset policy, naming its own address
+        let above = format!(
+            "{}resource \"google_org_policy_policy\" \"twin_superseded\" {{\n",
+            reset_replace_comment("google_org_policy_policy.twin_superseded")
+        );
+        assert!(text.starts_with(&above), "{text}");
+        assert!(text.contains("# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.twin_superseded\n"), "{text}");
+        // and on nothing else: the policy that keeps its rules carries none
+        assert_eq!(text.matches("-replace=").count(), 1, "{text}");
+        assert!(text.contains("}\n\nresource \"google_org_policy_policy\" \"enforced\" {\n"), "{text}");
+
+        // the comment is the whole difference: without it, the text is the body as
+        // `hcl` renders it, and it parses back to the same manifest
+        let body = blocks.iter().cloned().fold(hcl::Body::builder(), |b, x| b.add_block(x)).build();
+        let bare: String = text.lines().filter(|l| !l.starts_with('#')).map(|l| format!("{l}\n")).collect();
+        assert_eq!(bare, hcl::to_string(&body).unwrap());
+        assert_eq!(crate::manifest::Manifest::parse(&text), manifest);
     }
 }

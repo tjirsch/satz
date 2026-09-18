@@ -47,6 +47,11 @@ applied.
   naming the policy.
 - `satz plan` and `tofu plan` differ for these policies: `tofu plan` run directly
   still shows the in-place update that the apply cannot make.
+- The HCL is also applied without satz — by a customer, a CI runner, satz-studio — and
+  none of them adds the replace. `main.tf` names it in a comment above each policy it
+  declares reset: the API's refusal, and `tofu apply -replace=<address>`. The comment
+  moves no address and no plan; it is where the handed-over HCL says what the wrapper
+  adds.
 - An estate with a reset policy pays one state read per `plan` or `apply`.
 - The wrapper is no longer purely pass-through; this is its one addition, and it is
   named in the command table and in the `run_tf` comment.
