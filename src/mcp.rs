@@ -613,9 +613,9 @@ pub(crate) struct WhoamiArgs {
     /// Read the ADC file only — no network, no token minted
     #[serde(default)]
     pub offline: bool,
-    /// Estate file to answer FOR: a cloud-mode estate reports its IaC service
-    /// account, which is the identity its live tools actually run as. Omit to
-    /// report the ambient credentials the server itself falls back to.
+    /// Estate file to answer FOR: a cloud-mode estate runs as its IaC service
+    /// account, a local-mode one as the credentials themselves. Omit for the open
+    /// estate, or — with nothing open — the ambient credentials.
     #[serde(default)]
     pub estate: Option<String>,
 }
@@ -1839,8 +1839,10 @@ impl SatzMcp {
         name = "satz_whoami",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::gcp::identity::WhoamiReport>(),
         description = "BOTH halves of the identity: the Application Default Credentials account \
-                       and its file, and the service account the open estate's live tools actually \
-                       run as. Online it also CHECKS them — whether this credential may become that \
+                       and its file, and what the open estate's live tools actually run as — its \
+                       deployment mode, the service account it declares, and whether the calls \
+                       impersonate it (cloud mode) or run as the credentials themselves (local \
+                       mode). Online it also CHECKS them — whether this credential may become that \
                        service account, and whether the quota project is reachable — so a refused \
                        live call is explained here rather than guessed at. The first thing to check \
                        when anything live fails.",
@@ -1857,23 +1859,35 @@ impl SatzMcp {
         // an estate is in play. With one open, the honest answer is the identity
         // that estate's live tools RUN as — so it is answered inside the same
         // scope they use, not merely described.
-        let scoped = match self.ctx.open.lock().expect("the open lock is never poisoned").clone() {
+        // Cloned in a statement of its own, so the guard drops here: a guard in the
+        // match scrutinee lives to the end of the match, and `target` below takes
+        // the same lock — a named estate hung the call and every call after it.
+        let open_now = self.ctx.open.lock().expect("the open lock is never poisoned").clone();
+        let scoped = match open_now {
             Some(open) if args.estate.is_none() => {
                 let estate = open.estate.clone();
                 Some((Self::identity_of(&open), open, estate))
             }
-            Some(_) => match self.target(args.estate.as_deref()) {
+            // Nothing open and nothing named: the question is about the ambient
+            // credentials, which is exactly what `satz whoami` answers with no estate.
+            None if args.estate.is_none() => None,
+            // A named estate resolves inside the open one's config; with nothing
+            // open, `target` refuses and says how to open one, rather than answering
+            // as if no estate had been named.
+            _ => match self.target(args.estate.as_deref()) {
                 Ok((open, estate)) => {
                     Some((crate::estate_impersonation_target(&estate, &open.runtime), open, estate))
                 }
                 Err(r) => return Ok(Err(r)),
             },
-            // Nothing open: the question is about the ambient credentials, which
-            // is exactly what `satz whoami` answers with no estate.
-            None => None,
         };
         let report = match scoped {
             Some((sa, open, estate)) => {
+                let declared =
+                    match crate::estate_declaration(&estate, estate.display().to_string(), &open.runtime) {
+                        Ok(d) => d,
+                        Err(e) => return Ok(Err(refused(format!("whoami: {}", e)))),
+                    };
                 // Online, the estate's resource types say which permissions to test;
                 // an estate that does not compile still gets its identity answered.
                 let probe = if args.offline {
@@ -1881,9 +1895,13 @@ impl SatzMcp {
                 } else {
                     crate::iac_probe(&estate, &open.tool, &open.runtime).ok()
                 };
-                crate::gcp::with_identity(sa, crate::gcp::identity::whoami_report(args.offline, probe)).await
+                crate::gcp::with_identity(
+                    sa,
+                    crate::gcp::identity::whoami_report(args.offline, Some(declared), probe),
+                )
+                .await
             }
-            None => crate::gcp::identity::whoami_report(args.offline, None).await,
+            None => crate::gcp::identity::whoami_report(args.offline, None, None).await,
         };
         match report {
             Ok(report) => Ok(Ok(Json(report))),

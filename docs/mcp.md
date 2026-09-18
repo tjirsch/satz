@@ -78,7 +78,7 @@ every `satz` block in the guide.
 | `satz_fmt` | `read` | Satz text in, the canonical layout out — two-space indent, `=` aligned over a run, one list item per line. No path and no write: the client holds the file. `satz_review_pack` refuses a pack that is not formatted, and this is what formats it |
 | `satz_review_pack` | `read` | one pack against the library's bar — it parses, is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles. Folded into a synthesised estate unless `against` names one. Findings anchored to file and line |
 | `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration |
-| `satz_whoami` | `read` | both halves of the identity — the ADC account and the open estate's service account — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable, does it hold the permissions the estate's resource types need (`permissions`, each missing one named with its role). The first thing to check when a live call is refused |
+| `satz_whoami` | `read` | both halves of the identity — the ADC account, and what the open estate's calls run as: its mode, the service account it declares, and whether that account is impersonated — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable, does it hold the permissions the estate's resource types need (`permissions`, each missing one named with its role). The first thing to check when a live call is refused |
 | `satz_transpile` | `write` | compiles the estate and writes its OpenTofu HCL into `hcl_dir`, as `satz transpile` does; `written` lists the files |
 | `satz_adopt` | `read` / `write` | every declared resource resolved against the **live** organisation, as the estate's service account: per row whether it would be imported, moved in the state, is already managed, or cannot be resolved, what it matched on, and the Satz line that declared it. With `execute` (`write`) the verified ids are written into the estate as `"import-id"`, refused while any row is unanswered or a live object is declared twice. `tofu import`, a state move and activating a managed constraint stay on the command line |
 | `satz_update_prerequisites` | `read` / `write` | what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing (with the fewest roles that close the gap) and the APIs its infrastructure project does not enable (with the types that need each), plus the emitted types the table has no row for. Offline. It WRITES both into the estate file and re-checks — a gap that survives the write restores the file — so the default needs `write`; `report_only` lists the gap and needs only `read` |
@@ -279,9 +279,15 @@ dispatches requests concurrently: a global changed underneath a call in flight w
 one estate's tools with another estate's credentials. Work started under one estate
 finishes under it.
 
-`satz_whoami` answers for the open estate, inside the same scope the other tools use.
-With nothing open it answers for the ambient credentials, as `satz whoami` does with no
-estate. `--no-impersonate` outranks the scope: every tool then runs as the plain ADC.
+`satz_whoami` answers for the open estate, inside the same scope the other tools use, or
+for the estate its `estate` argument names. With nothing open it answers for the ambient
+credentials, as `satz whoami` does with no estate; an `estate` named with nothing open is
+refused, because only an open estate's config resolves the name. Its `estate` object
+carries what the terminal's `runs as:` line says: `deployment_mode`, the
+`service_account` the estate declares (in local mode too), and `impersonated` — `true`
+when the calls run as that account, `false` when they run as the ADC account itself (local
+mode, or `--no-impersonate`). `--no-impersonate` outranks the scope: every tool then runs
+as the plain ADC.
 
 ### Not available
 

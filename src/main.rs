@@ -880,8 +880,10 @@ enum Commands {
     /// Default Credentials resolve to
     Whoami {
         /// Estate to answer FOR (.satz, inside yaml_dir if relative): a
-        /// cloud-mode estate reports its IaC service account, the identity its
-        /// live commands actually run as. Omit to report the ambient credentials.
+        /// cloud-mode estate runs as its IaC service account, impersonated by the
+        /// credentials; a local-mode one runs as the credentials, and names the
+        /// account `satz migrate --mode cloud` switches to. Omit to report the
+        /// ambient credentials.
         input: Option<PathBuf>,
         /// Read the ADC file only — no network, no token minted
         #[arg(long)]
@@ -2227,6 +2229,7 @@ Thumbs.db
             // so: the binding helper reads an unreadable estate as "nothing to
             // impersonate", which would quietly answer the other question.
             if let Some(estate) = input {
+                let named = estate.display().to_string();
                 let path = estate_path(estate, &runtime_config);
                 if !path.exists() {
                     return Err(format!(
@@ -2236,6 +2239,9 @@ Thumbs.db
                     )
                     .into());
                 }
+                // Read first: an estate whose params cannot be read has no answer,
+                // and binding would take it for one that impersonates nothing.
+                let declared = estate_declaration(&path, named, &runtime_config)?;
                 configure_estate_impersonation(&path, &runtime_config)?;
                 // Online, the estate's resource types say which permissions to test.
                 // An estate that does not compile still gets its identity answered.
@@ -2250,9 +2256,9 @@ Thumbs.db
                         }
                     }
                 };
-                return crate::gcp::identity::whoami(offline, probe).await;
+                return crate::gcp::identity::whoami(offline, Some(declared), probe).await;
             }
-            crate::gcp::identity::whoami(offline, None).await
+            crate::gcp::identity::whoami(offline, None, None).await
         }
         Commands::Completion { shell, install } => {
             let using_default = shell.is_none();
@@ -4903,18 +4909,24 @@ pub(crate) fn estate_impersonation_target(
     input_path: &Path,
     runtime_config: &ToolConfig,
 ) -> Option<String> {
-    satz_estate_params(input_path, &runtime_config.include_dirs).ok().and_then(|params| {
-        let get = |k: &str| params.get(k).and_then(|v| v.as_str()).map(str::to_string);
-        if get("deployment-mode").as_deref() != Some("cloud") {
-            return None;
-        }
-        match (get("svc-iac-account"), get("infra-project-name")) {
-            (Some(a), Some(p)) if !a.is_empty() && !p.is_empty() => {
-                Some(format!("{}@{}.iam.gserviceaccount.com", a, p))
-            }
-            _ => None,
-        }
-    })
+    estate_declaration(input_path, input_path.display().to_string(), runtime_config)
+        .ok()?
+        .impersonation_target()
+        .map(str::to_string)
+}
+
+/// What an estate declares about its identity — its `deployment_mode` and its IaC
+/// service account — read off its params. `named` is the estate as the operator
+/// named it, which is what `whoami` repeats in the `satz migrate` it suggests.
+pub(crate) fn estate_declaration(
+    input_path: &Path,
+    named: String,
+    runtime_config: &ToolConfig,
+) -> Result<crate::gcp::identity::EstateDeclaration, String> {
+    let params = satz_estate_params(input_path, &runtime_config.include_dirs)
+        .map_err(|e| format!("{}: {}", input_path.display(), e))?;
+    let get = |k: &str| params.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    Ok(crate::gcp::identity::EstateDeclaration::from_params(named, get))
 }
 
 /// The parameter table of a `.satz` estate, in the dialect's kebab-case

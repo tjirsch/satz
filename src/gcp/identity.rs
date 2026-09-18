@@ -156,16 +156,74 @@ pub(crate) struct Credential {
     pub file: Option<String>,
 }
 
-/// The identity an estate's live calls run as, and whether this credential may
-/// actually become it.
+/// What an estate declares about the identity its live calls use, read off its
+/// params — no credential needed, so `--offline` answers it too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EstateDeclaration {
+    /// The estate as it was named: the argument `satz migrate` takes.
+    pub(crate) path: String,
+    /// `deployment_mode`, `local` when the estate declares none — as the emitter
+    /// reads it.
+    pub(crate) mode: String,
+    /// `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`, when the
+    /// estate declares both.
+    pub(crate) service_account: Option<String>,
+}
+
+impl EstateDeclaration {
+    /// From an estate's params, looked up by their kebab-case names.
+    pub(crate) fn from_params(path: String, get: impl Fn(&str) -> Option<String>) -> Self {
+        let mode = get("deployment-mode").filter(|m| !m.is_empty()).unwrap_or_else(|| "local".into());
+        let service_account = match (get("svc-iac-account"), get("infra-project-name")) {
+            (Some(a), Some(p)) if !a.is_empty() && !p.is_empty() => {
+                Some(format!("{}@{}.iam.gserviceaccount.com", a, p))
+            }
+            _ => None,
+        };
+        Self { path, mode, service_account }
+    }
+
+    /// The account live calls impersonate: the declared one, in cloud mode only —
+    /// the emitter's provider rule.
+    pub(crate) fn impersonation_target(&self) -> Option<&str> {
+        if self.mode == "cloud" { self.service_account.as_deref() } else { None }
+    }
+}
+
+/// The estate the answer is for: what it declares, whether its live calls
+/// impersonate the account it declares, and whether this credential may.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct EstateIdentity {
-    pub service_account: String,
-    /// `None` when not checked (offline). Checked with one `generateAccessToken`
-    /// whose token is discarded — the same call every live command makes, so a
-    /// failure here is the failure that command would hit.
+    /// The estate as it was named: the argument `satz migrate` takes.
+    pub path: String,
+    /// `cloud` or `local`, as the estate declares it; `local` when it declares none.
+    pub deployment_mode: String,
+    /// The IaC service account the estate declares (`svc_iac_account` at
+    /// `infra_project_name`). Absent when it declares no such pair.
+    pub service_account: Option<String>,
+    /// true: live calls run as `service_account`, impersonated by the ADC account.
+    /// false: they run as the ADC account itself — in local mode, where
+    /// `satz migrate <path> --mode cloud` switches to impersonation, or in cloud
+    /// mode under `--no-impersonate`.
+    pub impersonated: bool,
+    /// `None` when not checked: offline, or nothing is impersonated. Checked with
+    /// one `generateAccessToken` whose token is discarded — the same call every
+    /// live command makes, so a failure here is the failure that command would hit.
     pub may_impersonate: Option<bool>,
     pub error: Option<String>,
+}
+
+impl EstateIdentity {
+    fn new(d: EstateDeclaration, impersonated: bool, checked: Option<Result<(), String>>) -> Self {
+        Self {
+            path: d.path,
+            deployment_mode: d.mode,
+            service_account: d.service_account,
+            impersonated,
+            may_impersonate: checked.as_ref().map(Result::is_ok),
+            error: checked.and_then(Result::err),
+        }
+    }
 }
 
 /// The project every API call is billed and quota'd against.
@@ -181,11 +239,12 @@ pub(crate) struct QuotaProject {
 ///
 /// The `note` is the one thing the human line carries that the fields do not: a
 /// user ADC file stores no identity, so `--offline` cannot answer the question it
-/// was asked, and saying so is more useful than an empty account.
+/// was asked, and saying so is more useful than an empty account. Given an estate,
+/// `--offline` answers without any ADC file, and the note says there is none.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct WhoamiReport {
     pub adc: Credential,
-    /// Absent when no estate is in play — then the ADC identity is the answer.
+    /// Absent when no estate is given — then the ADC identity is the answer.
     pub estate: Option<EstateIdentity>,
     pub quota_project: Option<QuotaProject>,
     /// true when the answer came from the file alone, without minting a token
@@ -230,8 +289,13 @@ pub(crate) async fn check_quota_project(
 /// they drifted: only the tool knew that a bound estate changes the answer, so
 /// `satz whoami` could not be asked the question the tool could answer. One
 /// resolver, two renderings — the divergence cannot come back.
+///
+/// `estate` is what the estate given declares; the identity the calls actually run
+/// as is the one bound for them, and the two must agree — a report that explained
+/// one binding with another estate's declaration would answer the wrong question.
 pub(crate) async fn whoami_report(
     offline: bool,
+    estate: Option<EstateDeclaration>,
     probe: Option<crate::prerequisites::Probe>,
 ) -> Result<WhoamiReport, Box<dyn std::error::Error>> {
     let file = crate::org_policy::adc_file_path().map(|p| p.display().to_string());
@@ -242,35 +306,52 @@ pub(crate) async fn whoami_report(
         CredKind::Unknown => "unknown",
     };
     let bound = crate::gcp::impersonation_target();
+    let declared = match &estate {
+        Some(d) if !crate::gcp::impersonation_disabled() => d.impersonation_target(),
+        _ => None,
+    };
+    if bound.as_deref() != declared {
+        let now = match (&estate, declared) {
+            (Some(d), Some(sa)) => format!("{} declares {} — it changed after it was bound; open it again", d.path, sa),
+            (Some(d), None) => format!("{} impersonates nothing — it changed after it was bound; open it again", d.path),
+            (None, _) => "no estate is given".to_string(),
+        };
+        return Err(format!(
+            "live calls are bound to run as {}, but {}",
+            bound.as_deref().unwrap_or("the credentials themselves"),
+            now
+        )
+        .into());
+    }
     let quota = crate::org_policy::resolve_quota_project();
 
     if offline {
         // The file alone: no token, so neither check can run, and saying "not
         // checked" is the honest answer rather than an optimistic one.
-        // With an estate in play there is still an answer without a credential —
-        // WHICH account this estate runs as is read off the estate, not off the
-        // ADC. Only when neither exists is there nothing to report.
+        // With an estate given there is still an answer without a credential —
+        // its mode and WHICH account it declares are read off the estate, not off
+        // the ADC. Only when neither exists is there nothing to report.
+        const NO_ADC: &str =
+            "no Application Default Credentials file found — run `gcloud auth application-default login`";
         let found = credential_info_offline();
-        if found.is_none() && bound.is_none() {
-            return Err("no Application Default Credentials file found — run `gcloud auth \
-                        application-default login`"
-                .into());
+        if found.is_none() && estate.is_none() {
+            return Err(NO_ADC.into());
         }
+        let note = match &found {
+            None => Some(NO_ADC.to_string()),
+            Some(i) if i.email.is_none() && i.kind == CredKind::UserAdc => {
+                Some("a user ADC file stores no identity — run without --offline to resolve it".to_string())
+            }
+            Some(_) => None,
+        };
         let info = found.unwrap_or(CredentialInfo {
             email: None,
             kind: CredKind::Unknown,
             quota_project: None,
         });
-        let note = (info.email.is_none() && info.kind == CredKind::UserAdc).then(|| {
-            "a user ADC file stores no identity — run without --offline to resolve it".to_string()
-        });
         return Ok(WhoamiReport {
             adc: Credential { account: info.email, kind: kind_name(&info.kind), file },
-            estate: bound.map(|sa| EstateIdentity {
-                service_account: sa,
-                may_impersonate: None,
-                error: None,
-            }),
+            estate: estate.map(|d| EstateIdentity::new(d, bound.is_some(), None)),
             quota_project: quota.map(|id| QuotaProject { id, reachable: None, error: None }),
             offline: true,
             note,
@@ -306,17 +387,11 @@ pub(crate) async fn whoami_report(
         }
     };
 
-    let estate = match &bound {
+    let checked = match &bound {
         None => None,
-        Some(sa) => {
-            let allowed = crate::gcp::may_impersonate(&token, sa).await;
-            Some(EstateIdentity {
-                service_account: sa.clone(),
-                may_impersonate: Some(allowed.is_ok()),
-                error: allowed.err(),
-            })
-        }
+        Some(sa) => Some(crate::gcp::may_impersonate(&token, sa).await),
     };
+    let estate = estate.map(|d| EstateIdentity::new(d, bound.is_some(), checked));
 
     // The estate's permissions last: they are tested as the identity its live
     // commands run as, which the two checks above just proved it can become.
@@ -344,8 +419,12 @@ pub(crate) fn project_of(sa: &str) -> Option<&str> {
 
 /// The terminal rendering of `whoami_report` — the same answer `satz_whoami`
 /// returns as data.
-pub(crate) async fn whoami(offline: bool, probe: Option<crate::prerequisites::Probe>) -> Result<(), Box<dyn std::error::Error>> {
-    let r = whoami_report(offline, probe).await?;
+pub(crate) async fn whoami(
+    offline: bool,
+    estate: Option<EstateDeclaration>,
+    probe: Option<crate::prerequisites::Probe>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let r = whoami_report(offline, estate, probe).await?;
     println!("{}", render_whoami(&r));
     // A credential that cannot become the estate's account, or a quota project
     // nothing can reach, makes every later command fail. `whoami` is the command
@@ -376,6 +455,40 @@ fn brief(msg: &str) -> String {
     format!("{} […] {}", head.trim_end(), tail.trim_start())
 }
 
+/// Who the calls run as, and the relation to the credential behind them: the ADC
+/// account itself, or the service account it impersonates. Each case names what
+/// decides it — no estate given, the estate's mode, `--no-impersonate` — so the
+/// line says which one applies and what changes it.
+fn runs_as(r: &WhoamiReport) -> String {
+    let you = r.adc.account.as_deref().unwrap_or("the ADC identity");
+    let Some(e) = &r.estate else {
+        return format!("{} — no estate given; name one to see what it runs as", you);
+    };
+    match (&e.service_account, e.impersonated) {
+        (Some(sa), true) => {
+            let check = match (e.may_impersonate, &e.error) {
+                (Some(true), _) => ", checked: allowed".to_string(),
+                (Some(false), Some(why)) => format!("\n             CANNOT IMPERSONATE: {}", brief(why)),
+                (Some(false), None) => ", checked: CANNOT IMPERSONATE".to_string(),
+                (None, _) => ", not checked (--offline)".to_string(),
+            };
+            format!("{} — impersonated by {}{}", sa, you, check)
+        }
+        (Some(sa), false) if e.deployment_mode == "cloud" => {
+            format!("{} — impersonation off (--no-impersonate); without it every run impersonates {}", you, sa)
+        }
+        (Some(sa), false) => format!(
+            "{} — {} mode; `satz migrate {} --mode cloud` makes every run impersonate {}",
+            you, e.deployment_mode, e.path, sa
+        ),
+        (None, _) => format!(
+            "{} — {} declares no IaC service account (svc_iac_account, infra_project_name), so \
+             nothing is impersonated",
+            you, e.path
+        ),
+    }
+}
+
 /// Both halves, one block. The ADC line keeps the wording every live command
 /// prints, so the two are recognisably the same fact.
 pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
@@ -393,22 +506,7 @@ pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
     if let Some(f) = &r.adc.file {
         out.push_str(&format!("\nadc file:    {}", f));
     }
-    match &r.estate {
-        None => out.push_str(
-            "\nruns as:     the credentials themselves — no estate, or a local-mode one",
-        ),
-        Some(e) => {
-            out.push_str(&format!("\nruns as:     {}", e.service_account));
-            match (e.may_impersonate, &e.error) {
-                (Some(true), _) => out.push_str(" — may impersonate"),
-                (Some(false), Some(why)) => {
-                    out.push_str(&format!("\n             CANNOT IMPERSONATE: {}", brief(why)))
-                }
-                (Some(false), None) => out.push_str(" — CANNOT IMPERSONATE"),
-                (None, _) => out.push_str(" — not checked (--offline)"),
-            }
-        }
-    }
+    out.push_str(&format!("\nruns as:     {}", runs_as(r)));
     match &r.quota_project {
         None => out.push_str("\nquota project: none — API calls are billed to the caller's own"),
         Some(q) => {
@@ -807,7 +905,32 @@ mod whoami_render_tests {
     //! line that reported the ADC and nothing else: the credential was fine, and
     //! the thing that was broken — the account it has to become, the project it
     //! bills — was not on screen.
-    use super::{Credential, EstateIdentity, QuotaProject, WhoamiReport, brief, project_of, render_whoami};
+    use super::{
+        Credential, EstateDeclaration, EstateIdentity, QuotaProject, WhoamiReport, brief, project_of,
+        render_whoami,
+    };
+
+    const SA: &str = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com";
+
+    /// An estate as the resolver reports it: named `e.satz`, declaring `SA`.
+    fn estate(mode: &str, impersonated: bool, checked: Option<Result<(), String>>) -> EstateIdentity {
+        let d = EstateDeclaration {
+            path: "e.satz".into(),
+            mode: mode.into(),
+            service_account: Some(SA.into()),
+        };
+        EstateIdentity::new(d, impersonated, checked)
+    }
+
+    /// The one line the three cases differ in.
+    fn runs_as_line(r: &WhoamiReport) -> String {
+        let out = render_whoami(r);
+        let at = out.find("\nruns as:").unwrap_or_else(|| panic!("no runs-as line:\n{out}"));
+        let rest = &out[at + 1..];
+        // the line, plus a continuation line indented under it
+        let end = rest.find("\nquota project:").unwrap_or(rest.len());
+        rest[..end].to_string()
+    }
 
     fn report() -> WhoamiReport {
         WhoamiReport {
@@ -857,18 +980,143 @@ mod whoami_render_tests {
         assert!(out.contains("quota project:"), "{}", out);
     }
 
+    /// Three cases, three lines: each says which case applies and what changes it.
+    /// One line for "no estate" and "a local-mode estate" answered neither: right
+    /// after bootstrap the Groups Admin check names the account, and the line did not
+    /// say why the run was not impersonating it.
+    #[test]
+    fn with_no_estate_the_credential_runs_as_itself_and_the_line_says_why() {
+        assert_eq!(
+            runs_as_line(&report()),
+            "runs as:     person@example.com — no estate given; name one to see what it runs as"
+        );
+    }
+
+    #[test]
+    fn a_local_mode_estate_names_the_account_and_the_migration_that_makes_it_impersonate() {
+        let mut r = report();
+        r.estate = Some(estate("local", false, None));
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     person@example.com — local mode; `satz migrate e.satz --mode cloud` makes \
+             every run impersonate svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+        );
+    }
+
+    /// The relation on one line: the account the calls run as, and who becomes it.
+    #[test]
+    fn a_cloud_mode_estate_runs_as_its_account_impersonated_by_the_credential() {
+        let mut r = report();
+        r.estate = Some(estate("cloud", true, Some(Ok(()))));
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     svc-iac-001@acme-infra-001.iam.gserviceaccount.com — impersonated by \
+             person@example.com, checked: allowed"
+        );
+    }
+
+    /// `--no-impersonate` is the one reason a cloud-mode estate runs as the
+    /// credentials; the line names it, not "local mode", which would be false.
+    #[test]
+    fn no_impersonate_on_a_cloud_mode_estate_names_the_switch() {
+        let mut r = report();
+        r.estate = Some(estate("cloud", false, None));
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     person@example.com — impersonation off (--no-impersonate); without it every \
+             run impersonates svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+        );
+    }
+
+    #[test]
+    fn an_estate_that_declares_no_account_says_so_instead_of_naming_one() {
+        let mut r = report();
+        let d = EstateDeclaration { path: "e.satz".into(), mode: "local".into(), service_account: None };
+        r.estate = Some(EstateIdentity::new(d, false, None));
+        let line = runs_as_line(&r);
+        assert!(line.starts_with("runs as:     person@example.com — e.satz declares no IaC service account"), "{line}");
+        assert!(!line.contains("migrate"), "{line}");
+    }
+
     #[test]
     fn a_credential_that_cannot_become_the_estate_says_so_loudly() {
         let mut r = report();
-        r.estate = Some(EstateIdentity {
-            service_account: "svc-iac-001@acme-infra-001.iam.gserviceaccount.com".into(),
-            may_impersonate: Some(false),
-            error: Some("403 denied".into()),
-        });
+        r.estate = Some(estate("cloud", true, Some(Err("403 denied".into()))));
         let out = render_whoami(&r);
         assert!(out.contains("CANNOT IMPERSONATE"), "{}", out);
         assert!(out.contains("svc-iac-001@acme-infra-001"), "{}", out);
         assert!(out.contains("403 denied"), "{}", out);
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     svc-iac-001@acme-infra-001.iam.gserviceaccount.com — impersonated by \
+             person@example.com\n             CANNOT IMPERSONATE: 403 denied"
+        );
+    }
+
+    /// Mode and account travel as data too: `satz_whoami` returns this report, so
+    /// an agent reads the same three cases the terminal prints.
+    #[test]
+    fn the_report_carries_the_mode_and_the_declared_account_in_every_case() {
+        let mut r = report();
+        r.estate = Some(estate("local", false, None));
+        let v = serde_json::to_value(&r).expect("serialises");
+        assert_eq!(v["estate"]["deployment_mode"], "local", "{v}");
+        assert_eq!(v["estate"]["service_account"], SA, "{v}");
+        assert_eq!(v["estate"]["impersonated"], false, "{v}");
+        assert_eq!(v["estate"]["path"], "e.satz", "{v}");
+        assert!(v["estate"]["may_impersonate"].is_null(), "{v}");
+    }
+
+    /// The report explains the binding with the estate's declaration, so the two
+    /// must agree. They part when the estate file changes after it was bound — an
+    /// estate `satz_open`ed and then migrated — and a report that explained one
+    /// with the other would name an identity no call runs as.
+    #[tokio::test]
+    async fn a_binding_the_declaration_does_not_explain_is_refused() {
+        let decl = |mode: &str| EstateDeclaration {
+            path: "e.satz".into(),
+            mode: mode.into(),
+            service_account: Some(SA.into()),
+        };
+        let other = "svc-iac-001@bolt-infra-001.iam.gserviceaccount.com".to_string();
+        for (bound, declared, says) in [
+            (Some(other), decl("cloud"), "e.satz declares svc-iac-001@acme-infra-001"),
+            (Some(SA.to_string()), decl("local"), "e.satz impersonates nothing"),
+            (None, decl("cloud"), "the credentials themselves"),
+        ] {
+            let err = crate::gcp::with_identity(bound, super::whoami_report(true, Some(declared), None))
+                .await
+                .expect_err("a disagreeing binding must be refused");
+            let err = err.to_string();
+            assert!(err.contains(says), "{err}");
+            assert!(err.contains("open it again"), "{err}");
+        }
+    }
+
+    /// The declaration reads the params the way the emitter does: no mode is
+    /// local, and only cloud mode with both halves of the account impersonates.
+    #[test]
+    fn the_declaration_reads_mode_and_account_as_the_emitter_does() {
+        let read = |pairs: &[(&str, &str)]| {
+            let pairs: Vec<(String, String)> =
+                pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            EstateDeclaration::from_params("e.satz".into(), |k| {
+                pairs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+            })
+        };
+        let both = [("svc-iac-account", "svc-iac-001"), ("infra-project-name", "acme-infra-001")];
+
+        let none = read(&both);
+        assert_eq!(none.mode, "local");
+        assert_eq!(none.service_account.as_deref(), Some(SA));
+        assert_eq!(none.impersonation_target(), None);
+
+        let cloud = read(&[both[0], both[1], ("deployment-mode", "cloud")]);
+        assert_eq!(cloud.impersonation_target(), Some(SA));
+
+        let half = read(&[both[0], ("infra-project-name", ""), ("deployment-mode", "cloud")]);
+        assert_eq!(half.service_account, None);
+        assert_eq!(half.impersonation_target(), None);
     }
 
     #[test]
@@ -890,17 +1138,43 @@ mod whoami_render_tests {
     fn offline_reports_the_checks_as_not_made() {
         let mut r = report();
         r.offline = true;
-        r.estate = Some(EstateIdentity {
-            service_account: "svc-iac-001@acme-infra-001.iam.gserviceaccount.com".into(),
-            may_impersonate: None,
-            error: None,
-        });
+        r.estate = Some(estate("cloud", true, None));
         r.quota_project =
             Some(QuotaProject { id: "acme-infra-001".into(), reachable: None, error: None });
         let out = render_whoami(&r);
         assert_eq!(out.matches("not checked (--offline)").count(), 2, "{}", out);
         assert!(!out.contains("CANNOT"), "{}", out);
         assert!(!out.contains("UNREACHABLE"), "{}", out);
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     svc-iac-001@acme-infra-001.iam.gserviceaccount.com — impersonated by \
+             person@example.com, not checked (--offline)"
+        );
+    }
+
+    /// Offline, a user ADC file names nobody — the three cases still read apart,
+    /// because what tells them apart is the estate, not the credential.
+    #[test]
+    fn offline_with_an_anonymous_user_adc_the_three_cases_still_differ() {
+        let mut r = report();
+        r.offline = true;
+        r.adc.account = None;
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     the ADC identity — no estate given; name one to see what it runs as"
+        );
+        r.estate = Some(estate("local", false, None));
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     the ADC identity — local mode; `satz migrate e.satz --mode cloud` makes \
+             every run impersonate svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+        );
+        r.estate = Some(estate("cloud", true, None));
+        assert_eq!(
+            runs_as_line(&r),
+            "runs as:     svc-iac-001@acme-infra-001.iam.gserviceaccount.com — impersonated by the \
+             ADC identity, not checked (--offline)"
+        );
     }
 
     /// The remedy satz appends is at the END of an API error, so a truncation
