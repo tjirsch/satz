@@ -1749,7 +1749,7 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<PackLines, BoxEr
     // An estate with no pack line at all — `init` wrote it without a graph — gets the whole
     // menu where the skeleton puts it, so it ends as the file `init` writes with one.
     if graph.lines().iter().all(|n| !has_line(&n.path)) {
-        if let Some(out) = crate::template::with_menu(&src, graph) {
+        if let Some(out) = crate::template::with_menu(&src, graph)? {
             crate::fsx::write_edited_satz(estate, &src, &out)?;
             let added = graph
                 .lines()

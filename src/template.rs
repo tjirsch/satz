@@ -290,8 +290,9 @@ fn place_in_blocks(mut src: String, graph: &PackGraph) -> Result<String, String>
 /// `init` or `interview --create` wrote it without a graph: the top-level lines after the
 /// estate-core line, the group after the scaffold at the end, the block lines in their
 /// blocks. The result is the file those commands write with the graph. `None` when `src`
-/// has no estate-core line to place the menu after, or lacks a block a line belongs in.
-pub(crate) fn with_menu(src: &str, graph: &PackGraph) -> Option<String> {
+/// has no estate-core line to place the menu after; an error when it lacks a block a line
+/// belongs in.
+pub(crate) fn with_menu(src: &str, graph: &PackGraph) -> Result<Option<String>, String> {
     let core = "use \"presets/estate-core.satz\"";
     let mut at = 0usize;
     let mut found = false;
@@ -308,14 +309,14 @@ pub(crate) fn with_menu(src: &str, graph: &PackGraph) -> Option<String> {
         found = raw.trim().trim_start_matches("// ") == core;
     }
     if !found {
-        return None;
+        return Ok(None);
     }
     let mut out = format!("{}{}\n{}", &src[..at], pack_menu(graph), &src[at..]);
     if !out.ends_with('\n') {
         out.push('\n');
     }
     out.push_str(&packs_after_scaffold(graph));
-    place_in_blocks(out, graph).ok()
+    place_in_blocks(out, graph).map(Some)
 }
 
 /// The refusal for a pack the graph places in a block the scaffold of this binary does not
@@ -494,7 +495,7 @@ use "presets/estate-core.satz"
 /// The skeleton with no pack line in it: the blocks this binary's scaffold has, which is
 /// what a graph's placements are checked against.
 pub(crate) fn bare_skeleton() -> String {
-    skeleton("x", None).unwrap_or_default()
+    skeleton("x", None).expect("a skeleton without a graph places no line, so it cannot fail")
 }
 
 /// The estate `satz init` writes, with the pack lines of `graph` — none without one, as
