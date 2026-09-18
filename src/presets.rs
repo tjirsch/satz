@@ -797,7 +797,7 @@ pub(crate) struct GetPresetsReport {
     pub forced: Vec<InUsePreset>,
     /// What a pack MOVE changed: the estate's repointed `use` lines, the forks and
     /// deltas carried over, and the pristine copies retired at the old paths.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub migrated: Vec<String>,
 }
 

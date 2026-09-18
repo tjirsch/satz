@@ -1852,7 +1852,7 @@ impl SatzMcp {
 
     #[tool(
         name = "satz_report_compliance",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<serde_json::Value>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<serde_json::Map<String, serde_json::Value>>(),
         description = "Evidence report: the goal view joined with LIVE verification through Cloud \
                        Asset Inventory, manual-duty attestations and optional Prowler corroboration. \
                        Reads the organisation with the estate's credentials. Writes nothing — unlike \

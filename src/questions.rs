@@ -65,7 +65,7 @@ pub(crate) struct QuestionRow {
     pub pack_description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommend: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub options: Vec<OptionRow>,
     /// the file that declared it — a fork asks its own questions
     pub from: String,

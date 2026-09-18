@@ -108,7 +108,9 @@ the table has no command for — `satz_open`, `satz_estates`, `satz_restrict` �
 the session and capability plumbing a terminal does not need.
 
 A tool the level does not permit returns a tool **result** with `isError`, not a
-protocol error, so the agent can continue.
+protocol error, so the agent can continue. A missing argument, or one of the wrong type,
+is refused the same way: an `isError` result that says what did not deserialize
+(``missing field `framework` ``), not a JSON-RPC `invalid_params` error.
 
 **`satz_report_compliance` reads live and writes nothing.** The CLI command appends
 every run to the append-only evidence history, the audit trail of reports someone ran;
@@ -135,7 +137,12 @@ an agent, a pipeline reading `--format json` — whether the witnesses were veri
 
 Every data tool returns its report as **`structuredContent`** and publishes the
 report's **`outputSchema`** in `tools/list`. A client gets a typed value it can index,
-and knows the shape before it calls.
+and knows the shape before it calls. The text block of the same result carries the same
+JSON, for a client that reads only text.
+
+Each report is a JSON object with an object schema, as MCP `2025-06-18` requires, except
+`satz_triage`'s: its rows are a JSON array, the value `satz triage --format json` prints,
+and its schema is an array schema.
 
 ## Annotations
 
@@ -216,6 +223,14 @@ and the client opens an estate per call.
 is listed as pending until it is approved, so cloning a repository does not start a
 process without consent.
 
+### Result size
+
+Claude Code cuts a tool result longer than `MAX_MCP_OUTPUT_TOKENS` (25,000 tokens unless
+the variable is set in its environment). `satz_report_compliance` returns the largest
+results, and they grow with the estate and the catalog. `scripts/mcp-probe.py` prints each tool's
+largest result in bytes and in estimated tokens
+([housekeeping](housekeeping.md#mcp-probepy--every-mcp-tool-through-the-raw-pipe)).
+
 Run the same command in a terminal to see what the client cannot show you: it holds the
 line waiting for a client, and says so when stdin closes.
 
@@ -223,14 +238,21 @@ line waiting for a client, and says so when stdin closes.
 
 satz serves MCP through [`rmcp`](https://crates.io/crates/rmcp). The smoke matrix
 drives the server as a client at protocol revision `2025-06-18`, the revision every
-step of it speaks.
+step of it speaks. The server answers a client's revision from `2024-11-05` to
+`2025-11-25` with the same revision, and any other with `2025-11-25`.
+
+`scripts/mcp-probe.py` drives every tool the way a client does, reading the server's
+stdout itself rather than through an MCP SDK, because an SDK drops a line that is not
+JSON and a test built on one cannot see a leak. It runs by hand, not in CI
+([housekeeping](housekeeping.md#mcp-probepy--every-mcp-tool-through-the-raw-pipe)).
 
 ## stdout is the protocol
 
 Everything satz says to a human — the version banner, emitter warnings, the
 `credentials:` line — goes to **stderr**. Under MCP a stray line on
 stdout corrupts the stream, and the client reports nothing useful. The smoke matrix
-asserts that every line the server emits parses as JSON-RPC. The background update
+asserts that every line the server emits parses as JSON-RPC, and `scripts/mcp-probe.py`
+charges any line that does not to the call in flight. The background update
 check does not run under `mcp` or `lsp` at all, and the `Update available` notice
 every other command may print is on stderr, so `--format json` output starts with
 the JSON.

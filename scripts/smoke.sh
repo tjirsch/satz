@@ -2413,7 +2413,7 @@ grep -qE '^  security_model_s[12] += ' tmp/iv/agent.satz && fail "a day-0 file h
 # `satz_interview` calls `interview::apply` — so this is the parity the table promises.
 sed -i.bak 's|^// use "presets/estate-map.satz"|use "presets/estate-map.satz"|' tmp/iv/agent.satz
 printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"security_model\":\"security_model_s2\"},\"accept_defaults\":true}}}" \
@@ -2436,7 +2436,7 @@ step "a skeleton answered yes for Sentinel and the findings mail still compiles 
 # them yes on the estate `create` wrote above must leave one `questions` and the compile
 # accept, not one that stops at `unknown param`.
 printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"use_sentinel\":true,\"use_scc_enablement\":true,\"use_scc_notifications\":true,\"use_scc_findings_mail\":true}}}}" \
