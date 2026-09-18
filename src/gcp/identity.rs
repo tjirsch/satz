@@ -981,9 +981,9 @@ mod whoami_render_tests {
     }
 
     /// Three cases, three lines: each says which case applies and what changes it.
-    /// One line for "no estate" and "a local-mode estate" answered neither — the
-    /// operator who had just bootstrapped expected to impersonate the account the
-    /// Groups Admin check had named, and the line did not say why he did not.
+    /// One line for "no estate" and "a local-mode estate" answered neither: right
+    /// after bootstrap the Groups Admin check names the account, and the line did not
+    /// say why the run was not impersonating it.
     #[test]
     fn with_no_estate_the_credential_runs_as_itself_and_the_line_says_why() {
         assert_eq!(
