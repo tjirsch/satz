@@ -282,7 +282,8 @@ grep -q 'customer_domain=not-exported' tmp/actions-check.txt \
 grep -q 'WRITE MODE' tmp/actions-exec.txt || fail "--execute did not append execute_args"
 
 # before-apply runs ahead of after-apply, whatever order they were declared in.
-grep -n 'showcase-action: name=' tmp/actions-exec.txt | head -1 | grep -q 'name=pack-step' \
+grep -m1 'showcase-action: name=' tmp/actions-exec.txt > tmp/actions-first.txt || true
+grep -q 'name=pack-step' tmp/actions-first.txt \
   || fail "phase order ignored: before-apply should run first"
 
 # The three switches.
@@ -766,8 +767,8 @@ SATZ
 grep -q 'resource "google_pubsub_subscription" "scc_findings"' tmp/sccm-hcl/main.tf || fail "no subscription on the findings topic"
 grep -q 'message_retention_duration = "604800s"' tmp/sccm-hcl/main.tf || fail "the subscription must hold a weekend's findings"
 # the address is the central alert pack's, by reference — one security mailbox
-grep -A6 'resource "google_monitoring_notification_channel" "scc_findings_mail"' tmp/sccm-hcl/main.tf \
-  | grep -q '"email_address" = "gcp-security@example.com"' \
+grep -A6 'resource "google_monitoring_notification_channel" "scc_findings_mail"' tmp/sccm-hcl/main.tf > tmp/sccm-channel.txt || true
+grep -q '"email_address" = "gcp-security@example.com"' tmp/sccm-channel.txt \
   || fail "the mailbox does not default to the address the organisation's CIS alerts go to:\n$(grep -A6 'scc_findings_mail' tmp/sccm-hcl/main.tf | head -12)"
 grep -q 'resource "google_monitoring_alert_policy" "scc_findings_published"' tmp/sccm-hcl/main.tf || fail "nothing fires when findings arrive"
 grep -q '"${google_monitoring_notification_channel.scc_findings_mail.id}"' tmp/sccm-hcl/main.tf \
@@ -1074,8 +1075,23 @@ step "pack docs are current, claims are on-catalog, every version has a changelo
 step "report-compliance --format pdf: typeset by satz, with nothing on PATH"
 # This step could not exist before: the PDF went through pandoc, which needed a
 # LaTeX engine behind it, and CI has neither. Typst is in the binary now.
-"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
-  || fail "report-compliance --format pdf failed"
+# The report is rendered twice, for the determinism check below. It states the
+# minute it ran (`run: 2026-09-18T18:23Z`), so two renders are the same input only
+# within one minute: the clock is read before the first render and after the second,
+# and a pair that crossed a minute boundary is rendered again — the second pair
+# starts just past that boundary. The run line stays the real clock: it is when the
+# evidence was taken, so no environment variable sets it.
+for attempt in 1 2; do
+  minute_before=$(date -u +%Y-%m-%dT%H:%MZ)
+  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
+    || fail "report-compliance --format pdf failed"
+  "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence2.pdf >/dev/null 2>&1 \
+    || fail "report-compliance --format pdf failed on the second render"
+  minute_after=$(date -u +%Y-%m-%dT%H:%MZ)
+  if [ "$minute_before" = "$minute_after" ]; then break; fi
+  [ "$attempt" = 1 ] || fail "both pairs of renders crossed a minute boundary ($minute_before → $minute_after): a pair takes half a minute or more"
+  printf 'the two renders crossed a minute boundary (%s → %s); rendering both again\n' "$minute_before" "$minute_after"
+done
 [ -s tmp/evidence.pdf ] || fail "no PDF was written"
 python3 - <<'PYEOF' || fail "what was written is not a PDF"
 data = open("tmp/evidence.pdf", "rb").read()
@@ -1084,8 +1100,7 @@ assert len(data) > 20_000, f"a whole evidence report in {len(data)} bytes?"
 assert b"/Type /Page" in data or b"/Type/Page" in data, "no page objects"
 PYEOF
 # the same report twice is the same bytes: a diff of two runs is a diff of the estate
-"$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence2.pdf >/dev/null 2>&1
-cmp -s tmp/evidence.pdf tmp/evidence2.pdf || fail "the PDF is not deterministic"
+cmp -s tmp/evidence.pdf tmp/evidence2.pdf || fail "the PDF is not deterministic: two renders in $minute_before differ"
 if command -v pandoc >/dev/null 2>&1; then fail "this machine has pandoc — the step proves nothing here"; fi
 
 step "check-presets against the repository's own presets (must be clean)"
@@ -1420,7 +1435,7 @@ done
 
 step "help fits the terminal: no line wider than the width, globals under their own heading at the root only"
 # clap reads the tty width; there is none in CI, so COLUMNS pins it
-long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80' | head -3)
+long=$(COLUMNS=80 "$satz" adopt --help 2>&1 | awk 'length > 80 && n++ < 3')
 [ -z "$long" ] || fail "adopt --help at 80 columns has lines wider than 80:\n$long"
 # to a file first: `grep -q` stops reading at the match, and under pipefail the help
 # still being written then fails the pipeline with SIGPIPE
@@ -1437,18 +1452,21 @@ step "the root help is grouped, on every path that prints it"
 for form in "--help" "-h" "help" ""; do
   # shellcheck disable=SC2086
   out=$(COLUMNS=80 "$satz" $form 2>&1)
+  # grep reads the variable itself: `printf … | grep -q` fails under pipefail when
+  # grep stops at the match while printf is still writing (SIGPIPE)
   for heading in "Estate:" "HCL:" "Presets:" "Policies:" "Compliance and audit:" "Tool:"; do
-    printf '%s\n' "$out" | grep -qx "$heading" \
+    grep -qx "$heading" <<<"$out" \
       || fail "\`satz ${form:-<no args>}\` has no '$heading' section — the grouped root help did not render"
   done
-  printf '%s\n' "$out" | grep -qx 'Global options:' \
+  grep -qx 'Global options:' <<<"$out" \
     || fail "\`satz ${form:-<no args>}\`: the globals lost their own heading"
 done
 # a command lands under its group, not just anywhere in the output
-COLUMNS=80 "$satz" --help 2>&1 | awk '/^Policies:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'adopt-org-policies' \
-  || fail "adopt-org-policies is not listed under Policies"
-COLUMNS=80 "$satz" --help 2>&1 | awk '/^HCL:/{f=1;next} /^[A-Z].*:$/{f=0} f' | grep -q 'hcl-init' \
-  || fail "hcl-init is not listed under HCL"
+COLUMNS=80 "$satz" --help > tmp/help-root-80.txt 2>&1
+awk '/^Policies:/{f=1;next} /^[A-Z].*:$/{f=0} f' tmp/help-root-80.txt > tmp/help-root-policies.txt
+grep -q 'adopt-org-policies' tmp/help-root-policies.txt || fail "adopt-org-policies is not listed under Policies"
+awk '/^HCL:/{f=1;next} /^[A-Z].*:$/{f=0} f' tmp/help-root-80.txt > tmp/help-root-hcl.txt
+grep -q 'hcl-init' tmp/help-root-hcl.txt || fail "hcl-init is not listed under HCL"
 
 step "transpile --check: compiles in memory, accepts the yaml/-prefixed form, writes nothing"
 rm -rf hcl
