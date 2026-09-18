@@ -190,7 +190,7 @@ google_folder {
 /// A hand-written line lands somewhere different every time; a written one is uniform.
 ///
 /// A phase repeated on consecutive rows is printed once, so the menu reads as blocks. A map
-/// choice with no row here fails `the_map_and_the_skeleton_stay_equal`, which is what keeps
+/// choice with no row here fails `every_map_choice_has_a_phase_and_the_menu_is_inert`, which is what keeps
 /// a new pack from reaching the library without anyone saying when it can be adopted.
 ///
 /// The fourth column is WHERE the line belongs: empty for the top-level menu, else the block
