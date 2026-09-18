@@ -261,7 +261,7 @@ values and the vendor defaults every customer shares, and everything else of tha
 shape is refused. **It judges tokens, not lines** — an allowed address never
 shields a private one beside it — and an unusable commit range or a missing file
 is a failure, never a pass. It runs under bash 3.2 (`/bin/bash` on macOS) as well
-as bash 5; the smoke matrix runs its identifier check under both.
+as bash 5.
 
 What it **cannot** see is a NAME. A display name or a company in prose has no
 shape, and "Log Admins" and a real customer's project name are the same kind of
@@ -282,20 +282,24 @@ commits that push adds. `main` is never force-pushed: a push whose previous
 
 ## `smoke.sh` — the command matrix
 
-The unit tests cover the engines; `scripts/smoke.sh` covers the *commands*, end to
-end. It runs, offline, against the fixture estate in `tests/smoke/` (the shipped CIS,
+The unit tests cover the engines and pin the bugs that were fixed; `scripts/smoke.sh`
+covers the *commands*, end to end, one check of each command's core behaviour. It
+runs, offline, against the fixture estate in `tests/smoke/` (the shipped CIS,
 contacts and monitoring packs, a group with a member, org grants, a project with
 services and a bucket): `transpile` (then `tofu validate` when `tofu` is on PATH —
-provider download only, no state, no cloud), `require`, `check-presets` against the
-repository's own presets (must be clean), `import` in its state shape (with the
-skipped report and import blocks), hcl shape (`--wrap-all`, then `tofu validate`)
-and yaml shape (including the refusal that names a pack still in YAML), `adopt` (a
-table with ADC, a credentials error without), `scan` when `checkov` or `uvx` is on
-PATH, then `cargo test`.
+no state, no cloud), `require`, `check-presets` against the repository's own
+presets (must be clean), `import` in its state shape (with the skipped report and
+import blocks), hcl shape (translated, then `tofu validate`; and `--wrap-all`) and
+yaml shape (including the refusal that names a pack still in YAML), `adopt` (a
+credentials error without ADC), `scan` against a stand-in `checkov` that prints a
+report, every MCP tool, then `cargo test`. The providers every `tofu init` needs are
+downloaded once, into `TF_PLUGIN_CACHE_DIR` (default
+`~/.cache/satz-smoke/tofu-plugins`).
 
 ```bash
 scripts/smoke.sh                 # builds target/release/satz first
 SATZ=~/.cargo/bin/satz scripts/smoke.sh   # uses that binary, never rebuilt
+SMOKE_SKIP_CARGO_TEST=1 scripts/smoke.sh  # leaves out the closing cargo test
 ```
 
 `.github/workflows/smoke.yml` runs it with OpenTofu installed, once per commit: on
@@ -305,7 +309,9 @@ because it tags a commit `main` already tested. A newer push to a pull request
 cancels the run it supersedes, in this workflow and in the privacy gate; a run on
 `main` is never cancelled or queued behind another. The Rust jobs restore the cargo
 registry and the dependencies' build from `Swatinem/rust-cache`, so a run compiles only
-satz's own crates. A new command that reads an estate gets a step here in the same PR.
+satz's own crates. The `smoke` job sets `SMOKE_SKIP_CARGO_TEST=1`, because the
+`checks` job runs `cargo test` on the same commit, and restores the provider cache
+with `actions/cache`. A new command that reads an estate gets a step here in the same PR.
 
 ## `mcp-probe.py` — every MCP tool through the raw pipe
 
