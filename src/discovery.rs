@@ -36,22 +36,14 @@ const ATTRIBUTION_LABEL: &str = "goog-terraform-provisioned";
 /// `Counter` keeps the first edge in the map form and writes each further one
 /// as a labelled resource under its own node, with a running number in the
 /// label. Import only: a written estate is its author's responsibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// The value parser of `satz import --on-collision`: its help lists `error` and
+/// `counter`, and clap refuses anything else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum OnCollision {
     #[default]
     Error,
     Counter,
-}
-
-impl std::str::FromStr for OnCollision {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "error" => Ok(Self::Error),
-            "counter" => Ok(Self::Counter),
-            other => Err(format!("--on-collision {:?}: one of error, counter", other)),
-        }
-    }
 }
 
 /// Why a resource the source had is not in the written estate. An import is
@@ -2683,8 +2675,6 @@ mod collision_tests {
         assert_eq!(grant_label_base("roles/resourcemanager.folderAdmin", "user:alice.b@example.com"), "folderAdmin_alice_b");
         assert_eq!(grant_label_base("organizations/1/roles/myRole", "serviceAccount:svc@p.iam.gserviceaccount.com"), "myRole_svc");
         assert_eq!(grant_label_base("roles/viewer", "allUsers"), "viewer_allUsers");
-        assert_eq!("error".parse::<OnCollision>(), Ok(OnCollision::Error));
-        assert!("hash".parse::<OnCollision>().unwrap_err().contains("one of error, counter"));
     }
 }
 

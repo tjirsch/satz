@@ -481,8 +481,8 @@ enum Commands {
         /// two projects — `error` refuses the import naming them, `counter`
         /// writes the second and later as labelled resources with a running
         /// number (the map form emits one address per member and role)
-        #[arg(long, default_value = "error")]
-        on_collision: String,
+        #[arg(long, value_enum, default_value_t)]
+        on_collision: crate::discovery::OnCollision,
         /// state/live shapes: the customer's short name, which no platform
         /// fact carries — wins over the inference from the names found
         #[arg(long)]
@@ -1608,7 +1608,6 @@ Thumbs.db
                 }
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
-                    let on_collision: crate::discovery::OnCollision = on_collision.parse()?;
                     if all {
                         let on = cfg.apply_all(shape == "org");
                         println!("import: --all — {} type(s) switched on beside the table's defaults", on);
@@ -2500,6 +2499,10 @@ pub(crate) fn compile_tail(
     if !f.is_empty() {
         return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, findings: f };
     }
+    // After the dry-run check, which stops at any finding; before the suppressions, the
+    // conflicts and the emitter, so a compile one of them stops still names a mode it
+    // has no backend for.
+    let mode_ok = deployment_mode_finding(&fe.env, estate, estate_src, &mut f);
     let mut folded = satz_core::pipeline::fold_fragments(resolver, &fe.fragments);
     // Subtractive override channel: estate suppressions apply before conflict
     // reporting (suppressing a conflicted address resolves the conflict).
@@ -2521,15 +2524,22 @@ pub(crate) fn compile_tail(
     };
     written_reference_findings(&folded, &out.manifest, &mut f);
     missing_required_findings(&out.missing_required, level, &mut f);
+    unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
     unadopted_pack_findings(estate, estate_src, &fe.env, level, &mut f);
     let (provider_sources, provider_versions) = provider_maps(tool_config);
-    let providers_tf = match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
-        Ok(t) => Some(t),
-        Err(e) => {
-            f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
-            None
+    // a mode with no backend is already the finding at its line; the providers are not
+    // emitted without one
+    let providers_tf = if !mode_ok {
+        None
+    } else {
+        match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
+                None
+            }
         }
     };
     action_findings(&fe.actions, &mut f);
@@ -2580,6 +2590,27 @@ fn dry_run_conflict_findings(
             .in_group(&group)
             .maybe_at(label.clone(), crate::findings::param_line(estate_src, dry)),
         );
+    }
+}
+
+/// A `deployment_mode` the emitter has no backend for is an error at the line the
+/// estate binds it on — at no line when a pack binds it. `false` when it is one.
+fn deployment_mode_finding(
+    env: &satz_core::pipeline::Env,
+    estate: &Path,
+    estate_src: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) -> bool {
+    use crate::findings::{Finding, Kind, Severity};
+    match crate::emitter::deployment_mode(env) {
+        Ok(_) => true,
+        Err(e) => {
+            f.push(
+                Finding::new(Severity::Error, Kind::DeploymentMode, e)
+                    .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "deployment_mode")),
+            );
+            false
+        }
     }
 }
 
@@ -2675,6 +2706,29 @@ fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level:
             Finding::new(sev, Kind::MissingRequired, format!("{} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", text))
         };
         if let Some((fl, l)) = &m.origin {
+            finding = finding.located(fl.clone(), *l);
+        }
+        f.push(finding);
+    }
+}
+
+/// A resource whose type takes a project or a folder, declared outside one and setting
+/// none — a warning at the declaring block, whatever the validation level: a
+/// project-scoped resource goes to the project the provider block names, which is a
+/// valid plan when that is where it belongs.
+fn unscoped_findings(unscoped: &[crate::emitter::Unscoped], f: &mut Vec<crate::findings::Finding>) {
+    use crate::findings::{Finding, Kind, Severity};
+    for u in unscoped {
+        let at = u.origin.as_ref().map(|(fl, l)| format!(" ({}:{})", fl, l)).unwrap_or_default();
+        let text = match u.scope {
+            "project" => format!(
+                "{}{}: declared outside a project and sets no `project` — it goes to the project the provider block names",
+                u.address, at
+            ),
+            scope => format!("{}{}: declared outside a {} and sets no `{}`", u.address, at, scope, scope),
+        };
+        let mut finding = Finding::new(Severity::Warning, Kind::MissingScope, text);
+        if let Some((fl, l)) = &u.origin {
             finding = finding.located(fl.clone(), *l);
         }
         f.push(finding);
@@ -5079,11 +5133,6 @@ fn load_import_config(
             }
         }
     }
-
-    let total_types = config.resource_types.len();
-    let enabled_types = config.resource_types.values().filter(|v| v.import).count();
-    eprintln!("Loaded {} resource types from import config '{}' ({} enabled for import).", total_types, config_path.display(), enabled_types);
-
     Ok(Some(config))
 }
 
@@ -7741,6 +7790,32 @@ folder:
         }
     }
 
+    /// `--on-collision` declares its values as its value parser: the help lists them, clap
+    /// refuses anything else before a source is read, and `error` is what an import does
+    /// without the flag.
+    #[test]
+    fn on_collision_is_error_or_counter_and_anything_else_is_refused() {
+        use crate::discovery::OnCollision;
+        let mut cmd = Cli::command();
+        cmd.build();
+        let import = cmd.find_subcommand("import").expect("import is a command");
+        let arg = import.get_arguments().find(|a| a.get_id() == "on_collision").expect("import takes --on-collision");
+        let values: Vec<String> = arg.get_possible_values().iter().map(|v| v.get_name().to_string()).collect();
+        assert_eq!(values, ["error", "counter"]);
+        let err = Cli::command()
+            .try_get_matches_from(["satz", "import", "state.json", "--on-collision", "hash"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid value 'hash'"), "{err}");
+        assert!(err.contains("error, counter"), "{err}");
+        let parsed = |args: &[&str]| match Cli::try_parse_from(args).expect("parses").command {
+            Some(Commands::Import { on_collision, .. }) => on_collision,
+            _ => panic!("not an import"),
+        };
+        assert_eq!(parsed(&["satz", "import", "state.json", "--on-collision", "counter"]), OnCollision::Counter);
+        assert_eq!(parsed(&["satz", "import", "state.json"]), OnCollision::Error);
+    }
+
     #[test]
     fn pinned_bucket_grants_emit_one_address_per_bucket() {
         // two buckets, one member, one role: two maps pinned to their bucket,
@@ -8410,12 +8485,16 @@ action "step" {
 "#;
 
     fn tail(level: &str) -> Tail {
+        tail_of(ESTATE, level)
+    }
+
+    fn tail_of(src: &str, level: &str) -> Tail {
         let reg = super::corpus::registry();
         let resolver = EstateResolver { registry: &reg };
-        let fe = satz_core::pipeline::compile_estate("tail.satz", ESTATE, &resolver, &|p| Err(format!("no {}", p)))
+        let fe = satz_core::pipeline::compile_estate("tail.satz", src, &resolver, &|p| Err(format!("no {}", p)))
             .unwrap_or_else(|e| panic!("front-end failed: {}", e));
         let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
-        compile_tail(&fe, &resolver, &reg, &cfg, level, Path::new("tail.satz"), ESTATE)
+        compile_tail(&fe, &resolver, &reg, &cfg, level, Path::new("tail.satz"), src)
     }
 
     fn line_of(needle: &str) -> u32 {
@@ -8481,6 +8560,47 @@ action "step" {
         assert!(f.message.starts_with("action \"step\" declared in tail.satz:"), "{}", f.message);
         // the tail ran to the end: the emitter's output and the providers are there
         assert!(t.out.is_some() && t.providers_tf.is_some());
+    }
+
+    /// A bucket declared outside any project, setting none: a finding at its block, so
+    /// the caller decides whether it is printed — a review's compile prints nothing. It
+    /// stays a warning at every level: the provider block's project is a valid home.
+    #[test]
+    fn a_resource_outside_a_project_that_sets_none_is_a_warning_at_its_block() {
+        for level in ["warn", "error", "none"] {
+            let t = tail(level);
+            let f = t
+                .findings
+                .iter()
+                .find(|f| f.kind == Kind::MissingScope && f.message.starts_with("google_storage_bucket.no_location"))
+                .unwrap_or_else(|| panic!("level {}: no finding for the unscoped bucket: {:?}", level, t.findings));
+            assert_eq!(f.severity, Severity::Warning, "level {}", level);
+            assert!(f.message.contains("sets no `project`"), "{}", f.message);
+            assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), Some(line_of("no_location {"))));
+        }
+    }
+
+    /// The emitter writes a backend for `local` and `cloud` only: any other mode is an
+    /// error at the line binding it, and the compile refuses rather than emitting
+    /// `providers.tf` without a backend.
+    #[test]
+    fn a_deployment_mode_with_no_backend_is_an_error_at_its_line() {
+        let src = ESTATE.replacen(
+            "  use_budget               = true\n",
+            "  use_budget               = true\n  deployment_mode          = \"boot\"\n",
+            1,
+        );
+        let t = tail_of(&src, "warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::DeploymentMode).expect("the mode no backend is emitted for");
+        assert_eq!(f.severity, Severity::Error);
+        assert!(f.message.contains("\"boot\"") && f.message.contains("\"local\"") && f.message.contains("\"cloud\""), "{}", f.message);
+        let line = src.lines().position(|l| l.contains("deployment_mode")).map(|i| i as u32 + 1);
+        assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), line));
+        assert!(t.providers_tf.is_none(), "providers.tf was emitted without a backend");
+        let refused = crate::findings::refusal(&t.findings).unwrap_err();
+        assert!(refused.contains("deployment_mode = \"boot\""), "{}", refused);
+        // the estate binds no mode: local, and the compile goes through
+        assert!(tail("warn").findings.iter().all(|f| f.kind != Kind::DeploymentMode));
     }
 }
 

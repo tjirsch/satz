@@ -1068,6 +1068,29 @@ assert len(errs) >= 4, errs
 assert any(f.get("line") for f in errs), "no finding is anchored to a line"
 assert all(f.get("file", "").endswith("bad.satz") for f in r["findings"]), r["findings"]
 PYEOF
+# What the compile says about the pack is in the report, not beside it: a bucket the
+# pack declares outside any project is a warning in the review, and the review's own
+# compile prints neither that warning nor a line about the import config it reads.
+# (The pack has no changelog row, so the review refuses it; the verdict is not the
+# subject here.)
+cat > tmp/packs/unscoped.satz <<'PACKEOF'
+// A log bucket with no project of its own.
+pack unscoped version "1.0"
+
+google_storage_bucket {
+  logs {
+    name     = "acme-logs"
+    location = "EU"
+  }
+}
+PACKEOF
+"$satz" --config . review-pack tmp/packs/unscoped.satz --format text --out tmp/review-unscoped.txt 2> tmp/review-unscoped.err || true
+[ -s tmp/review-unscoped.txt ] || fail "review-pack wrote no report:\n$(cat tmp/review-unscoped.err)"
+grep -q 'warning: .*unscoped.satz:5: google_storage_bucket.logs .*sets no `project`' tmp/review-unscoped.txt \
+  || fail "the review does not carry the compile's warning at the pack's line:\n$(cat tmp/review-unscoped.txt)"
+if grep -Eq 'sets no|requires a|import config' tmp/review-unscoped.err; then
+  fail "the review's compile printed beside its report:\n$(cat tmp/review-unscoped.err)"
+fi
 
 step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
@@ -1082,6 +1105,7 @@ step "report-compliance --format pdf: typeset by satz, with nothing on PATH"
 # starts just past that boundary. The run line stays the real clock: it is when the
 # evidence was taken, so no environment variable sets it.
 for attempt in 1 2; do
+  ls evidence 2>/dev/null | sort > tmp/history-before.txt || true
   minute_before=$(date -u +%Y-%m-%dT%H:%MZ)
   "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
     || fail "report-compliance --format pdf failed"
@@ -1092,6 +1116,18 @@ for attempt in 1 2; do
   [ "$attempt" = 1 ] || fail "both pairs of renders crossed a minute boundary ($minute_before → $minute_after): a pair takes half a minute or more"
   printf 'the two renders crossed a minute boundary (%s → %s); rendering both again\n' "$minute_before" "$minute_after"
 done
+# Two runs in one minute are two records: the evidence history is append-only, so the
+# second run takes the next free name of that minute instead of replacing the first.
+ls evidence 2>/dev/null | sort > tmp/history-after.txt || true
+STEM="cis-gcp-4.0-${minute_before//:/-}" python3 - <<'PYEOF' || fail "two runs in $minute_before did not leave two records in the evidence history:\n$(comm -13 tmp/history-before.txt tmp/history-after.txt)"
+import os
+before = set(open("tmp/history-before.txt").read().split())
+new = [n for n in open("tmp/history-after.txt").read().split() if n not in before]
+stem = os.environ["STEM"]
+assert len(new) == 2, new
+assert all(n.startswith(stem) and n.endswith(".json") for n in new), (stem, new)
+assert any(n.startswith(stem + "_") for n in new), ("the second run did not take a name of its own", new)
+PYEOF
 [ -s tmp/evidence.pdf ] || fail "no PDF was written"
 python3 - <<'PYEOF' || fail "what was written is not a PDF"
 data = open("tmp/evidence.pdf", "rb").read()
@@ -1542,6 +1578,16 @@ grep -q 'the param `security_contacts`' tmp/shape-warn.txt \
 if "$satz" --config . --validation error transpile tmp/shape-gap.satz --check > tmp/shape-err.txt 2>&1; then
   fail "--validation error compiled a value the provider refuses"
 fi
+# The emitter writes a backend for `local` and `cloud` only: an estate bound to any
+# other mode is refused, naming the value and the two modes there are.
+sed 's/^\(  deployment_mode *= *\)"local"/\1"boot"/' yaml/smoke.satz > tmp/mode-boot.satz
+grep -q '^  deployment_mode *= *"boot"' tmp/mode-boot.satz || fail "the mode fixture was not written"
+if "$satz" --config . transpile tmp/mode-boot.satz --check > tmp/mode-boot.txt 2>&1; then
+  fail "an estate whose deployment_mode selects no backend compiled:\n$(cat tmp/mode-boot.txt)"
+fi
+# (the refusal reaches stderr in its Debug form, quotes escaped: the pattern takes both)
+grep -Eq 'deployment_mode = \\?"boot\\?"`: the mode is \\?"local\\?" .* or \\?"cloud\\?"' tmp/mode-boot.txt \
+  || fail "the refusal does not name the mode and the two there are:\n$(cat tmp/mode-boot.txt)"
 # A pack enabling an API on ITS OWN project has not enabled it on the billed one.
 "$satz" --config . transpile smoke.satz --check > tmp/api-clean.txt 2>&1
 if grep -q 'API(s) this estate' tmp/api-clean.txt; then fail "a complete estate warned about APIs:\n$(cat tmp/api-clean.txt)"; fi

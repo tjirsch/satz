@@ -595,6 +595,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A bucket the pack declares outside any project: what the compile says about it is a
+    /// finding in the review, at the pack's line, and the review's own compile prints
+    /// nothing — the report is the output.
+    #[test]
+    fn what_the_compile_says_about_the_pack_is_in_the_review_and_nowhere_else() {
+        let dir = std::env::temp_dir().join(format!("satz-review-unscoped-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg = crate::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.schema_dir = crate::corpus::schema_dir();
+        let pack = dir.join("logs.satz");
+        std::fs::write(
+            &pack,
+            "// A log bucket with no project of its own.\npack logs version \"1.0\"\n\n\
+             google_storage_bucket {\n  logs {\n    name     = \"acme-logs\"\n    location = \"EU\"\n  }\n}\n",
+        )
+        .unwrap();
+        crate::findings::take_said();
+        let r = review(&pack, None, &cfg, &cfg).expect("the review runs");
+        assert!(crate::findings::take_said().is_empty(), "the review's compile printed");
+        let f = r
+            .findings
+            .iter()
+            .find(|f| f.kind == Kind::MissingScope)
+            .unwrap_or_else(|| panic!("the unscoped bucket is not in the review: {:?}", r.findings));
+        assert_eq!(f.severity, Severity::Warning);
+        assert!(f.message.starts_with("google_storage_bucket.logs"), "{}", f.message);
+        assert_eq!(f.line, Some(5), "at the declaring block");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_version_is_read_from_the_pack_statement() {
         assert_eq!(
