@@ -1148,6 +1148,7 @@ pub(crate) async fn run_merge_presets(
     // transpiled output — running both would make that proof meaningless (or,
     // worse, roll a good repoint back). One run, one kind of operation.
     let adopting = !adopt.is_empty();
+    let mut needs_attention_early = false;
     let pristine = pristine_source(pristine_dir).await?;
     // The pack lines come from the graph that arrived with these packs. One placing a pack
     // in a block this binary's scaffold lacks is refused before anything changes.
@@ -1201,6 +1202,23 @@ pub(crate) async fn run_merge_presets(
     // for a pack the estate already uses under its old name.
     for line in migrate_moved_packs(estate.as_deref(), &local_base, &pristine, report_only)? {
         events.push(MergeEvent::Note { text: line });
+    }
+
+    // The gating migration is refused before anything is written when two packs that
+    // exclude one another both deploy; a report-only run says here what it would gate.
+    let gating_lib = match &graph {
+        Some(g) => Some(crate::packs::Library::load(g, &pristine)?),
+        None => None,
+    };
+    if let (Some(est), Some(g), Some(lib)) = (estate.as_deref(), &graph, &gating_lib) {
+        let text = crate::fsx::read_to_string(est)?;
+        if let Some(why) = crate::packs::gating_contradiction(g, lib, &text) {
+            return Err(format!("merge-presets: {} — {}", est.display(), why).into());
+        }
+        if report_only {
+            let (_, gating) = plan_gating(&text, g, lib, &pristine, &local_base)?;
+            needs_attention_early = gating_notes(&gating, true, &mut events);
+        }
     }
 
     // baseline for the self-verifying estate edit. It must be taken BEFORE the first
@@ -1257,7 +1275,7 @@ pub(crate) async fn run_merge_presets(
     upstream_files.sort();
     upstream_files.dedup();
     let mut adopted = 0usize;
-    let mut needs_attention = false;
+    let mut needs_attention = needs_attention_early;
     // one place builds a pack's event, so an outcome cannot be recorded with one
     // spelling here and another there
     let pack = |action: MergeAction, rel: &Path| MergeEvent::Pack {
@@ -1272,6 +1290,9 @@ pub(crate) async fn run_merge_presets(
     let mut journal: Vec<(PathBuf, String)> = Vec::new();
     let mut created: Vec<PathBuf> = Vec::new();
     let mut estate_edited = false;
+    // the gates the gating migration binds: their tfvars lines are the one part of the
+    // emission the proof lets move
+    let mut gates_bound: Vec<(String, bool)> = Vec::new();
 
     for rel in &upstream_files {
         if rel.starts_with(".base") { continue; }
@@ -1458,6 +1479,45 @@ pub(crate) async fn run_merge_presets(
         }
     }
 
+    // The gating migration: an ungated line of a gated pack gets its `when`, and the gate
+    // is bound true where the line deployed. The emission does not move, which the
+    // transpile-identity proof below checks — with the fork repoints, and rolled back with
+    // them. An adoption changes the emission, so it cannot share the run.
+    if !report_only {
+        if let (Some(est), Some(g), Some(lib)) = (estate.as_deref(), &graph, &gating_lib) {
+            let text = crate::fsx::read_to_string(est)?;
+            let (next, gating) = plan_gating(&text, g, lib, &pristine, &local_base)?;
+            let edits = !gating.lines.is_empty() || !gating.bound.is_empty();
+            if edits && adopting {
+                events.push(MergeEvent::Note {
+                    text: format!(
+                        "  DEFERRED gating {} ungated pack line(s): the gating migration proves itself by transpile identity, which cannot share a run with --adopt. Re-run `merge-presets` without --adopt.",
+                        gating.lines.len()
+                    ),
+                });
+                needs_attention = true;
+            } else if edits && estate_dirty {
+                events.push(MergeEvent::Note {
+                    text: format!(
+                        "  REFUSED gating {} ungated pack line(s): the estate file has uncommitted changes — commit or stash it so the gating stays an isolated edit",
+                        gating.lines.len()
+                    ),
+                });
+                needs_attention = true;
+            } else {
+                if edits {
+                    gates_bound.extend(gating.bound.iter().map(|b| (b.param.clone(), b.value)));
+                    if journal.iter().all(|(p, _)| p != est) {
+                        journal.push((est.to_path_buf(), text.clone()));
+                    }
+                    crate::fsx::write_edited_satz(est, &text, &next)?;
+                    estate_edited = true;
+                }
+                needs_attention |= gating_notes(&gating, false, &mut events);
+            }
+        }
+    }
+
     // The line for a pack the library has and this estate does not. A pack shipped after an
     // estate was written has no `use` line there, so its question is inert — this is what
     // closes that, and it writes every line the same way, which a person does not.
@@ -1526,14 +1586,23 @@ pub(crate) async fn run_merge_presets(
             Ok(a) => a,
             Err(e) => {
                 rollback(&journal, &created)?;
-                return Err(format!("merge-presets: the repointed estate does not transpile ({}) — rolled back everything", e).into());
+                return Err(format!("merge-presets: the edited estate does not transpile ({}) — rolled back everything", e).into());
             }
         };
-        if baseline.as_deref() != Some(after.as_str()) {
+        if let Err(why) = same_emission(baseline.as_deref().unwrap_or_default(), &after, &gates_bound) {
             rollback(&journal, &created)?;
-            return Err("merge-presets: estate repoint changed the transpiled output — rolled back everything (this should be impossible; please report)".into());
+            return Err(format!("merge-presets: the estate edit (fork repoint or gating) changed the transpiled output — {} — rolled back everything (this should be impossible; please report)", why).into());
         }
-        events.push(MergeEvent::Note { text: "  estate repoint verified: transpiled output identical.".to_string() });
+        events.push(MergeEvent::Note {
+            text: if gates_bound.is_empty() {
+                "  estate edit verified: transpiled output identical.".to_string()
+            } else {
+                format!(
+                    "  estate edit verified: main.tf, imports.tf and variables.tf identical; terraform.tfvars differs only in the {} gate(s) bound, which nothing emitted reads.",
+                    gates_bound.len()
+                )
+            },
+        });
     }
 
     // Last, and after the repoint proof: a pack the estate gained may emit a type
@@ -1707,6 +1776,99 @@ fn is_git_dirty(path: &Path) -> Result<bool, String> {
         ));
     }
     Ok(!out.stdout.is_empty())
+}
+
+/// The transpile-identity proof over two [`crate::transpile_sorted_b`] outputs. Every
+/// part is identical, except that a param in `bound` — a gate the gating migration bound —
+/// has its tfvars line carry the new value. Every param is a variable with a value in
+/// terraform.tfvars; a gate is read by no emitted resource, which is checked here too, so
+/// its value moves no plan.
+fn same_emission(before: &str, after: &str, bound: &[(String, bool)]) -> Result<(), String> {
+    if bound.is_empty() {
+        return if before == after { Ok(()) } else { Err("the output differs".to_string()) };
+    }
+    let (b, a): (Vec<&str>, Vec<&str>) = (before.split("\n---\n").collect(), after.split("\n---\n").collect());
+    let ([b_main, b_imports, b_vars, b_tfvars], [a_main, a_imports, a_vars, a_tfvars]) = (b.as_slice(), a.as_slice()) else {
+        return Err("the output does not split into main.tf, imports.tf, variables.tf and terraform.tfvars".to_string());
+    };
+    for (name, x, y) in [("main.tf", b_main, a_main), ("imports.tf", b_imports, a_imports), ("variables.tf", b_vars, a_vars)] {
+        if x != y {
+            return Err(format!("{} differs", name));
+        }
+    }
+    let names: Vec<(String, bool)> = bound.iter().map(|(p, v)| (p.replace('_', "-"), *v)).collect();
+    for (hy, _) in &names {
+        let reads = |text: &str| text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')).any(|t| t == format!("var.{}", hy));
+        if reads(a_main) || reads(a_imports) {
+            return Err(format!("an emitted resource reads `var.{}`, a gate the gating bound", hy));
+        }
+    }
+    let mut expected: Vec<String> = b_tfvars
+        .lines()
+        .filter(|l| !names.iter().any(|(hy, _)| l.split(" = ").next() == Some(hy.as_str())))
+        .map(str::to_string)
+        .chain(names.iter().map(|(hy, v)| format!("{} = {}", hy, v)))
+        .collect();
+    expected.sort_unstable();
+    if expected.join("\n") != *a_tfvars {
+        return Err("terraform.tfvars differs beyond the gates the gating bound".to_string());
+    }
+    Ok(())
+}
+
+/// [`crate::packs::gate_ungated`] over the estate's text. Whether the copy of the file
+/// that declares a gate has it is read from the file the estate names: a `.local.satz`
+/// fork beside the estate's packs, a pristine name from the packs that arrived.
+fn plan_gating(
+    text: &str,
+    graph: &PackGraph,
+    lib: &crate::packs::Library,
+    pristine: &Path,
+    local_base: &Path,
+) -> Result<(String, crate::packs::Gating), BoxErr> {
+    let declares = |written: &str, gate: &str| -> Result<bool, String> {
+        let rel = written.strip_prefix("presets/").unwrap_or(written);
+        let path = if written.ends_with(".local.satz") { local_base.join(rel) } else { pristine.join(rel) };
+        let src = crate::fsx::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
+        let file = satz_core::satz::parse(&src).map_err(|e| format!("{}:{}: {}", path.display(), e.line, e.msg))?;
+        Ok(file.params.iter().any(|(n, _, _)| n == gate))
+    };
+    Ok(crate::packs::gate_ungated(graph, lib, text, &declares)?)
+}
+
+/// The gating migration's lines in the report; `true` when a human has to look — an
+/// explicit answer was overwritten, or a line stays ungated.
+fn gating_notes(g: &crate::packs::Gating, dry: bool, events: &mut Vec<MergeEvent>) -> bool {
+    for l in &g.lines {
+        events.push(MergeEvent::Note { text: format!("  {} line {}: {}", if dry { "would gate" } else { "gated" }, l.at_line, l.text) });
+    }
+    for b in &g.bound {
+        let verb = if dry { "would bind" } else { "bound" };
+        let text = if b.overwrote {
+            format!(
+                "  ANSWER CHANGED — {} {} = {} (was {}): {}. The estate answered {} and deployed the pack; the answer now says what it deploys — `satz remove-pack {}` switches it off",
+                verb, b.param, b.value, b.was, b.why, b.was, b.param
+            )
+        } else {
+            format!("  {} {} = {} (was {}): {}", verb, b.param, b.value, b.was, b.why)
+        };
+        events.push(MergeEvent::Note { text });
+    }
+    for l in &g.left {
+        events.push(MergeEvent::Note { text: format!("  {}", l) });
+    }
+    if !g.lines.is_empty() {
+        events.push(MergeEvent::Note {
+            text: format!(
+                "  {} pack line(s) {} on their gate, {} gate(s) {} — a no now switches each pack off",
+                g.lines.len(),
+                if dry { "would be gated" } else { "gated" },
+                g.bound.len(),
+                if dry { "would be bound" } else { "bound" }
+            ),
+        });
+    }
+    g.bound.iter().any(|b| b.overwrote) || !g.left.is_empty()
 }
 
 /// What [`adopt_pack_lines`] did: the lines it wrote, each with where it went, and the
@@ -2148,8 +2310,27 @@ fn text_diff(old: &str, new: &str) -> String {
 mod tests {
     use super::{
         ChangedDefault, CheckPresetsReport, CheckPresetsSummary, PresetRow, render_check_presets,
-        repoint_moved_uses, unwrap_cis_baseline,
+        repoint_moved_uses, same_emission, unwrap_cis_baseline,
     };
+
+    /// The proof of the gating migration lets exactly one thing move: the tfvars line of a
+    /// gate it bound, to the value it bound — and only while nothing emitted reads it.
+    #[test]
+    fn the_gating_proof_admits_only_the_bound_gates_tfvars_lines() {
+        let out = |main: &str, tfvars: &str| format!("{}\n---\n\n---\nvariable \"use-x\" {{\n---\n{}", main, tfvars);
+        let before = out("resource \"a\" \"b\" {", "name = \"n\"\nuse-x = false");
+        let after = out("resource \"a\" \"b\" {", "name = \"n\"\nuse-x = true");
+        let bound = vec![("use_x".to_string(), true)];
+        assert!(same_emission(&before, &after, &bound).is_ok());
+        assert!(same_emission(&before, &after, &[]).is_err(), "nothing bound, nothing may move");
+        let other = out("resource \"a\" \"b\" {", "name = \"m\"\nuse-x = true");
+        assert!(same_emission(&before, &other, &bound).unwrap_err().contains("beyond the gates"));
+        let reads = out("count = var.use-x ? 1 : 0", "name = \"n\"\nuse-x = true");
+        let reads_before = out("count = var.use-x ? 1 : 0", "name = \"n\"\nuse-x = false");
+        assert!(same_emission(&reads_before, &reads, &bound).unwrap_err().contains("var.use-x"));
+        let moved = out("resource \"a\" \"c\" {", "name = \"n\"\nuse-x = true");
+        assert!(same_emission(&before, &moved, &bound).unwrap_err().contains("main.tf"));
+    }
 
     /// Every shape a `use` line comes in has to survive being repointed: a line
     /// still commented stays commented, an indented one keeps its indentation, a

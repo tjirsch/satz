@@ -501,7 +501,10 @@ impl<'a> View<'a> {
                 let g = n.gate.as_deref().unwrap_or_default();
                 ungated.push((
                     n.path.clone(),
-                    format!("`{}` is used without `when {}`, so a no to `{}` does not switch it off — write `use \"{}\" when {}`", n.path, g, g, n.path, g),
+                    format!(
+                        "`{}` is used without `when {}`, so a no to `{}` does not switch it off — `satz merge-presets` gates it, or write `use \"{}\" when {}`",
+                        n.path, g, g, n.path, g
+                    ),
                     at(line),
                 ));
             }
@@ -1041,6 +1044,188 @@ pub(crate) fn gate_on(src: &str, graph: &PackGraph, gate: &str) -> Result<(Strin
 }
 
 // ---------------------------------------------------------------------------
+// The gating migration: `when <gate>` on every ungated line
+// ---------------------------------------------------------------------------
+
+/// One line the gating migration gates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatedLine {
+    pub path: String,
+    /// 1-based
+    pub at_line: usize,
+    /// the line as it reads after the edit, trimmed
+    pub text: String,
+}
+
+/// One gate the gating migration binds, and what the estate said before.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GateBinding {
+    pub param: String,
+    pub value: bool,
+    /// the estate's own binding as written, or where the value came from
+    pub was: String,
+    /// an explicit binding to the other value was overwritten: the estate answered no
+    /// and deployed the pack anyway
+    pub overwrote: bool,
+    pub why: String,
+}
+
+/// What the gating migration does to one estate.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Gating {
+    pub lines: Vec<GatedLine>,
+    pub bound: Vec<GateBinding>,
+    /// the ungated lines it leaves, each with the reason
+    pub left: Vec<String>,
+}
+
+/// `raw` with ` when <gate>` after the `use` clause, before a trailing comment.
+fn with_when(raw: &str, trailing: &str, gate: &str) -> String {
+    let (code, rest) = match (trailing.is_empty(), raw.rfind(trailing)) {
+        (false, Some(i)) => raw.split_at(i),
+        _ => (raw, ""),
+    };
+    let body = code.trim_end();
+    let gap = &code[body.len()..];
+    if rest.is_empty() {
+        format!("{} when {}", body, gate)
+    } else {
+        format!("{} when {}{}{}", body, gate, if gap.is_empty() { "  " } else { gap }, rest)
+    }
+}
+
+fn contradiction(view: &View, src: &str) -> Option<String> {
+    let clashes = view.exclusion_findings("", src);
+    (!clashes.is_empty()).then(|| {
+        format!(
+            "no line is gated while packs that exclude one another both deploy — binding both gates true would answer one choice two ways:\n  {}",
+            clashes.iter().map(|(_, f)| f.message.replace('\n', " ")).collect::<Vec<_>>().join("\n  ")
+        )
+    })
+}
+
+/// The refusal [`gate_ungated`] would give `src`, checked before anything is written;
+/// `None` too for an estate that does not parse, which the compile reports.
+pub(crate) fn gating_contradiction(graph: &PackGraph, lib: &Library, src: &str) -> Option<String> {
+    contradiction(&View::new(graph, lib, src).ok()?, src)
+}
+
+/// The gating migration `merge-presets` runs: every ACTIVE `use` of a graph node — or of
+/// its fork — at any depth, that has a gate and no `when`, gets ` when <gate>`, where the
+/// file declaring the gate is used and `declares` confirms the copy the estate uses has
+/// it. Each such gate the estate does not already bind true is bound `true`, because the
+/// line deployed: the emission stays what it was — a default that is already true is
+/// bound too, since the file declaring it may be used below the line. A commented line is
+/// never touched.
+///
+/// A gate that another one follows (`use_sentinel_auditlogs = use_sentinel`) and that
+/// the estate leaves unbound is bound to the value it had, so switching its leader on
+/// switches nothing else on; the other options of a choice held true are bound false.
+///
+/// It refuses while two packs that exclude one another both deploy: gating both would
+/// answer a choice two ways at once.
+pub(crate) fn gate_ungated(
+    graph: &PackGraph,
+    lib: &Library,
+    src: &str,
+    declares: &dyn Fn(&str, &str) -> Result<bool, String>,
+) -> Result<(String, Gating), String> {
+    let view = View::new(graph, lib, src)?;
+    if let Some(c) = contradiction(&view, src) {
+        return Err(c);
+    }
+    let mut g = Gating::default();
+    let mut out = src.to_string();
+    let mut gates: Vec<&str> = Vec::new();
+    for l in view.scan.uses.iter().filter(|l| !l.commented && l.when.is_none()) {
+        let Some((n, _)) = node_of(graph, &l.written) else { continue };
+        let Some(gate) = n.gate.as_deref() else { continue };
+        if !view.gate_exists(n) {
+            continue;
+        }
+        let decl = n.gate_declared_in.as_deref().unwrap_or_default();
+        let written = view.lines_of(decl).0.map(|d| d.written.clone()).unwrap_or_else(|| decl.to_string());
+        if !declares(&written, gate)? {
+            g.left.push(format!(
+                "line {}: `{}` stays ungated — `{}`, which this estate uses, does not declare `{}`",
+                l.index + 1,
+                l.written,
+                written,
+                gate
+            ));
+            continue;
+        }
+        let raw = lines_vec(&out)[l.index].trim_end_matches(['\n', '\r']).to_string();
+        let line = with_when(&raw, &l.trailing, gate);
+        out = replace_line(&out, l.index, &line);
+        g.lines.push(GatedLine { path: n.path.clone(), at_line: l.index + 1, text: line.trim().to_string() });
+        if !gates.contains(&gate) {
+            gates.push(gate);
+        }
+    }
+    let written_as = |p: &str| view.own.get(p).map(crate::doc_packs::value_text);
+    let was = |p: &str| match (written_as(p), view.value(p)) {
+        (Some(w), _) => w,
+        (None, Some(v)) => format!("unbound, default {}", v),
+        (None, None) => "unbound".to_string(),
+    };
+    // bound in the estate even where the default is already true: a `when` is checked where
+    // the walk meets it, and an older estate often uses the map below the lines it gates
+    for gate in &gates {
+        if view.own.contains_key(*gate) && view.value(gate) == Some(true) {
+            continue;
+        }
+        g.bound.push(GateBinding {
+            param: gate.to_string(),
+            value: true,
+            was: was(gate),
+            overwrote: view.own.get(*gate) == Some(&Value::Bool(false)),
+            why: "its line deployed".to_string(),
+        });
+    }
+    let on: Vec<String> = g.bound.iter().map(|b| b.param.clone()).collect();
+    // a follower of a gate bound true here keeps the value it had
+    for m in &graph.nodes {
+        let (Some(f), Some(mg)) = (&m.follows, &m.gate) else { continue };
+        if !on.contains(f)
+            || view.own.contains_key(mg)
+            || view.value(mg) == Some(true)
+            || gates.contains(&mg.as_str())
+            || g.bound.iter().any(|b| &b.param == mg)
+        {
+            continue;
+        }
+        g.bound.push(GateBinding {
+            param: mg.clone(),
+            value: false,
+            was: was(mg),
+            overwrote: false,
+            why: format!("it follows `{}`, bound true here, and stays as it was", f),
+        });
+    }
+    // the other options of a choice bound true here
+    for e in graph.edges.iter().filter(|e| e.kind == EdgeKind::Excludes && e.source == Source::Derived) {
+        for (a, b) in [(&e.from, &e.to), (&e.to, &e.from)] {
+            let (Some(ga), Some(gb)) = (view.node(a).and_then(|n| n.gate.clone()), view.node(b).and_then(|n| n.gate.clone())) else { continue };
+            if ga == gb || !on.contains(&ga) || view.value(&gb) != Some(true) || g.bound.iter().any(|x| x.param == gb) {
+                continue;
+            }
+            g.bound.push(GateBinding {
+                param: gb.clone(),
+                value: false,
+                was: was(&gb),
+                overwrote: view.own.get(&gb) == Some(&Value::Bool(true)),
+                why: format!("it is the other option of `{}`, bound true here, and its pack does not deploy", ga),
+            });
+        }
+    }
+    for b in &g.bound {
+        out = crate::interview::bind(&out, &b.param, &serde_yaml::Value::Bool(b.value))?;
+    }
+    Ok((out, g))
+}
+
+// ---------------------------------------------------------------------------
 // `satz add-pack` and `satz remove-pack`
 // ---------------------------------------------------------------------------
 
@@ -1293,7 +1478,7 @@ pub(crate) fn remove(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg
         let (Some(l), Some(g)) = (view.lines_of(&n.path).0, &n.gate) else { continue };
         match &l.when {
             None => refusals.push(format!(
-                "`{}` is used without `when {}` at line {}, so binding `{}` false does not switch it off — write `use \"{}\" when {}` there first",
+                "`{}` is used without `when {}` at line {}, so binding `{}` false does not switch it off — `satz merge-presets` gates it, or write `use \"{}\" when {}` there first",
                 n.path, g, l.index + 1, g, l.written, g
             )),
             Some(w) if w != g && !off.iter().any(|o| o.gate.as_ref() == Some(w)) => refusals.push(format!(
@@ -1500,6 +1685,101 @@ mod tests {
         // no folder: reported, never invented
         let bare = "estate e\n\nparams {\n  x = 1\n}\n";
         assert_eq!(place_line(bare, &g, node("presets/monitoring/organization-audit-logsink.satz"), false).unwrap_err().block, "google_folder.infra_folder");
+    }
+
+    fn bound(src: &str, param: &str) -> Option<bool> {
+        match satz_core::satz::parse(src).ok()?.params.into_iter().find(|(n, _, _)| n == param)?.1 {
+            Value::Bool(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    fn gate(src: &str) -> Result<(String, Gating), String> {
+        let g = graph();
+        let l = lib(&g);
+        gate_ungated(&g, &l, src, &|_, _| Ok(true))
+    }
+
+    #[test]
+    fn the_gating_migration_gates_every_ungated_line_and_binds_what_deployed() {
+        let src = format!(
+            "{}google_essential_contacts_contact {{\n  use \"presets/essential-contacts-organization.satz\"\n}}\n\ngoogle_folder {{\n  infra_folder {{\n    display_name = \"Infra\"\n    use \"presets/monitoring/organization-audit-logsink.satz\"  // the archive\n    use \"presets/monitoring/organization-cis-log-alerts-central.satz\" when use_central_alerts\n  }}\n}}\n\nuse \"presets/scc/scc-findings-mail.satz\"\n// use \"presets/organization-budget.satz\"\n",
+            HEAD.replace("x = 1", "use_audit_logsink = false\n  use_essential_contacts = true")
+        );
+        let (out, g) = gate(&src).unwrap();
+        // in a resource map, in a folder with its trailing comment, at the top level
+        assert!(out.contains("\n  use \"presets/essential-contacts-organization.satz\" when use_essential_contacts\n"), "{out}");
+        assert!(out.contains("\n    use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink  // the archive\n"), "{out}");
+        assert!(out.contains("\nuse \"presets/scc/scc-findings-mail.satz\" when use_scc_findings_mail\n"), "{out}");
+        // a commented line keeps its `//` and its text; a gated one is left alone
+        assert!(out.contains("\n// use \"presets/organization-budget.satz\"\n"), "{out}");
+        assert_eq!(g.lines.len(), 3, "{:?}", g.lines);
+        // the explicit no is overwritten and says so; the unanswered one says its default;
+        // the one already true is not bound again
+        let b = |p: &str| g.bound.iter().find(|b| b.param == p).cloned();
+        let sink = b("use_audit_logsink").unwrap();
+        assert!(sink.value && sink.overwrote && sink.was == "false", "{sink:?}");
+        let mail = b("use_scc_findings_mail").unwrap();
+        assert!(mail.value && !mail.overwrote && mail.was == "unbound, default false", "{mail:?}");
+        assert!(b("use_essential_contacts").is_none());
+        // a default that is already true is bound too: the map may be used below the line
+        let late_map = "estate e\n\nparams {\n  x = 1\n}\n\nuse \"presets/estate-core.satz\"\nuse \"presets/cis/CIS-GCP-Foundation-4.0.satz\"\nuse \"presets/estate-map.satz\"\n";
+        let (late, lg) = gate(late_map).unwrap();
+        assert_eq!(bound(&late, "use_cis_baseline"), Some(true), "{late}");
+        assert_eq!(lg.bound[0].was, "unbound, default true");
+        assert_eq!((bound(&out, "use_audit_logsink"), bound(&out, "use_scc_findings_mail")), (Some(true), Some(true)), "{out}");
+        // no line of a gated pack is left ungated, and a second run changes nothing
+        let v = View::new(&graph(), &lib(&graph()), &out).map(|v| graph().nodes.iter().filter(|n| v.state(n).0 == "ungated").count()).unwrap();
+        assert_eq!(v, 0);
+        let (again, g2) = gate(&out).unwrap();
+        assert_eq!(again, out);
+        assert!(g2.lines.is_empty() && g2.bound.is_empty());
+    }
+
+    #[test]
+    fn the_gating_migration_keeps_what_follows_a_gate_it_binds_and_the_other_option_of_a_choice() {
+        let src = format!(
+            "{}use \"presets/integrations/microsoft-sentinel.satz\"\n// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\" when use_sentinel_auditlogs\nuse \"presets/security-group-models/s2-security-groups.satz\"\n// use \"presets/security-group-models/s1-security-groups.satz\" when security_model_s1\n",
+            HEAD.replace("x = 1", "use_sentinel = false")
+        );
+        let (out, g) = gate(&src).unwrap();
+        let b = |p: &str| g.bound.iter().find(|b| b.param == p).cloned().unwrap();
+        assert!(b("use_sentinel").value);
+        let follower = b("use_sentinel_auditlogs");
+        assert!(!follower.value && follower.why.contains("follows `use_sentinel`"), "{follower:?}");
+        assert!(b("security_model_s2").value);
+        let other = b("security_model_s1");
+        assert!(!other.value && other.was == "unbound, default true", "{other:?}");
+        assert_eq!((bound(&out, "use_sentinel_auditlogs"), bound(&out, "security_model_s1")), (Some(false), Some(false)), "{out}");
+    }
+
+    #[test]
+    fn the_gating_migration_refuses_both_options_of_a_choice_and_leaves_a_gate_the_used_copy_lacks() {
+        let both = format!(
+            "{}use \"presets/security-group-models/s1-security-groups.satz\"\nuse \"presets/security-group-models/s2-security-groups.satz\"\n",
+            HEAD
+        );
+        let e = gate(&both).unwrap_err();
+        assert!(e.contains("s1-security-groups.satz") && e.contains("s2-security-groups.satz"), "{e}");
+        // the S1 model's two spellings on one gate are not a contradiction: both are gated
+        let spellings = format!(
+            "{}use \"presets/security-group-models/s1-security-groups.satz\"\ngoogle_cloud_identity_group {{\n  use \"presets/security-group-models/s1-group-definitions.satz\"\n}}\n",
+            HEAD
+        );
+        let (_, g) = gate(&spellings).unwrap();
+        assert_eq!(g.lines.len(), 2, "{:?}", g.lines);
+        // the map copy the estate uses does not declare the gate: the line stays, reported
+        let g0 = graph();
+        let l = lib(&g0);
+        let src = format!("{}use \"presets/organization-budget.satz\"\n", HEAD);
+        let (out, g) = gate_ungated(&g0, &l, &src, &|_, gate| Ok(gate != "use_budget")).unwrap();
+        assert_eq!(out, src);
+        assert!(g.lines.is_empty() && g.left.len() == 1 && g.left[0].contains("does not declare `use_budget`"), "{:?}", g.left);
+        // without the map no gate exists, so nothing is gated
+        let no_map = "estate e\n\nparams {\n  x = 1\n}\n\nuse \"presets/organization-budget.satz\"\n";
+        let (out, g) = gate(no_map).unwrap();
+        assert_eq!(out, no_map);
+        assert!(g.lines.is_empty());
     }
 
     #[test]

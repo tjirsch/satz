@@ -188,7 +188,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | Command | Options / Arguments |
 |---------|---------------------|
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
-| `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking. Writes the commented line for every pack the pack graph of the pristine source offers and the estate lacks — the whole menu into an estate that has none |
+| `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking. Writes the commented line for every pack the pack graph of the pristine source offers and the estate lacks — the whole menu into an estate that has none — and gates every active line of a gated pack written without `when`, binding its gate `true` |
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
 | `review-pack <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-pack) |
 | `pack-graph` | `--presets-dir <DIR>` (default `presets_dir` from the config), `--check` — checks the library and writes `<presets_dir>/pack-graph.json`, the pack graph that ships with the presets: every pack with its gate, phase, block and adoption order from the map's `offers` entries, and the edges between packs — derived from their param references and `ask_when`, declared on the entries where the packs do not show them. Nothing is written while a check fails; `--check` fails when the file is behind the library. See [The pack graph](docs/language.md#615-offers--what-the-library-offers-an-estate) |
@@ -1319,6 +1319,15 @@ default discovery (the single `estate` .satz in yaml_dir).
 A semantic change without a version bump warns (an upstream release bug); a bump
 with identical semantics upgrades in place.
 
+**Gating.** Every active `use` of a pack the pack graph offers — or of its fork — that
+has no `when` gets ` when <gate>`, at any depth, and the gate is bound `true`, because the
+line deployed; a gate the estate answered `false` is reported as `ANSWER CHANGED`. A gate
+that follows the one bound keeps its value, and a commented line is left as it is. The
+edit is checked like a repoint: `main.tf`, `imports.tf` and `variables.tf` identical,
+`terraform.tfvars` different only in the gates bound, else everything rolls back. Two
+packs that exclude one another on two gates, both deploying, are refused before anything
+is written — see [docs/workflows.md](docs/workflows.md#when-a-pack-line-has-no-gate).
+
 **Last, the prerequisites.** A pack the run adopts can emit a type whose role or API
 the estate does not declare yet, and so can a release whose prerequisite table grew. The
 run ends with the check and the write `update-prerequisites` makes, and reports each role
@@ -1327,7 +1336,8 @@ needs attention. Its compiles do not report that gap as a finding, so at `--vali
 error` it is written rather than refused.
 
 The exit is non-zero when anything needs attention (a fork was created or its
-upstream moved, or a repoint was refused), so CI can gate on it.
+upstream moved, a repoint was refused, an answer was changed by the gating, or a line
+could not be gated), so CI can gate on it.
 
 > **Which command when?** [docs/workflows.md](docs/workflows.md)
 > walks the whole decision — how to tell a newer preset exists, whether your copy
