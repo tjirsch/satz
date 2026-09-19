@@ -1591,6 +1591,24 @@ added = msgs[5]["result"]["structuredContent"]
 assert added["bound"] == [{"param": "use_audit_logsink", "value": True}], added
 PYEOF
 
+step "merge-presets gates a pack line written without its gate, binds what deployed, and proves the emission"
+# The same estate with the logsink adopted the old way: a plain line, the answer no.
+rm -rf tmp/gm && mkdir -p tmp/gm/yaml && cp -R "$root/tests/schemas" tmp/gm/schemas
+printf 'yaml_dir = "yaml"\nhcl_dir = "hcl"\ninclude_dirs = [".", "yaml"]\nschema_dir = "schemas"\npresets_dir = "presets"\ntf_tool = "tofu"\ngoogle_providers = ["google", "google-beta"]\nprovider_version = "7.14.1"\n' > tmp/gm/config.toml
+sed -e 's/^\(    use "presets\/monitoring\/organization-audit-logsink.satz"\) when use_audit_logsink/\1/' \
+    -e 's/^\(  use_audit_logsink *= \)true/\1false/' tmp/pk/e.satz > tmp/gm/yaml/e.satz
+grep -qE '^    use "presets/monitoring/organization-audit-logsink.satz"$' tmp/gm/yaml/e.satz || fail "the fixture has no ungated logsink line"
+"$satz" --config tmp/gm get-presets --pristine-dir "$root/presets" > tmp/gm/get.txt 2>&1 || fail "get-presets failed:\n$(cat tmp/gm/get.txt)"
+(cd tmp/gm && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
+# an overwritten answer needs a human, so the run exits 1; the report is the check
+"$satz" --config tmp/gm merge-presets --pristine-dir "$root/presets" > tmp/gm/merge.txt 2>&1 || true
+grep -q 'ANSWER CHANGED — bound use_audit_logsink = true (was false)' tmp/gm/merge.txt || fail "the flip was not reported:\n$(cat tmp/gm/merge.txt)"
+grep -q 'estate edit verified' tmp/gm/merge.txt || fail "the gating was not proven:\n$(cat tmp/gm/merge.txt)"
+grep -qE '^    use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink$' tmp/gm/yaml/e.satz \
+  || fail "the logsink line was not gated:\n$(grep -n logsink tmp/gm/yaml/e.satz)"
+"$satz" --config tmp/gm merge-presets --pristine-dir "$root/presets" > tmp/gm/again.txt 2>&1 || fail "a second merge-presets needs attention:\n$(cat tmp/gm/again.txt)"
+grep -q 'gated line\|bound use_' tmp/gm/again.txt && fail "a second merge-presets gated again:\n$(cat tmp/gm/again.txt)"
+
 step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'

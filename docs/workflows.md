@@ -678,6 +678,37 @@ writes the lines of THAT directory's graph. A pristine source without a graph ge
 note and no line; a graph that places a pack in a block this binary's scaffold does not
 have is refused before anything changes.
 
+### When a pack line has no gate
+
+Every pack but `estate-core` and the map is switched by a gate, and a no switches it
+off only through a line written `use "…" when <gate>`. An estate that adopted its packs
+as plain `use` lines deploys them whatever the answer says. `merge-presets` gates them:
+
+- every active `use` of a pack the graph offers — or of its `.local.satz` fork — that has
+  no `when`, at the top level, in a folder or in a resource map, gets ` when <gate>`,
+  where the file declaring the gate is used and the copy the estate uses declares it; a
+  line that cannot be gated is named and left;
+- each such gate is bound `true` in the estate's `params`, because the line deployed.
+  A gate the estate answered `false` is overwritten and reported as `ANSWER CHANGED`,
+  with the command that switches the pack off; a gate left to its default is bound too,
+  because a `when` is checked where the compile meets the line and an older estate
+  often uses the map below it;
+- a gate that follows the one bound (`use_sentinel_auditlogs = use_sentinel`) and that
+  the estate leaves unbound is bound to the value it had, and the other option of a
+  choice bound true here is bound false — so nothing else switches on;
+- a commented line is left as it is, `//` and all.
+
+It refuses, before anything is written, while two packs that exclude one another on two
+gates both deploy — the two security models, or a dry run beside its enforcing pack —
+naming both. The two spellings of one model on one gate are gated together.
+
+The emission does not move, and the run proves it the way it proves a fork repoint:
+`main.tf`, `imports.tf` and `variables.tf` are identical, and `terraform.tfvars`
+differs only in the lines of the gates it bound, which no emitted resource reads.
+Anything else rolls the whole run back. `--report-only` prints the lines it would gate
+and the gates it would bind; with `--adopt` the gating is deferred to a run without it.
+A second run finds nothing to gate.
+
 ### When a release moves a pack
 
 A `use` of a path the library moved is **refused**, naming the path the pack lives at
