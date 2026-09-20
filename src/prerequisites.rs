@@ -586,6 +586,143 @@ pub(crate) async fn test_live(probe: &Probe) -> PermissionCheck {
     check
 }
 
+/// The line that enables `apis` on `project` by hand. Printed wherever satz
+/// knows an API has to be on and does not switch it on itself: the preflight
+/// that was refused, and the APIs `update-prerequisites` writes into an estate
+/// that someone then applies with `tofu` directly.
+pub(crate) fn enable_command(project: &str, apis: &[String]) -> String {
+    format!("gcloud services enable {} --project {}", apis.join(" "), project)
+}
+
+/// What the `plan`/`apply` preflight found and did on the billed project.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ApiPreflight {
+    /// the project every provider call is billed to
+    pub project: String,
+    /// every API the estate declares there
+    pub declared: Vec<String>,
+    /// the ones that were off, now on
+    pub enabled: Vec<String>,
+}
+
+impl ApiPreflight {
+    /// One line for the terminal, plus one per API switched on.
+    pub fn render(&self) -> String {
+        let mut out = if self.enabled.is_empty() {
+            format!("APIs on {}: {} declared, all enabled\n", self.project, self.declared.len())
+        } else {
+            format!(
+                "APIs on {}: {} declared, {} off — enabling them, because the refresh is billed to \
+                 this project and runs before anything is created\n",
+                self.project,
+                self.declared.len(),
+                self.enabled.len()
+            )
+        };
+        for api in &self.enabled {
+            out.push_str(&format!("  enabled {}\n", api));
+        }
+        out
+    }
+}
+
+/// The preflight could not put the declared APIs on. What the operator needs
+/// comes first — which APIs and the command that enables them — and what the API
+/// said comes last, for whoever has to work out why. The run stops before
+/// `tofu` refreshes anything against an API that is off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApiRefusal {
+    pub project: String,
+    /// the APIs to enable by hand: the ones known to be off, or every declared
+    /// one when their state could not be read
+    pub enable: Vec<String>,
+    /// what satz was doing, in one line
+    pub why: String,
+    /// what the API answered
+    pub detail: String,
+}
+
+impl ApiRefusal {
+    pub fn render(&self) -> String {
+        let mut out = format!("APIs on {}: {}\n", self.project, self.why);
+        for api in &self.enable {
+            out.push_str(&format!("  {}\n", api));
+        }
+        out.push_str("enable them and run this again:\n  ");
+        out.push_str(&enable_command(&self.project, &self.enable));
+        out.push_str(&format!("\nthe API said: {}\n", self.detail));
+        out
+    }
+
+    /// The one line the command fails with, once `render` has said the rest.
+    pub fn summary(&self) -> String {
+        format!(
+            "satz could not get the {} API(s) the estate declares on {} enabled — nothing was \
+             planned or applied",
+            self.enable.len(),
+            self.project
+        )
+    }
+}
+
+/// Switch on every API in `declared` that is off on `project`, as the identity
+/// bound for this process — the estate's IaC service account, the one `tofu`
+/// applies with and the one the estate grants the Service Usage role to.
+///
+/// `tofu apply` refreshes every resource in state before it creates anything,
+/// and every provider call is billed to this project (`user_project_override`
+/// with `billing_project`), so an API the estate declares but the project has
+/// off stops the refresh — before the `google_project_service` that would have
+/// enabled it is ever created. The emitter's ordering (ADR 0023) orders creates
+/// within one apply; it cannot order the refresh that precedes them.
+///
+/// An API that is already on is left alone and the run says so. Anything that
+/// fails — no permission, the Service Usage API itself off on the billed
+/// project, an org policy — is an [`ApiRefusal`], never a warning the caller can
+/// run past.
+pub(crate) async fn enable_declared_apis(
+    project: &str,
+    declared: Vec<String>,
+) -> Result<ApiPreflight, ApiRefusal> {
+    let refused = |why: &str, detail: String, enable: Vec<String>| ApiRefusal {
+        project: project.to_string(),
+        enable,
+        why: why.to_string(),
+        detail,
+    };
+    let token = crate::gcp::access_token()
+        .await
+        .map_err(|e| refused("satz has no credential to check them with", e, declared.clone()))?;
+    let client = reqwest::Client::new();
+    let states = crate::gcp::serviceusage::service_states(&client, &token, project, &declared)
+        .await
+        .map_err(|e| refused("satz could not read which of them are enabled", e.to_string(), declared.clone()))?;
+    let mut off = Vec::new();
+    for api in &declared {
+        match states.get(api) {
+            Some(true) => {}
+            Some(false) => off.push(api.clone()),
+            // The API answered about every other service and not this one: satz
+            // does not know its state, and guessing either way is worse than
+            // saying so.
+            None => {
+                return Err(refused(
+                    "satz does not know the state of every one of them",
+                    format!("Service Usage answered nothing for {}", api),
+                    declared.clone(),
+                ))
+            }
+        }
+    }
+    if off.is_empty() {
+        return Ok(ApiPreflight { project: project.to_string(), declared, enabled: Vec::new() });
+    }
+    crate::gcp::serviceusage::batch_enable(&client, &token, project, &off)
+        .await
+        .map_err(|e| refused("satz could not enable them", e.to_string(), off.clone()))?;
+    Ok(ApiPreflight { project: project.to_string(), declared, enabled: off })
+}
+
 /// The grant-map key the estate writes for its service account.
 const SA_KEY: &str = "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com";
 

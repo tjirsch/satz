@@ -173,6 +173,12 @@ pub(crate) struct Cli {
     #[arg(long, global = true, help_heading = "Global options")]
     no_impersonate: bool,
 
+    /// `plan` and `apply`: do not ask Service Usage which of the APIs the estate
+    /// declares are off, and enable none — for a run that must reach the tool
+    /// without satz calling Google
+    #[arg(long, global = true, help_heading = "Global options")]
+    no_api_preflight: bool,
+
     /// Never execute a declared `action`, whatever `run-actions` was asked to do
     #[arg(long, global = true, help_heading = "Global options")]
     no_actions: bool,
@@ -1152,6 +1158,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         crate::gcp::disable_impersonation();
     }
 
+    // `--no-api-preflight`: `plan` and `apply` run the tool without asking
+    // Service Usage anything. Carried to `run_tf`, which is the one place that
+    // preflights, and ignored by `init`, which preflights nothing.
+    let api_preflight = !cli.no_api_preflight;
+
     let config_dir = config_file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     let tool_config: ToolConfig = match parse_tool_config(&config_file_path) {
@@ -1240,9 +1251,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let hcl_dir = Path::new(&runtime_config.hcl_dir);
                 if !hcl_dir.join(".terraform").exists() {
-                    run_tf(&runtime_config, "init", &["-input=false".to_string()])?;
+                    run_tf(&runtime_config, "init", &["-input=false".to_string()], api_preflight).await?;
                 }
-                run_tf(&runtime_config, if apply { "apply" } else { "plan" }, &[])?;
+                run_tf(&runtime_config, if apply { "apply" } else { "plan" }, &[], api_preflight).await?;
             }
             if scan {
                 if output.is_some() {
@@ -2154,9 +2165,9 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Plan { args } => run_tf(&runtime_config, "plan", &args),
-        Commands::Apply { args } => run_tf(&runtime_config, "apply", &args),
-        Commands::HclInit { args } => run_tf(&runtime_config, "init", &args),
+        Commands::Plan { args } => run_tf(&runtime_config, "plan", &args, api_preflight).await,
+        Commands::Apply { args } => run_tf(&runtime_config, "apply", &args, api_preflight).await,
+        Commands::HclInit { args } => run_tf(&runtime_config, "init", &args, api_preflight).await,
         Commands::CheckPresets { input, pristine_dir, format, out } => {
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -3132,6 +3143,11 @@ pub(crate) struct PrerequisitesReport {
     /// every service the infra project declares, whatever needs it: what
     /// `bootstrap` enables before `tofu` runs
     pub infra_services: Vec<String>,
+    /// the `gcloud services enable` line for `missing_apis` — what an operator
+    /// who applies with `tofu` directly runs, since writing the declaration into
+    /// the estate does not switch anything on. Empty when nothing is missing.
+    /// `satz plan` and `satz apply` do it themselves.
+    pub enable_missing_apis: String,
     pub granted: crate::prerequisites::Granted,
     pub needs: Vec<crate::prerequisites::Need>,
     pub missing: Vec<crate::prerequisites::Need>,
@@ -3172,10 +3188,18 @@ pub(crate) fn prerequisites_report(
     let infra = params.get("infra_project_name").cloned().unwrap_or_default();
     let apis =
         if infra.is_empty() { Vec::new() } else { crate::prerequisites::apis(&out.manifest, &infra) };
+    let missing_apis: Vec<crate::prerequisites::ApiNeed> =
+        apis.iter().filter(|a| !a.declared).cloned().collect();
     Ok(PrerequisitesReport {
         estate: path.display().to_string(),
         service_account: sa,
-        missing_apis: apis.iter().filter(|a| !a.declared).cloned().collect(),
+        enable_missing_apis: if missing_apis.is_empty() {
+            String::new()
+        } else {
+            let ids: Vec<String> = missing_apis.iter().map(|a| a.api.clone()).collect();
+            crate::prerequisites::enable_command(&infra, &ids)
+        },
+        missing_apis,
         apis,
         infra_services: if infra.is_empty() {
             Vec::new()
@@ -3242,6 +3266,14 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
             for a in &r.missing_apis {
                 out.push_str(&format!("  {} — for {}\n", a.api, a.reason.join(", ")));
             }
+            // Declaring an API is not enabling it. `satz plan` and `satz apply`
+            // switch on what the estate declares before the tool refreshes; an
+            // apply run with `tofu` directly needs this line first.
+            out.push_str(&format!(
+                "declared, not enabled — `satz plan` and `satz apply` enable them; for a bare \
+                 tofu run:\n  {}\n",
+                r.enable_missing_apis
+            ));
         }
     }
     out
@@ -3425,19 +3457,27 @@ fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
 /// apply's approval prompt and the usual coloured output behave normally, and the
 /// tool's own exit code is propagated — a failed plan must fail the caller.
 ///
-/// The one thing it adds: `plan` and `apply` replace an org policy that the
-/// state holds with rules and the estate now declares reset
-/// (`reset_replacements`, ADR 0011), and say so. The emitted `main.tf` names the
-/// same `-replace` in a comment above each policy declared reset, for an apply
-/// that does not run through satz.
+/// Two things it adds, both before the tool starts and both only for `plan` and
+/// `apply`:
+///
+/// - The APIs. Every API the estate declares on the project the provider bills
+///   to is switched on if it is off (`api_preflight`, ADR 0036), as the estate's
+///   IaC service account. `init` does not: it configures a backend and talks to
+///   no Google API of the estate's.
+/// - The replacements. An org policy that the state holds with rules and the
+///   estate now declares reset is replaced (`reset_replacements`, ADR 0011), and
+///   satz says so. The emitted `main.tf` names the same `-replace` in a comment
+///   above each policy declared reset, for an apply that does not run through
+///   satz.
 ///
 /// It does NOT transpile first: `hcl/` is generated, but coupling generation to
 /// the deploy step would change what `plan` means and hide a diff the operator
 /// should see. Transpile, look, then plan.
-fn run_tf(
+async fn run_tf(
     runtime_config: &ToolConfig,
     subcommand: &str,
     args: &[String],
+    api_preflight: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let hcl_dir = Path::new(&runtime_config.hcl_dir);
     if !hcl_dir.is_dir() {
@@ -3455,6 +3495,9 @@ fn run_tf(
         .into());
     }
     let mut args = args.to_vec();
+    if (subcommand == "plan" || subcommand == "apply") && api_preflight {
+        enable_declared_apis(hcl_dir).await?;
+    }
     if subcommand == "plan" || subcommand == "apply" {
         for address in reset_replacements_for(runtime_config, hcl_dir, &args)? {
             eprintln!(
@@ -3555,6 +3598,119 @@ fn reset_replacements_for(
     let state = crate::bootstrap::state_index(&runtime_config.tf_tool, hcl_dir)
         .map_err(|e| format!("reading the state for org policies that must be replaced: {}", e))?;
     Ok(reset_replacements(&manifest, &state).into_iter().filter(|a| !already.contains(a)).collect())
+}
+
+/// What the emitted provider configuration says the next `tofu` run will do:
+/// which project it bills every call to, and which identity it acts as.
+///
+/// Read from `providers.tf` rather than derived from the estate again, because
+/// this is the file the tool itself reads — `plan` and `apply` are given no
+/// estate, they are given a directory, and satz must act as what is in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct EmittedProvider {
+    /// `billing_project` of the default `google` provider — the project
+    /// `user_project_override` bills every call to, so the project the APIs must
+    /// be on. `None` when the estate declares no literal one.
+    billing_project: Option<String>,
+    /// `impersonate_service_account` — `None` in local mode, where `tofu` runs
+    /// as the credentials themselves.
+    impersonate: Option<String>,
+}
+
+/// The default provider's billing project and identity, out of `providers.tf`.
+///
+/// The DEFAULT provider is the block labelled `google` whose `alias` is
+/// `"google"`: the one every emitted resource without a provider of its own
+/// uses. The per-project aliases carry the same two values in cloud mode and
+/// their own project in local mode, and taking whichever came first would make
+/// the answer depend on emission order.
+fn emitted_provider(hcl_dir: &Path) -> Result<EmittedProvider, String> {
+    let path = hcl_dir.join("providers.tf");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(EmittedProvider::default()),
+        Err(e) => return Err(format!("{}: {}", path.display(), e)),
+    };
+    let body = hcl::parse(&text).map_err(|e| format!("{}: {}", path.display(), e))?;
+    Ok(default_google_provider(body.blocks()))
+}
+
+/// [`emitted_provider`]'s reading, over parsed blocks.
+fn default_google_provider<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>) -> EmittedProvider {
+    let string_attr = |b: &hcl::Block, key: &str| -> Option<String> {
+        b.body.attributes().find(|a| a.key() == key).and_then(|a| match &a.expr {
+            hcl::Expression::String(s) => Some(s.clone()),
+            _ => None,
+        })
+    };
+    for b in blocks {
+        if b.identifier() != "provider" || b.labels().first().map(|l| l.as_str()) != Some("google") {
+            continue;
+        }
+        if string_attr(b, "alias").as_deref() != Some("google") {
+            continue;
+        }
+        return EmittedProvider {
+            billing_project: string_attr(b, "billing_project"),
+            impersonate: string_attr(b, "impersonate_service_account"),
+        };
+    }
+    EmittedProvider::default()
+}
+
+/// Bind the identity `plan` and `apply` run as: the service account the emitted
+/// provider impersonates, which is what `tofu` is about to act as in the same
+/// directory.
+///
+/// The estate commands derive it from the estate's params
+/// (`configure_estate_impersonation`); these two are handed a directory and no
+/// estate, so they read the artefact instead. Same rule, same identity — the
+/// emitter writes that attribute from those same params.
+fn configure_emitted_impersonation(provider: &EmittedProvider) -> Result<(), String> {
+    crate::gcp::configure_impersonation(provider.impersonate.clone())
+}
+
+/// Before `plan` or `apply`: every API the estate declares on the project the
+/// provider bills to, switched on where it is off.
+///
+/// Says on stderr what it found and what it changed, beside the tool's own note:
+/// stdout belongs to the plan. A refusal prints the APIs and the `gcloud
+/// services enable` line that does it by hand, and fails — `tofu` is never
+/// started with an API off, because its refresh would stop halfway through,
+/// having already reported half an estate as drifted.
+async fn enable_declared_apis(hcl_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let provider = emitted_provider(hcl_dir)?;
+    let Some(project) = provider.billing_project.clone() else {
+        // A local-mode estate with no infrastructure project bills nothing
+        // centrally; each resource's own project carries its APIs, and `tofu`
+        // creates them.
+        return Ok(());
+    };
+    let main_tf = hcl_dir.join("main.tf");
+    let text = match std::fs::read_to_string(&main_tf) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {}", main_tf.display(), e).into()),
+    };
+    let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
+    let manifest = crate::manifest::Manifest::from_blocks(body.blocks());
+    let declared = crate::prerequisites::declared_apis(&manifest, &project);
+    if declared.is_empty() {
+        return Ok(());
+    }
+    configure_emitted_impersonation(&provider)?;
+    match crate::prerequisites::enable_declared_apis(&project, declared).await {
+        Ok(done) => {
+            eprint!("{}", done.render());
+            Ok(())
+        }
+        Err(refusal) => {
+            // Printed rather than returned whole: `main` renders a returned error
+            // with `Debug`, which escapes the newlines into literal \n.
+            eprint!("{}", refusal.render());
+            Err(refusal.summary().into())
+        }
+    }
 }
 
 /// satz reads Satz estates. A `.yaml` estate is not an error the user can fix
@@ -6046,6 +6202,10 @@ mod command_groups {
         /// The human by default, the estate's service account when the command
         /// is GIVEN an estate to answer for. One command, two questions.
         HumanOrEstate(&'static str),
+        /// Calls no Google API of its own; a flag that runs `plan` or `apply`
+        /// for the operator binds the estate's service account through the same
+        /// site those two bind at.
+        EstateSaWhenItRuns(&'static str),
     }
 
     /// EVERY command, classified. A new one fails `every_command_declares_an_identity`
@@ -6071,12 +6231,14 @@ mod command_groups {
         ),
         ("map-types", Identity::Human("Discovery documents are public — no credential at all")),
         ("mcp", Identity::PerTool),
-        ("transpile", Identity::NoGoogleApi),
+        ("transpile", Identity::EstateSaWhenItRuns("only --plan/--apply reach an API, through run_tf")),
         ("update-prerequisites", Identity::NoGoogleApi),
         ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
-        ("plan", Identity::NoGoogleApi),
-        ("apply", Identity::NoGoogleApi),
+        // The API preflight: as the identity the emitted provider impersonates,
+        // which is the identity `tofu` is about to act as in the same directory.
+        ("plan", Identity::EstateSa),
+        ("apply", Identity::EstateSa),
         (
             "migrate",
             Identity::Human("--mode cloud assigns Groups Admin to the IaC service account, which cannot give itself an admin role"),
@@ -6142,6 +6304,10 @@ mod command_groups {
         &["adopt", "adopt-org-policies"],
         &["import"],
         &["whoami"],
+        // `run_tf`'s API preflight, reached by all three routes into the tool.
+        // It binds from the emitted provider rather than from an estate file,
+        // because these commands are given a directory and no estate.
+        &["plan", "apply", "transpile"],
     ];
 
     /// The classification is a claim about the code, so check it against the code.
@@ -6171,7 +6337,12 @@ mod command_groups {
         let bound: BTreeSet<&str> = BINDING_SITES.iter().flat_map(|s| s.iter().copied()).collect();
         let claimed: BTreeSet<&str> = IDENTITIES
             .iter()
-            .filter(|(_, i)| matches!(i, Identity::EstateSa | Identity::HumanOrEstate(_)))
+            .filter(|(_, i)| {
+                matches!(
+                    i,
+                    Identity::EstateSa | Identity::HumanOrEstate(_) | Identity::EstateSaWhenItRuns(_)
+                )
+            })
             .map(|(n, _)| *n)
             .collect();
         assert_eq!(
@@ -6180,10 +6351,15 @@ mod command_groups {
              service account"
         );
 
-        // One `configure_estate_impersonation(` per site, plus the definition.
+        // One binding call per site, plus each function's own definition. Two
+        // functions, because a command given an estate derives the identity from
+        // its params and a command given only the emitted directory reads it out
+        // of the artefact `tofu` reads.
         let src = include_str!("main.rs");
         let body = src.split("#[cfg(test)]").next().unwrap_or(src);
-        let calls = body.matches("configure_estate_impersonation(").count() - 1;
+        let calls = body.matches("configure_estate_impersonation(").count() - 1
+            + body.matches("configure_emitted_impersonation(").count()
+            - 1;
         assert_eq!(
             calls,
             BINDING_SITES.len(),
@@ -7340,6 +7516,113 @@ mod reset_replace {
         // what the operator already replaces is not added twice, in either form
         let r = replace_args(&args(&["-replace=google_org_policy_policy.a", "-replace", "google_org_policy_policy.b"])).unwrap();
         assert_eq!(r.into_iter().collect::<Vec<_>>(), ["google_org_policy_policy.a", "google_org_policy_policy.b"]);
+    }
+}
+
+#[cfg(test)]
+mod api_preflight {
+    //! What `plan` and `apply` read out of the emitted directory before they
+    //! start the tool: the project every call is billed to, the identity to ask
+    //! as, and the APIs the estate declares there.
+    use super::*;
+
+    const PROVIDERS: &str = r#"
+provider "google" {
+  alias = "google"
+  project = "corp-infra-001"
+  billing_project = "corp-infra-001"
+  user_project_override = true
+  impersonate_service_account = "svc-iac-001@corp-infra-001.iam.gserviceaccount.com"
+}
+
+provider "google-beta" {
+  alias = "google-beta"
+  billing_project = "corp-infra-001"
+}
+
+provider "google" {
+  alias = "project_logsink"
+  project = "corp-log-infra-001"
+  billing_project = "corp-log-infra-001"
+}
+"#;
+
+    fn read(text: &str) -> EmittedProvider {
+        default_google_provider(hcl::parse(text).expect("parses").blocks())
+    }
+
+    #[test]
+    fn the_billed_project_and_the_identity_come_from_the_default_provider() {
+        // A per-project alias carries its own project in local mode, so taking
+        // whichever block came first would make the answer depend on emission
+        // order — and enable a project's APIs on another project.
+        let p = read(PROVIDERS);
+        assert_eq!(p.billing_project.as_deref(), Some("corp-infra-001"));
+        assert_eq!(
+            p.impersonate.as_deref(),
+            Some("svc-iac-001@corp-infra-001.iam.gserviceaccount.com")
+        );
+    }
+
+    #[test]
+    fn a_local_mode_provider_names_no_identity() {
+        let p = read("provider \"google\" {\n  alias = \"google\"\n  billing_project = \"corp-infra-001\"\n}\n");
+        assert_eq!(p.billing_project.as_deref(), Some("corp-infra-001"));
+        assert_eq!(p.impersonate, None);
+        // nothing to preflight where no provider bills centrally
+        assert_eq!(read("terraform {\n}\n"), EmittedProvider::default());
+    }
+
+    #[test]
+    fn the_declared_apis_are_the_ones_on_the_billed_project() {
+        // The services of another project are that project's business; the
+        // refresh is billed here.
+        let manifest = crate::manifest::Manifest::parse(
+            "resource \"google_project\" \"infra\" {\n  project_id = \"corp-infra-001\"\n}\n\
+             resource \"google_project_service\" \"infra_iam\" {\n  project = google_project.infra.project_id\n  service = \"iam.googleapis.com\"\n}\n\
+             resource \"google_project_service\" \"infra_asset\" {\n  project = \"corp-infra-001\"\n  service = \"cloudasset.googleapis.com\"\n}\n\
+             resource \"google_project_service\" \"other\" {\n  project = \"corp-log-infra-001\"\n  service = \"logging.googleapis.com\"\n}\n",
+        );
+        assert_eq!(
+            crate::prerequisites::declared_apis(&manifest, "corp-infra-001"),
+            ["cloudasset.googleapis.com", "iam.googleapis.com"]
+        );
+    }
+
+    #[test]
+    fn a_refusal_prints_the_command_that_does_it_by_hand() {
+        let r = crate::prerequisites::ApiRefusal {
+            project: "corp-infra-001".to_string(),
+            enable: vec!["cloudasset.googleapis.com".to_string(), "iam.googleapis.com".to_string()],
+            why: "satz could not enable them".to_string(),
+            detail: "403 Forbidden [PERMISSION_DENIED]".to_string(),
+        };
+        assert!(
+            r.render().contains(
+                "gcloud services enable cloudasset.googleapis.com iam.googleapis.com --project corp-infra-001"
+            ),
+            "{}",
+            r.render()
+        );
+        // the reason the operator can act on comes before the body they cannot
+        assert!(r.render().find("gcloud").unwrap() < r.render().find("403").unwrap());
+        assert!(r.summary().contains("nothing was planned or applied"));
+    }
+
+    #[test]
+    fn nothing_to_do_says_so_and_a_change_names_every_api() {
+        let done = crate::prerequisites::ApiPreflight {
+            project: "corp-infra-001".to_string(),
+            declared: vec!["iam.googleapis.com".to_string()],
+            enabled: Vec::new(),
+        };
+        assert_eq!(done.render(), "APIs on corp-infra-001: 1 declared, all enabled\n");
+        let changed = crate::prerequisites::ApiPreflight {
+            enabled: vec!["iam.googleapis.com".to_string()],
+            ..done
+        };
+        assert!(changed.render().contains("1 declared, 1 off"));
+        assert!(changed.render().contains("  enabled iam.googleapis.com\n"));
     }
 }
 

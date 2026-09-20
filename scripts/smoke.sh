@@ -930,6 +930,9 @@ if "$satz" --config . update-prerequisites tmp/prereq-gap.satz --report-only > t
 fi
 # one role and one API, counted together: a prerequisite is a prerequisite
 grep -q '2 prerequisite(s) missing' tmp/prereq-dry.txt || fail "--report-only does not count both halves of the gap:\n$(cat tmp/prereq-dry.txt)"
+# declaring an API does not switch it on: the report prints the line that does
+grep -q 'gcloud services enable monitoring.googleapis.com --project corp-infra-001' tmp/prereq-dry.txt \
+  || fail "the report does not print the command that enables the API it would declare:\n$(cat tmp/prereq-dry.txt)"
 cmp -s tmp/prereq-gap.satz tmp/prereq-gap-before.satz || fail "--report-only edited the estate"
 "$satz" --config . update-prerequisites tmp/prereq-gap.satz > tmp/prereq-write.txt 2>&1 || fail "the write failed:\n$(cat tmp/prereq-write.txt)"
 grep -q 'wrote roles/storage.admin in google_organization_iam_member' tmp/prereq-write.txt \
