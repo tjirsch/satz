@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use rmcp::schemars;
 use satz_core::pack_graph::{EdgeKind, Node, PackGraph, Role, Source};
+use satz_core::pipeline::PipelineError;
 use satz_core::satz::{File, Value};
 
 use crate::findings::{Finding, Kind, Severity};
@@ -296,6 +297,15 @@ impl<'a> View<'a> {
         self.eval(v, depth + 1)
     }
 
+    /// The estate's ANSWER to a gate: its own `params {}` binding, resolved. `None` while
+    /// the estate binds nothing — the default in the map or in the declaring pack is what
+    /// the library proposes, not what this estate decided, and the interview means the
+    /// same thing by an answer. A day-0 skeleton answers nothing and every pack line is
+    /// commented, which is the normal state and not a finding.
+    fn answered(&self, param: &str) -> Option<bool> {
+        self.eval(self.own.get(param)?, 0)
+    }
+
     fn eval(&self, v: &Value, depth: u8) -> Option<bool> {
         match v {
             Value::Bool(b) => Some(*b),
@@ -501,9 +511,11 @@ impl<'a> View<'a> {
         let on = |p: &str| self.deploys(p);
         for n in &self.graph.nodes {
             let (state, line) = self.state(n);
-            // a gate answered yes with no line to switch on
+            // a gate the ESTATE answered yes with no line to switch on. The library's own
+            // default is not an answer: a fresh skeleton uses the map, whose defaults
+            // propose six packs, and every line is commented on day 0 by design.
             if let (Some(g), true) = (&n.gate, n.order.is_some() && n.by_hand.is_none()) {
-                if self.value(g) == Some(true) && matches!(state, "commented" | "absent") && !self.stood_in_for(n, &|p| self.lines_of(p).0.is_some()) {
+                if self.answered(g) == Some(true) && matches!(state, "commented" | "absent") && !self.stood_in_for(n, &|p| self.lines_of(p).0.is_some()) {
                     let msg = if state == "commented" {
                         format!("`{}` is true and `{}` is still commented out — uncomment it, or `satz add-pack` will", g, n.path)
                     } else {
@@ -653,9 +665,26 @@ pub(crate) fn compile_findings(graph: &PackGraph, presets_dir: &Path, label: &st
     (strip(view.exclusion_findings(label, src)), strip(view.line_findings(label, level)))
 }
 
+/// A front-end refusal with what the pack graph has to add: an `unknown param` is most
+/// often a pack whose provider is off, and the graph names it.
+///
+/// The hint rides in the typed error, so one refusal has one shape — `file` and `line`
+/// survive for the LSP's diagnostics, `satz_transpile_check` and satz-studio, which are
+/// the readers that most need the line for exactly these refusals.
+pub(crate) fn hinted(e: PipelineError, graph: &crate::pack_graph::Shipped, label: &str, src: &str, level: &str) -> PipelineError {
+    let hints = match graph {
+        crate::pack_graph::Shipped::Graph(g, dir) => front_end_hints(g, dir, label, src, level),
+        _ => Vec::new(),
+    };
+    if hints.is_empty() {
+        return e;
+    }
+    PipelineError { msg: format!("{} — the pack graph: {}", e.msg, hints.join("; ")), ..e }
+}
+
 /// What the pack graph says about an estate whose front end failed: the requirements
 /// that are off, which is usually why a param is unknown. Empty when it has nothing to add.
-pub(crate) fn front_end_hints(graph: &PackGraph, presets_dir: &Path, label: &str, src: &str, level: &str) -> Vec<String> {
+fn front_end_hints(graph: &PackGraph, presets_dir: &Path, label: &str, src: &str, level: &str) -> Vec<String> {
     let Ok(lib) = Library::load(graph, presets_dir) else { return Vec::new() };
     let Ok(view) = View::new(graph, &lib, src) else { return Vec::new() };
     view.line_findings(label, level)
@@ -1668,6 +1697,46 @@ mod tests {
         // the fork is the pack
         let src = format!("{}use \"presets/organization-budget.local.satz\" when use_budget\n", HEAD.replace("x = 1", "use_budget = true"));
         assert!(messages(&src).iter().all(|m| !m.contains("organization-budget")), "{:?}", messages(&src));
+    }
+
+    /// A day-0 skeleton uses the map and answers nothing: the map's own defaults propose
+    /// six packs and every line is commented, which is the state `satz init` writes. The
+    /// compile says nothing about it — at `validation_level = "error"` too — and starts
+    /// once this estate binds the answer itself.
+    #[test]
+    fn a_library_default_is_not_the_estate_s_answer() {
+        let skeleton = format!("{}// use \"presets/cis/CIS-GCP-Foundation-4.0.satz\" when use_cis_baseline\n", HEAD);
+        let m = messages(&skeleton);
+        assert!(m.iter().all(|m| !m.contains("still commented out")), "{m:?}");
+        assert_eq!(
+            View::new(&graph(), &lib(&graph()), &skeleton).unwrap().value("use_cis_baseline"),
+            Some(true),
+            "the map's default is still what the pack reads; only the finding changes"
+        );
+        let answered = skeleton.replace("x = 1", "use_cis_baseline = true");
+        assert!(
+            messages(&answered).iter().any(|m| m.contains("use_cis_baseline") && m.contains("still commented out")),
+            "{:?}",
+            messages(&answered)
+        );
+    }
+
+    /// The pack graph's hint rides in the typed error, so the LSP, `satz_transpile_check`
+    /// and satz-studio keep the line of exactly the refusals the graph explains.
+    #[test]
+    fn a_hinted_front_end_refusal_keeps_its_file_and_line() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
+        let shipped = crate::pack_graph::Shipped::Graph(graph(), dir);
+        let head = HEAD.replace("x = 1", "use_billing_permissions = true\n  security_model_s1 = false\n  security_model_s2 = false");
+        let src = format!("{}use \"presets/billing-account-permissions.satz\" when use_billing_permissions\n", head);
+        let err = || PipelineError { file: "e.satz".to_string(), line: 42, msg: "unknown param `iac_admins_group`".to_string() };
+        let h = hinted(err(), &shipped, "e.satz", &src, "warn");
+        assert_eq!((h.file.as_str(), h.line), ("e.satz", 42));
+        assert!(h.msg.starts_with("unknown param `iac_admins_group` — the pack graph: "), "{}", h.msg);
+        assert!(h.msg.contains("security-group-models"), "{}", h.msg);
+        // nothing to add: the refusal travels untouched
+        let quiet = hinted(err(), &shipped, "e.satz", HEAD, "warn");
+        assert_eq!(quiet.msg, "unknown param `iac_admins_group`");
     }
 
     #[test]

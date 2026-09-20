@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Parse every Satz file of this checkout with the tree-sitter grammar the Zed
-# extension pins (editors/zed/extension.toml) and fail on any parse error. The
-# grammar mirrors the parser by hand, so a language change the grammar has not
-# followed shows up here — and otherwise only as a mis-highlighted file.
+# Hold the tree-sitter grammar the Zed extension pins (editors/zed/extension.toml)
+# against satz's own parser, in two checks:
+#
+#   1. Every statement keyword the parser dispatches on — `STATEMENT_KEYWORDS` in
+#      crates/satz-core/src/satz.rs, which a unit test derives from the dispatch
+#      itself — is a node or token the grammar declares in src/node-types.json.
+#      A keyword the grammar has no rule for parses as a resource block, so the
+#      parse below stays green while every tool over the grammar reads the file
+#      differently from satz.
+#   2. Every Satz file of this checkout parses with no ERROR or MISSING node.
 #
 #   scripts/check-grammar.sh                                  # the pinned commit, cloned
 #   GRAMMAR=../satz-tree-sitter scripts/check-grammar.sh      # a local checkout instead
@@ -37,6 +43,36 @@ else
 fi
 
 if command -v tree-sitter >/dev/null; then ts=(tree-sitter); else ts=(npx --yes tree-sitter-cli@0.27.0); fi
+
+# 1. the two statement sets
+node_types=$dir/src/node-types.json
+[[ -f $node_types ]] || { echo "check-grammar: $node_types is not there — the grammar ships it beside src/parser.c" >&2; exit 1; }
+python3 - "$root/crates/satz-core/src/satz.rs" "$node_types" <<'PY'
+import json, re, sys
+
+parser_src, node_types = sys.argv[1], sys.argv[2]
+text = open(parser_src, encoding="utf-8").read()
+m = re.search(r"pub const STATEMENT_KEYWORDS: &\[&str\] =\s*&\[(.*?)\];", text, re.S)
+if not m:
+    sys.exit(f"check-grammar: no STATEMENT_KEYWORDS in {parser_src} — the gate reads the parser's statement set from it")
+keywords = re.findall(r'"([^"]+)"', m.group(1))
+if not keywords:
+    sys.exit(f"check-grammar: STATEMENT_KEYWORDS in {parser_src} is empty")
+
+declared = {n["type"] for n in json.load(open(node_types, encoding="utf-8"))}
+missing = [k for k in keywords if k not in declared]
+if missing:
+    sys.exit(
+        "check-grammar: the grammar models no node for %d statement(s) satz parses: %s\n"
+        "  A keyword the grammar has no rule for parses as a resource block, so the parse "
+        "below would stay green.\n"
+        "  Add the rule in the grammar repository, then bump `rev` in editors/zed/extension.toml."
+        % (len(missing), ", ".join(missing))
+    )
+print(f"check-grammar: {len(keywords)} statement(s) satz parses, all modelled by the grammar")
+PY
+
+# 2. every Satz file of this checkout
 
 files=$(find presets tests -name '*.satz' ! -name '*.diff.satz' | sort | sed "s|^|$root/|")
 [[ -n "$files" ]] || { echo "check-grammar: no .satz files found" >&2; exit 1; }

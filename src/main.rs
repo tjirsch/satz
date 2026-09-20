@@ -2533,19 +2533,10 @@ fn pipeline_b_compile(
     let fe = match satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader) {
         Ok(fe) => fe,
         // An `unknown param` is most often a pack whose provider is off: the pack graph
-        // names it beside the parser's error.
+        // names it beside the parser's error, inside the typed error so the location
+        // reaches every reader.
         Err(e) => {
-            let hints = match &graph {
-                crate::pack_graph::Shipped::Graph(g, dir) => {
-                    crate::packs::front_end_hints(g, dir, &input_path.to_string_lossy(), &src, &runtime_config.validation_level)
-                }
-                _ => Vec::new(),
-            };
-            if hints.is_empty() {
-                return Err(e.into());
-            }
-            // one line: `main` prints a returned error with `Debug`, newlines escaped
-            return Err(format!("{} — the pack graph: {}", e, hints.join("; ")).into());
+            return Err(crate::packs::hinted(e, &graph, &input_path.to_string_lossy(), &src, &runtime_config.validation_level).into())
         }
     };
     let tail = compile_tail(&fe, &resolver, &registry, tool_config, &graph, &runtime_config.validation_level, input_path, &src);

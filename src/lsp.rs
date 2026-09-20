@@ -591,16 +591,17 @@ fn compile_for_diagnostics(
         let t = text_of(&p);
         out.push((p, line_diagnostic(&t, e.line, e.msg, DiagnosticSeverity::ERROR)));
     };
+    let graph = crate::pack_graph::shipped(Path::new(&config.presets_dir));
     let fe = match pipeline::compile_estate(&label, src, &resolver, &loader) {
         Ok(fe) => fe,
+        // the same refusal the CLI reports, hint included, at the same line
         Err(e) => {
-            push_err(e);
+            push_err(crate::packs::hinted(e, &graph, &label, src, &config.validation_level));
             return out;
         }
     };
     // Everything `transpile --check` checks after the front end, as findings: at the
     // file and line each names, or on the estate's first line when it names none.
-    let graph = crate::pack_graph::shipped(Path::new(&config.presets_dir));
     let tail = crate::compile_tail(&fe, &resolver, registry, config, &graph, &config.validation_level, root, src);
     for finding in tail.findings {
         let severity = match finding.severity {

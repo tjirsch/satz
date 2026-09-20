@@ -98,9 +98,12 @@ Five steps, in this order. Each one is a section below.
    `satz interview` switches its line on the same way, and `satz packs` shows every pack
    with its answer, its line and what it needs. `satz merge-presets` writes the
    line for a pack the library has gained since the estate was written, so the list stays
-   the library's rather than one person's memory of it. A question answered `true` whose
-   line is still commented — or missing — is reported at every compile, because otherwise
-   the answer is bound and nothing emits it.
+   the library's rather than one person's memory of it. A question **this estate** has
+   answered `true` whose line is still commented — or missing — is reported at every
+   compile, because otherwise the answer is bound and nothing emits it. The answer is the
+   estate's own `params {}` binding: a default in the map or in a pack is the library's
+   proposal, so a day-0 skeleton — every line commented, nothing answered — compiles clean
+   at `validation_level = "error"`, and `satz packs` is where the proposals are read.
 
    A pack can name one command to run once it is on: the CIS org-policy packs name
    `satz adopt <estate> --execute --import`, because Google sets some of their policies on

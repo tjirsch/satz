@@ -235,8 +235,10 @@ fn pack_menu(graph: &PackGraph) -> String {
          // Uncomment a line to add its pack. `satz interview` does it when that pack's question\n\
          // is answered yes, and `satz merge-presets` adds the line for a pack the library has\n\
          // gained since — so the list here stays the library's, not one person's memory of it.\n\
-         // Whichever writes it, the compile reports a question answered true whose line is still\n\
-         // commented, so the two never drift apart.\n",
+         // Whichever writes it, the compile reports a question THIS estate has answered true\n\
+         // whose line is still commented, so the two never drift apart. A default in the map or\n\
+         // in a pack is the library's proposal, not this estate's answer: `satz packs` lists it,\n\
+         // and the compile says nothing until the answer is bound here.\n",
         graph,
         Place::Menu,
     )

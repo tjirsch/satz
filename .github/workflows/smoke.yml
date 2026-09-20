@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: every Satz file parses with the pinned tree-sitter grammar
+      - name: the grammar models every statement, and every Satz file parses with it
         run: bash scripts/check-grammar.sh
   checks:
     runs-on: ubuntu-latest

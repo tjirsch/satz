@@ -1437,6 +1437,20 @@ pub fn lf(src: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// Every keyword that opens a top-level statement in Satz, sorted.
+///
+/// The tree-sitter grammar mirrors the parser by hand, and a keyword it has no rule for
+/// parses as a resource block rather than an error — a green parse is no proof that the
+/// tree means what satz means. `scripts/check-grammar.sh` reads this list and fails by
+/// name on a keyword the grammar's `node-types.json` does not declare, so a new statement
+/// cannot reach a release ungrammared.
+///
+/// It is derived, not remembered: `statement_keywords_are_the_parser_s_own_dispatch`
+/// below reads the dispatch in `parse` out of this file's source and fails when the two
+/// differ.
+pub const STATEMENT_KEYWORDS: &[&str] =
+    &["action", "claim", "estate", "hcl", "notice", "offers", "pack", "params", "question", "suppress", "use"];
+
 pub fn parse(src: &str) -> Result<File, SatzError> {
     let src = lf(src);
     let toks = lex(&src)?;
@@ -1444,6 +1458,7 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
     let mut file = File::default();
     loop {
         let line = p.line();
+        // ---- statement dispatch: one arm per STATEMENT_KEYWORDS entry ----------------
         match p.peek() {
             None => break,
             Some(Tok::Ident(id)) if id == "estate" || id == "pack" => {
@@ -1626,6 +1641,7 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
             }
             Some(other) => return err(line, format!("unexpected {:?} at top level", other)),
         }
+        // ---- end of the statement dispatch ------------------------------------------
     }
 
     // A question must live in the file that declares its param. Questions are
@@ -2437,6 +2453,88 @@ mod empty_collection_tests {
 
         let deps = use_paths(&parse("estate e\nuse \"a.satz\"\ngoogle_folder { f { use \"b.satz\" } }\n").unwrap());
         assert_eq!(deps, vec!["a.satz".to_string(), "b.satz".to_string()]);
+    }
+}
+
+/// `STATEMENT_KEYWORDS` against the parser it is taken from. The list leaves this crate:
+/// `scripts/check-grammar.sh` fails on a keyword the tree-sitter grammar declares no node
+/// for, so a statement missing here ships ungrammared — which is what `offers` did.
+#[cfg(test)]
+mod statement_set_tests {
+    use super::*;
+
+    /// The keywords the dispatch in `parse` matches on, read out of this file's own
+    /// source between the two markers: every `id == "…"` guard, plus `hcl`, whose block
+    /// the lexer hands over as one token. The dispatch binds the keyword as `id` and
+    /// nothing else in it does — the header's `content` and `version` modifiers bind
+    /// `m`, because they open no statement.
+    fn dispatched_keywords() -> std::collections::BTreeSet<String> {
+        const SRC: &str = include_str!("satz.rs");
+        // spelled in halves so this function's own source is not the first match
+        let begin = concat!("// ---- statement ", "dispatch: one arm per STATEMENT_KEYWORDS entry");
+        let end = concat!("// ---- end of the statement ", "dispatch ---");
+        let (_, rest) = SRC.split_once(begin).expect("the dispatch in `parse` carries its begin marker");
+        let (body, _) = rest.split_once(end).expect("the dispatch in `parse` carries its end marker");
+        let mut out = std::collections::BTreeSet::new();
+        if body.contains("Tok::Hcl(") {
+            out.insert("hcl".to_string());
+        }
+        let mut rest = body;
+        while let Some(at) = rest.find("id == \"") {
+            rest = &rest[at + "id == \"".len()..];
+            let Some(close) = rest.find('"') else { break };
+            out.insert(rest[..close].to_string());
+            rest = &rest[close..];
+        }
+        out
+    }
+
+    /// `STATEMENT_KEYWORDS` is what `parse` dispatches on, and nothing else.
+    #[test]
+    fn statement_keywords_are_the_parser_s_own_dispatch() {
+        let derived = dispatched_keywords();
+        let listed: std::collections::BTreeSet<String> = STATEMENT_KEYWORDS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            derived, listed,
+            "STATEMENT_KEYWORDS and the dispatch in `parse` disagree — add the keyword to the list \
+             (and a rule for it to the tree-sitter grammar, which scripts/check-grammar.sh checks)"
+        );
+        let mut sorted: Vec<&&str> = STATEMENT_KEYWORDS.iter().collect();
+        sorted.sort();
+        assert_eq!(sorted, STATEMENT_KEYWORDS.iter().collect::<Vec<_>>(), "STATEMENT_KEYWORDS is sorted");
+    }
+
+    /// Every listed keyword is a statement to the parser, not a resource block: the shape
+    /// that hid `offers` from the grammar gate hides a stale entry from this list.
+    #[test]
+    fn every_statement_keyword_parses_as_a_statement_not_a_block() {
+        let probe = |kw: &str| -> String {
+            match kw {
+                "estate" => "estate e\n".into(),
+                "pack" => "pack p version \"1.0\"\n".into(),
+                "params" => "estate e\nparams { a = \"1\" }\n".into(),
+                "use" => "estate e\nuse \"p.satz\"\n".into(),
+                "hcl" => "estate e\nhcl {\n  # raw\n}\n".into(),
+                "claim" => "estate e\nclaim \"f\" \"1\" \"1.1\" implements {\n  resources = [\"google_x.y\"]\n}\n".into(),
+                "question" => {
+                    "pack p version \"1.0\"\nparams { a = false }\nquestion a {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n}\n".into()
+                }
+                "action" => "estate e\naction \"a\" {\n  reason = \"no provider resource does it\"\n  run    = \"a.sh\"\n}\n".into(),
+                "notice" => "pack p version \"1.0\"\nparams { a = false }\nnotice a {\n  text = \"t\"\n  run = \"satz adopt\"\n  before = apply\n}\n".into(),
+                "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
+                "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
+                other => panic!("no probe for the statement `{}` — add one", other),
+            }
+        };
+        for kw in STATEMENT_KEYWORDS {
+            let src = probe(kw);
+            let f = parse(&src).unwrap_or_else(|e| panic!("`{}` probe: {}:{}", kw, e.line, e.msg));
+            let as_block = f.items.iter().any(|e| match e {
+                Entry::Map { key: Key::Ident(k), .. } | Entry::Attr { key: Key::Ident(k), .. } => k == kw,
+                _ => false,
+            });
+            assert!(!as_block, "`{}` parsed as a resource block, so it is no statement", kw);
+        }
     }
 }
 

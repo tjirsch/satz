@@ -261,7 +261,7 @@ second kind.
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
 | `update-third-party-licenses.sh` | helper | regenerate `THIRD-PARTY-LICENSES.md`, the licence text of every crate compiled into satz, from `Cargo.lock` with `cargo about`; `--check` fails on a stale file or a licence outside the allow-list. CI runs `--check` in the `checks` job |
-| `check-grammar.sh` | gate | parse every `.satz` under `presets/` and `tests/` with the tree-sitter grammar `editors/zed/extension.toml` pins; any `ERROR` or `MISSING` node fails; CI runs it on every PR and every push to `main` (`smoke.yml`, job `grammar`) |
+| `check-grammar.sh` | gate | hold the tree-sitter grammar `editors/zed/extension.toml` pins against the parser: every keyword in `STATEMENT_KEYWORDS` must be a node the grammar declares, and every `.satz` under `presets/` and `tests/` must parse with no `ERROR` or `MISSING` node; CI runs it on every PR and every push to `main` (`smoke.yml`, job `grammar`) |
 
 ## `check-names.sh` — the privacy gate
 
@@ -747,14 +747,26 @@ The Zed extension in `editors/zed/` highlights Satz through a tree-sitter gramma
 mirrors the parser by hand (`crates/satz-core/src/satz.rs`). The grammar lives in its
 own repository, `satz-tree-sitter`, and `editors/zed/extension.toml` pins one commit of
 it. A statement the parser gains and the grammar has not followed reads as an error in
-the editor and nowhere else.
+the editor — or, where the statement is shaped like a resource block, as a resource
+block, which is no error anywhere and disagrees with satz silently.
 
-`scripts/check-grammar.sh` clones the pinned commit into a temporary directory and
-parses every `*.satz` under `presets/` and `tests/` with it, failing on any `ERROR` or
-`MISSING` node; `*.diff.satz` files are unified diffs and are skipped.
-`GRAMMAR=<path>` uses a local checkout of the grammar instead of cloning. It needs the
-tree-sitter CLI (`brew install tree-sitter-cli`) or `node`, through which it fetches
-the CLI.
+`scripts/check-grammar.sh` clones the pinned commit into a temporary directory and runs
+two checks against it.
+
+**The two statement sets.** `STATEMENT_KEYWORDS` in `crates/satz-core/src/satz.rs` is
+every keyword that opens a top-level statement — `action`, `claim`, `estate`, `hcl`,
+`notice`, `offers`, `pack`, `params`, `question`, `suppress`, `use`. The script reads
+that list and the node and token types the grammar declares in its `src/node-types.json`,
+and fails naming any keyword the grammar models nothing for. The list is derived rather
+than remembered: the unit test `statement_keywords_are_the_parser_s_own_dispatch` reads
+the dispatch in `parse` out of the source between its two markers and fails when the two
+differ, so a statement the parser gains reaches this gate.
+
+**The files.** Every `*.satz` under `presets/` and `tests/` is parsed with the grammar,
+failing on any `ERROR` or `MISSING` node; `*.diff.satz` files are unified diffs and are
+skipped. `GRAMMAR=<path>` uses a local checkout of the grammar instead of cloning. It
+needs the tree-sitter CLI (`brew install tree-sitter-cli`) or `node`, through which it
+fetches the CLI, and `python3` for the statement comparison.
 
 CI runs it on every PR and every push to `main` (`.github/workflows/smoke.yml`, job
 `grammar`), and the
