@@ -31,17 +31,16 @@
 // is deciding not to see name resolution, and that decision belongs in a `deviates`
 // claim whose `reason` the compliance report carries.
 
-pack cis_extensions.dns_logging version "1.1"
-
+pack cis_extensions.dns_logging version "1.2"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_dns_logging_adopted = false
 }
 
 notice cis_dns_logging_adopted {
-  text   = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
-  run    = "satz adopt <estate> --execute --import"
-  before = apply
+  text     = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  run      = "satz adopt <estate> --execute --import"
+  severity = error
 }
 
 google_org_policy_custom_constraint {

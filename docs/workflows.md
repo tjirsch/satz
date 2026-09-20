@@ -148,7 +148,7 @@ estate binds, and nothing below runs while one is missing.
 ### Bootstrap the organisation
 
 `bootstrap` refuses while any question the estate's packs declare is unanswered, and
-while a pack's `before = apply` notice is unacknowledged; `--dry-run` warns instead.
+while a pack's `severity = error` notice is unacknowledged; `--dry-run` compiles, prints it and goes on.
 
 Before it asks for a credential, `bootstrap` checks the params it is about to use:
 `customer_shortname`, `billing_account_infra`, `infra_project_name` and

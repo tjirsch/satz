@@ -36,6 +36,7 @@ mod doc_packs;
 mod pack_graph;
 mod packs;
 mod notices;
+mod org_write;
 mod github;
 mod policy_tree;
 mod prowler;
@@ -238,7 +239,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Subcommand)]
-enum Commands {
+pub(crate) enum Commands {
     /// Run the estate's declared `action`s — the deployment steps that have no provider resource
     ///
     /// Prints what it would run and stops. `--check` runs each action's own
@@ -1308,6 +1309,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    // One rule in front of every command that changes a customer's organisation: a pack
+    // says what has to be done before its resources are applied, and a message it
+    // declared an `error` refuses the run until the estate acknowledges it
+    // (`src/org_write.rs`).
+    org_write::refuse(&cmd_choice, &tool_config, &runtime_config)?;
 
     match cmd_choice {
         Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan, check, format } => {
@@ -1348,12 +1354,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             if plan || apply {
                 // Same gate as bootstrap: apply refuses, plan warns.
                 match crate::questions::require_complete(&input_path, &runtime_config, if apply { "apply" } else { "plan" }) {
-                    Ok(()) => {}
-                    Err(e) if !apply => eprintln!("warning: {}", e),
-                    Err(e) => return Err(e.into()),
-                }
-                // And a pack's notice: the command it names runs before the apply.
-                match crate::notices::require_acknowledged(&input_path, &runtime_config, if apply { "apply" } else { "plan" }) {
                     Ok(()) => {}
                     Err(e) if !apply => eprintln!("warning: {}", e),
                     Err(e) => return Err(e.into()),
@@ -1891,11 +1891,6 @@ Thumbs.db
             // The quality gate: an estate may not touch an organisation while a
             // question is open. A dry run is how you look, so it warns instead.
             match crate::questions::require_complete(&config_path, &runtime_config, "bootstrap") {
-                Ok(()) => {}
-                Err(e) if dry_run => eprintln!("warning: {}", e),
-                Err(e) => return Err(e.into()),
-            }
-            match crate::notices::require_acknowledged(&config_path, &runtime_config, "bootstrap") {
                 Ok(()) => {}
                 Err(e) if dry_run => eprintln!("warning: {}", e),
                 Err(e) => return Err(e.into()),
@@ -2645,7 +2640,7 @@ pub(crate) enum FindingsOutput {
 /// named two ways, is a finding no `[[silence]]` row and no editor can match, so the
 /// estate's directory decides the spelling for every reader. A path that is not under
 /// it — a preset read from the library — is left as it is written.
-fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<&Path>) -> crate::findings::Finding {
+pub(crate) fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<&Path>) -> crate::findings::Finding {
     let (Some(file), Some(dir)) = (f.file.as_deref(), dir) else { return f };
     let (Ok(full), Ok(root)) = (std::fs::canonicalize(file), std::fs::canonicalize(dir)) else { return f };
     if let Ok(rel) = full.strip_prefix(&root) {
@@ -2919,12 +2914,12 @@ pub(crate) fn compile_tail(
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
     f.extend(pack_findings);
-    f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_src));
+    f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_src, crate::notices::Doing::Reading));
     match graph {
         crate::pack_graph::Shipped::Graph(..) => {}
         crate::pack_graph::Shipped::Missing(_) if crate::findings::at_level(level).is_none() => {}
         crate::pack_graph::Shipped::Missing(path) => f.push(Finding::new(
-            Severity::Note,
+            Severity::Info,
             Kind::UnadoptedPack,
             format!("{} is not here, so no pack line is checked against its answer", path.display()),
         ).fix("satz get-presets")),
@@ -3203,7 +3198,7 @@ fn prerequisite_findings(
     }
     if !granted.owner() && !unknown.is_empty() {
         f.push(Finding::new(
-            Severity::Note,
+            Severity::Info,
             Kind::Prerequisites,
             format!(
                 "no role is known for {} — grant the one it needs to the IaC service account in the estate",
@@ -3237,7 +3232,7 @@ fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<
     }
     if actions.iter().any(|a| a.from_pack) {
         f.push(Finding::new(
-            Severity::Note,
+            Severity::Info,
             Kind::Action,
             "--no-pack-actions ignores pack-declared actions, --no-actions disables all execution, \
              `satz silence add action --reason \"…\"` leaves these findings out of the output.",
@@ -3253,7 +3248,7 @@ fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crat
         let lines = dedent_hcl(&b.body).lines().count();
         let finding = match &b.trust {
             Some(reason) => Finding::new(
-                Severity::Note,
+                Severity::Info,
                 Kind::HclPassthrough,
                 format!("raw HCL passthrough ({} lines) — trusted: {}", lines, reason),
             ),
@@ -5339,7 +5334,7 @@ fn redundant_yaml_dir(estate: &str, yaml_dir: &str) -> Option<String> {
     Some(est[1..].join("/"))
 }
 
-fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
+pub(crate) fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
     if estate.is_absolute() {
         return estate;
     }
@@ -9318,7 +9313,7 @@ action "step" {
         let t = compile_tail(&fe, &resolver, &reg, &cfg, &graph, "warn", Path::new("tail.satz"), ESTATE);
         let menu: Vec<_> = t.findings.iter().filter(|f| f.kind == Kind::UnadoptedPack).collect();
         assert_eq!(menu.len(), 1, "{menu:?}");
-        assert_eq!(menu[0].severity, Severity::Note);
+        assert_eq!(menu[0].severity, Severity::Info);
         assert!(menu[0].message.contains("presets/pack-graph.json is not here"), "{}", menu[0].message);
     }
 

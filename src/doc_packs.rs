@@ -768,14 +768,14 @@ fn render(
 
     if !file.notices.is_empty() {
         md.push_str("## Notices\n\n");
-        md.push_str("What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; `apply` and `bootstrap` refuse while one whose `before` is `apply` is open.\n\n");
-        md.push_str("| param | run | before | what and why |\n|---|---|---|---|\n");
+        md.push_str("What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.\n\n");
+        md.push_str("| param | run | severity | what and why |\n|---|---|---|---|\n");
         for n in &file.notices {
             md.push_str(&format!(
                 "| `{}` | `{}` | {} | {} |\n",
                 n.param,
                 n.run.replace('|', "\\|"),
-                n.before.as_deref().unwrap_or("—"),
+                n.severity,
                 n.text.replace('|', "\\|").replace('\n', " "),
             ));
         }

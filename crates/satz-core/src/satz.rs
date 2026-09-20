@@ -262,15 +262,64 @@ pub struct OffersDecl {
 /// The one pack that may carry `offers` entries.
 pub const MAP_PACK: &str = "estate_map";
 
-/// `notice <param> { text run before }` — what to run once the pack is switched on.
+/// How much a pack-declared message holds back, declared by the pack that says it.
+///
+/// The pack sets the floor: a reader may silence an `Info` or a `Warning`, never an
+/// `Error`. The compile says every open message either way; what the severity decides is
+/// what a command that WRITES to the organisation does about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// every command that writes to the organisation refuses while the message is open
+    Error,
+    /// those commands print it and go on
+    Warning,
+    /// the compile says it, and nothing waits for it
+    Info,
+}
+
+impl Severity {
+    /// The word a pack writes, and the word every reader prints.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        }
+    }
+
+    /// The severity of that word, or nothing.
+    pub fn parse(word: &str) -> Option<Severity> {
+        match word {
+            "error" => Some(Severity::Error),
+            "warning" => Some(Severity::Warning),
+            "info" => Some(Severity::Info),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A message left undeclared is a warning: it is said, and nothing waits for it.
+impl Default for Severity {
+    fn default() -> Self {
+        Severity::Warning
+    }
+}
+
+/// `notice <param> { text run severity }` — what to run once the pack is switched on.
 ///
 /// A pack that needs one step after it goes in — the CIS org-policy packs need `satz
 /// adopt`, because Google sets some of their policies on every new organisation and the
 /// first apply stops on `409` for each — names that step here. satz shows the notice when
 /// the pack is switched on and until the estate acknowledges it by binding `<param> =
-/// true`; with `before = apply`, `transpile --apply` and `bootstrap` refuse while it is
-/// open. The param is the pack's own, declared `false` in the same file, and read by
-/// nothing: it is an acknowledgement, not configuration, so it is never emitted.
+/// true`; with `severity = error`, every command that writes to the organisation refuses
+/// while it is open. The param is the pack's own, declared `false` in the same file, and
+/// read by nothing: it is an acknowledgement, not configuration, so it is never emitted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NoticeDecl {
     /// the param the estate binds `true` to acknowledge the notice
@@ -279,8 +328,8 @@ pub struct NoticeDecl {
     pub text: String,
     /// the command to run
     pub run: String,
-    /// `apply`: `transpile --apply` and `bootstrap` refuse while the notice is open
-    pub before: Option<String>,
+    /// how much an open message holds back; `warning` when the pack declares none
+    pub severity: Severity,
     pub line: usize,
 }
 
@@ -1245,7 +1294,7 @@ impl P {
         };
         self.expect(Tok::LBrace, "'{' after the notice's param")?;
         let body = self.entries()?;
-        let (mut text, mut run, mut before) = (None, None, None);
+        let (mut text, mut run, mut severity) = (None, None, None);
         for e in body {
             match e {
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "text" => {
@@ -1254,16 +1303,30 @@ impl P {
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "run" => {
                     run = Some(lit_str(&parts, l, "notice: run")?);
                 }
-                Entry::Attr { key: Key::Ident(k), value: Value::Ref(id), line: l } if k == "before" => {
-                    if id != "apply" {
-                        return err(l, format!("notice {}: before = {} — the one step a notice holds back is `apply`", param, id));
+                Entry::Attr { key: Key::Ident(k), value: Value::Ref(id), line: l } if k == "severity" => {
+                    match Severity::parse(&id) {
+                        Some(s) => severity = Some(s),
+                        None => {
+                            return err(
+                                l,
+                                format!("notice {}: severity = {} — the three are error, warning and info", param, id),
+                            )
+                        }
                     }
-                    before = Some(id);
+                }
+                // `before = apply` said the same thing and said it as a phase. The
+                // severity says it once, for every command that writes to the
+                // organisation rather than for two named ones.
+                Entry::Attr { key: Key::Ident(k), line: l, .. } if k == "before" => {
+                    return err(l, format!("notice {}: `before = apply` is gone — write `severity = error`", param))
                 }
                 other => {
                     return err(
                         line,
-                        format!("notice {}: unexpected entry {:?} — the keys are text, run and before = apply", param, other),
+                        format!(
+                            "notice {}: unexpected entry {:?} — the keys are text, run and severity = error | warning | info",
+                            param, other
+                        ),
                     )
                 }
             }
@@ -1276,7 +1339,7 @@ impl P {
             Some(r) if !r.trim().is_empty() => r,
             _ => return err(line, format!("notice {}: run = \"…\" is required — the command the notice names", param)),
         };
-        Ok(NoticeDecl { param, text, run, before, line })
+        Ok(NoticeDecl { param, text, run, severity: severity.unwrap_or_default(), line })
     }
 
     fn offers_stmt(&mut self, line: usize) -> Result<OffersDecl, SatzError> {
@@ -1892,7 +1955,7 @@ pub fn canonical_offers(file: &File) -> String {
 pub fn canonical_notices(file: &File) -> String {
     let mut ns: Vec<&NoticeDecl> = file.notices.iter().collect();
     ns.sort_by(|a, b| a.param.cmp(&b.param));
-    ns.iter().map(|n| format!("notice({}|{}|{}|{})\n", n.param, n.text, n.run, n.before.as_deref().unwrap_or(""))).collect()
+    ns.iter().map(|n| format!("notice({}|{}|{}|{})\n", n.param, n.text, n.run, n.severity)).collect()
 }
 
 pub fn canonical_parts(file: &File) -> Canonical {
@@ -2498,7 +2561,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
             "pack p version \"1.0\"\nparams { a = false }\nquestion a {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n}\n".into()
         }
         "action" => "estate e\naction \"a\" {\n  reason = \"no provider resource does it\"\n  run    = \"a.sh\"\n}\n".into(),
-        "notice" => "pack p version \"1.0\"\nparams { a = false }\nnotice a {\n  text = \"t\"\n  run = \"satz adopt\"\n  before = apply\n}\n".into(),
+        "notice" => "pack p version \"1.0\"\nparams { a = false }\nnotice a {\n  text = \"t\"\n  run = \"satz adopt\"\n  severity = error\n}\n".into(),
         "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
         "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
         other => panic!("no probe for the statement `{}` — add one", other),
@@ -2632,11 +2695,11 @@ mod review_2026_08_29_tests {
 
     #[test]
     fn a_notice_travels_with_its_false_param_and_emits_nothing() {
-        let pack = "pack p version \"1.0\"\n\nparams {\n  p_adopted = false\n}\n\nnotice p_adopted {\n  text   = \"Adopt what exists.\"\n  run    = \"satz adopt <estate> --execute --import\"\n  before = apply\n}\n";
+        let pack = "pack p version \"1.0\"\n\nparams {\n  p_adopted = false\n}\n\nnotice p_adopted {\n  text     = \"Adopt what exists.\"\n  run      = \"satz adopt <estate> --execute --import\"\n  severity = error\n}\n";
         let f = parse(pack).unwrap();
         assert_eq!(f.notices.len(), 1);
         let n = &f.notices[0];
-        assert_eq!((n.param.as_str(), n.before.as_deref()), ("p_adopted", Some("apply")));
+        assert_eq!((n.param.as_str(), n.severity), ("p_adopted", Severity::Error));
         assert!(f.items.is_empty(), "a notice is no resource map");
         // the notice and its param are outside what the pack emits
         let bare = parse("pack p version \"1.0\"\n").unwrap();
@@ -2650,13 +2713,19 @@ mod review_2026_08_29_tests {
         assert!(e.msg.contains("declared `false`"), "{}", e.msg);
         let asked = format!("{}\nquestion p_adopted {{\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n}}\n", pack);
         assert!(parse(&asked).unwrap_err().msg.contains("no customer decision"));
-        // only in a pack, once, with its two texts and only `before = apply`
+        // only in a pack, once, with its two texts
         let e = parse(&pack.replace("pack p version \"1.0\"", "estate e")).unwrap_err();
         assert!(e.msg.contains("belongs in a pack"), "{}", e.msg);
         let twice = format!("{}\nnotice p_adopted {{\n  text = \"t\"\n  run = \"r\"\n}}\n", pack);
         assert!(parse(&twice).unwrap_err().msg.contains("declared twice"));
-        assert!(parse(&pack.replace("  run    = \"satz adopt <estate> --execute --import\"\n", "")).unwrap_err().msg.contains("run = "));
-        assert!(parse(&pack.replace("before = apply", "before = plan")).unwrap_err().msg.contains("`apply`"));
-        assert!(parse(&pack.replace("before = apply", "when = apply")).unwrap_err().msg.contains("the keys are"));
+        assert!(parse(&pack.replace("  run      = \"satz adopt <estate> --execute --import\"\n", "")).unwrap_err().msg.contains("run = "));
+        // the severity: one of three words, `warning` when the pack declares none, and
+        // the phase it replaced names the edit rather than being read again
+        assert!(parse(&pack.replace("severity = error", "severity = blocking")).unwrap_err().msg.contains("error, warning and info"));
+        assert!(parse(&pack.replace("severity = error", "before = apply")).unwrap_err().msg.contains("write `severity = error`"));
+        assert!(parse(&pack.replace("severity = error", "when = apply")).unwrap_err().msg.contains("the keys are"));
+        let unsaid = parse(&pack.replace("  severity = error\n", "")).unwrap();
+        assert_eq!(unsaid.notices[0].severity, Severity::Warning, "a message nobody rated is said and waited for by nothing");
+        assert_ne!(canonical_notices(&f), canonical_notices(&unsaid), "the severity is part of what a pack declares");
     }
 }

@@ -19,7 +19,7 @@ pub(crate) enum Severity {
     /// The compile goes on; `tofu plan` or a reviewer will not.
     Warning,
     /// For the log: a fact a reviewer wants to see, no fault.
-    Note,
+    Info,
 }
 
 /// The enum, the name each variant is silenced by, and the list of them all, from one
@@ -343,7 +343,7 @@ impl Width {
 pub(crate) enum Shown {
     /// what refuses the compile
     Errors,
-    /// what does not: the warnings and the notes
+    /// what does not: the warnings and the infos
     Rest,
     All,
 }
@@ -363,7 +363,7 @@ impl Severity {
         match self {
             Severity::Error => "error",
             Severity::Warning => "warning",
-            Severity::Note => "note",
+            Severity::Info => "info",
         }
     }
 }
@@ -505,7 +505,7 @@ fn wrap_into(out: &mut String, line: &str, width: Width) {
 pub(crate) fn footer(findings: &[Finding]) -> Option<String> {
     let count = |s: Severity| findings.iter().filter(|f| f.severity == s && f.silenced.is_none()).count();
     let plural = |n: usize, word: &str| format!("{} {}{}", n, word, if n == 1 { "" } else { "s" });
-    let printed: Vec<String> = [(Severity::Error, "error"), (Severity::Warning, "warning"), (Severity::Note, "note")]
+    let printed: Vec<String> = [(Severity::Error, "error"), (Severity::Warning, "warning"), (Severity::Info, "info")]
         .into_iter()
         .filter_map(|(s, word)| match count(s) {
             0 => None,
@@ -530,7 +530,7 @@ pub(crate) fn footer(findings: &[Finding]) -> Option<String> {
     }
 }
 
-/// The CLI's rendering: the warnings and notes to stderr in the layout, then the
+/// The CLI's rendering: the warnings and infos to stderr in the layout, then the
 /// verdict `refusal` reaches — `Err` when there is an error, so `?` refuses the compile.
 /// The footer closes a compile that goes on; one that is refused gets it from
 /// `report_refusal`, under the errors, so it is the last line either way.
@@ -625,14 +625,14 @@ mod tests {
     fn a_finding_is_a_first_line_its_message_and_its_fix() {
         let f = vec![
             notice("a"),
-            Finding::new(Severity::Note, Kind::HclPassthrough, "raw HCL passthrough (3 lines) — trusted: reviewed")
+            Finding::new(Severity::Info, Kind::HclPassthrough, "raw HCL passthrough (3 lines) — trusted: reviewed")
                 .about("p.satz:12")
                 .located("p.satz", 12),
             notice("b"),
         ];
         assert_eq!(
             lay_out(&f, Shown::All, Width::Unwrapped),
-            "note     hcl-passthrough  p.satz:12\n\
+            "info     hcl-passthrough  p.satz:12\n\
              \x20   raw HCL passthrough (3 lines) — trusted: reviewed\n\
              \n\
              notices open (2)\n\
@@ -645,7 +645,7 @@ mod tests {
              \x20   the notice of b\n\
              \x20   fix: satz adopt e.satz --execute --import\n"
         );
-        assert_eq!(footer(&f).as_deref(), Some("2 warnings, 1 note"));
+        assert_eq!(footer(&f).as_deref(), Some("2 warnings, 1 info"));
         assert!(lay_out(&f, Shown::Errors, Width::Unwrapped).is_empty(), "there is no error to lay out");
     }
 

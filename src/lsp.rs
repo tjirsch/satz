@@ -619,7 +619,7 @@ fn compile_for_diagnostics(
         let severity = match finding.severity {
             crate::findings::Severity::Error => DiagnosticSeverity::ERROR,
             crate::findings::Severity::Warning => DiagnosticSeverity::WARNING,
-            crate::findings::Severity::Note => DiagnosticSeverity::INFORMATION,
+            crate::findings::Severity::Info => DiagnosticSeverity::INFORMATION,
         };
         let (p, line) = match (&finding.file, finding.line) {
             (Some(file), Some(line)) => (locate(file), line as usize),
@@ -794,7 +794,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("question", "what a customer decides, so a param can be filled: `question [oneof] PARAM { … }`"),
     ("action", "a deployment step with no provider resource: `action \"name\" { reason run args }`"),
     ("offers", "the map only — one pack the library offers: `offers \"presets/…\" { when phase block … }`"),
-    ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run before }`"),
+    ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run severity }`"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, emitted as providers.tf"),
@@ -830,7 +830,7 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("text", "what to do and why, as the operator reads it"),
             ("run", "the command to run once the pack is on"),
-            ("before", "apply: `transpile --apply` and `bootstrap` refuse while the notice is open"),
+            ("severity", "error | warning | info — an open `error` refuses every command that writes to the organisation (warning)"),
         ],
     ),
     (

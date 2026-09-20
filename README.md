@@ -169,7 +169,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--on-collision error|counter`, `--customer-shortname`; yaml shape: `--kind pack|estate`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
-| `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
+| `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
 | `add-pack <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions and the notices that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is compiled and restored when it does not compile |
 | `remove-pack <INPUT> <PACK>` | `--cascade`, `--format` (`text`\|`json`) — binds the gate false and leaves the line: a gated line with a false gate deploys nothing. Refused, naming them, while a pack that needs it is on — `--cascade` switches those off too — or while the pack's line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
 
@@ -524,7 +524,7 @@ hcl {
   }
 }
 
-// once reviewed, state why — the warning becomes a note
+// once reviewed, state why — the warning becomes an info
 hcl trust "vendor snippet, reviewed 2026-08 by TJ" {
   output "router_name" { value = google_compute_router.nat_router.name }
 }
@@ -1062,8 +1062,8 @@ satz adopt C0example.satz --only google_folder,google_cloud_identity_group
 A pack can say so itself: the CIS org-policy packs carry a `notice` naming this run
 ([§6.15](docs/language.md#615-notice--the-command-a-pack-asks-for-once-it-is-on)). satz
 shows it when the pack is switched on, the compile warns at the pack's `use` line until
-the estate binds the notice's param `true`, and `transpile --apply` and `bootstrap`
-refuse while it is open. `satz adopt --execute --import` over every type binds those
+the estate binds the notice's param `true`, and every command that writes to the
+organisation refuses while it is open — the notice declares `severity = error`. `satz adopt --execute --import` over every type binds those
 params itself when the run finishes with nothing unresolved.
 
 How a resource is resolved depends on who chose its identity:
@@ -1573,7 +1573,7 @@ where the editor's log shows it.
 
 ### How a finding is printed
 
-What a compile finds — the errors it refuses on, the warnings and the notes — is printed
+What a compile finds — the errors it refuses on, the warnings and the infos — is printed
 in blocks, one per finding, and findings that say the same thing share one. Every command
 that prints a finding prints this block: `transpile`, every command that compiles,
 `review-pack` and the findings of `packs`. This is `tests/corpus/cis-packs/main.satz` as
@@ -1595,8 +1595,8 @@ warning  notice            estate.satz:45  cis_baseline_adopted
     exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live
     policy is in the state before the apply; with --import it binds this param itself when it has
     run.
-    Once the command has run, bind `cis_baseline_adopted = true` in the estate's params; apply and
-    bootstrap refuse until then.
+    Once the command has run, bind `cis_baseline_adopted = true` in the estate's params; every
+    command that writes to the organisation refuses until then.
     fix: satz adopt estate.satz --execute --import
 
 warning  notice            estate.satz:47  cis_block_project_ssh_keys_adopted
@@ -1612,8 +1612,8 @@ warning  notice            estate.satz:57  cis_cloud_sql_iam_and_deletion_protec
     or by default, and an apply that creates a policy that exists stops on 409
     POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state
     before the apply; with --import it binds this param itself when it has run.
-    Once the command has run, bind each param named above `true` in the estate's params; apply and
-    bootstrap refuse until then.
+    Once the command has run, bind each param named above `true` in the estate's params; every
+    command that writes to the organisation refuses until then.
     fix: satz adopt estate.satz --execute --import
 
 11 warnings
@@ -1662,7 +1662,7 @@ notices is its own, with its whole message.
 ### Silencing a finding (`silence`)
 
 A compile reports what it finds as findings — the errors it refuses on, the warnings and
-the notes. A finding that has been seen and acted on is silenced by **what it is**, never
+the infos. A finding that has been seen and acted on is silenced by **what it is**, never
 by its wording: its `kind`, as `--format json` spells it, and optionally its `subject` —
 the pack a pack finding judges, the param a notice is acknowledged by, the action's name,
 the `hcl` block's `file:line`. Both are in every finding's JSON, so a selector is read out

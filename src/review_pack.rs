@@ -51,6 +51,11 @@ const EXAMPLE_PARAMS: &[(&str, &str)] = &[
     ("default_zone", "europe-west3-a"),
 ];
 
+/// How long a reason is. The `text` of a notice that refuses every adopting estate's
+/// apply has to say what goes wrong otherwise; anything that fits in fewer characters
+/// than this is an instruction, and the operator it stops is left to guess why.
+const REASON: usize = 80;
+
 /// The estate satz writes to fold the pack into: the example params, then the pack.
 pub(crate) fn synthetic_estate(pack: &Path) -> String {
     let mut s = String::from(
@@ -205,7 +210,7 @@ pub(crate) fn review(
                 Err(_) => f.push(at(
                     &pack,
                     None,
-                    Severity::Note,
+                    Severity::Info,
                     format!(
                         "no `{}` to check the changelog row against — a pack contributed upstream needs one \
                          row per version there",
@@ -283,22 +288,41 @@ pub(crate) fn review(
         ));
     }
 
-    // the notices the pack carries: what an operator is told to run once it is on, and
-    // what holds the apply back until the estate acknowledges it
+    // 8. the notices the pack carries: what an operator is told to run once it is on, and
+    //    what it holds back. `severity = error` stops every estate that adopts this pack
+    //    from applying anything until its operator has run that command and recorded it —
+    //    a pack author blocking a customer's apply — so it says why, the way a `deviates`
+    //    claim does, and the review says it out loud rather than listing it.
     if let Ok(file) = crate::fsx::read_to_string(&pack).map_err(|e| e.to_string()).and_then(|t| satz_core::satz::parse(&t).map_err(|e| e.msg)) {
         for n in &file.notices {
+            let blocks = n.severity == satz_core::satz::Severity::Error;
             f.push(at(
                 &pack,
                 Some(n.line as u32),
-                Severity::Note,
+                if blocks { Severity::Warning } else { Severity::Info },
                 format!(
-                    "notice `{}`: once the pack is on, `{}` is to run{} — the estate acknowledges it with `{} = true`",
+                    "notice `{}` [{}]: once the pack is on, `{}` is to run{} — the estate acknowledges it with `{} = true`",
                     n.param,
+                    n.severity,
                     n.run,
-                    if n.before.as_deref() == Some("apply") { ", and apply and bootstrap refuse until then" } else { "" },
+                    if blocks { ", and every command that writes to the organisation refuses until then" } else { "" },
                     n.param
                 ),
             ));
+            if blocks && n.text.trim().chars().count() < REASON {
+                f.push(at(
+                    &pack,
+                    Some(n.line as u32),
+                    Severity::Error,
+                    format!(
+                        "notice `{}`: `severity = error` refuses every adopting estate's apply, so its `text` states why \
+                         it must wait — a sentence, not a label ({} characters, {} are the bar)",
+                        n.param,
+                        n.text.trim().chars().count(),
+                        REASON
+                    ),
+                ));
+            }
         }
     }
 
@@ -311,7 +335,7 @@ pub(crate) fn review(
             f.push(at(
                 &pack,
                 None,
-                Severity::Note,
+                Severity::Info,
                 format!(
                     "{} question(s) a customer must answer, no default is possible: {}",
                     blocking.len(),
@@ -391,7 +415,7 @@ pub(crate) fn review(
         f.push(at(
             &pack,
             None,
-            Severity::Note,
+            Severity::Info,
             format!(
                 "adopting it costs an estate: {} and {}. `satz update-prerequisites <estate>` writes both",
                 if roles.is_empty() { "no new role".to_string() } else { roles.into_iter().collect::<Vec<_>>().join(", ") },
@@ -452,7 +476,7 @@ pub(crate) fn review(
     f.push(at(
         &pack,
         None,
-        Severity::Note,
+        Severity::Info,
         "not checked here: the privacy shapes (organisation and project ids, e-mail addresses, domains). \
          `scripts/check-names.sh` in a satz checkout is what rejects them today, and what must become a \
          param before a pack leaves the machine it was written on"
@@ -565,15 +589,15 @@ mod tests {
             emits: Vec::new(),
             findings: vec![
                 at(pack, None, Severity::Error, "not formatted".into()).fix("satz fmt /tmp/x/my-pack.satz"),
-                at(pack, Some(3), Severity::Note, "a note".into()),
+                at(pack, Some(3), Severity::Info, "a fact for the log".into()),
             ],
         };
         assert_eq!(
             render(&r, crate::findings::Width::Unwrapped),
             "pack: /tmp/x/my-pack.satz\nfolded into: synthetic\nemits: nothing\n\n\
              error    pack  my-pack.satz\n    not formatted\n    fix: satz fmt /tmp/x/my-pack.satz\n\n\
-             note     pack  my-pack.satz:3\n    a note\n\n\
-             1 error, 1 note\n\
+             info     pack  my-pack.satz:3\n    a fact for the log\n\n\
+             1 error, 1 info\n\
              the pack does not clear the bar yet — every error above is a rule the library holds.\n"
         );
     }
