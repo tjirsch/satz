@@ -334,8 +334,11 @@ the same Prowler export and Checkov report.
 
 **Adopting what exists.** Never invent an id: `satz_adopt` resolves every declared
 resource against the live organisation and says per row what it matched on; with
-`execute` it writes the verified ids into the estate as `"import-id"`. The import
-itself (`satz adopt --execute --import`) is a human's.
+`execute` it writes the verified ids into the estate as `"import-id"`. `rows` is the
+worklist, not the table — the rows that ask for something, most urgent first — and
+`rows_total`, `rows_omitted` and `note` say what is missing; pass `out` for the whole
+report as JSON in a file. The import itself (`satz adopt --execute --import`) is a
+human's.
 
 Also available: `satz_check_presets` (is the pack library current, or forked?),
 `satz_merge_presets` (bring it up to date: forks a used pack that changed and repoints

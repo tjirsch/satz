@@ -20,7 +20,9 @@ Per call: `structuredContent` validates against the tool's `outputSchema` and eq
 the JSON in the text block; a refusal is an `isError` result with prose; a missing or
 mistyped argument is refused (the form, `isError` or `invalid_params`, is reported);
 the duration; the size in bytes and in tokens estimated at four bytes each. The report
-ends with each tool's LARGEST result, the number a client's output limit is set from.
+ends with each tool's LARGEST result, the number a client's output limit is set from;
+a result over --limit-tokens fails the run, because a client cuts an oversized result
+mid-JSON.
 
 Modes, each including the one before:
   offline  no credentials (the ADC path names a file that does not exist), no network;
@@ -82,8 +84,9 @@ R, W, X = {"read"}, {"read", "write"}, {"read", "write", "exec"}
 
 
 class Run:
-    def __init__(self, groups: set[str], mode: str, tools: set[str]):
+    def __init__(self, groups: set[str], mode: str, tools: set[str], limit_tokens: int):
         self.groups, self.mode, self.tools = groups, mode, tools
+        self.limit_tokens = limit_tokens
         self.results: list[dict] = []
         self.largest: dict[str, dict] = {}
         self.deviations: set[tuple[str, str]] = set()
@@ -440,6 +443,16 @@ def suite_main(s: Server, root: Path, checkov: bool) -> None:
         s.call(case, tool, args, needs=needs)
     if run.mode == "offline":
         s.call("satz_adopt without credentials, refused", "satz_adopt", {}, "error")
+        # the file the table would go to is judged before the organisation is read:
+        # this refusal is about the path, not about the missing credentials
+        s.call(
+            "satz_adopt out outside the root",
+            "satz_adopt",
+            {"out": "../adopt.json"},
+            "error",
+            OUTSIDE,
+            needs=W,
+        )
     items = s.call(
         "satz_remediation_items",
         "satz_remediation_items",
@@ -519,6 +532,8 @@ def suite_ceiling(s: Server, outside: Path) -> None:
         ("satz_update_prerequisites", {}, "write"),
         ("satz_interview", {"answers": {"customer_id": "C0example"}}, "write"),
         ("satz_adopt", {"execute": True}, "write"),
+        # the table goes to a file, so `out` is a write although resolving is a read
+        ("satz_adopt", {"out": "adopt.json"}, "write"),
         ("satz_get_presets", {"pristine_dir": "pristine"}, "write"),
         (
             "satz_merge_presets",
@@ -532,7 +547,8 @@ def suite_ceiling(s: Server, outside: Path) -> None:
         ),
         ("satz_scan_checkov", {}, "exec"),
     ):
-        s.call(f"--allow read refuses {tool}", tool, args, "error", f"needs '{group}'")
+        named = f"{tool} {' '.join(sorted(args))}".strip()
+        s.call(f"--allow read refuses {named}", tool, args, "error", f"needs '{group}'")
     s.call(
         "satz_restrict without --self-gated, refused",
         "satz_restrict",
@@ -710,17 +726,38 @@ def report(
     for r in run.results:
         if "refused_as" in r:
             print(f"  {r['refused_as']:15} {r['case']}")
-    print("\n== largest result per tool (tokens estimated at 4 bytes each) ==")
+    print(
+        f"\n== largest result per tool (tokens estimated at 4 bytes each; "
+        f"the limit is {run.limit_tokens}) =="
+    )
     print(f"  {'tool':28} {'bytes':>9} {'~tokens':>8} {'text':>9}  case")
     for tool, big in sorted(run.largest.items(), key=lambda kv: -kv[1]["bytes"]):
+        over = " OVER" if big["bytes"] // 4 > run.limit_tokens else ""
         print(
-            f"  {tool:28} {big['bytes']:9d} {big['bytes'] // 4:8d} {big['text_bytes']:9d}  {big['case']}"
+            f"  {tool:28} {big['bytes']:9d} {big['bytes'] // 4:8d} {big['text_bytes']:9d}  {big['case']}{over}"
         )
+    # A result over the client's limit is cut mid-JSON, or written to a file the
+    # agent may have no tool to open: the size is a check, not a note.
+    over = {
+        tool: big
+        for tool, big in sorted(run.largest.items())
+        if big["bytes"] // 4 > run.limit_tokens
+    }
+    run.check(
+        "-",
+        f"every result fits {run.limit_tokens} tokens",
+        not over,
+        "; ".join(
+            f"{t} {b['bytes']} bytes (~{b['bytes'] // 4} tokens) from {b['case']}"
+            for t, b in over.items()
+        ),
+    )
     fails = sum(r["status"] == "FAIL" for r in run.results)
     skips = sum(r["status"] == "SKIP" for r in run.results)
     print(f"\n{len(run.results)} checks: {fails} FAIL, {skips} SKIP, {len(strays)} stray line(s), "
           f"{elapsed:.1f}s; logs in {work}")  # fmt: skip
     data = {"satz": version, "mode": run.mode, "groups": sorted(run.groups), "seconds": round(elapsed, 1),
+            "limit_tokens": run.limit_tokens,
             "results": run.results, "largest": run.largest, "stray": strays,
             "deviations": sorted(" ".join(d) for d in run.deviations)}  # fmt: skip
     (work / "report.json").write_text(json.dumps(data, indent=2))
@@ -756,6 +793,13 @@ def main() -> None:
         help="live: its config, relative to --live-dir",
     )
     ap.add_argument("--live-estate", help="live: its main .satz")
+    ap.add_argument(
+        "--limit-tokens",
+        type=int,
+        default=25_000,
+        help="a client's output limit; a larger result fails the run "
+        "(Claude Code's MAX_MCP_OUTPUT_TOKENS, 25000 by default)",
+    )
     a = ap.parse_args()
 
     satz = Path(a.satz).resolve()
@@ -781,7 +825,7 @@ def main() -> None:
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
 
-    run, t0 = Run(groups, a.mode, tools), time.monotonic()
+    run, t0 = Run(groups, a.mode, tools, a.limit_tokens), time.monotonic()
     version = subprocess.run(
         [satz, "--version"], capture_output=True, text=True, check=True
     ).stdout.strip()

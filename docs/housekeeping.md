@@ -397,8 +397,10 @@ only where the edit can be undone:
 **The report.** After the per-call lines come the stray stdout lines, the protocol
 deviations, how each malformed argument was refused, and a table of each tool's largest
 result in bytes and in tokens estimated at four bytes each — the number
-`MAX_MCP_OUTPUT_TOKENS` is set from ([satz mcp](mcp.md#result-size)). The exit status
-is non-zero on any failed check or stray line.
+`MAX_MCP_OUTPUT_TOKENS` is set from ([satz mcp](mcp.md#result-size)). A result over
+`--limit-tokens` (25,000, Claude Code's default) is a failed check of its own, because a
+client cuts an oversized result mid-JSON. The exit status is non-zero on any failed check
+or stray line.
 
 **When to run it.** CI does not: run `offline` before a pull request that changes a tool,
 its arguments or its report type, and `live` on the test organisation before a release

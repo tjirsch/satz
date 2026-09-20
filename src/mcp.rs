@@ -248,6 +248,18 @@ pub(crate) enum Parity {
 /// MCP needs and a terminal does not.
 pub(crate) const MCP_ONLY: &[&str] = &["satz_open", "satz_estates", "satz_restrict"];
 
+/// How many rows of a per-resource table a tool result carries.
+///
+/// A client caps what it reads from a tool: Claude Code cuts a result over
+/// `MAX_MCP_OUTPUT_TOKENS`, 25,000 by default, and what it cuts is no longer
+/// JSON. MCP asks the text block to repeat `structuredContent`, so every row
+/// costs twice its own JSON. Fifty rows of an adopt table is around nine
+/// thousand tokens all told — the size of the other tools' largest results, and
+/// well inside the default cap with the rest of the report beside it. A terminal
+/// has no such cap, so `satz adopt` prints every row; the file `out` names holds
+/// every row too.
+pub(crate) const ROWS_IN_RESULT: usize = 50;
+
 #[derive(Clone)]
 pub(crate) struct SatzMcp {
     ctx: Arc<Ctx>,
@@ -473,14 +485,37 @@ pub(crate) struct AdoptArgs {
     /// Write the verified ids into the estate as `"import-id"` — needs 'write'
     #[serde(default)]
     pub execute: bool,
+    /// Write the WHOLE report — every row of the table — as JSON to this path
+    /// under the server's root, and read it from there. Needs 'write'
+    #[serde(default)]
+    pub out: Option<String>,
 }
 
 /// What `satz_adopt` found, and with `execute` what it wrote.
+///
+/// The table has one row per declared resource and a real estate declares
+/// hundreds, so the result carries the counts and the rows that ask for
+/// something, not the table (`ROWS_IN_RESULT`). `out` writes the whole of it to
+/// a file.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct AdoptReport {
     pub estate: String,
     pub declared: usize,
+    /// The rows that ask for something — an import, a state move, a decision —
+    /// most urgent first. NOT the table: `rows_total`, `rows_omitted` and `note`
+    /// say what is missing and where the whole of it is.
     pub rows: Vec<crate::adopt::AdoptRow>,
+    /// rows the table has, one per declared resource adopt says something about
+    pub rows_total: usize,
+    /// rows of that table this result leaves out — the ones that ask for
+    /// nothing, and any the result had no room for
+    pub rows_omitted: usize,
+    /// What this result leaves out and how to read the rest. Stated on every
+    /// call, so a short list is never mistaken for the table.
+    pub note: String,
+    /// where the whole report was written, when `out` named a path
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<String>,
     /// The counts line: to import, to move, already managed, …
     pub summary: String,
     /// Rows that did not answer — failed, unresolvable, ambiguous, no rule.
@@ -491,9 +526,67 @@ pub(crate) struct AdoptReport {
     pub move_conflicts: Vec<MoveConflict>,
     /// The state could not be read, so no row says "already managed".
     pub state_note: Option<String>,
-    /// With `execute`: the `"import-id"` lines written into the estate.
+    /// With `execute`: the `"import-id"` lines written into the estate, at most
+    /// `ROWS_IN_RESULT` of them — `written_total` is how many there were.
     pub written: Vec<String>,
+    /// lines `execute` wrote, whether or not `written` carries them all
+    pub written_total: usize,
+    /// What `execute` could not write and how to write it, at most
+    /// `ROWS_IN_RESULT` of them — a resource declared in a pristine pack is one
+    /// per resource, so a whole library's worth is the normal case.
     pub hints: Vec<String>,
+    /// hints the run produced, whether or not `hints` carries them all
+    pub hints_total: usize,
+}
+
+impl AdoptReport {
+    /// Cut the report down to what a client reads, and say so in `note`.
+    ///
+    /// What is dropped is decided, not sampled: the rows that ask for nothing go
+    /// first, then the least urgent of the rest, and both counts stay in the
+    /// report. A result that quietly omitted rows would be worse than one that is
+    /// too big — a client cuts an oversized result mid-JSON and an agent sees
+    /// that something is wrong, where a silent subset reads as the whole estate.
+    fn trim(&mut self, limit: usize) {
+        let asking = self.rows.iter().filter(|r| r.action != crate::adopt::RowAction::None).count();
+        let (rows, omitted) = crate::adopt::attention(&self.rows, limit);
+        let mut note = format!(
+            "rows carries {} of the table's {} row(s): the ones that ask for something — an import, a state move, a decision — most urgent first.",
+            rows.len(),
+            self.rows_total
+        );
+        if asking > rows.len() {
+            note.push_str(&format!(
+                " {} more ask for something and did not fit: a result carries at most {} rows.",
+                asking - rows.len(),
+                limit
+            ));
+        }
+        if self.rows_total > asking {
+            note.push_str(&format!(
+                " {} ask for nothing — already managed, already adopted, or apply creates them.",
+                self.rows_total - asking
+            ));
+        }
+        if self.written_total > limit {
+            self.written.truncate(limit);
+            note.push_str(&format!(" written carries {} of the {} lines written.", limit, self.written_total));
+        }
+        if self.hints_total > limit {
+            self.hints.truncate(limit);
+            note.push_str(&format!(" hints carries {} of the {}.", limit, self.hints_total));
+        }
+        note.push_str(&match &self.out {
+            Some(path) => format!(" The whole report is JSON in {}.", path),
+            None => format!(
+                " For the whole table pass `out` — a path under the server's root, needs 'write' — or run `satz adopt {}`, which prints every row.",
+                self.estate
+            ),
+        });
+        self.rows = rows;
+        self.rows_omitted = omitted;
+        self.note = note;
+    }
 }
 
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
@@ -1704,7 +1797,12 @@ impl SatzMcp {
                        moved in the state, is already managed, or cannot be resolved. With `execute` (needs \
                        'write') it writes the verified ids into the estate as \"import-id\". Running `tofu \
                        import`, a state move or activating a managed constraint stays on the command line \
-                       (`satz adopt --execute --import`). Runs as the estate's service account.",
+                       (`satz adopt --execute --import`). Runs as the estate's service account. The table \
+                       has a row per declared resource and an estate declares hundreds, so `rows` carries \
+                       only the rows that ask for something — an import, a state move, a decision — most \
+                       urgent first and capped; `rows_total`, `rows_omitted` and `note` say what is left \
+                       out, and `out` (a path under the root, needs 'write') writes the whole report there \
+                       as JSON.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
     async fn adopt(
@@ -1714,6 +1812,21 @@ impl SatzMcp {
         if let Err(r) = self.permits(if args.execute { Group::Write } else { Group::Read }) {
             return Ok(Err(r));
         }
+        // Judged before the organisation is read: a table that cannot be written
+        // where it was asked for is not worth the lookups.
+        let out = match &args.out {
+            Some(out) => {
+                if let Err(r) = self.permits(Group::Write) {
+                    return Ok(Err(r));
+                }
+                // `out` need not exist yet; it is judged where creating it would lead
+                match self.confine(self.ctx.root.join(out)) {
+                    Ok(p) => Some(p),
+                    Err(r) => return Ok(Err(r)),
+                }
+            }
+            None => None,
+        };
         let (open, estate) = match self.target(args.estate.as_deref()) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
@@ -1736,10 +1849,15 @@ impl SatzMcp {
         let in_state = plan.state.clone().unwrap_or_default();
         let unanswered = crate::adopt::unanswered(&plan.resolutions, &in_state);
         let conflicts = crate::adopt::move_conflicts(&plan.resolutions, &in_state);
+        let table = crate::adopt::rows(&plan.resolutions, &in_state, &plan.out.manifest);
         let mut report = AdoptReport {
             estate: estate.display().to_string(),
             declared: plan.out.manifest.resources.len(),
-            rows: crate::adopt::rows(&plan.resolutions, &in_state, &plan.out.manifest),
+            rows_total: table.len(),
+            rows_omitted: 0,
+            note: String::new(),
+            out: None,
+            rows: table,
             summary: crate::adopt::summary(&plan.resolutions, &in_state),
             unanswered,
             move_conflicts: conflicts
@@ -1753,7 +1871,9 @@ impl SatzMcp {
                 )
             }),
             written: Vec::new(),
+            written_total: 0,
             hints: Vec::new(),
+            hints_total: 0,
         };
         if args.execute {
             if unanswered > 0 || !conflicts.is_empty() {
@@ -1766,12 +1886,29 @@ impl SatzMcp {
             }
             match crate::adopt::write_import_ids(&plan.resolutions, Some(std::path::Path::new(&open.runtime.presets_dir))) {
                 Ok((written, hints)) => {
+                    report.written_total = written.len();
                     report.written = written;
+                    report.hints_total = hints.len();
                     report.hints = hints;
                 }
                 Err(e) => return Ok(Err(refused(format!("adopt: {}", e)))),
             }
         }
+        // The file is the report as it stands — every row, every written line —
+        // and is written before the result is cut down to what a client reads.
+        if let Some(out) = &out {
+            report.note = format!("the whole table: {} row(s), nothing left out", report.rows_total);
+            let json = match serde_json::to_vec_pretty(&report) {
+                Ok(j) => j,
+                Err(e) => return Ok(Err(refused(format!("adopt: the table could not be rendered as JSON: {}", e)))),
+            };
+            let written = out.parent().map_or(Ok(()), crate::fsx::create_dir_all).and_then(|()| crate::fsx::write(out, &json));
+            if let Err(e) = written {
+                return Ok(Err(refused(format!("adopt: {}", e))));
+            }
+            report.out = Some(out.display().to_string());
+        }
+        report.trim(ROWS_IN_RESULT);
         Ok(Ok(Json(report)))
     }
 
@@ -2272,7 +2409,132 @@ pub(crate) async fn serve(
 
 #[cfg(test)]
 mod tests {
-    use super::{Group, Level, DOCS};
+    use super::{AdoptReport, Group, Level, ROWS_IN_RESULT, DOCS};
+    use crate::adopt::{AdoptRow, RowAction};
+
+    /// A table the size a real estate produces, with rows the width real ones
+    /// have: an address, an id, the key it matched on and the declaring line.
+    fn adopt_table(rows: usize, action: RowAction) -> Vec<AdoptRow> {
+        (0..rows)
+            .map(|i| AdoptRow {
+                address: format!("google_project_service.service_number_{:04}_of_the_estate", i),
+                verdict: "IMPORT".into(),
+                detail: format!("an-identifier-{:04}-as-long-as-a-real-one-is-{}", i, "x".repeat(24)),
+                action,
+                matched_on: Some(format!("the-natural-key-{:04}-{}", i, "y".repeat(24))),
+                move_from: None,
+                note: None,
+                declared_at: Some(format!("presets/a-pack-with-a-name.satz:{}", 100 + i)),
+            })
+            .collect()
+    }
+
+    fn report(table: Vec<AdoptRow>) -> AdoptReport {
+        AdoptReport {
+            estate: "estates/an-estate.satz".into(),
+            declared: table.len(),
+            rows_total: table.len(),
+            rows_omitted: 0,
+            note: String::new(),
+            out: None,
+            rows: table,
+            summary: crate::adopt::summary(&[], &Default::default()),
+            unanswered: 0,
+            move_conflicts: Vec::new(),
+            state_note: None,
+            written: Vec::new(),
+            written_total: 0,
+            hints: Vec::new(),
+            hints_total: 0,
+        }
+    }
+
+    /// The bytes a client reads: `structuredContent` and the text block that
+    /// repeats it, inside the result envelope — what `scripts/mcp-probe.py`
+    /// measures.
+    fn result_bytes(report: &AdoptReport) -> usize {
+        let json = serde_json::to_string(report).unwrap();
+        serde_json::to_string(&serde_json::json!({
+            "content": [{"type": "text", "text": json}],
+            "structuredContent": report,
+            "isError": false,
+        }))
+        .unwrap()
+        .len()
+    }
+
+    /// A client cuts a tool result over its output limit — 25,000 tokens in
+    /// Claude Code — and what it cuts is no longer JSON. An adopt table of a real
+    /// estate is several times that, so the result carries the rows that ask for
+    /// something and states what it left out.
+    #[test]
+    fn an_adopt_result_stays_inside_a_client_s_output_limit() {
+        let whole = report(adopt_table(400, RowAction::Import));
+        let untrimmed = result_bytes(&whole);
+        assert!(untrimmed > 100_000, "the fixture is too small to prove anything: {untrimmed} bytes");
+        let mut trimmed = report(adopt_table(400, RowAction::Import));
+        trimmed.trim(ROWS_IN_RESULT);
+        let bytes = result_bytes(&trimmed);
+        // four bytes to the token, as the probe estimates
+        assert!(bytes / 4 < 12_000, "an adopt result is {bytes} bytes (~{} tokens)", bytes / 4);
+        assert_eq!(trimmed.rows.len(), ROWS_IN_RESULT);
+        assert_eq!(trimmed.rows_total, 400);
+        assert_eq!(trimmed.rows_omitted, 350);
+        assert!(trimmed.note.contains("50 of the table's 400"), "{}", trimmed.note);
+        assert!(trimmed.note.contains("350 more ask for something"), "{}", trimmed.note);
+        assert!(trimmed.note.contains("`out`") && trimmed.note.contains("satz adopt"), "{}", trimmed.note);
+    }
+
+    /// The rows that ask for nothing are the first thing dropped, and the ones
+    /// that did not answer are the last: a result that fits carries the whole
+    /// worklist and says how much of the table asked for nothing.
+    #[test]
+    fn a_trimmed_adopt_result_keeps_the_urgent_rows_and_counts_the_rest() {
+        let mut table = adopt_table(300, RowAction::None);
+        table.extend(adopt_table(3, RowAction::Import));
+        table.extend(adopt_table(2, RowAction::Unresolved));
+        let mut trimmed = report(table);
+        trimmed.trim(ROWS_IN_RESULT);
+        assert_eq!(trimmed.rows.len(), 5);
+        assert_eq!(trimmed.rows_omitted, 300);
+        assert_eq!(
+            trimmed.rows.iter().map(|r| r.action).collect::<Vec<_>>(),
+            [RowAction::Unresolved, RowAction::Unresolved, RowAction::Import, RowAction::Import, RowAction::Import]
+        );
+        assert!(trimmed.note.contains("300 ask for nothing"), "{}", trimmed.note);
+        assert!(!trimmed.note.contains("did not fit"), "nothing was cut: {}", trimmed.note);
+    }
+
+    /// `execute` writes a line per resource, and a resource declared in a
+    /// pristine pack is a hint per resource, so both lists are the size of the
+    /// estate and both are capped.
+    #[test]
+    fn what_execute_wrote_is_capped_with_the_rows() {
+        let mut done = report(adopt_table(400, RowAction::Import));
+        done.written = (0..400).map(|i| format!("google_project_service.service_{:04} → presets/a-pack-with-a-name.satz:{}", i, i)).collect();
+        done.written_total = done.written.len();
+        done.hints = (0..400)
+            .map(|i| format!("google_project_service.service_{:04}: declared in a pristine pack — import it with `--execute --import`", i))
+            .collect();
+        done.hints_total = done.hints.len();
+        done.trim(ROWS_IN_RESULT);
+        assert_eq!(done.written.len(), ROWS_IN_RESULT);
+        assert_eq!(done.hints.len(), ROWS_IN_RESULT);
+        assert!(done.note.contains("written carries 50 of the 400"), "{}", done.note);
+        assert!(done.note.contains("hints carries 50 of the 400"), "{}", done.note);
+        let bytes = result_bytes(&done);
+        assert!(bytes / 4 < 20_000, "an executed adopt result is {bytes} bytes (~{} tokens)", bytes / 4);
+    }
+
+    /// With `out` the note points at the file instead of asking for one.
+    #[test]
+    fn a_result_that_names_a_file_says_where_the_table_is() {
+        let mut trimmed = report(adopt_table(80, RowAction::Import));
+        trimmed.out = Some("reports/adopt.json".into());
+        trimmed.trim(ROWS_IN_RESULT);
+        assert!(trimmed.note.contains("The whole report is JSON in reports/adopt.json."), "{}", trimmed.note);
+        assert!(!trimmed.note.contains("pass `out`"), "{}", trimmed.note);
+    }
 
     /// A typo in a capability grant must be an error. Read as "less" it would
     /// silently disable half a pipeline; read as "more" it would grant what

@@ -677,6 +677,27 @@ pub(crate) fn move_conflicts(
         .collect()
 }
 
+/// What a row asks of whoever reads it. The verdict is the sentence; this is the
+/// sort key, and the order below is the order of urgency: a row that did not
+/// answer first, then the state moves, then the imports, and last the rows that
+/// ask for nothing. `satz_adopt` keeps its rows in this order and drops the
+/// `None`s, which is how a table of hundreds of rows becomes a result a client
+/// can read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum RowAction {
+    /// the lookup did not answer: failed, unresolvable, ambiguous, without a
+    /// rule, or waiting on an activation
+    Unresolved,
+    /// the live object is in the state under another address — `state mv`
+    Move,
+    /// live and unmanaged — import it, activating the constraint first where the
+    /// verdict says so
+    Import,
+    /// nothing to do: already managed, already adopted, or apply creates it
+    None,
+}
+
 /// One row of the adopt table: what adopt found for a declared resource and what
 /// it would do. The table renders these; `satz_adopt` returns them.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
@@ -685,6 +706,8 @@ pub(crate) struct AdoptRow {
     /// `IMPORT`, `MOVE`, `adopted`, `on apply`, `AMBIGUOUS`, `FAILED`, …
     pub verdict: String,
     pub detail: String,
+    /// what this row asks for, the verdict sorted into four buckets
+    pub action: RowAction,
     /// what the live lookup matched on, when it matched on a natural key
     pub matched_on: Option<String>,
     /// the address the same live object is managed under, for a MOVE
@@ -695,6 +718,18 @@ pub(crate) struct AdoptRow {
     pub declared_at: Option<String>,
 }
 
+/// The rows that ask for something, most urgent first, at most `limit` of them —
+/// what a result carries when the whole table does not fit. The count returned is
+/// how many of `all` are left out, the rows that ask for nothing included: a
+/// caller that states both numbers cannot pass the short list off as the table.
+pub(crate) fn attention(all: &[AdoptRow], limit: usize) -> (Vec<AdoptRow>, usize) {
+    let mut kept: Vec<AdoptRow> = all.iter().filter(|r| r.action != RowAction::None).cloned().collect();
+    kept.sort_by(|a, b| a.action.cmp(&b.action).then_with(|| a.address.cmp(&b.address)));
+    kept.truncate(limit);
+    let omitted = all.len() - kept.len();
+    (kept, omitted)
+}
+
 /// The rows of the adopt table, one per declared resource adopt says something
 /// about: already managed, moved, or its resolution.
 pub(crate) fn rows(
@@ -702,10 +737,11 @@ pub(crate) fn rows(
     in_state: &crate::bootstrap::StateIndex,
     manifest: &crate::manifest::Manifest,
 ) -> Vec<AdoptRow> {
-    let row = |r: &Resolution, verdict: &str, detail: String| AdoptRow {
+    let row = |r: &Resolution, verdict: &str, detail: String, action: RowAction| AdoptRow {
         address: r.address.clone(),
         verdict: verdict.to_string(),
         detail,
+        action,
         matched_on: None,
         move_from: None,
         note: None,
@@ -716,13 +752,13 @@ pub(crate) fn rows(
         if in_state.manages(&r.address) {
             // The same words the import path prints, so the dry run and the run
             // are recognisably the same statement.
-            out.push(row(r, "already managed in the state", "skipped".into()));
+            out.push(row(r, "already managed in the state", "skipped".into(), RowAction::None));
             continue;
         }
         if let Some(old) = moved_from(r, in_state) {
             // Said before the outcome, because the outcome is "IMPORT" and
             // importing is precisely the wrong move here.
-            let mut moved = row(r, "MOVE", format!("in state as {} — the same live object, so `state mv`, not an import", old));
+            let mut moved = row(r, "MOVE", format!("in state as {} — the same live object, so `state mv`, not an import", old), RowAction::Move);
             moved.move_from = Some(old.to_string());
             // After the move the state holds its rules under an address the
             // estate declares reset, which the API refuses as an update.
@@ -732,21 +768,29 @@ pub(crate) fn rows(
             out.push(moved);
             continue;
         }
-        let (verdict, detail) = match &r.outcome {
-            Outcome::AlreadyAdopted(id) => ("adopted", id.clone()),
-            Outcome::Resolved { id, verified: true } => ("IMPORT", id.clone()),
-            Outcome::Resolved { id, verified: false } => ("import (derived, unverified)", id.clone()),
-            Outcome::NeedsActivation { id, .. } => ("ACTIVATE + IMPORT", id.clone()),
-            Outcome::OnApply => ("on apply", "not live — apply creates it".into()),
-            Outcome::ParentOnApply(why) => ("on apply (parent)", why.clone()),
-            Outcome::Ambiguous(c) => ("AMBIGUOUS", format!("{} candidates: {} — pin \"import-id\" by hand", c.len(), c.join(", "))),
-            Outcome::NeedsLookup(why) => ("needs lookup", why.clone()),
-            Outcome::NoRule => ("no rule", format!("add import_id or match_on for {} to import-config.yaml", r.tf_type)),
-            Outcome::Unresolvable(why) => ("unresolvable", why.clone()),
-            Outcome::Failed(e) => ("FAILED", e.clone()),
+        let (verdict, detail, action) = match &r.outcome {
+            Outcome::AlreadyAdopted(id) => ("adopted", id.clone(), RowAction::None),
+            Outcome::Resolved { id, verified: true } => ("IMPORT", id.clone(), RowAction::Import),
+            Outcome::Resolved { id, verified: false } => ("import (derived, unverified)", id.clone(), RowAction::Import),
+            Outcome::NeedsActivation { id, .. } => ("ACTIVATE + IMPORT", id.clone(), RowAction::Import),
+            Outcome::OnApply => ("on apply", "not live — apply creates it".into(), RowAction::None),
+            Outcome::ParentOnApply(why) => ("on apply (parent)", why.clone(), RowAction::None),
+            Outcome::Ambiguous(c) => (
+                "AMBIGUOUS",
+                format!("{} candidates: {} — pin \"import-id\" by hand", c.len(), c.join(", ")),
+                RowAction::Unresolved,
+            ),
+            Outcome::NeedsLookup(why) => ("needs lookup", why.clone(), RowAction::Unresolved),
+            Outcome::NoRule => (
+                "no rule",
+                format!("add import_id or match_on for {} to import-config.yaml", r.tf_type),
+                RowAction::Unresolved,
+            ),
+            Outcome::Unresolvable(why) => ("unresolvable", why.clone(), RowAction::Unresolved),
+            Outcome::Failed(e) => ("FAILED", e.clone(), RowAction::Unresolved),
             Outcome::Skipped => continue,
         };
-        let mut resolved = row(r, verdict, detail);
+        let mut resolved = row(r, verdict, detail, action);
         resolved.note = r.note.clone();
         if !r.natural_key.is_empty() && !matches!(r.outcome, Outcome::Resolved { verified: false, .. } | Outcome::AlreadyAdopted(_)) {
             resolved.matched_on = Some(r.natural_key.clone());

@@ -83,7 +83,7 @@ every `satz` block in the guide.
 | `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration |
 | `satz_whoami` | `read` | both halves of the identity — the ADC account, and what the open estate's calls run as: its mode, the service account it declares, and whether that account is impersonated — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable, does it hold the permissions the estate's resource types need (`permissions`, each missing one named with its role). The first thing to check when a live call is refused |
 | `satz_transpile` | `write` | compiles the estate and writes its OpenTofu HCL into `hcl_dir`, as `satz transpile` does; `written` lists the files |
-| `satz_adopt` | `read` / `write` | every declared resource resolved against the **live** organisation, as the estate's service account: per row whether it would be imported, moved in the state, is already managed, or cannot be resolved, what it matched on, and the Satz line that declared it. With `execute` (`write`) the verified ids are written into the estate as `"import-id"`, refused while any row is unanswered or a live object is declared twice. `tofu import`, a state move and activating a managed constraint stay on the command line |
+| `satz_adopt` | `read` / `write`; `out` also `write` | every declared resource resolved against the **live** organisation, as the estate's service account: per row whether it would be imported, moved in the state, is already managed, or cannot be resolved, what it matched on, and the Satz line that declared it. `rows` carries the rows that ask for something — a decision, a state move, an import, in that order — and at most fifty of them; `rows_total`, `rows_omitted` and `note` say what is not there and where the rest is, and `out` writes the whole report as JSON to that path under the root. With `execute` (`write`) the verified ids are written into the estate as `"import-id"`, refused while any row is unanswered or a live object is declared twice; `written` and `hints` are a line per resource and are capped the same way, with `written_total` and `hints_total` beside them. `tofu import`, a state move and activating a managed constraint stay on the command line |
 | `satz_update_prerequisites` | `read` / `write` | what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing (with the fewest roles that close the gap) and the APIs its infrastructure project does not enable (with the types that need each), plus the emitted types the table has no row for. Offline. It WRITES both into the estate file and re-checks — a gap that survives the write restores the file — so the default needs `write`; `report_only` lists the gap and needs only `read` |
 | `satz_merge_presets` | `write` | the reconciling update: what was installed, taken as doc/format only, forked to `X.local.satz` with the estate repointed, adopted in place, deferred or refused — as events in the walk's own order, with the counts and `attention`. `adopt` takes upstream in place for the packs named (`all` for every pack merely behind) and the answer carries the emission delta; `report_only` writes nothing. It writes the commented `use` line for a pack the library has that the estate has none for, so a new pack's question never binds an answer that nothing emits, and last writes the roles and APIs the estate's packs need as `satz_update_prerequisites` does — a `prerequisites` event, at validation level `error` too |
 | `satz_get_presets` | `write` | the upstream library into the open estate's `presets_dir`: missing files installed, identical ones left, changed ones the estate does not use refreshed; a pack the estate uses that upstream changed is refused unless `force`. `pristine_dir` copies from a library under the root instead of downloading. `presets_dir` must be inside the root |
@@ -92,7 +92,10 @@ every `satz` block in the guide.
 | `satz_scan_checkov` | `exec`; `out` also `write` | Checkov over the HCL in `hcl_dir` — the counts, and every failed check with the Satz file and line that declared the resource. Scans what is written: transpile first. Runs `checkov`, else `uvx checkov`, with its output captured. With `out` it writes Checkov's JSON report to that path under the root, the file `satz_remediation_items` and `satz_remediation_annotate` read as `checkov` |
 | `satz_restrict` | — | lowers this session's level; only with `--self-gated` |
 
-Each returns the same value the corresponding `--format json` command prints.
+Each returns the same value the corresponding `--format json` command prints, with one
+exception: `satz_adopt`, whose table has a row per declared resource, returns the rows
+that ask for something and says how many it left out — a terminal has no output limit and
+a client has ([result size](#result-size)).
 
 **Which commands an agent can run is a decision per command.** `MCP_PARITY`
 (`src/mcp.rs`) names every CLI command with the tool that serves it or the reason
@@ -148,6 +151,11 @@ Each report is a JSON object with an object schema, as MCP `2025-06-18` requires
 the value the command's `--format json` prints: `satz_triage` returns `{"rows": […]}`,
 as `satz triage --format json` does.
 
+Where a report is too long for a client to read, what it leaves out is a field of the
+report rather than a difference between its two renderings: `satz_adopt` carries
+`rows_total`, `rows_omitted` and a `note` naming the file its `out` wrote, and the text
+block and `structuredContent` carry the same trimmed object.
+
 ## Annotations
 
 `--allow` sets what the **server** permits. Tool annotations tell the **client** what
@@ -156,7 +164,7 @@ it may run without asking:
 | annotation | on |
 |---|---|
 | `readOnlyHint: true` | `satz_open`, `satz_estates`, `satz_require`, `satz_questions`, `satz_packs`, `satz_triage`, `satz_prowler`, `satz_transpile_check`, `satz_check_presets`, `satz_review_pack`, `satz_fmt`, `satz_report_compliance`, `satz_whoami`, `satz_remediation_items` |
-| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_update_prerequisites` — `report_only` is free, the default writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and is refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_add_pack` and `satz_remove_pack` — they write the estate, and the same call twice leaves it as the first did; `satz_scan_checkov` — it runs an external program, and `uvx` downloads it first, so a client asks before running it, and `out` writes its report; `satz_restrict` — it lowers this session's level and nothing else |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_update_prerequisites` — `report_only` is free, the default writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and `out` writes the table, and both are refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_add_pack` and `satz_remove_pack` — they write the estate, and the same call twice leaves it as the first did; `satz_scan_checkov` — it runs an external program, and `uvx` downloads it first, so a client asks before running it, and `out` writes its report; `satz_restrict` — it lowers this session's level and nothing else |
 | `destructiveHint: true` | `satz_get_presets` — with `force` it overwrites packs the estate uses |
 | `openWorldHint: true` (also) | `satz_merge_presets` — without `pristine_dir` it fetches the upstream library |
 | `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_adopt`, `satz_get_presets`, `satz_merge_presets` — the ones that can reach the network (`uvx checkov` fetches Checkov) |
@@ -230,9 +238,29 @@ process without consent.
 ### Result size
 
 Claude Code cuts a tool result longer than `MAX_MCP_OUTPUT_TOKENS` (25,000 tokens unless
-the variable is set in its environment). `satz_report_compliance` returns the largest
-results, and they grow with the estate and the catalog. `scripts/mcp-probe.py` prints each tool's
-largest result in bytes and in estimated tokens
+the variable is set in its environment), and what it cuts is no longer JSON. MCP asks the
+text block to repeat `structuredContent`, so every row of a result costs twice its own
+JSON.
+
+A result that carries a row per declared resource therefore carries what the caller has
+to act on rather than the whole table: `satz_adopt` returns the rows that ask for
+something — a decision, a state move, an import — most urgent first and at most fifty of
+them, with `rows_total`, `rows_omitted` and a `note` that states both numbers and names
+the two ways to the rest: `out`, which writes the whole report as JSON to a path under
+the root, and `satz adopt <estate>`, which prints every row in a terminal, where there
+is no limit. The trimming is in the report, not in the rendering: the text block still
+equals `structuredContent`, and both say what they leave out.
+
+`satz_report_compliance` returns the largest results — around 19,000 tokens for one
+organisation against CIS GCP 5.0 — and they grow with the estate and the catalog,
+because every control carries its witnesses. It is the whole report or nothing: an
+evidence report that omits evidence is a different document, and it is the value
+`satz report-compliance --format json` writes. Where an estate outgrows the limit, raise
+`MAX_MCP_OUTPUT_TOKENS` in the client's environment, or run the command and read the
+file it writes.
+
+`scripts/mcp-probe.py` prints each tool's largest result in bytes and in estimated
+tokens, and fails the run on one over `--limit-tokens`
 ([housekeeping](housekeeping.md#mcp-probepy--every-mcp-tool-through-the-raw-pipe)).
 
 Run the same command in a terminal to see what the client cannot show you: it holds the
