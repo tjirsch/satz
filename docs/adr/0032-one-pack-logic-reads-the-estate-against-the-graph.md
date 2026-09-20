@@ -1,6 +1,8 @@
 # 0032 — one pack logic reads the estate against the shipped graph
 
-- **Status:** accepted
+- **Status:** accepted; "until the gating migration runs" is superseded by
+  [ADR 0041](0041-satz-carries-no-code-that-rewrites-an-estate-for-a-breaking-change.md):
+  no command gates a line, the finding and `remove-pack`'s refusal state the line to write
 - **Date:** 2026-09-19
 - **Shipped in:** the release that follows
 

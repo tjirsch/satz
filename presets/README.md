@@ -1496,6 +1496,78 @@ estate, and what to write instead; the error satz prints names the file and the 
 
 ### v0.69.0
 
+**`get-presets` and `merge-presets` rewrite no estate for a breaking change.** Up to
+v0.68 they repointed a `use` of a CIS pack at its old path, moved the forks beside it,
+lifted the CIS baseline out of its block, and wrote ` when <gate>` on a pack line that
+lacked it. They do none of that now. The compile reports both forms, naming the file and
+the line, and the two entries below are the edits. The `migrated` field of
+`get-presets`' answer (`satz_get_presets`) is gone with it. What `merge-presets` does for
+a pack whose upstream CHANGED is untouched: it forks, repoints, proves and adopts as
+before.
+
+**A `use` of a CIS pack at its old path** — `presets/cis-extensions/<pack>.satz` or
+`presets/CIS-GCP-Foundation-4.0.satz` — is refused with `this pack moved to
+"presets/cis/…"`. The CIS packs live in `presets/cis/`, the baseline beside its
+extensions. Find every line, commented ones included:
+`grep -rn 'presets/cis-extensions/\|presets/CIS-GCP-Foundation' yaml/`.
+
+1. Run `satz get-presets`. It installs the packs at `presets/cis/`, and it reads the
+   estate without compiling it, so it runs while the old lines are still there.
+2. Move the estate's own files. Each `<pack>.local.satz` and `<pack>.diff.satz` in
+   `presets/cis-extensions/`, and `presets/CIS-GCP-Foundation-4.0.local.satz` with its
+   `.diff.satz`, moves to `presets/cis/` as it is (`git mv`).
+3. Delete the old pristine copies: every other file in `presets/cis-extensions/`, the
+   directory, and `presets/CIS-GCP-Foundation-4.0.satz`. The old baseline is deleted, not
+   moved: the baseline at the new path is a different shape — it declares its own
+   `google_org_policy_policy { … }`.
+4. Repoint the lines. In each line the `grep` found, change the text inside the quotes
+   and nothing else: `presets/cis-extensions/<x>` becomes `presets/cis/<x>`,
+   `presets/CIS-GCP-Foundation-4.0<…>` becomes `presets/cis/CIS-GCP-Foundation-4.0<…>`.
+   The indentation, an `as`, a `when` and the `//` of a commented line stay. Never change
+   whether a line is commented: an active baseline that comes back commented takes thirty
+   organisation policies off the organisation at the next apply, and a commented pack
+   made active deploys it.
+5. Place the baseline's line. The line of the PRISTINE baseline
+   (`use "presets/cis/CIS-GCP-Foundation-4.0.satz"`) moves out of the
+   `google_org_policy_policy { … }` block it stood in to the top level of the estate; a
+   block left with nothing in it is deleted, one that holds the estate's own policies
+   stays. The line of a FORK made at the old path (`…-4.0.local.satz`) stays inside the
+   block: that fork is still a bare list of labels, and the block is what gives them
+   their type.
+6. Check. `satz transpile <estate>.satz`, then `git diff` over the generated HCL. A pack
+   whose deleted copy was the version `get-presets` installed emits what it emitted
+   before. A copy that was behind upstream shows upstream's change in that diff; to keep
+   what the estate deployed instead, restore the deleted copy as
+   `presets/cis/<pack>.local.satz` and point the line at it. Then `satz merge-presets`,
+   and `tofu plan`.
+
+A baseline line at the top level without ` when use_cis_baseline` is the next entry.
+
+**An active line of a gated pack written without `when`** is reported by the compile as
+an `ungated-pack` finding, `satz packs` lists the line as `ungated`, and `satz
+remove-pack` refuses to switch the pack off through it. The line deploys the pack
+whatever its gate says, so a no does not switch it off.
+
+- On the line the finding names, write the line it prints:
+  `use "<path>" when <gate>`, after an `as <type>` where the line has one, before a
+  trailing comment.
+- Bind `<gate> = true` in the estate's own `params { }` — also where the library's
+  default is already `true`, because a `when` is checked where the compile meets the
+  line and the file declaring the gate may be used below it. The line deployed the pack;
+  left unbound or `false`, the gate now switches it off and the next apply destroys
+  what it deployed. If the no was meant, `satz remove-pack <estate> <gate>` switches the
+  pack off afterwards.
+- A gate whose default follows the one bound (`use_sentinel_auditlogs = use_sentinel`)
+  and that the estate leaves unbound: bind it to the value it had before the edit, so
+  nothing else switches on.
+- The other option of a choice bound `true` here (`security_model_s1` beside
+  `security_model_s2`), where the estate leaves it to a default of `true`: bind it
+  `false`.
+- A commented line is left as it is.
+- Check: `satz transpile <estate>.satz`; `main.tf`, `imports.tf` and `variables.tf` are
+  unchanged, `terraform.tfvars` changes in the gates bound, and `tofu plan` reads no
+  changes.
+
 **A pack header takes a name and a version — the word `content` is gone.**
 `pack essential_contacts_organization version "1.3" content` is refused with
 `` pack header: `content` is not a header word ``. The word marked one shipped pack

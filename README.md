@@ -935,7 +935,7 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 - GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/workflows.md](docs/workflows.md#when-upstream-stops-answering-the-github-quota).
 - Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. A changed pack the estate deploys changes the organization; `merge-presets` reports that change before any `tofu plan`. `--force` overwrites anyway, listing each in-use pack as it does.
 - `X.local.*` files have no upstream counterpart, so nothing here can touch them.
-- A pack the library **moved** is carried over here and by `merge-presets`: a `use` of the old path is refused naming the new one, and one run repoints the estate's `use` lines (a commented line stays commented, a `when <gate>` stays), moves any `.local.satz` fork and `.diff.satz` delta, installs the upstream copy at the new path and retires the old pristine copy. A pack that only moved emits what it emitted before, so the generated HCL is unchanged — see [docs/workflows.md](docs/workflows.md#when-a-release-moves-a-pack).
+- A pack the library **moved** is installed at its new path like any missing file. The copy at the old path, a `.local.satz` fork and a `.diff.satz` delta beside it, and the estate's `use` lines stay as they are: a `use` of the old path is refused naming the new one and the edit — see [docs/workflows.md](docs/workflows.md#when-a-release-moves-a-pack).
 
 ### The decisions sheet (`questions --format markdown`)
 
@@ -1353,14 +1353,9 @@ default discovery (the single `estate` .satz in yaml_dir).
 A semantic change without a version bump warns (an upstream release bug); a bump
 with identical semantics upgrades in place.
 
-**Gating.** Every active `use` of a pack the pack graph offers — or of its fork — that
-has no `when` gets ` when <gate>`, at any depth, and the gate is bound `true`, because the
-line deployed; a gate the estate answered `false` is reported as `ANSWER CHANGED`. A gate
-that follows the one bound keeps its value, and a commented line is left as it is. The
-edit is checked like a repoint: `main.tf`, `imports.tf` and `variables.tf` identical,
-`terraform.tfvars` different only in the gates bound, else everything rolls back. Two
-packs that exclude one another on two gates, both deploying, are refused before anything
-is written — see [docs/workflows.md](docs/workflows.md#when-a-pack-line-has-no-gate).
+**A pack line without its gate** is not written by this command. The compile reports an
+active `use` of a gated pack that has no `when` as an `ungated-pack` finding, which names
+the line to write — see [docs/workflows.md](docs/workflows.md#when-a-pack-line-has-no-gate).
 
 **Last, the prerequisites.** A pack the run adopts can emit a type whose role or API
 the estate does not declare yet, and so can a release whose prerequisite table grew. The
@@ -1370,8 +1365,7 @@ needs attention. Its compiles do not report that gap as a finding, so at `--vali
 error` it is written rather than refused.
 
 The exit is non-zero when anything needs attention (a fork was created or its
-upstream moved, a repoint was refused, an answer was changed by the gating, or a line
-could not be gated), so CI can gate on it.
+upstream moved, or a repoint was refused), so CI can gate on it.
 
 > **Which command when?** [docs/workflows.md](docs/workflows.md)
 > walks the whole decision — how to tell a newer preset exists, whether your copy

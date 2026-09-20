@@ -504,34 +504,30 @@ pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<Pipel
 /// path or a directory prefix ending in `/`, which covers the forks and adoption
 /// deltas beside it (`<x>.local.satz`, `<x>.diff.satz`) without a row each.
 ///
-/// The table is public because `merge-presets` repoints estate lines from exactly
-/// these entries: one table, so the migration and the refusal cannot disagree
-/// about where a pack went. Like a renamed param, an entry stays for one release
-/// line and is removed once the fleet is past it.
-#[derive(Debug)]
-pub struct MovedPack {
-    pub from: &'static str,
-    pub to: &'static str,
-    pub why: &'static str,
-    /// The file at `to` is not a copy of the one at `from` — the same release
-    /// reshaped it, so an old copy that differs is stale rather than a fork worth
-    /// keeping. `merge-presets` reads this to decide between retiring a pristine
-    /// copy and preserving it as an explicit fork.
-    pub reshaped: bool,
+/// A `use` of a moved path is refused, and the refusal is the whole of it: satz
+/// rewrites no estate for a move. `edit` is the hand edit the refusal names, and
+/// `presets/README.md` under `## Breaking changes` carries the same steps in full.
+/// Like a renamed param, an entry stays for one release line and is removed once
+/// the fleet is past it.
+struct MovedPack {
+    from: &'static str,
+    to: &'static str,
+    why: &'static str,
+    edit: &'static str,
 }
 
-pub const MOVED_PACKS: &[MovedPack] = &[
+const MOVED_PACKS: &[MovedPack] = &[
     MovedPack {
         from: "presets/cis-extensions/",
         to: "presets/cis/",
         why: "the CIS packs live in one folder, the baseline beside the extensions it gates",
-        reshaped: false,
+        edit: "Change the path inside the quotes and nothing else on this line; a `.local.satz` fork and its `.diff.satz` move to the new folder as they are, and the pristine copy at the old path is deleted",
     },
     MovedPack {
         from: "presets/CIS-GCP-Foundation-4.0.satz",
         to: "presets/cis/CIS-GCP-Foundation-4.0.satz",
-        why: "the CIS packs live in one folder, and the baseline declares its own `google_org_policy_policy { … }` now, so it is `use`d bare at the top level",
-        reshaped: true,
+        why: "the CIS packs live in one folder, and the baseline declares its own `google_org_policy_policy { … }` now",
+        edit: "Change the path inside the quotes, and move the line of the pristine baseline out of `google_org_policy_policy { … }` to the top level; the line of a `.local.satz` fork stays inside the block, and the fork and its `.diff.satz` move to the new folder as they are. The pristine copy at the old path is deleted, not moved",
     },
 ];
 
@@ -542,7 +538,7 @@ pub const MOVED_PACKS: &[MovedPack] = &[
 /// `<stem>.diff.satz`, its adoption delta — because a fork left behind at the old
 /// path is the worst case of all: nothing would refuse it, and the estate would
 /// compile that copy forever.
-pub fn moved_to(use_path: &str) -> Option<(String, &'static MovedPack)> {
+fn moved_to(use_path: &str) -> Option<(String, &'static MovedPack)> {
     MOVED_PACKS.iter().find_map(|m| {
         if let Some(rest) = m.from.strip_suffix('/') {
             return use_path
@@ -573,8 +569,8 @@ fn moved_pack(use_path: &str, file: &str, line: usize) -> Option<PipelineError> 
         file: file.to_string(),
         line,
         msg: format!(
-            "use \"{}\": this pack moved to \"{}\" — {}. Run `satz get-presets`, then `satz merge-presets`: together they repoint this line and carry over any `.local.satz` fork beside it.",
-            use_path, to, m.why
+            "use \"{}\": this pack moved to \"{}\" — {}. {}. Commenting the line out instead takes what the pack deploys off the organisation at the next apply. `satz get-presets` installs the pack at its new path; `## Breaking changes` in presets/README.md has every step.",
+            use_path, to, m.why, m.edit
         ),
     })
 }
@@ -2187,7 +2183,7 @@ google_org_policy_policy {
 
     /// A moved pack is refused wherever it is `use`d, and whether or not its gate
     /// holds. A line gated off still names a path whose local copy nothing will
-    /// update again, so letting it pass would migrate the fleet in two rounds:
+    /// update again, so letting it pass would leave the hand edit in two rounds:
     /// one for the lines that are on, another whenever somebody answers yes.
     #[test]
     fn a_moved_pack_is_refused_at_every_use_site() {
@@ -2218,11 +2214,12 @@ google_org_policy_policy {
                 err.msg
             );
             assert!(
-                err.msg.contains("satz merge-presets"),
-                "{}: the refusal must name the command that migrates it — got {}",
+                err.msg.contains("Change the path inside the quotes") && err.msg.contains("## Breaking changes"),
+                "{}: the refusal must say what to edit and where the steps are — got {}",
                 form,
                 err.msg
             );
+            assert!(!err.msg.contains("merge-presets"), "{}: no command migrates a moved pack — got {}", form, err.msg);
         }
     }
 

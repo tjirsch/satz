@@ -740,60 +740,23 @@ have is refused before anything changes.
 ### When a pack line has no gate
 
 Every pack but `estate-core` and the map is switched by a gate, and a no switches it
-off only through a line written `use "…" when <gate>`. An estate that adopted its packs
-as plain `use` lines deploys them whatever the answer says. `merge-presets` gates them:
+off only through a line written `use "…" when <gate>`. An active line of such a pack
+written without `when` deploys the pack whatever the answer says. The compile reports
+each one as an `ungated-pack` finding with its file and line, `satz packs` lists the
+line as `ungated`, and `satz remove-pack` refuses to switch the pack off through it.
 
-- every active `use` of a pack the graph offers — or of its `.local.satz` fork — that has
-  no `when`, at the top level, in a folder or in a resource map, gets ` when <gate>`,
-  where the file declaring the gate is used and the copy the estate uses declares it; a
-  line that cannot be gated is named and left;
-- each such gate is bound `true` in the estate's `params`, because the line deployed.
-  A gate the estate answered `false` is overwritten and reported as `ANSWER CHANGED`,
-  with the command that switches the pack off; a gate left to its default is bound too,
-  because a `when` is checked where the compile meets the line and an older estate
-  often uses the map below it;
-- a gate that follows the one bound (`use_sentinel_auditlogs = use_sentinel`) and that
-  the estate leaves unbound is bound to the value it had, and the other option of a
-  choice bound true here is bound false — so nothing else switches on;
-- a commented line is left as it is, `//` and all.
-
-It refuses, before anything is written, while two packs that exclude one another on two
-gates both deploy — the two security models, or a dry run beside its enforcing pack —
-naming both. The two spellings of one model on one gate are gated together.
-
-The emission does not move, and the run proves it the way it proves a fork repoint:
-`main.tf`, `imports.tf` and `variables.tf` are identical, and `terraform.tfvars`
-differs only in the lines of the gates it bound, which no emitted resource reads.
-Anything else rolls the whole run back. `--report-only` prints the lines it would gate
-and the gates it would bind; with `--adopt` the gating is deferred to a run without it.
-A second run finds nothing to gate.
+The finding names both halves of the edit: write `use "<path>" when <gate>` on that
+line, and bind `<gate> = true` in the estate's own `params { }`. The line deploys the
+pack, and the binding keeps it deploying once the gate decides; `satz remove-pack` is
+what switches it off afterwards. No command writes the `when`.
 
 ### When a release moves a pack
 
-A `use` of a path the library moved is **refused**, naming the path the pack lives at
-now. It has to be: the old file is still in the estate's `presets/`, so following it
-would compile a copy nothing updates again, frozen at the version it had the day the
-library moved.
-
-One pass carries an estate over:
-
-```bash
-satz --config <estate-dir> get-presets
-satz --config <estate-dir> merge-presets
-satz --config <estate-dir> transpile <estate>.satz
-git -C <estate-dir> diff        # the generated HCL must be unchanged
-```
-
-`merge-presets` repoints every `use` — a line still commented stays commented, an
-indentation stays, a `when <gate>` stays — moves a `.local.satz` fork and its
-`.diff.satz` delta to the new path, installs the upstream copy there, retires the
-pristine copy at the old path and removes the directory left empty. It prints every
-line it changed, before and after; a line it could not rewrite is named as needing a
-hand edit. A pristine copy someone had edited is kept as an explicit `.local.satz`
-fork rather than dropped. Running it twice changes nothing the second time.
-
-The generated HCL is the check that matters: a pack that only moved emits exactly what
-it emitted before, so `tofu plan` reads no changes.
+A `use` of a path the library moved is **refused**, naming the file and the line, the
+path the pack lives at now and the edit. The old file is still in the estate's
+`presets/`, so following it would compile a copy nothing updates again, at the version
+it had when the library moved it. No command rewrites the line or moves the files
+beside it: the steps are in [Breaking changes](../presets/README.md#breaking-changes).
 
 ### Is it stale, or edited?
 

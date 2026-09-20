@@ -1,6 +1,11 @@
 # 0033 — the gating migration binds what deployed
 
-- **Status:** accepted
+- **Status:** superseded by
+  [ADR 0041](0041-satz-carries-no-code-that-rewrites-an-estate-for-a-breaking-change.md):
+  `merge-presets` gates no line and binds no gate. What this record found about the edit —
+  bind the gate `true` where the line deployed, a default included, keep a follower at its
+  value, bind the other option of a choice false — is the hand edit in `presets/README.md`
+  under `## Breaking changes`
 - **Date:** 2026-09-19
 - **Shipped in:** the release that follows
 
