@@ -163,9 +163,12 @@ move to the service account, and only then does a pack go in — one at a time, 
 own plan. Answering a pack's question `true` switches its line on — uncommented, or written
 where the pack graph places it; `satz add-pack` does the same by the pack's gate or path, and
 first refuses while a pack it needs is off; `satz merge-presets` writes the line for a pack the
-library has gained since; and the compile reports a question answered `true` whose line is
-still commented or missing, so they never drift apart. `satz packs` lists every pack with its
-answer, its line and what it needs.
+library has gained since; and the compile reports a question **this estate** has answered
+`true` whose line is still commented or missing, so they never drift apart. An answer is a
+binding in the estate's own `params {}`; a default in the map or in a pack is what the
+library proposes, so a skeleton that has answered nothing compiles clean at every
+validation level. `satz packs` lists every pack with its answer, the library's default,
+its line and what it needs.
 
 Then the interview:
 

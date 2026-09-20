@@ -1576,14 +1576,18 @@ default reads them — the runner grant with `ci_runner_service_account` bound t
 that another estate runs. An `asks` edge decides when a question is asked and is no
 requirement.
 
-The compile reports, from the same logic: a gate answered `true` whose line is commented
-or absent — skipping a line written `by_hand`, and counting a pack as used when an
-`excludes` neighbour on the same gate is; an active line of a gated pack without its
+The compile reports, from the same logic: a gate **the estate itself binds** `true` whose
+line is commented or absent — skipping a line written `by_hand`, and counting a pack as
+used when an `excludes` neighbour on the same gate is. A default in the map or in a pack
+is the library's proposal and not this estate's answer, so a skeleton that has answered
+nothing compiles clean at every validation level and `satz packs` is where the proposals
+are read. Then: an active line of a gated pack without its
 `when`, where the gate is declared; a pack that deploys while something it needs is off;
 and, as an error before the fold, two packs on two gates that exclude one another both
 deploying — a dry-run twin beside its enforcing pack named as the decision it is. A compile that stops
-on `unknown param` adds the requirement that is off. With no graph there, the compile
-notes it once and skips those checks.
+on `unknown param` adds the requirement that is off, inside the refusal itself, so the
+file and line it names stay with it and an editor marks that line. With no graph there,
+the compile notes it once and skips those checks.
 
 `check-presets` reports a map whose entries changed like one whose questions changed:
 the map emits the same, so the estate is not forked, and the change is listed.

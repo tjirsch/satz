@@ -1513,10 +1513,13 @@ Protocol over stdio. What the editor gets is what satz knows, from satz's own fr
   has no estate of its own: its pipeline diagnostics come from the `estate` files beside
   it that name it. Everything `transpile --check` checks is in — a required attribute
   the provider needs, a reference to a resource the estate does not emit, an IaC role
-  the service account lacks, a pack a true answer asks for that is still commented out,
+  the service account lacks, a pack the estate's own true answer asks for that is still
+  commented out,
   a resource outside the project its type takes, a `deployment_mode` other than `local`
   or `cloud`, a `cloud` one without `svc_iac_account` and `infra_project_name`, the actions and passthrough blocks the compile warns about — each at the
-  line it names, as a warning or an error.
+  line it names, as a warning or an error. A compile that stops on `unknown param` carries
+  the requirement the pack graph says is off, in the refusal itself, so it is marked at
+  the line that refused.
 - **Completion.** Inside a resource type, its attributes and nested blocks (from the
   provider schema in `schema_dir`), then `use`, then every resource type; at the top
   level the statements and every type; after `=`, the params in scope with their values,
