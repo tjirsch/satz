@@ -502,6 +502,14 @@ using the pack has to bind all thirteen before `bootstrap` or `transpile --apply
 none of the thirteen needs a typed value. The technical defaults (protocol-forwarding
 schemes, the contacts domain) are not asked. See [satz interview](../docs/interview.md).
 
+**Notice.** Once the baseline is switched on, `satz adopt <estate> --execute --import`
+is to run before the apply: Google sets some of these policies on every new organisation,
+and an apply that creates a policy that exists stops on `409 POLICY_ALREADY_EXISTS`. satz
+prints that notice when the pack goes on and warns at its `use` line until the estate
+binds `cis_baseline_adopted = true`, which the adopt run does itself; `transpile --apply`
+and `bootstrap` refuse while it is open. Every org-policy extension carries the same
+notice on its own param — each is adopted when it is switched on.
+
 **Cross-org grants** need the other organization in
 `allowed_policy_member_principal_sets`, beside the estate's own. Example (a lab org
 administered by the parent org's staff):
@@ -975,6 +983,33 @@ the prompt becomes the generated `variables.tf` description. `check-presets` rep
 pack whose questions changed as `questions`, not as drift: its HCL is identical, so the
 estate is not forked, and the change — a `recreate → edit` downgrade included — is
 still listed.
+
+## Notices
+
+A pack can name ONE command to run once it is switched on, beside its questions:
+
+```
+params {
+  cis_baseline_adopted = false
+}
+
+notice cis_baseline_adopted {
+  text   = "Google sets some of these policies on every new organisation …"
+  run    = "satz adopt <estate> --execute --import"
+  before = apply
+}
+```
+
+satz shows it when the pack goes on — the interview's yes, `satz add-pack`,
+`merge-presets` bringing the pack in — and the compile warns at the estate's `use` line
+until the estate binds the param `true`. `before = apply` makes `transpile --apply` and
+`bootstrap` refuse while it is open. The param is the notice's alone: declared `false` in
+the same pack, asked by no question, read by nothing, and never emitted — binding it
+moves no line of the HCL. `satz packs` lists every pack's notices with their state, and
+`satz doc-packs` gives a pack a Notices section.
+
+The CIS org-policy packs carry one each, naming `satz adopt`; a run over every resource
+type that resolves everything binds their params itself.
 
 ## Superseded legacy constraints
 
@@ -1462,6 +1497,22 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.15 | 2026-09-19 | a `notice`: once the baseline is switched on, `satz adopt <estate> --execute --import` is to run before the apply — Google sets some of these policies on every new organisation, and the first apply of the 2026-09-17 onboarding stopped on `409 POLICY_ALREADY_EXISTS` for `compute.managed.restrictProtocolForwardingCreationForTypes`. The estate acknowledges it with `cis_baseline_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.block_project_ssh_keys` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_block_project_ssh_keys_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.shielded_vm` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_require_shielded_vm_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.dns_logging` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_dns_logging_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.confidential_computing` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_confidential_computing_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.cloud_sql` | 1.2 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_cloud_sql_hardening_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.cmek` | 1.2 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_cmek_required_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.api_key_services` | 1.2 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_api_key_services_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.bucket_retention` | 1.3 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_bucket_retention_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_cloud_sql_iam_and_deletion_protection_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
+| `cis_extensions.block_project_ssh_keys_dry_run` | 1.1 | 2026-09-19 | GENERATED from `block-project-ssh-keys.satz` 1.1: the same notice, on its own param `cis_block_project_ssh_keys_dry_run_adopted`, because the twin is switched on on its own |
+| `cis_extensions.confidential_computing_dry_run` | 1.1 | 2026-09-19 | GENERATED from `confidential-computing.satz` 1.1: the same notice, on its own param `cis_confidential_computing_dry_run_adopted`, because the twin is switched on on its own |
+| `cis_extensions.cloud_sql_dry_run` | 1.2 | 2026-09-19 | GENERATED from `cloud-sql.satz` 1.2: the same notice, on its own param `cis_cloud_sql_hardening_dry_run_adopted`, because the twin is switched on on its own |
+| `cis_extensions.api_key_services_dry_run` | 1.2 | 2026-09-19 | GENERATED from `api-key-services.satz` 1.2: the same notice, on its own param `cis_api_key_services_dry_run_adopted`, because the twin is switched on on its own |
+| `cis_extensions.bucket_retention_dry_run` | 1.3 | 2026-09-19 | GENERATED from `bucket-retention.satz` 1.3: the same notice, on its own param `cis_bucket_retention_dry_run_adopted`, because the twin is switched on on its own |
+| `cis_extensions.cloud_sql_iam_and_deletion_protection_dry_run` | 1.1 | 2026-09-19 | GENERATED from `cloud-sql-iam-and-deletion-protection.satz` 1.1: the same notice, on its own param `cis_cloud_sql_iam_and_deletion_protection_dry_run_adopted`, because the twin is switched on on its own |
 | `exemptions.exemption_tag` | 2.0 | 2026-09-13 | one value per exemption CLASS instead of a single `not_enforced`: `service-account-keys`, `public-endpoint`, `public-storage`, `vm-image`, `vm-access`, `data-residency`, `encryption`, `network-appliance`. IAM is set on a tag VALUE, so one blanket value meant anyone allowed to exempt anything could exempt everything — the team needing a public bucket could switch off customer-managed encryption just as easily. The classes are deliberately narrow: a wide class is a grant that hands over more than the person asking described. Audit logging, flow logs, DNS logging and domain-restricted sharing carry NO class on purpose — exempting the record of what happened, or letting an outside identity in, is a decision for whoever owns the baseline, not a delegation. The `enforced` value is GONE: its only job was leaving a trace instead of deleting a binding, which the estate's own history already does, and it had no meaning once values became classes |
 | `CIS_GCP_Foundation_4_0` | 2.14 | 2026-09-17 | the pack declares its own `google_org_policy_policy { … }` and is `use`d bare at the top level, gated on `use_cis_baseline`, exactly like every CIS extension. Nothing emitted changes — both `use` forms resolve to the same addresses and the same manifest — so an estate's plan does not move. What changes is that the baseline is a pack like the others: the interview can switch it on, the compile reports it when its answer is true and its line is not in, and satz-studio lists it. An estate that keeps the old `google_org_policy_policy { use … }` wrapper is refused, because as a map's content the pack's type key would be read as a label and the whole baseline would collapse into one resource |
 | `CIS_GCP_Foundation_4_0` | 2.13 | 2026-09-13 | claims CIS 5.0 §2.14, Cloud Asset Inventory enabled — the last technical control of CIS 5.0 with no claim anywhere in the library. The estate already satisfied it: the scaffold enables `cloudasset.googleapis.com` in every infrastructure project, so the witness is the scaffold's own `google_project_service.infra_cloudasset_googleapis_com` rather than a second `google_project_service` declared here — two resources enabling one API on one project is a duplicate, not a merge. The address depends on the `infra` project label, which is already a contract (`bootstrap` imports by it) and is now held by the init-template test, so renaming it breaks a test rather than a customer's report |

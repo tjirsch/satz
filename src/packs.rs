@@ -205,6 +205,21 @@ impl Library {
             let file = satz_core::satz::parse(&text).map_err(|e| format!("{}:{}: {}", path.display(), e.line, e.msg))?;
             files.insert(p.to_string(), file);
         }
+        // A `.local` fork carries its own notices — an estate that uses the fork is asked
+        // what the fork says, which is what the compile walks. One that does not read is
+        // left out: the estate naming it does not compile either, and the row then says
+        // what the pristine pack carries.
+        for n in &graph.nodes {
+            let rel = n.path.strip_prefix("presets/").unwrap_or(&n.path);
+            let fork = crate::presets::fork_sibling(Path::new(rel));
+            let path = presets_dir.join(&fork);
+            if !path.exists() {
+                continue;
+            }
+            if let Ok(file) = crate::fsx::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| satz_core::satz::parse(&t).map_err(|e| e.msg)) {
+                files.insert(format!("presets/{}", crate::fsx::slash(&fork)), file);
+            }
+        }
         Ok(Library { files })
     }
 }
@@ -572,7 +587,41 @@ impl<'a> View<'a> {
                 .collect(),
             excludes: self.graph.excluded_by(&n.path).iter().map(|m| m.path.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
             by_hand: n.by_hand.clone(),
+            notices: self.notices(n, line),
             findings: findings.iter().filter(|(p, _)| p == &n.path).map(|(_, f)| f.message.clone()).collect(),
+        }
+    }
+
+    /// The notices of the file this estate uses for `n`: its `.local` fork's where the
+    /// line names one and the fork was read, the pack's own otherwise.
+    fn notices(&self, n: &Node, line: Option<&UseLine>) -> Vec<crate::notices::NoticeRow> {
+        let ack = |param: &str| self.own.get(param).and_then(|v| self.eval(v, 0)) == Some(true);
+        let fork = line.filter(|l| l.written != n.path).and_then(|l| self.lib.files.get(&l.written).map(|f| (l.written.clone(), f)));
+        match fork {
+            Some((path, f)) => f
+                .notices
+                .iter()
+                .map(|x| crate::notices::NoticeRow {
+                    param: x.param.clone(),
+                    pack: path.clone(),
+                    text: x.text.clone(),
+                    run: x.run.clone(),
+                    before: x.before.clone(),
+                    acknowledged: ack(&x.param),
+                })
+                .collect(),
+            None => n
+                .notices
+                .iter()
+                .map(|x| crate::notices::NoticeRow {
+                    param: x.param.clone(),
+                    pack: n.path.clone(),
+                    text: x.text.clone(),
+                    run: x.run.clone(),
+                    before: x.before.clone(),
+                    acknowledged: ack(&x.param),
+                })
+                .collect(),
         }
     }
 
@@ -663,6 +712,10 @@ pub(crate) struct PackRow {
     /// the line is written by hand, never by satz; why
     #[serde(skip_serializing_if = "Option::is_none")]
     pub by_hand: Option<String>,
+    /// what the pack asks to be run once it is on; open while it `deploys` and the notice
+    /// is not `acknowledged`
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<crate::notices::NoticeRow>,
     /// the compile's findings about this pack
     pub findings: Vec<String>,
 }
@@ -774,6 +827,14 @@ pub(crate) fn render_text(r: &PacksReport) -> String {
         if let Some(h) = &p.by_hand {
             s.push_str(&format!("    written by hand: {}\n", h));
         }
+        for n in &p.notices {
+            let state = match (p.deploys, n.acknowledged) {
+                (_, true) => "acknowledged",
+                (true, false) => "OPEN",
+                (false, false) => "when on",
+            };
+            s.push_str(&format!("    notice {} — run `{}`, then bind `{} = true`\n", state, n.run, n.param));
+        }
     }
     if !r.unmanaged.is_empty() {
         s.push_str("\nunmanaged — used here, unknown to the pack graph:\n");
@@ -813,6 +874,14 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
                 cell(&needs.join("; ")),
                 cell(&p.required_by.join(", ")),
             ));
+        }
+    }
+    let open: Vec<&crate::notices::NoticeRow> =
+        r.packs.iter().filter(|p| p.deploys).flat_map(|p| p.notices.iter().filter(|n| !n.acknowledged)).collect();
+    if !open.is_empty() {
+        s.push_str("\n## Open notices\n\n");
+        for n in open {
+            s.push_str(&format!("- `{}`: {} Run `{}`, then bind `{} = true`.\n", n.pack, cell(&n.text), n.run, n.param));
         }
     }
     if !r.unmanaged.is_empty() {
@@ -1249,6 +1318,9 @@ pub(crate) struct PackChange {
     pub left: Vec<String>,
     /// the questions the switch opened: the estate has to answer them now
     pub opened: Vec<String>,
+    /// the notices the switch opened: the command each pack names, to run now, and the
+    /// param that acknowledges it
+    pub notices: Vec<crate::notices::NoticeRow>,
 }
 
 /// The nodes `arg` names: one pack by path (`presets/…`, the path without `presets/`,
@@ -1366,6 +1438,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
     // the questions as they stand, for the choices and for what opens
     let rows = crate::questions::questions_report(estate, runtime)?;
     let asked: BTreeSet<String> = rows.questions.iter().filter(|q| q.state != "not-applicable").map(|q| q.subject.clone()).collect();
+    let open_before = crate::notices::open(estate, runtime)?;
     let mut change = PackChange { estate: estate.display().to_string(), action: "add", left, ..PackChange::default() };
     let mut src = before.clone();
     let yes = serde_yaml::Value::Bool(true);
@@ -1405,6 +1478,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
     }
     let after = crate::questions::questions_report(estate, runtime)?;
     change.opened = after.questions.iter().filter(|q| q.state == "unanswered" && !asked.contains(&q.subject)).map(|q| q.subject.clone()).collect();
+    change.notices = crate::notices::opened(&open_before, &crate::notices::open(estate, runtime)?);
     Ok(change)
 }
 
@@ -1537,6 +1611,7 @@ pub(crate) fn render_change(c: &PackChange) -> String {
             c.estate
         ));
     }
+    s.push_str(&crate::notices::render(&c.notices));
     s
 }
 

@@ -282,6 +282,25 @@ pub(crate) fn review(
         ));
     }
 
+    // the notices the pack carries: what an operator is told to run once it is on, and
+    // what holds the apply back until the estate acknowledges it
+    if let Ok(file) = crate::fsx::read_to_string(&pack).map_err(|e| e.to_string()).and_then(|t| satz_core::satz::parse(&t).map_err(|e| e.msg)) {
+        for n in &file.notices {
+            f.push(at(
+                &pack,
+                Some(n.line as u32),
+                Severity::Note,
+                format!(
+                    "notice `{}`: once the pack is on, `{}` is to run{} — the estate acknowledges it with `{} = true`",
+                    n.param,
+                    n.run,
+                    if n.before.as_deref() == Some("apply") { ", and apply and bootstrap refuse until then" } else { "" },
+                    n.param
+                ),
+            ));
+        }
+    }
+
     // 6. blocking questions: a question with no possible default is what a customer
     //    must type, and naming them is half of what a pack author is reviewing.
     if let Ok(report) = crate::questions::questions_report(&estate, runtime_config) {

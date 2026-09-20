@@ -239,6 +239,27 @@ bootstrap or apply**; `summary.complete` says whether they are.
 
 A question must be declared in the same file as the param it answers.
 
+**A notice is not a question.** A pack can name one command to run once it is switched
+on — the CIS org-policy packs name `satz adopt <estate> --execute --import`:
+
+```satz
+pack cis_baseline version "2.15"
+
+params { cis_baseline_adopted = false }
+
+notice cis_baseline_adopted {
+  text   = "Google sets some of these policies on every new organisation …"
+  run    = "satz adopt <estate> --execute --import"
+  before = apply
+}
+```
+
+`satz_interview` and `satz_add_pack` return what their call opened in `notices`. Tell the
+human the command and let them run it; when it has run, acknowledge it with
+`satz_interview` `answers: {<param>: true}` — never before. Until then the compile warns
+and apply and bootstrap refuse. `satz_packs` shows every pack's notices with
+`acknowledged`.
+
 **Interviewing a customer** is `satz_interview`: the open questions with their offers;
 `create: true` writes a new estate from `presets/estate-core.satz` first; `answers:
 {subject: value}` writes what was decided (a `oneof` takes the chosen option's name) and
@@ -351,6 +372,7 @@ recoverable: say what you would need and why, rather than retrying the same call
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |
 | a question names no local param | a question must travel with the param it answers |
+| `N notice(s) open` | a pack asks for a command to be run now; run it, then bind its param `true` |
 | the IaC service account … lacks roles | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run `satz update-prerequisites <estate>` |
 | … API(s) this estate's resources need are not enabled on … | a resource type the estate emits is served by an API no `project_service` entry of the infrastructure project enables; add it to that list, or run `satz update-prerequisites <estate>` |
 

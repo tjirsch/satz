@@ -20,6 +20,7 @@
   "claim"
   "question" "oneof"
   "action"
+  "notice"
   "suppress" "role"
   "hcl" "trust"
 ] @keyword
@@ -36,6 +37,7 @@
 (header name: (identifier) @title)
 (param name: (identifier) @variable)
 (question name: (identifier) @variable)
+(notice name: (identifier) @variable)
 (use_statement type: (identifier) @type)
 (use_statement condition: (identifier) @variable)
 (suppress type: (identifier) @type)

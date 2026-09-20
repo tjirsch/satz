@@ -11,7 +11,7 @@
 
 use crate::doc_packs;
 use crate::template;
-use satz_core::pack_graph::{Edge, EdgeKind, Node, PackGraph, Role, Source};
+use satz_core::pack_graph::{Edge, EdgeKind, Node, Notice, PackGraph, Role, Source};
 use satz_core::satz::{File, OffersDecl, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -32,6 +32,14 @@ pub(crate) struct Finding {
 
 fn finding(check: u8, text: String) -> Finding {
     Finding { check, text }
+}
+
+/// A file's `notice` statements, as the graph carries them.
+fn notices_of(f: &File) -> Vec<Notice> {
+    f.notices
+        .iter()
+        .map(|n| Notice { param: n.param.clone(), text: n.text.clone(), run: n.run.clone(), before: n.before.clone() })
+        .collect()
 }
 
 /// A library path as a `use` line names it.
@@ -75,6 +83,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             after_scaffold: false,
             by_hand: None,
             location: None,
+            notices: notices_of(core),
         });
     }
     let own = map.offers.iter().position(|o| o.path == map_path);
@@ -92,6 +101,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             after_scaffold: false,
             by_hand: None,
             location: None,
+            notices: notices_of(map),
         });
     }
     let mut entries: Vec<&OffersDecl> = Vec::new();
@@ -166,6 +176,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             after_scaffold: o.after_scaffold,
             by_hand: o.by_hand.clone(),
             location: Some(at_map(o.line)),
+            notices: notices_of(file),
         });
     }
     // check 1: every library file is a node
@@ -303,8 +314,60 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
         (index[a.from.as_str()], a.kind, index[a.to.as_str()], a.source).cmp(&(index[b.from.as_str()], b.kind, index[b.to.as_str()], b.source))
     });
     let graph = PackGraph { nodes, edges };
+    findings.extend(check_notices(&graph, &by_path, &declared));
     findings.extend(check(&graph));
     Ok((graph, findings))
+}
+
+/// Check 9: a notice sits on a gated pack the map offers — it is shown when that pack is
+/// switched on — and its param is the notice's alone: declared by that pack only, asked
+/// by no question, no gate, and read by no file, because an acknowledgement is never
+/// emitted and binding it must change nothing a pack builds.
+fn check_notices(g: &PackGraph, by_path: &BTreeMap<String, &File>, declared: &BTreeMap<&str, Vec<(&str, usize, &Value)>>) -> Vec<Finding> {
+    let mut out = Vec::new();
+    // every param a library file reads, with the first file and line that reads it
+    let mut reads: BTreeMap<String, String> = BTreeMap::new();
+    for (path, f) in by_path {
+        let mut r = doc_packs::Refs::new();
+        f.items.iter().for_each(|e| doc_packs::refs_in_entry(e, &mut r));
+        for (_, v, line) in &f.params {
+            doc_packs::refs_in_value(v, *line, &mut r);
+        }
+        for a in &f.actions {
+            a.args.iter().chain(&a.execute_args).for_each(|p| doc_packs::refs_in_str(p, a.line, &mut r));
+        }
+        for (param, line) in r {
+            reads.entry(param).or_insert_with(|| format!("{}:{}", path, line));
+        }
+    }
+    for n in &g.nodes {
+        for x in &n.notices {
+            let at = format!("{}: the notice `{}`", n.path, x.param);
+            if n.role != Role::Pack || n.gate.is_none() {
+                out.push(finding(9, format!("{} — a notice is shown when a pack is switched on, so only a gated pack the map offers carries one", at)));
+            }
+            let elsewhere: Vec<String> = declared
+                .get(x.param.as_str())
+                .map(|d| d.iter().filter(|(p, _, _)| *p != n.path).map(|(p, l, _)| format!("{}:{}", p, l)).collect())
+                .unwrap_or_default();
+            if !elsewhere.is_empty() {
+                out.push(finding(9, format!("{} — its param is declared again at {}; it belongs to the notice alone", at, elsewhere.join(", "))));
+            }
+            let asked = by_path.iter().find(|(_, f)| {
+                f.questions.iter().any(|q| q.subject == x.param || q.options.iter().any(|o| o.param == x.param))
+            });
+            if let Some((p, _)) = asked {
+                out.push(finding(9, format!("{} — {} asks its param as a question; an acknowledgement is no customer decision", at, p)));
+            }
+            if g.nodes.iter().any(|m| m.gate.as_deref() == Some(x.param.as_str())) {
+                out.push(finding(9, format!("{} — its param is a pack's gate", at)));
+            }
+            if let Some(site) = reads.get(&x.param) {
+                out.push(finding(9, format!("{} — {} reads its param; an acknowledgement is never emitted, so nothing may read it", at, site)));
+            }
+        }
+    }
+    out
 }
 
 /// Checks 3 to 8 over a built graph (1 and 2 are found while building it).
@@ -761,5 +824,25 @@ mod tests {
             "offers \"presets/a.satz\" {\n  when = use_a\n}\n\noffers \"presets/b.satz\" {\n  when     = use_b\n  requires = [\"presets/a.satz\"]\n}\n",
         );
         assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", A), ("b.satz", B_READS_A)]), vec![8]);
+    }
+
+    #[test]
+    fn check_9_a_notice_on_a_gated_pack_whose_param_nothing_else_touches() {
+        let a = "pack a version \"1.0\"\n\nparams {\n  a_adopted = false\n}\n\nnotice a_adopted {\n  text = \"t\"\n  run  = \"satz adopt <estate> --execute --import\"\n}\n";
+        let m = map("  use_a = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n");
+        let (g, found) = build(&lib(&[("estate-map.satz", &m), ("a.satz", a)])).unwrap();
+        assert!(found.is_empty(), "{:?}", found);
+        let node = g.nodes.iter().find(|n| n.path == "presets/a.satz").unwrap();
+        assert_eq!(node.notices.len(), 1, "the graph carries the notice for every reader");
+        // read by another pack, and declared again there
+        let b = "pack b version \"1.0\"\n\nparams {\n  b_value = \"{a_adopted}\"\n}\n";
+        let m2 = map("  use_a = true\n  use_b = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n\noffers \"presets/b.satz\" {\n  when = use_b\n}\n");
+        assert_eq!(checks(&[("estate-map.satz", &m2), ("a.satz", a), ("b.satz", b)]), vec![9]);
+        let c = "pack c version \"1.0\"\n\nparams {\n  a_adopted = false\n}\n";
+        let m3 = map("  use_a = true\n  use_c = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n\noffers \"presets/c.satz\" {\n  when = use_c\n}\n");
+        assert!(checks(&[("estate-map.satz", &m3), ("a.satz", a), ("c.satz", c)]).contains(&9));
+        // on the day-0 pack, which nothing switches on
+        let core = "pack estate_core version \"1.0\"\n\nparams {\n  x_adopted = false\n}\n\nnotice x_adopted {\n  text = \"t\"\n  run  = \"r\"\n}\n";
+        assert_eq!(checks(&[("estate-map.satz", &map("  use_a = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n")), ("a.satz", A), ("estate-core.satz", core)]), vec![9]);
     }
 }

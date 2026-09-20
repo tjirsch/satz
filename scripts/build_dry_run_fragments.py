@@ -89,7 +89,12 @@ def derive(src_text: str, stem: str, param: str, source: str) -> str:
     if n == 0:
         raise SystemExit(f"{source}: no enforcing `spec {{` block to make a dry run of")
 
-    head = HEADER.format(source=source, stem=stem, param=param, enforcing=param.removesuffix("_dry_run"))
+    # The source's notice asks for `satz adopt` once it is on; the twin is switched on
+    # on its own, so it carries the same notice on its own param.
+    enforcing = param.removesuffix("_dry_run")
+    body = body.replace(f"{enforcing}_adopted", f"{param}_adopted")
+
+    head = HEADER.format(source=source, stem=stem, param=param, enforcing=enforcing)
     return f"{head}pack {pack_name}_dry_run version {pack_version}\n{body.rstrip()}\n"
 
 

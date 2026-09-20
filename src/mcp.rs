@@ -327,6 +327,10 @@ pub(crate) struct InterviewReport {
     /// `init` would have named it. `git mv` to this and set the `estate` line.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rename_to: Option<String>,
+    /// The notices this call's answers opened, by switching a pack on: the command each
+    /// names, to run now, and the param that acknowledges it — answered `true` through
+    /// `answers` once it has run. Shown once: a later call returns only what it opens.
+    pub notices: Vec<crate::notices::NoticeRow>,
     #[serde(flatten)]
     pub report: crate::questions::QuestionsReport,
 }
@@ -1214,10 +1218,15 @@ impl SatzMcp {
             created = true;
         }
         let mut written = 0;
+        let mut notices = Vec::new();
         if !args.answers.is_empty() || args.accept_defaults {
             if let Err(r) = self.permits(Group::Write) {
                 return Ok(Err(r));
             }
+            let open_before = match crate::notices::open(&estate, &open.runtime) {
+                Ok(n) => n,
+                Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
+            };
             let mut answers = BTreeMap::new();
             for (k, v) in &args.answers {
                 match serde_yaml::to_value(v) {
@@ -1227,6 +1236,10 @@ impl SatzMcp {
             }
             written = match crate::interview::apply(&estate, &open.runtime, &answers, args.accept_defaults) {
                 Ok(n) => n,
+                Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
+            };
+            notices = match crate::notices::open(&estate, &open.runtime) {
+                Ok(now) => crate::notices::opened(&open_before, &now),
                 Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
             };
         }
@@ -1239,7 +1252,7 @@ impl SatzMcp {
             // The summary stays whole: it describes the estate, not the filter.
             report.questions.retain(|q| q.state == "unanswered");
         }
-        Ok(Ok(Json(InterviewReport { created, written, rename_to, report })))
+        Ok(Ok(Json(InterviewReport { created, written, rename_to, notices, report })))
     }
 
     #[tool(

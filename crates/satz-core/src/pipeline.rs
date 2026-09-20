@@ -180,6 +180,27 @@ pub struct FrontEnd {
     /// Declared `question`s from the estate and every file it actually `use`s.
     /// Metadata only: they emit nothing and never reach the fold.
     pub questions: Vec<PackQuestions>,
+    /// Declared `notice`s from every pack the estate actually `use`s. Their params
+    /// are not in `tfvars`: an acknowledgement is never emitted.
+    pub notices: Vec<PackNotices>,
+}
+
+/// One pack's notices, carried with the file that declared them (a fork declares its own).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PackNotices {
+    pub pack: String,
+    pub file: String,
+    pub notices: Vec<satz::NoticeDecl>,
+}
+
+/// A notice is acknowledged when the estate binds its param `true` — the pack declares
+/// it `false`, so nothing else can.
+pub fn acknowledged(env: &Env, param: &str) -> bool {
+    env.get(param) == Some(&serde_yaml::Value::Bool(true))
+}
+
+fn pack_notices(file: &satz::File, file_name: &str) -> PackNotices {
+    PackNotices { pack: file.estate.clone().unwrap_or_default(), file: file_name.to_string(), notices: file.notices.clone() }
 }
 
 /// One file's declared claims, carried with the file that declared them.
@@ -567,9 +588,16 @@ pub fn compile_estate(
     let env = build_env(&file, &Env::new(), file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
-    let tfvars = w.genv;
+    let mut tfvars = w.genv;
+    // An acknowledgement is not configuration: nothing reads it (`satz pack-graph`
+    // refuses a pack that does), so it is no variable, and binding it moves no line of
+    // the emission.
+    let notices = w.notices;
+    for n in notices.iter().flat_map(|p| &p.notices) {
+        tfvars.remove(&n.param);
+    }
     let config = w.config;
     let walked_actions = w.actions;
     let mut hcl: Vec<HclPassthrough> = file
@@ -640,7 +668,7 @@ pub fn compile_estate(
     questions.extend(w.questions);
     check_oneof(&questions, &tfvars, true)?;
 
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions })
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices })
 }
 
 /// Resolve one action's arguments against the finished parameter namespace. An
@@ -794,29 +822,29 @@ pub fn estate_questions(
     file_name: &str,
     src: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
-) -> Result<(Vec<PackQuestions>, Env), PipelineError> {
+) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env), PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
     let mut env = build_env(&file, &Env::new(), file_name)?;
-    let mut out = Vec::new();
+    let mut out = (Vec::new(), Vec::new());
     if !file.questions.is_empty() {
-        out.push(pack_questions(&file, file_name));
+        out.0.push(pack_questions(&file, file_name));
     }
     collect_questions(&file.items, file_name, load, &mut env, &mut out, 0)?;
     // Contradictions only: a required choice nobody has made yet is what this
     // report is for.
-    check_oneof(&out, &env, false)?;
-    Ok((out, env))
+    check_oneof(&out.0, &env, false)?;
+    Ok((out.0, out.1, env))
 }
 
-/// The `use` walk of `collect_params`, gathering questions on the way. A pack
-/// behind a false `when` contributes neither params nor questions.
+/// The `use` walk of `collect_params`, gathering questions and notices on the way. A
+/// pack behind a false `when` contributes neither params, questions nor notices.
 fn collect_questions(
     items: &[Entry],
     file_name: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
     env: &mut Env,
-    out: &mut Vec<PackQuestions>,
+    out: &mut (Vec<PackQuestions>, Vec<PackNotices>),
     depth: usize,
 ) -> Result<(), PipelineError> {
     if depth > MAX_USE_DEPTH {
@@ -846,7 +874,10 @@ fn collect_questions(
                     env.insert(name.clone(), resolved);
                 }
                 if !used.questions.is_empty() {
-                    out.push(pack_questions(&used, path));
+                    out.0.push(pack_questions(&used, path));
+                }
+                if !used.notices.is_empty() {
+                    out.1.push(pack_notices(&used, path));
                 }
                 collect_questions(&used.items, path, load, env, out, depth + 1)?;
             }
@@ -995,7 +1026,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -1032,6 +1063,7 @@ struct Walk<'a> {
     hcl: Vec<HclPassthrough>,
     claims: Vec<PackClaims>,
     questions: Vec<PackQuestions>,
+    notices: Vec<PackNotices>,
     /// Actions collected from every file the walk visits, still unresolved: the
     /// param namespace is only complete once the walk has finished, so resolving
     /// here would judge a pack's argument against a half-built environment.
@@ -1083,6 +1115,14 @@ impl Walk<'_> {
             return;
         }
         self.questions.push(pack_questions(file, file_name));
+    }
+
+    /// After the guard too: a pack switched off asks for nothing to be run.
+    fn absorb_notices(&mut self, file: &satz::File, file_name: &str) {
+        if file.notices.is_empty() {
+            return;
+        }
+        self.notices.push(pack_notices(file, file_name));
     }
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
@@ -1181,6 +1221,7 @@ impl Walk<'_> {
         self.absorb_hcl(&file, use_path);
         self.absorb_claims(&file, use_path);
         self.absorb_questions(&file, use_path);
+        self.absorb_notices(&file, use_path);
         self.absorb_actions(&file, use_path);
         self.use_chain.push(use_path.to_string());
         Ok(file)

@@ -95,6 +95,21 @@ pub struct Node {
     /// the file)
     #[serde(rename = "at", skip_serializing_if = "Option::is_none", default)]
     pub location: Option<String>,
+    /// what the pack asks to be run once it is switched on (its `notice` statements)
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub notices: Vec<Notice>,
+}
+
+/// One `notice` of a pack: shown when the pack is switched on, open until the estate
+/// binds `param` true.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notice {
+    pub param: String,
+    pub text: String,
+    pub run: String,
+    /// `apply`: `transpile --apply` and `bootstrap` refuse while it is open
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub before: Option<String>,
 }
 
 /// What an edge says about its two ends. `from` is always the node that has the

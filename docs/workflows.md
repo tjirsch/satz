@@ -102,6 +102,14 @@ Five steps, in this order. Each one is a section below.
    line is still commented — or missing — is reported at every compile, because otherwise
    the answer is bound and nothing emits it.
 
+   A pack can name one command to run once it is on: the CIS org-policy packs name
+   `satz adopt <estate> --execute --import`, because Google sets some of their policies on
+   every new organisation and an apply that creates a policy that exists stops on `409
+   POLICY_ALREADY_EXISTS`. satz prints that notice when the pack goes on, the compile warns
+   at its `use` line, and `transpile --apply` and `bootstrap` refuse until the estate binds
+   the notice's param `true` — which `adopt --execute --import` does itself when the run
+   covers every type and nothing is left unresolved.
+
 ![The five steps of an estate's life, each as satz commands in the terminal and as satz studio: write the estate, bootstrap, apply as yourself, switch to the service account, add packs one at a time; steps 1–3 run as the logged-in user with a local state, steps 4–5 as the IaC service account with the state in the bucket](workflow-lifecycle.svg)
 
 ### Prerequisites
@@ -136,8 +144,8 @@ estate binds, and nothing below runs while one is missing.
 
 ### Bootstrap the organisation
 
-`bootstrap` refuses while any question the estate's packs declare is unanswered;
-`--dry-run` warns instead.
+`bootstrap` refuses while any question the estate's packs declare is unanswered, and
+while a pack's `before = apply` notice is unacknowledged; `--dry-run` warns instead.
 
 Before it asks for a credential, `bootstrap` checks the params it is about to use:
 `customer_shortname`, `billing_account_infra`, `infra_project_name` and

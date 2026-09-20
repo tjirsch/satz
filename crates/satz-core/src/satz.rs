@@ -262,6 +262,28 @@ pub struct OffersDecl {
 /// The one pack that may carry `offers` entries.
 pub const MAP_PACK: &str = "estate_map";
 
+/// `notice <param> { text run before }` — what to run once the pack is switched on.
+///
+/// A pack that needs one step after it goes in — the CIS org-policy packs need `satz
+/// adopt`, because Google sets some of their policies on every new organisation and the
+/// first apply stops on `409` for each — names that step here. satz shows the notice when
+/// the pack is switched on and until the estate acknowledges it by binding `<param> =
+/// true`; with `before = apply`, `transpile --apply` and `bootstrap` refuse while it is
+/// open. The param is the pack's own, declared `false` in the same file, and read by
+/// nothing: it is an acknowledgement, not configuration, so it is never emitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoticeDecl {
+    /// the param the estate binds `true` to acknowledge the notice
+    pub param: String,
+    /// what to do and why, as the operator reads it
+    pub text: String,
+    /// the command to run
+    pub run: String,
+    /// `apply`: `transpile --apply` and `bootstrap` refuse while the notice is open
+    pub before: Option<String>,
+    pub line: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct File {
     pub estate: Option<String>,
@@ -283,6 +305,8 @@ pub struct File {
     pub questions: Vec<QuestionDecl>,
     /// `offers` entries, in file order — only the map (`pack estate_map`) has any
     pub offers: Vec<OffersDecl>,
+    /// `notice` statements — only a pack has any
+    pub notices: Vec<NoticeDecl>,
 }
 
 /// A control claim as language syntax:
@@ -1211,6 +1235,47 @@ impl P {
         Ok(ActionDecl { name, reason, run, args, execute_args, phase, line })
     }
 
+    fn notice_stmt(&mut self, line: usize) -> Result<NoticeDecl, SatzError> {
+        let param = match self.next() {
+            Some(Tok::Ident(id)) => id,
+            other => return err(line, format!("notice: expected the param that acknowledges it, found {:?}", other)),
+        };
+        self.expect(Tok::LBrace, "'{' after the notice's param")?;
+        let body = self.entries()?;
+        let (mut text, mut run, mut before) = (None, None, None);
+        for e in body {
+            match e {
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "text" => {
+                    text = Some(lit_str(&parts, l, "notice: text")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "run" => {
+                    run = Some(lit_str(&parts, l, "notice: run")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Ref(id), line: l } if k == "before" => {
+                    if id != "apply" {
+                        return err(l, format!("notice {}: before = {} — the one step a notice holds back is `apply`", param, id));
+                    }
+                    before = Some(id);
+                }
+                other => {
+                    return err(
+                        line,
+                        format!("notice {}: unexpected entry {:?} — the keys are text, run and before = apply", param, other),
+                    )
+                }
+            }
+        }
+        let text = match text {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => return err(line, format!("notice {}: text = \"…\" is required — it is what the operator reads", param)),
+        };
+        let run = match run {
+            Some(r) if !r.trim().is_empty() => r,
+            _ => return err(line, format!("notice {}: run = \"…\" is required — the command the notice names", param)),
+        };
+        Ok(NoticeDecl { param, text, run, before, line })
+    }
+
     fn offers_stmt(&mut self, line: usize) -> Result<OffersDecl, SatzError> {
         let path = match self.next() {
             Some(Tok::Str(parts)) => lit_str(&parts, line, "offers: the pack path")?,
@@ -1484,6 +1549,19 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 }
                 file.actions.push(a);
             }
+            // Before the generic arm, which would read `notice p { … }` as a resource
+            // map named `notice`.
+            Some(Tok::Ident(id)) if id == "notice" => {
+                p.next();
+                let n = p.notice_stmt(line)?;
+                if let Some(first) = file.notices.iter().find(|x| x.param == n.param) {
+                    return err(
+                        n.line,
+                        format!("notice {}: declared twice in this file (line {} and line {})", n.param, first.line, n.line),
+                    );
+                }
+                file.notices.push(n);
+            }
             // Before the generic arm, which would read `offers "p" { … }` as a
             // resource map named `offers`.
             Some(Tok::Ident(id)) if id == "offers" => {
@@ -1596,6 +1674,33 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                     "question {}: ask_when names {}, which this file does not declare",
                     q.subject, w));
             }
+        }
+    }
+    // A notice is shown when its pack is switched on, so it lives in a pack; the estate
+    // acknowledges it by binding the pack's param, which the pack declares `false`, so an
+    // estate that never looked has it open. A question on the same param would make an
+    // acknowledgement a customer decision, which it is not.
+    for n in &file.notices {
+        if !file.is_pack {
+            return err(n.line, format!("notice {}: a notice belongs in a pack — it is shown when the pack is switched on", n.param));
+        }
+        match file.params.iter().find(|(name, _, _)| name == &n.param) {
+            Some((_, Value::Bool(false), _)) => {}
+            Some((_, _, l)) => {
+                return err(
+                    *l,
+                    format!("notice {}: the param is declared `false` — the estate acknowledges the notice by binding it true", n.param),
+                )
+            }
+            None => {
+                return err(
+                    n.line,
+                    format!("notice {}: no param of that name is declared in this file — declare `{} = false` in its params", n.param, n.param),
+                )
+            }
+        }
+        if file.questions.iter().any(|q| q.subject == n.param || q.options.iter().any(|o| o.param == n.param)) {
+            return err(n.line, format!("notice {}: a question asks this param — an acknowledgement is no customer decision", n.param));
         }
     }
     Ok(file)
@@ -1753,8 +1858,24 @@ pub fn canonical_offers(file: &File) -> String {
     out
 }
 
+/// The notices of a file, canonically, by param. A FIFTH product, for the reason the
+/// questions are one: a notice emits nothing, so a changed wording is reported and never
+/// forks an estate that uses the pack.
+pub fn canonical_notices(file: &File) -> String {
+    let mut ns: Vec<&NoticeDecl> = file.notices.iter().collect();
+    ns.sort_by(|a, b| a.param.cmp(&b.param));
+    ns.iter().map(|n| format!("notice({}|{}|{}|{})\n", n.param, n.text, n.run, n.before.as_deref().unwrap_or(""))).collect()
+}
+
 pub fn canonical_parts(file: &File) -> Canonical {
-    let params = file.params.iter().map(|(n, v, _)| (n.clone(), canon_value(v))).collect();
+    // A notice's param is an acknowledgement and never emitted, so it belongs to the
+    // notice's canonical form: a pack gaining a notice does not change what it emits.
+    let params = file
+        .params
+        .iter()
+        .filter(|(n, _, _)| !file.notices.iter().any(|x| &x.param == n))
+        .map(|(n, v, _)| (n.clone(), canon_value(v)))
+        .collect();
     let mut body = String::new();
     match (&file.estate, file.is_pack) {
         (Some(n), true) => {
@@ -2376,5 +2497,37 @@ mod review_2026_08_29_tests {
         assert!(e.msg.contains("the keys are when"), "{}", e.msg);
         let e = parse("pack estate_map\n\noffers \"presets/a.satz\" {\n  block = \"b\"\n  after_scaffold = true\n}\n").unwrap_err();
         assert!(e.msg.contains("not both"), "{}", e.msg);
+    }
+
+    // ---- `notice` ---------------------------------------------------------
+
+    #[test]
+    fn a_notice_travels_with_its_false_param_and_emits_nothing() {
+        let pack = "pack p version \"1.0\"\n\nparams {\n  p_adopted = false\n}\n\nnotice p_adopted {\n  text   = \"Adopt what exists.\"\n  run    = \"satz adopt <estate> --execute --import\"\n  before = apply\n}\n";
+        let f = parse(pack).unwrap();
+        assert_eq!(f.notices.len(), 1);
+        let n = &f.notices[0];
+        assert_eq!((n.param.as_str(), n.before.as_deref()), ("p_adopted", Some("apply")));
+        assert!(f.items.is_empty(), "a notice is no resource map");
+        // the notice and its param are outside what the pack emits
+        let bare = parse("pack p version \"1.0\"\n").unwrap();
+        assert_eq!(canonical(&f), canonical(&bare), "a notice emits nothing");
+        let reworded = parse(&pack.replace("Adopt what exists.", "Adopt it.")).unwrap();
+        assert_ne!(canonical_notices(&f), canonical_notices(&reworded));
+        // the param: declared here, `false`, asked by no question
+        let e = parse("pack p\n\nnotice x {\n  text = \"t\"\n  run = \"r\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("no param of that name"), "{}", e.msg);
+        let e = parse(&pack.replace("p_adopted = false", "p_adopted = true")).unwrap_err();
+        assert!(e.msg.contains("declared `false`"), "{}", e.msg);
+        let asked = format!("{}\nquestion p_adopted {{\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n}}\n", pack);
+        assert!(parse(&asked).unwrap_err().msg.contains("no customer decision"));
+        // only in a pack, once, with its two texts and only `before = apply`
+        let e = parse(&pack.replace("pack p version \"1.0\"", "estate e")).unwrap_err();
+        assert!(e.msg.contains("belongs in a pack"), "{}", e.msg);
+        let twice = format!("{}\nnotice p_adopted {{\n  text = \"t\"\n  run = \"r\"\n}}\n", pack);
+        assert!(parse(&twice).unwrap_err().msg.contains("declared twice"));
+        assert!(parse(&pack.replace("  run    = \"satz adopt <estate> --execute --import\"\n", "")).unwrap_err().msg.contains("run = "));
+        assert!(parse(&pack.replace("before = apply", "before = plan")).unwrap_err().msg.contains("`apply`"));
+        assert!(parse(&pack.replace("before = apply", "when = apply")).unwrap_err().msg.contains("the keys are"));
     }
 }

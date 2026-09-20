@@ -104,15 +104,12 @@ pub(crate) struct QuestionsSummary {
     pub complete: bool,
 }
 
-/// Read the estate and its packs, and join every question with its current value.
-pub(crate) fn questions_report(
-    input: &Path,
-    runtime: &ToolConfig,
-) -> Result<QuestionsReport, Box<dyn std::error::Error>> {
-    let src = crate::fsx::read_to_string(input)?;
+/// How the schema-free walks find a `use`d file: beside the estate, then in the include
+/// dirs — the compile's order.
+pub(crate) fn loader(input: &Path, runtime: &ToolConfig) -> impl Fn(&str) -> Result<String, String> {
     let base = input.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let include_dirs = runtime.include_dirs.clone();
-    let load = move |p: &str| -> Result<String, String> {
+    move |p: &str| -> Result<String, String> {
         let direct = base.join(p);
         if direct.exists() {
             return crate::fsx::read_to_string(&direct).map_err(|e| e.to_string());
@@ -124,10 +121,18 @@ pub(crate) fn questions_report(
             }
         }
         Err(format!("{}: not found", p))
-    };
+    }
+}
 
+/// Read the estate and its packs, and join every question with its current value.
+pub(crate) fn questions_report(
+    input: &Path,
+    runtime: &ToolConfig,
+) -> Result<QuestionsReport, Box<dyn std::error::Error>> {
+    let src = crate::fsx::read_to_string(input)?;
+    let load = loader(input, runtime);
     let file_name = input.display().to_string();
-    let (packs, env) = estate_questions(&file_name, &src, &load)
+    let (packs, _, env) = estate_questions(&file_name, &src, &load)
         .map_err(|e| format!("{}:{}: {}", e.file, e.line, e.msg))?;
 
     // The estate's OWN bindings. The fold cannot answer "did a human decide

@@ -34,6 +34,7 @@ mod presets;
 mod doc_packs;
 mod pack_graph;
 mod packs;
+mod notices;
 mod github;
 mod policy_tree;
 mod prowler;
@@ -1217,6 +1218,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) if !apply => eprintln!("warning: {}", e),
                     Err(e) => return Err(e.into()),
                 }
+                // And a pack's notice: the command it names runs before the apply.
+                match crate::notices::require_acknowledged(&input_path, &runtime_config, if apply { "apply" } else { "plan" }) {
+                    Ok(()) => {}
+                    Err(e) if !apply => eprintln!("warning: {}", e),
+                    Err(e) => return Err(e.into()),
+                }
                 // And the same for an API nothing enables: the apply would run until
                 // it reached that resource and then fail, leaving half an estate.
                 match prerequisites_report(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report)
@@ -1750,6 +1757,11 @@ Thumbs.db
             // The quality gate: an estate may not touch an organisation while a
             // question is open. A dry run is how you look, so it warns instead.
             match crate::questions::require_complete(&config_path, &runtime_config, "bootstrap") {
+                Ok(()) => {}
+                Err(e) if dry_run => eprintln!("warning: {}", e),
+                Err(e) => return Err(e.into()),
+            }
+            match crate::notices::require_acknowledged(&config_path, &runtime_config, "bootstrap") {
                 Ok(()) => {}
                 Err(e) if dry_run => eprintln!("warning: {}", e),
                 Err(e) => return Err(e.into()),
@@ -2682,6 +2694,7 @@ pub(crate) fn compile_tail(
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
     f.extend(pack_findings);
+    f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_src));
     match graph {
         crate::pack_graph::Shipped::Graph(..) => {}
         crate::pack_graph::Shipped::Missing(_) if crate::findings::at_level(level).is_none() => {}
@@ -4546,6 +4559,8 @@ async fn run_adopt(
     let input_path = estate_path(PathBuf::from(input), runtime_config);
     reject_yaml_estate(&input_path, "adopt")?;
     configure_estate_impersonation(&input_path, runtime_config)?;
+    // a run over every declared resource is the one a notice naming `satz adopt` asks for
+    let whole = only.is_empty();
     let AdoptPlan { out, resolutions, mut live, state } =
         adopt_plan(&input_path, only, activate, tool_config, runtime_config).await?;
     let in_state = state.clone().unwrap_or_default();
@@ -4713,6 +4728,19 @@ async fn run_adopt(
         );
         if failed > 0 {
             return Err(format!("adopt: {} activation(s)/import(s)/move(s) failed — see above", failed).into());
+        }
+        // Every declared resource answered and nothing failed: the notices that ask for
+        // this run are done, and the estate says so.
+        if whole {
+            let done: Vec<String> = crate::notices::open(&input_path, runtime_config)?
+                .into_iter()
+                .filter(|n| n.run.split_whitespace().take(2).eq(["satz", "adopt"]))
+                .map(|n| n.param)
+                .collect();
+            crate::notices::acknowledge(&input_path, &done)?;
+            for p in &done {
+                println!("adopt: acknowledged the notice {} — bound {} = true in {}", p, p, input_path.display());
+            }
         }
     } else {
         let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)))?;

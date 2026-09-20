@@ -27,6 +27,10 @@
   "action" @context
   name: (string) @name) @item
 
+(notice
+  "notice" @context
+  name: (identifier) @name) @item
+
 (hcl_block "hcl" @name) @item
 
 (block

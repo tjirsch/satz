@@ -5,6 +5,18 @@ pack showcase_pack version "1.0"
 
 params {
   pack_bucket_location = "EU"
+  // acknowledges the notice below; the estate binds it true once the command has run
+  pack_bucket_adopted  = false
+}
+
+// A pack may name ONE command to run once it is switched on. satz shows it then, and
+// warns at the estate's `use` line until the estate binds `pack_bucket_adopted = true`;
+// `before = apply` makes `transpile --apply` and `bootstrap` refuse while it is open.
+// The param is an acknowledgement, never emitted: binding it moves no line of the HCL.
+notice pack_bucket_adopted {
+  text   = "The bucket may already exist in the project — creating it again fails. Import what is live first."
+  run    = "satz adopt <estate> --execute --import"
+  before = apply
 }
 
 // Declared outside a project, so it names the one it belongs in: without `project`

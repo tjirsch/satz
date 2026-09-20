@@ -73,6 +73,14 @@ the estate's params.
 `summary.complete` in the JSON report is the same boolean. Bare `satz plan` and
 `satz apply` are not gated: they run the tool in `hcl_dir` and know no estate.
 
+**A pack's notice is the second gate.** A pack can name one command to run once it is
+switched on — the CIS org-policy packs name `satz adopt`
+([§6.15](language.md#615-notice--the-command-a-pack-asks-for-once-it-is-on)). The
+interview prints it when a yes switches the pack on, `satz_interview` returns it in
+`notices`, and the estate acknowledges it by binding the notice's param `true` — over
+MCP, as an answer to that param. Until then the compile warns, and `transpile --apply`
+and `bootstrap` refuse while a `before = apply` notice is open.
+
 ## The path: day-0 params, then the map, then the packs
 
 An interview follows the estate file's order, and the skeleton is written so that
@@ -296,6 +304,9 @@ and every question says what it costs to be wrong about. The rules, from the
 - `ask_when = <boolean param>` hides a question that only applies on one branch.
 - `recommend` is what the interview shows as advice when it differs from the default;
   the `params` value is what applies.
+- A command the pack needs run once it is on is a `notice`, not a question: it names
+  the command, and the estate acknowledges it by binding the notice's own param. It is
+  no customer decision, so it stays out of the decisions sheet.
 
 The first paragraph of the pack's header comment opens the pack's section of the
 interview. Write it for the customer.
