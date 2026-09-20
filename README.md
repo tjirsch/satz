@@ -931,7 +931,7 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 **Under the Hood:**
 - Fetches the `presets` directory from the GitHub repo (main branch) in **one** API request (a recursive tree), preserving subdirectories (e.g. `presets/security-group-models/`). The files themselves come from raw.githubusercontent.com, which does not count against the API quota.
 - GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/workflows.md](docs/workflows.md#when-upstream-stops-answering-the-github-quota).
-- Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. A changed pack the estate deploys changes the organization; `merge-presets` reports that change before any `tofu plan`. `--force` overwrites anyway, listing each in-use pack as it does.
+- Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. A changed pack the estate deploys changes the organization; `merge-presets` reports that change before any `tofu plan`. `--force` overwrites anyway, listing each in-use pack as it does. A pack copy the estate uses that does not parse stops `get-presets`, which reads the estate's `use` graph to know what is in use; with `--force` that copy is overwritten like the rest and listed as one that did not parse.
 - `X.local.*` files have no upstream counterpart, so nothing here can touch them.
 - A pack the library **moved** is carried over here and by `merge-presets`: a `use` of the old path is refused naming the new one, and one run repoints the estate's `use` lines (a commented line stays commented, a `when <gate>` stays), moves any `.local.satz` fork and `.diff.satz` delta, installs the upstream copy at the new path and retires the old pristine copy. A pack that only moved emits what it emitted before, so the generated HCL is unchanged — see [docs/workflows.md](docs/workflows.md#when-a-release-moves-a-pack).
 
@@ -1328,10 +1328,11 @@ version-line changes upgrade in place), merge-presets:
    upstream would change, with a `local -> upstream` version header.
 
 That check needs the estate to compile BEFORE anything is written, so merge-presets
-refuses an estate that does not. When what fails is a pack copy binding a param the
-estate renamed, `satz get-presets --force` refreshes the pristine copies of the packs the
-estate uses without compiling (it lists them first); then merge-presets runs. A
-`X.local.satz` fork is the estate's own file and is edited by hand.
+refuses an estate that does not. When what fails is a pack copy — one binding a param
+the estate renamed, or one that does not parse — `satz get-presets --force` overwrites
+the pristine copies of the packs the estate uses without compiling, listing each, and any
+change made to one of them is lost; then merge-presets runs. A `X.local.satz` fork is the
+estate's own file and is edited by hand.
 
 **Adoption** is `--adopt <stem>`: the pristine
 name is overwritten in place, the estate's `use` is left alone, and the run prints

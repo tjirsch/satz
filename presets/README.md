@@ -1503,13 +1503,17 @@ and changed nothing that satz emits.
 
 - The one shipped pack that said it is `presets/essential-contacts-organization.satz`;
   version 1.4 does not. An estate that holds the 1.3 copy does not compile, and
-  `satz merge-presets` stops on the same line, because it reads the estate's copy before
-  it replaces it. Delete the word `content` from the `pack` line of the estate's copy
-  (line 15), then run `satz merge-presets`: it upgrades the copy to 1.4 in place, as a
-  change of comments and version only.
-- A fork (`presets/essential-contacts-organization.local.satz`) or a pack of your own
-  that says `content`: delete the word from its `pack` line. Nothing else changes, and
-  the emitted HCL is the same.
+  `satz merge-presets` and `satz get-presets` stop on the same line.
+- Run `satz get-presets --force`. It overwrites your copy of every pack the estate uses
+  with the library's current one — **any change you made to a pristine pack is lost.**
+  It lists each pack it overwrites, and says of the 1.3 copy that it did not parse. A
+  `.local.satz` fork is your own file and is not touched: delete the word `content`
+  from its header by hand — first, where the estate uses the fork, because
+  `get-presets` stops at that line too.
+- Then the estate compiles: run `satz merge-presets` as after any upgrade, `satz
+  transpile`, and read `tofu plan`.
+- A pack of your own that says `content`: delete the word from its `pack` line. Nothing
+  else changes, and the emitted HCL is the same.
 - Find them: `grep -rn '^pack .* content' presets/ yaml/`.
 
 **A statement is written at the top level of a file.** `params`, `question`, `claim`,
