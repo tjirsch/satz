@@ -194,6 +194,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   is stated as what to do to make it work and what does not work, with the
   reason — never under a label ("the quota-project trap"), and without
   rhetoric ("on purpose", "deliberately", "silently fails", "the point").
+  The single exception is `## Breaking changes` in `presets/README.md`: per
+  release, newest first, what satz now refuses that it compiled before and the
+  edit that satisfies it, written so an operator can act with no context. A
+  change that refuses a form an estate may hold adds its entry there in the
+  same PR.
 - **`Satz` is the language; `satz` is everything else** — the binary, the
   project, the repository. "written in Satz", "a Satz estate", "a Satz
   abstraction"; "satz compiles", "a satz command", "the satz repository". Page

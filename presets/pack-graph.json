@@ -101,7 +101,7 @@
     },
     {
       "path": "presets/essential-contacts-organization.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "use_essential_contacts",
       "gate_declared_in": "presets/estate-map.satz",

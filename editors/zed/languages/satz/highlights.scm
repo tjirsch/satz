@@ -14,7 +14,7 @@
 ["=" ","] @punctuation.delimiter
 
 [
-  "estate" "pack" "content" "version"
+  "estate" "pack" "version"
   "params"
   "use" "as" "when"
   "claim"

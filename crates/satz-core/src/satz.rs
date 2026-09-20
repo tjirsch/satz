@@ -289,9 +289,6 @@ pub struct File {
     pub estate: Option<String>,
     /// true when the header keyword was `pack` (estate and pack share the name slot)
     pub is_pack: bool,
-    /// `pack <name> content` — forking into `<name>.local.satz` is the EXPECTED
-    /// workflow (per-customer content); reporting tone only, mechanics are identical.
-    pub content_mode: bool,
     /// `pack <name> version "1.2"` — the pack file's own revision, deliberately kept
     /// OUT of the filename (framework/standard versions live in claims and are
     /// orthogonal: multiple internal revisions may implement the same standard).
@@ -910,6 +907,11 @@ impl P {
                                 Tok::Str(s) => Key::Str(s),
                                 _ => unreachable!(),
                             };
+                            if let (Key::Ident(k), false) = (&key, matches!(self.peek(), Some(Tok::LBrace))) {
+                                if STATEMENT_KEYWORDS.contains(&k.as_str()) {
+                                    return err(line, statement_in_a_block(k));
+                                }
+                            }
                             self.expect(Tok::LBrace, "'{' after map entry name")?;
                             let body = self.entries()?;
                             note_key(&mut seen, &key, Some(&name), line)?;
@@ -920,6 +922,7 @@ impl P {
                         }
                     }
                 }
+                Some(Tok::Hcl(..)) => return err(line, statement_in_a_block("hcl")),
                 Some(other) => return err(line, format!("unexpected {:?} in block", other)),
             }
         }
@@ -1437,6 +1440,14 @@ pub fn lf(src: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// A statement the block parser meets inside `{ … }` in a shape it cannot read as an
+/// entry — `hcl { … }`, which the lexer hands over whole, and `suppress <type> "…"` or
+/// `claim "…" "…" "…"`, whose third word is no `{`. The shapes it CAN read as an entry
+/// (`params { … }`, `question x { … }`) are refused by the walk, which knows the position.
+fn statement_in_a_block(keyword: &str) -> String {
+    format!("`{}` is a Satz statement: it is written at the top level of a file, never inside a block — move it out", keyword)
+}
+
 /// Every keyword that opens a top-level statement in Satz, sorted.
 ///
 /// The tree-sitter grammar mirrors the parser by hand, and a keyword it has no rule for
@@ -1475,23 +1486,24 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                     }
                     other => return err(line, format!("estate: expected a name, found {:?}", other)),
                 }
-                loop {
-                    match p.peek() {
-                        Some(Tok::Ident(m)) if m == "content" => {
-                            p.next();
-                            file.content_mode = true;
-                        }
-                        Some(Tok::Ident(m)) if m == "version" => {
-                            p.next();
-                            match p.next() {
-                                Some(Tok::Str(parts)) => match parts.as_slice() {
-                                    [StrPart::Lit(v)] => file.version = Some(v.clone()),
-                                    _ => return err(line, "version: plain string required"),
-                                },
-                                other => return err(line, format!("version: expected string, found {:?}", other)),
-                            }
-                        }
-                        _ => break,
+                if matches!(p.peek(), Some(Tok::Ident(m)) if m == "version") {
+                    p.next();
+                    match p.next() {
+                        Some(Tok::Str(parts)) => match parts.as_slice() {
+                            [StrPart::Lit(v)] => file.version = Some(v.clone()),
+                            _ => return err(line, "version: plain string required"),
+                        },
+                        other => return err(line, format!("version: expected string, found {:?}", other)),
+                    }
+                }
+                // The header is a name and a version. A word after it on the same line
+                // would otherwise open the next block under a key nobody wrote.
+                if let Some(Tok::Ident(m)) = p.peek() {
+                    if p.line() == line {
+                        return err(
+                            line,
+                            format!("{} header: `{}` is not a header word — the header is `{} <name> [version \"…\"]`; delete `{}`", keyword, m, keyword, m),
+                        );
                     }
                 }
             }
@@ -1897,9 +1909,6 @@ pub fn canonical_parts(file: &File) -> Canonical {
         (Some(n), true) => {
             body.push_str("pack ");
             body.push_str(n);
-            if file.content_mode {
-                body.push_str(" content");
-            }
             body.push('\n');
         }
         (Some(n), false) => {
@@ -2190,18 +2199,36 @@ mod tests {
     }
 
     #[test]
-    fn pack_header_version_and_content_any_order() {
-        for src in [
-            "pack demo version \"1.0\" content\n\nvariables {\n  a = \"1\"\n}\n",
-            "pack demo content version \"1.0\"\n\nvariables {\n  a = \"1\"\n}\n",
-        ] {
-            let f = parse(src).expect(src);
-            assert_eq!(f.version.as_deref(), Some("1.0"), "{}", src);
-            assert!(f.content_mode, "{}", src);
-        }
-        let f = parse("pack demo version \"2.1\"\n").unwrap();
+    fn pack_header_takes_a_version_and_no_other_word() {
+        let f = parse("pack demo version \"2.1\"\n\nparams {\n  a = \"1\"\n}\n").unwrap();
         assert_eq!(f.version.as_deref(), Some("2.1"));
-        assert!(!f.content_mode);
+        assert_eq!(f.params.len(), 1);
+        // A word on the header's line would open the next block under a key nobody
+        // wrote: `content params { … }` parses, and the params are gone.
+        for src in [
+            "pack demo version \"1.0\" content\n\nparams {\n  a = \"1\"\n}\n",
+            "pack demo content version \"1.0\"\n\nparams {\n  a = \"1\"\n}\n",
+        ] {
+            let e = parse(src).expect_err(src);
+            assert_eq!(e.line, 1, "{}", src);
+            assert!(e.msg.contains("`content` is not a header word") && e.msg.contains("delete `content`"), "{}: {}", src, e.msg);
+        }
+        // a label on its own line is a label, whatever it is called
+        let f = parse("pack demo version \"1.0\"\ncontent {\n  a = \"1\"\n}\n").unwrap();
+        assert_eq!(f.items.len(), 1);
+    }
+
+    #[test]
+    fn a_statement_inside_a_block_is_named_as_one() {
+        for (src, kw) in [
+            ("estate e\ngoogle_x {\n  hcl {\n    # raw\n  }\n}\n", "hcl"),
+            ("estate e\ngoogle_x {\n  suppress google_y \"z\"\n}\n", "suppress"),
+            ("estate e\ngoogle_x {\n  claim \"f\" \"1\" \"1.1\" implements {\n  }\n}\n", "claim"),
+        ] {
+            let e = parse(src).expect_err(src);
+            assert_eq!(e.line, 3, "{}", src);
+            assert!(e.msg.contains(&format!("`{}` is a Satz statement", kw)), "{}: {}", src, e.msg);
+        }
     }
 
     use super::*;
@@ -2456,6 +2483,28 @@ mod empty_collection_tests {
     }
 }
 
+/// One minimal file per statement keyword, each carrying that statement. Shared by the
+/// tests that hold a per-statement table against `STATEMENT_KEYWORDS`.
+#[cfg(test)]
+pub(crate) fn statement_probe(kw: &str) -> String {
+    match kw {
+        "estate" => "estate e\n".into(),
+        "pack" => "pack p version \"1.0\"\n".into(),
+        "params" => "estate e\nparams { a = \"1\" }\n".into(),
+        "use" => "estate e\nuse \"p.satz\"\n".into(),
+        "hcl" => "estate e\nhcl {\n  # raw\n}\n".into(),
+        "claim" => "estate e\nclaim \"f\" \"1\" \"1.1\" implements {\n  resources = [\"google_x.y\"]\n}\n".into(),
+        "question" => {
+            "pack p version \"1.0\"\nparams { a = false }\nquestion a {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n}\n".into()
+        }
+        "action" => "estate e\naction \"a\" {\n  reason = \"no provider resource does it\"\n  run    = \"a.sh\"\n}\n".into(),
+        "notice" => "pack p version \"1.0\"\nparams { a = false }\nnotice a {\n  text = \"t\"\n  run = \"satz adopt\"\n  before = apply\n}\n".into(),
+        "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
+        "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
+        other => panic!("no probe for the statement `{}` — add one", other),
+    }
+}
+
 /// `STATEMENT_KEYWORDS` against the parser it is taken from. The list leaves this crate:
 /// `scripts/check-grammar.sh` fails on a keyword the tree-sitter grammar declares no node
 /// for, so a statement missing here ships ungrammared — which is what `offers` did.
@@ -2466,8 +2515,8 @@ mod statement_set_tests {
     /// The keywords the dispatch in `parse` matches on, read out of this file's own
     /// source between the two markers: every `id == "…"` guard, plus `hcl`, whose block
     /// the lexer hands over as one token. The dispatch binds the keyword as `id` and
-    /// nothing else in it does — the header's `content` and `version` modifiers bind
-    /// `m`, because they open no statement.
+    /// nothing else in it does — the header's `version` binds `m`, because it opens no
+    /// statement.
     fn dispatched_keywords() -> std::collections::BTreeSet<String> {
         const SRC: &str = include_str!("satz.rs");
         // spelled in halves so this function's own source is not the first match
@@ -2508,26 +2557,8 @@ mod statement_set_tests {
     /// that hid `offers` from the grammar gate hides a stale entry from this list.
     #[test]
     fn every_statement_keyword_parses_as_a_statement_not_a_block() {
-        let probe = |kw: &str| -> String {
-            match kw {
-                "estate" => "estate e\n".into(),
-                "pack" => "pack p version \"1.0\"\n".into(),
-                "params" => "estate e\nparams { a = \"1\" }\n".into(),
-                "use" => "estate e\nuse \"p.satz\"\n".into(),
-                "hcl" => "estate e\nhcl {\n  # raw\n}\n".into(),
-                "claim" => "estate e\nclaim \"f\" \"1\" \"1.1\" implements {\n  resources = [\"google_x.y\"]\n}\n".into(),
-                "question" => {
-                    "pack p version \"1.0\"\nparams { a = false }\nquestion a {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n}\n".into()
-                }
-                "action" => "estate e\naction \"a\" {\n  reason = \"no provider resource does it\"\n  run    = \"a.sh\"\n}\n".into(),
-                "notice" => "pack p version \"1.0\"\nparams { a = false }\nnotice a {\n  text = \"t\"\n  run = \"satz adopt\"\n  before = apply\n}\n".into(),
-                "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
-                "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
-                other => panic!("no probe for the statement `{}` — add one", other),
-            }
-        };
         for kw in STATEMENT_KEYWORDS {
-            let src = probe(kw);
+            let src = statement_probe(kw);
             let f = parse(&src).unwrap_or_else(|e| panic!("`{}` probe: {}:{}", kw, e.line, e.msg));
             let as_block = f.items.iter().any(|e| match e {
                 Entry::Map { key: Key::Ident(k), .. } | Entry::Attr { key: Key::Ident(k), .. } => k == kw,

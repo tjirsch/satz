@@ -6777,6 +6777,95 @@ mod corpus {
 }
 
 #[cfg(test)]
+mod placement_gate {
+    //! What a `use` places, and what it never emits, through the emitter — the two rules
+    //! that hold by construction and that nothing pinned: a used pack's resources land
+    //! where its `use` stands, and its `params`, `question` and `claim` statements reach
+    //! the estate and never `main.tf`.
+    use super::*;
+
+    const PACK: &str = r#"pack hosting version "1.0"
+
+params {
+  host_project_id = "acme-host-001"
+  host_is_wanted  = true
+}
+
+question host_is_wanted {
+  prompt   = "Is the hosting project wanted here?"
+  reversal = edit
+  blast    = low
+}
+
+claim "cis-gcp" "4.0" "2.2" contributes {
+  resources = ["google_project.host"]
+}
+
+google_project {
+  host {
+    name            = host_project_id
+    project_id      = host_project_id
+    billing_account = "012345-6789AB-CDEF01"
+  }
+}
+"#;
+
+    fn emit(estate: &str) -> (String, String, satz_core::pipeline::FrontEnd) {
+        let reg = corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("main.satz", estate, &resolver, &|p| {
+            if p == "hosting.satz" { Ok(PACK.to_string()) } else { Err(format!("no load: {}", p)) }
+        })
+        .unwrap_or_else(|e| panic!("front end: {}", e));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        assert!(folded.conflicts().is_empty(), "{:?}", folded.conflicts());
+        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("emit: {}", e));
+        (out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars), fe)
+    }
+
+    const HEAD: &str = "estate t\n\nparams {\n  customer_organization_id = \"123456789012\"\n}\n\n";
+
+    #[test]
+    fn a_used_pack_lands_where_its_use_stands_and_its_statements_never_reach_main_tf() {
+        let forms = [
+            ("at the top level", "use \"hosting.satz\"\n".to_string(), Some("org_id = \"123456789012\"")),
+            (
+                "in a folder's body",
+                "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"hosting.satz\"\n  }\n}\n".to_string(),
+                Some("folder_id = google_folder.shared.name"),
+            ),
+            (
+                "in a project's body",
+                "google_project {\n  outer {\n    name            = \"acme-outer-001\"\n    billing_account = \"012345-6789AB-CDEF01\"\n    use \"hosting.satz\"\n  }\n}\n"
+                    .to_string(),
+                None,
+            ),
+        ];
+        for (form, tail, parent) in forms {
+            let (main_tf, tfvars, fe) = emit(&format!("{}{}", HEAD, tail));
+            let host = format!("\n{}", main_tf);
+            let host = host
+                .split("\nresource ")
+                .find(|r| r.starts_with("\"google_project\" \"host\""))
+                .unwrap_or_else(|| panic!("{}: the pack's project is not in main.tf:\n{}", form, main_tf));
+            if let Some(parent) = parent {
+                assert!(host.contains(parent), "{}: the project is created where the `use` stands — got:\n{}", form, host);
+            }
+            // the statements: in the estate, resolved — and nowhere in the HCL
+            assert_eq!(fe.questions.len(), 1, "{}", form);
+            assert_eq!(fe.questions[0].questions[0].subject, "host_is_wanted", "{}", form);
+            assert_eq!(fe.claims.len(), 1, "{}", form);
+            assert!(tfvars.contains("host-project-id = \"acme-host-001\""), "{}: the param is a variable with its value:\n{}", form, tfvars);
+            for word in ["question", "prompt", "Is the hosting project wanted", "reversal", "blast", "params", "claim", "cis-gcp", "host_is_wanted"] {
+                assert!(!main_tf.contains(word), "{}: `{}` of the used pack reached main.tf:\n{}", form, word, main_tf);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod yaml_estate_gate {
     //! THE gate for the legacy YAML dialect. The dialect is migration input
     //! only (owner, 2026-08-29): nothing transpiles it, `satz import <file>.yaml`
