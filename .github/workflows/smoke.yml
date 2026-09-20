@@ -47,6 +47,19 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: tests
         run: cargo test --workspace --locked
+      # Last in this job, where the crate sources and the cargo cache already are. The
+      # script reads the licence files out of the unpacked sources and runs offline,
+      # so `cargo fetch` first: a Linux build unpacks what Linux compiles, and the
+      # file also covers the crates only Windows and macOS pull in. The cargo-about
+      # version comes from the script, which refuses any other one — a different one
+      # can read a licence file differently, and the file would then differ between a
+      # machine and CI with nothing in the repository having changed.
+      - uses: cargo-bins/cargo-binstall@main
+      - name: third-party licence texts match Cargo.lock
+        run: |
+          cargo binstall -y --locked "cargo-about@$(sed -n 's/^WANT=//p' scripts/update-third-party-licenses.sh)"
+          cargo fetch --locked
+          bash scripts/update-third-party-licenses.sh --check
   windows-checks:
     # the same two gates on Windows: satz ships a Windows build, so clippy and the tests
     # run there on every pull request and push to main — the smoke matrix is bash and

@@ -31,6 +31,7 @@ ships it).
 | provider version pin | by hand | a provider release | **nothing** |
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
 | `NOTICE` (its third-party entries) | by hand, one entry per piece of foreign material | material from outside the project enters or leaves the tree | **nothing** |
+| `THIRD-PARTY-LICENSES.md` | `scripts/update-third-party-licenses.sh` | `Cargo.lock` moves — a dependency added, removed or updated | the `checks` job of `smoke.yml`: `--check`, which compares byte for byte |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
@@ -178,10 +179,29 @@ the provider schema fixture and the provider's own text inside it, the release
 workflow cargo-dist generates, and the control identifiers the catalogs carry. Apache
 2.0 §4(d) makes that file travel with every redistribution of satz, so material that
 arrives from outside and is not named there goes unattributed everywhere satz is
-redistributed.
+redistributed. The crates satz is compiled from are the one thing it does not
+enumerate: their texts are in `THIRD-PARTY-LICENSES.md`, which `NOTICE` points at.
 
 Nothing checks it. Write the entry in the same change that brings the material in,
 and delete the entry in the change that takes it out.
+
+## The third-party licence texts
+
+`THIRD-PARTY-LICENSES.md` carries the licence text of every crate compiled into the
+binary — one copy per crate, as the crate ships it, because a copyright line is part
+of the MIT and BSD texts. MIT and Apache 2.0 ask a binary redistribution to carry
+them, so the file travels in every release archive: `include` in
+`dist-workspace.toml` names it beside `NOTICE`.
+
+It is generated from `Cargo.lock`, never edited:
+[`update-third-party-licenses.sh`](#update-third-party-licensessh--the-crates-licence-texts)
+writes it and `--check` fails on a stale one. `about.toml` holds the allow-list of
+licences and the four release targets, `about.hbs` the layout. The privacy gate skips
+the file: it is upstream authors' e-mail addresses and domains, written by a tool.
+
+The two files divide the subject: a crate's licence is here, and everything that is
+not a crate — the provider schema fixture, the fonts Typst embeds, the control
+identifiers in the catalogs — is in `NOTICE`.
 
 ## Versions
 
@@ -240,6 +260,7 @@ second kind.
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
+| `update-third-party-licenses.sh` | helper | regenerate `THIRD-PARTY-LICENSES.md`, the licence text of every crate compiled into satz, from `Cargo.lock` with `cargo about`; `--check` fails on a stale file or a licence outside the allow-list. CI runs `--check` in the `checks` job |
 | `check-grammar.sh` | gate | parse every `.satz` under `presets/` and `tests/` with the tree-sitter grammar `editors/zed/extension.toml` pins; any `ERROR` or `MISSING` node fails; CI runs it on every PR and every push to `main` (`smoke.yml`, job `grammar`) |
 
 ## `check-names.sh` — the privacy gate
@@ -740,6 +761,48 @@ CI runs it on every PR and every push to `main` (`.github/workflows/smoke.yml`, 
 grammar repository's own CI parses a fresh clone of this one on every push and once a
 week. A language change is a grammar commit first, then the pin bump here, in the PR
 that changes the parser; the job fails on a PR that changes the parser without it.
+
+## `update-third-party-licenses.sh` — the crates' licence texts
+
+`cargo about` reads `Cargo.lock`, finds each crate's licence file in its unpacked
+source, and renders `about.hbs` into `THIRD-PARTY-LICENSES.md`: a summary table, then
+every licence text with the crates it belongs to. The script is the only way that file
+is written. It runs `cargo about` offline, so the sources on disk are the whole input
+and the network cannot change what the file says; a dependency whose source is not
+unpacked yet needs `cargo fetch --locked` first.
+
+```bash
+scripts/update-third-party-licenses.sh           # rewrite it
+scripts/update-third-party-licenses.sh --check   # fail when it is stale, print the diff
+```
+
+`about.toml` decides what the file contains:
+
+- **`accepted`** is the allow-list, and the preference order for a crate that offers a
+  choice. A dependency under a licence it does not name fails the run, naming the
+  crate, so a new licence reaches a person. Apache-2.0 comes first: a crate offered as
+  `MIT OR Apache-2.0` is taken under Apache 2.0, satz's own licence.
+- **`targets`** are the four release targets (ADR 0029), so a dependency only Windows
+  or only Linux pulls in is in the file wherever it is generated.
+- **Dev dependencies are out** — `cargo test` compiles them and no archive carries
+  them. Build dependencies are in: a build script is how the C in `aws-lc-sys` and
+  `zlib-rs` reaches the binary.
+- **`[private] ignore = true`** keeps `satz`, `satz-core` and `satz-hcl` out; all three
+  carry `publish = false`, and their licence is `LICENSE`. The root manifest therefore
+  also carries `[package.metadata.dist] dist = true`, or `publish = false` would hide
+  the binary from dist and a release would build nothing.
+
+The script requires one exact `cargo-about` version and names it when another is
+installed (`cargo binstall cargo-about@<version>`). A different version can read a
+crate's licence file differently, and the file would then differ between a machine and
+CI with nothing in the repository having changed. That `WANT=` line is where the
+version lives: moving it is one edit plus a regenerated file in the same commit.
+
+CI runs `--check` in the `checks` job of `.github/workflows/smoke.yml`, last, where
+the cargo cache already is. The job installs the version the script names — read out
+of the script — and runs `cargo fetch --locked` first, because a Linux build unpacks
+what Linux compiles and the file also covers the crates only Windows and macOS pull
+in.
 
 ## `build-satz-doc.py` — one page, self-contained
 
