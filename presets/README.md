@@ -62,15 +62,21 @@ org-wide, creates its own destination project + GCS archive bucket, and routes a
 Audit Logs from every current and future project into that bucket via an aggregated
 org-level sink (project owners cannot bypass it). Self-contained — multi-resource-type.
 
-**Use** (root, or inside a folder block to place the project there):
+**Use** — `logsink_project_folder` says where the destination project is created, so
+the line stands at the top level:
 
 ```
+params {
+  logsink_project_folder = "google_folder.shared_services.name"
+}
+
 google_folder {
   shared_services {
     display_name = "Shared Services"
-    use "presets/monitoring/organization-audit-logsink.satz" when logsink_project_id
   }
 }
+
+use "presets/monitoring/organization-audit-logsink.satz" when logsink_project_id
 ```
 
 **Overridable defaults** (names are derived from `customer_shortname`, so they are
@@ -79,6 +85,7 @@ globally unique without overrides):
 | Param | Default | Meaning |
 |---|---|---|
 | `logsink_project_id` | `"{customer_shortname}-log-infra-001"` | project_id of the destination project |
+| `logsink_project_folder` | `""` | the folder the destination project is created in — a folder the estate declares by reference (`google_folder.<label>.name`), one that already exists by its id. Empty says nothing, and the node the `use` line stands in decides: the organisation at the top level |
 | `logsink_bucket_name` | `"{customer_shortname}-organization-audit-logs"` | GCS archive bucket |
 | `logsink_bucket_location` | `default_region` | bucket region |
 | `logsink_retention_days` | `400` | lifecycle delete age |
@@ -822,7 +829,11 @@ use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege
 ```
 
 **Params:** `mdc_workload_pool_id` (the customer's Entra tenant id without dashes — that is
-what Microsoft's wizard uses as the pool id), `mdc_mgmt_project_id`, `mdc_plan_cspm`, and
+what Microsoft's wizard uses as the pool id), `mdc_mgmt_project_id`,
+`mdc_mgmt_project_folder` (the folder that project is created in — a folder the estate
+declares by reference, `google_folder.<label>.name`, or one that already exists by its id;
+empty says nothing and the node the `use` line stands in decides, the organisation at the
+top level), `mdc_plan_cspm`, and
 the access-mode pair `mdc_cspm_default_access` / `mdc_cspm_least_privilege`. Everything
 Microsoft-side — their tenant as the OIDC issuer, the per-plan `api://` audiences, the
 provider ids, the custom role ids, the API list — is an inlined constant, identical for
@@ -1687,6 +1698,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `monitoring.organization_audit_logsink` | 1.5 | 2026-09-21 | `logsink_project_folder`: the folder the audit-archive project is created in, said by the estate instead of read from the node the `use` line stands in. The default is empty, which says nothing — the enclosing node decides, exactly as before — so no estate's plan moves. An estate whose `use "presets/monitoring/organization-audit-logsink.satz"` stands inside a folder's body writes `logsink_project_folder = "google_folder.<label>.name"` for that folder (`satz init` writes the line into `google_folder.infra_folder`, so `"google_folder.infra_folder.name"`) and may then move the `use` line to the top level: the emitted HCL is byte-identical either way. A folder that already exists rather than being declared here is named by its id, `"123456789012"` |
+| `integrations.microsoft_defender_for_cloud` | 0.3 | 2026-09-21 | `mdc_mgmt_project_folder`: the folder the Defender management project is created in, said by the estate instead of read from the node the `use` line stands in. The default is empty, which says nothing — the enclosing node decides, exactly as before — so no estate's plan moves. An estate whose `use "presets/integrations/microsoft-defender-for-cloud.satz"` stands inside a folder's body writes `mdc_mgmt_project_folder = "google_folder.<label>.name"` for that folder and may then move the `use` line to the top level: the emitted HCL is byte-identical either way. A folder that already exists rather than being declared here is named by its id, `"123456789012"` |
 | `CIS_GCP_Foundation_4_0` | 2.16 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
 | `cis_extensions.block_project_ssh_keys` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
 | `cis_extensions.shielded_vm` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |

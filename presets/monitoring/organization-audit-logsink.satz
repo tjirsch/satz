@@ -5,11 +5,18 @@
 // Params are overridable defaults: define the same param in the estate to
 // override one. Claims are read from this source by the compliance plane.
 
-pack monitoring.organization_audit_logsink version "1.4"
+pack monitoring.organization_audit_logsink version "1.5"
 
 params {
   logsink_name                 = "{customer_shortname}-organization-audit-gcs"
   logsink_project_id           = "{customer_shortname}-log-infra-001"
+  // The folder the archive project is created in. Empty says nothing, and the
+  // node the `use` line stands in decides — the organisation at the top level.
+  // A folder the estate declares is named by reference,
+  // `google_folder.<label>.name`; one that already exists by its id,
+  // `"123456789012"`. Setting it is what makes this pack emit the same project
+  // wherever it is used.
+  logsink_project_folder       = ""
   // What the console shows. Google defaults a project's display name to its id,
   // and so does this: set it only where the two should differ.
   logsink_project_display_name = logsink_project_id
@@ -54,12 +61,13 @@ question logsink_retention_days {
   blast    = high
 }
 
-// 0) The destination project. Lands wherever this pack is used: at root ->
-//    organization level, inside a folder block -> that folder.
+// 0) The destination project. `logsink_project_folder` says where it is created;
+//    left empty, the node the `use` line stands in decides.
 google_project {
   logsink_project {
     project_id      = logsink_project_id
     name            = logsink_project_display_name
+    folder_id       = logsink_project_folder
     billing_account = billing_account_infra
     project_service = [
       "logging.googleapis.com",

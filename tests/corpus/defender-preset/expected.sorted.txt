@@ -191,6 +191,7 @@ billing-account-infra = "01AA-BB-CC"
 customer-organization-id = "123456789"
 mdc-cspm-default-access = true
 mdc-cspm-least-privilege = false
+mdc-mgmt-project-folder = ""
 mdc-mgmt-project-id = "acme-mdc-mgmt"
 mdc-plan-cspm = true
 mdc-workload-pool-id = "acmetenantpoolexample0000000001"

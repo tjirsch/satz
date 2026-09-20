@@ -19,6 +19,7 @@ params {
   first_admin              = "admin@example.com"
   billing_account_infra    = "012345-6789AB-CDEF01"
   logsink_project_id       = "corp-log-infra-001"
+  logsink_project_folder   = "google_folder.logging.name"
   // the CIS baseline's notice: `satz adopt --execute --import` has run for this estate
   cis_baseline_adopted     = true
   deployment_engine        = "tofu"
@@ -128,10 +129,13 @@ google_folder {
   }
   logging {
     display_name = "Logging"
-    use "presets/monitoring/organization-audit-logsink.satz"
     use "presets/monitoring/organization-cis-log-alerts-central.satz"
   }
 }
+
+// The archive project goes in the Logging folder, named by `logsink_project_folder`
+// rather than by where this line stands.
+use "presets/monitoring/organization-audit-logsink.satz"
 
 // The IaC service account's roles for this estate's resource types (`satz update-prerequisites`).
 google_billing_account_iam_member {

@@ -112,7 +112,7 @@
     },
     {
       "path": "presets/monitoring/organization-audit-logsink.satz",
-      "version": "1.4",
+      "version": "1.5",
       "role": "pack",
       "gate": "use_audit_logsink",
       "gate_declared_in": "presets/estate-map.satz",
@@ -467,7 +467,7 @@
     },
     {
       "path": "presets/integrations/microsoft-defender-for-cloud.satz",
-      "version": "0.2",
+      "version": "0.3",
       "role": "pack",
       "gate": "use_defender",
       "gate_declared_in": "presets/estate-map.satz",
@@ -964,7 +964,7 @@
       "params": [
         "mdc_plan_cspm"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:53"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:62"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz",
@@ -974,7 +974,7 @@
       "params": [
         "mdc_cspm_default_access"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:59"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:68"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz",
@@ -984,7 +984,7 @@
       "params": [
         "mdc_plan_cspm"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:89"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:98"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz",
@@ -995,7 +995,7 @@
         "mdc_cspm_default_access",
         "mdc_cspm_least_privilege"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:89"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:98"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz",
@@ -1005,7 +1005,7 @@
       "params": [
         "mdc_cspm_least_privilege"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:60"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:69"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz",
@@ -1015,7 +1015,7 @@
       "params": [
         "mdc_plan_cspm"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:89"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:98"
     },
     {
       "from": "presets/integrations/microsoft-sentinel.satz",

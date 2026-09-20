@@ -15,7 +15,9 @@
 //   use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" when mdc_cspm_default_access
 //
 // Required from the estate: `customer_organization_id`. The management project
-// takes `billing_account_infra` unless the estate sets `billing_account` on it.
+// takes `billing_account_infra` unless the estate sets `billing_account` on it,
+// and it is created wherever `mdc_mgmt_project_folder` says — at the organisation
+// while that param says nothing.
 //
 // WHY the plans are separate files and not a list param: a pack cannot add to
 // another fragment's project — two fragments defining one project is a fold
@@ -35,7 +37,7 @@
 //      below. The estate must allow the `sts.windows.net/<microsoft tenant>`
 //      issuer, or document the exception.
 
-pack integrations.microsoft_defender_for_cloud version "0.2"
+pack integrations.microsoft_defender_for_cloud version "0.3"
 
 params {
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
@@ -46,6 +48,13 @@ params {
   // The management project Defender is onboarded through. A full param, not
   // derived: customers name projects their own way.
   mdc_mgmt_project_id = ""
+
+  // The folder that project is created in. Empty says nothing, and the node the
+  // `use` line stands in decides — the organisation at the top level. A folder
+  // the estate declares is named by reference, `google_folder.<label>.name`; one
+  // that already exists by its id, `"123456789012"`. Setting it is what makes
+  // this pack emit the same project wherever it is used.
+  mdc_mgmt_project_folder = ""
 
   // Which plans are licensed. Each `true` pulls in that plan's fragment; a
   // fragment for a plan not listed here has to be written from that customer's
@@ -103,6 +112,7 @@ question oneof mdc_cspm_access {
 google_project {
   mdc_mgmt {
     project_id = mdc_mgmt_project_id
+    folder_id  = mdc_mgmt_project_folder
     name       = "Microsoft MGMT Project"
     project_service = [
       "cloudresourcemanager.googleapis.com",

@@ -15,6 +15,7 @@ params {
   default_region           = "europe-west3"
   billing_account_infra    = "01AA-BB-CC"
   logsink_project_id       = "corp-log-infra-001"
+  logsink_project_folder   = "google_folder.logging.name"
 }
 
 terraform {
@@ -26,7 +27,10 @@ terraform {
 google_folder {
   logging {
     display_name = "Logging"
-    use "presets/monitoring/organization-audit-logsink.satz"
     use "presets/monitoring/organization-cis-log-alerts-central.satz"
   }
 }
+
+// The archive project goes in the Logging folder, named by `logsink_project_folder`
+// rather than by where this line stands.
+use "presets/monitoring/organization-audit-logsink.satz"
