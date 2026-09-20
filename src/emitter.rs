@@ -728,7 +728,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 } else if t.contains("project") {
                     ("project", rc.project_ref.clone().or(rc.project_id.clone()))
                 } else if t.contains("folder") {
-                    ("folder", rc.folder_ref.clone().or(rc.folder_id.clone()))
+                    ("folder", rc.folder_ref.clone())
                 } else {
                     // a bucket / service-account / … scoped grant has no scope
                     // to inherit from the node path; the map form used to emit
