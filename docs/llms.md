@@ -363,6 +363,19 @@ recoverable: say what you would need and why, rather than retrying the same call
 
 ## Errors you will meet, and what they mean
 
+**Read a finding as fields, not as text.** `satz_transpile_check` — and `satz transpile
+<estate> --check --format json` from a shell — return every finding as an object:
+`severity` (`error` · `warning` · `note`), `kind`, `subject`, `file`, `line`, `message`
+(the sentence) and, where one command answers it, `fix` (that command, as it is typed).
+Run `fix`; never cut a command out of `message`. A refused compile returns the same
+object with its errors in `findings`, a parse error included (`kind: "front-end"`).
+
+On a terminal the same finding is a block: a first line of severity, kind, `file:line` and
+subject, the message indented under it, then `fix: <command>`. A terminal gets the message
+wrapped to its width; a pipe gets each paragraph on one line, so a substring of this table
+matches what a pipe carries. A group of findings stands under a title ending in its count,
+and the last line counts the run: `1 error, 10 warnings; 3 silenced (3 estate) — …`.
+
 | message | what happened |
 |---|---|
 | unknown key in a resource body | the attribute is not in the provider schema for that type — invented or misspelled |
@@ -372,10 +385,11 @@ recoverable: say what you would need and why, rather than retrying the same call
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |
 | a question names no local param | a question must travel with the param it answers |
-| `N notice(s) open` | a pack asks for a command to be run now; run it, then bind its param `true` |
-| the IaC service account … lacks roles | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run `satz update-prerequisites <estate>` |
-| … API(s) this estate's resources need are not enabled on … | a resource type the estate emits is served by an API no `project_service` entry of the infrastructure project enables; add it to that list, or run `satz update-prerequisites <estate>` |
-| `N finding(s) silenced (…)` | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
+| `notices open — what a pack asks to be run once it is on (N)`, kind `notice` | a pack asks for a command to be run now; run the finding's `fix`, then bind its `subject` — the param — `true` |
+| the IaC service account … lacks roles, kind `prerequisites` | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
+| … API(s) this estate's resources need are not enabled on …, kind `prerequisites` | a resource type the estate emits is served by an API no `project_service` entry of the infrastructure project enables; add it to that list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
+| `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-pack` that switches the needed one on |
+| `N silenced (…)` in the last line | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules
 

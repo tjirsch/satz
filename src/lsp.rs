@@ -24,6 +24,7 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{Completion, Formatting, GotoDefinition, HoverRequest, Request as _};
 use lsp_types::*;
+use crate::findings::Kind;
 use satz_core::pipeline::{self, PipelineError};
 use satz_core::satz::{self, lex_spanned, Entry, File, Tok, Token};
 use std::cell::RefCell;
@@ -177,7 +178,7 @@ impl Server {
         let mut by_file: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
         by_file.entry(path.to_path_buf()).or_default();
         match satz::parse(&text) {
-            Err(e) => by_file.get_mut(path).unwrap().push(line_diagnostic(&text, e.line, e.msg, DiagnosticSeverity::ERROR)),
+            Err(e) => by_file.get_mut(path).unwrap().push(line_diagnostic(&text, e.line, e.msg, DiagnosticSeverity::ERROR, Kind::FrontEnd)),
             Ok(file) if pipeline => {
                 for (f, d) in self.pipeline_diagnostics(path, &text, &file) {
                     by_file.entry(f).or_default().push(d);
@@ -589,7 +590,7 @@ fn compile_for_diagnostics(
     let mut push_err = |e: PipelineError| {
         let p = locate(&e.file);
         let t = text_of(&p);
-        out.push((p, line_diagnostic(&t, e.line, e.msg, DiagnosticSeverity::ERROR)));
+        out.push((p, line_diagnostic(&t, e.line, e.msg, DiagnosticSeverity::ERROR, Kind::FrontEnd)));
     };
     let graph = crate::pack_graph::shipped(Path::new(&config.presets_dir));
     let fe = match pipeline::compile_estate(&label, src, &resolver, &loader) {
@@ -607,6 +608,12 @@ fn compile_for_diagnostics(
     // rows `satz transpile` reads, so a file is not clean in the terminal and marked up
     // here. The run tier cannot reach this: `--silence` is refused for `satz lsp`.
     let mut findings = tail.findings;
+    // a subject that is a path — an `hcl` block's — is spelled as the CLI and MCP spell
+    // it, relative to the estate's directory, or a `[[silence]]` row naming it would
+    // answer in the terminal and not here. `file` stays as the loader knows it.
+    for f in findings.iter_mut() {
+        f.subject = crate::estate_relative_file(f.clone(), config.dir.as_deref()).subject;
+    }
     crate::silence::in_force(config).apply(&mut findings);
     for finding in findings.into_iter().filter(|f| f.silenced.is_none()) {
         let severity = match finding.severity {
@@ -619,11 +626,18 @@ fn compile_for_diagnostics(
             _ => (root.to_path_buf(), 1),
         };
         let t = text_of(&p);
-        let message = match &finding.group {
+        // The layout, as far as a diagnostic can hold it. The range is the location and
+        // the editor draws the severity; `code` is the kind; the message is the group's
+        // title, the sentence, and the fix as its own last line — the order the CLI
+        // prints them in.
+        let mut message = match &finding.group {
             Some(g) => format!("{}\n{}", g, finding.message),
             None => finding.message.clone(),
         };
-        out.push((p, line_diagnostic(&t, line, message, severity)));
+        if let Some(fix) = &finding.fix {
+            message.push_str(&format!("\nfix: {}", fix));
+        }
+        out.push((p, line_diagnostic(&t, line, message, severity, finding.kind)));
     }
     out
 }
@@ -961,10 +975,13 @@ fn line_range(text: &str, line: usize) -> Range {
     Range { start: Position::new(l, 0), end: Position::new(l, len) }
 }
 
-fn line_diagnostic(text: &str, line: usize, msg: String, severity: DiagnosticSeverity) -> Diagnostic {
+/// `code` is the finding's kind — the name a `[[silence]]` row and `--format json` call
+/// it by — so an editor groups and filters by what the CLI prints in its second column.
+fn line_diagnostic(text: &str, line: usize, msg: String, severity: DiagnosticSeverity, kind: Kind) -> Diagnostic {
     Diagnostic {
         range: line_range(text, line),
         severity: Some(severity),
+        code: Some(NumberOrString::String(kind.as_str().to_string())),
         source: Some("satz".into()),
         message: msg,
         ..Default::default()

@@ -165,7 +165,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--on-collision error|counter`, `--customer-shortname`; yaml shape: `--kind pack|estate`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
@@ -336,8 +336,9 @@ declared defaults for its questions, which checks the pack the way a customer fi
 it. `--against <estate>` judges it inside a real estate instead.
 
 The findings are the same `Finding` the compile, `satz lsp` and `satz_transpile_check`
-produce — severity, kind, file, line, message — so an editor or an app that already reads
-those needs nothing new to show them. `satz_review_pack` serves the same review over MCP,
+produce — severity, kind, file, line, message, fix — so an editor or an app that already
+reads those needs nothing new to show them, and the text report prints them as every
+command does ([How a finding is printed](#how-a-finding-is-printed)). `satz_review_pack` serves the same review over MCP,
 read-only. The command exits non-zero when the pack does not clear the bar.
 
 Not checked here: the **privacy shapes** — organisation and project ids, e-mail addresses,
@@ -715,8 +716,9 @@ Merge rules when several fragments declare the same thing:
   conflict state.
 - **Groups must agree.** The same group key with a deep-equal body is deduped (including
   the same fragment twice is idempotent); with a *different* body the transpile aborts
-  before writing any file: `composition conflicts: google_cloud_identity_group.log-admins:
-  2 disagreeing definitions`, naming both files and lines.
+  before writing any file, under `composition conflicts`:
+  `google_cloud_identity_group.log-admins: 2 disagreeing definitions`, at both files and
+  lines.
 - Hoisted output is sorted, so moving a fragment between folders does not churn the
   generated HCL.
 
@@ -1575,6 +1577,64 @@ where the editor's log shows it.
   initialize, open, completion, hover, definition, formatting, a parse error and a
   pipeline error, shutdown.
 
+### How a finding is printed
+
+What a compile finds — the errors it refuses on, the warnings and the notes — is printed
+one block per finding, and every command that prints a finding prints this block:
+`transpile`, every command that compiles, `review-pack` and the findings of `packs`.
+
+```
+packs on while a pack they need is off (1)
+
+warning  pack-requirement  estate.satz:45  presets/cis/CIS-GCP-Foundation-4.0.satz
+    `presets/cis/CIS-GCP-Foundation-4.0.satz` needs `presets/estate-map.satz`, which is off
+    fix: satz add-pack estate.satz presets/estate-map.satz
+
+notices open — what a pack asks to be run once it is on (1)
+
+warning  notice            estate.satz:45  cis_baseline_adopted
+    `presets/cis/CIS-GCP-Foundation-4.0.satz`: Google sets some of these policies on every new
+    organisation, and an administrator may have set others; an apply that creates a policy that
+    exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live
+    policy is in the state before the apply; with --import it binds this param itself when it has
+    run.
+    Once the command has run, bind `cis_baseline_adopted = true` in the estate's params; apply and
+    bootstrap refuse until then.
+    fix: satz adopt estate.satz --execute --import
+
+2 warnings
+```
+
+- **The first line** is the severity, the `kind`, `file:line` and the subject — the pack, the
+  param, the action's name — in columns that line up over the run. Kind and subject are
+  what a [silence](#silencing-a-finding-silence) names.
+- **The message** stands under it, indented. On a terminal it is wrapped to the terminal's
+  width, 110 columns at most. Into a pipe, a file or a CI log nothing is wrapped: each
+  paragraph is one line, so a `grep` for a phrase finds it.
+- **`fix:`** is the last line, where one command answers the finding: the command as it is
+  typed, with the estate's file name in it. It is never wrapped.
+- **A group** of findings stands under its title with its count — `(7 of 10, 3 silenced)`
+  when a silence left some of it out. Findings of no group come first. One thing found at
+  several sites — a composition conflict, at each file involved — is one first line per
+  site over the one message.
+- **The last line** counts the run by severity, and what was silenced by tier:
+  `1 error, 10 warnings; 3 silenced (3 estate) — …`. A refused compile prints its warnings,
+  then its errors, then this line, and exits 1.
+- There is no colour.
+
+`satz transpile <estate> --check --format json` prints the same run as data on stdout, and
+nothing on stderr but the version line: the estate, the `addresses` it emits, the files
+`written` (none under `--check`) and every finding — `severity`, `kind`, `group`, `file`,
+`line`, `subject`, `message`, `fix`, and `silenced` where a tier silenced it. It is the
+object the MCP tools `satz_transpile_check` and `satz_transpile` return. A refused compile
+prints the same object with no address and its errors among the findings — a parse error
+too, as one finding of kind `front-end` — and exits 1. `message` is the sentence and `fix`
+the command; the command is in `fix` alone.
+
+The language server shows the same finding as a diagnostic: the range is the location, the
+diagnostic's `code` is the kind, and its message is the group's title, the sentence and
+`fix: <command>` as the last line.
+
 ### Silencing a finding (`silence`)
 
 A compile reports what it finds as findings — the errors it refuses on, the warnings and
@@ -1598,8 +1658,8 @@ one process, and a silence given once on their command line would hold for all o
 
 A silenced finding is **still produced**: it stays in the list, in `--format json` and in
 what MCP returns, marked with the tier that silenced it and that tier's reason. Only the
-printed output leaves it out, and every run that silenced anything ends with one line
-saying how many and from which tier. An **error is never silenced** by any tier, and a
+printed output leaves it out: a group's title says how many of it were silenced, and the
+run's last line counts them by tier. An **error is never silenced** by any tier, and a
 `--silence` that names one refuses the run.
 
 ```bash

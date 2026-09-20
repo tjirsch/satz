@@ -470,8 +470,6 @@ impl<'a> View<'a> {
             let dry_run = e.source == Source::Declared;
             clashes.push((a, b, dry_run));
         }
-        let dry = clashes.iter().filter(|c| c.2).count();
-        let other = clashes.len() - dry;
         let mut out = Vec::new();
         for (a, b, dry_run) in clashes {
             let f = if dry_run {
@@ -480,12 +478,12 @@ impl<'a> View<'a> {
                     Severity::Error,
                     Kind::DryRunConflict,
                     format!(
-                        "`{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n     \
+                        "`{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n\
                          Switch one off: `{}` to size the control against this organisation first, `{}` to enforce it now.",
                         enforcing, dry_gate, dry_gate, enforcing
                     ),
                 )
-                .in_group(format!("{} control(s) asked to be measured and enforced at once:", dry))
+                .in_group("controls asked to be measured and enforced at once")
                 .maybe_at(label.to_string(), crate::findings::param_line(src, dry_gate))
             } else {
                 Finding::new(
@@ -493,7 +491,7 @@ impl<'a> View<'a> {
                     Kind::ExcludedPacks,
                     format!("`{}` and `{}` exclude one another and both are on — switch one off with `satz remove-pack`", a.path, b.path),
                 )
-                .in_group(format!("{} pair(s) of packs that exclude one another, both on:", other))
+                .in_group("pairs of packs that exclude one another, both on")
                 .maybe_at(label.to_string(), self.lines_of(&a.path).0.map(|l| l.index as u32 + 1))
             };
             out.push((a.path.clone(), f));
@@ -505,9 +503,11 @@ impl<'a> View<'a> {
     fn line_findings(&self, label: &str, level: &str) -> Vec<(String, Finding)> {
         let Some(sev) = crate::findings::at_level(level) else { return Vec::new() };
         let at = |l: Option<&UseLine>| l.map(|l| l.index as u32 + 1);
-        let mut unadopted: Vec<(String, String, Option<u32>)> = Vec::new();
-        let mut ungated: Vec<(String, String, Option<u32>)> = Vec::new();
-        let mut needs: Vec<(String, String, Option<u32>)> = Vec::new();
+        // (the pack, the sentence, the command that answers it, the line)
+        type Row = (String, String, Option<String>, Option<u32>);
+        let mut unadopted: Vec<Row> = Vec::new();
+        let mut ungated: Vec<Row> = Vec::new();
+        let mut needs: Vec<Row> = Vec::new();
         let on = |p: &str| self.deploys(p);
         for n in &self.graph.nodes {
             let (state, line) = self.state(n);
@@ -517,11 +517,11 @@ impl<'a> View<'a> {
             if let (Some(g), true) = (&n.gate, n.order.is_some() && n.by_hand.is_none()) {
                 if self.answered(g) == Some(true) && matches!(state, "commented" | "absent") && !self.stood_in_for(n, &|p| self.lines_of(p).0.is_some()) {
                     let msg = if state == "commented" {
-                        format!("`{}` is true and `{}` is still commented out — uncomment it, or `satz add-pack` will", g, n.path)
+                        format!("`{}` is true and `{}` is still commented out — the command uncomments it", g, n.path)
                     } else {
-                        format!("`{}` is true and this estate has no line for `{}` — `satz add-pack` writes it where the pack graph places it", g, n.path)
+                        format!("`{}` is true and this estate has no line for `{}` — the command writes it where the pack graph places it", g, n.path)
                     };
-                    unadopted.push((n.path.clone(), msg, at(line)));
+                    unadopted.push((n.path.clone(), msg, Some(format!("satz add-pack <estate> {}", n.path)), at(line)));
                 }
             }
             if state == "ungated" && self.gate_exists(n) {
@@ -529,30 +529,41 @@ impl<'a> View<'a> {
                 ungated.push((
                     n.path.clone(),
                     format!(
-                        "`{}` is used without `when {}`, so a no to `{}` does not switch it off — `satz merge-presets` gates it, or write `use \"{}\" when {}`",
+                        "`{}` is used without `when {}`, so a no to `{}` does not switch it off — the command gates it, or write `use \"{}\" when {}`",
                         n.path, g, g, n.path, g
                     ),
+                    Some("satz merge-presets --estate <estate>".to_string()),
                     at(line),
                 ));
             }
             if self.deploys(&n.path) {
                 for r in self.requirements(n, &on).iter().filter(|r| !r.met) {
-                    needs.push((n.path.clone(), format!("{} — `satz add-pack` it first", self.requirement_text(n, r)), at(line)));
+                    // one pack meets it: that is the command. Several could: which is the
+                    // operator's choice, and the sentence says so
+                    let (text, fix) = match r.any_of.as_slice() {
+                        [one] => (self.requirement_text(n, r), Some(format!("satz add-pack <estate> {}", one))),
+                        _ => (format!("{} — `satz add-pack` one of them first", self.requirement_text(n, r)), None),
+                    };
+                    needs.push((n.path.clone(), text, fix, at(line)));
                 }
             }
         }
         let mut out = Vec::new();
-        let mut group = |items: Vec<(String, String, Option<u32>)>, kind: Kind, header: String| {
-            for (path, msg, line) in items {
-                out.push((path, Finding::new(sev, kind, msg).in_group(&header).maybe_at(label.to_string(), line)));
+        let mut group = |items: Vec<Row>, kind: Kind, title: &str| {
+            for (path, msg, fix, line) in items {
+                let f = Finding::new(sev, kind, msg).in_group(title).maybe_at(label.to_string(), line);
+                out.push((
+                    path,
+                    match fix {
+                        Some(command) => f.fix_in(&command, Path::new(label)),
+                        None => f,
+                    },
+                ));
             }
         };
-        let n = unadopted.len();
-        group(unadopted, Kind::UnadoptedPack, format!("{} pack(s) this estate asks for but does not use — the answer is bound and nothing emits it:", n));
-        let n = ungated.len();
-        group(ungated, Kind::UngatedPack, format!("{} pack line(s) without their gate — a no does not switch them off:", n));
-        let n = needs.len();
-        group(needs, Kind::PackRequirement, format!("{} pack(s) on while a pack they need is off:", n));
+        group(unadopted, Kind::UnadoptedPack, "packs this estate asks for but does not use — the answer is bound and nothing emits it");
+        group(ungated, Kind::UngatedPack, "pack lines without their gate — a no does not switch them off");
+        group(needs, Kind::PackRequirement, "packs on while a pack they need is off");
         out
     }
 
@@ -693,7 +704,10 @@ fn front_end_hints(graph: &PackGraph, presets_dir: &Path, label: &str, src: &str
         .into_iter()
         .chain(view.exclusion_findings(label, src))
         .filter(|(_, f)| matches!(f.kind, Kind::PackRequirement | Kind::ExcludedPacks | Kind::DryRunConflict))
-        .map(|(_, f)| f.message)
+        .map(|(_, f)| match f.fix {
+            Some(fix) => format!("{} — `{}`", f.message.replace('\n', " "), fix),
+            None => f.message.replace('\n', " "),
+        })
         .collect()
 }
 
@@ -815,11 +829,13 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
         note: None,
         packs: nodes.iter().map(|n| view.row(n, &found)).collect(),
         unmanaged: view.unmanaged(),
-        findings: found.into_iter().map(|(_, f)| f).collect(),
+        // as the compile reports them: the pack is the subject, the file is relative to
+        // the estate's directory
+        findings: found.into_iter().map(|(path, f)| crate::estate_relative_file(f.about(path), runtime.dir.as_deref())).collect(),
     })
 }
 
-pub(crate) fn render_text(r: &PacksReport) -> String {
+pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> String {
     let mut s = format!("packs — {}\n", r.estate);
     if let Some(n) = &r.note {
         s.push_str(&format!("  {}\n", n));
@@ -874,10 +890,8 @@ pub(crate) fn render_text(r: &PacksReport) -> String {
         }
     }
     if !r.findings.is_empty() {
-        s.push_str("\nfindings:\n");
-        for f in &r.findings {
-            s.push_str(&format!("  {}\n", f.message));
-        }
+        s.push_str("\nfindings:\n\n");
+        s.push_str(&crate::findings::lay_out(&r.findings, crate::findings::Shown::All, width));
     }
     s
 }
@@ -924,7 +938,10 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
     if !r.findings.is_empty() {
         s.push_str("\n## Findings\n\n");
         for f in &r.findings {
-            s.push_str(&format!("- {}\n", cell(&f.message)));
+            match &f.fix {
+                Some(fix) => s.push_str(&format!("- {} Fix: `{}`\n", cell(&f.message), fix)),
+                None => s.push_str(&format!("- {}\n", cell(&f.message))),
+            }
         }
     }
     s

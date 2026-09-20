@@ -1,10 +1,10 @@
 //! What the compile finds after the front end — one list, three readers.
 //!
-//! The CLI prints a warning as it always did and refuses on an error; the language
-//! server turns each finding into a diagnostic at the file and line it names; MCP
-//! returns the list as data, warnings included. One shape, so the three never
-//! disagree about what satz found. The texts are the CLI's, verbatim: what the smoke
-//! matrix greps for is what an editor shows.
+//! The CLI lays each finding out for a reader (`lay_out`) and refuses on an error; the
+//! language server turns each finding into a diagnostic at the file and line it names;
+//! MCP returns the list as data, warnings included. One shape, so the three never
+//! disagree about what satz found, and one layout, so every command that prints a
+//! finding prints it the same way.
 
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -49,6 +49,9 @@ macro_rules! kinds {
 }
 
 kinds! {
+    /// what the front end refuses before anything is folded: a parse error, an unknown
+    /// param, an entry that does not belong where it stands
+    FrontEnd => "front-end",
     DryRunConflict => "dry-run-conflict",
     Conflict => "conflict",
     Suppression => "suppression",
@@ -103,8 +106,8 @@ impl std::fmt::Display for Kind {
 pub(crate) struct Finding {
     pub severity: Severity,
     pub kind: Kind,
-    /// The header of the group this finding belongs to, printed once above the group
-    /// by the CLI (`required arguments missing:`).
+    /// The title of the group this finding belongs to (`required arguments missing`).
+    /// The CLI prints it once above the group, with how many findings stand under it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     /// The file the finding names: a `use` path as the loader saw it, or the estate.
@@ -119,7 +122,13 @@ pub(crate) struct Finding {
     /// which carries counts and paths, names nothing stable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// The sentence: what was found, and why it matters. Never the command that answers
+    /// it — that is `fix`.
     pub message: String,
+    /// The command that answers this finding, as it is typed: `satz add-pack e.satz
+    /// presets/estate-map.satz`. Absent where no one command does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
     /// Set when a tier silenced this finding. The finding stays in the list and in the
     /// JSON either way — only the human rendering leaves it out.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -136,6 +145,7 @@ impl Finding {
             line: None,
             subject: None,
             message: message.into(),
+            fix: None,
             silenced: None,
         }
     }
@@ -173,6 +183,22 @@ impl Finding {
         self.group = Some(group.into());
         self
     }
+
+    /// The command that answers it, as it is typed.
+    pub(crate) fn fix(mut self, command: impl Into<String>) -> Self {
+        self.fix = Some(command.into());
+        self
+    }
+
+    /// The command that answers it, for one estate: `<estate>` in it — a pack's notice
+    /// writes its command that way — is the estate's file name, so the line is one to
+    /// paste.
+    pub(crate) fn fix_in(self, command: &str, estate: &std::path::Path) -> Self {
+        match estate.file_name() {
+            Some(name) => self.fix(command.replace("<estate>", &name.to_string_lossy())),
+            None => self.fix(command),
+        }
+    }
 }
 
 /// The severity a validation level gives the findings it governs: `warn` → Warning,
@@ -195,62 +221,251 @@ pub(crate) fn param_line(src: &str, name: &str) -> Option<u32> {
     .map(|i| i as u32 + 1)
 }
 
-/// A compile the findings refused, as an error: it renders exactly what the CLI
-/// prints, and carries the findings that produced it for a caller that can show
-/// them at their lines. `pipeline_b_generate` returns this boxed, so every `?`
+/// A compile the findings refused, as an error: it displays as the layout the CLI
+/// prints, unwrapped, and carries the findings that produced it for a caller that can
+/// show them at their lines. `pipeline_b_generate` returns this boxed, so every `?`
 /// call site is unchanged and only the callers that want structure look for it.
+///
+/// A front-end refusal is one too, with one finding: the parser's error has a file, a
+/// line and a message, which is what a finding is.
 #[derive(Debug)]
 pub(crate) struct CompileRefusal {
-    pub message: String,
     pub findings: Vec<Finding>,
+}
+
+impl CompileRefusal {
+    /// The front end's refusal as the one error finding it is.
+    pub(crate) fn front_end(e: satz_core::pipeline::PipelineError) -> Self {
+        CompileRefusal { findings: vec![Finding::new(Severity::Error, Kind::FrontEnd, e.msg).located(e.file, e.line as u32)] }
+    }
+
+    /// The first error in one line — `file:line: message` — for a caller that reports a
+    /// refused compile as one row of its own report.
+    pub(crate) fn brief(&self) -> String {
+        let Some(f) = self.findings.iter().find(|f| f.severity == Severity::Error) else { return String::new() };
+        let first = f.message.lines().next().unwrap_or_default();
+        match location(f) {
+            Some(at) => format!("{}: {}", at, first),
+            None => first.to_string(),
+        }
+    }
 }
 
 impl std::fmt::Display for CompileRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        f.write_str(lay_out(&self.findings, Shown::Errors, Width::Unwrapped).trim_end())
     }
 }
 impl std::error::Error for CompileRefusal {}
 
+/// The refusal this error is, if it is one.
+pub(crate) fn as_refusal<'a>(e: &'a (dyn std::error::Error + 'static)) -> Option<&'a CompileRefusal> {
+    e.downcast_ref::<CompileRefusal>()
+}
+
 /// The findings behind a refusal, if this error is one. Empty for every other
 /// failure — a missing schema directory has no line to point at.
 pub(crate) fn refusal_findings(e: &(dyn std::error::Error + 'static)) -> Vec<Finding> {
-    e.downcast_ref::<CompileRefusal>().map(|c| c.findings.clone()).unwrap_or_default()
+    as_refusal(e).map(|c| c.findings.clone()).unwrap_or_default()
 }
 
-/// The CLI's rendering: warnings and notes to stderr, each group's header once; then
-/// the verdict `refusal` reaches — `Err` when there is an error, so `?` refuses the
-/// compile.
+// ---------------------------------------------------------------------------
+// The layout: one text form of a finding, for every command that prints one
+// ---------------------------------------------------------------------------
+
+/// How far the prose may run before it breaks.
 ///
-/// A silenced finding is left out here and nowhere else: it is still in the list this
-/// was given, still in `--format json` and still in what MCP returns. What it leaves
-/// behind is the summary line — how many were silenced, and by which tier — so a
-/// silence is visible on every run even when its finding is not.
-pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
-    let mut seen: Vec<&str> = Vec::new();
-    for f in findings.iter().filter(|f| f.severity != Severity::Error && f.silenced.is_none()) {
-        let tag = if f.severity == Severity::Warning { "warning" } else { "note" };
-        match f.group.as_deref() {
-            Some(g) if !seen.contains(&g) => {
-                seen.push(g);
-                say(format!("{}: {}\n  {}", tag, g, f.message));
-            }
-            Some(_) => say(format!("  {}", f.message)),
-            None => say(format!("{}: {}", tag, f.message)),
+/// A terminal has a width and gets prose wrapped to it. Anything else — a pipe, a CI
+/// log, a file, an MCP text block — gets every paragraph on one line: what reads such
+/// a stream matches substrings, and a break inside the phrase it looks for is a match
+/// it misses. The structure is the same either way: the first line, the indented
+/// message, the `fix:` line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Width {
+    Unwrapped,
+    Columns(usize),
+}
+
+impl Width {
+    /// Wider than this and a line of prose is harder to read than a wrapped one.
+    const WIDEST: usize = 110;
+    /// Narrower than this and the wrapping is worse than the terminal's own.
+    const NARROWEST: usize = 40;
+
+    fn of(columns: Option<(terminal_size::Width, terminal_size::Height)>, is_terminal: bool) -> Width {
+        match columns {
+            Some((w, _)) if is_terminal => Width::Columns((w.0 as usize).clamp(Self::NARROWEST, Self::WIDEST)),
+            _ => Width::Unwrapped,
         }
     }
-    if let Some(line) = silenced_summary(findings) {
-        say(line);
+
+    pub(crate) fn of_stderr() -> Width {
+        use std::io::IsTerminal;
+        Width::of(terminal_size::terminal_size_of(std::io::stderr()), std::io::stderr().is_terminal())
     }
-    refusal(findings)
+
+    pub(crate) fn of_stdout() -> Width {
+        use std::io::IsTerminal;
+        Width::of(terminal_size::terminal_size_of(std::io::stdout()), std::io::stdout().is_terminal())
+    }
 }
 
-/// `3 finding(s) silenced (2 estate, 1 run)` — nothing when none was.
-pub(crate) fn silenced_summary(findings: &[Finding]) -> Option<String> {
-    let silenced: Vec<&Finding> = findings.iter().filter(|f| f.silenced.is_some()).collect();
-    if silenced.is_empty() {
-        return None;
+/// Which findings of a list one call lays out. A silenced finding is in none of them:
+/// it stays in the list and in the JSON, and the footer counts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Shown {
+    /// what refuses the compile
+    Errors,
+    /// what does not: the warnings and the notes
+    Rest,
+    All,
+}
+
+impl Shown {
+    fn takes(self, f: &Finding) -> bool {
+        match self {
+            Shown::Errors => f.severity == Severity::Error,
+            Shown::Rest => f.severity != Severity::Error,
+            Shown::All => true,
+        }
     }
+}
+
+impl Severity {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Note => "note",
+        }
+    }
+}
+
+/// `file:line`, or the file alone when the whole file is the subject.
+fn location(f: &Finding) -> Option<String> {
+    match (&f.file, f.line) {
+        (Some(file), Some(line)) => Some(format!("{}:{}", file, line)),
+        (Some(file), None) => Some(file.clone()),
+        _ => None,
+    }
+}
+
+/// The indentation of a finding's message and of its `fix:` line under its first line.
+const BODY: &str = "    ";
+
+/// The findings as a human reads them. Per finding: a first line of severity, kind,
+/// `file:line` and subject, in columns that line up over the whole run; the message
+/// under it, indented, wrapped to `width`; and the command that answers it as a last
+/// line of its own, `fix: …`. Findings of one group stand together under the group's
+/// title, which says how many stand there and how many of the group a silence left out.
+/// Findings that say the same thing at several sites — a conflict, at each file it
+/// involves — share one message under their first lines.
+/// The findings of no group come first, so that what stands under a title is that
+/// group's. Every finding, and every title, is a blank line from the one before it.
+/// Empty when nothing is shown.
+pub(crate) fn lay_out(findings: &[Finding], shown: Shown, width: Width) -> String {
+    let printed: Vec<&Finding> = findings.iter().filter(|f| shown.takes(f) && f.silenced.is_none()).collect();
+    // The columns are as wide as their widest entry in this RUN, not in this call: a
+    // refused compile prints its warnings and then its errors, and they line up.
+    let run = || findings.iter().filter(|f| f.silenced.is_none());
+    let kind_w = run().map(|f| f.kind.as_str().len()).max().unwrap_or(0);
+    let at_w = run().filter_map(location).map(|l| l.chars().count()).max().unwrap_or(0);
+    // The findings of no group first, then each group in the order its first finding
+    // arrives: whatever stands under a title belongs to it, down to the next title.
+    let mut entries: Vec<(Option<&str>, Vec<&Finding>)> = vec![(None, Vec::new())];
+    for f in printed {
+        let title = f.group.as_deref();
+        match entries.iter_mut().find(|(t, _)| *t == title) {
+            Some((_, members)) => members.push(f),
+            None => entries.push((title, vec![f])),
+        }
+    }
+    let mut out = String::new();
+    for (title, members) in entries {
+        if let Some(title) = title {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            let silenced = findings.iter().filter(|f| shown.takes(f) && f.silenced.is_some() && f.group.as_deref() == Some(title)).count();
+            let count = match silenced {
+                0 => format!("{}", members.len()),
+                m => format!("{} of {}, {} silenced", members.len(), members.len() + m, m),
+            };
+            out.push_str(&format!("{} ({})\n", title, count));
+        }
+        // One thing found at several sites is one finding per site, so an editor marks
+        // each; here the sites stand together over the one sentence they share.
+        let same = |a: &Finding, b: &Finding| (a.severity, a.kind, &a.message, &a.fix) == (b.severity, b.kind, &b.message, &b.fix);
+        for (i, f) in members.iter().enumerate() {
+            if !out.is_empty() && !(i > 0 && same(members[i - 1], f)) {
+                out.push('\n');
+            }
+            let at = location(f).unwrap_or_default();
+            // a subject that IS the location — an `hcl` block is named by where it stands —
+            // is said once
+            let subject = f.subject.as_deref().filter(|s| *s != at).unwrap_or_default();
+            let first = format!("{:<7}  {:<kind_w$}  {:<at_w$}  {}", f.severity.as_str(), f.kind.as_str(), at, subject);
+            out.push_str(first.trim_end());
+            out.push('\n');
+            if members.get(i + 1).is_some_and(|next| same(f, next)) {
+                continue;
+            }
+            for line in f.message.lines() {
+                wrap_into(&mut out, line, width);
+            }
+            if let Some(fix) = &f.fix {
+                // never wrapped: a command is pasted
+                out.push_str(&format!("{}fix: {}\n", BODY, fix));
+            }
+        }
+    }
+    out
+}
+
+/// One line of a message under its finding: indented, and broken at `width` between
+/// words. A line the producer indented — a list under a sentence — keeps its indent,
+/// and what wraps hangs two further in.
+fn wrap_into(out: &mut String, line: &str, width: Width) {
+    let text = line.trim_start();
+    let lead = &line[..line.len() - text.len()];
+    let Width::Columns(columns) = width else {
+        out.push_str(&format!("{}{}{}\n", BODY, lead, text));
+        return;
+    };
+    let hang = if lead.is_empty() { String::new() } else { format!("{}  ", lead) };
+    let mut current = format!("{}{}", BODY, lead);
+    let mut empty = true;
+    for word in text.split(' ').filter(|w| !w.is_empty()) {
+        if !empty && current.chars().count() + 1 + word.chars().count() > columns {
+            out.push_str(&current);
+            out.push('\n');
+            current = format!("{}{}", BODY, hang);
+            empty = true;
+        }
+        if !empty {
+            current.push(' ');
+        }
+        current.push_str(word);
+        empty = false;
+    }
+    out.push_str(&current);
+    out.push('\n');
+}
+
+/// The last line of a run: what was printed, by severity, and what a silence left out,
+/// by tier — `1 error, 10 warnings; 3 silenced (2 estate, 1 run) — …`. Nothing when
+/// there is nothing to count.
+pub(crate) fn footer(findings: &[Finding]) -> Option<String> {
+    let count = |s: Severity| findings.iter().filter(|f| f.severity == s && f.silenced.is_none()).count();
+    let plural = |n: usize, word: &str| format!("{} {}{}", n, word, if n == 1 { "" } else { "s" });
+    let printed: Vec<String> = [(Severity::Error, "error"), (Severity::Warning, "warning"), (Severity::Note, "note")]
+        .into_iter()
+        .filter_map(|(s, word)| match count(s) {
+            0 => None,
+            n => Some(plural(n, word)),
+        })
+        .collect();
+    let silenced: Vec<&Finding> = findings.iter().filter(|f| f.silenced.is_some()).collect();
     let by_tier: Vec<String> = crate::silence::Tier::ALL
         .iter()
         .filter_map(|t| {
@@ -258,12 +473,51 @@ pub(crate) fn silenced_summary(findings: &[Finding]) -> Option<String> {
             (n > 0).then(|| format!("{} {}", n, t))
         })
         .collect();
-    Some(format!("{} finding(s) silenced ({}) — `satz silence list` says by what", silenced.len(), by_tier.join(", ")))
+    let left_out =
+        (!silenced.is_empty()).then(|| format!("{} silenced ({}) — `satz silence list` says by what", silenced.len(), by_tier.join(", ")));
+    match (printed.is_empty(), left_out) {
+        (true, None) => None,
+        (true, Some(s)) => Some(s),
+        (false, None) => Some(printed.join(", ")),
+        (false, Some(s)) => Some(format!("{}; {}", printed.join(", "), s)),
+    }
 }
 
-/// One entry of the CLI's rendering, to stderr. A test reads back what its own thread
-/// printed, which is how it tells a compile that printed its warnings from one that
-/// printed nothing.
+/// The CLI's rendering: the warnings and notes to stderr in the layout, then the
+/// verdict `refusal` reaches — `Err` when there is an error, so `?` refuses the compile.
+/// The footer closes a compile that goes on; one that is refused gets it from
+/// `report_refusal`, under the errors, so it is the last line either way.
+///
+/// A silenced finding is left out here and nowhere else: it is still in the list this
+/// was given, still in `--format json` and still in what MCP returns. What it leaves
+/// behind is its count in the footer — how many were silenced, and by which tier — so a
+/// silence is visible on every run even when its finding is not.
+pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
+    let text = lay_out(findings, Shown::Rest, Width::of_stderr());
+    if !text.is_empty() {
+        say(text);
+    }
+    let verdict = refusal(findings);
+    if verdict.is_ok() {
+        if let Some(line) = footer(findings) {
+            say(line);
+        }
+    }
+    verdict
+}
+
+/// A refused compile as the CLI's last words: the errors in the layout, then the footer.
+pub(crate) fn report_refusal(refusal: &CompileRefusal) {
+    let text = lay_out(&refusal.findings, Shown::Errors, Width::of_stderr());
+    eprint!("{}", text);
+    if let Some(line) = footer(&refusal.findings) {
+        eprintln!("\n{}", line);
+    }
+}
+
+/// One piece of the CLI's rendering, to stderr, followed by a blank line. A test reads
+/// back what its own thread printed, which is how it tells a compile that printed its
+/// warnings from one that printed nothing.
 fn say(text: String) {
     #[cfg(test)]
     SAID.with(|s| s.borrow_mut().push(text.clone()));
@@ -281,42 +535,17 @@ pub(crate) fn take_said() -> Vec<String> {
     SAID.with(|s| std::mem::take(&mut *s.borrow_mut()))
 }
 
-/// The verdict `render` reaches, with nothing printed: the errors joined into one
-/// message under their headers, `Err` when there is any. A command that reports the
-/// findings in its own output compiles with this, so an internal compile does not
-/// speak over it.
+/// The verdict `render` reaches, with nothing printed: the errors in the layout,
+/// unwrapped, `Err` when there is any. A command that reports the findings in its own
+/// output compiles with this, so an internal compile does not speak over it.
 ///
 /// It never reads `silenced`, and it never has to: `Silences::apply` skips an `Error`,
 /// so no tier can reach the verdict.
 pub(crate) fn refusal(findings: &[Finding]) -> Result<(), String> {
-    let errors: Vec<&Finding> = findings.iter().filter(|f| f.severity == Severity::Error).collect();
-    if errors.is_empty() {
-        return Ok(());
+    match lay_out(findings, Shown::Errors, Width::Unwrapped) {
+        text if text.is_empty() => Ok(()),
+        text => Err(text.trim_end().to_string()),
     }
-    let mut out = String::new();
-    let mut groups: Vec<&str> = Vec::new();
-    for f in errors {
-        match f.group.as_deref() {
-            Some(g) => {
-                if !groups.contains(&g) {
-                    if !out.is_empty() {
-                        out.push_str("\n\n");
-                    }
-                    out.push_str(g);
-                    groups.push(g);
-                }
-                out.push_str("\n  ");
-                out.push_str(&f.message);
-            }
-            None => {
-                if !out.is_empty() {
-                    out.push_str("\n\n");
-                }
-                out.push_str(&f.message);
-            }
-        }
-    }
-    Err(out)
 }
 
 #[cfg(test)]
@@ -335,27 +564,102 @@ mod tests {
         assert!(Kind::names().contains("hcl-passthrough"));
     }
 
+    fn notice(subject: &str) -> Finding {
+        Finding::new(Severity::Warning, Kind::Notice, format!("the notice of {}", subject))
+            .in_group("notices open")
+            .about(subject)
+            .located("e.satz", 4)
+            .fix("satz adopt e.satz --execute --import")
+    }
+
+    /// The layout, whole: lone findings first, a group under its title with its count,
+    /// the columns lined up over the run, the message indented, the fix last.
+    #[test]
+    fn a_finding_is_a_first_line_its_message_and_its_fix() {
+        let f = vec![
+            notice("a"),
+            Finding::new(Severity::Note, Kind::HclPassthrough, "raw HCL passthrough (3 lines) — trusted: reviewed")
+                .about("p.satz:12")
+                .located("p.satz", 12),
+            notice("b"),
+        ];
+        assert_eq!(
+            lay_out(&f, Shown::All, Width::Unwrapped),
+            "note     hcl-passthrough  p.satz:12\n\
+             \x20   raw HCL passthrough (3 lines) — trusted: reviewed\n\
+             \n\
+             notices open (2)\n\
+             \n\
+             warning  notice           e.satz:4   a\n\
+             \x20   the notice of a\n\
+             \x20   fix: satz adopt e.satz --execute --import\n\
+             \n\
+             warning  notice           e.satz:4   b\n\
+             \x20   the notice of b\n\
+             \x20   fix: satz adopt e.satz --execute --import\n"
+        );
+        assert_eq!(footer(&f).as_deref(), Some("2 warnings, 1 note"));
+        assert!(lay_out(&f, Shown::Errors, Width::Unwrapped).is_empty(), "there is no error to lay out");
+    }
+
+    /// A conflict is one finding per site, so an editor marks every file; the CLI says the
+    /// sentence once, under the sites.
+    #[test]
+    fn the_same_sentence_at_several_sites_is_said_once() {
+        let at = |file: &str, line| Finding::new(Severity::Error, Kind::Conflict, "x.y: 2 disagreeing definitions").in_group("composition conflicts").located(file, line);
+        let f = vec![at("a.satz", 12), at("b.satz", 40)];
+        assert_eq!(
+            lay_out(&f, Shown::Errors, Width::Unwrapped),
+            "composition conflicts (2)\n\n\
+             error    conflict  a.satz:12\n\
+             error    conflict  b.satz:40\n\
+             \x20   x.y: 2 disagreeing definitions\n"
+        );
+    }
+
+    /// Prose breaks between words at the width; a line the producer indented keeps its
+    /// indent and hangs what wraps; a command is never broken, because it is pasted.
+    #[test]
+    fn prose_wraps_to_the_width_and_a_fix_never_does() {
+        let f = vec![Finding::new(Severity::Warning, Kind::Prerequisites, "one two three four five six seven\n  eight nine ten eleven twelve thirteen")
+            .fix("satz update-prerequisites an-estate-with-a-long-name.satz --report-only")];
+        assert_eq!(
+            lay_out(&f, Shown::All, Width::Columns(24)),
+            "warning  prerequisites\n\
+             \x20   one two three four\n\
+             \x20   five six seven\n\
+             \x20     eight nine ten\n\
+             \x20       eleven twelve\n\
+             \x20       thirteen\n\
+             \x20   fix: satz update-prerequisites an-estate-with-a-long-name.satz --report-only\n"
+        );
+        // no terminal, no width: a pipe gets each paragraph whole, so a substring matches
+        assert!(lay_out(&f, Shown::All, Width::Unwrapped).contains("one two three four five six seven\n"));
+    }
+
     /// A silence hides, it never drops: the finding is still in the list the caller
     /// holds — and so in `--format json` and in what MCP returns — while the printing
-    /// leaves it out and says how many it left out, and by which tier.
+    /// leaves it out, the group's title counts what is left under it, and the footer
+    /// says how many were left out, and by which tier.
     #[test]
     fn a_silenced_finding_is_not_printed_but_is_still_there_and_counted() {
         use crate::silence::{Silenced, Tier};
-        let mut f = vec![
-            Finding::new(Severity::Warning, Kind::Notice, "notice one").in_group("2 notice(s) open:").about("a"),
-            Finding::new(Severity::Warning, Kind::Notice, "notice two").in_group("2 notice(s) open:").about("b"),
-            Finding::new(Severity::Warning, Kind::Action, "an action").about("x"),
-        ];
+        let mut f = vec![notice("a"), notice("b"), notice("c"), Finding::new(Severity::Warning, Kind::Action, "an action").about("x")];
         f[0].silenced = Some(Silenced { tier: Tier::Estate, reason: "adopted".into() });
         f[1].silenced = Some(Silenced { tier: Tier::Run, reason: "--silence on the command line".into() });
         take_said();
         render(&f).expect("warnings do not refuse");
         let said = take_said();
-        assert_eq!(said.len(), 2, "the group printed nothing and the action printed once: {:?}", said);
-        assert_eq!(said[0], "warning: an action");
-        assert_eq!(said[1], "2 finding(s) silenced (1 estate, 1 run) — `satz silence list` says by what");
-        assert_eq!(f.len(), 3, "nothing was dropped");
-        assert!(silenced_summary(&f[2..]).is_none(), "nothing silenced, nothing said");
+        assert_eq!(said.len(), 2, "the layout, then the footer: {:?}", said);
+        assert!(said[0].contains("notices open (1 of 3, 2 silenced)\n"), "the title counts what stands under it: {}", said[0]);
+        assert!(said[0].contains("  c\n") && !said[0].contains("the notice of a"), "{}", said[0]);
+        assert_eq!(said[1], "2 warnings; 2 silenced (1 estate, 1 run) — `satz silence list` says by what");
+        assert_eq!(f.len(), 4, "nothing was dropped");
+        assert_eq!(footer(&f[3..]).as_deref(), Some("1 warning"), "nothing silenced, nothing said about it");
+        // a group silenced whole leaves no title behind
+        f[2].silenced = Some(Silenced { tier: Tier::Machine, reason: "seen".into() });
+        assert!(!lay_out(&f, Shown::All, Width::Unwrapped).contains("notices open"));
+        assert!(footer(&[]).is_none());
     }
 
     #[test]
@@ -373,26 +677,46 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_displays_as_the_cli_text_and_hands_its_findings_over() {
-        let findings = vec![Finding::new(Severity::Error, Kind::Emit, "emit: no").located("e.satz", 7)];
-        let e: Box<dyn std::error::Error> =
-            Box::new(CompileRefusal { message: "emit: no".into(), findings: findings.clone() });
-        assert_eq!(e.to_string(), "emit: no");
-        assert_eq!(refusal_findings(e.as_ref()).len(), 1);
+    fn a_refusal_displays_as_the_layout_and_hands_its_findings_over() {
+        let findings = vec![
+            Finding::new(Severity::Warning, Kind::Action, "an action"),
+            Finding::new(Severity::Error, Kind::Emit, "emit: no\nand why").located("e.satz", 7),
+        ];
+        let e: Box<dyn std::error::Error> = Box::new(CompileRefusal { findings });
+        assert_eq!(e.to_string(), "error    emit    e.satz:7\n    emit: no\n    and why", "the errors alone, and no trailing newline");
+        assert_eq!(refusal_findings(e.as_ref()).len(), 2);
+        assert_eq!(as_refusal(e.as_ref()).unwrap().brief(), "e.satz:7: emit: no");
         let other: Box<dyn std::error::Error> = "no schemas".into();
         assert!(refusal_findings(other.as_ref()).is_empty(), "only a refusal carries findings");
+    }
+
+    /// The parser's refusal is a refusal like any other: one error finding, at its line.
+    #[test]
+    fn a_front_end_error_is_one_finding_at_its_line() {
+        let e = satz_core::pipeline::PipelineError { file: "e.satz".into(), line: 8, msg: "unknown param `x`".into() };
+        let r = CompileRefusal::front_end(e);
+        assert_eq!(r.findings.len(), 1);
+        let f = &r.findings[0];
+        assert_eq!((f.severity, f.kind, f.file.as_deref(), f.line), (Severity::Error, Kind::FrontEnd, Some("e.satz"), Some(8)));
+        assert_eq!(r.to_string(), "error    front-end  e.satz:8\n    unknown param `x`");
     }
 
     #[test]
     fn errors_render_under_their_group_once_and_warnings_do_not_refuse() {
         let f = vec![
             Finding::new(Severity::Warning, Kind::Action, "an action").located("e.satz", 3),
-            Finding::new(Severity::Error, Kind::MissingRequired, "a: the provider requires b").in_group("required arguments missing:"),
-            Finding::new(Severity::Error, Kind::MissingRequired, "c: the provider requires d").in_group("required arguments missing:"),
+            Finding::new(Severity::Error, Kind::MissingRequired, "a: the provider requires b").in_group("required arguments missing"),
+            Finding::new(Severity::Error, Kind::MissingRequired, "c: the provider requires d").in_group("required arguments missing"),
             Finding::new(Severity::Error, Kind::Emit, "emit: no"),
         ];
         let e = render(&f).unwrap_err();
-        assert_eq!(e, "required arguments missing:\n  a: the provider requires b\n  c: the provider requires d\n\nemit: no");
+        assert_eq!(
+            e,
+            "error    emit\n    emit: no\n\n\
+             required arguments missing (2)\n\n\
+             error    missing-required\n    a: the provider requires b\n\n\
+             error    missing-required\n    c: the provider requires d"
+        );
         assert!(render(&f[..1]).is_ok());
     }
 
@@ -402,12 +726,16 @@ mod tests {
     fn the_quiet_verdict_is_the_rendered_one_without_the_printing() {
         let f = vec![
             Finding::new(Severity::Warning, Kind::Action, "an action").located("e.satz", 3),
-            Finding::new(Severity::Error, Kind::MissingRequired, "a: the provider requires b").in_group("required arguments missing:"),
+            Finding::new(Severity::Error, Kind::MissingRequired, "a: the provider requires b").in_group("required arguments missing"),
             Finding::new(Severity::Error, Kind::Emit, "emit: no"),
         ];
         take_said();
         assert_eq!(refusal(&f), render(&f));
-        assert_eq!(take_said(), vec!["warning: an action".to_string()], "render printed the warning, once");
+        assert_eq!(
+            take_said(),
+            vec!["warning  action            e.satz:3\n    an action\n".to_string()],
+            "render printed the warning, once, and left the footer to whoever reports the refusal"
+        );
         let _ = refusal(&f);
         assert!(take_said().is_empty(), "refusal printed something");
         assert!(refusal(&f[..1]).is_ok(), "a warning alone does not refuse");

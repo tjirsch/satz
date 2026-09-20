@@ -1244,8 +1244,7 @@ pub(crate) async fn run_merge_presets(
     // refuse before that step ran — here, after an adoption, or in the step itself.
     let baseline = match (&estate, report_only) {
         (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet).map_err(|e| {
-            // printed, not returned: `main` renders a returned error with `Debug`,
-            // which escapes the newlines
+            // Printed ahead of the error: the detail first, then the one line `main` closes with.
             eprintln!(
                 "\nmerge-presets compiles {} before it changes anything, and it does not compile:\n  {}\n\
                  If a pack copy under {} is what fails — a param the estate renamed that the copy still binds —\n\

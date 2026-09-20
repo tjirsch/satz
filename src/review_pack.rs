@@ -148,10 +148,11 @@ pub(crate) fn review(
             &pack,
             None,
             Severity::Error,
-            "not formatted — every Satz file in the library is in the canonical layout; \
-             `satz fmt <file>` writes it and never changes meaning"
+            "not formatted — every Satz file in the library is in the canonical layout; the command writes it \
+             and never changes meaning"
                 .to_string(),
-        )),
+        )
+        .fix(format!("satz fmt {}", pack.display()))),
         Err(e) => f.push(at(&pack, None, Severity::Warning, format!("could not be formatted: {}", e))),
     }
 
@@ -248,12 +249,12 @@ pub(crate) fn review(
     let out = match compiled {
         Ok(o) => o,
         Err(e) => {
-            f.push(at(
-                &pack,
-                None,
-                Severity::Error,
-                format!("does not compile inside an estate: {}", first_line(&e.to_string())),
-            ));
+            // a refusal is its first error, where it stands; anything else is what it says
+            let why = match crate::findings::as_refusal(e.as_ref()) {
+                Some(refusal) => refusal.brief(),
+                None => first_line(&e.to_string()),
+            };
+            f.push(at(&pack, None, Severity::Error, format!("does not compile inside an estate: {}", why)));
             return Ok(Review { pack: pack.display().to_string(), folded_into, emits: Vec::new(), findings: f });
         }
     };
@@ -432,8 +433,9 @@ pub(crate) fn review(
             &pack,
             None,
             Severity::Warning,
-            "adoption rules not checked: <presets_dir>/import-config.yaml is not there — `satz get-presets` writes it".to_string(),
-        )),
+            "adoption rules not checked: <presets_dir>/import-config.yaml is not there — the command writes it".to_string(),
+        )
+        .fix("satz get-presets")),
         Err(e) => f.push(at(&pack, None, Severity::Error, format!("adoption rules not checked: {}", e))),
     }
 
@@ -516,34 +518,33 @@ fn same_file(a: &str, b: &Path) -> bool {
 }
 
 /// The review as a human reads it: what the pack is, what it emits, then the findings
-/// in the order they were checked.
-pub(crate) fn render(r: &Review) -> String {
+/// in the order they were checked — in the layout every command prints a finding in
+/// (`findings::lay_out`) — the count by severity, and the verdict.
+pub(crate) fn render(r: &Review, width: crate::findings::Width) -> String {
     let mut out = format!("pack: {}\nfolded into: {}\n", r.pack, r.folded_into);
-    out.push_str(&format!("emits: {}\n", if r.emits.is_empty() { "nothing".to_string() } else { r.emits.join(", ") }));
-    let count = |s: Severity| r.findings.iter().filter(|f| f.severity == s).count();
-    out.push_str(&format!(
-        "{} error(s), {} warning(s), {} note(s)\n\n",
-        count(Severity::Error),
-        count(Severity::Warning),
-        count(Severity::Note)
-    ));
-    for f in &r.findings {
-        let label = match f.severity {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Note => "note",
-        };
-        let at = match (&f.file, f.line) {
-            (Some(file), Some(line)) => format!("{}:{}: ", file, line),
-            (Some(file), None) => format!("{}: ", file),
-            _ => String::new(),
-        };
-        out.push_str(&format!("{}: {}{}\n", label, at, f.message));
+    out.push_str(&format!("emits: {}\n\n", if r.emits.is_empty() { "nothing".to_string() } else { r.emits.join(", ") }));
+    // the first line names the pack in full, so a finding about it names the file alone:
+    // the rows stay narrow, and the JSON keeps the path
+    let pack_name = Path::new(&r.pack).file_name().map(|n| n.to_string_lossy().into_owned());
+    let findings: Vec<Finding> = r
+        .findings
+        .iter()
+        .cloned()
+        .map(|mut f| {
+            if f.file.as_deref() == Some(r.pack.as_str()) {
+                f.file = pack_name.clone().or(f.file);
+            }
+            f
+        })
+        .collect();
+    out.push_str(&crate::findings::lay_out(&findings, crate::findings::Shown::All, width));
+    if let Some(counts) = crate::findings::footer(&findings) {
+        out.push_str(&format!("\n{}\n", counts));
     }
     out.push_str(if r.passed() {
-        "\nthe pack clears the bar.\n"
+        "the pack clears the bar.\n"
     } else {
-        "\nthe pack does not clear the bar yet — every error above is a rule the library holds.\n"
+        "the pack does not clear the bar yet — every error above is a rule the library holds.\n"
     });
     out
 }
@@ -551,6 +552,31 @@ pub(crate) fn render(r: &Review) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The review prints its findings in the layout every command prints one in — the
+    /// pack named by its file in each row, since the first line names it in full — then
+    /// the count by severity and the verdict.
+    #[test]
+    fn the_report_is_the_layout_every_finding_is_printed_in() {
+        let pack = Path::new("/tmp/x/my-pack.satz");
+        let r = Review {
+            pack: pack.display().to_string(),
+            folded_into: "synthetic".into(),
+            emits: Vec::new(),
+            findings: vec![
+                at(pack, None, Severity::Error, "not formatted".into()).fix("satz fmt /tmp/x/my-pack.satz"),
+                at(pack, Some(3), Severity::Note, "a note".into()),
+            ],
+        };
+        assert_eq!(
+            render(&r, crate::findings::Width::Unwrapped),
+            "pack: /tmp/x/my-pack.satz\nfolded into: synthetic\nemits: nothing\n\n\
+             error    pack  my-pack.satz\n    not formatted\n    fix: satz fmt /tmp/x/my-pack.satz\n\n\
+             note     pack  my-pack.satz:3\n    a note\n\n\
+             1 error, 1 note\n\
+             the pack does not clear the bar yet — every error above is a rule the library holds.\n"
+        );
+    }
 
     #[test]
     fn the_synthetic_estate_binds_the_documented_examples_and_uses_the_pack() {

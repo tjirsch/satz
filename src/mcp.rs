@@ -749,12 +749,13 @@ fn refused(msg: String) -> CallToolResult {
 }
 
 /// A refusal that also hands over what the compile found, so a client can show
-/// each error at its own line instead of parsing the text. The text is the one
-/// `refused` carries; the structure is a `CompileSummary` with nothing emitted,
-/// so it conforms to the schema the tool publishes.
-fn refused_with_findings(msg: String, estate: &std::path::Path, e: &(dyn std::error::Error + 'static)) -> CallToolResult {
+/// each error at its own line instead of parsing the text. The text is the errors in
+/// the layout the CLI prints them in, under a line saying what refused; the structure
+/// is a `CompileSummary` with nothing emitted, so it conforms to the schema the tool
+/// publishes. A front-end refusal is one too: its one finding carries the file and line.
+fn refused_with_findings(what: &str, estate: &std::path::Path, e: &(dyn std::error::Error + 'static)) -> CallToolResult {
     let findings = crate::findings::refusal_findings(e);
-    let mut result = refused(msg);
+    let mut result = refused(if findings.is_empty() { format!("{}: {}", what, e) } else { format!("{} refused:\n\n{}", what, e) });
     if !findings.is_empty() {
         let summary = CompileSummary {
             estate: estate.display().to_string(),
@@ -1433,11 +1434,7 @@ impl SatzMcp {
                 written: Vec::new(),
                 findings: out.findings,
             }))),
-            Err(e) => Ok(Err(refused_with_findings(
-                format!("transpile --check: {}", e),
-                &estate,
-                e.as_ref(),
-            ))),
+            Err(e) => Ok(Err(refused_with_findings("transpile --check", &estate, e.as_ref()))),
         }
     }
 
@@ -1560,7 +1557,7 @@ impl SatzMcp {
         let out = match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
             Ok(out) => out,
             Err(e) => {
-                return Ok(Err(refused_with_findings(format!("transpile: {}", e), &estate, e.as_ref())));
+                return Ok(Err(refused_with_findings("transpile", &estate, e.as_ref())));
             }
         };
         // The directory must be inside the root, whether or not it exists yet.

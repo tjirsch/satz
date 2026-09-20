@@ -289,6 +289,12 @@ enum Commands {
         /// the estate either transpiles or the error says why
         #[arg(long)]
         check: bool,
+        /// `json` prints the compile as data on stdout — the estate, the addresses it
+        /// emits, the files written and every finding, silenced ones included — and
+        /// nothing on stderr but the version line. A refused compile prints the same
+        /// object with its errors in `findings`, and exits 1
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
     },
     /// Scan Tofu plan JSON for resource renames
     ScanPlan {
@@ -1125,8 +1131,25 @@ fn save_global_settings(settings: &GlobalSettings) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// An error is printed as what it says. Returned from `main`, it would be printed by
+/// the `Debug` formatter: a message in quotes with its newlines escaped, and a refused
+/// compile as a struct dump of every finding.
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            match crate::findings::as_refusal(e.as_ref()) {
+                // the errors in the layout the warnings above them were printed in
+                Some(refusal) => crate::findings::report_refusal(refusal),
+                None => eprintln!("error: {}", e),
+            }
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // stderr, not stdout: stdout carries the ANSWER. A banner in front of it makes
     // `--format json` unparseable by anything downstream, and once `satz mcp` speaks
     // JSON-RPC over stdout a stray line there is a corrupt protocol stream rather
@@ -1223,8 +1246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // tool verbatim, which also swallows a `--config` written after
                     // those args. "config.toml not found" is baffling then, so name
                     // the actual fix.
-                    // Printed rather than returned: `main` renders a returned error
-                    // with `Debug`, which escapes the newline into a literal \n.
+                    // Printed ahead of the error: the detail first, then the one line `main` closes with.
                     if let Some(hint) = misplaced_config_hint(&cmd_choice) {
                         eprintln!("\n{}\n", hint);
                         return Err("--config came after the pass-through arguments".into());
@@ -1268,8 +1290,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tool_config: ToolConfig = match parse_tool_config(&config_file_path) {
         Ok(c) => c,
-        // Printed rather than returned: `main` renders a returned error with `Debug`,
-        // which escapes the newlines and inlines the entire file.
+        // Printed ahead of the error: the detail first, then the one line `main` closes with.
         Err(described) => {
             eprintln!("\n{}\n", described);
             return Err(format!("could not parse '{}' as TOML", config_file_path.display()).into());
@@ -1289,7 +1310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     match cmd_choice {
-        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan, check } => {
+        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan, check, format } => {
 
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             if let Some(sd) = &schema_dir {
@@ -1303,6 +1324,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // estate is migrated, never transpiled — `reject_yaml_estate` says
             // so and names the converter.
             reject_yaml_estate(&input_path, "transpile")?;
+            if format == OutFormat::Json {
+                if print_variables || plan || apply || scan {
+                    return Err("--format json is the compile as data; --print-variables, --plan, --apply and --scan print their own output — run them without it".into());
+                }
+                return transpile_as_json(&input_path, &input, output.as_deref(), check, &tool_config, &runtime_config);
+            }
             let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
             if print_variables {
                 println!("{}", out.tfvars);
@@ -1314,12 +1341,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            // --output relocates the emitted HCL; relative to hcl_dir, as before.
-            let base_output_path = match &output {
-                Some(o) if Path::new(o).is_absolute() => PathBuf::from(o),
-                Some(o) => PathBuf::from(&runtime_config.hcl_dir).join(o),
-                None => PathBuf::from(&runtime_config.hcl_dir),
-            };
+            let base_output_path = hcl_target(output.as_deref(), &runtime_config);
             for p in write_hcl(&out, &base_output_path, &input)? {
                 println!("Created {}", p.display());
             }
@@ -2261,7 +2283,7 @@ Thumbs.db
             let review = crate::review_pack::review(&pack, against.as_deref(), &tool_config, &runtime_config)?;
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&review)?,
-                _ => crate::review_pack::render(&review),
+                _ => crate::review_pack::render(&review, crate::out::width(&out)),
             };
             let what = format!(
                 "{} finding(s) on {}",
@@ -2347,7 +2369,7 @@ Thumbs.db
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&report)?,
                 OutFormat::Markdown | OutFormat::Pdf => crate::packs::render_markdown(&report),
-                _ => crate::packs::render_text(&report),
+                _ => crate::packs::render_text(&report, crate::out::width(&out)),
             };
             let deploying = report.packs.iter().filter(|p| p.deploys).count();
             let what = format!("{} pack(s), {} deploying, {} finding(s)", report.packs.len(), deploying, report.findings.len());
@@ -2360,8 +2382,7 @@ Thumbs.db
         }
         Commands::AddPack { input, pack, with_requirements, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            // printed rather than returned: `main` renders a returned error with `Debug`,
-            // which escapes the newlines of a refusal that names several packs
+            // Printed ahead of the error: the detail first, then the one line `main` closes with.
             let change = match crate::packs::add(&input_path, &tool_config, &runtime_config, &pack, with_requirements) {
                 Ok(c) => c,
                 Err(e) => {
@@ -2377,8 +2398,7 @@ Thumbs.db
         }
         Commands::RemovePack { input, pack, cascade, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            // printed rather than returned: `main` renders a returned error with `Debug`,
-            // which escapes the newlines of a refusal that names several packs
+            // Printed ahead of the error: the detail first, then the one line `main` closes with.
             let change = match crate::packs::remove(&input_path, &tool_config, &runtime_config, &pack, cascade) {
                 Ok(c) => c,
                 Err(e) => {
@@ -2630,8 +2650,76 @@ fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<&Path>) -> 
     let (Ok(full), Ok(root)) = (std::fs::canonicalize(file), std::fs::canonicalize(dir)) else { return f };
     if let Ok(rel) = full.strip_prefix(&root) {
         f.file = Some(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
+        // an `hcl` block is named by where it stands, so its subject is that same path:
+        // one spelling whoever compiles, or a `[[silence]]` row written from an agent's
+        // JSON would not answer to the CLI's finding
+        if let (crate::findings::Kind::HclPassthrough, Some(file), Some(line)) = (f.kind, &f.file, f.line) {
+            f.subject = Some(format!("{}:{}", file, line));
+        }
     }
     f
+}
+
+/// `transpile --format json`: the compile as the object `satz_transpile_check` and
+/// `satz_transpile` return — one run, read by a person as the layout or by a program as
+/// this. The compile prints nothing: the findings are in the object, silenced ones
+/// marked. A refused compile is the same object with nothing emitted and its errors
+/// among the findings, and the exit code says it refused.
+fn transpile_as_json(
+    input_path: &Path,
+    input: &str,
+    output: Option<&str>,
+    check: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (summary, refused) = compile_summary(input_path, input, output, check, tool_config, runtime_config)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    if refused {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// The compile as data, and whether it refused. `Err` is a failure that is no verdict
+/// on the estate — a schema directory that is not there.
+fn compile_summary(
+    input_path: &Path,
+    input: &str,
+    output: Option<&str>,
+    check: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(crate::mcp::CompileSummary, bool), Box<dyn std::error::Error>> {
+    let estate = input_path.display().to_string();
+    let compiled = pipeline_b_compile(input_path, tool_config, runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent);
+    match compiled {
+        Ok(out) => {
+            let written = if check { Vec::new() } else { write_hcl(&out, &hcl_target(output, runtime_config), input)? };
+            let summary = crate::mcp::CompileSummary {
+                estate,
+                addresses: out.manifest.addresses().into_iter().collect(),
+                written: written.iter().map(|p| p.display().to_string()).collect(),
+                findings: out.findings,
+            };
+            Ok((summary, false))
+        }
+        Err(e) => match crate::findings::as_refusal(e.as_ref()) {
+            Some(r) => {
+                Ok((crate::mcp::CompileSummary { estate, addresses: Vec::new(), written: Vec::new(), findings: r.findings.clone() }, true))
+            }
+            None => Err(e),
+        },
+    }
+}
+
+/// Where `transpile` writes: `--output` relocates the emitted HCL, relative to hcl_dir.
+fn hcl_target(output: Option<&str>, runtime_config: &ToolConfig) -> PathBuf {
+    match output {
+        Some(o) if Path::new(o).is_absolute() => PathBuf::from(o),
+        Some(o) => PathBuf::from(&runtime_config.hcl_dir).join(o),
+        None => PathBuf::from(&runtime_config.hcl_dir),
+    }
 }
 
 /// The compile every command runs: its findings reported in full, and printed.
@@ -2672,8 +2760,13 @@ fn pipeline_b_compile(
         // An `unknown param` is most often a pack whose provider is off: the pack graph
         // names it beside the parser's error, inside the typed error so the location
         // reaches every reader.
+        // The parser's error is a finding like any other — one row with its file and
+        // line — so every reader gets a front-end refusal in the shape of any refusal.
         Err(e) => {
-            return Err(crate::packs::hinted(e, &graph, &input_path.to_string_lossy(), &src, &runtime_config.validation_level).into())
+            let hinted = crate::packs::hinted(e, &graph, &input_path.to_string_lossy(), &src, &runtime_config.validation_level);
+            let mut refusal = crate::findings::CompileRefusal::front_end(hinted);
+            refusal.findings = refusal.findings.into_iter().map(|f| estate_relative_file(f, runtime_config.dir.as_deref())).collect();
+            return Err(Box::new(refusal));
         }
     };
     let tail = compile_tail(&fe, &resolver, &registry, tool_config, &graph, &runtime_config.validation_level, input_path, &src);
@@ -2693,8 +2786,8 @@ fn pipeline_b_compile(
         FindingsOutput::Stderr => crate::findings::render(&findings),
         FindingsOutput::Silent => crate::findings::refusal(&findings),
     };
-    if let Err(message) = verdict {
-        return Err(Box::new(crate::findings::CompileRefusal { message, findings }));
+    if verdict.is_err() {
+        return Err(Box::new(crate::findings::CompileRefusal { findings }));
     }
     let out = tail.out.expect("no error finding, so the emitter ran");
     let providers_tf = tail.providers_tf.expect("no error finding, so the providers were emitted");
@@ -2833,8 +2926,8 @@ pub(crate) fn compile_tail(
         crate::pack_graph::Shipped::Missing(path) => f.push(Finding::new(
             Severity::Note,
             Kind::UnadoptedPack,
-            format!("{} is not here, so no pack line is checked against its answer — `satz get-presets` fetches it", path.display()),
-        )),
+            format!("{} is not here, so no pack line is checked against its answer", path.display()),
+        ).fix("satz get-presets")),
         crate::pack_graph::Shipped::Unreadable(why) => {
             f.push(Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{} — no pack line is checked against its answer", why)))
         }
@@ -2900,7 +2993,7 @@ fn conflict_findings(folded: &satz_core::algebra::Folded, f: &mut Vec<crate::fin
                         Kind::Conflict,
                         format!("{}.{}: {} disagreeing definitions — {}", c.addr.tf_type, c.addr.label, c.candidates.len(), sites.join(", ")),
                     )
-                    .in_group("composition conflicts:")
+                    .in_group("composition conflicts")
                     .located(sp.file.clone(), sp.line),
                 );
             }
@@ -2913,12 +3006,12 @@ fn conflict_findings(folded: &satz_core::algebra::Folded, f: &mut Vec<crate::fin
                 Kind::Conflict,
                 format!(
                     "`{}` is the dry-run twin of `{}` and declares the same policies with \
-                     `dry_run_spec`.\n  A dry run REPLACES enforcement while it measures — use one or the other, \
+                     `dry_run_spec`. A dry run REPLACES enforcement while it measures — use one or the other, \
                      never both.",
                     pair.1, pair.0
                 ),
             )
-            .in_group("composition conflicts:"),
+            .in_group("composition conflicts"),
         );
     }
     true
@@ -2949,9 +3042,9 @@ fn written_reference_findings(
             Finding::new(
                 Severity::Error,
                 Kind::WrittenReference,
-                format!("{}:{}: {} writes `${{{}}}`\n    {}", r.file, r.line, r.site, r.traversal, hint),
+                format!("{} writes `${{{}}}`\n  {}", r.site, r.traversal, hint),
             )
-            .in_group("references to resources this estate does not emit:")
+            .in_group("references to resources this estate does not emit")
             .located(r.file, r.line),
         );
     }
@@ -2963,10 +3056,9 @@ fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level:
     use crate::findings::{Finding, Kind, Severity};
     let Some(sev) = crate::findings::at_level(level) else { return };
     for m in missing {
-        let at = m.origin.as_ref().map(|(fl, l)| format!(" ({}:{})", fl, l)).unwrap_or_default();
-        let text = format!("{}{}: the provider requires {}", m.address, at, m.missing.join(", "));
+        let text = format!("{}: the provider requires {}", m.address, m.missing.join(", "));
         let mut finding = if sev == Severity::Error {
-            Finding::new(sev, Kind::MissingRequired, text).in_group("required arguments missing:")
+            Finding::new(sev, Kind::MissingRequired, text).in_group("required arguments missing")
         } else {
             Finding::new(sev, Kind::MissingRequired, format!("{} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", text))
         };
@@ -2984,13 +3076,12 @@ fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level:
 fn unscoped_findings(unscoped: &[crate::emitter::Unscoped], f: &mut Vec<crate::findings::Finding>) {
     use crate::findings::{Finding, Kind, Severity};
     for u in unscoped {
-        let at = u.origin.as_ref().map(|(fl, l)| format!(" ({}:{})", fl, l)).unwrap_or_default();
         let text = match u.scope {
             "project" => format!(
-                "{}{}: declared outside a project and sets no `project` — it goes to the project the provider block names",
-                u.address, at
+                "{}: declared outside a project and sets no `project` — it goes to the project the provider block names",
+                u.address
             ),
-            scope => format!("{}{}: declared outside a {} and sets no `{}`", u.address, at, scope, scope),
+            scope => format!("{}: declared outside a {} and sets no `{}`", u.address, scope, scope),
         };
         let mut finding = Finding::new(Severity::Warning, Kind::MissingScope, text);
         if let Some((fl, l)) = &u.origin {
@@ -3015,14 +3106,13 @@ fn wrong_shape_findings(
     for w in wrong {
         let leaf = w.attribute.rsplit('.').next().unwrap_or(&w.attribute);
         let param = w.origin.as_ref().and_then(|(file, line)| bound_param(file, *line, leaf)).filter(|p| env.contains_key(p));
-        let at = w.origin.as_ref().map(|(fl, l)| format!(" ({}:{})", fl, l)).unwrap_or_default();
         let via = match &param {
             Some(p) => format!(" — it comes from the param `{}`, which the estate binds as a {}", p, w.got),
             None => String::new(),
         };
-        let text = format!("{}{}: `{}` is a {}, and the provider wants {}{}", w.address, at, w.attribute, w.got, w.expected, via);
+        let text = format!("{}: `{}` is a {}, and the provider wants {}{}", w.address, w.attribute, w.got, w.expected, via);
         let mut finding = if sev == Severity::Error {
-            Finding::new(sev, Kind::AttributeShape, text).in_group("attribute values the provider refuses:")
+            Finding::new(sev, Kind::AttributeShape, text).in_group("attribute values the provider refuses")
         } else {
             Finding::new(sev, Kind::AttributeShape, format!("{} — `tofu plan` refuses it (validation_level = \"error\" refuses it here)", text))
         };
@@ -3074,6 +3164,7 @@ fn prerequisite_findings(
     let infra = get("infra_project_name").unwrap_or_default();
     let missing_apis =
         if infra.is_empty() { Vec::new() } else { crate::prerequisites::missing_apis(manifest, &infra) };
+    let update = "satz update-prerequisites <estate>";
     if !missing_apis.is_empty() {
         f.push(Finding::new(
             sev,
@@ -3090,25 +3181,23 @@ fn prerequisite_findings(
                     .collect::<Vec<_>>()
                     .join("\n  ")
             ),
-        ));
+        ).fix_in(update, estate));
     }
     let (needs, unknown) = crate::prerequisites::needs(manifest);
     let granted = crate::prerequisites::granted(manifest, &sa);
     let missing = crate::prerequisites::missing(&needs, &granted);
-    let file = estate.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
     if !missing.is_empty() {
         f.push(
             Finding::new(
                 sev,
                 Kind::Prerequisites,
                 format!(
-                    "the IaC service account {} lacks roles this estate's resource types need — \
-                     `satz update-prerequisites {}` writes them into the estate:\n  {}",
+                    "the IaC service account {} lacks roles this estate's resource types need:\n  {}",
                     sa,
-                    file,
                     crate::prerequisites::describe(&crate::prerequisites::plan(&missing, &granted)).join("\n  ")
                 ),
             )
+            .fix_in(update, estate)
             .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "svc_iac_account")),
         );
     }
@@ -3136,12 +3225,9 @@ fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<
                 Severity::Warning,
                 Kind::Action,
                 format!(
-                    "action \"{}\" declared in {}:{}{} — `satz run-actions` will execute {}\n  reason: {}",
-                    a.name,
-                    a.file,
-                    a.line,
-                    if a.from_pack { " (from a pack)" } else { "" },
+                    "`satz run-actions` will execute {}{}\n  reason: {}",
                     a.run,
+                    if a.from_pack { " — a pack declares it" } else { "" },
                     a.reason
                 ),
             )
@@ -3169,14 +3255,14 @@ fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crat
             Some(reason) => Finding::new(
                 Severity::Note,
                 Kind::HclPassthrough,
-                format!("raw HCL passthrough at {}:{} ({} lines) — trusted: {}", b.file, b.line, lines, reason),
+                format!("raw HCL passthrough ({} lines) — trusted: {}", lines, reason),
             ),
             None => Finding::new(
                 Severity::Warning,
                 Kind::HclPassthrough,
                 format!(
-                    "raw HCL passthrough at {}:{} ({} lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
-                    b.file, b.line, lines
+                    "raw HCL passthrough ({} lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
+                    lines
                 ),
             ),
         };
@@ -3838,8 +3924,7 @@ async fn enable_declared_apis(hcl_dir: &Path) -> Result<(), Box<dyn std::error::
             Ok(())
         }
         Err(refusal) => {
-            // Printed rather than returned whole: `main` renders a returned error
-            // with `Debug`, which escapes the newlines into literal \n.
+            // Printed ahead of the error: the detail first, then the one line `main` closes with.
             eprint!("{}", refusal.render());
             Err(refusal.summary().into())
         }
@@ -3853,8 +3938,7 @@ fn reject_yaml_estate(input: &Path, what: &str) -> Result<(), Box<dyn std::error
     if input.extension().and_then(|e| e.to_str()) == Some("satz") {
         return Ok(());
     }
-    // Printed rather than returned: `main` renders a returned error with `Debug`,
-    // which escapes the newlines into literal \n.
+    // Printed ahead of the error: the detail first, then the one line `main` closes with.
     eprintln!(
         "\n{}: {} is a YAML-dialect estate. Every command reads Satz; the dialect\n\
          exists only to be converted. Convert once — the conversion compiles the\n\
@@ -3944,8 +4028,7 @@ fn convert_yaml_to_satz(
         .map(String::from)
         .collect();
     if !yaml_uses.is_empty() {
-        // Printed rather than returned: `main` renders a returned error with
-        // `Debug`, which escapes the newlines.
+        // Printed ahead of the error: the detail first, then the one line `main` closes with.
         eprintln!("\n{} still `use`s {} YAML pack(s) — convert them first, then re-run:", src_path.display(), yaml_uses.len());
         for p in &yaml_uses {
             eprintln!("    satz import {} --kind pack", p);
@@ -9218,6 +9301,9 @@ action "step" {
         let f = t.findings.iter().find(|f| f.kind == Kind::UnadoptedPack).expect("the commented budget line");
         assert!(f.message.contains("use_budget") && f.message.contains("still commented out"), "{}", f.message);
         assert_eq!(f.line, Some(line_of("// use \"presets/organization-budget.satz\"")));
+        // the command is the finding's `fix`, for this estate, and the sentence does not repeat it
+        assert_eq!(f.fix.as_deref(), Some("satz add-pack tail.satz presets/organization-budget.satz"));
+        assert!(!f.message.contains("satz add-pack"), "{}", f.message);
     }
 
     /// Presets without `pack-graph.json`: the checks that read the menu are skipped, and
@@ -9241,7 +9327,10 @@ action "step" {
         let t = tail("warn");
         let f = t.findings.iter().find(|f| f.kind == Kind::Action).expect("the action");
         assert_eq!((f.severity, f.line), (Severity::Warning, Some(line_of("action \"step\""))));
-        assert!(f.message.starts_with("action \"step\" declared in tail.satz:"), "{}", f.message);
+        // where it stands is the finding's location, said once: the sentence does not repeat it
+        assert_eq!(f.file.as_deref(), Some("tail.satz"));
+        assert_eq!(f.subject.as_deref(), Some("step"));
+        assert!(f.message.starts_with("`satz run-actions` will execute"), "{}", f.message);
         // the tail ran to the end: the emitter's output and the providers are there
         assert!(t.out.is_some() && t.providers_tf.is_some());
     }
@@ -9442,6 +9531,42 @@ google_storage_bucket {
         fn drop(&mut self) {
             self.0.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// `transpile --format json` is the object `satz_transpile_check` returns, whether the
+    /// compile goes on or refuses — and a refusal by the FRONT END is one too, with its
+    /// file and line as fields, never only inside a message. It prints nothing.
+    #[test]
+    fn the_compile_as_data_is_one_shape_whether_it_compiles_or_is_refused() {
+        let dir = std::env::temp_dir().join(format!("satz-compile-summary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.schema_dir = super::corpus::schema_dir();
+        cfg.validation_level = "warn".to_string();
+        cfg.dir = Some(dir.clone());
+        let good = dir.join("good.satz");
+        std::fs::write(&good, ESTATE).unwrap();
+        crate::findings::take_said();
+        let (summary, refused) = compile_summary(&good, "good.satz", None, true, &cfg, &cfg).expect("a verdict");
+        assert!(crate::findings::take_said().is_empty(), "the findings are in the object; nothing is printed beside it");
+        assert!(!refused && !summary.addresses.is_empty() && summary.written.is_empty(), "{:?}", summary);
+        let lacks = summary.findings.iter().find(|f| f.kind == crate::findings::Kind::Prerequisites).expect("the roles it lacks");
+        assert_eq!(lacks.fix.as_deref(), Some("satz update-prerequisites good.satz"));
+        assert!(!lacks.message.contains("satz update-prerequisites"), "the command moved out of the sentence: {}", lacks.message);
+        let json = serde_json::to_value(&summary).unwrap();
+        let row = json["findings"].as_array().unwrap().iter().find(|f| f["kind"] == "prerequisites").unwrap();
+        assert_eq!(row["fix"], "satz update-prerequisites good.satz", "`fix` is a field beside `message`: {}", row);
+
+        let bad = dir.join("bad.satz");
+        std::fs::write(&bad, format!("{}\ngoogle_storage_bucket {{\n  params {{\n    a = 1\n  }}\n}}\n", ESTATE)).unwrap();
+        let (summary, refused) = compile_summary(&bad, "bad.satz", None, true, &cfg, &cfg).expect("a refusal is a verdict");
+        assert!(refused && summary.addresses.is_empty());
+        let f = &summary.findings[0];
+        assert_eq!((f.severity, f.kind), (crate::findings::Severity::Error, crate::findings::Kind::FrontEnd));
+        assert_eq!(f.file.as_deref(), Some("bad.satz"), "relative to the estate's directory, as every finding's file is");
+        assert!(f.line.is_some() && f.message.contains("`params` is a Satz statement"), "{:?}", f);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
