@@ -157,6 +157,7 @@ google_folder {
             force_destroy               = true
             public_access_prevention    = "enforced"
             uniform_bucket_level_access = true
+            versioning { enabled = true }
             lifecycle_rule = [
               {
                 action { type = "Delete" }
@@ -592,6 +593,25 @@ pub(crate) mod tests {
             project_id: "acme-iac-infra".into(),
             bucket_id: "acme-iac-infra".into(),
             first_admin: first_admin.into(),
+        }
+    }
+
+    /// `bootstrap` creates the state bucket with versioning on (`src/gcp/storage.rs`, whose header
+    /// calls it non-negotiable for a Terraform state bucket), and the scaffold's two lifecycle rules
+    /// count versions. A skeleton that does not DECLARE versioning therefore plans to switch it off
+    /// on the bucket holding the state, beside `force_destroy = true`.
+    #[test]
+    fn the_scaffold_declares_versioning_on_the_state_bucket() {
+        let sk = skeleton("acme", None).unwrap();
+        let after = sk.split_once("google_storage_bucket {").expect("the scaffold declares the state bucket").1;
+        let bucket = &after[..after.find("google_service_account").unwrap_or(after.len())];
+        assert!(
+            bucket.contains("versioning { enabled = true }"),
+            "the state bucket must declare versioning: bootstrap creates it with versioning on, so a skeleton without it plans to turn it off\n{}",
+            bucket
+        );
+        for rule in ["num_newer_versions", "days_since_noncurrent_time"] {
+            assert!(bucket.contains(rule), "the version-counting lifecycle rule {} is still declared", rule);
         }
     }
 
