@@ -47,6 +47,8 @@ pub(crate) enum Kind {
     PackRequirement,
     /// two packs that exclude one another, both on
     ExcludedPacks,
+    /// a pack's notice the estate has not acknowledged: the command it names has to run
+    Notice,
     Providers,
     Action,
     HclPassthrough,

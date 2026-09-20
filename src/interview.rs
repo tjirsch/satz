@@ -339,12 +339,22 @@ pub(crate) fn apply(
     let graph = crate::pack_graph::read(Path::new(&runtime.presets_dir)).map_err(|e| e.to_string())?;
     let mut src = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let before = src.clone();
+    let notices = crate::notices::estate_notices(estate, runtime)?;
     let mut n = 0;
     for (name, value) in answers {
+        // a notice's param is acknowledged with `true`, and with nothing else
+        if let Some(notice) = notices.iter().find(|x| x.param == *name) {
+            if value != &serde_yaml::Value::Bool(true) {
+                return Err(format!("{}: acknowledges the notice of {} — the one answer is true", name, notice.pack));
+            }
+            src = bind(&src, name, value)?;
+            n += 1;
+            continue;
+        }
         let row = report.questions.iter().find(|q| q.subject == *name).ok_or_else(|| {
             format!(
-                "{}: no pack this estate uses asks that. An answer names a question's subject — \
-                 `satz questions {} --format text --out -` lists them",
+                "{}: no pack this estate uses asks that or names it in a notice. An answer names a question's \
+                 subject — `satz questions {} --format text --out -` lists them",
                 name,
                 estate.display()
             )
@@ -427,9 +437,18 @@ pub(crate) fn run(
         }
         accept_defaults = !matches!(line.trim().to_ascii_lowercase().as_str(), "n" | "no");
     }
+    // A yes that switches a pack on opens its notice; it is shown once, when it opens.
+    let mut open_notices = crate::notices::open(estate, runtime)?;
+    let mut notices_opened = |out: &mut dyn Write| -> Result<(), String> {
+        let now = crate::notices::open(estate, runtime)?;
+        w(out, &crate::notices::render(&crate::notices::opened(&open_notices, &now)))?;
+        open_notices = now;
+        Ok(())
+    };
     if accept_defaults {
         let n = apply(estate, runtime, &BTreeMap::new(), true)?;
         w(out, &format!("  accepted {} default(s).\n", n))?;
+        notices_opened(out)?;
         report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
     }
 
@@ -503,6 +522,7 @@ pub(crate) fn run(
         };
         crate::fsx::write_edited_satz(estate, &src, &new_src).map_err(|e| e.to_string())?;
         w(out, &format!("  ✓ {} = {}\n", q.subject, literal(&value)))?;
+        notices_opened(out)?;
         done.insert(q.subject.clone());
         // Re-read: a derived default may have become usable, a `use … when` may
         // have switched a pack on or off.

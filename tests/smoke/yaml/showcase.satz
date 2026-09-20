@@ -21,6 +21,7 @@ params {
   pack_bucket_location     = "europe-west3" # overrides showcase-pack's "EU" default
   group_model_flat         = true           # exactly one of these two — see `question oneof` below
   group_model_split        = false
+  pack_bucket_adopted      = true           # acknowledges showcase-pack's `notice` — the command has run
 }
 // ---------------------------------------------------------------------------
 // QUESTIONS — what to ask a customer so a param can be filled, and what getting

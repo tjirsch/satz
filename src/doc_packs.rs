@@ -605,22 +605,30 @@ fn address(typ: &str, label: &str) -> String {
     format!("{}.{}", typ, label.replace('-', "_"))
 }
 
+/// The params a pack offers an estate: its own, without the acknowledgements its
+/// notices are bound through — those are the Notices section's, and an estate binds one
+/// when the command has run, not when it takes the pack.
+fn configurable(file: &File) -> Vec<&(String, satz_core::satz::Value, usize)> {
+    file.params.iter().filter(|(n, _, _)| !file.notices.iter().any(|x| &x.param == n)).collect()
+}
+
 fn use_it(rel: &Path, file: &File, sh: &Shape, h: &Header, lib: &Library) -> Result<String, BoxErr> {
     let inv = invocation(rel, file, sh, h)?;
     let gate = inv.split(" when ").nth(1).map(|s| s.trim().to_string());
+    let params = configurable(file);
 
     let mut md = String::from("## Use it\n\n```\n");
-    if gate.is_some() || !file.params.is_empty() {
+    if gate.is_some() || !params.is_empty() {
         md.push_str("params {\n");
         if let Some(g) = &gate {
             md.push_str(&format!("  {} = true\n", g));
-            if !file.params.is_empty() {
+            if !params.is_empty() {
                 md.push('\n');
             }
         }
-        if !file.params.is_empty() {
+        if !params.is_empty() {
             md.push_str("  // the pack's own defaults — copy only the lines you change\n");
-            for (n, v, _) in &file.params {
+            for (n, v, _) in &params {
                 md.push_str(&value_block(n, v, "  "));
                 md.push('\n');
             }
@@ -643,7 +651,7 @@ fn use_it(rel: &Path, file: &File, sh: &Shape, h: &Header, lib: &Library) -> Res
             }
         ));
     }
-    if file.params.is_empty() && gate.is_none() {
+    if params.is_empty() && gate.is_none() {
         md.push_str("The pack declares no params: everything it sets is fixed in the file. A different value is a param lifted into the pack, or a `.local` fork.\n\n");
     }
 
@@ -717,11 +725,12 @@ fn render(
     }
     md.push_str(&use_it(rel, file, &sh, h, lib)?);
     md.push_str("## Params\n\n");
-    if file.params.is_empty() {
+    let params = configurable(file);
+    if params.is_empty() {
         md.push_str("_None — the pack takes everything from the estate's params._\n\n");
     } else {
         md.push_str("| param | default |\n|---|---|\n");
-        for (n, v, _) in &file.params {
+        for (n, v, _) in &params {
             md.push_str(&format!("| `{}` | `{}` |\n", n, value_text(v).replace('|', "\\|")));
         }
         md.push('\n');
@@ -759,6 +768,22 @@ fn render(
             }
             md.push('\n');
         }
+    }
+
+    if !file.notices.is_empty() {
+        md.push_str("## Notices\n\n");
+        md.push_str("What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; `apply` and `bootstrap` refuse while one whose `before` is `apply` is open.\n\n");
+        md.push_str("| param | run | before | what and why |\n|---|---|---|---|\n");
+        for n in &file.notices {
+            md.push_str(&format!(
+                "| `{}` | `{}` | {} | {} |\n",
+                n.param,
+                n.run.replace('|', "\\|"),
+                n.before.as_deref().unwrap_or("—"),
+                n.text.replace('|', "\\|").replace('\n', " "),
+            ));
+        }
+        md.push('\n');
     }
 
     // The map's menu of the library, in adoption order. `satz pack-graph` turns the

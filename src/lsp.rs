@@ -774,6 +774,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("question", "what a customer decides, so a param can be filled: `question [oneof] PARAM { … }`"),
     ("action", "a deployment step with no provider resource: `action \"name\" { reason run args }`"),
     ("offers", "the map only — one pack the library offers: `offers \"presets/…\" { when phase block … }`"),
+    ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run before }`"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, emitted as providers.tf"),
@@ -802,6 +803,14 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
             ("args", "arguments; `{param}` interpolates"),
             ("execute_args", "appended with `run-actions --execute`"),
             ("phase", "\"before-apply\" | \"after-apply\""),
+        ],
+    ),
+    (
+        "notice",
+        &[
+            ("text", "what to do and why, as the operator reads it"),
+            ("run", "the command to run once the pack is on"),
+            ("before", "apply: `transpile --apply` and `bootstrap` refuse while the notice is open"),
         ],
     ),
     (

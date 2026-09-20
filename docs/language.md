@@ -1455,7 +1455,62 @@ Composition follows from that: a choice between two packs is two booleans plus t
   change — a `recreate → edit` downgrade included — is still listed. Questions are
   canonicalised separately from the body for that reason.
 
-### 6.15 `offers` — what the library offers an estate
+### 6.15 `notice` — the command a pack asks for once it is on
+
+A pack that needs one step taken after it goes into an estate names it here. satz shows
+the notice when the pack is switched on, and keeps showing it until the estate binds the
+notice's param `true`.
+
+```
+pack showcase_pack version "1.0"
+
+params {
+  pack_bucket_location = "EU"
+  pack_bucket_adopted  = false
+}
+
+notice pack_bucket_adopted {
+  text   = "The bucket may already exist in the project — creating it again fails. Import what is live first."
+  run    = "satz adopt <estate> --execute --import"
+  before = apply
+}
+```
+
+| key | value | meaning |
+|---|---|---|
+| `text` | a string | what to do and why, as the operator reads it. Required |
+| `run` | a string | the command to run. Required |
+| `before` | `apply` | `transpile --apply` and `bootstrap` refuse while the notice is open |
+
+**The binding is the acknowledgement.** The pack declares the param `false`; the estate
+binds it `true` when the command has run, in its own `params {}` — the same record an
+answer is (§6.14, [ADR 0006](adr/0006-an-answer-is-a-param-the-estate-binds.md)). Git says
+who and when, a second operator and CI read the same state, and there is no local file
+beside the estate.
+
+**A notice belongs in a pack, and its param is the notice's alone.** It is declared in
+the same file, as `false`, and no `question` asks it — an acknowledgement is not a
+customer decision. The param is never emitted: it is in no `variables.tf` and no
+`terraform.tfvars`, so binding it moves nothing in the plan. `satz pack-graph` refuses a
+library where another pack declares or reads it, or where a notice sits on the day-0 pack
+or the map, which nothing switches on.
+
+#### Where they show up
+
+- **When the pack is switched on** — a yes in `satz interview`, `satz add-pack`, or
+  `merge-presets` bringing the pack in — the notice is printed once, and the MCP tools
+  `satz_interview` and `satz_add_pack` return it in `notices`.
+- **Until it is acknowledged** the compile warns at the estate's `use` line of the pack,
+  and `transpile --apply` and `bootstrap` refuse while a `before = apply` notice is open
+  (`--plan` and `--dry-run` warn).
+- `satz adopt --execute --import` **acknowledges the notices that name it** when the run
+  covers every resource type and nothing failed: it binds their params itself.
+- `satz packs` lists each pack's notices with their state, and `satz doc-packs` gives a
+  pack a **Notices** section.
+- `check-presets` reports a pack whose notices changed as **`questions`**, not as drift:
+  a notice emits nothing, so a reworded one never forks an estate.
+
+### 6.16 `offers` — what the library offers an estate
 
 `presets/estate-map.satz` — the map, `pack estate_map` — carries one `offers` entry per
 pack in the library. The entry says what an estate's line for that pack looks like and
@@ -1533,7 +1588,7 @@ notes it once and skips those checks.
 `check-presets` reports a map whose entries changed like one whose questions changed:
 the map emits the same, so the estate is not forked, and the change is listed.
 
-### 6.16 Provenance: pristine, fork, ledger
+### 6.17 Provenance: pristine, fork, ledger
 
 Suffix carries meaning; the tooling enforces it.
 
@@ -1753,6 +1808,7 @@ these properties was verified at this time".
 | run a script inside the apply instead | `hcl trust "…" { resource "terraform_data" … provisioner "local-exec" { … } }` |
 | multi-line string | `"""…"""` |
 | offer a pack from the map | `offers "presets/x.satz" { when = use_x phase = "…" }` |
+| name the command a pack needs once it is on | `notice x_adopted { text = "…" run = "satz adopt <estate> --execute --import" before = apply }` |
 | comment | `#`, `//`, `/* … */` |
 
 ### Commands that consume this language

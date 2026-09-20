@@ -1591,6 +1591,54 @@ added = msgs[5]["result"]["structuredContent"]
 assert added["bound"] == [{"param": "use_audit_logsink", "value": True}], added
 PYEOF
 
+step "a pack's notice: named when the pack goes on, open until the estate binds its param, and apply refuses"
+# The CIS baseline asks for `satz adopt` before the first apply — Google sets some of its
+# policies on every new organisation, and creating one that exists stops the apply.
+"$satz" --config . add-pack "$PWD/tmp/pk/e.satz" use_cis_baseline > tmp/pk/notice.txt 2>&1 \
+  || fail "add-pack of the CIS baseline failed:\n$(cat tmp/pk/notice.txt)"
+grep -q 'notice — presets/cis/CIS-GCP-Foundation-4.0.satz' tmp/pk/notice.txt \
+  || fail "switching the pack on must name its notice:\n$(cat tmp/pk/notice.txt)"
+grep -q 'bind `cis_baseline_adopted = true`' tmp/pk/notice.txt || fail "the notice must say how it is acknowledged"
+"$satz" --config . transpile "$PWD/tmp/pk/e.satz" --check > tmp/pk/notice-check.txt 2>&1 \
+  || fail "the estate with an open notice must compile:\n$(cat tmp/pk/notice-check.txt)"
+grep -q '1 notice(s) open' tmp/pk/notice-check.txt || fail "the compile must warn while a notice is open:\n$(cat tmp/pk/notice-check.txt)"
+# the acknowledgement is an answer: `satz_interview` takes it, and `satz_packs` reports both states
+"$satz" --config . packs "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/notice-packs.json > /dev/null 2>&1 || fail "satz packs failed"
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"answers\":{\"cis_baseline_adopted\":true}}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_packs\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\"}}}" \
+  > tmp/pk/notice-in.jsonl
+python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/pk/notice-in.jsonl > tmp/pk/notice-mcp.jsonl 2>/dev/null || true
+python3 - <<'PYEOF' || fail "the notice is not carried through satz packs and satz_interview"
+import json
+cli = {p["path"]: p for p in json.load(open("tmp/pk/notice-packs.json"))["packs"]}
+n = cli["presets/cis/CIS-GCP-Foundation-4.0.satz"]["notices"]
+assert len(n) == 1 and n[0]["param"] == "cis_baseline_adopted", n
+assert n[0]["acknowledged"] is False and n[0]["before"] == "apply", n
+assert n[0]["run"].startswith("satz adopt"), n
+msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/pk/notice-mcp.jsonl") if l.strip()) if "id" in d}
+interview = msgs[3]["result"]["structuredContent"]
+assert interview["written"] == 1, interview
+assert interview["notices"] == [], "answering opened no pack, so it opened no notice"
+after = {p["path"]: p for p in msgs[4]["result"]["structuredContent"]["packs"]}
+assert after["presets/cis/CIS-GCP-Foundation-4.0.satz"]["notices"][0]["acknowledged"] is True
+PYEOF
+"$satz" --config . transpile "$PWD/tmp/pk/e.satz" --check > tmp/pk/notice-done.txt 2>&1 \
+  || fail "the acknowledged estate does not compile:\n$(cat tmp/pk/notice-done.txt)"
+grep -q 'notice(s) open' tmp/pk/notice-done.txt && fail "the acknowledged notice still warns:\n$(cat tmp/pk/notice-done.txt)"
+# and the gate: an estate whose questions are all answered is still refused while a notice is open
+rm -rf tmp/nt && mkdir -p tmp/nt
+sed 's/pack_bucket_adopted      = true/pack_bucket_adopted      = false/' yaml/showcase.satz > tmp/nt/open-notice.satz
+if "$satz" --config . transpile "$PWD/tmp/nt/open-notice.satz" --apply --output "$PWD/tmp/nt/hcl" > tmp/nt/apply.txt 2>&1; then
+  fail "apply with an open notice was not refused"
+fi
+grep -q 'apply refused: 1 notice(s) open' tmp/nt/apply.txt || fail "the refusal must count the open notices:\n$(cat tmp/nt/apply.txt)"
+grep -q 'pack_bucket_adopted' tmp/nt/apply.txt || fail "the refusal must name the param that acknowledges it"
+grep -q 'adopted' tmp/nt/hcl/variables.tf tmp/nt/hcl/terraform.tfvars && fail "an acknowledgement is never emitted"
+
 step "merge-presets gates a pack line written without its gate, binds what deployed, and proves the emission"
 # The same estate with the logsink adopted the old way: a plain line, the answer no.
 rm -rf tmp/gm && mkdir -p tmp/gm/yaml && cp -R "$root/tests/schemas" tmp/gm/schemas

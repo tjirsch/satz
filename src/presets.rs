@@ -229,6 +229,7 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
     };
     let questions_differ = satz_core::satz::canonical_questions(&lf) != satz_core::satz::canonical_questions(&pf);
     let offers_differ = satz_core::satz::canonical_offers(&lf) != satz_core::satz::canonical_offers(&pf);
+    let notices_differ = satz_core::satz::canonical_notices(&lf) != satz_core::satz::canonical_notices(&pf);
     let (l, p) = (satz_core::satz::canonical_parts(&lf), satz_core::satz::canonical_parts(&pf));
     if l.body != p.body {
         let lb: BTreeSet<&str> = l.body.lines().collect();
@@ -271,6 +272,11 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
         if offers_differ {
             return Drift::QuestionsOnly {
                 summary: format!("the offered packs differ: {} here, {} upstream", lf.offers.len(), pf.offers.len()),
+            };
+        }
+        if notices_differ {
+            return Drift::QuestionsOnly {
+                summary: format!("the notices differ: {} here, {} upstream", lf.notices.len(), pf.notices.len()),
             };
         }
         Drift::Clean
@@ -983,6 +989,10 @@ pub(crate) struct MergeReport {
     pub counts: MergeCounts,
     /// something here needs a human: `merge-presets` exits non-zero
     pub attention: bool,
+    /// the notices this merge opened — a pack it brought in, or a notice a pack the
+    /// estate uses gained: the command each names, to run now
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub notices: Vec<crate::notices::NoticeRow>,
 }
 
 impl MergeReport {
@@ -1006,7 +1016,7 @@ impl MergeReport {
                 *n += 1;
             }
         }
-        Self { report_only, events, counts, attention }
+        Self { report_only, events, counts, attention, notices: Vec::new() }
     }
 }
 
@@ -1114,6 +1124,7 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
         c.refused,
         c.skipped_edited
     ));
+    out.push_str(&crate::notices::render(&r.notices));
     out
 }
 
@@ -1251,6 +1262,11 @@ pub(crate) async fn run_merge_presets(
     let estate_dirty = match estate.as_deref() {
         Some(e) => is_git_dirty(e)?,
         None => false,
+    };
+    // what is open before a pack is written, so the run shows what it opens
+    let notices_before = match (&estate, report_only) {
+        (Some(est), false) => Some(crate::notices::open(est, runtime_config)?),
+        _ => None,
     };
 
     // ---- upstream inventory --------------------------------------------------
@@ -1649,7 +1665,11 @@ pub(crate) async fn run_merge_presets(
         }
     }
 
-    Ok(MergeReport::counted(events, report_only, needs_attention))
+    let mut report = MergeReport::counted(events, report_only, needs_attention);
+    if let (Some(est), Some(before)) = (&estate, notices_before) {
+        report.notices = crate::notices::opened(&before, &crate::notices::open(est, runtime_config)?);
+    }
+    Ok(report)
 }
 
 /// What `--adopt` says about one pack.

@@ -16,12 +16,21 @@
 // This fragment carries NO claim. A dry run discharges no control while it runs, and
 // `require` reports the control as unmet, which is the truth.
 
-pack cis_extensions.api_key_services_dry_run version "1.1"
+pack cis_extensions.api_key_services_dry_run version "1.2"
 
 params {
+  // acknowledges the notice below: the estate binds it true once `satz adopt` has run
+  cis_api_key_services_dry_run_adopted = false
+
   // The services an API key may target. Empty means no service-account API key
   // may be created at all — the strictest reading, and a legitimate one.
   allowed_api_key_services = []
+}
+
+notice cis_api_key_services_dry_run_adopted {
+  text   = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  run    = "satz adopt <estate> --execute --import"
+  before = apply
 }
 
 question allowed_api_key_services {

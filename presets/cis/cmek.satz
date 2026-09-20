@@ -10,9 +10,12 @@
 // Both constraints are plain LIST constraints, not managed booleans — verified
 // against a live organisation's OrgPolicy `ListConstraints`.
 
-pack cis_extensions.cmek version "1.1"
+pack cis_extensions.cmek version "1.2"
 
 params {
+  // acknowledges the notice below: the estate binds it true once `satz adopt` has run
+  cis_cmek_required_adopted = false
+
   // The services that must not create resources without a CMEK. The CIS
   // controls this pack claims are BigQuery (7.2, 7.3) and Dataproc (8.1); add
   // more once their keys are in place.
@@ -29,6 +32,12 @@ params {
   cmek_allowed_key_projects = [
     "under:organizations/{customer_organization_id}",
   ]
+}
+
+notice cis_cmek_required_adopted {
+  text   = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  run    = "satz adopt <estate> --execute --import"
+  before = apply
 }
 
 // ---- what a customer decides, asked -------------------------------------------

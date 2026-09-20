@@ -12,9 +12,12 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.14"
+pack CIS_GCP_Foundation_4_0 version "2.15"
 
 params {
+  // acknowledges the notice below: the estate binds it true once `satz adopt` has run
+  cis_baseline_adopted = false
+
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
   // a workload that was legitimate the day before. Turn one on and `use` its
   // fragment from presets/cis/ — see presets/README.md. Constraint
@@ -186,6 +189,12 @@ params {
   essential_contacts_allowed_domains = [
     "@{customer_domain}",
   ]
+}
+
+notice cis_baseline_adopted {
+  text   = "Google sets some of these policies on every new organisation, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  run    = "satz adopt <estate> --execute --import"
+  before = apply
 }
 
 // ---- what a customer decides, asked -------------------------------------------

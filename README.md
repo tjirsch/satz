@@ -165,10 +165,10 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--on-collision error|counter`, `--customer-shortname`; yaml shape: `--kind pack|estate`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
-| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses |
+| `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
-| `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#615-offers--what-the-library-offers-an-estate) |
-| `add-pack <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is compiled and restored when it does not compile |
+| `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
+| `add-pack <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions and the notices that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is compiled and restored when it does not compile |
 | `remove-pack <INPUT> <PACK>` | `--cascade`, `--format` (`text`\|`json`) — binds the gate false and leaves the line: a gated line with a false gate deploys nothing. Refused, naming them, while a pack that needs it is on — `--cascade` switches those off too — or while the pack's line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
 
 **HCL**
@@ -191,7 +191,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking. Writes the commented line for every pack the pack graph of the pristine source offers and the estate lacks — the whole menu into an estate that has none — and gates every active line of a gated pack written without `when`, binding its gate `true` |
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
 | `review-pack <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-pack) |
-| `pack-graph` | `--presets-dir <DIR>` (default `presets_dir` from the config), `--check` — checks the library and writes `<presets_dir>/pack-graph.json`, the pack graph that ships with the presets: every pack with its gate, phase, block and adoption order from the map's `offers` entries, and the edges between packs — derived from their param references and `ask_when`, declared on the entries where the packs do not show them. Nothing is written while a check fails; `--check` fails when the file is behind the library. See [The pack graph](docs/language.md#615-offers--what-the-library-offers-an-estate) |
+| `pack-graph` | `--presets-dir <DIR>` (default `presets_dir` from the config), `--check` — checks the library and writes `<presets_dir>/pack-graph.json`, the pack graph that ships with the presets: every pack with its gate, phase, block and adoption order from the map's `offers` entries, and the edges between packs — derived from their param references and `ask_when`, declared on the entries where the packs do not show them. Nothing is written while a check fails; `--check` fails when the file is behind the library. See [The pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
 | `doc-packs` | `--out-dir <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file, plus a grouped index; `--check` fails when the pages are behind, a claim names a control its catalog lacks, a pack header says nothing the index can print, or a pack version has no changelog row |
 
 **Policies**
@@ -208,7 +208,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | Command | Options / Arguments |
 |---------|---------------------|
 | `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`\|`xlsx`, the decisions catalog as a workbook a customer fills in and sends back), `--out <FILE>`, `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
-| `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. A yes to a pack's question switches its line on as `add-pack` does. See [satz interview](docs/interview.md) |
+| `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. A yes to a pack's question switches its line on as `add-pack` does, and prints the notice that pack carries. See [satz interview](docs/interview.md) |
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
@@ -1032,6 +1032,13 @@ satz adopt C0example.satz --execute --import --activate     # tofu import now; a
 satz adopt C0example.satz --only google_folder,google_cloud_identity_group
 ```
 
+A pack can say so itself: the CIS org-policy packs carry a `notice` naming this run
+([§6.15](docs/language.md#615-notice--the-command-a-pack-asks-for-once-it-is-on)). satz
+shows it when the pack is switched on, the compile warns at the pack's `use` line until
+the estate binds the notice's param `true`, and `transpile --apply` and `bootstrap`
+refuse while it is open. `satz adopt --execute --import` over every type binds those
+params itself when the run finishes with nothing unresolved.
+
 How a resource is resolved depends on who chose its identity:
 
 - **Projects** are an existence check, not a template: the project id is
@@ -1513,7 +1520,7 @@ Protocol over stdio. What the editor gets is what satz knows, from satz's own fr
 - **Completion.** Inside a resource type, its attributes and nested blocks (from the
   provider schema in `schema_dir`), then `use`, then every resource type; at the top
   level the statements and every type; after `=`, the params in scope with their values,
-  and `true`/`false`; inside `question` and `action` bodies, their keys.
+  and `true`/`false`; inside `question`, `notice` and `action` bodies, their keys.
 - **Hover.** An attribute's type, whether it is required, and the provider's description;
   a resource type's provider and size; a param's bound value; a `use` path's resolution;
   a keyword's one-line meaning.
