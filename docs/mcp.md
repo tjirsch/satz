@@ -76,7 +76,7 @@ every `satz` block in the guide.
 | `satz_remove_pack` | `write` | switches a pack off, as `satz remove-pack` does: the gate bound false, the line left. Refused, naming them, while a pack that needs it is on (`cascade` switches those off too) or while its line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
 | `satz_triage` | `read` | a Prowler export's FAILs sorted into buckets A–E against what the estate claims |
 | `satz_prowler` | `read` | the Prowler invocation this estate needs — frameworks, projects, and an output path named for the UTC minute, so no two scans share a file; `unresolved_projects` names each project left out because its id is built from a reference to another resource. It prints the command; nothing runs the scanner |
-| `satz_transpile_check` | `read` | compiles in memory and reports what it *would* emit — writes nothing; `findings` carries what the compile said, each at its file and line, by kind. A refusal is an error result that carries the same list, so an error is shown at its line rather than parsed out of the sentence |
+| `satz_transpile_check` | `read` | compiles in memory and reports what it *would* emit — writes nothing; `findings` carries what the compile said, each at its file and line, by `kind` and `subject` — the pack, the notice's param, the action's name, the `hcl` block's `file:line`. A finding a tier silenced is in the list too, carrying `silenced` with that tier and its reason, so an agent sees what a human's output leaves out. A refusal is an error result that carries the same list, so an error is shown at its line rather than parsed out of the sentence |
 | `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
 | `satz_fmt` | `read` | Satz text in, the canonical layout out — two-space indent, `=` aligned over a run, one list item per line. No path and no write: the client holds the file. `satz_review_pack` refuses a pack that is not formatted, and this is what formats it |
 | `satz_review_pack` | `read` | one pack against the library's bar — it parses, is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles. Folded into a synthesised estate unless `against` names one. Findings anchored to file and line |
@@ -104,7 +104,9 @@ the human (`init`, `bootstrap`), the ones that write to an organisation
 (`import`), the specialist org-policy tools the compliance plane answers for
 (`export-`, `diff-` and `report-organizational-policies`), the maintainer refreshes
 of shipped data (`map-types`, `update-schema`, `doc-packs`, `pack-graph`), the `tofu`-workflow
-plumbing (`scan-plan`, `generate-migration`, `migrate`), and the terminal
+plumbing (`scan-plan`, `generate-migration`, `migrate`), what decides a human's own
+output (`silence` — an agent is handed every finding, the silenced ones included and
+marked), and the terminal
 affordances (`completion`, `open-readme`, `self-update`). The table in `src/mcp.rs`
 is the full list, with a reason per command. The tools
 the table has no command for — `satz_open`, `satz_estates`, `satz_restrict` — are

@@ -661,7 +661,9 @@ pub(crate) fn compile_findings(graph: &PackGraph, presets_dir: &Path, label: &st
         Ok(v) => v,
         Err(e) => return (Vec::new(), vec![Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{}: {}", label, e))]),
     };
-    let strip = |v: Vec<(String, Finding)>| v.into_iter().map(|(_, f)| f).collect();
+    // the pack each finding is about becomes its subject: the half of its identity a
+    // `[[silence]]` row names, and what `satz packs` groups by
+    let strip = |v: Vec<(String, Finding)>| v.into_iter().map(|(path, f)| f.about(path)).collect();
     (strip(view.exclusion_findings(label, src)), strip(view.line_findings(label, level)))
 }
 

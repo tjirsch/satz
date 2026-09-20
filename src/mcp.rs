@@ -179,6 +179,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("fmt", Parity::Tools(&["satz_fmt"])),
     // --- not served ---------------------------------------------------------
     ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
+    ("silence", Parity::Off("it decides what a human's output leaves out; an agent is handed every finding, silenced ones included, each marked with the tier that silenced it and why")),
 
     ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; init derives from the credentials and runs as the human, before there is an estate")),
     ("bootstrap", Parity::Off("day 0: it runs as the operator's own credentials, because the IaC service account every other tool runs as does not exist until it has — creating the folder, project and state bucket, so a human runs it knowingly in their own shell")),
@@ -227,7 +228,7 @@ fn served_by() -> String {
 fn not_served() -> String {
     let mut rows: Vec<String> = MCP_PARITY
         .iter()
-        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "fmt" | "lsp"))
+        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "fmt" | "lsp" | "silence"))
         .filter_map(|(c, p)| match p {
             Parity::Off(why) => Some(format!("{} ({})", c, why)),
             Parity::Tools(_) => None,

@@ -27,6 +27,7 @@ mod compliance;
 mod questions;
 mod interview;
 mod findings;
+mod silence;
 mod lsp;
 mod mcp;
 mod dossier;
@@ -88,6 +89,19 @@ pub struct ToolConfig {
     pub validation_level: String,
     #[serde(default)]
     pub import_config: Option<String>,
+    /// What this estate has said "seen, move on" to: `[[silence]]` tables, each naming
+    /// a finding's `kind`, optionally its `subject`, and why. Committed with the
+    /// estate, so a review sees who silenced what.
+    ///
+    /// Last in the struct because it is the one array of tables: TOML puts tables after
+    /// the scalars, and `save` serializes in this order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) silence: Vec<crate::silence::Rule>,
+    /// The directory the config was read from, set by `resolved_config` — never read
+    /// from the file and never written back. It is what makes a finding's `file`
+    /// estate-relative, so the CLI, the editor and an agent name the same path.
+    #[serde(skip)]
+    pub(crate) dir: Option<PathBuf>,
 }
 
 impl ToolConfig {
@@ -187,20 +201,19 @@ pub(crate) struct Cli {
     #[arg(long, global = true, help_heading = "Global options")]
     no_pack_actions: bool,
 
-    /// Silence the warning every declared `action` raises on a compile
-    #[arg(long, global = true, help_heading = "Global options")]
-    no_action_warnings: bool,
+    /// Leave a finding out of this run's output by what it is: `<kind>` or
+    /// `<kind>:<subject>`, repeatable
+    ///
+    /// The run tier of `satz silence`, for a CI pipeline; `SATZ_SILENCE` takes the
+    /// same selectors, comma-separated, where the command line cannot be changed. The
+    /// finding is still produced, still counted and still in `--format json`. An error
+    /// is never silenced, and a `--silence` that names one refuses the run.
+    #[arg(long, global = true, help_heading = "Global options", value_name = "KIND[:SUBJECT]")]
+    silence: Vec<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
 }
-
-/// `--no-action-warnings`, reachable from `pipeline_b_generate`.
-///
-/// A process-wide flag rather than a threaded argument on purpose: it is a global CLI
-/// flag whose only effect is on what is printed, and threading it would widen the
-/// signature of every estate-consuming call site to carry a print setting.
-static NO_ACTION_WARNINGS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The `satz --help` groups. The ONE place the command taxonomy lives: the root
 /// help renders them in this order, and `satz --verbose` walks the per-command
@@ -221,7 +234,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "prowler", "triage", "remediation-plan"]),
-    ("Tool", &["update-schema", "map-types", "fmt", "lsp", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
+    ("Tool", &["update-schema", "map-types", "fmt", "lsp", "silence", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
 ];
 
 #[derive(Subcommand)]
@@ -901,6 +914,19 @@ enum Commands {
         #[arg(long, conflicts_with_all = ["check", "paths"])]
         stdin: bool,
     },
+    /// What this estate, or this machine, has said "seen, move on" to — and say it
+    ///
+    /// A finding is silenced by what it IS: its `kind`, as `--format json` spells it,
+    /// and optionally its `subject` — the pack, the notice's param, the action's name,
+    /// the `hcl` block's `file:line`. Never by its wording. The estate's `config.toml`
+    /// holds the rows a review reads, with a reason each; `--machine` holds this
+    /// operator's, whole kinds only. A silenced finding is still produced, still
+    /// counted and still in `--format json`; only the printed output leaves it out,
+    /// and every run says how many. An error is never silenced.
+    Silence {
+        #[command(subcommand)]
+        sub: SilenceSub,
+    },
     /// The language server behind an editor's Satz support (Language Server Protocol, stdio)
     ///
     /// Started by the editor, never by hand. Diagnostics from the parser on every
@@ -971,6 +997,37 @@ enum Commands {
     },
 }
 
+#[derive(Subcommand)]
+enum SilenceSub {
+    /// Every silence in force, with its reason and what it still silences
+    List {
+        /// Estate file, .satz (inside yaml_dir if relative) — compile it, and say per
+        /// row how many findings it silences, or that nothing answers to it any more
+        input: Option<String>,
+    },
+    /// Silence a kind, or one subject of a kind
+    Add {
+        /// `<kind>` or `<kind>:<subject>` — `satz silence list` and `--format json`
+        /// spell both
+        selector: String,
+        /// Why — mandatory: this is what a review reads months later
+        #[arg(long)]
+        reason: String,
+        /// Write it to this machine (~/.config/satz/satz.toml) instead of the estate;
+        /// whole kinds only
+        #[arg(long)]
+        machine: bool,
+    },
+    /// Remove a silence, by the same selector
+    Remove {
+        /// `<kind>` or `<kind>:<subject>`
+        selector: String,
+        /// Remove it from this machine instead of the estate
+        #[arg(long)]
+        machine: bool,
+    },
+}
+
 /// User-level settings for satz in ~/.config/satz/satz.toml. Created on first run with defaults.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GlobalSettings {
@@ -980,6 +1037,13 @@ struct GlobalSettings {
     /// Last time we ran an update check (unix timestamp string). Used for "daily" throttle.
     #[serde(skip_serializing_if = "Option::is_none")]
     last_update_check: Option<String>,
+    /// What this operator has said "seen, move on" to on every estate they open:
+    /// `[[silence]]` tables naming a whole `kind`, never a subject. Managed by
+    /// `satz silence add --machine`.
+    ///
+    /// Last in the struct because TOML writes tables after scalars.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    silence: Vec<crate::silence::Rule>,
 }
 
 impl Default for GlobalSettings {
@@ -987,6 +1051,7 @@ impl Default for GlobalSettings {
         Self {
             self_update_frequency: default_self_update_frequency(),
             last_update_check: None,
+            silence: Vec::new(),
         }
     }
 }
@@ -1024,9 +1089,22 @@ fn load_global_settings() -> Result<GlobalSettings, Box<dyn std::error::Error>> 
         let content = fs::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
         // a settings file that does not parse is not "defaults": the next
         // save would overwrite what the user wrote
-        return toml::from_str(&content).map_err(|e| {
+        let settings: GlobalSettings = toml::from_str(&content).map_err(|e| -> Box<dyn std::error::Error> {
             format!("{}: not valid TOML ({}) — fix the file or delete it to start from defaults", path.display(), e).into()
-        });
+        })?;
+        // A machine silences whole kinds. A subject is one estate's business, and a
+        // row that names one here would hide that one thing at every customer.
+        if let Some(r) = settings.silence.iter().find(|r| r.subject.is_some()) {
+            return Err(format!(
+                "{}: [[silence]] kind = \"{}\", subject = \"{}\" — this file silences whole kinds only. \
+                 Move the row to that estate's config.toml, or drop the subject.",
+                path.display(),
+                r.kind,
+                r.subject.as_deref().unwrap_or_default()
+            )
+            .into());
+        }
+        return Ok(settings);
     }
     // First run: create directory and write defaults
     let defaults = GlobalSettings::default();
@@ -1070,10 +1148,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.html_help {
         return open_html_help(subcommand.as_deref());
     }
-    NO_ACTION_WARNINGS.store(cli.no_action_warnings, std::sync::atomic::Ordering::Relaxed);
+    // The run tier of `satz silence`. Refused for the two servers: `satz mcp` and
+    // `satz lsp` live for many estates and many calls at once, and a silence given
+    // once on their command line would hold for all of them. What CI hides, an agent
+    // and an editor still see.
+    let run_silences = silence::run_tier(&cli.silence, std::env::var("SATZ_SILENCE").ok().as_deref())?;
+    if !run_silences.is_empty() && matches!(subcommand.as_deref(), Some("mcp") | Some("lsp")) {
+        return Err(format!(
+            "satz {}: --silence and SATZ_SILENCE are one run's, and a server serves many estates in one \
+             process. Silence it in the estate's config.toml (`satz silence add … --reason \"…\"`) or on \
+             this machine (`satz silence add … --machine --reason \"…\"`).",
+            subcommand.unwrap_or_default()
+        )
+        .into());
+    }
+    silence::set_run(run_silences);
 
     // Load/create global settings on first run (creates ~/.config/satz/satz.toml with defaults)
     let mut global_settings = load_global_settings()?;
+    silence::set_machine(global_settings.silence.clone());
 
     let cmd_choice = match cli.command {
         Some(c) => c,
@@ -1120,6 +1213,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::ReviewPack { .. }
                 | Commands::PackGraph { presets_dir: None, .. }
+                // the estate tier lives in the estate's config.toml. `--machine` needs
+                // none, and a bare `list` says what this machine silences from anywhere
+                | Commands::Silence {
+                    sub: SilenceSub::List { input: Some(_) } | SilenceSub::Add { machine: false, .. } | SilenceSub::Remove { machine: false, .. },
+                }
                 | Commands::UpdatePrerequisites { input: Some(_), .. } => {
                     // plan/apply/hcl-init hand everything after the subcommand to the
                     // tool verbatim, which also swallows a `--config` written after
@@ -1134,6 +1232,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
                 Commands::Init { .. } | Commands::SelfUpdate { .. } | Commands::Completion { .. } | Commands::OpenReadme | Commands::Whoami { .. } | Commands::Mcp { .. } | Commands::Fmt { .. } | Commands::Lsp
+                // what is left of `silence` here is `--machine`, which writes
+                // ~/.config/satz/satz.toml and has no estate
+                | Commands::Silence { .. }
                 | Commands::UpdatePrerequisites { input: None, .. }
                 | Commands::PackGraph { presets_dir: Some(_), .. } => {
                     // These commands can proceed without a config file
@@ -1952,6 +2053,14 @@ Thumbs.db
             }
             Ok(())
         }
+        Commands::Silence { sub } => match sub {
+            SilenceSub::List { input } => {
+                let estate = input.map(|i| estate_path(PathBuf::from(&i), &runtime_config));
+                silence::list(estate.as_deref(), &tool_config, &runtime_config, &config_file_path)
+            }
+            SilenceSub::Add { selector, reason, machine } => silence::add(&selector, &reason, machine, &config_file_path),
+            SilenceSub::Remove { selector, machine } => silence::remove(&selector, machine, &config_file_path),
+        },
         Commands::Fmt { paths, check, stdin } => run_fmt(&paths, check, stdin),
         Commands::Lsp => lsp::run().map_err(|e| e as Box<dyn std::error::Error>),
         Commands::Prowler { input, format } => {
@@ -2508,6 +2617,23 @@ pub(crate) enum FindingsOutput {
     Silent,
 }
 
+/// A finding's `file`, relative to the estate's own directory.
+///
+/// A pack names itself as the `use` line wrote it, which is already estate-relative; the
+/// estate file reaches the compile as the caller spelled it — a path relative to the
+/// terminal's directory from the CLI, an absolute one from `satz mcp`. One finding,
+/// named two ways, is a finding no `[[silence]]` row and no editor can match, so the
+/// estate's directory decides the spelling for every reader. A path that is not under
+/// it — a preset read from the library — is left as it is written.
+fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<&Path>) -> crate::findings::Finding {
+    let (Some(file), Some(dir)) = (f.file.as_deref(), dir) else { return f };
+    let (Ok(full), Ok(root)) = (std::fs::canonicalize(file), std::fs::canonicalize(dir)) else { return f };
+    if let Ok(rel) = full.strip_prefix(&root) {
+        f.file = Some(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
+    }
+    f
+}
+
 /// The compile every command runs: its findings reported in full, and printed.
 fn pipeline_b_generate(
     input_path: &Path,
@@ -2551,14 +2677,18 @@ fn pipeline_b_compile(
         }
     };
     let tail = compile_tail(&fe, &resolver, &registry, tool_config, &graph, &runtime_config.validation_level, input_path, &src);
-    // The two silencers: `--no-action-warnings`, and a caller that reports the
-    // prerequisites itself.
-    let findings: Vec<crate::findings::Finding> = tail
+    // A caller that reports the prerequisites itself is the one check that DROPS its
+    // findings: it is about to say the same thing in its own output. Everything else a
+    // reader asked not to see is silenced below — kept, marked and counted.
+    let mut findings: Vec<crate::findings::Finding> = tail
         .findings
         .into_iter()
-        .filter(|f| !(f.kind == crate::findings::Kind::Action && NO_ACTION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)))
         .filter(|f| !(f.kind == crate::findings::Kind::Prerequisites && prerequisites == PrerequisiteFindings::Quiet))
+        .map(|f| estate_relative_file(f, runtime_config.dir.as_deref()))
         .collect();
+    let silences = crate::silence::in_force(tool_config);
+    silences.apply(&mut findings);
+    crate::silence::refuse_run_silence_of_an_error(&silences, &findings)?;
     let verdict = match output {
         FindingsOutput::Stderr => crate::findings::render(&findings),
         FindingsOutput::Silent => crate::findings::refusal(&findings),
@@ -3015,6 +3145,7 @@ fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<
                     a.reason
                 ),
             )
+            .about(a.name.clone())
             .located(a.file.clone(), a.line as u32),
         );
     }
@@ -3023,7 +3154,7 @@ fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<
             Severity::Note,
             Kind::Action,
             "--no-pack-actions ignores pack-declared actions, --no-actions disables all execution, \
-             --no-action-warnings silences this.",
+             `satz silence add action --reason \"…\"` leaves these findings out of the output.",
         ));
     }
 }
@@ -3049,7 +3180,9 @@ fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crat
                 ),
             ),
         };
-        f.push(finding.located(b.file.clone(), b.line as u32));
+        // one block, named by where it stands: two blocks in one file are two findings
+        // and two silences, and moving one is a new block to review
+        f.push(finding.about(format!("{}:{}", b.file, b.line)).located(b.file.clone(), b.line as u32));
     }
 }
 
@@ -5061,6 +5194,8 @@ pub(crate) fn parse_tool_config(path: &Path) -> Result<ToolConfig, String> {
             auto_explode: default_auto_explode(),
             validation_level: default_validation_level(),
             import_config: None,
+            silence: Vec::new(),
+            dir: None,
         });
     }
     let content = fsx::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
@@ -5071,6 +5206,7 @@ pub(crate) fn parse_tool_config(path: &Path) -> Result<ToolConfig, String> {
 /// directory, which is what makes a command runnable from anywhere.
 pub(crate) fn resolved_config(tool: &ToolConfig, config_dir: &Path) -> ToolConfig {
     let mut rc = tool.clone();
+    rc.dir = Some(config_dir.to_path_buf());
     let at = |d: &str| config_dir.join(d).to_string_lossy().into_owned();
     if Path::new(&rc.yaml_dir).is_relative() {
         rc.yaml_dir = at(&rc.yaml_dir);
@@ -6255,6 +6391,7 @@ mod command_groups {
         ("prowler", Identity::NoGoogleApi),
         ("fmt", Identity::NoGoogleApi),
         ("lsp", Identity::NoGoogleApi),
+        ("silence", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
         ("packs", Identity::NoGoogleApi),

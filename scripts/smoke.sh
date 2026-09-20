@@ -1642,6 +1642,67 @@ grep -q 'apply refused: 1 notice(s) open' tmp/nt/apply.txt || fail "the refusal 
 grep -q 'pack_bucket_adopted' tmp/nt/apply.txt || fail "the refusal must name the param that acknowledges it"
 grep -q 'adopted' tmp/nt/hcl/variables.tf tmp/nt/hcl/terraform.tfvars && fail "an acknowledgement is never emitted"
 
+step "silence: a finding is left out of the printed output by its kind and subject, stays in the machine stream, and a rule nothing answers to reads stale"
+# The shape this exists for: the CIS extensions all on at once produce eleven findings
+# on every compile — ten open notices and the baseline's requirement — all saying what
+# has already been read once.
+rm -rf tmp/sil && mkdir -p tmp/sil
+printf 'yaml_dir = "."\nhcl_dir = "hcl"\ninclude_dirs = [".", "../../../.."]\nschema_dir = "../../../schemas"\npresets_dir = "../../../../presets"\ntf_tool = "tofu"\ngoogle_providers = ["google", "google-beta"]\nprovider_version = "7.14.1"\n' > tmp/sil/config.toml
+cp "$root/tests/corpus/cis-packs/main.satz" tmp/sil/cis.satz
+"$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/before.txt 2>&1 \
+  || fail "the corpus estate must compile:\n$(cat tmp/sil/before.txt)"
+grep -q '10 notice(s) open' tmp/sil/before.txt || fail "the ten notices are what this silences:\n$(cat tmp/sil/before.txt)"
+grep -q 'pack(s) on while a pack they need is off' tmp/sil/before.txt || fail "the eleventh finding is missing"
+# two rows, written by satz into the estate's own config.toml
+"$satz" --config tmp/sil silence add notice --reason "satz adopt --execute --import has run" > tmp/sil/add.txt 2>&1 \
+  || fail "silence add failed:\n$(cat tmp/sil/add.txt)"
+"$satz" --config tmp/sil silence add "pack-requirement:presets/cis/CIS-GCP-Foundation-4.0.satz" \
+  --reason "this estate compiles the baseline without the map on purpose" >> tmp/sil/add.txt 2>&1 \
+  || fail "silence add with a subject failed:\n$(cat tmp/sil/add.txt)"
+grep -q 'kind = "notice"' tmp/sil/config.toml || fail "the row was not written into config.toml:\n$(cat tmp/sil/config.toml)"
+"$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/after.txt 2>&1 \
+  || fail "the estate must still compile:\n$(cat tmp/sil/after.txt)"
+grep -q 'notice(s) open' tmp/sil/after.txt && fail "a silenced finding was printed:\n$(cat tmp/sil/after.txt)"
+grep -q '11 finding(s) silenced (11 estate)' tmp/sil/after.txt \
+  || fail "every run says how many findings it left out, and from which tier:\n$(cat tmp/sil/after.txt)"
+# …and an agent is handed all eleven, each marked
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":"tmp/sil","estate":"cis.satz"}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{}}}' \
+  > tmp/sil/in.jsonl
+python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/sil/in.jsonl > tmp/sil/mcp.jsonl 2>/dev/null || true
+python3 - <<'PYEOF' || fail "the machine stream lost what the terminal left out"
+import json
+msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/sil/mcp.jsonl") if l.strip()) if "id" in d}
+f = msgs[3]["result"]["structuredContent"]["findings"]
+assert len(f) == 11, f"the JSON kept {len(f)} of eleven findings"
+assert all("silenced" in x for x in f), [x for x in f if "silenced" not in x]
+assert {x["silenced"]["tier"] for x in f} == {"estate"}, f
+assert all(x["subject"] for x in f), "every one of these findings names what it is about"
+# one path, whoever asks: the CLI and MCP spell the estate the same way
+assert {x["file"] for x in f} == {"cis.satz"}, {x["file"] for x in f}
+PYEOF
+# a row the estate outgrew says so
+"$satz" --config tmp/sil silence add "notice:no_such_param" --reason "a pack that is gone" > /dev/null 2>&1 \
+  || fail "silence add of a subject nothing matches must still be written"
+"$satz" --config tmp/sil silence list cis.satz > tmp/sil/list.txt 2>&1 || fail "silence list failed:\n$(cat tmp/sil/list.txt)"
+grep -q 'silences 10 finding(s)' tmp/sil/list.txt || fail "list must say what each row silences:\n$(cat tmp/sil/list.txt)"
+grep -q 'STALE' tmp/sil/list.txt || fail "a row nothing answers to must read stale:\n$(cat tmp/sil/list.txt)"
+"$satz" --config tmp/sil silence remove "notice:no_such_param" > /dev/null 2>&1 || fail "silence remove failed"
+"$satz" --config tmp/sil silence list cis.satz | grep -q 'STALE' && fail "the stale row was not removed"
+# an error is never silenced, and the run that asked for it is refused by name
+if "$satz" --config tmp/sil --validation error --silence pack-requirement transpile cis.satz --check > tmp/sil/err.txt 2>&1; then
+  fail "a --silence naming an error was accepted"
+fi
+grep -q 'an error is never silenced' tmp/sil/err.txt || fail "the refusal must say why:\n$(cat tmp/sil/err.txt)"
+# and the run tier is one run's: a server serving many estates never carries one
+if "$satz" --silence action mcp --root . > tmp/sil/srv.txt 2>&1; then
+  fail "satz mcp accepted --silence"
+fi
+grep -q 'one run' tmp/sil/srv.txt || fail "the refusal must say why:\n$(cat tmp/sil/srv.txt)"
+
 step "merge-presets gates a pack line written without its gate, binds what deployed, and proves the emission"
 # The same estate with the logsink adopted the old way: a plain line, the answer no.
 rm -rf tmp/gm && mkdir -p tmp/gm/yaml && cp -R "$root/tests/schemas" tmp/gm/schemas

@@ -603,7 +603,12 @@ fn compile_for_diagnostics(
     // Everything `transpile --check` checks after the front end, as findings: at the
     // file and line each names, or on the estate's first line when it names none.
     let tail = crate::compile_tail(&fe, &resolver, registry, config, &graph, &config.validation_level, root, src);
-    for finding in tail.findings {
+    // The editor shows what the estate and this machine have not silenced — the same
+    // rows `satz transpile` reads, so a file is not clean in the terminal and marked up
+    // here. The run tier cannot reach this: `--silence` is refused for `satz lsp`.
+    let mut findings = tail.findings;
+    crate::silence::in_force(config).apply(&mut findings);
+    for finding in findings.into_iter().filter(|f| f.silenced.is_none()) {
         let severity = match finding.severity {
             crate::findings::Severity::Error => DiagnosticSeverity::ERROR,
             crate::findings::Severity::Warning => DiagnosticSeverity::WARNING,
