@@ -38,7 +38,7 @@ fn finding(check: u8, text: String) -> Finding {
 fn notices_of(f: &File) -> Vec<Notice> {
     f.notices
         .iter()
-        .map(|n| Notice { param: n.param.clone(), text: n.text.clone(), run: n.run.clone(), before: n.before.clone() })
+        .map(|n| Notice { param: n.param.clone(), text: n.text.clone(), run: n.run.clone(), severity: n.severity.to_string() })
         .collect()
 }
 

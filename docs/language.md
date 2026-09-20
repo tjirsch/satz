@@ -1185,10 +1185,10 @@ warning  hcl-passthrough  yaml/main.satz:14
     raw HCL passthrough (4 lines) emitted verbatim — opaque to the compliance plane; no claim
     can cover it. Add `hcl trust "<reason>" { … }` once reviewed.
 
-note     hcl-passthrough  yaml/main.satz:21
+info     hcl-passthrough  yaml/main.satz:21
     raw HCL passthrough (4 lines) — trusted: reviewed 2026-08-24, provider gap for static IPs
 
-1 warning, 1 note
+1 warning, 1 info
 ```
 
 and so does the output:
@@ -1328,11 +1328,11 @@ warning  action  presets/scc/enable.satz:12  scc-services
     `satz run-actions` will execute enable.sh — a pack declares it
       reason: SCC service enablement has no provider resource (google 7.14.1)
 
-note     action
+info     action
     --no-pack-actions ignores pack-declared actions, --no-actions disables all execution, `satz
     silence add action --reason "…"` leaves these findings out of the output.
 
-1 warning, 1 note
+1 warning, 1 info
 ```
 
 A pack may declare an action, and the warning says when one did. The two
@@ -1538,9 +1538,9 @@ params {
 }
 
 notice pack_bucket_adopted {
-  text   = "The bucket may already exist in the project — creating it again fails. Import what is live first."
-  run    = "satz adopt <estate> --execute --import"
-  before = apply
+  text     = "The bucket may already exist in the project — creating it again fails. Import what is live first."
+  run      = "satz adopt <estate> --execute --import"
+  severity = error
 }
 ```
 
@@ -1548,7 +1548,7 @@ notice pack_bucket_adopted {
 |---|---|---|
 | `text` | a string | what to do and why, as the operator reads it. Required |
 | `run` | a string | the command to run. Required |
-| `before` | `apply` | `transpile --apply` and `bootstrap` refuse while the notice is open |
+| `severity` | `error` \| `warning` \| `info` | what an open notice holds back: an `error` refuses every command that writes to the organisation, a `warning` is printed and the run goes on, an `info` waits for nothing. `warning` where the pack declares none |
 
 **The binding is the acknowledgement.** The pack declares the param `false`; the estate
 binds it `true` when the command has run, in its own `params {}` — the same record an
@@ -1571,8 +1571,9 @@ or the map, which nothing switches on.
 - **Until it is acknowledged** the compile warns at the estate's `use` line of the pack —
   a `notice` finding whose subject is the param and whose `fix:` line is the pack's `run`,
   with the estate's file name where the pack wrote `<estate>` —
-  and `transpile --apply` and `bootstrap` refuse while a `before = apply` notice is open
-  (`--plan` and `--dry-run` warn).
+  and every command that writes to the organisation — `transpile --apply`, `bootstrap`,
+  `run-actions --execute`, `migrate` — refuses while a `severity = error` notice is open.
+  `--plan` and `--dry-run` compile, print the finding and go on.
 - `satz adopt --execute --import` **acknowledges the notices that name it** when the run
   covers every resource type and nothing failed: it binds their params itself.
 - `satz packs` lists each pack's notices with their state, and `satz doc-packs` gives a
@@ -1881,7 +1882,7 @@ these properties was verified at this time".
 | run a script inside the apply instead | `hcl trust "…" { resource "terraform_data" … provisioner "local-exec" { … } }` |
 | multi-line string | `"""…"""` |
 | offer a pack from the map | `offers "presets/x.satz" { when = use_x phase = "…" }` |
-| name the command a pack needs once it is on | `notice x_adopted { text = "…" run = "satz adopt <estate> --execute --import" before = apply }` |
+| name the command a pack needs once it is on | `notice x_adopted { text = "…" run = "satz adopt <estate> --execute --import" severity = error }` |
 | comment | `#`, `//`, `/* … */` |
 
 ### Commands that consume this language

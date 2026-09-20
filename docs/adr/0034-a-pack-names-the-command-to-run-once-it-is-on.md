@@ -1,6 +1,6 @@
 # 0034 — a pack names the command to run once it is on, and the estate acknowledges it by binding a param
 
-- **Status:** accepted
+- **Status:** accepted; its `before = apply` half is superseded by ADR 0042, which replaces the key with `severity`
 - **Date:** 2026-09-20
 - **Shipped in:** the release that follows
 
@@ -41,7 +41,9 @@ would reject in a customer's repository anyway.
 **`before = apply` holds back the two commands that change an organisation**:
 `transpile --apply` and `bootstrap` refuse while such a notice is open, `--plan` and
 `--dry-run` warn. The same two-speed rule as the questions gate (ADR-0006) and the
-prerequisites (ADR-0023).
+prerequisites (ADR-0023). *(Superseded by ADR 0042: the notice declares
+`severity = error` instead, and the refusal covers every command that writes to the
+organisation.)*
 
 **`satz adopt --execute --import` acknowledges the notices that name it** when the run
 covers every resource type and finishes with nothing unresolved: it binds their params

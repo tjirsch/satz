@@ -1494,6 +1494,25 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.70.0
+
+**`before = apply` on a `notice` is gone; a notice declares a `severity`.** A pack whose
+notice carries `before = apply` is refused with ``notice <param>: `before = apply` is
+gone — write `severity = error` ``. Find every one, in a fork of a pack as well as in a
+pack written here: `grep -rn 'before = apply' presets/`. In each notice block, replace
+that line with `severity = error`, then `satz fmt presets` to realign the block. The
+three words are `error` — every command that writes to the organisation refuses while
+the notice is open — `warning`, which prints and goes on, and `info`; a notice that
+declares none is a `warning`. A pack of the library carries the severity already: the
+CIS packs' notices are `severity = error`, which is what `before = apply` did.
+
+**The finding severity `note` is now `info`.** `satz transpile --format json`,
+`satz_transpile_check` and every other reader return `"severity": "info"` where they
+returned `"note"`, the last line of a run counts `1 info` instead of `1 note`, and the
+first line of such a finding starts with `info`. A script or a pipeline that matches the
+word changes with it: `grep '"severity": "note"'` becomes `grep '"severity": "info"'`.
+The three words are now the three a pack declares.
+
 ### v0.69.0
 
 **`get-presets` and `merge-presets` rewrite no estate for a breaking change.** Up to
@@ -1644,6 +1663,22 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `CIS_GCP_Foundation_4_0` | 2.16 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.block_project_ssh_keys` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.shielded_vm` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.dns_logging` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.confidential_computing` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.cloud_sql` | 1.3 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.cmek` | 1.3 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.api_key_services` | 1.3 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.bucket_retention` | 1.4 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.cloud_sql_iam_and_deletion_protection` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
+| `cis_extensions.block_project_ssh_keys_dry_run` | 1.2 | 2026-09-20 | GENERATED from `block-project-ssh-keys.satz` 1.2: the same notice, now `severity = error`, on its own param |
+| `cis_extensions.confidential_computing_dry_run` | 1.2 | 2026-09-20 | GENERATED from `confidential-computing.satz` 1.2: the same notice, now `severity = error`, on its own param |
+| `cis_extensions.cloud_sql_dry_run` | 1.3 | 2026-09-20 | GENERATED from `cloud-sql.satz` 1.3: the same notice, now `severity = error`, on its own param |
+| `cis_extensions.api_key_services_dry_run` | 1.3 | 2026-09-20 | GENERATED from `api-key-services.satz` 1.3: the same notice, now `severity = error`, on its own param |
+| `cis_extensions.bucket_retention_dry_run` | 1.4 | 2026-09-20 | GENERATED from `bucket-retention.satz` 1.4: the same notice, now `severity = error`, on its own param |
+| `cis_extensions.cloud_sql_iam_and_deletion_protection_dry_run` | 1.2 | 2026-09-20 | GENERATED from `cloud-sql-iam-and-deletion-protection.satz` 1.2: the same notice, now `severity = error`, on its own param |
 | `essential_contacts_organization` | 1.4 | 2026-09-20 | the header loses the word `content`, which the language no longer has: a pack header is a name and a version. Nothing emitted changes. A copy of 1.3 is refused by its header line — see Breaking changes |
 | `CIS_GCP_Foundation_4_0` | 2.15 | 2026-09-19 | a `notice`: once the baseline is switched on, `satz adopt <estate> --execute --import` is to run before the apply — Google sets some of these policies on every new organisation, and the first apply of the 2026-09-17 onboarding stopped on `409 POLICY_ALREADY_EXISTS` for `compute.managed.restrictProtocolForwardingCreationForTypes`. The estate acknowledges it with `cis_baseline_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
 | `cis_extensions.block_project_ssh_keys` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_block_project_ssh_keys_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |

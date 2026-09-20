@@ -14,8 +14,7 @@
 // configured USING BUCKET LOCK, and no org policy locks a bucket. The
 // audit-logsink pack carries the same duty.
 
-pack cis_extensions.bucket_retention version "1.3"
-
+pack cis_extensions.bucket_retention version "1.4"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_bucket_retention_adopted = false
@@ -29,9 +28,9 @@ params {
 }
 
 notice cis_bucket_retention_adopted {
-  text   = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
-  run    = "satz adopt <estate> --execute --import"
-  before = apply
+  text     = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  run      = "satz adopt <estate> --execute --import"
+  severity = error
 }
 
 question allowed_bucket_retention_seconds {

@@ -638,7 +638,7 @@ impl<'a> View<'a> {
                     pack: path.clone(),
                     text: x.text.clone(),
                     run: x.run.clone(),
-                    before: x.before.clone(),
+                    severity: x.severity.to_string(),
                     acknowledged: ack(&x.param),
                 })
                 .collect(),
@@ -650,7 +650,7 @@ impl<'a> View<'a> {
                     pack: n.path.clone(),
                     text: x.text.clone(),
                     run: x.run.clone(),
-                    before: x.before.clone(),
+                    severity: x.severity.clone(),
                     acknowledged: ack(&x.param),
                 })
                 .collect(),
@@ -889,7 +889,7 @@ pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> Str
                 (true, false) => "OPEN",
                 (false, false) => "when on",
             };
-            s.push_str(&format!("    notice {} — run `{}`, then bind `{} = true`\n", state, n.run, n.param));
+            s.push_str(&format!("    notice {} [{}] — run `{}`, then bind `{} = true`\n", state, n.severity, n.run, n.param));
         }
     }
     if !r.unmanaged.is_empty() {
@@ -935,7 +935,14 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
     if !open.is_empty() {
         s.push_str("\n## Open notices\n\n");
         for n in open {
-            s.push_str(&format!("- `{}`: {} Run `{}`, then bind `{} = true`.\n", n.pack, cell(&n.text), n.run, n.param));
+            s.push_str(&format!(
+                "- `{}` ({}): {} Run `{}`, then bind `{} = true`.\n",
+                n.pack,
+                n.severity,
+                cell(&n.text),
+                n.run,
+                n.param
+            ));
         }
     }
     if !r.unmanaged.is_empty() {

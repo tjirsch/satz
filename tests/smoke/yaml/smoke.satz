@@ -19,6 +19,8 @@ params {
   first_admin              = "admin@example.com"
   billing_account_infra    = "012345-6789AB-CDEF01"
   logsink_project_id       = "corp-log-infra-001"
+  // the CIS baseline's notice: `satz adopt --execute --import` has run for this estate
+  cis_baseline_adopted     = true
   deployment_engine        = "tofu"
   deployment_mode          = "local"
   default_region           = "europe-west3"

@@ -134,7 +134,7 @@
     },
     {
       "path": "presets/cis/CIS-GCP-Foundation-4.0.satz",
-      "version": "2.15",
+      "version": "2.16",
       "role": "pack",
       "gate": "use_cis_baseline",
       "gate_declared_in": "presets/estate-map.satz",
@@ -146,13 +146,13 @@
           "param": "cis_baseline_adopted",
           "text": "Google sets some of these policies on every new organisation, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/block-project-ssh-keys.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_block_project_ssh_keys",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -164,13 +164,13 @@
           "param": "cis_block_project_ssh_keys_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/shielded-vm.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_require_shielded_vm",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -181,13 +181,13 @@
           "param": "cis_require_shielded_vm_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/dns-logging.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_dns_logging",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -198,13 +198,13 @@
           "param": "cis_dns_logging_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/confidential-computing.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_confidential_computing",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -215,13 +215,13 @@
           "param": "cis_confidential_computing_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/cloud-sql.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_cloud_sql_hardening",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -232,13 +232,13 @@
           "param": "cis_cloud_sql_hardening_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/cmek.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_cmek_required",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -249,13 +249,13 @@
           "param": "cis_cmek_required_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/api-key-services.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_api_key_services",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -266,13 +266,13 @@
           "param": "cis_api_key_services_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/bucket-retention.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "cis_bucket_retention",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -283,7 +283,7 @@
           "param": "cis_bucket_retention_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
@@ -307,7 +307,7 @@
     },
     {
       "path": "presets/cis/cloud-sql-iam-and-deletion-protection.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_cloud_sql_iam_and_deletion_protection",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -318,13 +318,13 @@
           "param": "cis_cloud_sql_iam_and_deletion_protection_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/api-key-services-dry-run.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_api_key_services_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -336,13 +336,13 @@
           "param": "cis_api_key_services_dry_run_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/block-project-ssh-keys-dry-run.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_block_project_ssh_keys_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -353,13 +353,13 @@
           "param": "cis_block_project_ssh_keys_dry_run_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/bucket-retention-dry-run.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "cis_bucket_retention_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -370,13 +370,13 @@
           "param": "cis_bucket_retention_dry_run_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/cloud-sql-dry-run.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_cloud_sql_hardening_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -387,13 +387,13 @@
           "param": "cis_cloud_sql_hardening_dry_run_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/cloud-sql-iam-and-deletion-protection-dry-run.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_cloud_sql_iam_and_deletion_protection_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -404,13 +404,13 @@
           "param": "cis_cloud_sql_iam_and_deletion_protection_dry_run_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
     {
       "path": "presets/cis/confidential-computing-dry-run.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_confidential_computing_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -421,7 +421,7 @@
           "param": "cis_confidential_computing_dry_run_adopted",
           "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
-          "before": "apply"
+          "severity": "error"
         }
       ]
     },
@@ -671,7 +671,7 @@
       "params": [
         "cis_block_project_ssh_keys"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:26"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:25"
     },
     {
       "from": "presets/cis/shielded-vm.satz",
@@ -681,7 +681,7 @@
       "params": [
         "cis_require_shielded_vm"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:27"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:26"
     },
     {
       "from": "presets/cis/dns-logging.satz",
@@ -691,7 +691,7 @@
       "params": [
         "cis_dns_logging"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:102"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:101"
     },
     {
       "from": "presets/cis/confidential-computing.satz",
@@ -701,7 +701,7 @@
       "params": [
         "cis_confidential_computing"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:28"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:27"
     },
     {
       "from": "presets/cis/cloud-sql.satz",
@@ -711,7 +711,7 @@
       "params": [
         "cis_cloud_sql_hardening"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:29"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:28"
     },
     {
       "from": "presets/cis/cmek.satz",
@@ -721,7 +721,7 @@
       "params": [
         "cis_cmek_required"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:30"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:29"
     },
     {
       "from": "presets/cis/api-key-services.satz",
@@ -731,7 +731,7 @@
       "params": [
         "cis_api_key_services"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:31"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:30"
     },
     {
       "from": "presets/cis/bucket-retention.satz",
@@ -741,7 +741,7 @@
       "params": [
         "cis_bucket_retention"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:32"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:31"
     },
     {
       "from": "presets/cis/access-approval.satz",
@@ -751,7 +751,7 @@
       "params": [
         "cis_access_approval"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:33"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:32"
     },
     {
       "from": "presets/cis/internet-ssh-rdp.satz",
@@ -761,7 +761,7 @@
       "params": [
         "cis_block_internet_ssh_rdp"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:103"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:102"
     },
     {
       "from": "presets/cis/cloud-sql-iam-and-deletion-protection.satz",
@@ -771,7 +771,7 @@
       "params": [
         "cis_cloud_sql_iam_and_deletion_protection"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:34"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:33"
     },
     {
       "from": "presets/cis/api-key-services-dry-run.satz",
@@ -781,7 +781,7 @@
       "params": [
         "cis_api_key_services_dry_run"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:85"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:84"
     },
     {
       "from": "presets/cis/api-key-services-dry-run.satz",
@@ -798,7 +798,7 @@
       "params": [
         "cis_block_project_ssh_keys_dry_run"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:86"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:85"
     },
     {
       "from": "presets/cis/block-project-ssh-keys-dry-run.satz",
@@ -815,7 +815,7 @@
       "params": [
         "cis_bucket_retention_dry_run"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:87"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:86"
     },
     {
       "from": "presets/cis/bucket-retention-dry-run.satz",
@@ -832,7 +832,7 @@
       "params": [
         "cis_cloud_sql_hardening_dry_run"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:88"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:87"
     },
     {
       "from": "presets/cis/cloud-sql-dry-run.satz",
@@ -849,7 +849,7 @@
       "params": [
         "cis_cloud_sql_iam_and_deletion_protection_dry_run"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:90"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:89"
     },
     {
       "from": "presets/cis/cloud-sql-iam-and-deletion-protection-dry-run.satz",
@@ -866,7 +866,7 @@
       "params": [
         "cis_confidential_computing_dry_run"
       ],
-      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:89"
+      "at": "presets/cis/CIS-GCP-Foundation-4.0.satz:88"
     },
     {
       "from": "presets/cis/confidential-computing-dry-run.satz",

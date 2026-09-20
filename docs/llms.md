@@ -248,17 +248,18 @@ pack cis_baseline version "2.15"
 params { cis_baseline_adopted = false }
 
 notice cis_baseline_adopted {
-  text   = "Google sets some of these policies on every new organisation …"
-  run    = "satz adopt <estate> --execute --import"
-  before = apply
+  text     = "Google sets some of these policies on every new organisation …"
+  run      = "satz adopt <estate> --execute --import"
+  severity = error
 }
 ```
 
 `satz_interview` and `satz_add_pack` return what their call opened in `notices`. Tell the
 human the command and let them run it; when it has run, acknowledge it with
 `satz_interview` `answers: {<param>: true}` — never before. Until then the compile warns
-and apply and bootstrap refuse. `satz_packs` shows every pack's notices with
-`acknowledged`.
+and every command that writes to the organisation refuses, because the notice declares
+`severity = error`; a notice declaring `warning` or `info` refuses nothing. `satz_packs`
+shows every pack's notices with `severity` and `acknowledged`.
 
 **Interviewing a customer** is `satz_interview`: the open questions with their offers;
 `create: true` writes a new estate from `presets/estate-core.satz` first; `answers:
@@ -365,7 +366,7 @@ recoverable: say what you would need and why, rather than retrying the same call
 
 **Read a finding as fields, not as text.** `satz_transpile_check` — and `satz transpile
 <estate> --check --format json` from a shell — return every finding as an object:
-`severity` (`error` · `warning` · `note`), `kind`, `subject`, `file`, `line`, `message`
+`severity` (`error` · `warning` · `info`), `kind`, `subject`, `file`, `line`, `message`
 (the sentence) and, where one command answers it, `fix` (that command, as it is typed).
 Run `fix`; never cut a command out of `message`. A refused compile returns the same
 object with its errors in `findings`, a parse error included (`kind: "front-end"`).

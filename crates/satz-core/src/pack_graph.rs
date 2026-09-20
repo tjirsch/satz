@@ -107,9 +107,9 @@ pub struct Notice {
     pub param: String,
     pub text: String,
     pub run: String,
-    /// `apply`: `transpile --apply` and `bootstrap` refuse while it is open
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub before: Option<String>,
+    /// `error` · `warning` · `info`: what a command that writes to the organisation
+    /// does while the notice is open — refuse, print and go on, nothing
+    pub severity: String,
 }
 
 /// What an edge says about its two ends. `from` is always the node that has the

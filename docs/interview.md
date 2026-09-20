@@ -79,7 +79,7 @@ switched on — the CIS org-policy packs name `satz adopt`
 interview prints it when a yes switches the pack on, `satz_interview` returns it in
 `notices`, and the estate acknowledges it by binding the notice's param `true` — over
 MCP, as an answer to that param. Until then the compile warns, and `transpile --apply`
-and `bootstrap` refuse while a `before = apply` notice is open.
+and `bootstrap` refuse while a `severity = error` notice is open.
 
 ## The path: day-0 params, then the map, then the packs
 

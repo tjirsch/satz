@@ -1284,7 +1284,7 @@ assert chk["addresses"], chk
 kinds = {f["kind"] for f in chk["findings"]}
 assert {"action", "hcl-passthrough"} <= kinds, chk["findings"]
 # a finding with no site (the pack-actions note) carries no line at all
-assert all(f.get("line") for f in chk["findings"] if f["kind"] in ("action", "hcl-passthrough") and f["severity"] != "note"), chk["findings"]
+assert all(f.get("line") for f in chk["findings"] if f["kind"] in ("action", "hcl-passthrough") and f["severity"] != "info"), chk["findings"]
 # A REFUSED check is an error result that still carries its findings, each at its
 # line — a client shows them where they are instead of parsing the sentence.
 bad = msgs[18]["result"]
@@ -1647,7 +1647,7 @@ import json
 cli = {p["path"]: p for p in json.load(open("tmp/pk/notice-packs.json"))["packs"]}
 n = cli["presets/cis/CIS-GCP-Foundation-4.0.satz"]["notices"]
 assert len(n) == 1 and n[0]["param"] == "cis_baseline_adopted", n
-assert n[0]["acknowledged"] is False and n[0]["before"] == "apply", n
+assert n[0]["acknowledged"] is False and n[0]["severity"] == "error", n
 assert n[0]["run"].startswith("satz adopt"), n
 msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/pk/notice-mcp.jsonl") if l.strip()) if "id" in d}
 interview = msgs[3]["result"]["structuredContent"]
@@ -1662,12 +1662,24 @@ grep -q 'notices open' tmp/pk/notice-done.txt && fail "the acknowledged notice s
 # and the gate: an estate whose questions are all answered is still refused while a notice is open
 rm -rf tmp/nt && mkdir -p tmp/nt
 sed 's/pack_bucket_adopted      = true/pack_bucket_adopted      = false/' yaml/showcase.satz > tmp/nt/open-notice.satz
+# it compiles — the command that closes the notice compiles the estate too — and the
+# acknowledgement reaches no emitted file
+"$satz" --config . transpile "$PWD/tmp/nt/open-notice.satz" --output "$PWD/tmp/nt/hcl" > tmp/nt/transpile.txt 2>&1 \
+  || fail "an estate with an open notice must compile:\n$(cat tmp/nt/transpile.txt)"
+grep -q 'adopted' tmp/nt/hcl/variables.tf tmp/nt/hcl/terraform.tfvars && fail "an acknowledgement is never emitted"
+# the pack declares `severity = error`, so the run that writes to the organisation refuses
 if "$satz" --config . transpile "$PWD/tmp/nt/open-notice.satz" --apply --output "$PWD/tmp/nt/hcl" > tmp/nt/apply.txt 2>&1; then
   fail "apply with an open notice was not refused"
 fi
-grep -q 'apply refused: 1 notice(s) open' tmp/nt/apply.txt || fail "the refusal must count the open notices:\n$(cat tmp/nt/apply.txt)"
-grep -q 'pack_bucket_adopted' tmp/nt/apply.txt || fail "the refusal must name the param that acknowledges it"
-grep -q 'adopted' tmp/nt/hcl/variables.tf tmp/nt/hcl/terraform.tfvars && fail "an acknowledgement is never emitted"
+grep -qE '^error +notice +.*pack_bucket_adopted$' tmp/nt/apply.txt \
+  || fail "the refusal is the finding, at its line and by its subject:\n$(cat tmp/nt/apply.txt)"
+grep -q 'every command that writes to the organisation refuses until then' tmp/nt/apply.txt \
+  || fail "the refusal must say what holds the run back:\n$(cat tmp/nt/apply.txt)"
+# and no tier may silence it away
+if "$satz" --config . --silence notice transpile "$PWD/tmp/nt/open-notice.satz" --apply --output "$PWD/tmp/nt/hcl" > tmp/nt/silenced.txt 2>&1; then
+  fail "--silence of an error-severity notice was not refused"
+fi
+grep -q 'an error is never silenced' tmp/nt/silenced.txt || fail "silencing an error must be refused by name:\n$(cat tmp/nt/silenced.txt)"
 
 step "silence: a finding is left out of the printed output by its kind and subject, stays in the machine stream, and a rule nothing answers to reads stale"
 # The shape this exists for: the CIS extensions all on at once produce eleven findings
