@@ -375,6 +375,10 @@ subject, the message indented under it, then `fix: <command>`. A terminal gets t
 wrapped to its width; a pipe gets each paragraph on one line, so a substring of this table
 matches what a pipe carries. A group of findings stands under a title ending in its count,
 and the last line counts the run: `1 error, 10 warnings; 3 silenced (3 estate) — …`.
+Findings of a group that say the same thing — nine packs asking for one command — are one
+block, on a terminal and in a pipe: a first line per finding, then the sentence and
+`fix: <command>` once. The printed sentence of such a block names no single pack or param;
+each finding's whole `message` is in the JSON, and the counts are of findings.
 
 | message | what happened |
 |---|---|

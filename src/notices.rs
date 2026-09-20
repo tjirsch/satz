@@ -130,17 +130,17 @@ pub(crate) fn compile_findings(notices: &[PackNotices], env: &Env, estate: &Path
             // `satz adopt --import` binds, and what a `[[silence]]` row names
             // the command is the finding's `fix`; the sentence says what is left to do
             // once it has run
+            let held = if n.before.as_deref() == Some("apply") { "; apply and bootstrap refuse until then" } else { "" };
             let f = Finding::new(
                 Severity::Warning,
                 Kind::Notice,
-                format!(
-                    "`{}`: {}\nOnce the command has run, bind `{} = true` in the estate's params{}.",
-                    n.pack,
-                    n.text,
-                    n.param,
-                    if n.before.as_deref() == Some("apply") { "; apply and bootstrap refuse until then" } else { "" }
-                ),
+                format!("`{}`: {}\nOnce the command has run, bind `{} = true` in the estate's params{}.", n.pack, n.text, n.param, held),
             )
+            // what is this notice's own is its pack and its param, and the first line
+            // carries both — the `use` line and the subject. What is left is the pack's
+            // text as the pack wrote it: packs that wrote the same text share a table,
+            // and a pack that worded it differently stands alone.
+            .shared(format!("{}\nOnce the command has run, bind each param named above `true` in the estate's params{}.", n.text, held))
             .in_group(header)
             .about(n.param.clone())
             .fix_in(&n.run, estate);
@@ -198,6 +198,12 @@ mod tests {
         assert_eq!(
             f[0].message,
             "`presets/p.satz`: Adopt what is live.\nOnce the command has run, bind `p_adopted = true` in the estate's params; apply and bootstrap refuse until then."
+        );
+        // what it shares with every pack that wrote the same text: the pack and the param
+        // are out of it, because the first line of a table row says both
+        assert_eq!(
+            f[0].shared.as_deref(),
+            Some("Adopt what is live.\nOnce the command has run, bind each param named above `true` in the estate's params; apply and bootstrap refuse until then.")
         );
         assert_eq!((f[0].subject.as_deref(), f[0].file.as_deref(), f[0].line), (Some("p_adopted"), Some("yaml/e.satz"), Some(2)));
         assert_eq!(f[0].group.as_deref(), Some("notices open — what a pack asks to be run once it is on"), "a title, with no count in it");

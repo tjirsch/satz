@@ -1580,8 +1580,11 @@ where the editor's log shows it.
 ### How a finding is printed
 
 What a compile finds — the errors it refuses on, the warnings and the notes — is printed
-one block per finding, and every command that prints a finding prints this block:
-`transpile`, every command that compiles, `review-pack` and the findings of `packs`.
+in blocks, one per finding, and findings that say the same thing share one. Every command
+that prints a finding prints this block: `transpile`, every command that compiles,
+`review-pack` and the findings of `packs`. This is `tests/corpus/cis-packs/main.satz` as
+`estate.satz`, the CIS baseline and nine of its extensions on, on a terminal 100 columns
+wide:
 
 ```
 packs on while a pack they need is off (1)
@@ -1590,7 +1593,7 @@ warning  pack-requirement  estate.satz:45  presets/cis/CIS-GCP-Foundation-4.0.sa
     `presets/cis/CIS-GCP-Foundation-4.0.satz` needs `presets/estate-map.satz`, which is off
     fix: satz add-pack estate.satz presets/estate-map.satz
 
-notices open — what a pack asks to be run once it is on (1)
+notices open — what a pack asks to be run once it is on (10)
 
 warning  notice            estate.satz:45  cis_baseline_adopted
     `presets/cis/CIS-GCP-Foundation-4.0.satz`: Google sets some of these policies on every new
@@ -1602,7 +1605,24 @@ warning  notice            estate.satz:45  cis_baseline_adopted
     bootstrap refuse until then.
     fix: satz adopt estate.satz --execute --import
 
-2 warnings
+warning  notice            estate.satz:47  cis_block_project_ssh_keys_adopted
+warning  notice            estate.satz:48  cis_require_shielded_vm_adopted
+warning  notice            estate.satz:49  cis_dns_logging_adopted
+warning  notice            estate.satz:50  cis_confidential_computing_adopted
+warning  notice            estate.satz:51  cis_cloud_sql_hardening_adopted
+warning  notice            estate.satz:52  cis_cmek_required_adopted
+warning  notice            estate.satz:53  cis_api_key_services_adopted
+warning  notice            estate.satz:54  cis_bucket_retention_adopted
+warning  notice            estate.satz:57  cis_cloud_sql_iam_and_deletion_protection_adopted
+    Google may already hold a policy this pack declares on the organisation, set by an administrator
+    or by default, and an apply that creates a policy that exists stops on 409
+    POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state
+    before the apply; with --import it binds this param itself when it has run.
+    Once the command has run, bind each param named above `true` in the estate's params; apply and
+    bootstrap refuse until then.
+    fix: satz adopt estate.satz --execute --import
+
+11 warnings
 ```
 
 - **The first line** is the severity, the `kind`, `file:line` and the subject — the pack, the
@@ -1614,9 +1634,17 @@ warning  notice            estate.satz:45  cis_baseline_adopted
 - **`fix:`** is the last line, where one command answers the finding: the command as it is
   typed, with the estate's file name in it. It is never wrapped.
 - **A group** of findings stands under its title with its count — `(7 of 10, 3 silenced)`
-  when a silence left some of it out. Findings of no group come first. One thing found at
-  several sites — a composition conflict, at each file involved — is one first line per
-  site over the one message.
+  when a silence left some of it out. Findings of no group come first.
+- **Findings of a group that say the same thing are one block:** their first lines as a
+  table, one row per finding, then the sentence once and `fix:` once. Above, nine packs
+  carry the same text and ask for the same command and are nine rows; the baseline words
+  its text differently and is a block of its own. Two findings say the same thing when
+  their severity, kind, `fix` and sentence are equal — the sentence without what the row
+  carries, the pack's `use` line and the param. A sentence one word apart is another
+  block. A finding alone in its block prints its whole message. One thing found at several
+  sites — a composition conflict, at each file involved — is a row per site over the one
+  message. The counts in the title and in the last line are of findings, and a silenced
+  finding is no row. A pipe gets the same blocks, unwrapped.
 - **The last line** counts the run by severity, and what was silenced by tier:
   `1 error, 10 warnings; 3 silenced (3 estate) — …`. A refused compile prints its warnings,
   then its errors, then this line, and exits 1.
@@ -1625,15 +1653,17 @@ warning  notice            estate.satz:45  cis_baseline_adopted
 `satz transpile <estate> --check --format json` prints the same run as data on stdout, and
 nothing on stderr but the version line: the estate, the `addresses` it emits, the files
 `written` (none under `--check`) and every finding — `severity`, `kind`, `group`, `file`,
-`line`, `subject`, `message`, `fix`, and `silenced` where a tier silenced it. It is the
-object the MCP tools `satz_transpile_check` and `satz_transpile` return. A refused compile
-prints the same object with no address and its errors among the findings — a parse error
+`line`, `subject`, `message`, `fix`, and `silenced` where a tier silenced it. Every
+finding is an object of its own with its whole `message`, the ten notices above included;
+only the printed form shares a block. It is the object the MCP tools
+`satz_transpile_check` and `satz_transpile` return. A refused compile prints the same object with no address and its errors among the findings — a parse error
 too, as one finding of kind `front-end` — and exits 1. `message` is the sentence and `fix`
 the command; the command is in `fix` alone.
 
 The language server shows the same finding as a diagnostic: the range is the location, the
 diagnostic's `code` is the kind, and its message is the group's title, the sentence and
-`fix: <command>` as the last line.
+`fix: <command>` as the last line. A diagnostic is one per location: each of the ten
+notices is its own, with its whole message.
 
 ### Silencing a finding (`silence`)
 
