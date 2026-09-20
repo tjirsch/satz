@@ -2,3 +2,9 @@
 # the corpus snapshots, the formatter's corpus test and the `include_str!` fixtures
 # compare bytes, and a checkout that turned them into CRLF fails them.
 * text=auto eol=lf
+
+# THIRD-PARTY-LICENSES.md is generated: cargo-about copies each crate's licence file
+# byte for byte, and seven of them are CRLF. Stored verbatim, so a fresh checkout
+# reproduces what the generator writes and `update-third-party-licenses.sh --check`
+# compares like for like on every platform.
+THIRD-PARTY-LICENSES.md -text

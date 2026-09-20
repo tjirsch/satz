@@ -17,6 +17,15 @@ limitations under the License.
 Third-party material in this distribution
 -----------------------------------------
 
+The Rust crates satz is compiled from
+
+    Their licence texts — one copy per crate, as the crate ships it — are in
+    THIRD-PARTY-LICENSES.md, which travels beside this file in every release
+    archive. That file is generated from Cargo.lock by cargo about
+    (`scripts/update-third-party-licenses.sh`) and names every crate under the
+    licence it is taken under. The entries below are the material that is not a
+    crate.
+
 Typst, and the fonts it typesets with
 
     `--format pdf` is typeset by Typst, compiled into this binary rather than

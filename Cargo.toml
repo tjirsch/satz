@@ -18,6 +18,15 @@ keywords = [
     "infrastructure-discovery"
 ]
 categories = ["command-line-utilities", "development-tools"]
+# satz is released as a binary, never to crates.io — as the two library crates say
+# for themselves. cargo-about reads it to keep this workspace out of
+# THIRD-PARTY-LICENSES.md.
+publish = false
+
+# `publish = false` also hides the binary from dist, which then finds nothing to
+# release; this says that this package IS the release.
+[package.metadata.dist]
+dist = true
 
 [dependencies]
 satz-core = { path = "crates/satz-core" }

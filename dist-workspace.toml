@@ -20,8 +20,11 @@ install-updater = false
 # Post-announce jobs to run in CI
 post-announce-jobs = ["./attach-checksum", "./prune-artifacts"]
 # dist packs LICENSE and README into every archive by itself, but not NOTICE, which
-# Apache 2.0 §4(d) asks every redistribution to carry (ADR 0022)
-include = ["NOTICE"]
+# Apache 2.0 §4(d) asks every redistribution to carry (ADR 0022), and not
+# THIRD-PARTY-LICENSES.md, the licence text of every crate compiled into the binary
+# that MIT and Apache 2.0 ask a binary redistribution to carry
+# (scripts/update-third-party-licenses.sh generates it)
+include = ["NOTICE", "THIRD-PARTY-LICENSES.md"]
 
 # The Release workflow grants `contents: write` and a called workflow can only NARROW
 # what its caller granted, so prune-artifacts asking for `actions: write` on its own

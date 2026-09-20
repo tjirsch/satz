@@ -1,0 +1,31 @@
+# satz — third-party licences
+
+The Rust crates compiled into the `satz` binary, with the licence text each one
+ships. MIT and Apache 2.0 ask a binary redistribution to carry these texts, so this
+file travels in every release archive beside `LICENSE` and `NOTICE`.
+
+Generated from `Cargo.lock` by `cargo about` — run
+`scripts/update-third-party-licenses.sh` to rewrite it, never an editor. The
+material that is not a crate — the provider schema fixture, the fonts Typst
+embeds, the control identifiers in the catalogs — is named in `NOTICE`.
+
+| licence | crates |
+|---|---|
+{{#each overview}}| {{{name}}} (`{{{id}}}`) | {{count}} |
+{{/each}}
+
+Crates offering a choice of licences are listed under the one satz takes, Apache 2.0
+where it is on offer. One licence can appear several times below: each crate ships
+its own copy of the text with its own copyright line, and every copy is here.
+{{#each licenses}}
+{{#if first_of_kind}}
+
+## {{{name}}} (`{{{id}}}`)
+{{/if}}
+
+**Used by:** {{#each used_by}}{{{crate.name}}} {{{crate.version}}}{{#unless @last}}, {{/unless}}{{/each}}
+
+```text
+{{{text}}}
+```
+{{/each}}
