@@ -152,6 +152,30 @@ impl Misfit {
     }
 }
 
+/// What a type belongs to when it is not the node it is written in — `None` for a type
+/// that lives where it stands.
+///
+/// A project is the bottom of the resource hierarchy, so nothing above it is placed by
+/// standing in its body: a folder and a project hang off the organisation or off a
+/// folder, an organisation grant off the organisation, a group off the Cloud Identity
+/// customer, a billing grant off the billing account. Written there they would reach the
+/// organisation anyway, which reads as "in this project" and is not. The same types are
+/// written at the TOP LEVEL of a file — the one that declares the project included — and
+/// hoist from wherever that file is `use`d.
+fn above_a_project(k: &str, types: &dyn TypeResolver) -> Option<String> {
+    match k {
+        "google_folder" => return Some("a folder hangs off the organisation or another folder".to_string()),
+        "google_project" => return Some("a project hangs off the organisation or a folder".to_string()),
+        _ => {}
+    }
+    match types.resolve(k)?.scope {
+        crate::Scope::Org => Some("it belongs to the organisation".to_string()),
+        crate::Scope::Customer => Some("it belongs to the Cloud Identity customer".to_string()),
+        crate::Scope::Billing => Some("it belongs to the billing account".to_string()),
+        crate::Scope::Node => None,
+    }
+}
+
 /// Whether a key names something that opens a map at the top level of a file.
 fn opens_a_map(k: &str, types: &dyn TypeResolver) -> bool {
     matches!(k, "google_folder" | "google_project" | "terraform" | "providers") || types.resolve(k).is_some()
@@ -234,6 +258,19 @@ pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> 
                         fix: "A label stands inside the map of its type: `google_x { \"…\" { … } }`".to_string(),
                     }),
                 },
+                Position::NodeBody { node: "google_project" } => {
+                    plain(key).and_then(|k| above_a_project(k, types)).map(|what| Misfit {
+                        line: *line,
+                        what: format!(
+                            "`{} {{ … }}` stands in the body of a `google_project`, and {} — not to the project",
+                            key_text(key), what
+                        ),
+                        fix: "It is written at the top level of a file, the file that declares the project included: \
+                              one file declares a project together with the organisation-level resources that go with it, \
+                              and those reach the organisation from wherever that file is `use`d"
+                            .to_string(),
+                    })
+                }
                 Position::NodeBody { .. } => None,
                 Position::NodeMap { .. } | Position::ResourceMap { .. } => match (key, name) {
                     (Key::Ident(k), None) if opens_a_map(k, types) => Some(Misfit {

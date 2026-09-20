@@ -1494,6 +1494,30 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.71.0
+
+**An organisation-level resource type written inside a project's body is refused.** A
+folder, a project, an organisation grant (`google_organization_iam_member`), a Cloud
+Identity group (`google_cloud_identity_group`) and a billing grant
+(`google_billing_account_iam_member`) all hang off something above the project — the
+organisation, a folder, the Cloud Identity customer, the billing account — so standing in
+a project's body did not place them: they reached the organisation while reading as "in
+this project". Such a block is now refused with ``google_organization_iam_member { … }`
+stands in the body of a `google_project`, and it belongs to the organisation — not to the
+project``, naming the file and the line. **The edit:** move the block out of the project's
+body, to the top level of the same file — the file that declares the project included, and
+one file may declare a project together with the groups that go with it. Nothing moves in
+the plan: the resource was already emitted at the organisation, and it still is. A folder's
+body is unaffected, and so is a `use`: a used file's entries are read at its own top level,
+which is what lets one file declare a project together with the groups that go with it.
+
+**An org policy inside a project's body gets the parent the API takes.** It was emitted
+with `parent = google_project.<label>.project_id`, the bare project id, which is no
+Resource Manager path and no apply could take; it is now
+`parent = "projects/${google_project.<label>.project_id}"`, with the policy's `name` built
+from it. No pack of the library declares an org policy in a project's body, so nothing
+here moves; an estate that does gets a plan that applies where it did not.
+
 ### v0.70.0
 
 **`before = apply` on a `notice` is gone; a notice declares a `severity`.** A pack whose

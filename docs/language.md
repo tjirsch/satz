@@ -1002,6 +1002,50 @@ inside `google_folder { … }` or a resource type map it is refused, because it 
 nothing that position takes. `suppress` is read from the estate's own file: a used
 file that carries one is refused.
 
+**An organisation-level resource type is written at the top level of a file, and reaches
+the organisation from wherever that file is `use`d.** A folder, a project, an
+organisation grant, a Cloud Identity group and a billing grant each hang off something
+above the project — the organisation, a folder, the Cloud Identity customer, the billing
+account — so the position of the `use` does not place them. That is what lets ONE file
+declare a project together with the groups that go with it:
+
+```
+// team-platform.satz
+google_project {
+  acme_platform_001 {
+    project_id      = "acme-platform-001"
+    billing_account = billing_account_infra
+  }
+}
+
+google_cloud_identity_group {
+  "platform-admins" { display_name = "Platform Admins" }
+}
+
+google_organization_iam_member {
+  "group:platform-admins@example.com" = ["roles/monitoring.viewer"]
+}
+```
+
+`use "team-platform.satz"` in the body of a folder creates the project in that folder;
+the group and the grant reach the organisation and the Cloud Identity customer from
+there, and the same file `use`d bare creates the project under the organisation. A
+resource whose type takes a `project` lands in the project it stands in — an org policy
+written inside a project's body gets `parent = "projects/<id>"`.
+
+**The same type written INSIDE a project's body is refused.** A project is the bottom of
+the resource hierarchy, so nothing above it is placed by standing in its body; written
+there it would reach the organisation anyway, which reads as "in this project" and is
+not:
+
+```
+`google_organization_iam_member { … }` stands in the body of a `google_project`, and it belongs to the organisation — not to the project. It is written at the top level of a file, the file that declares the project included: one file declares a project together with the organisation-level resources that go with it, and those reach the organisation from wherever that file is `use`d
+```
+
+A folder's body takes them, because a folder has children: a group or an organisation
+grant written in one reaches the organisation exactly once, however many folders declare
+it.
+
 **A statement is written at the top level of a file.** Directly inside a resource type
 map, `google_folder { … }`, `google_project { … }`, or the body of a folder or a
 project, a block whose key is a statement keyword is an error:

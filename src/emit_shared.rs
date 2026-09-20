@@ -339,13 +339,14 @@ pub(crate) fn project_service_block(
     service_builder.build()
 }
 
-/// The narrowest-context facts the generic emission inherits from. Field names
-/// mirror the walk's ResourceContext so the extracted code reads unchanged.
+/// The narrowest-context facts the generic emission inherits from: what the node
+/// path says encloses the resource. A folder contributes a REFERENCE only
+/// (`google_folder.x.name`); a project contributes both, because its id is a
+/// value the estate writes and some attributes take it literally.
 #[derive(Default, Clone)]
 pub(crate) struct ResCtx {
     pub org_id: Option<String>,
     pub org_ref: Option<String>,
-    pub folder_id: Option<String>,
     pub folder_ref: Option<String>,
     pub project_id: Option<String>,
     pub project_ref: Option<String>,
@@ -504,37 +505,52 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
                 res_name
             ))?;
 
-        let (resolved_parent_expr, resolved_parent_str) = if let Some(v) = attrs.get(serde_yaml::Value::String("parent".to_string())) {
-            (render_value_r(resolve, v), v.as_str().map(|s| s.to_string()))
-        } else if let Some(p_ref) = ctx.project_ref.as_ref().or(ctx.folder_ref.as_ref()).or(ctx.org_ref.as_ref()) {
-            (Some(parse_expr(p_ref)), Some(p_ref.clone()))
-        } else {
-            let org_id = ctx.org_id.as_ref().ok_or_else(|| format!(
-                "google_org_policy_policy '{}' has no 'parent' and no enclosing organization, folder or project to inherit one from",
-                res_name
-            ))?;
-            (Some(hcl::Expression::from(format!("organizations/{}", org_id))), Some(format!("organizations/{}", org_id)))
-        };
+        // The parent is a Resource Manager path, and the enclosing node gives one in
+        // its own form: the organisation reference is `organizations/<id>` and a
+        // folder reference is `google_folder.x.name`, which resolves to `folders/<id>`
+        // — but a project reference is `google_project.x.project_id`, the bare id, so
+        // an org policy inside a project writes `projects/<id>`.
+        // `parent_text` is that path as TEMPLATE text (`${…}` around a reference), which
+        // is what the policy's name is built from.
+        let (resolved_parent_expr, parent_text): (Option<hcl::Expression>, Option<String>) =
+            if let Some(v) = attrs.get(serde_yaml::Value::String("parent".to_string())) {
+                let expr = render_value_r(resolve, v);
+                let text = match (&expr, v.as_str()) {
+                    (Some(hcl::Expression::String(s)), _) => Some(s.clone()),
+                    // Interpolation, not a literal: without the helper hcl-rs
+                    // would escape this to "$${...}/policies/...".
+                    (Some(hcl::Expression::Traversal(_)), Some(s)) => Some(format!("${{{}}}", s)),
+                    _ => None,
+                };
+                (expr, text)
+            } else if let Some(p_ref) = ctx.project_ref.as_ref() {
+                let text = format!("projects/${{{}}}", p_ref);
+                (Some(string_to_hcl_expr(&text)), Some(text))
+            } else if let Some(p_id) = ctx.project_id.as_ref() {
+                let text = format!("projects/{}", p_id);
+                (Some(hcl::Expression::from(text.clone())), Some(text))
+            } else if let Some(node_ref) = ctx.folder_ref.as_ref().or(ctx.org_ref.as_ref()) {
+                let expr = parse_expr(node_ref);
+                let text = match &expr {
+                    hcl::Expression::Traversal(_) => format!("${{{}}}", node_ref),
+                    _ => node_ref.clone(),
+                };
+                (Some(expr), Some(text))
+            } else {
+                let org_id = ctx.org_id.as_ref().ok_or_else(|| format!(
+                    "google_org_policy_policy '{}' has no 'parent' and no enclosing organization, folder or project to inherit one from",
+                    res_name
+                ))?;
+                let text = format!("organizations/{}", org_id);
+                (Some(hcl::Expression::from(text.clone())), Some(text))
+            };
 
         // Calculate final name
-        let final_name = if !name_val.contains('/') {
-            match &resolved_parent_expr {
-                Some(hcl::Expression::String(p_str)) => {
-                    hcl::Expression::from(format!("{}/policies/{}", p_str, name_val))
-                }
-                Some(hcl::Expression::Traversal(_)) => {
-                     if let Some(p_str) = resolved_parent_str {
-                         // Interpolation, not a literal: without the helper hcl-rs
-                         // would escape this to "$${...}/policies/...".
-                         string_to_hcl_expr(&format!("${{{}}}/policies/{}", p_str, name_val))
-                     } else {
-                         string_to_hcl_expr(name_val)
-                     }
-                }
-                _ => string_to_hcl_expr(name_val),
+        let final_name = match parent_text {
+            Some(parent) if !name_val.contains('/') => {
+                string_to_hcl_expr(&format!("{}/policies/{}", parent, name_val))
             }
-        } else {
-            string_to_hcl_expr(name_val)
+            _ => string_to_hcl_expr(name_val),
         };
 
         block_builder = block_builder.add_attribute(("name", final_name));
@@ -577,15 +593,6 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
                     if schema.block.attributes.contains_key(f) && !attrs.contains_key(serde_yaml::Value::String(f.to_string())) {
                         block_builder = block_builder.add_attribute(hcl::Attribute::new(f, parse_expr(f_ref)));
                         final_attrs.insert(serde_yaml::Value::String(f.to_string()), serde_yaml::Value::String(f_ref.clone()));
-                        context_set = true;
-                        break;
-                    }
-                }
-            } else if let Some(f_id) = &ctx.folder_id {
-                for f in folder_params {
-                    if schema.block.attributes.contains_key(f) && !attrs.contains_key(serde_yaml::Value::String(f.to_string())) {
-                        block_builder = block_builder.add_attribute(hcl::Attribute::new(f, f_id.clone()));
-                        final_attrs.insert(serde_yaml::Value::String(f.to_string()), serde_yaml::Value::String(f_id.clone()));
                         context_set = true;
                         break;
                     }

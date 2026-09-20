@@ -6856,10 +6856,12 @@ mod corpus {
 
 #[cfg(test)]
 mod placement_gate {
-    //! What a `use` places, and what it never emits, through the emitter — the two rules
+    //! What a `use` places, and what it never emits, through the emitter — the rules
     //! that hold by construction and that nothing pinned: a used pack's resources land
-    //! where its `use` stands, and its `params`, `question` and `claim` statements reach
-    //! the estate and never `main.tf`.
+    //! where its `use` stands, an organisation-level resource hoists to the organisation
+    //! from every position, a folder or a project written in a project's body is refused,
+    //! and a pack's `params`, `question` and `claim` statements reach the estate and never
+    //! `main.tf`.
     use super::*;
 
     const PACK: &str = r#"pack hosting version "1.0"
@@ -6888,49 +6890,90 @@ google_project {
 }
 "#;
 
-    fn emit(estate: &str) -> (String, String, satz_core::pipeline::FrontEnd) {
+    /// A pack of CONTENT, no node of its own: one project-scoped resource, one whose
+    /// scope is a Resource Manager path, and one that belongs to the organisation
+    /// whatever encloses it.
+    const CONTENT: &str = r#"pack content version "1.0"
+
+google_storage_bucket {
+  evidence {
+    name                        = "acme-evidence-001"
+    location                    = "EU"
+    uniform_bucket_level_access = true
+  }
+}
+
+google_org_policy_policy {
+  os_login {
+    name = "compute.requireOsLogin"
+    spec {
+      rules = [
+        { enforce = "TRUE" },
+      ]
+    }
+  }
+}
+
+google_organization_iam_member {
+  "group:gcp-auditors@example.com" = ["roles/viewer"]
+}
+"#;
+
+    fn load(p: &str) -> Result<String, String> {
+        match p {
+            "hosting.satz" => Ok(PACK.to_string()),
+            "content.satz" => Ok(CONTENT.to_string()),
+            other => Err(format!("no load: {}", other)),
+        }
+    }
+
+    fn try_emit(estate: &str) -> Result<(String, String, satz_core::pipeline::FrontEnd), String> {
         let reg = corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
-        let fe = satz_core::pipeline::compile_estate("main.satz", estate, &resolver, &|p| {
-            if p == "hosting.satz" { Ok(PACK.to_string()) } else { Err(format!("no load: {}", p)) }
-        })
-        .unwrap_or_else(|e| panic!("front end: {}", e));
+        let fe = satz_core::pipeline::compile_estate("main.satz", estate, &resolver, &load)
+            .map_err(|e| e.to_string())?;
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty(), "{:?}", folded.conflicts());
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
-        let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("emit: {}", e));
-        (out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars), fe)
+        let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
+        Ok((out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars), fe))
+    }
+
+    fn emit(estate: &str) -> (String, String, satz_core::pipeline::FrontEnd) {
+        try_emit(estate).unwrap_or_else(|e| panic!("front end: {}", e))
+    }
+
+    /// The one resource block of `main_tf` with this type and label — the label as a
+    /// prefix, so a grant found by its hashed label is named by what it grants.
+    fn block(main_tf: &str, tf_type: &str, label: &str) -> String {
+        let head = format!("\"{}\" \"{}", tf_type, label);
+        format!("\n{}", main_tf)
+            .split("\nresource ")
+            .find(|r| r.starts_with(&head))
+            .map(str::to_string)
+            .unwrap_or_else(|| panic!("{}.{} is not in main.tf:\n{}", tf_type, label, main_tf))
     }
 
     const HEAD: &str = "estate t\n\nparams {\n  customer_organization_id = \"123456789012\"\n}\n\n";
 
+    const IN_FOLDER: &str = "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"content.satz\"\n  }\n}\n";
+    const IN_PROJECT: &str = "google_project {\n  outer {\n    name            = \"acme-outer-001\"\n    project_id      = \"acme-outer-001\"\n    billing_account = \"012345-6789AB-CDEF01\"\n    use \"content.satz\"\n  }\n}\n";
+
     #[test]
     fn a_used_pack_lands_where_its_use_stands_and_its_statements_never_reach_main_tf() {
         let forms = [
-            ("at the top level", "use \"hosting.satz\"\n".to_string(), Some("org_id = \"123456789012\"")),
+            ("at the top level", "use \"hosting.satz\"\n".to_string(), "org_id = \"123456789012\""),
             (
                 "in a folder's body",
                 "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"hosting.satz\"\n  }\n}\n".to_string(),
-                Some("folder_id = google_folder.shared.name"),
-            ),
-            (
-                "in a project's body",
-                "google_project {\n  outer {\n    name            = \"acme-outer-001\"\n    billing_account = \"012345-6789AB-CDEF01\"\n    use \"hosting.satz\"\n  }\n}\n"
-                    .to_string(),
-                None,
+                "folder_id = google_folder.shared.name",
             ),
         ];
         for (form, tail, parent) in forms {
             let (main_tf, tfvars, fe) = emit(&format!("{}{}", HEAD, tail));
-            let host = format!("\n{}", main_tf);
-            let host = host
-                .split("\nresource ")
-                .find(|r| r.starts_with("\"google_project\" \"host\""))
-                .unwrap_or_else(|| panic!("{}: the pack's project is not in main.tf:\n{}", form, main_tf));
-            if let Some(parent) = parent {
-                assert!(host.contains(parent), "{}: the project is created where the `use` stands — got:\n{}", form, host);
-            }
+            let host = block(&main_tf, "google_project", "host");
+            assert!(host.contains(parent), "{}: the project is created where the `use` stands — got:\n{}", form, host);
             // the statements: in the estate, resolved — and nowhere in the HCL
             assert_eq!(fe.questions.len(), 1, "{}", form);
             assert_eq!(fe.questions[0].questions[0].subject, "host_is_wanted", "{}", form);
@@ -6940,6 +6983,102 @@ google_project {
                 assert!(!main_tf.contains(word), "{}: `{}` of the used pack reached main.tf:\n{}", form, word, main_tf);
             }
         }
+    }
+
+    /// Per SCOPE, where a used file's resources land. A project body places what it
+    /// encloses — including an org policy, whose parent is the Resource Manager path
+    /// `projects/<id>` and not the bare id a project reference gives. An
+    /// organisation-level resource keeps the organisation from every position: that
+    /// hoist is what lets an author write one beside the project it serves.
+    #[test]
+    fn a_projects_body_places_what_it_encloses_and_an_organisation_level_resource_hoists() {
+        let forms = [
+            (
+                "at the top level",
+                "use \"content.satz\"",
+                None,
+                "\"organizations/123456789012\"",
+                "\"organizations/123456789012/policies/compute.requireOsLogin\"",
+            ),
+            (
+                "in a folder's body",
+                IN_FOLDER,
+                None,
+                "google_folder.shared.name",
+                "\"${google_folder.shared.name}/policies/compute.requireOsLogin\"",
+            ),
+            (
+                "in a project's body",
+                IN_PROJECT,
+                Some("project = google_project.outer.project_id"),
+                "\"projects/${google_project.outer.project_id}\"",
+                "\"projects/${google_project.outer.project_id}/policies/compute.requireOsLogin\"",
+            ),
+        ];
+        for (form, tail, bucket_project, policy_parent, policy_name) in forms {
+            let (main_tf, _, _) = emit(&format!("{}{}", HEAD, tail));
+
+            // project-scoped: the project the `use` stands in, or none at all
+            let bucket = block(&main_tf, "google_storage_bucket", "evidence");
+            match bucket_project {
+                Some(p) => assert!(bucket.contains(p), "{}: the bucket is not in the project it stands in:\n{}", form, bucket),
+                None => assert!(!bucket.contains("project ="), "{}: the bucket took a project from nowhere:\n{}", form, bucket),
+            }
+
+            // a Resource Manager path: organisation, folder or project, in that form
+            let policy = block(&main_tf, "google_org_policy_policy", "os_login");
+            assert!(
+                policy.contains(&format!("parent = {}", policy_parent)),
+                "{}: the policy's parent is not the node it stands in:\n{}",
+                form,
+                policy
+            );
+            assert!(
+                policy.contains(&format!("name = {}", policy_name)),
+                "{}: the policy's name is not built from its parent:\n{}",
+                form,
+                policy
+            );
+
+            // organisation-level: the organisation, wherever the `use` stands
+            let grant = block(&main_tf, "google_organization_iam_member", "iam_group_gcp_auditors_example_com_");
+            assert!(grant.contains("org_id = \"123456789012\""), "{}: the organisation grant did not hoist:\n{}", form, grant);
+            assert!(grant.contains("provider = google.google"), "{}: the organisation grant took a project's provider:\n{}", form, grant);
+        }
+    }
+
+    /// A type that belongs above a project, written IN a project's body. It used to be
+    /// emitted at the organisation, which reads as "in this project" and is not.
+    /// The same type at a file's top level is the hoist the rule above proves, so the
+    /// refusal is of the position, never of the type.
+    #[test]
+    fn a_type_that_belongs_above_a_project_is_refused_in_its_body() {
+        for (block, belongs) in [
+            ("google_folder {\n      inner {\n        display_name = \"Inner\"\n      }\n    }", "a folder hangs off the organisation or another folder"),
+            ("google_project {\n      inner {\n        project_id = \"acme-inner-001\"\n      }\n    }", "a project hangs off the organisation or a folder"),
+            ("google_organization_iam_member {\n      \"group:gcp-auditors@example.com\" = [\"roles/viewer\"]\n    }", "it belongs to the organisation"),
+            ("google_cloud_identity_group {\n      \"log-admins\" { display_name = \"Log Admins\" }\n    }", "it belongs to the Cloud Identity customer"),
+            ("google_billing_account_iam_member {\n      \"group:billing@example.com\" = [\"roles/billing.admin\"]\n    }", "it belongs to the billing account"),
+        ] {
+            let estate = format!(
+                "{}google_project {{\n  outer {{\n    name            = \"acme-outer-001\"\n    project_id      = \"acme-outer-001\"\n    billing_account = \"012345-6789AB-CDEF01\"\n    {}\n  }}\n}}\n",
+                HEAD, block
+            );
+            let Err(err) = try_emit(&estate) else {
+                panic!("accepted in a project's body:\n{}", estate);
+            };
+            assert!(err.contains("stands in the body of a `google_project`"), "{}", err);
+            assert!(err.contains(belongs), "{}", err);
+        }
+
+        // the same types at the top level of a file, beside the project that file declares
+        let estate = format!(
+            "{}google_project {{\n  outer {{\n    name            = \"acme-outer-001\"\n    project_id      = \"acme-outer-001\"\n    billing_account = \"012345-6789AB-CDEF01\"\n  }}\n}}\n\ngoogle_organization_iam_member {{\n  \"group:gcp-auditors@example.com\" = [\"roles/viewer\"]\n}}\n",
+            HEAD
+        );
+        let (main_tf, _, _) = emit(&estate);
+        let grant = block(&main_tf, "google_organization_iam_member", "iam_group_gcp_auditors_example_com_");
+        assert!(grant.contains("org_id = \"123456789012\""), "the grant beside the project did not reach the organisation:\n{}", grant);
     }
 }
 
