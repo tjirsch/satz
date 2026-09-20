@@ -67,7 +67,7 @@ These options can be placed anywhere in the command (e.g., before or after subco
 - `--verbose`: Enable verbose output. When invoked without a subcommand (e.g. `satz --verbose`), prints full recursive help listing all subcommands and their options.
 - `--no-actions`: never execute a declared [`action`](#run-actions-run-actions), whatever `run-actions` was asked to do.
 - `--no-pack-actions`: consider only the estate's own actions; ignore any a `use`d pack declares.
-- `--no-action-warnings`: silence the warning every declared action raises on a compile.
+- `--silence <KIND[:SUBJECT]>`: leave a finding out of this run's output, by what it is (see [Silencing a finding](#silencing-a-finding-silence)). Repeatable; `SATZ_SILENCE` takes the same selectors comma-separated. The finding is still produced, still counted and still in `--format json`; an error is never silenced, and a `--silence` that names one refuses the run. Refused for `satz mcp` and `satz lsp`, which serve many estates in one process.
 - `--no-impersonate`: run as the Application Default Credentials themselves, without becoming the estate's IaC service account — for a check that must answer as the human.
 - `--no-api-preflight`: `plan` and `apply` start the tool without asking Service Usage which of the APIs the estate declares are off, and enable none — for a run that must reach the tool without satz calling Google.
 
@@ -78,6 +78,7 @@ User-level **parameters** (e.g. when to check for updates) live in **`~/.config/
 | Option | Default | Description |
 |--------|---------|-------------|
 | `self_update_frequency` | `"always"` | When to check for updates on normal runs: `never`, `always`, or `daily` (at most once per 24 hours). The check only reports a newer version; it installs nothing. |
+| `[[silence]]` | none | Finding kinds this machine leaves out of every estate's printed output, each with a `reason`. Whole kinds only — a `subject` here is refused, because it belongs to one estate. Managed by `satz silence add --machine`; see [Silencing a finding](#silencing-a-finding-silence). |
 
 **Project config** (paths, providers, etc.) stays in **`config.toml`** per project; see [Configuration](#configuration) below.
 
@@ -1565,6 +1566,54 @@ where the editor's log shows it.
   initialize, open, completion, hover, definition, formatting, a parse error and a
   pipeline error, shutdown.
 
+### Silencing a finding (`silence`)
+
+A compile reports what it finds as findings — the errors it refuses on, the warnings and
+the notes. A finding that has been seen and acted on is silenced by **what it is**, never
+by its wording: its `kind`, as `--format json` spells it, and optionally its `subject` —
+the pack a pack finding judges, the param a notice is acknowledged by, the action's name,
+the `hcl` block's `file:line`. Both are in every finding's JSON, so a selector is read out
+of a report and pasted into a rule.
+
+Three tiers hold those rules, each belonging to a different person:
+
+| tier | where | what it may name | who reads it |
+|---|---|---|---|
+| estate | `[[silence]]` in the estate's `config.toml` | a kind, or one subject of a kind | the CLI, the editor, an agent over MCP |
+| machine | `[[silence]]` in `~/.config/satz/satz.toml` | a whole kind only | the CLI, the editor, an agent over MCP |
+| run | `--silence <kind>[:<subject>]`, `SATZ_SILENCE` | a kind, or one subject of a kind | this one CLI run |
+
+Every row carries a `reason`; a row without one is a TOML error naming the file and the
+line. The run tier is refused for `satz mcp` and `satz lsp`: both serve many estates in
+one process, and a silence given once on their command line would hold for all of them.
+
+A silenced finding is **still produced**: it stays in the list, in `--format json` and in
+what MCP returns, marked with the tier that silenced it and that tier's reason. Only the
+printed output leaves it out, and every run that silenced anything ends with one line
+saying how many and from which tier. An **error is never silenced** by any tier, and a
+`--silence` that names one refuses the run.
+
+```bash
+satz silence list                     # every rule in force, with its reason
+satz silence list estate.satz         # …and what each one still silences, or STALE
+satz silence add notice --reason "adopt has run; the params are bound"
+satz silence add "hcl-passthrough:yaml/estate.satz:192" --reason "reviewed 2026-09-20"
+satz silence add action --machine --reason "reviewed once per estate, not per compile"
+satz silence remove notice
+satz transpile estate.satz --check --silence pack-requirement   # this run only
+```
+
+```toml
+# the estate's config.toml
+[[silence]]
+kind = "notice"
+subject = "cis_baseline_adopted"
+reason = "satz adopt --execute --import has run; every live policy is in the state"
+```
+
+A rule nothing answers to any more reads `STALE` in `satz silence list <estate>`, with the
+command to remove it — the estate changed, and the rule outlived what it was about.
+
 ## Playbooks
 
 Standing an organisation up from nothing, adopting one that already exists, and
@@ -1596,6 +1645,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 | `provider_version` | `"7.14.1"` | Provider version to use |
 | `auto_explode` | `["google_project_service", ".*_iam_member"]` | Resources that use compact explosion |
 | `validation_level` | `"warn"` | Validation level for mandatory parameters |
+| `[[silence]]` | none | Findings this estate leaves out of its printed output: `kind`, optional `subject`, mandatory `reason`. Managed by `satz silence add`; see [Silencing a finding](#silencing-a-finding-silence). |
 
 ### File locations
 
@@ -1794,7 +1844,7 @@ global switches exist:
 |---|---|
 | `--no-actions` | never execute an action, whatever `run-actions` was asked to do |
 | `--no-pack-actions` | consider only the estate's own actions |
-| `--no-action-warnings` | silence the warning every declared action raises on a compile |
+| `--silence action` | leave the action findings out of this run's output; `satz silence add action --reason "…"` does it for every run ([Silencing a finding](#silencing-a-finding-silence)) |
 
 A downloaded script arrives without its executable bit and satz does not set
 it: the error names the `chmod +x` to run once the script has been read. The full reference is

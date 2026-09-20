@@ -126,7 +126,11 @@ pub(crate) fn compile_findings(notices: &[PackNotices], env: &Env, estate: &Path
     let label = estate.to_string_lossy().into_owned();
     open.iter()
         .map(|n| {
-            let f = Finding::new(Severity::Warning, Kind::Notice, format!("`{}`: {} — {}", n.pack, n.text, then(n))).in_group(&header);
+            // the param that acknowledges it is the notice's identity: the same key
+            // `satz adopt --import` binds, and what a `[[silence]]` row names
+            let f = Finding::new(Severity::Warning, Kind::Notice, format!("`{}`: {} — {}", n.pack, n.text, then(n)))
+                .in_group(&header)
+                .about(n.param.clone());
             match scan.uses.iter().find(|l| !l.commented && l.written == n.pack) {
                 Some(l) => f.located(label.clone(), l.index as u32 + 1),
                 None => {

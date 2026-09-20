@@ -7,7 +7,9 @@
 //! matrix greps for is what an editor shows.
 
 use rmcp::schemars;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+use crate::silence::Silenced;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -20,40 +22,81 @@ pub(crate) enum Severity {
     Note,
 }
 
-/// Which check spoke. The CLI's flags silence two of them (`--no-action-warnings`,
-/// the `update-prerequisites` command's own report); an agent can group by it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum Kind {
-    DryRunConflict,
-    Conflict,
-    Suppression,
-    Emit,
-    WrittenReference,
-    MissingRequired,
+/// The enum, the name each variant is silenced by, and the list of them all, from one
+/// declaration: a kind the list does not know could not be named in a `[[silence]]`
+/// row, so the macro fills the list rather than a second table that can fall behind.
+macro_rules! kinds {
+    ($($(#[$attr:meta])* $variant:ident => $name:literal),+ $(,)?) => {
+        /// Which check spoke, and half of a finding's identity: a `[[silence]]` row and
+        /// `--silence` name a kind, never a wording. The other half is `subject`. The
+        /// `update-prerequisites` command's own report silences its kind for its own
+        /// compile; an agent can group by it.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+        #[serde(rename_all = "kebab-case")]
+        pub(crate) enum Kind { $($(#[$attr])* $variant),+ }
+
+        impl Kind {
+            /// Every kind there is, in declaration order: what `satz silence` offers and
+            /// what a selector is read against.
+            pub(crate) const ALL: &'static [Kind] = &[$(Kind::$variant),+];
+
+            /// The name a silence names it by — the kebab-case form the JSON carries.
+            pub(crate) fn as_str(self) -> &'static str {
+                match self { $(Kind::$variant => $name),+ }
+            }
+        }
+    };
+}
+
+kinds! {
+    DryRunConflict => "dry-run-conflict",
+    Conflict => "conflict",
+    Suppression => "suppression",
+    Emit => "emit",
+    WrittenReference => "written-reference",
+    MissingRequired => "missing-required",
     /// a resource declared outside the project or folder its type is scoped to, which
     /// sets none itself
-    MissingScope,
+    MissingScope => "missing-scope",
     /// an estate's `deployment_mode` that is neither `local` nor `cloud`
-    DeploymentMode,
+    DeploymentMode => "deployment-mode",
     /// an emitted attribute whose value the provider refuses by its shape
-    AttributeShape,
-    Prerequisites,
+    AttributeShape => "attribute-shape",
+    Prerequisites => "prerequisites",
     /// a pack whose gate is true and whose line is commented out or absent
-    UnadoptedPack,
+    UnadoptedPack => "unadopted-pack",
     /// an active line of a gated pack without its `when`: a no does not switch it off
-    UngatedPack,
+    UngatedPack => "ungated-pack",
     /// a pack on while a pack it needs is off
-    PackRequirement,
+    PackRequirement => "pack-requirement",
     /// two packs that exclude one another, both on
-    ExcludedPacks,
+    ExcludedPacks => "excluded-packs",
     /// a pack's notice the estate has not acknowledged: the command it names has to run
-    Notice,
-    Providers,
-    Action,
-    HclPassthrough,
+    Notice => "notice",
+    Providers => "providers",
+    Action => "action",
+    HclPassthrough => "hcl-passthrough",
     /// `review-pack`: a rule the preset library holds, judged on one pack
-    Pack,
+    Pack => "pack",
+}
+
+impl Kind {
+    /// The kind of that name, or nothing: a selector naming no kind is refused, never
+    /// read as a subject.
+    pub(crate) fn parse(name: &str) -> Option<Kind> {
+        Kind::ALL.iter().copied().find(|k| k.as_str() == name)
+    }
+
+    /// Every name, for an error that has to say what is on offer.
+    pub(crate) fn names() -> String {
+        Kind::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
+    }
+}
+
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -70,12 +113,37 @@ pub(crate) struct Finding {
     /// 1-based, in that file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    /// What this finding is ABOUT, and with `kind` its identity: the pack a pack
+    /// finding judges, the param a notice is acknowledged by, the action's name, the
+    /// `hcl` block's `file:line`. A `[[silence]]` row names this pair; the message,
+    /// which carries counts and paths, names nothing stable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     pub message: String,
+    /// Set when a tier silenced this finding. The finding stays in the list and in the
+    /// JSON either way — only the human rendering leaves it out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub silenced: Option<Silenced>,
 }
 
 impl Finding {
     pub(crate) fn new(severity: Severity, kind: Kind, message: impl Into<String>) -> Self {
-        Finding { severity, kind, group: None, file: None, line: None, message: message.into() }
+        Finding {
+            severity,
+            kind,
+            group: None,
+            file: None,
+            line: None,
+            subject: None,
+            message: message.into(),
+            silenced: None,
+        }
+    }
+
+    /// What this finding is about: the second half of its identity.
+    pub(crate) fn about(mut self, subject: impl Into<String>) -> Self {
+        self.subject = Some(subject.into());
+        self
     }
     /// The file this finding is about, with no line — the whole file is the subject.
     pub(crate) fn at_file(mut self, file: impl Into<String>) -> Self {
@@ -153,9 +221,14 @@ pub(crate) fn refusal_findings(e: &(dyn std::error::Error + 'static)) -> Vec<Fin
 /// The CLI's rendering: warnings and notes to stderr, each group's header once; then
 /// the verdict `refusal` reaches — `Err` when there is an error, so `?` refuses the
 /// compile.
+///
+/// A silenced finding is left out here and nowhere else: it is still in the list this
+/// was given, still in `--format json` and still in what MCP returns. What it leaves
+/// behind is the summary line — how many were silenced, and by which tier — so a
+/// silence is visible on every run even when its finding is not.
 pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
     let mut seen: Vec<&str> = Vec::new();
-    for f in findings.iter().filter(|f| f.severity != Severity::Error) {
+    for f in findings.iter().filter(|f| f.severity != Severity::Error && f.silenced.is_none()) {
         let tag = if f.severity == Severity::Warning { "warning" } else { "note" };
         match f.group.as_deref() {
             Some(g) if !seen.contains(&g) => {
@@ -166,7 +239,26 @@ pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
             None => say(format!("{}: {}", tag, f.message)),
         }
     }
+    if let Some(line) = silenced_summary(findings) {
+        say(line);
+    }
     refusal(findings)
+}
+
+/// `3 finding(s) silenced (2 estate, 1 run)` — nothing when none was.
+pub(crate) fn silenced_summary(findings: &[Finding]) -> Option<String> {
+    let silenced: Vec<&Finding> = findings.iter().filter(|f| f.silenced.is_some()).collect();
+    if silenced.is_empty() {
+        return None;
+    }
+    let by_tier: Vec<String> = crate::silence::Tier::ALL
+        .iter()
+        .filter_map(|t| {
+            let n = silenced.iter().filter(|f| f.silenced.as_ref().is_some_and(|s| s.tier == *t)).count();
+            (n > 0).then(|| format!("{} {}", n, t))
+        })
+        .collect();
+    Some(format!("{} finding(s) silenced ({}) — `satz silence list` says by what", silenced.len(), by_tier.join(", ")))
 }
 
 /// One entry of the CLI's rendering, to stderr. A test reads back what its own thread
@@ -193,6 +285,9 @@ pub(crate) fn take_said() -> Vec<String> {
 /// message under their headers, `Err` when there is any. A command that reports the
 /// findings in its own output compiles with this, so an internal compile does not
 /// speak over it.
+///
+/// It never reads `silenced`, and it never has to: `Silences::apply` skips an `Error`,
+/// so no tier can reach the verdict.
 pub(crate) fn refusal(findings: &[Finding]) -> Result<(), String> {
     let errors: Vec<&Finding> = findings.iter().filter(|f| f.severity == Severity::Error).collect();
     if errors.is_empty() {
@@ -227,6 +322,41 @@ pub(crate) fn refusal(findings: &[Finding]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a `[[silence]]` row writes is what `--format json` prints: one spelling, so
+    /// an operator reads a kind out of a report and pastes it into a rule.
+    #[test]
+    fn every_kind_is_named_the_same_way_in_the_json_and_in_a_silence() {
+        for k in Kind::ALL {
+            assert_eq!(serde_json::to_string(k).unwrap(), format!("\"{}\"", k.as_str()));
+            assert_eq!(Kind::parse(k.as_str()), Some(*k));
+        }
+        assert_eq!(Kind::parse("no-such-kind"), None);
+        assert!(Kind::names().contains("hcl-passthrough"));
+    }
+
+    /// A silence hides, it never drops: the finding is still in the list the caller
+    /// holds — and so in `--format json` and in what MCP returns — while the printing
+    /// leaves it out and says how many it left out, and by which tier.
+    #[test]
+    fn a_silenced_finding_is_not_printed_but_is_still_there_and_counted() {
+        use crate::silence::{Silenced, Tier};
+        let mut f = vec![
+            Finding::new(Severity::Warning, Kind::Notice, "notice one").in_group("2 notice(s) open:").about("a"),
+            Finding::new(Severity::Warning, Kind::Notice, "notice two").in_group("2 notice(s) open:").about("b"),
+            Finding::new(Severity::Warning, Kind::Action, "an action").about("x"),
+        ];
+        f[0].silenced = Some(Silenced { tier: Tier::Estate, reason: "adopted".into() });
+        f[1].silenced = Some(Silenced { tier: Tier::Run, reason: "--silence on the command line".into() });
+        take_said();
+        render(&f).expect("warnings do not refuse");
+        let said = take_said();
+        assert_eq!(said.len(), 2, "the group printed nothing and the action printed once: {:?}", said);
+        assert_eq!(said[0], "warning: an action");
+        assert_eq!(said[1], "2 finding(s) silenced (1 estate, 1 run) — `satz silence list` says by what");
+        assert_eq!(f.len(), 3, "nothing was dropped");
+        assert!(silenced_summary(&f[2..]).is_none(), "nothing silenced, nothing said");
+    }
 
     #[test]
     fn a_level_governs_severity() {

@@ -40,6 +40,9 @@ clap = { version = "4.6", features = ["derive", "wrap_help"] }
 terminal_size = "0.4"
 clap_complete = "4.6"
 toml = "1.1"
+# `satz silence add|remove` edits the estate's own config.toml: a format-preserving
+# document, so the operator's comments and layout survive satz adding one table.
+toml_edit = "0.22"
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "io-std", "io-util"] }
 # The MCP surface (`satz mcp`). The official SDK rather than a hand-rolled
 # JSON-RPC shim: the spec negotiates per request via `_meta`, adds a mandatory

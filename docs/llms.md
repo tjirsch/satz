@@ -375,6 +375,7 @@ recoverable: say what you would need and why, rather than retrying the same call
 | `N notice(s) open` | a pack asks for a command to be run now; run it, then bind its param `true` |
 | the IaC service account … lacks roles | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run `satz update-prerequisites <estate>` |
 | … API(s) this estate's resources need are not enabled on … | a resource type the estate emits is served by an API no `project_service` entry of the infrastructure project enables; add it to that list, or run `satz update-prerequisites <estate>` |
+| `N finding(s) silenced (…)` | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules
 
