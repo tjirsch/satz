@@ -168,19 +168,10 @@ fn walk_preset_sources(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> Resul
 /// conditionally-disabled pack as included — deliberately the safe direction, since
 /// over-reporting drift is recoverable and under-reporting it is exactly the bug
 /// this function exists to fix.
-///
-/// `unparsable` is `get-presets --force` alone. There a pristine-named pack copy that
-/// does not parse is recorded — it is in use, and it is what `--force` is there to
-/// replace — instead of stopping the walk. Its own `use` lines stay unread, so a pack
-/// reachable only through it is missing from the set; under `--force` that costs the
-/// word IN-USE in the listing and nothing else, since `--force` overwrites used and
-/// unused alike. Every other caller passes `None` and keeps the hard error, because
-/// there the set decides what may be overwritten.
 fn used_preset_files(
     input: &Path,
     presets_dir: &str,
     include_dirs: &[String],
-    mut unparsable: Option<&mut Vec<(PathBuf, String)>>,
 ) -> Result<BTreeSet<PathBuf>, BoxErr> {
     let canon_presets = crate::fsx::canonicalize(presets_dir)
         .unwrap_or_else(|_| PathBuf::from(presets_dir));
@@ -206,21 +197,7 @@ fn used_preset_files(
         // "used" set incomplete — and an incomplete set disarms the guard
         // (drift would read [unused], merge would overwrite a used pack)
         let src = crate::fsx::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
-        let file = match satz_core::satz::parse(&src) {
-            Ok(f) => f,
-            Err(e) => {
-                // only a copy `get-presets` can replace: a pristine name under presets_dir
-                let name = canon.to_string_lossy();
-                let pristine_named = !name.ends_with(".local.satz") && !name.ends_with(".diff.satz");
-                match (unparsable.as_deref_mut(), canon.strip_prefix(&canon_presets)) {
-                    (Some(found), Ok(rel)) if pristine_named => {
-                        found.push((rel.to_path_buf(), format!("line {}: {}", e.line, e.msg)));
-                        continue;
-                    }
-                    _ => return Err(format!("{}:{}: {}", path.display(), e.line, e.msg).into()),
-                }
-            }
-        };
+        let file = satz_core::satz::parse(&src).map_err(|e| format!("{}:{}: {}", path.display(), e.line, e.msg))?;
         let parent = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         for dep in satz_core::satz::use_paths(&file) {
             let mut candidates = vec![parent.join(&dep)];
@@ -551,7 +528,7 @@ pub(crate) async fn check_presets_report(
     let pristine_base = pristine_source(pristine_dir).await?;
 
     // Which packs does the estate actually use? Its `use` graph.
-    let included = used_preset_files(input, presets_dir, include_dirs, None)?;
+    let included = used_preset_files(input, presets_dir, include_dirs)?;
 
     // The params the estate itself declares — an edited pack default that the
     // estate already overrides is redundant, not a remedy to print.
@@ -742,35 +719,15 @@ pub(crate) async fn get_presets(
     // nothing to protect, which is exactly the bootstrap case.
     let estate = find_estate(&runtime_config.yaml_dir);
     let mut used_stems: BTreeSet<PathBuf> = BTreeSet::new();
-    // `--force` overwrites the packs the estate uses, so it is not stopped by one of
-    // them failing to parse. Without it the walk refuses as everywhere else.
-    let mut unparsable: Vec<(PathBuf, String)> = Vec::new();
     match &estate {
         Some(est) => {
-            for rel in used_preset_files(est, presets_dir, &runtime_config.include_dirs, force.then_some(&mut unparsable))? {
+            for rel in used_preset_files(est, presets_dir, &runtime_config.include_dirs)? {
                 if let Some(stem) = pack_stem(&rel) {
                     used_stems.insert(stem);
                 }
             }
         }
         None => report.no_estate = true,
-    }
-    // Before anything is written: a copy that does not parse and that `--force` has
-    // nothing to replace with would be left as it is, in silence.
-    for (rel, why) in &unparsable {
-        let (lo_path, up_path) = (local_base.join(rel), tmp.join(rel));
-        if !up_path.exists() {
-            return Err(format!(
-                "{}: {} — the estate uses it and the library has no {}, so --force has nothing to replace it with: edit it by hand",
-                lo_path.display(), why, rel.display()
-            ).into());
-        }
-        if crate::fsx::read_to_string(&up_path)? == crate::fsx::read_to_string(&lo_path)? {
-            return Err(format!(
-                "{}: {} — and the library's copy is the same text, so this satz (v{}) cannot read the library it was given: upgrade satz, or pass the library that belongs to it as --pristine-dir",
-                lo_path.display(), why, env!("CARGO_PKG_VERSION")
-            ).into());
-        }
     }
 
     let mut files = Vec::new();
@@ -814,7 +771,6 @@ pub(crate) async fn get_presets(
             stem: stem.file_name().unwrap_or_default().to_string_lossy().to_string(),
             local_version: pack_version(&lo),
             upstream_version: pack_version(&up),
-            parse_error: unparsable.iter().find(|(r, _)| r == rel).map(|(_, why)| why.clone()),
         };
         let in_use = used_stems.contains(&stem);
         if in_use && !force {
@@ -866,9 +822,6 @@ pub(crate) struct InUsePreset {
     pub stem: String,
     pub local_version: Option<String>,
     pub upstream_version: Option<String>,
-    /// `--force` only: the copy that was overwritten did not parse, and this is where
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub parse_error: Option<String>,
 }
 
 /// `get-presets`: fetch the upstream library and say what changed.
@@ -888,8 +841,7 @@ pub(crate) async fn run_get_presets(
         println!("    `merge-presets --adopt {}` (upgrades it in place), or --force to overwrite anyway.", p.stem);
     }
     for p in &r.forced {
-        let unparsed = p.parse_error.as_ref().map(|why| format!(", which did not parse ({})", why)).unwrap_or_default();
-        println!("  --force overwrote IN-USE {} ({}){} — re-transpile and read the plan", p.file, version_arrow(&p.local_version, &p.upstream_version), unparsed);
+        println!("  --force overwrote IN-USE {} ({}) — re-transpile and read the plan", p.file, version_arrow(&p.local_version, &p.upstream_version));
     }
     if !r.migrated.is_empty() {
         println!("\npacks the library moved, carried over here:");
@@ -1240,7 +1192,7 @@ pub(crate) async fn run_merge_presets(
     if let Some(est) = &estate {
         // The same `use`-graph walk `check-presets` makes — no include manifest,
         // so a satz estate is read as satz rather than through a generated twin.
-        for rel in used_preset_files(est, presets_dir, &runtime_config.include_dirs, None)? {
+        for rel in used_preset_files(est, presets_dir, &runtime_config.include_dirs)? {
             if let Some(stem) = pack_stem(&rel) {
                 used_stems.insert(stem);
             }
@@ -2722,87 +2674,6 @@ params {
         assert_eq!(classify_source(&commented, PACK), Drift::Clean);
     }
 
-}
-
-#[cfg(test)]
-mod force_and_a_copy_that_does_not_parse {
-    //! `get-presets --force` is there to replace the packs the estate uses, so it is not
-    //! stopped by one of them failing to parse. Without `--force` the walk still is: there
-    //! the used set decides what may be overwritten, and it would be incomplete.
-    use super::*;
-
-    const OLD: &str = "pack outer version \"1.3\" content\n\nuse \"presets/inner.satz\"\n";
-    const NEW: &str = "pack outer version \"1.4\"\n\nuse \"presets/inner.satz\"\n";
-    const INNER: &str = "pack inner version \"1.0\"\n";
-
-    fn put(dir: &Path, name: &str, text: &str) {
-        std::fs::create_dir_all(dir).unwrap();
-        crate::fsx::write_verbatim(dir.join(name), text.as_bytes()).unwrap();
-    }
-
-    /// An estate using `outer.satz`, whose copy says `content`; upstream ships 1.4.
-    fn staged(tag: &str) -> (PathBuf, crate::ToolConfig) {
-        let root = std::env::temp_dir().join(format!("satz-force-{}-{}", tag, std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        put(&root.join("presets"), "outer.satz", OLD);
-        put(&root.join("presets"), "inner.satz", INNER);
-        put(&root.join("upstream"), "outer.satz", NEW);
-        put(&root.join("upstream"), "inner.satz", INNER);
-        put(&root.join("yaml"), "estate.satz", "estate t\n\nuse \"presets/outer.satz\"\n");
-        let mut cfg: crate::ToolConfig = toml::from_str("").unwrap();
-        cfg.yaml_dir = root.join("yaml").to_string_lossy().to_string();
-        cfg.presets_dir = root.join("presets").to_string_lossy().to_string();
-        cfg.include_dirs = vec![root.to_string_lossy().to_string()];
-        (root, cfg)
-    }
-
-    #[tokio::test]
-    async fn without_force_the_copy_still_stops_the_command_and_nothing_is_written() {
-        let (root, cfg) = staged("refuses");
-        let err = get_presets(&cfg.presets_dir, &cfg, false, Some(root.join("upstream"))).await.unwrap_err().to_string();
-        assert!(err.contains("outer.satz:1:") && err.contains("`content` is not a header word"), "{}", err);
-        assert_eq!(std::fs::read_to_string(root.join("presets/outer.satz")).unwrap(), OLD);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[tokio::test]
-    async fn force_overwrites_it_and_lists_it_as_a_copy_that_did_not_parse() {
-        let (root, cfg) = staged("forces");
-        let r = get_presets(&cfg.presets_dir, &cfg, true, Some(root.join("upstream"))).await.unwrap();
-        assert_eq!(std::fs::read_to_string(root.join("presets/outer.satz")).unwrap(), NEW);
-        assert_eq!(r.forced.len(), 1, "{:?}", r.forced);
-        let f = &r.forced[0];
-        assert_eq!((f.file.as_str(), f.local_version.as_deref(), f.upstream_version.as_deref()), ("outer.satz", Some("1.3"), Some("1.4")));
-        let why = f.parse_error.as_deref().expect("the listing says the copy did not parse");
-        assert!(why.starts_with("line 1: ") && why.contains("`content`"), "{}", why);
-        assert!(r.refused.is_empty());
-
-        // a fork is the estate's own file: --force does not replace it, so it still stops there
-        put(&root.join("presets"), "outer.local.satz", OLD);
-        put(&root.join("yaml"), "estate.satz", "estate t\n\nuse \"presets/outer.local.satz\"\n");
-        let err = get_presets(&cfg.presets_dir, &cfg, true, Some(root.join("upstream"))).await.unwrap_err().to_string();
-        assert!(err.contains("outer.local.satz:1:"), "{}", err);
-        assert_eq!(std::fs::read_to_string(root.join("presets/outer.local.satz")).unwrap(), OLD);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[tokio::test]
-    async fn force_with_nothing_to_replace_the_copy_with_is_an_error_before_anything_is_written() {
-        // the library's copy is the same text: this binary cannot read its own library
-        let (root, cfg) = staged("same");
-        put(&root.join("upstream"), "outer.satz", OLD);
-        put(&root.join("upstream"), "inner.satz", "pack inner version \"1.1\"\n");
-        let err = get_presets(&cfg.presets_dir, &cfg, true, Some(root.join("upstream"))).await.unwrap_err().to_string();
-        assert!(err.contains("the library's copy is the same text"), "{}", err);
-        assert_eq!(std::fs::read_to_string(root.join("presets/inner.satz")).unwrap(), INNER, "nothing was written");
-
-        // the library does not ship it at all
-        std::fs::remove_file(root.join("upstream/outer.satz")).unwrap();
-        let err = get_presets(&cfg.presets_dir, &cfg, true, Some(root.join("upstream"))).await.unwrap_err().to_string();
-        assert!(err.contains("the library has no outer.satz") && err.contains("edit it by hand"), "{}", err);
-        assert_eq!(std::fs::read_to_string(root.join("presets/inner.satz")).unwrap(), INNER, "nothing was written");
-        let _ = std::fs::remove_dir_all(&root);
-    }
 }
 
 #[cfg(test)]

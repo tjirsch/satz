@@ -108,12 +108,8 @@ block parser would otherwise read `content params { … }` as a block and lose t
   refuses, and `## Breaking changes` in `presets/README.md` says what to edit. That
   section is the one place in the docs that speaks of what satz used to do.
 - No pack is reshaped or moved. The contacts pack loses one word and gains a version.
-  An estate holding the old copy does not compile, and `merge-presets` — which compiles
-  the estate before it changes anything — stops with it. No mechanism is built around
-  that: the remedy is `satz get-presets --force`, which overwrites the pristine copies
-  of the packs the estate uses, changes to them included, and says so. `--force` reads
-  the `use` graph without stopping at a pristine copy that does not parse; every other
-  walk still stops there, because there the used set decides what may be overwritten.
+  An estate holding the old copy deletes that word before `merge-presets` can upgrade
+  it, because `merge-presets` parses the estate's copy before it replaces it.
 - A file of labelled bodies whose labels are all commented out is refused inside a
   resource type map, since it holds no entry. The `use` line is what to comment out.
 - A used file is judged before it is walked, so the refusal is located at the `use` —

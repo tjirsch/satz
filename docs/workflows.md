@@ -718,8 +718,7 @@ Two more facts:
 what the estate does **not** use. A pristine pack the estate **does** use is
 **refused**, naming the two commands that fit instead, because changing it changes
 what the organisation enforces.
-`--force` overrides, listing each in-use pack as it overwrites it — a copy that does
-not parse included, which without `--force` stops the command at its line.
+`--force` overrides, listing each in-use pack as it overwrites it.
 
 **`check-presets <estate>`** is the read-only report. It walks the estate's `use`
 graph, so packs the estate actually includes are tagged `[included]`, and drift in
