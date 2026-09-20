@@ -2030,7 +2030,7 @@ The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that 
 and `use`s into per-file fragments, `algebra.rs` folds them by Terraform address (⊕), and
 the emitter renders the folded IR as `main.tf`, `providers.tf`, `variables.tf`,
 `terraform.tfvars` and `imports.tf`.
-- **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block.
+- **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block. A project that writes one says its own parent — a reference to a folder the estate declares, or an id — and an empty value says nothing, so the enclosing block decides.
 - **Intrinsic scopes**: groups, org grants and billing grants hoist to their real scope wherever they are written.
 
 #### 2. Schema Registry (`src/schema.rs`)

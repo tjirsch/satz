@@ -22,6 +22,8 @@ params {
   group_model_flat         = true           # exactly one of these two — see `question oneof` below
   group_model_split        = false
   pack_bucket_adopted      = true           # acknowledges showcase-pack's `notice` — the command has run
+  // A project's parent, said rather than nested — see the `google_project` below.
+  archive_project_folder   = "google_folder.infra.name"
 }
 // ---------------------------------------------------------------------------
 // QUESTIONS — what to ask a customer so a param can be filled, and what getting
@@ -185,6 +187,20 @@ google_folder {
         }
       }
     }
+  }
+}
+
+// --- A project whose parent is SAID, not nested. `folder_id` takes a reference
+//     to a folder the estate declares, or the id of one that already exists; an
+//     empty value says nothing and the node the block stands in decides. A pack
+//     carries its own parent this way, so it emits the same project wherever its
+//     `use` line stands.
+google_project {
+  archive {
+    name            = "corp-archive"
+    project_id      = "{customer_shortname}-archive-001"
+    folder_id       = archive_project_folder
+    billing_account = billing_account_infra
   }
 }
 

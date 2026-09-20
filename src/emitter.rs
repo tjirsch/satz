@@ -958,12 +958,22 @@ fn emit_project(
             b = b.add_attribute(hcl::Attribute::new("billing_account", val));
         }
     }
-    let has_org = get("org_id").is_some() || get("org").is_some() || get("folder_id").is_some();
-    // An explicit parent on the project is written as declared — it used to
-    // be dropped silently (skipped below), leaving the project without one.
+    // The project's parent, stated or inherited. A `folder_id`, `org_id` or `org`
+    // whose value is EMPTY is not stated: the enclosing node decides, exactly as
+    // if the key were absent. That is what lets a pack carry its own parent in a
+    // param — the default says nothing, and a value names the folder, so the pack
+    // emits the same project wherever its `use` stands.
+    let stated = |k: &str| get(k).filter(|v| v.as_str() != Some(""));
+    let has_org = stated("org_id").is_some() || stated("org").is_some() || stated("folder_id").is_some();
+    // A parent stated by hand is written as declared, and it is written the way an
+    // inherited one is: a dotted path is a reference to a node the estate declares
+    // (`google_folder.shared.name`), anything else a literal id.
     for k in ["org_id", "folder_id"] {
-        if let Some(v) = get(k).and_then(|v| crate::emit_shared::render_value(v, &|_| None)) {
-            b = b.add_attribute(hcl::Attribute::new(k, v));
+        let Some(v) = stated(k) else { continue };
+        if let Some(s) = v.as_str() {
+            b = b.add_attribute(hcl::Attribute::new(k, crate::emit_shared::parse_expr(s)));
+        } else if let Some(val) = crate::emit_shared::render_value(v, &|_| None) {
+            b = b.add_attribute(hcl::Attribute::new(k, val));
         }
     }
     if !has_org {

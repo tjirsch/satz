@@ -21,6 +21,7 @@ params {
   first_admin                         = "admin@example.com"
   billing_account_infra               = "012345-6789AB-CDEF01"
   logsink_project_id                  = "acme-log-001"
+  logsink_project_folder              = "google_folder.shared.name"
   deployment_engine                   = "tofu"
   deployment_mode                     = "local"
   default_region                      = "europe-west3"
@@ -90,9 +91,11 @@ google_folder {
 google_folder {
   shared {
     display_name = "Shared"
-    use "presets/monitoring/organization-audit-logsink.satz"
   }
 }
+// The archive project goes in the Shared folder, named by the param rather than by
+// where this line stands.
+use "presets/monitoring/organization-audit-logsink.satz"
 use "presets/monitoring/organization-cis-log-alerts-central.satz"
 use "presets/monitoring/project-cis-log-alerts.satz"
 use "presets/scc/scc-notifications.satz"

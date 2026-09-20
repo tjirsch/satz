@@ -6867,8 +6867,9 @@ mod placement_gate {
     const PACK: &str = r#"pack hosting version "1.0"
 
 params {
-  host_project_id = "acme-host-001"
-  host_is_wanted  = true
+  host_project_id     = "acme-host-001"
+  host_project_folder = ""
+  host_is_wanted      = true
 }
 
 question host_is_wanted {
@@ -6885,6 +6886,7 @@ google_project {
   host {
     name            = host_project_id
     project_id      = host_project_id
+    folder_id       = host_project_folder
     billing_account = "012345-6789AB-CDEF01"
   }
 }
@@ -6983,6 +6985,43 @@ google_organization_iam_member {
                 assert!(!main_tf.contains(word), "{}: `{}` of the used pack reached main.tf:\n{}", form, word, main_tf);
             }
         }
+    }
+
+    /// A pack's project names the folder it is created in, so the pack emits the same
+    /// HCL wherever its `use` line stands — byte for byte, which is what lets an estate
+    /// move that line and read an empty diff. The param's default is empty, which says
+    /// nothing: the node the `use` stands in decides, and at the top level that is the
+    /// organisation.
+    #[test]
+    fn a_project_that_names_its_folder_emits_the_same_hcl_wherever_its_pack_is_used() {
+        let nested = format!(
+            "{}{}",
+            HEAD,
+            "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"hosting.satz\"\n  }\n}\n"
+        );
+        let bare = concat!(
+            "estate t\n\nparams {\n",
+            "  customer_organization_id = \"123456789012\"\n",
+            "  host_project_folder      = \"google_folder.shared.name\"\n",
+            "}\n\n",
+            "google_folder {\n  shared {\n    display_name = \"Shared\"\n  }\n}\n\n",
+            "use \"hosting.satz\"\n"
+        );
+        let (nested_tf, _, _) = emit(&nested);
+        let (bare_tf, _, _) = emit(bare);
+        assert_eq!(nested_tf, bare_tf, "the pack nested in a folder and used bare with that folder named emit different HCL");
+        assert!(
+            block(&bare_tf, "google_project", "host").contains("folder_id = google_folder.shared.name"),
+            "a folder named as a dotted path is a reference, not a quoted string:\n{}",
+            bare_tf
+        );
+
+        // The default says nothing, so a bare `use` still creates the project at the
+        // organisation — which is what every estate that names no folder gets.
+        let (top_tf, _, _) = emit(&format!("{}{}", HEAD, "use \"hosting.satz\"\n"));
+        let host = block(&top_tf, "google_project", "host");
+        assert!(host.contains("org_id = \"123456789012\""), "{}", host);
+        assert!(!host.contains("folder_id"), "an empty folder_id is not emitted:\n{}", host);
     }
 
     /// Per SCOPE, where a used file's resources land. A project body places what it

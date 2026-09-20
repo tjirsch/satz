@@ -797,7 +797,8 @@ Memberships stay **out of packs**: packs define groups, humans grant membership.
 
 ### 6.6 Folders and hierarchy
 
-Nesting **is** the parent reference — `parent` and `folder_id` are never written:
+Nesting **is** the parent reference — `parent` and `folder_id` follow from the
+block a resource stands in:
 
 ```
 google_folder {
@@ -847,6 +848,41 @@ Read the two `{ }` bodies inside `alpha_prod` against each other:
 `google_folder { … }` is a schema type, so it emits a resource;
 `labels { … }` is an attribute, so it emits `labels = { … }`. Same syntax; the
 schema decides.
+
+A project may **say** its parent instead of standing in it
+(`tests/smoke/yaml/showcase.satz`, "a project whose parent is SAID"):
+
+```
+params {
+  archive_project_folder = "google_folder.infra.name"
+}
+
+google_project {
+  archive {
+    name       = "corp-archive"
+    project_id = "{customer_shortname}-archive-001"
+    folder_id  = archive_project_folder
+  }
+}
+```
+
+```hcl
+resource "google_project" "archive" {
+  project_id = "corp-archive-001"
+  name = "corp-archive"
+  provider = google.google
+  billing_account = "012345-6789AB-CDEF01"
+  folder_id = google_folder.infra.name
+}
+```
+
+`folder_id` takes a reference to a folder the estate declares
+(`google_folder.<label>.name`) or the id of one that already exists
+(`"123456789012"`), and `org_id` takes the organisation's id. A value that is
+empty says nothing: the node the block stands in decides, which at the top level
+is the organisation. That is how a pack carries its own parent in a param — the
+default says nothing, and an estate that names a folder gets the same project
+wherever the pack's `use` line stands.
 
 ### 6.7 Adoption of existing resources
 

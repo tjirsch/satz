@@ -466,6 +466,7 @@ logsink-bucket-name = "corp-organization-audit-logs"
 logsink-filter = "log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")"
 logsink-name = "corp-organization-audit-gcs"
 logsink-project-display-name = "corp-log-infra-001"
+logsink-project-folder = "google_folder.logging.name"
 logsink-project-id = "corp-log-infra-001"
 logsink-retention-days = 400
 ---imports---
