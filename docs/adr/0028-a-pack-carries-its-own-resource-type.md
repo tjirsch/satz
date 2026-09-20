@@ -1,6 +1,10 @@
 # 0028 — a pack carries its own resource type, and a moved pack repoints an estate's lines
 
-- **Status:** accepted; supersedes ADR 0007's "the CIS baseline is not a choice"
+- **Status:** accepted; supersedes ADR 0007's "the CIS baseline is not a choice". Its
+  "the move is migrated by satz, not by hand" is superseded by
+  [ADR 0041](0041-satz-carries-no-code-that-rewrites-an-estate-for-a-breaking-change.md):
+  the refusal against `MOVED_PACKS` stays, `merge-presets` repoints nothing for a move, and
+  the hand edit is in `presets/README.md` under `## Breaking changes`
 - **Date:** 2026-09-17
 - **Shipped in:** the release that follows
 

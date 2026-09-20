@@ -1630,9 +1630,9 @@ places it in) — whether the pack deploys, what it requires and what requires i
 the graph does not know is `unmanaged`. `satz add-pack` and `satz remove-pack` switch a
 pack on or off by its gate or its path. A yes in the interview switches a line on as
 `add-pack` does, and `merge-presets` writes the lines the estate lacks from the graph of
-its pristine source. `merge-presets` also gates every active line of a gated pack that has
-no `when`, and binds that gate `true` because the line deployed — the emission stays what
-it was ([workflows](workflows.md#when-a-pack-line-has-no-gate)). Every line satz writes goes where the graph's order puts it: after
+its pristine source. An active line of a gated pack that has no `when` is a compile
+finding naming the line to write ([workflows](workflows.md#when-a-pack-line-has-no-gate)).
+Every line satz writes goes where the graph's order puts it: after
 the line of the pack before it in the same place, inside the block the graph names, after
 the estate-core line — or, in an estate without one, after its top-level `params` — and at
 the end for a pack placed after the scaffold.

@@ -774,7 +774,7 @@ assert {p["status"] for p in d["packs"]} <= {"clean","stale","edited","fork","lo
 PYEOF
 grep -q 'satz v' tmp/presets.json && fail "the version banner reached the report file"
 
-step "get-presets installs the library; merge-presets writes the prerequisites an estate lacks and adopts a pack"
+step "get-presets installs the library; merge-presets writes the prerequisites an estate lacks, adopts a pack, and forks one with the emission proven"
 rm -rf tmp/prq && mkdir -p tmp/prq/yaml tmp/prq/presets tmp/prq/pristine
 cp -R "$root/tests/schemas" tmp/prq/schemas
 cat > tmp/prq/config.toml <<'CFGEOF'
@@ -812,6 +812,21 @@ grep -q 'prerequisite written: pubsub.googleapis.com' tmp/prq-adopt.txt \
   || fail "merge-presets did not write the API the adopted pack needs:\n$(cat tmp/prq-adopt.txt)"
 "$satz" --config tmp/prq/config.toml --validation error transpile prq.satz --check > tmp/prq-adopted.txt 2>&1 \
   || fail "the estate lacks a prerequisite after the adoption:\n$(cat tmp/prq-adopted.txt)"
+# Without --adopt a used pack whose upstream changed what it emits is forked, the estate is
+# repointed at the fork, and the run proves the emission did not move.
+(cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm adopted)
+prq_pack 1.2 '\ngoogle_pubsub_topic {\n  logs {\n    name    = "acme-logs-eu"\n    project = "acme-infra-001"\n  }\n}\n' > tmp/prq/pristine/logs.satz
+# a fork asks for a look, so the run exits 1; the report is the check
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-fork.txt 2>&1 || true
+grep -q 'forked logs.satz -> logs.local.satz' tmp/prq-fork.txt || fail "the used pack was not forked:\n$(cat tmp/prq-fork.txt)"
+grep -q 'estate edit verified: transpiled output identical' tmp/prq-fork.txt || fail "the repoint was not proven:\n$(cat tmp/prq-fork.txt)"
+grep -q '^use "presets/logs.local.satz"$' tmp/prq/yaml/prq.satz || fail "the estate was not repointed:\n$(grep -n '^use' tmp/prq/yaml/prq.satz)"
+grep -q 'acme-logs-eu' tmp/prq/presets/logs.local.satz && fail "the fork carries upstream's change instead of what the estate deployed"
+[ -f tmp/prq/presets/logs.diff.satz ] || fail "the adoption delta was not written"
+(cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm forked)
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-again.txt 2>&1 \
+  || fail "a second merge-presets needs attention:\n$(cat tmp/prq-again.txt)"
+grep -q 'forked logs\|estate edit' tmp/prq-again.txt && fail "a second merge-presets edited the estate again:\n$(cat tmp/prq-again.txt)"
 
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
@@ -1715,24 +1730,6 @@ if "$satz" --silence action mcp --root . > tmp/sil/srv.txt 2>&1; then
   fail "satz mcp accepted --silence"
 fi
 grep -q 'one run' tmp/sil/srv.txt || fail "the refusal must say why:\n$(cat tmp/sil/srv.txt)"
-
-step "merge-presets gates a pack line written without its gate, binds what deployed, and proves the emission"
-# The same estate with the logsink adopted the old way: a plain line, the answer no.
-rm -rf tmp/gm && mkdir -p tmp/gm/yaml && cp -R "$root/tests/schemas" tmp/gm/schemas
-printf 'yaml_dir = "yaml"\nhcl_dir = "hcl"\ninclude_dirs = [".", "yaml"]\nschema_dir = "schemas"\npresets_dir = "presets"\ntf_tool = "tofu"\ngoogle_providers = ["google", "google-beta"]\nprovider_version = "7.14.1"\n' > tmp/gm/config.toml
-sed -e 's/^\(    use "presets\/monitoring\/organization-audit-logsink.satz"\) when use_audit_logsink/\1/' \
-    -e 's/^\(  use_audit_logsink *= \)true/\1false/' tmp/pk/e.satz > tmp/gm/yaml/e.satz
-grep -qE '^    use "presets/monitoring/organization-audit-logsink.satz"$' tmp/gm/yaml/e.satz || fail "the fixture has no ungated logsink line"
-"$satz" --config tmp/gm get-presets --pristine-dir "$root/presets" > tmp/gm/get.txt 2>&1 || fail "get-presets failed:\n$(cat tmp/gm/get.txt)"
-(cd tmp/gm && git init -q && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm estate)
-# an overwritten answer needs a human, so the run exits 1; the report is the check
-"$satz" --config tmp/gm merge-presets --pristine-dir "$root/presets" > tmp/gm/merge.txt 2>&1 || true
-grep -q 'ANSWER CHANGED — bound use_audit_logsink = true (was false)' tmp/gm/merge.txt || fail "the flip was not reported:\n$(cat tmp/gm/merge.txt)"
-grep -q 'estate edit verified' tmp/gm/merge.txt || fail "the gating was not proven:\n$(cat tmp/gm/merge.txt)"
-grep -qE '^    use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink$' tmp/gm/yaml/e.satz \
-  || fail "the logsink line was not gated:\n$(grep -n logsink tmp/gm/yaml/e.satz)"
-"$satz" --config tmp/gm merge-presets --pristine-dir "$root/presets" > tmp/gm/again.txt 2>&1 || fail "a second merge-presets needs attention:\n$(cat tmp/gm/again.txt)"
-grep -q 'gated line\|bound use_' tmp/gm/again.txt && fail "a second merge-presets gated again:\n$(cat tmp/gm/again.txt)"
 
 step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"
 {
