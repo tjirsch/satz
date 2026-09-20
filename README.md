@@ -69,6 +69,7 @@ These options can be placed anywhere in the command (e.g., before or after subco
 - `--no-pack-actions`: consider only the estate's own actions; ignore any a `use`d pack declares.
 - `--no-action-warnings`: silence the warning every declared action raises on a compile.
 - `--no-impersonate`: run as the Application Default Credentials themselves, without becoming the estate's IaC service account — for a check that must answer as the human.
+- `--no-api-preflight`: `plan` and `apply` start the tool without asking Service Usage which of the APIs the estate declares are off, and enable none — for a run that must reach the tool without satz calling Google.
 
 ### User settings (~/.config/satz/satz.toml)
 
@@ -409,6 +410,20 @@ a resource before its API is on. A service is never ordered behind a service, an
 edge is added into a service block's own dependencies, so the project a service is
 declared on and the folder above it never wait for it.
 
+**Declaring an API does not switch it on.** `tofu apply` refreshes every resource in
+state before it creates anything, and that refresh is billed to the infrastructure
+project too, so an API the estate declares and the project has off stops the run before
+the `google_project_service` that would enable it is created. `satz plan` and `satz
+apply` enable what is off first — see [The API preflight](docs/workflows.md#the-api-preflight).
+`update-prerequisites` writes the declaration and enables nothing; it prints the line
+that does, for an apply run with `tofu` directly:
+
+```
+gcloud services enable monitoring.googleapis.com --project corp-infra-001
+```
+
+The same line is `enable_missing_apis` in `--format json`.
+
 **The write** adds each missing role to the account's existing grant list — the list
 whose key names the account once `{param}`s are interpolated — or appends a new block
 when the estate has none. It writes the fewest roles: a need only one role meets takes
@@ -459,7 +474,7 @@ satz transpile <INPUT> [options]
 - `--scan`: after transpiling, run Checkov (terraform framework) over `hcl_dir` — `checkov` on PATH, else `uvx checkov` — and print every failed check under the resource it hit, with the Satz file and line that declared it (from the emission manifest) and Checkov's guideline link. Failed checks exit 1, so it gates like a test. `satz scan [<estate>]` does the same without transpiling first.
 - `--plan` / `--apply`: after transpiling, run `<tf_tool> plan` / `apply` in `hcl_dir` — one command from estate to plan. The dir is initialised first when it has no `.terraform`. The same as `satz transpile … && satz plan`; `satz plan`, `satz apply` and `satz hcl-init` remain for running the tool on its own (extra arguments pass through).
 
-Above each org policy the estate declares `reset = true`, `main.tf` carries two comment lines: the API refuses to switch a policy with rules to reset in place (`Cannot set PolicyRules if reset is true`), and an apply that does not run through satz needs `tofu apply -replace=<address>` while the state holds that policy with rules. `satz plan` and `satz apply` add that `-replace` themselves. See [Transpile, plan, apply](docs/workflows.md#transpile-plan-apply).
+Above each org policy the estate declares `reset = true`, `main.tf` carries two comment lines: the API refuses to switch a policy with rules to reset in place (`Cannot set PolicyRules if reset is true`), and an apply that does not run through satz needs `tofu apply -replace=<address>` while the state holds that policy with rules. `satz plan` and `satz apply` add that `-replace` themselves, and enable the APIs the estate declares on the billed project before the tool starts. See [Transpile, plan, apply](docs/workflows.md#transpile-plan-apply) and [The API preflight](docs/workflows.md#the-api-preflight).
 
 **Running from subdirectories:**
 You can run the transpile command from any directory (e.g., from within the `hcl/` folder) by specifying the config path. Both styles are supported:
@@ -1938,7 +1953,9 @@ estate's service account.** Every exception is listed here with its reason.
 | `whoami <estate>` | the estate's service account in cloud mode; the human's ADC in local mode | a different question — who that estate acts as — so a different answer |
 | `map-types` | no credential at all | Discovery documents are public |
 | `mcp` | per tool call, from the estate the call works on — the one it names, else the open one | one server, a fleet: `satz_open` moves to the next estate, and the identity follows it |
-| `plan`, `apply`, `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
+| `plan`, `apply` | the estate's service account, read from the emitted provider block | the [API preflight](docs/workflows.md#the-api-preflight) runs as what `tofu` is about to act as; the tool then resolves its own credential |
+| `transpile --plan` / `--apply` | the same | the flags run `plan`/`apply`, preflight included; a transpile without them calls nothing |
+| `hcl-init` | `tofu`'s own resolution | satz passes it no token; the provider block impersonates |
 
 `--no-impersonate` pins the process to the plain ADC and outranks every estate.
 

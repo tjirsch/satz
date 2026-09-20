@@ -327,6 +327,10 @@ as the plain ADC.
 
 - **No `tofu` tool.** `satz plan` and `satz apply` inherit stdio — apply's approval prompt
   is interactive — and under MCP stdin and stdout are the protocol; a human runs them.
+  Their [API preflight](workflows.md#the-api-preflight) runs with them, so nothing
+  enables an API over this protocol either. What an agent gets is
+  `satz_update_prerequisites`: its `enable_missing_apis` is the `gcloud services enable`
+  line for the APIs the estate is missing.
 - **`satz adopt --execute --import` is not exposed** — the `tofu import`, the state
   moves and activating a managed constraint stay with a human; `satz_adopt` writes the
   ids.

@@ -336,6 +336,54 @@ in one pass; a resource that meets a permission error on the role just granted i
 created by running the apply again once the grant has taken effect, which takes up to a
 few minutes.
 
+### The API preflight
+
+Every provider block carries `user_project_override = true` with `billing_project =
+<infrastructure project>`, so Google bills every call to that project and wants the API
+enabled there. `tofu apply` refreshes every resource in state before it creates
+anything, and an API the estate declares as a `google_project_service` but the project
+has off stops that refresh — before the declaration that would enable it is created.
+
+`satz plan` and `satz apply` enable them first. They read the emitted `providers.tf`
+for the project the default provider bills to and the service account it impersonates,
+read `main.tf` for the services declared on that project, ask Service Usage which are
+off and switch those on, as the estate's IaC service account — the identity the estate
+grants `roles/serviceusage.serviceUsageAdmin`. `satz transpile --plan` and `--apply` do
+the same. Nothing to do reads as one line:
+
+```
+APIs on corp-infra-001: 14 declared, all enabled
+```
+
+and a change names every API:
+
+```
+APIs on corp-infra-001: 14 declared, 2 off — enabling them, because the refresh is billed to this project and runs before anything is created
+  enabled cloudasset.googleapis.com
+  enabled essentialcontacts.googleapis.com
+```
+
+The enable is a live change outside tofu's state. The declared
+`google_project_service` records an API that is now already on and its create is
+idempotent, so the plan that follows shows no change for it.
+
+Where the enable cannot succeed — the identity holds no `serviceusage.services.enable`,
+the Service Usage API is itself off on the billed project, an org policy forbids it —
+the run stops before `tofu` and prints the command that does it by hand:
+
+```
+APIs on corp-infra-001: satz could not enable them: 403 PERMISSION_DENIED …
+  cloudasset.googleapis.com
+  essentialcontacts.googleapis.com
+enable them and run this again:
+  gcloud services enable cloudasset.googleapis.com essentialcontacts.googleapis.com --project corp-infra-001
+```
+
+`satz --no-api-preflight plan` skips it: satz asks Service Usage nothing and enables
+nothing. `update-prerequisites` writes the declaration into the estate and enables
+nothing either; it prints the same `gcloud services enable` line for the APIs it adds.
+The reasoning is in [ADR 0036](adr/0036-plan-and-apply-enable-the-apis-the-estate-declares.md).
+
 ### Switch to the service account, and deploy as it
 
 Steps 1–3 ran as the logged-in user. This is where that ends: the state moves into the
