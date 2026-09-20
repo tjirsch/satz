@@ -129,6 +129,18 @@ pub(crate) struct Finding {
     /// presets/estate-map.satz`. Absent where no one command does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
+    /// What this finding says in the words every finding like it uses: `message` with
+    /// what is this finding's own — a notice's pack and param — left to the first line,
+    /// which carries it as `file:line` and `subject`. The PRODUCER states it; the layout
+    /// compares it for equality and never derives it from `message`. Findings of one
+    /// group whose `shared`, severity, kind and `fix` are equal stand as one table of
+    /// first lines over this text. A finding that stands alone prints `message`.
+    ///
+    /// For the layout alone, and in no schema: every reader of the JSON gets each
+    /// finding whole, in `message`, and a second field holding most of the same
+    /// sentence would be two homes for one fact.
+    #[serde(skip)]
+    pub shared: Option<String>,
     /// Set when a tier silenced this finding. The finding stays in the list and in the
     /// JSON either way — only the human rendering leaves it out.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -146,6 +158,7 @@ impl Finding {
             subject: None,
             message: message.into(),
             fix: None,
+            shared: None,
             silenced: None,
         }
     }
@@ -188,6 +201,20 @@ impl Finding {
     pub(crate) fn fix(mut self, command: impl Into<String>) -> Self {
         self.fix = Some(command.into());
         self
+    }
+
+    /// What it says in the words every finding like it uses — see `shared`. Written for
+    /// a table: the rows above it name what each finding is about.
+    pub(crate) fn shared(mut self, text: impl Into<String>) -> Self {
+        self.shared = Some(text.into());
+        self
+    }
+
+    /// What the layout compares to tell whether two findings say the same thing: the
+    /// text the producer declared shared, else the whole message — one thing found at
+    /// several sites is the same message at each.
+    fn said(&self) -> &str {
+        self.shared.as_deref().unwrap_or(&self.message)
     }
 
     /// The command that answers it, for one estate: `<estate>` in it — a pack's notice
@@ -358,8 +385,10 @@ const BODY: &str = "    ";
 /// under it, indented, wrapped to `width`; and the command that answers it as a last
 /// line of its own, `fix: …`. Findings of one group stand together under the group's
 /// title, which says how many stand there and how many of the group a silence left out.
-/// Findings that say the same thing at several sites — a conflict, at each file it
-/// involves — share one message under their first lines.
+/// Findings of a group that say the same thing — a conflict at each file it involves,
+/// nine packs asking for one command — are one block: their first lines as a table, then
+/// the sentence and the command once (`blocks`). A pipe gets the same blocks; only the
+/// wrapping differs.
 /// The findings of no group come first, so that what stands under a title is that
 /// group's. Every finding, and every title, is a blank line from the one before it.
 /// Empty when nothing is shown.
@@ -393,33 +422,51 @@ pub(crate) fn lay_out(findings: &[Finding], shown: Shown, width: Width) -> Strin
             };
             out.push_str(&format!("{} ({})\n", title, count));
         }
-        // One thing found at several sites is one finding per site, so an editor marks
-        // each; here the sites stand together over the one sentence they share.
-        let same = |a: &Finding, b: &Finding| (a.severity, a.kind, &a.message, &a.fix) == (b.severity, b.kind, &b.message, &b.fix);
-        for (i, f) in members.iter().enumerate() {
-            if !out.is_empty() && !(i > 0 && same(members[i - 1], f)) {
+        for block in blocks(members) {
+            if !out.is_empty() {
                 out.push('\n');
             }
-            let at = location(f).unwrap_or_default();
-            // a subject that IS the location — an `hcl` block is named by where it stands —
-            // is said once
-            let subject = f.subject.as_deref().filter(|s| *s != at).unwrap_or_default();
-            let first = format!("{:<7}  {:<kind_w$}  {:<at_w$}  {}", f.severity.as_str(), f.kind.as_str(), at, subject);
-            out.push_str(first.trim_end());
-            out.push('\n');
-            if members.get(i + 1).is_some_and(|next| same(f, next)) {
-                continue;
+            for f in &block {
+                let at = location(f).unwrap_or_default();
+                // a subject that IS the location — an `hcl` block is named by where it
+                // stands — is said once
+                let subject = f.subject.as_deref().filter(|s| *s != at).unwrap_or_default();
+                let first = format!("{:<7}  {:<kind_w$}  {:<at_w$}  {}", f.severity.as_str(), f.kind.as_str(), at, subject);
+                out.push_str(first.trim_end());
+                out.push('\n');
             }
-            for line in f.message.lines() {
+            // alone, a finding says its whole message; in a table the rows have said what
+            // is each finding's own
+            let text = if block.len() == 1 { block[0].message.as_str() } else { block[0].said() };
+            for line in text.lines() {
                 wrap_into(&mut out, line, width);
             }
-            if let Some(fix) = &f.fix {
+            if let Some(fix) = &block[0].fix {
                 // never wrapped: a command is pasted
                 out.push_str(&format!("{}fix: {}\n", BODY, fix));
             }
         }
     }
     out
+}
+
+/// The findings of one group as the blocks they print as. Findings that say the same
+/// thing are one block: their first lines as a table, the sentence once, the command
+/// once. Same by EQUALITY — of the severity, the kind, the command and what the finding
+/// says (`Finding::said`) — so two sentences one word apart are two blocks, and nothing
+/// is cut out of a message to make two alike. A block stands where its first finding
+/// arrived. One thing found at several sites — a conflict is one finding per site, so an
+/// editor marks each — is the plainest case: the same message at every site.
+fn blocks<'a>(members: Vec<&'a Finding>) -> Vec<Vec<&'a Finding>> {
+    let mut blocks: Vec<Vec<&Finding>> = Vec::new();
+    for f in members {
+        let key = |f: &'a Finding| (f.severity, f.kind, f.said(), f.fix.as_deref());
+        match blocks.iter_mut().find(|b| key(b[0]) == key(f)) {
+            Some(block) => block.push(f),
+            None => blocks.push(vec![f]),
+        }
+    }
+    blocks
 }
 
 /// One line of a message under its finding: indented, and broken at `width` between
@@ -615,6 +662,110 @@ mod tests {
              error    conflict  b.satz:40\n\
              \x20   x.y: 2 disagreeing definitions\n"
         );
+    }
+
+    /// A pack's notice as its producer builds it: the message names the pack and the
+    /// param, and `shared` is what is left when the first line has said both.
+    fn pack_notice(pack: &str, line: u32, text: &str) -> Finding {
+        let param = format!("{}_adopted", pack);
+        Finding::new(Severity::Warning, Kind::Notice, format!("`presets/{}.satz`: {}\nOnce it has run, bind `{} = true`.", pack, text, param))
+            .shared(format!("{}\nOnce it has run, bind each param named above `true`.", text))
+            .in_group("notices open")
+            .about(param)
+            .located("e.satz", line)
+            .fix("satz adopt e.satz --execute --import")
+    }
+
+    /// Findings of one group whose shared sentence and command are EQUAL are one block:
+    /// a row each, then the sentence and the command once — into a pipe as on a terminal.
+    /// The block stands where its first finding arrived, and a finding that arrives
+    /// between two of its rows does not split it.
+    #[test]
+    fn findings_that_say_the_same_thing_share_one_table() {
+        let f = vec![
+            pack_notice("a", 4, "Google may hold the policy."),
+            pack_notice("baseline", 5, "Google sets the policy."),
+            pack_notice("b", 6, "Google may hold the policy."),
+            pack_notice("c", 7, "Google may hold the policy."),
+        ];
+        assert_eq!(
+            lay_out(&f, Shown::All, Width::Unwrapped),
+            "notices open (4)\n\
+             \n\
+             warning  notice  e.satz:4  a_adopted\n\
+             warning  notice  e.satz:6  b_adopted\n\
+             warning  notice  e.satz:7  c_adopted\n\
+             \x20   Google may hold the policy.\n\
+             \x20   Once it has run, bind each param named above `true`.\n\
+             \x20   fix: satz adopt e.satz --execute --import\n\
+             \n\
+             warning  notice  e.satz:5  baseline_adopted\n\
+             \x20   `presets/baseline.satz`: Google sets the policy.\n\
+             \x20   Once it has run, bind `baseline_adopted = true`.\n\
+             \x20   fix: satz adopt e.satz --execute --import\n"
+        );
+        assert_eq!(footer(&f).as_deref(), Some("4 warnings"), "a row is a finding, and the count is of findings");
+        // the JSON is where it was: every finding whole, and the shared sentence in no field
+        let json = serde_json::to_value(&f).unwrap();
+        assert_eq!(json[2]["message"], "`presets/b.satz`: Google may hold the policy.\nOnce it has run, bind `b_adopted = true`.");
+        assert!(json[2].get("shared").is_none(), "{}", json[2]);
+    }
+
+    /// One row is no table: a finding that shares its sentence with nothing printed
+    /// beside it says its whole message, as a finding with no shared sentence does.
+    #[test]
+    fn a_finding_alone_in_its_block_prints_its_whole_message() {
+        let f = vec![pack_notice("a", 4, "Google may hold the policy.")];
+        assert_eq!(
+            lay_out(&f, Shown::All, Width::Unwrapped),
+            "notices open (1)\n\
+             \n\
+             warning  notice  e.satz:4  a_adopted\n\
+             \x20   `presets/a.satz`: Google may hold the policy.\n\
+             \x20   Once it has run, bind `a_adopted = true`.\n\
+             \x20   fix: satz adopt e.satz --execute --import\n"
+        );
+    }
+
+    /// Equality is the bar. One word apart is two sentences, a different command is two
+    /// answers, another group is another title: each stays a block of its own.
+    #[test]
+    fn a_sentence_one_word_apart_is_a_block_of_its_own() {
+        let f = vec![
+            pack_notice("a", 4, "Google may hold the policy."),
+            pack_notice("b", 5, "Google may hold a policy."),
+            pack_notice("c", 6, "Google may hold the policy.").fix("satz adopt e.satz --execute"),
+            pack_notice("d", 7, "Google may hold the policy.").in_group("other notices"),
+        ];
+        let text = lay_out(&f, Shown::All, Width::Unwrapped);
+        assert_eq!(text.matches("    fix: ").count(), 4, "four blocks, each with its command:\n{}", text);
+        assert!(!text.contains("named above"), "no two of them share a table:\n{}", text);
+        for pack in ["a", "b", "c", "d"] {
+            assert!(text.contains(&format!("`presets/{}.satz`: ", pack)), "{} says its whole message:\n{}", pack, text);
+        }
+    }
+
+    /// A silenced finding is no row: the table holds what is printed, the title counts
+    /// it exactly, and a table a silence leaves one row of is a finding on its own.
+    #[test]
+    fn a_silenced_finding_is_no_row_and_the_title_counts_what_stands_under_it() {
+        use crate::silence::{Silenced, Tier};
+        let mut f: Vec<Finding> = (0..10u32).map(|i| pack_notice(&format!("p{}", i), 4 + i, "Google may hold the policy.")).collect();
+        for i in [1, 4, 8] {
+            f[i].silenced = Some(Silenced { tier: Tier::Estate, reason: "adopted".into() });
+        }
+        let text = lay_out(&f, Shown::All, Width::Unwrapped);
+        assert!(text.starts_with("notices open (7 of 10, 3 silenced)\n\n"), "{}", text);
+        assert_eq!(text.matches("warning  notice  ").count(), 7, "{}", text);
+        assert!(!text.contains("p1_adopted") && !text.contains("p4_adopted") && !text.contains("p8_adopted"), "{}", text);
+        assert_eq!(text.matches("    fix: ").count(), 1, "one table, one command:\n{}", text);
+        assert_eq!(footer(&f).as_deref(), Some("7 warnings; 3 silenced (3 estate) — `satz silence list` says by what"));
+        for x in f.iter_mut().skip(1) {
+            x.silenced = Some(Silenced { tier: Tier::Estate, reason: "adopted".into() });
+        }
+        let text = lay_out(&f, Shown::All, Width::Unwrapped);
+        assert!(text.starts_with("notices open (1 of 10, 9 silenced)\n\n"), "{}", text);
+        assert!(text.contains("`presets/p0.satz`: Google may hold the policy."), "one row left, so its whole message:\n{}", text);
     }
 
     /// Prose breaks between words at the width; a line the producer indented keeps its
