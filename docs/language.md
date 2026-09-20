@@ -377,7 +377,7 @@ rather than matched against live state as if the `${…}` text were literal.
 
 ```ebnf
 file    := [ header ] { item }
-header  := ("estate" | "pack") IDENT { "content" | "version" STRING }
+header  := ("estate" | "pack") IDENT [ "version" STRING ]
 item    := "params" "{" { param } "}"
          | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
          | "claim" STRING STRING STRING COVERAGE "{" { claim-entry } "}"
@@ -387,22 +387,28 @@ item    := "params" "{" { param } "}"
          | "action" STRING "{" { action-entry } "}"
          | "offers" STRING "{" { offers-entry } "}"      # the map only
          | block
+
+block   := KEY [ KEY ] "{" { entry } "}"
+entry   := KEY "=" value | block | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
 ```
+
+An `item` stands at the top level of a file and nowhere else. A `use` is the one
+statement that is also an `entry`: it stands in the body of a folder or a project, in
+`google_folder { … }` and in a resource type map (§6.9).
 
 **Header**
 
 ```
 estate acme                        # a customer estate
 pack   monitoring.audit_logsink version "1.1"
-pack   essential_contacts_organization version "1.1" content
 ```
 
 - `estate` — one customer organisation. Usually one per repo.
 - `pack` — a reusable unit. `version` is the pack's own revision, **in-file,
   never in the filename** (framework versions live in claims and are independent
   of it: several pack revisions may implement the same standard).
-- `content` — marks a pack that is edited per customer, by forking it to
-  `<name>.local.satz`. It affects reporting only.
+
+The header is a name and a version: another word on its line is an error.
 
 The header is optional in fragment files that are only ever `use`d.
 
@@ -511,7 +517,10 @@ are otherwise indistinguishable from a nested attribute block such as
 `labels { … }` — the schema is what tells the two apart.
 
 The only bare block keywords are Satz's own: `estate`, `pack`, `params`,
-`terraform`, `providers`, `use`, `suppress`, `claim`, `question`, `action`, `offers`, `hcl`.
+`terraform`, `providers`, `use`, `suppress`, `claim`, `question`, `action`, `notice`, `offers`,
+`hcl`. `terraform` and `providers` are blocks and `use` also stands inside a block (§6.9);
+the rest are statements, written at the top level of a file, and an error as the key of a
+block anywhere else.
 
 **Simple** — one org policy:
 
@@ -945,28 +954,70 @@ use "presets/essential-contacts-organization.satz" as google_essential_contacts_
 use "showcase-optional.satz" when want_optional                          # conditionally
 ```
 
-(The pack's own shape decides which form it takes. A pack that declares its
-resource types — the CIS baseline and its extensions — is `use`d bare, and as a
-map's content it is refused: there its type key would be read as a label and the
-whole pack would collapse into one resource. A pack that is a BARE LIST of labels,
-like the contacts pack above or `showcase-policies.satz`, needs the map to supply
-the type; bare at the top level it is `unknown resource type`. Each pack states
-its own line in its header comment, and `presets/docs/` prints it.)
+A `use` stands in one of four positions. The position decides what the used file's
+entries are read as and what scopes the resources it declares — the same pack `use`d
+at the top level and in a folder's body creates its project under the organisation and
+under that folder:
+
+| where the `use` stands | what the used file's entries are | what scopes them |
+|---|---|---|
+| the top level of a file | resource type maps, `use` lines | the organisation |
+| the body of a folder or of a project | resource type maps, `use` lines | that folder or project, as for a resource written there |
+| `google_folder { … }` | named folders, `use` lines | the folder the map stands in |
+| a resource type map, `google_x { … }` | labelled `google_x` bodies — members, in a grant map — and `use` lines | whatever scopes the map |
+
+`use "…" as google_x` is the fourth row written flat: the file's entries are the
+content of a `google_x` map standing where the `use` stands. It is valid at the top
+level and in `google_folder { … }`; inside a resource type map the map's type is the
+key, and an `as` naming another type is an error. `google_project { … }` takes
+projects and no `use`.
+
+A file declares no kind. It is judged by whether its entries fit the position of its
+`use`: a pack that declares its own resource types — the CIS baseline and its
+extensions, most of the library — is `use`d at the top level or in the body of a folder
+or a project, and a file that is a bare list of labels, like the contacts pack above or
+`showcase-policies.satz`, is `use`d inside the map of its type. An entry that does not
+fit is an error at the `use` line, naming the entry's line in the used file:
+
+```
+use "presets/cis/cmek.satz" inside `google_folder { … }`: presets/cis/cmek.satz:59 does not belong there — `google_org_policy_policy { … }` opens a map of its own, and directly inside `google_folder { … }` every key is a name — it is read as a folder named `google_org_policy_policy`. A file used inside `google_folder { … }` holds named folders. This one declares its own resource types, so it is written bare, at the top level or in the body of a folder or a project: `use "presets/cis/cmek.satz"`
+```
+
+Each pack states its own line in its header comment, and `presets/docs/` prints it.
+
+**The statements of a used file reach the estate from every position.** Its `params`
+join the estate's parameter namespace, where the estate's own binding wins; its
+`question`s go to the interview; its `claim`s to the compliance plane; its `notice`s
+and `action`s join the estate's; its `hcl` blocks pass through to `main.tf` beside the
+resources. None of them is emitted as part of the map the `use` stands in — a bare
+list with a `params` block and a `question` is the content of a resource type map, and
+the map receives its labelled bodies alone. A file that holds statements and no entry
+(`presets/estate-core.satz`, `presets/estate-map.satz`) is `use`d at the top level;
+inside `google_folder { … }` or a resource type map it is refused, because it brings
+nothing that position takes. `suppress` is read from the estate's own file: a used
+file that carries one is refused.
+
+**A statement is written at the top level of a file.** Directly inside a resource type
+map, `google_folder { … }`, `google_project { … }`, or the body of a folder or a
+project, a block whose key is a statement keyword is an error:
+
+```
+`params` is a Satz statement: it is written at the top level of a file, where it goes to the estate's parameter namespace. Directly inside `google_essential_contacts_contact { … }` it is read as a resource `google_essential_contacts_contact.params`. Move it to the top level of the file; one that really is called `params` is written quoted, `"params" { … }`
+```
+
+The same holds for a resource type map written directly inside a map of names
+(`google_x { google_y { … } }`, `google_folder { google_x { … } }`): there every key is
+a label or a folder name, so the map is refused. Nested blocks of a resource's own
+body are the provider's — `action { type = "Delete" }` inside a `lifecycle_rule` is an
+attribute block, not the `action` statement.
 
 - **Path** is a plain string, never interpolated. Resolved relative to the using
   file first, then the configured `include_dirs`.
-- **`as <key>`** — the pack's top-level entries become the *content* of a
-  resource map keyed by `<key>`. For a pack that is a bare list of resources.
-- **`when <param>`** — the pack is pulled in only if the param is truthy. A
-  skipped pack contributes nothing: no resources, no params, no claims.
+- **`when <param>`** — the file is pulled in only if the param is truthy. A
+  skipped file contributes nothing: no resources, no params, no claims, no questions.
 
-`use` is valid at three places, and all three behave identically with respect
-to params, claims and `hcl` blocks: top level; inside a `google_folder { … }`
-block (where `as` is honoured too — the pack becomes that resource map, scoped
-to the folder); and inside a resource map, the form most estates use (there the
-map's type IS the key: an `as` naming another type is an error). A `use` cycle is an error naming the chain; `when` on a param no file
-declares is an error, not `false`; a top-level attribute in a file `use`d
-without `as` is an error.
+A `use` cycle is an error naming the chain; `when` on a param no file declares is an
+error, not `false`; an attribute at the top level of a used file is an error.
 
 **In the showcase:** `showcase-pack.satz` declares
 `pack_bucket_location = "EU"` and a bucket that uses it; the estate binds
@@ -1787,7 +1838,6 @@ these properties was verified at this time".
 |---|---|
 | declare an estate | `estate acme` |
 | declare a versioned pack | `pack monitoring.logsink version "1.2"` |
-| mark a pack as per-customer content | `pack contacts version "1.1" content` |
 | declare a tunable | `params { region = "europe-west3" }` |
 | reference a param in a string | `"organizations/{customer_organization_id}"` |
 | reference a param as a value | `bucket = infra_bucket_name` |
@@ -1875,6 +1925,10 @@ use ... as: given twice
 `lifecycle_rule` is given twice in this block (first at line 12) — a repeated key would silently last-win; write a list (`lifecycle_rule = [ … ]`) or remove one
 block `folder`: unknown resource type. Satz names Terraform types in full — write `google_folder`. (Leaving the provider prefix off is a YAML-dialect shorthand; it is not Satz.)
 `x` is an attribute at the top level of the file — attributes live inside a resource block
+pack header: `content` is not a header word — the header is `pack <name> [version "…"]`; delete `content`
+`hcl` is a Satz statement: it is written at the top level of a file, never inside a block — move it out
+use "presets/estate-core.satz" inside `google_essential_contacts_contact { … }`: that file holds no entry — only `params`, `question`, which reach the estate from any position. A file used inside `google_essential_contacts_contact { … }` holds labelled `google_essential_contacts_contact` bodies. Write this one at the top level of the estate: `use "presets/estate-core.satz"`
+use "x.satz": x.satz:3 is a `suppress`, which is read from the estate alone — in a used file it is never applied. Write it in the estate, or take the resource out of the used file
 use … when want_cs: unknown param `want_cs` — a `when` on a param nobody declares would silently drop the pack
 use … as google_cloud_identity_group inside `google_org_policy_policy { … }`: the pack is this map's content; move the `use` to the folder or top level to re-key it
 use "old-pack.yaml": packs are Satz — convert it first: `satz import old-pack.yaml --kind pack`

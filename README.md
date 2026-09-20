@@ -699,6 +699,15 @@ The project is created in `shared-services`; the group and the grant are hoisted
 intrinsic scopes. Placement is always **by `use` position** — fragments never name their
 parent folder, so the estate stays the single source of hierarchy truth.
 
+The position also decides what a used file may hold: resource type maps at the top level
+and in the body of a folder or a project, named folders in `google_folder { … }`, labelled
+bodies in a resource type map. A file whose entries do not fit where its `use` stands is
+refused, naming the entry. Its `params`, `question`s and `claim`s reach the estate from
+every position and are never emitted into the map the `use` stands in
+([§6.9](docs/language.md#69-use--composition)). What a release refuses that the one before
+it compiled, and the edit to make, is on
+[the library page](presets/README.md#breaking-changes).
+
 Merge rules when several fragments declare the same thing:
 
 - **IAM grants are additive.** Same member from two fragments → role lists union; a

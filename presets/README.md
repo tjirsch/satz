@@ -8,7 +8,7 @@ set every org-specific value there — never by editing a preset.
 
 `use "presets/<pack>.satz"` at top level for packs that declare their own
 resource-type maps — the CIS baseline and its extensions, and most of the library —
-or inside a resource map for the content packs that are a bare list of labels
+or inside a resource map for the packs that are a bare list of labels
 (`google_essential_contacts_contact { use … }`, or `use … as <type>` written flat).
 Each pack's header states its own line and `presets/docs/` prints it; the shapes are
 not interchangeable, and using one the wrong way round is refused rather than
@@ -386,7 +386,7 @@ Two spellings of S1 exist — an estate takes ONE of them, never both:
   distinct ids, so the pack's `google_cloud_identity_group { … }` sits beside
   the estate's own.
 - **s1-group-definitions.satz** + **s1-group-permissions.satz** — the same S1
-  as two content packs `use`d UNDER a resource type.
+  as two bare lists `use`d UNDER a resource type.
 - **s2-security-groups.satz** — S2: S1 plus a distinct **`gcp-network-admins`**
   group. The network authority moves out of project-admins (which lose
   `compute.networkAdmin` and `compute.xpnAdmin`) into a team that owns VPCs,
@@ -426,7 +426,7 @@ param.
 // one typed file (S1 or S2)
 use "presets/security-group-models/s2-security-groups.satz"
 
-// or the two S1 content packs under their resource types
+// or the two S1 bare lists under their resource types
 google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
 google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
 ```
@@ -778,7 +778,8 @@ amount and the thresholds are literals, not params.
 ## essential-contacts-organization.satz
 
 One organization-level Essential Contact subscribed to ALL notification categories.
-A content pack: use it inside the resource map.
+A bare list of labelled contacts: use it inside the resource map. Its `params` and its
+`question` reach the estate from there; the map receives the contacts alone.
 
 **Use:**
 
@@ -1487,6 +1488,80 @@ per resource type the API→Terraform field map the live import applies, aligned
 the API's Discovery Document and the provider schema. Overrides go into
 `import-config.yaml` (`api_schema:` to pin an ambiguous schema name).
 
+## Breaking changes
+
+What a satz release refuses that the release before it compiled, and the edit that
+satisfies it. Newest first. Each entry says what is refused, how to find it in an
+estate, and what to write instead; the error satz prints names the file and the line.
+
+### v0.69.0
+
+**A pack header takes a name and a version — the word `content` is gone.**
+`pack essential_contacts_organization version "1.3" content` is refused with
+`` pack header: `content` is not a header word ``. The word marked one shipped pack
+and changed nothing that satz emits.
+
+- The one shipped pack that said it is `presets/essential-contacts-organization.satz`;
+  version 1.4 does not. An estate that holds the 1.3 copy does not compile, and
+  `satz merge-presets` stops on the same line, because it reads the estate's copy before
+  it replaces it. Delete the word `content` from the `pack` line of the estate's copy
+  (line 15), then run `satz merge-presets`: it upgrades the copy to 1.4 in place, as a
+  change of comments and version only.
+- A fork (`presets/essential-contacts-organization.local.satz`) or a pack of your own
+  that says `content`: delete the word from its `pack` line. Nothing else changes, and
+  the emitted HCL is the same.
+- Find them: `grep -rn '^pack .* content' presets/ yaml/`.
+
+**A statement is written at the top level of a file.** `params`, `question`, `claim`,
+`notice`, `action`, `offers`, `suppress`, `hcl`, `estate` and `pack` directly inside a
+block are refused with `` `params` is a Satz statement ``. satz used to read such a
+block as whatever the position takes: `google_x { params { … } }` declared a resource
+labelled `params`, `google_folder { params { … } }` a folder called `params`, and
+`params { … }` in a folder's or a project's body an attribute `params = { … }` on the
+folder or project, which the provider rejects at plan time.
+
+- Move the block to the top level of the file it is in.
+- A resource, folder or project that really is called `params` is written with a
+  quoted key: `"params" { … }`. The emitted address does not change.
+- Nested blocks of a resource's own body are untouched: `action { type = "Delete" }`
+  inside a `lifecycle_rule` is the provider's block.
+
+**A resource type map is not written inside a map of names.**
+`google_x { google_y { … } }`, `google_folder { google_x { … } }` and
+`google_project { google_x { … } }` are refused with `opens a map of its own`. satz
+used to read the inner key as a name: a resource `google_x.google_y`, or a folder or
+project called `google_x`.
+
+- Inside a folder or a project, the map goes into the BODY of a named folder or
+  project: `google_folder { shared { google_x { … } } }`.
+- Otherwise it goes beside the outer map, not inside it.
+
+**A pack that declares its own resource types is not used inside `google_folder { … }`.**
+`google_folder { use "presets/cis/cmek.satz" }` is refused with `does not belong
+there`; satz used to compile it into a FOLDER named after each of the pack's resource
+types — `google_folder.google_org_policy_policy` — and to emit none of the pack's
+resources. The same pack inside a resource type map (`google_x { use … }`,
+`use … as google_x`) was refused before and still is.
+
+- To create the pack's resources in a folder, write the `use` in that folder's body:
+  `google_folder { shared { use "presets/<pack>.satz" } }`.
+- To create them at the organisation, write it at the top level: `use "presets/<pack>.satz"`.
+- `google_folder { use "<file>" }` stays valid for a file whose entries are named
+  folders.
+
+**A file of statements alone is used at the top level.** `presets/estate-core.satz` and
+`presets/estate-map.satz` hold `params` and `question`s and no resource; inside a
+resource type map or `google_folder { … }` they are refused with `that file holds no
+entry`. Write `use "presets/estate-core.satz"` at the top level of the estate. The
+params and questions of a file reach the estate from every position, so nothing is lost
+by moving the line.
+
+**A used file carries no `suppress`.** A `suppress` in a pack or any other `use`d file
+is refused with `` is a `suppress`, which is read from the estate alone ``. satz never
+applied such a line — the resource it names was emitted all along. Move the line into
+the estate's own file, where it takes effect and removes the resource from the plan; or
+delete it to keep what is deployed today.
+
 ## Changelog
 
 One row per pack version. The in-file `pack <name> version "<n>"` line is the
@@ -1497,6 +1572,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `essential_contacts_organization` | 1.4 | 2026-09-20 | the header loses the word `content`, which the language no longer has: a pack header is a name and a version. Nothing emitted changes. A copy of 1.3 is refused by its header line — see Breaking changes |
 | `CIS_GCP_Foundation_4_0` | 2.15 | 2026-09-19 | a `notice`: once the baseline is switched on, `satz adopt <estate> --execute --import` is to run before the apply — Google sets some of these policies on every new organisation, and the first apply of the 2026-09-17 onboarding stopped on `409 POLICY_ALREADY_EXISTS` for `compute.managed.restrictProtocolForwardingCreationForTypes`. The estate acknowledges it with `cis_baseline_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
 | `cis_extensions.block_project_ssh_keys` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_block_project_ssh_keys_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
 | `cis_extensions.shielded_vm` | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_require_shielded_vm_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |

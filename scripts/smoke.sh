@@ -280,6 +280,15 @@ fi
 grep -q 'group_model_flat and group_model_split are both true' tmp/twochoice.txt \
   || fail "the oneof refusal does not name both branches:\n$(cat tmp/twochoice.txt)"
 
+# a used file is judged by where its `use` stands: a pack that declares its own types, used
+# in the folder map, compiled into folders named after those types
+{ cat yaml/smoke.satz; printf 'google_folder {\n  use "presets/cis/cmek.satz"\n}\n'; } > tmp/misplaced.satz
+if "$satz" --config . transpile tmp/misplaced.satz --check >tmp/misplaced.txt 2>&1; then
+  fail "a pack that declares its own types was accepted inside google_folder { … }"
+fi
+grep -q 'presets/cis/cmek.satz:[0-9]* does not belong there' tmp/misplaced.txt \
+  || fail "the refusal does not name the entry in the used file:\n$(cat tmp/misplaced.txt)"
+
 step "require cis-gcp-4.0 (goal view, offline): text, and json where the file carries the answer and the console nothing"
 # `require` exits non-zero when a technical control is unmet, and the smoke estate
 # leaves controls unmet, so the step asserts on the verdict, not the exit code.

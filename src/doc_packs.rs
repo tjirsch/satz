@@ -712,12 +712,8 @@ fn render(
     let mut md = String::new();
     md.push_str(BANNER);
     md.push('\n');
-    md.push_str(&format!("# `{}` — version {}{}\n\n", name, version, if file.content_mode { " · content pack" } else { "" }));
-    md.push_str(&format!("Source: `presets/{}`", rel.display()));
-    if file.content_mode {
-        md.push_str(" — a **content** pack: forking it into `<name>.local.satz` is the expected workflow (per-customer content).");
-    }
-    md.push_str("\n\n");
+    md.push_str(&format!("# `{}` — version {}\n\n", name, version));
+    md.push_str(&format!("Source: `presets/{}`\n\n", rel.display()));
     if !h.purpose.is_empty() {
         md.push_str("## Purpose\n\n");
         md.push_str(&h.purpose.join("\n"));

@@ -18,6 +18,9 @@ use crate::satz::{self, Entry, File, Key, StrPart, Value};
 use crate::{Address, MergeClass, Scope, Span};
 use std::collections::BTreeMap;
 
+mod position;
+use position::Position;
+
 /// How a source-level mapping key becomes a Terraform type. Schema-driven in
 /// production (the harness/bin supplies it); explicit tables in tests. Returning
 /// `None` marks the key as config-layer (terraform/providers/…) — not an entity.
@@ -1154,51 +1157,13 @@ impl Walk<'_> {
         Ok(truthy(self.genv.get(param)))
     }
 
-    /// The first resource-type map a `use`d pack declares itself, with its line.
-    ///
-    /// A pack is one of two shapes. Either it IS a resource map's content — a
-    /// bare list of labels, which the using estate keys with its own
-    /// `google_x { use … }` — or it declares its own types and is `use`d bare.
-    /// Only an identifier key can be a type: a bare label is a quoted string,
-    /// so a pack's labels are never mistaken for one here.
-    fn typed_map_in(&self, file: &satz::File) -> Option<(String, usize)> {
-        file.items.iter().find_map(|e| match e {
-            Entry::Map { key: Key::Ident(k), name: None, line, .. } => {
-                self.types.resolve(k).map(|rt| (rt.tf_type, *line))
-            }
-            _ => None,
-        })
-    }
-
-    /// `google_x { use "pack" }`, or `use "pack" as google_x`, where the pack
-    /// declares `google_x { … }` itself.
-    ///
-    /// The two shapes above are not interchangeable and this pairing fails
-    /// SILENTLY: as a map's content every name-less child is read as
-    /// `(label, body)`, so the pack's own type key becomes a label and the whole
-    /// pack collapses into one resource carrying its policies as attributes. The
-    /// emitter takes unknown attributes without complaint, so the first sign
-    /// would be a plan that destroys everything the pack used to emit.
-    fn refuse_typed_pack_as_map_content(
-        &self,
-        file: &satz::File,
-        use_path: &str,
-        file_name: &str,
-        line: usize,
-    ) -> Result<(), PipelineError> {
-        let Some((ty, at)) = self.typed_map_in(file) else {
-            return Ok(());
-        };
-        perr(
-            file_name,
-            line,
-            format!(
-                "use \"{path}\" as the content of a resource map: that pack declares `{ty} {{ … }}` itself ({path}:{at}), so here its type key is read as a LABEL and the pack collapses into one resource `{ty}.{ty}` carrying its contents as attributes. Write it bare at the top level: `use \"{path}\"`",
-                path = use_path,
-                ty = ty,
-                at = at
-            ),
-        )
+    /// An entry against the position it stands in (`position`): the one check every
+    /// walker makes before it reads an entry as what its position takes.
+    fn belongs(&self, pos: Position, entry: &Entry, file_name: &str) -> Result<(), PipelineError> {
+        match position::misfit(pos, entry, self.types) {
+            Some(m) => perr(file_name, m.line, m.message()),
+            None => Ok(()),
+        }
     }
 
     /// Load and parse a `use`d file, absorb its params/hcl/claims, and put it
@@ -1236,16 +1201,13 @@ impl Walk<'_> {
         path: &[String],
     ) -> Result<(), PipelineError> {
         for item in items {
+            self.belongs(Position::File, item, file_name)?;
             match item {
-                // Estate-level scalar attrs (customer ids …) are config layer in v0.
-                // A bare attribute at the top of a file belongs to nothing —
-                // silently ignoring it once made 22 project services vanish.
-                Entry::Attr { key, line, .. } => {
-                    return perr(
-                        file_name,
-                        *line,
-                        format!("`{:?}` is an attribute at the top level of the file — attributes live inside a resource block", key),
-                    );
+                // A bare attribute at the top of a file belongs to nothing, and
+                // `belongs` has refused it — silently ignoring it once made 22
+                // project services vanish, so reaching this arm is an error too.
+                Entry::Attr { line, .. } => {
+                    return perr(file_name, *line, "an attribute reached the walk at the top level of a file");
                 }
                 Entry::Use { path: use_path, as_key, when, line } => {
                     // Before the `when` guard: a line gated off still points at a
@@ -1265,14 +1227,17 @@ impl Walk<'_> {
                         // CONTENT of a resource map keyed by `key`.
                         Some(k) => match self.types.resolve(k) {
                             Some(rt) => {
-                                self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
+                                position::used_file_fits(map_position(&rt), &file, use_path, file_name, *line, self.types)?;
                                 self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?
                             }
                             None => {
                                 return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as"))
                             }
                         },
-                        None => self.items(&file.items, use_path, &mut child_own, all, path)?,
+                        None => {
+                            position::used_file_fits(Position::File, &file, use_path, file_name, *line, self.types)?;
+                            self.items(&file.items, use_path, &mut child_own, all, path)?
+                        }
                     }
                     self.use_chain.pop();
                     all.push(child_own);
@@ -1334,6 +1299,7 @@ impl Walk<'_> {
             // `google_folder { a {…} b {…} }` — each named child is a folder node.
             None => {
                 for e in body {
+                    self.belongs(FOLDER_MAP, e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
                             let fname = resolve_key(key, &self.genv, file_name, *line)?;
@@ -1362,12 +1328,15 @@ impl Walk<'_> {
                                 // content of that resource map, scoped to the folder
                                 Some(k) => match self.types.resolve(k) {
                                     Some(rt) => {
-                                        self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
+                                        position::used_file_fits(map_position(&rt), &file, use_path, file_name, *line, self.types)?;
                                         self.resource_map(&rt, None, &file.items, use_path, &mut child_own, *line, path, None)?
                                     }
                                     None => return perr(file_name, *line, unknown_type_msg(self.types, k, "use … as")),
                                 },
-                                None => self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?,
+                                None => {
+                                    position::used_file_fits(FOLDER_MAP, &file, use_path, file_name, *line, self.types)?;
+                                    self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?
+                                }
                             }
                             self.use_chain.pop();
                             all.push(child_own);
@@ -1404,7 +1373,7 @@ impl Walk<'_> {
         // The folder itself is a Node-scoped entity. Entries whose key names a
         // resource type (or `folder`/`project`/`use`) are children; everything
         // else — attrs, labels-style maps — is folder body.
-        let (attrs, children) = self.split_body(body, file_name)?;
+        let (attrs, children) = self.split_body(body, file_name, "google_folder")?;
         insert_entity(
             own,
             Address { tf_type: "google_folder".to_string(), label: fname.to_string() },
@@ -1424,10 +1393,12 @@ impl Walk<'_> {
         &mut self,
         body: &[Entry],
         file_name: &str,
+        node: &'static str,
     ) -> Result<(serde_yaml::Mapping, Vec<Entry>), PipelineError> {
         let mut attrs = serde_yaml::Mapping::new();
         let mut children = Vec::new();
         for e in body {
+            self.belongs(Position::NodeBody { node }, e, file_name)?;
             match e {
                 Entry::Attr { key, value, line } => {
                     attrs.insert(
@@ -1489,6 +1460,7 @@ impl Walk<'_> {
             None => {
                 let mut v = Vec::new();
                 for e in body {
+                    self.belongs(Position::NodeMap { node: "google_project" }, e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
                             v.push((resolve_key(key, &self.genv, file_name, *line)?, body.as_slice(), *line))
@@ -1506,7 +1478,7 @@ impl Walk<'_> {
             }
         };
         for (pname, pbody, pline) in named {
-            let (mut attrs, children) = self.split_body(pbody, file_name)?;
+            let (mut attrs, children) = self.split_body(pbody, file_name, "google_project")?;
             // project_service may arrive as an Attr list (already in attrs) or as
             // a Map — split_body routed non-resource maps into attrs already.
             if !attrs.contains_key(serde_yaml::Value::String("project_id".into())) {
@@ -1640,6 +1612,7 @@ impl Walk<'_> {
             None => {
                 let mut v = Vec::new();
                 for e in body {
+                    self.belongs(map_position(rt), e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
                             v.push((resolve_key(key, &self.genv, file_name, *line)?, body.as_slice(), *line))
@@ -1675,7 +1648,7 @@ impl Walk<'_> {
                                 }
                             }
                             let file = self.enter_use(use_path, file_name, *line)?;
-                            self.refuse_typed_pack_as_map_content(&file, use_path, file_name, *line)?;
+                            position::used_file_fits(map_position(rt), &file, use_path, file_name, *line, self.types)?;
                             // pack content lands in this same fragment-map scope;
                             // its own file identity is preserved via provenance.
                             self.resource_map(rt, None, &file.items, use_path, own, *line, path, pin)?;
@@ -1708,6 +1681,12 @@ impl Walk<'_> {
         }
         Ok(())
     }
+}
+
+const FOLDER_MAP: Position = Position::NodeMap { node: "google_folder" };
+
+fn map_position(rt: &ResolvedType) -> Position<'_> {
+    Position::ResourceMap { tf_type: &rt.tf_type, grant: rt.class == MergeClass::Grant }
 }
 
 /// Separator between a Node-scoped grant's structural path and its member key
@@ -2204,49 +2183,6 @@ google_org_policy_policy {
         assert_eq!(fe.questions.len(), 1, "a nested `use` must absorb the pack's questions");
         assert_eq!(fe.questions[0].pack, "cis");
         assert_eq!(fe.questions[0].questions[0].subject, "cis_dns_logging");
-    }
-
-    /// A pack that declares its own resource type cannot also be a resource
-    /// map's content, in ANY of the three forms that make it one. The pairing
-    /// is silent otherwise: every name-less child of a map is read as
-    /// `(label, body)`, so the pack's type key becomes a label and 25 policies
-    /// collapse into one resource the emitter accepts without a word.
-    #[test]
-    fn a_typed_pack_used_as_map_content_is_refused_in_every_form() {
-        let pack = r#"pack cis version "2.14"
-
-google_org_policy_policy {
-  "no_keys" { name = "iam.disableServiceAccountKeyCreation" }
-}
-"#;
-        let load = |p: &str| {
-            if p == "cis.satz" { Ok(pack.to_string()) } else { Err(format!("no load: {}", p)) }
-        };
-        let forms = [
-            ("inside the map", "estate t\n\ngoogle_org_policy_policy {\n  use \"cis.satz\"\n}\n"),
-            ("as at the top level", "estate t\n\nuse \"cis.satz\" as google_org_policy_policy\n"),
-            (
-                "as inside a folder",
-                "estate t\n\ngoogle_folder {\n  use \"cis.satz\" as google_org_policy_policy\n}\n",
-            ),
-        ];
-        for (form, estate) in forms {
-            let Err(err) = compile_estate("t.satz", estate, &Table, &load) else {
-                panic!("{}: a self-typed pack as map content must be refused", form);
-            };
-            assert!(
-                err.msg.contains("declares `google_org_policy_policy { … }` itself"),
-                "{}: the refusal must name the pack's own typed map — got {}",
-                form,
-                err.msg
-            );
-            assert!(
-                err.msg.contains("Write it bare at the top level"),
-                "{}: the refusal must name the line to write instead — got {}",
-                form,
-                err.msg
-            );
-        }
     }
 
     /// A moved pack is refused wherever it is `use`d, and whether or not its gate
