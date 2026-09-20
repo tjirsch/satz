@@ -136,6 +136,16 @@ pub(crate) fn target(out: PathBuf, format: OutFormat) -> Result<PathBuf, String>
     Ok(PathBuf::from(name))
 }
 
+/// How wide the prose of a text artefact may run where it lands: the terminal's width
+/// when `--out -` reaches one, unwrapped into a file or a pipe.
+pub(crate) fn width(out: &Path) -> crate::findings::Width {
+    if out.as_os_str() == "-" {
+        crate::findings::Width::of_stdout()
+    } else {
+        crate::findings::Width::Unwrapped
+    }
+}
+
 /// Write the one artefact this invocation produces, and say where it went on
 /// stderr. The parent directory is created: a report named into a directory that
 /// does not exist yet is a path the caller meant, not a mistake.

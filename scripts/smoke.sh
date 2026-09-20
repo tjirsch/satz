@@ -1613,7 +1613,10 @@ grep -q 'notice — presets/cis/CIS-GCP-Foundation-4.0.satz' tmp/pk/notice.txt \
 grep -q 'bind `cis_baseline_adopted = true`' tmp/pk/notice.txt || fail "the notice must say how it is acknowledged"
 "$satz" --config . transpile "$PWD/tmp/pk/e.satz" --check > tmp/pk/notice-check.txt 2>&1 \
   || fail "the estate with an open notice must compile:\n$(cat tmp/pk/notice-check.txt)"
-grep -q '1 notice(s) open' tmp/pk/notice-check.txt || fail "the compile must warn while a notice is open:\n$(cat tmp/pk/notice-check.txt)"
+grep -q 'notices open — what a pack asks to be run once it is on (1)' tmp/pk/notice-check.txt || fail "the compile must warn while a notice is open:\n$(cat tmp/pk/notice-check.txt)"
+# the layout: the first line, the sentence under it, the command as a last line of its own
+grep -q '^warning  notice  *tmp/pk/e.satz:[0-9]*  cis_baseline_adopted$' tmp/pk/notice-check.txt || fail "a finding opens with severity, kind, file:line and subject:\n$(cat tmp/pk/notice-check.txt)"
+grep -q '^    fix: satz adopt e.satz --execute --import$' tmp/pk/notice-check.txt || fail "the command is the finding's last line:\n$(cat tmp/pk/notice-check.txt)"
 # the acknowledgement is an answer: `satz_interview` takes it, and `satz_packs` reports both states
 "$satz" --config . packs "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/notice-packs.json > /dev/null 2>&1 || fail "satz packs failed"
 printf '%s\n' \
@@ -1640,7 +1643,7 @@ assert after["presets/cis/CIS-GCP-Foundation-4.0.satz"]["notices"][0]["acknowled
 PYEOF
 "$satz" --config . transpile "$PWD/tmp/pk/e.satz" --check > tmp/pk/notice-done.txt 2>&1 \
   || fail "the acknowledged estate does not compile:\n$(cat tmp/pk/notice-done.txt)"
-grep -q 'notice(s) open' tmp/pk/notice-done.txt && fail "the acknowledged notice still warns:\n$(cat tmp/pk/notice-done.txt)"
+grep -q 'notices open' tmp/pk/notice-done.txt && fail "the acknowledged notice still warns:\n$(cat tmp/pk/notice-done.txt)"
 # and the gate: an estate whose questions are all answered is still refused while a notice is open
 rm -rf tmp/nt && mkdir -p tmp/nt
 sed 's/pack_bucket_adopted      = true/pack_bucket_adopted      = false/' yaml/showcase.satz > tmp/nt/open-notice.satz
@@ -1660,8 +1663,9 @@ printf 'yaml_dir = "."\nhcl_dir = "hcl"\ninclude_dirs = [".", "../../../.."]\nsc
 cp "$root/tests/corpus/cis-packs/main.satz" tmp/sil/cis.satz
 "$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/before.txt 2>&1 \
   || fail "the corpus estate must compile:\n$(cat tmp/sil/before.txt)"
-grep -q '10 notice(s) open' tmp/sil/before.txt || fail "the ten notices are what this silences:\n$(cat tmp/sil/before.txt)"
-grep -q 'pack(s) on while a pack they need is off' tmp/sil/before.txt || fail "the eleventh finding is missing"
+grep -q 'notices open — what a pack asks to be run once it is on (10)' tmp/sil/before.txt || fail "the ten notices are what this silences:\n$(cat tmp/sil/before.txt)"
+grep -q 'packs on while a pack they need is off (1)' tmp/sil/before.txt || fail "the eleventh finding is missing"
+grep -q '^11 warnings$' tmp/sil/before.txt || fail "the run closes with its count by severity:\n$(cat tmp/sil/before.txt)"
 # two rows, written by satz into the estate's own config.toml
 "$satz" --config tmp/sil silence add notice --reason "satz adopt --execute --import has run" > tmp/sil/add.txt 2>&1 \
   || fail "silence add failed:\n$(cat tmp/sil/add.txt)"
@@ -1671,8 +1675,8 @@ grep -q 'pack(s) on while a pack they need is off' tmp/sil/before.txt || fail "t
 grep -q 'kind = "notice"' tmp/sil/config.toml || fail "the row was not written into config.toml:\n$(cat tmp/sil/config.toml)"
 "$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/after.txt 2>&1 \
   || fail "the estate must still compile:\n$(cat tmp/sil/after.txt)"
-grep -q 'notice(s) open' tmp/sil/after.txt && fail "a silenced finding was printed:\n$(cat tmp/sil/after.txt)"
-grep -q '11 finding(s) silenced (11 estate)' tmp/sil/after.txt \
+grep -q 'notices open' tmp/sil/after.txt && fail "a silenced finding was printed:\n$(cat tmp/sil/after.txt)"
+grep -q '^11 silenced (11 estate)' tmp/sil/after.txt \
   || fail "every run says how many findings it left out, and from which tier:\n$(cat tmp/sil/after.txt)"
 # …and an agent is handed all eleven, each marked
 printf '%s\n' \

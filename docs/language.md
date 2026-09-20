@@ -353,9 +353,14 @@ blocks. A reference naming nothing is a compile error that says where it was
 written and lists the labels of that type that do exist:
 
 ```
-references to resources this estate does not emit:
-  yaml/main.satz:26: google_service_account_iam_member writes `${google_service_account.onbaording.name}`
-    emitted `google_service_account` labels: onboarding
+references to resources this estate does not emit (1)
+
+error    written-reference  yaml/main.satz:26
+    google_service_account_iam_member.onboarding_user writes
+    `${google_service_account.onbaording.name}`
+      emitted `google_service_account` labels: onboarding
+
+1 error
 ```
 
 Without the check, Terraform catches most typos one cycle later, pointing at
@@ -1176,8 +1181,14 @@ The body is captured verbatim, is **never interpolated**, and bypasses the fold,
 so the compliance plane cannot see into it. Every transpile says so:
 
 ```
-warning: raw HCL passthrough at yaml/main.satz:14 (4 lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust "<reason>" { … }` once reviewed.
-note: raw HCL passthrough at yaml/main.satz:21 (4 lines) — trusted: reviewed 2026-08-24, provider gap for static IPs
+warning  hcl-passthrough  yaml/main.satz:14
+    raw HCL passthrough (4 lines) emitted verbatim — opaque to the compliance plane; no claim
+    can cover it. Add `hcl trust "<reason>" { … }` once reviewed.
+
+note     hcl-passthrough  yaml/main.satz:21
+    raw HCL passthrough (4 lines) — trusted: reviewed 2026-08-24, provider gap for static IPs
+
+1 warning, 1 note
 ```
 
 and so does the output:
@@ -1313,9 +1324,15 @@ Every compile of an estate that declares one says so, and unlike `hcl trust`, a
 `reason` does not downgrade the warning, because an action executes a script:
 
 ```
-warning: action "scc-services" declared in presets/scc/enable.satz:12 (from a pack) — `satz run-actions` will execute enable.sh
-  reason: SCC service enablement has no provider resource (google 7.14.1)
-note: --no-pack-actions ignores pack-declared actions, --no-actions disables all execution, `satz silence add action --reason "…"` leaves these findings out of the output.
+warning  action  presets/scc/enable.satz:12  scc-services
+    `satz run-actions` will execute enable.sh — a pack declares it
+      reason: SCC service enablement has no provider resource (google 7.14.1)
+
+note     action
+    --no-pack-actions ignores pack-declared actions, --no-actions disables all execution, `satz
+    silence add action --reason "…"` leaves these findings out of the output.
+
+1 warning, 1 note
 ```
 
 A pack may declare an action, and the warning says when one did. The two
@@ -1551,7 +1568,9 @@ or the map, which nothing switches on.
 - **When the pack is switched on** — a yes in `satz interview`, `satz add-pack`, or
   `merge-presets` bringing the pack in — the notice is printed once, and the MCP tools
   `satz_interview` and `satz_add_pack` return it in `notices`.
-- **Until it is acknowledged** the compile warns at the estate's `use` line of the pack,
+- **Until it is acknowledged** the compile warns at the estate's `use` line of the pack —
+  a `notice` finding whose subject is the param and whose `fix:` line is the pack's `run`,
+  with the estate's file name where the pack wrote `<estate>` —
   and `transpile --apply` and `bootstrap` refuse while a `before = apply` notice is open
   (`--plan` and `--dry-run` warn).
 - `satz adopt --execute --import` **acknowledges the notices that name it** when the run
@@ -1869,7 +1888,7 @@ these properties was verified at this time".
 
 | command | layer | does |
 |---|---|---|
-| `transpile <estate>.satz` | Satz → HCL | emit `hcl/`; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars |
+| `transpile <estate>.satz` | Satz → HCL | emit `hcl/`; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the compile as data — estate, addresses, files written, findings — and exits 1 on a refusal |
 | `require <framework> <estate>.satz --format text\|json --out f` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
 | `report-compliance <framework> <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |
@@ -1941,9 +1960,7 @@ claim: resources = [...] is required (a claim ships its witnesses)
 claim … deviates: reason = "…" is required (a deviation is a disclosed decision, and the report carries the reason)
 suppress google_org_policy_policy "x" matches nothing — stale suppression (typo or upstream rename)
 suppress … role on google_organization_iam_member "group:x@example.com": the address is in conflict (⊥); suppress the whole member or resolve the conflict first
-composition conflicts: <type>.<label>: 2 disagreeing definitions
-  - a.satz:12
-  - b.satz:40
+<type>.<label>: 2 disagreeing definitions — a.satz:12, b.satz:40   (under `composition conflicts`, at each site)
 `deployment_mode = "boot"`: the mode is "local" (the state in a file) or "cloud" (the state in the gcs bucket), and no backend is emitted for anything else
 `deployment_mode = "cloud"` without a value for `svc_iac_account`: cloud mode runs every live call and `tofu` as `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`, so the estate binds both — bind it in `params {}`, or keep `deployment_mode = "local"`
 transpile: `estate.yaml` is the legacy YAML dialect — convert it: `satz import estate.yaml --kind estate`

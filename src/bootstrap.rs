@@ -586,8 +586,7 @@ pub async fn bootstrap(
     };
 
     if !org_known && !greenfield {
-        // Printed rather than returned: `main` renders a returned error with
-        // `Debug`, which would escape the newlines.
+        // Printed ahead of the error: the detail first, then the one line `main` closes with.
         eprintln!(
             "\nThe estate's `customer_organization_id` is empty — there is no organization to install into.\n\
              If the organization exists: `satz init --from-live` derives the id from your credentials, or fill the param.\n\
@@ -632,8 +631,7 @@ pub async fn bootstrap(
         project_id: final_proj_id.as_deref(),
         bucket_name: bucket_name.as_deref(),
     }) {
-        // printed, not returned: `main` renders a returned error with `Debug`,
-        // which escapes the newlines into one unreadable line
+        // Printed ahead of the error: the detail first, then the one line `main` closes with.
         eprintln!("\n{}", detail);
         return Err("the estate is not ready to bootstrap (the params are listed above)".into());
     }
@@ -682,8 +680,7 @@ pub async fn bootstrap(
     let resolved_identity = crate::gcp::identity::resolve_adc_identity(&client, &token).await;
     match (&expected_admin, &resolved_identity) {
         (Some(expected), None) => {
-            // These messages are printed rather than carried in the error, because `main`
-            // renders a returned error with `Debug`, which would escape the newlines.
+            // Printed ahead of the error: the detail first, then the one line `main` closes with.
             eprintln!(
                 "\nCould not determine the identity of your Application Default Credentials,\n\
                  so it cannot be checked against the configured admin '{expected}'.\n\n\

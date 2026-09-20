@@ -121,16 +121,29 @@ pub(crate) fn acknowledge(estate: &Path, params: &[String]) -> Result<(), String
 /// that declares it — or at the notice itself when another pack uses that one.
 pub(crate) fn compile_findings(notices: &[PackNotices], env: &Env, estate: &Path, estate_src: &str) -> Vec<Finding> {
     let open: Vec<NoticeRow> = rows(notices, env).into_iter().filter(|n| !n.acknowledged).collect();
-    let header = format!("{} notice(s) open — what a pack asks to be run once it is on:", open.len());
+    let header = "notices open — what a pack asks to be run once it is on";
     let scan = crate::packs::scan(estate_src);
     let label = estate.to_string_lossy().into_owned();
     open.iter()
         .map(|n| {
             // the param that acknowledges it is the notice's identity: the same key
             // `satz adopt --import` binds, and what a `[[silence]]` row names
-            let f = Finding::new(Severity::Warning, Kind::Notice, format!("`{}`: {} — {}", n.pack, n.text, then(n)))
-                .in_group(&header)
-                .about(n.param.clone());
+            // the command is the finding's `fix`; the sentence says what is left to do
+            // once it has run
+            let f = Finding::new(
+                Severity::Warning,
+                Kind::Notice,
+                format!(
+                    "`{}`: {}\nOnce the command has run, bind `{} = true` in the estate's params{}.",
+                    n.pack,
+                    n.text,
+                    n.param,
+                    if n.before.as_deref() == Some("apply") { "; apply and bootstrap refuse until then" } else { "" }
+                ),
+            )
+            .in_group(header)
+            .about(n.param.clone())
+            .fix_in(&n.run, estate);
             match scan.uses.iter().find(|l| !l.commented && l.written == n.pack) {
                 Some(l) => f.located(label.clone(), l.index as u32 + 1),
                 None => {
@@ -160,6 +173,34 @@ mod tests {
             before: Some("apply".into()),
             acknowledged,
         }
+    }
+
+    /// The compile's finding for an open notice: the pack's command is its `fix`, with the
+    /// estate's file name where the pack wrote `<estate>`, and the sentence carries the
+    /// text and the acknowledgement, never the command.
+    #[test]
+    fn an_open_notice_is_a_finding_whose_fix_is_the_packs_command() {
+        let notices = vec![PackNotices {
+            pack: "p".into(),
+            file: "presets/p.satz".into(),
+            notices: vec![satz_core::satz::NoticeDecl {
+                param: "p_adopted".into(),
+                text: "Adopt what is live.".into(),
+                run: "satz adopt <estate> --execute --import".into(),
+                before: Some("apply".into()),
+                line: 7,
+            }],
+        }];
+        let src = "estate e\nuse \"presets/p.satz\"\n";
+        let f = compile_findings(&notices, &Env::new(), Path::new("yaml/e.satz"), src);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].fix.as_deref(), Some("satz adopt e.satz --execute --import"));
+        assert_eq!(
+            f[0].message,
+            "`presets/p.satz`: Adopt what is live.\nOnce the command has run, bind `p_adopted = true` in the estate's params; apply and bootstrap refuse until then."
+        );
+        assert_eq!((f[0].subject.as_deref(), f[0].file.as_deref(), f[0].line), (Some("p_adopted"), Some("yaml/e.satz"), Some(2)));
+        assert_eq!(f[0].group.as_deref(), Some("notices open — what a pack asks to be run once it is on"), "a title, with no count in it");
     }
 
     #[test]
