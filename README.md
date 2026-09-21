@@ -2046,7 +2046,7 @@ the emitter renders the folded IR as `main.tf`, `providers.tf`, `variables.tf`,
 
 #### 2. Schema Registry (`src/schema.rs`)
 Manages Terraform provider schemas (loaded as JSON).
-- **Typing**: every resource key and block key is checked against the schema at parse time — an unknown key is an error, not a guess.
+- **Typing**: every resource key and block key is checked against the schema at parse time — an unknown key is an error naming the file, the line and the key, not a guess. The keys satz reads itself are the exception, and they are a closed list: `"import-id"`, `lifecycle`, `provider`, a project's `project_service` and `org`, a group's `member` / `manager` / `owner` / `email`.
 
 #### 3. Template Generator (`src/template.rs`)
 Writes the day-0 estate for a new customer.

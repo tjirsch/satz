@@ -2593,6 +2593,14 @@ impl satz_core::pipeline::TypeResolver for EstateResolver<'_> {
         let (class, scope) = satz_core::pipeline::type_facts(key);
         Some(ResolvedType { tf_type: key.to_string(), class, scope })
     }
+
+    fn body_keys(&self, tf_type: &str, path: &[&str]) -> Option<satz_core::pipeline::BodyKeys> {
+        let block = self.registry.block_at(tf_type, path)?;
+        Some(satz_core::pipeline::BodyKeys {
+            blocks: block.block_types.keys().cloned().collect(),
+            attributes: block.attributes.keys().cloned().collect(),
+        })
+    }
 }
 impl satz_core::algebra::TypeTable for EstateResolver<'_> {
     fn merge_class(&self, t: &str) -> satz_core::MergeClass {
@@ -7245,6 +7253,12 @@ mod yaml_estate_gate {
             let (class, scope) = satz_core::pipeline::type_facts(key);
             Some(satz_core::pipeline::ResolvedType { tf_type: key.to_string(), class, scope })
         }
+        /// The fixture table is a list of type names with no schema behind it, so it
+        /// has no verdict on a body's keys. The estate resolver, which does, is what
+        /// the key check is tested through.
+        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<satz_core::pipeline::BodyKeys> {
+            None
+        }
     }
     impl satz_core::algebra::TypeTable for FixtureTypes {
         fn merge_class(&self, t: &str) -> satz_core::MergeClass {
@@ -8302,6 +8316,75 @@ google_cloud_identity_group {
         let got = crate::emitter::reconciled_edges(&merged).unwrap();
         assert_eq!(got.len(), 1, "with and without an id is one binding");
         assert_eq!(got[0].import_id, "x");
+    }
+}
+
+#[cfg(test)]
+mod schema_typed_bodies {
+    //! Every key of a resource body is the provider's or satz's own. The estate
+    //! resolver answers from the real schema fixture, which is what production
+    //! compiles against.
+
+    fn compile(src: &str) -> Result<(), String> {
+        let reg = super::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        satz_core::pipeline::compile_estate("main.satz", src, &resolver, &|p| Err(format!("no use: {}", p)))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    const HEAD: &str = r#"estate body_keys
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id = "C0example"
+  customer_domain = "example.com"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+"#;
+
+    /// A project's parent is `folder_id` or `org_id`; `parent` is the Resource
+    /// Manager path, which `google_project` has no attribute for. It used to
+    /// compile and reach `main.tf`, where `tofu validate` was the first to say so.
+    #[test]
+    fn a_project_body_is_refused_an_argument_the_provider_has_not() {
+        let err = compile(&format!(
+            "{}\ngoogle_project {{\n  archive {{\n    project_id = \"corp-archive-001\"\n    parent = \"organizations/123456789012\"\n  }}\n}}\n",
+            HEAD
+        ))
+        .expect_err("a key the schema does not name is refused");
+        // file, line and key — the estate reads where to go, not just what is wrong
+        assert!(err.starts_with("main.satz:18: google_project: unknown key `parent`"), "{}", err);
+    }
+
+    /// The same rule one level down: a block's own keys are the schema's too.
+    #[test]
+    fn a_nested_block_is_refused_a_key_the_schema_does_not_name() {
+        let err = compile(&format!(
+            "{}\ngoogle_org_policy_policy {{\n  \"compute-disableSerialPortAccess\" {{\n    spec {{\n      bogus = true\n    }}\n  }}\n}}\n",
+            HEAD
+        ))
+        .expect_err("a key the schema does not name is refused");
+        assert!(err.contains("google_org_policy_policy spec: unknown key `bogus`"), "{}", err);
+    }
+
+    /// What a project body carries besides the provider's own arguments:
+    /// `project_service` (satz emits one `google_project_service` per entry),
+    /// `"import-id"` (an `import` block) and nested resource types (the project
+    /// is the scope they are written in). None of the three is an attribute of
+    /// `google_project`, and all three compile.
+    #[test]
+    fn a_project_keeps_what_satz_reads_itself() {
+        compile(&format!(
+            "{}\ngoogle_project {{\n  infra {{\n    \"import-id\" = \"corp-infra-001\"\n    project_id = \"corp-infra-001\"\n    project_service = [\"storage.googleapis.com\"]\n    google_storage_bucket {{\n      audit {{\n        name = \"corp-audit-logs\"\n        location = \"EU\"\n      }}\n    }}\n  }}\n}}\n",
+            HEAD
+        ))
+        .expect("a project body carrying what satz reads itself compiles");
     }
 }
 

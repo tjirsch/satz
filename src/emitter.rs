@@ -776,9 +776,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     schema,
                     &rc,
                     Some(&alias),
-                    ctx.billing_fallback.as_ref(),
                     &|_| None,
-                    None,
                 )
                 .map_err(|e| e.to_string())?;
                 if let Some(id) = import_id {

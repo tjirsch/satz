@@ -241,6 +241,20 @@ impl ResourceRegistry {
         false
     }
 
+    /// The block at `path` inside a resource type — `path` empty is the resource's own
+    /// body, each further element a block key one level down. `None` where the registry
+    /// has no such type, or the schema no such block.
+    pub fn block_at(&self, tf_type: &str, path: &[&str]) -> Option<&BlockSchema> {
+        // EXACT lookup: the `google_` fallback belongs to the YAML dialect, and a body
+        // is judged against the type the estate actually names.
+        let (_, schema) = self.resources.get(tf_type)?;
+        let mut block = &schema.block;
+        for seg in path {
+            block = &block.block_types.get(*seg)?.block;
+        }
+        Some(block)
+    }
+
     pub fn find_resource(&self, key: &str) -> Option<(&str, &ResourceSchema)> {
         // 1. Try exact match
         if let Some((prov, schema)) = self.resources.get(key) {

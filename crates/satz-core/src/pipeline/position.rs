@@ -434,6 +434,10 @@ mod tests {
 
     struct Types;
     impl TypeResolver for Types {
+        // No schema behind this table: no verdict on a body's keys.
+        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<crate::pipeline::BodyKeys> {
+            None
+        }
         fn resolve(&self, key: &str) -> Option<ResolvedType> {
             const KNOWN: [&str; 4] =
                 ["google_storage_bucket", "google_org_policy_policy", "google_essential_contacts_contact", "google_organization_iam_member"];

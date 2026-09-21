@@ -26,6 +26,54 @@ use position::Position;
 /// `None` marks the key as config-layer (terraform/providers/…) — not an entity.
 pub trait TypeResolver {
     fn resolve(&self, key: &str) -> Option<ResolvedType>;
+
+    /// The keys the provider schema names in one body of `tf_type`: `path` empty is the
+    /// resource's own body, each further element a block key one level down
+    /// (`["spec", "rules"]`). `None` where the schema has no such type or no such
+    /// block — a level with no schema gets no verdict, and the walk checks nothing
+    /// there.
+    fn body_keys(&self, tf_type: &str, path: &[&str]) -> Option<BodyKeys>;
+}
+
+/// One body level as the schema names it: the keys that open a nested block, and the
+/// keys that carry a value. The walk needs both apart — it descends into a block and
+/// stops at an attribute, whose own content is data (`labels`, a JSON string) and not
+/// the schema's to judge.
+#[derive(Debug, Clone, Default)]
+pub struct BodyKeys {
+    pub blocks: std::collections::BTreeSet<String>,
+    pub attributes: std::collections::BTreeSet<String>,
+}
+
+impl BodyKeys {
+    fn knows(&self, key: &str) -> bool {
+        self.blocks.contains(key) || self.attributes.contains(key)
+    }
+}
+
+/// Keys a resource body carries that no provider schema names, and what each one is.
+/// Everything else is checked against the schema, so this list is the whole of what
+/// satz adds to a resource type's own vocabulary:
+///
+/// - `"import-id"` — the live id `satz adopt --execute` writes back; it becomes an
+///   `import` block, never an attribute.
+/// - `lifecycle` and `provider` — the two Terraform meta-arguments satz emits from a
+///   body; they belong to no resource schema. `depends_on` is not among them: satz
+///   derives the ordering a plan needs itself.
+/// - `project_service` on a project — the list of APIs satz turns into
+///   `google_project_service` resources beside the project.
+/// - `org` on a project — the organisation a project states as its parent where the
+///   estate has no enclosing node; the emitter reads it beside `org_id`.
+/// - `member`, `manager`, `owner` and `email` on a group — the membership lists satz
+///   turns into `google_cloud_identity_group_membership` resources, and the address the
+///   group's `group_key` is built from.
+fn satz_body_key(tf_type: &str, key: &str) -> bool {
+    match key {
+        "import-id" | "lifecycle" | "provider" => true,
+        "project_service" | "org" => tf_type == "google_project",
+        "member" | "manager" | "owner" | "email" => tf_type == "google_cloud_identity_group",
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -957,6 +1005,18 @@ fn unknown_type_msg(types: &dyn TypeResolver, key: &str, what: &str) -> String {
     }
 }
 
+/// The message for a body key no schema names. It says where the key stands — the
+/// resource type, and the chain of blocks inside it — so a key written one level too
+/// deep reads as what it is.
+fn unknown_body_key_msg(tf_type: &str, path: &[String], key: &str) -> String {
+    let at = if path.is_empty() {
+        tf_type.to_string()
+    } else {
+        format!("{} {}", tf_type, path.join(" "))
+    };
+    format!("{}: unknown key `{}` — the provider schema names no such argument or block here", at, key)
+}
+
 /// Merge class and intrinsic scope for a resolved Terraform type.
 ///
 /// Whether a key names a resource at all is a schema question and stays with the
@@ -1070,6 +1130,60 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
+    /// Every key of one resource body against the provider schema. A key the schema
+    /// does not name, and that satz does not read itself (`satz_body_key`), is a parse
+    /// error naming the file, the line and the key — it would otherwise reach `main.tf`
+    /// as an argument the provider has no such thing as, and `tofu validate` would be
+    /// the first to say so.
+    ///
+    /// A key that opens a nested block is followed one level down; a key that carries a
+    /// value is a leaf, because its content is data — a `labels` map's keys are the
+    /// customer's, not the schema's.
+    fn check_body<'e>(
+        &self,
+        tf_type: &str,
+        entries: impl IntoIterator<Item = &'e Entry>,
+        file_name: &str,
+    ) -> Result<(), PipelineError> {
+        self.check_level(tf_type, &mut Vec::new(), entries, file_name)
+    }
+
+    fn check_level<'e>(
+        &self,
+        tf_type: &str,
+        path: &mut Vec<String>,
+        entries: impl IntoIterator<Item = &'e Entry>,
+        file_name: &str,
+    ) -> Result<(), PipelineError> {
+        let borrowed: Vec<&str> = path.iter().map(String::as_str).collect();
+        let Some(keys) = self.types.body_keys(tf_type, &borrowed) else { return Ok(()) };
+        for e in entries {
+            let (key, line, body, named) = match e {
+                Entry::Attr { key, line, .. } => (key, *line, None, false),
+                Entry::Map { key, name, body, line } => (key, *line, Some(body), name.is_some()),
+                Entry::Use { .. } => continue,
+            };
+            let key = resolve_key(key, &self.genv, file_name, line)?;
+            if path.is_empty() && satz_body_key(tf_type, &key) {
+                continue;
+            }
+            if !keys.knows(&key) {
+                return perr(file_name, line, unknown_body_key_msg(tf_type, path, &key));
+            }
+            // A named map (`key name { … }`) inside a body is a map of names, not the
+            // block's own level: the names are the author's and the schema has no
+            // verdict on them.
+            if let (Some(body), false) = (body, named) {
+                if keys.blocks.contains(&key) {
+                    path.push(key);
+                    self.check_level(tf_type, path, body, file_name)?;
+                    path.pop();
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Absorb a file's declared params: first definition wins, later files see
     /// earlier definitions. Returns the file's declared names (tfvars dedup is
     /// implicit — genv IS the tfvars namespace).
@@ -1394,10 +1508,14 @@ impl Walk<'_> {
     ) -> Result<(serde_yaml::Mapping, Vec<Entry>), PipelineError> {
         let mut attrs = serde_yaml::Mapping::new();
         let mut children = Vec::new();
+        // The node's own keys — what is left once the children are routed away — are
+        // checked against the schema like any other resource body.
+        let mut own_entries: Vec<&Entry> = Vec::new();
         for e in body {
             self.belongs(Position::NodeBody { node, label }, e, file_name)?;
             match e {
                 Entry::Attr { key, value, line } => {
+                    own_entries.push(e);
                     attrs.insert(
                         serde_yaml::Value::String(resolve_key(key, &self.genv, file_name, *line)?),
                         resolve_value(value, &self.genv, file_name, *line)?,
@@ -1431,6 +1549,7 @@ impl Walk<'_> {
                     if is_child {
                         children.push(e.clone());
                     } else if let Entry::Map { body, .. } = e {
+                        own_entries.push(e);
                         attrs.insert(
                             serde_yaml::Value::String(k),
                             serde_yaml::Value::Mapping(resolve_obj(body, &self.genv, file_name)?),
@@ -1439,6 +1558,7 @@ impl Walk<'_> {
                 }
             }
         }
+        self.check_body(node, own_entries, file_name)?;
         Ok((attrs, children))
     }
 
@@ -1669,6 +1789,7 @@ impl Walk<'_> {
             }
         };
         for (label, entries, line) in named {
+            self.check_body(&rt.tf_type, entries, file_name)?;
             let body = Body::Attrs(serde_yaml::Value::Mapping(resolve_obj(entries, &self.genv, file_name)?));
             insert_entity(
                 own,
@@ -1930,6 +2051,10 @@ question oneof mode {
 
     struct Table;
     impl TypeResolver for Table {
+        // No schema behind this table: no verdict on a body's keys.
+        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<BodyKeys> {
+            None
+        }
         fn resolve(&self, key: &str) -> Option<ResolvedType> {
             match key {
                 "google_cloud_identity_group" => Some(ResolvedType {
@@ -2076,6 +2201,10 @@ mod estate_channel_tests {
 
     struct Table;
     impl TypeResolver for Table {
+        // No schema behind this table: no verdict on a body's keys.
+        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<BodyKeys> {
+            None
+        }
         fn resolve(&self, key: &str) -> Option<ResolvedType> {
             match key {
                 "google_org_policy_policy" => Some(ResolvedType {
@@ -2439,6 +2568,10 @@ mod full_type_name_tests {
 
     struct Google;
     impl TypeResolver for Google {
+        // No schema behind this table: no verdict on a body's keys.
+        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<BodyKeys> {
+            None
+        }
         fn resolve(&self, key: &str) -> Option<ResolvedType> {
             match key {
                 "terraform" | "providers" | "variables" | "include" => return None,
@@ -2529,6 +2662,10 @@ mod review_2026_08_29_tests {
 
     struct Table;
     impl TypeResolver for Table {
+        // No schema behind this table: no verdict on a body's keys.
+        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<BodyKeys> {
+            None
+        }
         fn resolve(&self, key: &str) -> Option<ResolvedType> {
             let entity = |t: &str, scope: Scope| Some(ResolvedType { tf_type: t.into(), class: MergeClass::Entity, scope });
             match key {
