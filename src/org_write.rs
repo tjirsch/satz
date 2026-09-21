@@ -14,7 +14,8 @@
 use std::path::PathBuf;
 
 use crate::findings::CompileRefusal;
-use crate::{estate_path, Commands, ToolConfig};
+use crate::{estate_path, Commands};
+use crate::settings::{ToolConfig};
 
 /// What a run does to the organisation it is pointed at.
 #[derive(Debug, PartialEq)]

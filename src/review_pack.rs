@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use rmcp::schemars;
 
 use crate::findings::{Finding, Kind, Severity};
-use crate::ToolConfig;
+use crate::settings::ToolConfig;
 
 type BoxErr = Box<dyn std::error::Error>;
 
@@ -619,7 +619,7 @@ mod tests {
         use std::sync::{Arc, Barrier};
         let dir = std::env::temp_dir().join(format!("satz-review-stem-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut cfg = crate::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        let mut cfg = crate::settings::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
         cfg.schema_dir = crate::corpus::schema_dir();
         let packs: Vec<(PathBuf, String)> = ["a", "b"]
             .iter()
@@ -672,7 +672,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("satz-review-unscoped-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let mut cfg = crate::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        let mut cfg = crate::settings::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
         cfg.schema_dir = crate::corpus::schema_dir();
         let pack = dir.join("logs.satz");
         std::fs::write(

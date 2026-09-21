@@ -92,7 +92,11 @@ jobs:
     # the same two gates on Windows: satz ships a Windows build, so clippy and the tests
     # run there on every pull request and push to main — the smoke matrix is bash and
     # stays on Linux
-    runs-on: windows-latest
+    #
+    # Pinned, like every Ubuntu job here: a floating label moves the whole toolchain under
+    # the gates on GitHub's schedule rather than on a commit, and a failure then belongs to
+    # no change anyone made. Moving the pin is its own commit, which is where it can be read.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

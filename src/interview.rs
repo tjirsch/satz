@@ -16,7 +16,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 
 use crate::questions::{questions_report, short, QuestionRow, QuestionsReport};
-use crate::ToolConfig;
+use crate::settings::ToolConfig;
 use satz_core::pack_graph::PackGraph;
 
 /// A value as a Satz literal, as it goes into `params {}`.

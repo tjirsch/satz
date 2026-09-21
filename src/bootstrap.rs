@@ -530,7 +530,7 @@ pub async fn bootstrap(
     dry_run: bool,
     greenfield: bool,
     no_default_grants: bool,
-    runtime_config: crate::ToolConfig,
+    runtime_config: crate::settings::ToolConfig,
     cli_config: Option<PathBuf>,
     cli_validation: Option<String>,
     cli_verbose: bool,

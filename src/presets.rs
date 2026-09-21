@@ -698,7 +698,7 @@ fn install(path: &Path, contents: &str) -> Result<(), BoxErr> {
 /// `X.local.*` files have no upstream counterpart, so nothing here can touch them.
 pub(crate) async fn get_presets(
     presets_dir: &str,
-    runtime_config: &crate::ToolConfig,
+    runtime_config: &crate::settings::ToolConfig,
     force: bool,
     pristine_dir: Option<PathBuf>,
 ) -> Result<GetPresetsReport, BoxErr> {
@@ -814,7 +814,7 @@ pub(crate) struct InUsePreset {
 /// `get-presets`: fetch the upstream library and say what changed.
 pub(crate) async fn run_get_presets(
     presets_dir: &str,
-    runtime_config: &crate::ToolConfig,
+    runtime_config: &crate::settings::ToolConfig,
     force: bool,
     pristine_dir: Option<PathBuf>,
 ) -> Result<(), BoxErr> {
@@ -1127,8 +1127,8 @@ pub(crate) async fn run_merge_presets(
     presets_dir: &str,
     pristine_dir: Option<PathBuf>,
     estate_arg: Option<PathBuf>,
-    tool_config: &crate::ToolConfig,
-    runtime_config: &crate::ToolConfig,
+    tool_config: &crate::settings::ToolConfig,
+    runtime_config: &crate::settings::ToolConfig,
     report_only: bool,
     adopt: &[String],
 ) -> Result<MergeReport, BoxErr> {
