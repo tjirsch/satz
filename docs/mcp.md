@@ -315,7 +315,8 @@ told that it is missing. A path that does not exist yet — an output directory,
 `satz_interview` creates — is judged where creating it leads, with `..` applied the way a
 directory walk applies it. A relative estate name is read from the server's working
 directory when a file of that name is there and inside the root; otherwise it names a
-file in the config's `yaml_dir`.
+file in the config's `yaml_dir`. That is every estate argument — `estate`, and
+`satz_review_pack`'s `against`.
 
 ### Which identity, and who decides
 

@@ -1505,7 +1505,11 @@ satz fmt --stdin < in.satz         # one file from stdin to stdout, for an edito
 ```
 
 **Parameters:**
-- `PATHS…` — files or directories; a directory is walked
+- `PATHS…` — files or directories; a directory is walked. They are paths, not estate
+  names: `fmt` walks the whole tree — packs and library files as much as estates — and
+  rewrites in place, so the file it touches is the one named. A name that exists only
+  inside `yaml_dir` is refused, and the refusal names the path that works
+  ([ADR 0049](docs/adr/0049-fmt-takes-paths-and-resolves-no-estate-name.md))
 - `--check` — report instead of rewrite; the exit code is the answer
 - `--stdin` — read one file from stdin, write it formatted to stdout
 
@@ -1634,7 +1638,8 @@ warning  notice            estate.satz:57  cis_cloud_sql_iam_and_deletion_protec
   width, 110 columns at most. Into a pipe, a file or a CI log nothing is wrapped: each
   paragraph is one line, so a `grep` for a phrase finds it.
 - **`fix:`** is the last line, where one command answers the finding: the command as it is
-  typed, with the estate's file name in it. It is never wrapped.
+  typed, with the estate in it as a command takes it — the path under `yaml_dir`, so an
+  estate in a subdirectory of it reads `pk/e.satz`. It is never wrapped.
 - **A group** of findings stands under its title with its count — `(7 of 10, 3 silenced)`
   when a silence left some of it out. Findings of no group come first.
 - **Findings of a group that say the same thing are one block:** their first lines as a
@@ -2146,7 +2151,8 @@ A local-mode estate — every estate from `bootstrap` until `satz migrate --mode
 because its first apply is what creates the service account — runs as the credential
 itself. Under `--no-impersonate` a cloud-mode estate does too, and the line says so. An
 estate that declares no `svc_iac_account` and `infra_project_name` pair impersonates
-nothing, and the line says that instead of naming an account. `--offline` reads the
+nothing, and the line says that instead of naming an account — with `satz migrate
+<estate> --mode cloud` named as what it is there: refused until both params are bound. `--offline` reads the
 mode and the account off the estate, so it answers all three without a token, and
 without an ADC file once an estate is given.
 

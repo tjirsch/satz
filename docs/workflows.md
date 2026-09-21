@@ -152,8 +152,8 @@ while a pack's `severity = error` notice is unacknowledged; `--dry-run` compiles
 
 Before it asks for a credential, `bootstrap` checks the params it is about to use:
 `customer_shortname`, `billing_account_infra`, `infra_project_name` and
-`infra_bucket_name` are present (the bucket takes the project id when the estate sets
-no bucket), the organisation id is
+`infra_bucket_name` are present — each is the estate's own value, and the only default
+is the one `estate-core` declares — the organisation id is
 a number, the billing account reads `XXXXXX-XXXXXX-XXXXXX`, and the project id and
 bucket name are shaped the way Google accepts them. A failure names the param and the
 flag that sets it, and nothing is called — an empty value used to travel into a URL

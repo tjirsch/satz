@@ -505,7 +505,7 @@ impl<'a> View<'a> {
     }
 
     /// The findings about each pack's line and what it needs, at the validation level.
-    fn line_findings(&self, label: &str, level: &str) -> Vec<(String, Finding)> {
+    fn line_findings(&self, label: &str, estate_arg: &str, level: &str) -> Vec<(String, Finding)> {
         let Some(sev) = crate::findings::at_level(level) else { return Vec::new() };
         let at = |l: Option<&UseLine>| l.map(|l| l.index as u32 + 1);
         // (the pack, the sentence, the command that answers it, the line)
@@ -560,7 +560,7 @@ impl<'a> View<'a> {
                 out.push((
                     path,
                     match fix {
-                        Some(command) => f.fix_in(&command, Path::new(label)),
+                        Some(command) => f.fix_in(&command, estate_arg),
                         None => f,
                     },
                 ));
@@ -666,7 +666,14 @@ impl<'a> View<'a> {
 /// The compile's pack findings, in two halves: the exclusions, which stop the compile
 /// before the fold, and the rest. A library file the graph names that does not read is
 /// one warning, never a stopped compile.
-pub(crate) fn compile_findings(graph: &PackGraph, presets_dir: &Path, label: &str, src: &str, level: &str) -> (Vec<Finding>, Vec<Finding>) {
+pub(crate) fn compile_findings(
+    graph: &PackGraph,
+    presets_dir: &Path,
+    label: &str,
+    estate_arg: &str,
+    src: &str,
+    level: &str,
+) -> (Vec<Finding>, Vec<Finding>) {
     let lib = match Library::load(graph, presets_dir) {
         Ok(l) => l,
         Err(e) => {
@@ -680,7 +687,7 @@ pub(crate) fn compile_findings(graph: &PackGraph, presets_dir: &Path, label: &st
     // the pack each finding is about becomes its subject: the half of its identity a
     // `[[silence]]` row names, and what `satz packs` groups by
     let strip = |v: Vec<(String, Finding)>| v.into_iter().map(|(path, f)| f.about(path)).collect();
-    (strip(view.exclusion_findings(label, src)), strip(view.line_findings(label, level)))
+    (strip(view.exclusion_findings(label, src)), strip(view.line_findings(label, estate_arg, level)))
 }
 
 /// A front-end refusal with what the pack graph has to add: an `unknown param` is most
@@ -689,9 +696,16 @@ pub(crate) fn compile_findings(graph: &PackGraph, presets_dir: &Path, label: &st
 /// The hint rides in the typed error, so one refusal has one shape — `file` and `line`
 /// survive for the LSP's diagnostics, `satz_transpile_check` and satz-studio, which are
 /// the readers that most need the line for exactly these refusals.
-pub(crate) fn hinted(e: PipelineError, graph: &crate::pack_graph::Shipped, label: &str, src: &str, level: &str) -> PipelineError {
+pub(crate) fn hinted(
+    e: PipelineError,
+    graph: &crate::pack_graph::Shipped,
+    label: &str,
+    estate_arg: &str,
+    src: &str,
+    level: &str,
+) -> PipelineError {
     let hints = match graph {
-        crate::pack_graph::Shipped::Graph(g, dir) => front_end_hints(g, dir, label, src, level),
+        crate::pack_graph::Shipped::Graph(g, dir) => front_end_hints(g, dir, label, estate_arg, src, level),
         _ => Vec::new(),
     };
     if hints.is_empty() {
@@ -702,10 +716,10 @@ pub(crate) fn hinted(e: PipelineError, graph: &crate::pack_graph::Shipped, label
 
 /// What the pack graph says about an estate whose front end failed: the requirements
 /// that are off, which is usually why a param is unknown. Empty when it has nothing to add.
-fn front_end_hints(graph: &PackGraph, presets_dir: &Path, label: &str, src: &str, level: &str) -> Vec<String> {
+fn front_end_hints(graph: &PackGraph, presets_dir: &Path, label: &str, estate_arg: &str, src: &str, level: &str) -> Vec<String> {
     let Ok(lib) = Library::load(graph, presets_dir) else { return Vec::new() };
     let Ok(view) = View::new(graph, &lib, src) else { return Vec::new() };
-    view.line_findings(label, level)
+    view.line_findings(label, estate_arg, level)
         .into_iter()
         .chain(view.exclusion_findings(label, src))
         .filter(|(_, f)| matches!(f.kind, Kind::PackRequirement | Kind::ExcludedPacks | Kind::DryRunConflict))
@@ -826,7 +840,7 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
     let lib = Library::load(&graph, &dir)?;
     let view = View::new(&graph, &lib, &src).map_err(|e| format!("{}: {}", label, e))?;
     let mut found = view.exclusion_findings(&label, &src);
-    found.extend(view.line_findings(&label, &runtime.validation_level));
+    found.extend(view.line_findings(&label, &crate::estate_as_typed(estate, runtime), &runtime.validation_level));
     let mut nodes: Vec<&Node> = graph.nodes.iter().collect();
     nodes.sort_by_key(|n| (n.order.map(|o| o + 1).unwrap_or(0), n.path.clone()));
     Ok(PacksReport {
@@ -1476,7 +1490,7 @@ mod tests {
 
     fn messages(src: &str) -> Vec<String> {
         let g = graph();
-        let (a, b) = compile_findings(&g, &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"), "e.satz", src, "warn");
+        let (a, b) = compile_findings(&g, &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"), "e.satz", "e.satz", src, "warn");
         a.into_iter().chain(b).map(|f| f.message).collect()
     }
 
@@ -1548,12 +1562,12 @@ mod tests {
         let head = HEAD.replace("x = 1", "use_billing_permissions = true\n  security_model_s1 = false\n  security_model_s2 = false");
         let src = format!("{}use \"presets/billing-account-permissions.satz\" when use_billing_permissions\n", head);
         let err = || PipelineError { file: "e.satz".to_string(), line: 42, msg: "unknown param `iac_admins_group`".to_string() };
-        let h = hinted(err(), &shipped, "e.satz", &src, "warn");
+        let h = hinted(err(), &shipped, "e.satz", "e.satz", &src, "warn");
         assert_eq!((h.file.as_str(), h.line), ("e.satz", 42));
         assert!(h.msg.starts_with("unknown param `iac_admins_group` — the pack graph: "), "{}", h.msg);
         assert!(h.msg.contains("security-group-models"), "{}", h.msg);
         // nothing to add: the refusal travels untouched
-        let quiet = hinted(err(), &shipped, "e.satz", HEAD, "warn");
+        let quiet = hinted(err(), &shipped, "e.satz", "e.satz", HEAD, "warn");
         assert_eq!(quiet.msg, "unknown param `iac_admins_group`");
     }
 
@@ -1612,7 +1626,7 @@ mod tests {
             HEAD.replace("x = 1", "use_cis_baseline = true\n  cis_cloud_sql_hardening = true\n  cis_cloud_sql_hardening_dry_run = true")
         );
         let g = graph();
-        let (stop, _) = compile_findings(&g, &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"), "e.satz", &src, "warn");
+        let (stop, _) = compile_findings(&g, &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"), "e.satz", "e.satz", &src, "warn");
         assert_eq!(stop.len(), 1, "{stop:?}");
         assert_eq!(stop[0].kind, Kind::DryRunConflict);
         assert!(stop[0].message.contains("REPLACES enforcement"), "{}", stop[0].message);
@@ -1621,7 +1635,7 @@ mod tests {
             "{}use \"presets/security-group-models/s1-security-groups.satz\" when security_model_s1\ngoogle_cloud_identity_group {{\n  use \"presets/security-group-models/s1-group-definitions.satz\" when security_model_s1\n}}\n",
             HEAD.replace("x = 1", "security_model_s1 = true\n  security_model_s2 = false")
         );
-        let (stop, _) = compile_findings(&g, &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"), "e.satz", &both, "warn");
+        let (stop, _) = compile_findings(&g, &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"), "e.satz", "e.satz", &both, "warn");
         assert!(stop.is_empty(), "{stop:?}");
     }
 

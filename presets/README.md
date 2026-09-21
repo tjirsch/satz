@@ -1504,6 +1504,27 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.73.0
+
+**`bootstrap` refuses an estate that binds no `infra_bucket_name`.** The state bucket had
+two defaults: `presets/estate-core.satz` declares
+`infra_bucket_name = "{customer_shortname}-infra-001-state"`, and `bootstrap` took the
+infra project's id when the estate bound no bucket of its own. An estate that binds
+`infra_project_name` and not `infra_bucket_name` therefore bootstrapped into a bucket
+named after the project. It is now refused by name, before any credential is asked for:
+
+```
+the estate is not ready to bootstrap — 1 param(s) are missing or malformed, and nothing was called:
+  infra_bucket_name — is not set
+      set it with `satz init --infra-bucket-name`
+```
+
+**The edit:** bind `infra_bucket_name` in the estate's `params { }` — the value the state
+bucket already has, so no state moves — or `use "presets/estate-core.satz"`, whose default
+resolves it. `satz init --infra-bucket-name <name>` writes it into an estate you already
+have. An estate that uses `estate-core`, and every estate `satz init` wrote, binds it
+already and is unaffected.
+
 ### v0.72.0
 
 **A key a resource type does not have is refused.** Every key of a resource body is

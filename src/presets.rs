@@ -1188,17 +1188,16 @@ pub(crate) async fn run_merge_presets(
     // refuse before that step ran — here, after an adoption, or in the step itself.
     let baseline = match (&estate, report_only) {
         (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet).map_err(|e| {
-            // Printed ahead of the error: the detail first, then the one line `main` closes with.
-            eprintln!(
-                "\nmerge-presets compiles {} before it changes anything, and it does not compile:\n  {}\n\
+            format!(
+                "{} does not compile, so merge-presets changed nothing.\n\
+                 merge-presets compiles the estate before it changes anything, and it does not compile:\n  {}\n\
                  If a pack copy under {} is what fails — a param the estate renamed that the copy still binds —\n\
                  `satz get-presets --force` refreshes the packs the estate uses without compiling (it lists them first);\n\
-                 then run merge-presets again. A `.local.satz` fork is the estate's own file: edit it by hand.\n",
+                 then run merge-presets again. A `.local.satz` fork is the estate's own file: edit it by hand.",
                 est.display(),
                 e,
                 presets_dir
-            );
-            format!("{} does not compile, so merge-presets changed nothing (see above)", est.display())
+            )
         })?),
         _ => None,
     };

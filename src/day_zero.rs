@@ -103,7 +103,9 @@ pub(crate) struct DayZero<'a> {
     pub billing_account: &'a str,
     /// `None` when the estate does not set it: there is no default to take.
     pub project_id: Option<&'a str>,
-    /// `None` when the estate sets neither it nor the project id it falls back to.
+    /// `None` when the estate does not set it: there is no default to take. The one
+    /// default is `presets/estate-core.satz`'s, which an estate that uses the pack
+    /// resolves before bootstrap reads the table.
     pub bucket_name: Option<&'a str>,
 }
 
@@ -224,6 +226,17 @@ mod tests {
         assert!(err.contains("infra_project_name — is not set"), "{}", err);
         assert!(err.contains("satz init --infra-project-name"), "the flag that sets it:\n{}", err);
         assert!(err.contains("infra_bucket_name — is not set"), "{}", err);
+    }
+
+    /// The state bucket has one default, `presets/estate-core.satz`'s, and bootstrap does
+    /// not hold a second: an estate that binds the project and not the bucket is refused
+    /// by name rather than bootstrapped into a bucket named after the project.
+    #[test]
+    fn a_bucket_the_estate_does_not_set_is_refused_although_the_project_is_set() {
+        let d = DayZero { bucket_name: None, ..ok() };
+        let err = gate(&d).unwrap_err();
+        assert!(err.contains("infra_bucket_name — is not set"), "{}", err);
+        assert!(!err.contains("infra_project_name"), "the project is set and is not the bucket's default:\n{}", err);
     }
 
     #[test]

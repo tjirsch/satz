@@ -1632,7 +1632,9 @@ grep -q 'bind `cis_baseline_adopted = true`' tmp/pk/notice.txt || fail "the noti
 grep -q 'notices open — what a pack asks to be run once it is on (1)' tmp/pk/notice-check.txt || fail "the compile must warn while a notice is open:\n$(cat tmp/pk/notice-check.txt)"
 # the layout: the first line, the sentence under it, the command as a last line of its own
 grep -q '^warning  notice  *tmp/pk/e.satz:[0-9]*  cis_baseline_adopted$' tmp/pk/notice-check.txt || fail "a finding opens with severity, kind, file:line and subject:\n$(cat tmp/pk/notice-check.txt)"
-grep -q '^    fix: satz adopt e.satz --execute --import$' tmp/pk/notice-check.txt || fail "the command is the finding's last line:\n$(cat tmp/pk/notice-check.txt)"
+# the estate is named as a command takes it — this one is given as an absolute path, and
+# that is what the line has to carry: the file name alone would name yaml/e.satz, another file
+grep -q "^    fix: satz adopt $PWD/tmp/pk/e.satz --execute --import$" tmp/pk/notice-check.txt || fail "the command is the finding's last line, naming the estate as a command takes it:\n$(cat tmp/pk/notice-check.txt)"
 # the acknowledgement is an answer: `satz_interview` takes it, and `satz_packs` reports both states
 "$satz" --config . packs "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/notice-packs.json > /dev/null 2>&1 || fail "satz packs failed"
 printf '%s\n' \
