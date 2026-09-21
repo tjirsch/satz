@@ -1538,7 +1538,7 @@ answer and `satz add-pack` both say which line it is:
 **The edit:** move the commented line out of the folder's body to the top level of the file,
 as it is, then answer or `add-pack` again. A pack that creates a project names its folder with
 a param of its own (`logsink_project_folder` for the audit archive): bind it to the folder,
-`logsink_project_folder = google_folder.infra_folder.name`, so the project stays where the line
+`logsink_project_folder = "google_folder.infra_folder.name"`, so the project stays where the line
 stood.
 
 **An answer that would leave an estate satz refuses writes nothing.** Before, the answer was
