@@ -1090,12 +1090,27 @@ How a resource is resolved depends on who chose its identity:
   exist (or that the caller cannot see) with **403, not 404**, so a typo reads
   as *FAILED* with the API's denial rather than *on apply*; either way the run
   stops and nothing is written.
-- **User-chosen id** (bucket, service account, IAM bindings, sinks,
-  metrics, custom roles, `project_service`, …): the import id is rendered
-  offline from a template on the type's row in `presets/import-config.yaml`
+- **User-chosen id** (bucket, service account, sinks, metrics, custom roles,
+  `project_service`, …): the import id is rendered offline from a template on
+  the type's row in `presets/import-config.yaml`
   (`import_id: "projects/{project}/serviceAccounts/{account_id}@…"`), with
   `{placeholders}` filled from the emitted attributes and resolved references.
   Reported as *derived*; its existence is verified by the import itself.
+- **IAM grants** (`google_organization_iam_member`, `google_folder_iam_member`,
+  `google_project_iam_member`, `google_billing_account_iam_member`,
+  `google_service_account_iam_member`, `google_storage_bucket_iam_member`,
+  `google_pubsub_topic_iam_member`, `google_pubsub_subscription_iam_member`,
+  `google_bigquery_dataset_iam_member`): the id `<parent> <role> <member>` is
+  rendered from the template, then checked against the live IAM policy of the
+  parent, read once per parent (a dataset's access list for a BigQuery dataset).
+  A binding of the role that holds the member → verified import; no such binding
+  → *on apply*, and `--execute --import` runs no `tofu import` for it; a parent
+  that does not exist (404) → *on apply (parent)*; a policy that cannot be read →
+  *FAILED* with the API's answer. A grant with a `condition` imports only when a
+  live binding carries the same condition title and expression, under the
+  provider's id `<parent> <role> <member> <title>`; when the member holds the role
+  live only under a different condition, the grant is **AMBIGUOUS** and the live
+  conditions are listed.
 - **GCP-assigned id**: looked up by natural key under the resolved parent —
   folders by display name, groups by email, memberships by group + email, org
   policies by constraint; every other type with a `match_on:` row (essential
@@ -1112,7 +1127,8 @@ it); more than one is **AMBIGUOUS**, the candidates are listed, and you pin
 ambiguous resource, or a type without a rule makes the command exit non-zero after
 printing the table —
 nothing is changed in that case; with `--import`, every row that is not
-imported says why. Managed org-policy constraints the
+imported says why, and the closing line counts what was activated, imported,
+moved, already managed, left to apply and failed. Managed org-policy constraints the
 organisation has never had need `--activate` (they cannot be imported before
 activation; this mutates the org). `--execute` writes the ids into the `.satz`:
 a resource with a block of its own gets an `"import-id"` line; an entry-level

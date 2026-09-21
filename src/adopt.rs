@@ -27,6 +27,7 @@ use rmcp::schemars;
 use std::path::{Path, PathBuf};
 
 use crate::config::ImportConfig;
+use crate::gcp::iam_policy::PolicyApi;
 use crate::manifest::{EmittedResource, Manifest};
 use crate::{configure_estate_impersonation, estate_path, load_import_config, pipeline_b_generate, reject_yaml_dialect, PipelineBOut};
 use crate::settings::{ToolConfig};
@@ -61,6 +62,11 @@ pub(crate) trait Live {
     /// `billingAccounts/<id>/budgets/<uuid>`, display name). Budgets are not
     /// in Cloud Asset Inventory — the Billing Budgets API is the only lookup.
     async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String>;
+    /// The IAM policy of the resource a grant is made on (`organizations/<n>`,
+    /// `b/<bucket>`, `projects/<p>/serviceAccounts/<email>`, …), read through
+    /// `api`. `Ok(None)` when that resource provably does not exist (404), `Err`
+    /// when the policy could not be read — never an empty policy by error.
+    async fn iam_policy(&mut self, api: PolicyApi, resource: &str) -> Result<Option<serde_json::Value>, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +177,9 @@ pub(crate) async fn resolve<L: Live>(
     // project id — a child names its project either by reference or by the
     // literal id, and both must read the same verdict.
     let mut not_live: BTreeMap<String, Outcome> = BTreeMap::new();
+    // IAM policies by the resource they are set on, read once per run — the
+    // answer, a missing resource or the failure alike
+    let mut iam_policies: IamPolicies = BTreeMap::new();
     let mut out = Vec::new();
     for r in ordered(manifest) {
         let mut res = Resolution {
@@ -208,7 +217,12 @@ pub(crate) async fn resolve<L: Live>(
             "google_org_policy_policy" => resolve_org_policy(r, manifest, &resolved_ids, opts, live, &mut res).await,
             "google_billing_budget" => resolve_budget(r, live).await,
             _ => match rule_for(rules, &r.tf_type) {
-                Rule::Template(t) => render_template(&t, r, manifest, &resolved_ids),
+                Rule::Template(t) => match render_template(&t, r, manifest, &resolved_ids) {
+                    (_, Outcome::Resolved { id, verified: false }) if grant_parent(&r.tf_type, "").is_some() => {
+                        resolve_grant(r, &id, manifest, &resolved_ids, &mut iam_policies, live).await
+                    }
+                    other => other,
+                },
                 Rule::Match(on, asset_type) => resolve_match(r, &on, asset_type.as_deref(), manifest, &resolved_ids, live).await,
                 Rule::None => (String::new(), Outcome::NoRule),
             },
@@ -619,6 +633,155 @@ fn render_template(
     }
     out.push_str(rest);
     (out.clone(), Outcome::Resolved { id: out, verified: false })
+}
+
+/// IAM policies read in one run, by the resource they are set on.
+type IamPolicies = BTreeMap<String, Result<Option<serde_json::Value>, String>>;
+
+/// The grant types whose import id is `<parent> <role> <member>`: the API that
+/// holds the parent's IAM policy, and the parent as that API names it. `None`
+/// for every other type.
+fn grant_parent(tf_type: &str, parent: &str) -> Option<(PolicyApi, String)> {
+    use PolicyApi::*;
+    let under = |prefix: &str| format!("{}{}", prefix, parent.trim_start_matches(prefix));
+    Some(match tf_type {
+        "google_organization_iam_member" => (ResourceManager, under("organizations/")),
+        "google_folder_iam_member" => (ResourceManager, under("folders/")),
+        "google_project_iam_member" => (ResourceManager, under("projects/")),
+        "google_billing_account_iam_member" => (Billing, under("billingAccounts/")),
+        "google_storage_bucket_iam_member" => (Storage, under("b/")),
+        // the provider accepts a bare e-mail; the IAM API wants the full name
+        "google_service_account_iam_member" if !parent.contains('/') => {
+            (ServiceAccount, format!("projects/-/serviceAccounts/{}", parent))
+        }
+        "google_service_account_iam_member" => (ServiceAccount, parent.to_string()),
+        "google_pubsub_topic_iam_member" | "google_pubsub_subscription_iam_member" => (PubSub, parent.to_string()),
+        "google_bigquery_dataset_iam_member" => (BigQueryDataset, parent.to_string()),
+        _ => return None,
+    })
+}
+
+/// The condition a grant declares, as far as it can be compared with a live one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DeclaredCondition {
+    None,
+    Literal { title: String, expression: String },
+    /// declared, but with a title or expression that is not a literal
+    Undecidable,
+}
+
+fn declared_condition(r: &EmittedResource) -> DeclaredCondition {
+    if !r.nested.keys().any(|k| k.starts_with("condition.")) {
+        return DeclaredCondition::None;
+    }
+    match (r.nested.get("condition.title"), r.nested.get("condition.expression")) {
+        (Some(t), Some(e)) if !crate::manifest::has_interpolation(t) && !crate::manifest::has_interpolation(e) => {
+            DeclaredCondition::Literal { title: t.clone(), expression: e.clone() }
+        }
+        _ => DeclaredCondition::Undecidable,
+    }
+}
+
+/// What a live IAM policy says about one declared grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GrantLive {
+    /// A binding of the role, under the declared condition (its title when there
+    /// is one), holds the member.
+    Held(Option<String>),
+    /// No such binding holds the member.
+    Absent,
+    /// The member holds the role live only under conditions that cannot be told
+    /// apart from the declared one — each as `title: expression`.
+    Unclear(Vec<String>),
+}
+
+/// Members compare as IAM compares them: the address of a user, group, service
+/// account or domain without regard to case, every other principal exactly.
+fn same_member(a: &str, b: &str) -> bool {
+    let folds = |m: &str| ["user:", "group:", "serviceAccount:", "domain:"].iter().any(|p| m.starts_with(p));
+    if folds(a) && folds(b) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
+/// Whether `policy` (an IAM policy, version 3) holds the declared grant.
+fn grant_in_policy(policy: &serde_json::Value, role: &str, member: &str, condition: &DeclaredCondition) -> GrantLive {
+    let text = |c: &serde_json::Value, k: &str| c.get(k).and_then(|s| s.as_str()).unwrap_or("").to_string();
+    // the conditions under which `member` holds `role`, `None` for the unconditional binding
+    let held: Vec<Option<(String, String)>> = policy
+        .get("bindings")
+        .and_then(|b| b.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|b| b.get("role").and_then(|r| r.as_str()) == Some(role))
+        .filter(|b| {
+            b.get("members").and_then(|m| m.as_array()).into_iter().flatten().any(|m| m.as_str().is_some_and(|m| same_member(m, member)))
+        })
+        .map(|b| b.get("condition").map(|c| (text(c, "title"), text(c, "expression"))))
+        .collect();
+    let conditional: Vec<String> = held.iter().flatten().map(|(t, e)| format!("{}: {}", t, e)).collect();
+    match condition {
+        DeclaredCondition::None if held.iter().any(Option::is_none) => GrantLive::Held(None),
+        DeclaredCondition::None => GrantLive::Absent,
+        DeclaredCondition::Literal { title, expression } => {
+            if held.iter().flatten().any(|(t, e)| t == title && e.trim() == expression.trim()) {
+                GrantLive::Held(Some(title.clone()))
+            } else if conditional.is_empty() {
+                GrantLive::Absent
+            } else {
+                GrantLive::Unclear(conditional)
+            }
+        }
+        DeclaredCondition::Undecidable if conditional.is_empty() => GrantLive::Absent,
+        DeclaredCondition::Undecidable => GrantLive::Unclear(conditional),
+    }
+}
+
+/// An IAM grant whose import id rendered offline: imported only when the live
+/// policy of its parent holds it. A grant the policy does not hold is created by
+/// `apply`; a parent that does not exist takes its grants with it; a policy that
+/// cannot be read fails the grant — an unreadable policy is never an empty one.
+async fn resolve_grant<L: Live>(
+    r: &EmittedResource,
+    id: &str,
+    manifest: &Manifest,
+    resolved_ids: &BTreeMap<String, String>,
+    policies: &mut IamPolicies,
+    live: &mut L,
+) -> (String, Outcome) {
+    let (role, member) = match (value_of(r, "role", manifest, resolved_ids), value_of(r, "member", manifest, resolved_ids)) {
+        (Ok(role), Ok(member)) => (role, member),
+        (Err(e), _) | (_, Err(e)) => return (id.to_string(), Outcome::Unresolvable(e)),
+    };
+    let Some(parent) = id.strip_suffix(&format!(" {} {}", role, member)) else {
+        return (
+            id.to_string(),
+            Outcome::Unresolvable(format!("{}: the import id `{}` does not end in its role and member", r.address(), id)),
+        );
+    };
+    let Some((api, resource)) = grant_parent(&r.tf_type, parent) else {
+        return (id.to_string(), Outcome::NoRule);
+    };
+    let key = format!("{} {} in the IAM policy of {}", role, member, resource);
+    if !policies.contains_key(&resource) {
+        let read = live.iam_policy(api, &resource).await;
+        policies.insert(resource.clone(), read);
+    }
+    let policy = match &policies[&resource] {
+        Ok(Some(p)) => p,
+        Ok(None) => return (key, Outcome::ParentOnApply(format!("{} is not live — created with it", resource))),
+        Err(e) => return (key, Outcome::Failed(format!("reading the IAM policy of {}: {}", resource, e))),
+    };
+    let outcome = match grant_in_policy(policy, &role, &member, &declared_condition(r)) {
+        GrantLive::Held(None) => Outcome::Resolved { id: id.to_string(), verified: true },
+        // the provider's import id of a conditional grant ends in the condition title
+        GrantLive::Held(Some(title)) => Outcome::Resolved { id: format!("{} {}", id, title), verified: true },
+        GrantLive::Absent => Outcome::OnApply,
+        GrantLive::Unclear(c) => Outcome::Ambiguous(c),
+    };
+    (key, outcome)
 }
 
 // ---------------------------------------------------------------------------
@@ -1146,6 +1309,10 @@ impl Live for RealLive {
     async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String> {
         crate::gcp::billing::list_budgets(&self.http, &self.token, billing_account).await.map_err(String::from)
     }
+
+    async fn iam_policy(&mut self, api: PolicyApi, resource: &str) -> Result<Option<serde_json::Value>, String> {
+        crate::gcp::iam_policy::read(&self.http, &self.token, api, resource).await.map_err(String::from)
+    }
 }
 
 #[cfg(test)]
@@ -1172,6 +1339,8 @@ mod tests {
         policies_with_rules: BTreeSet<(String, String)>,
         searches: BTreeMap<(String, String), Vec<(String, serde_json::Value)>>,
         budgets: BTreeMap<String, Vec<(String, String)>>,
+        /// IAM policies by resource; a missing key is a read that fails
+        iam: BTreeMap<String, Result<Option<serde_json::Value>, String>>,
         calls: Vec<String>,
     }
 
@@ -1208,6 +1377,10 @@ mod tests {
         async fn budgets(&mut self, billing_account: &str) -> Result<Vec<(String, String)>, String> {
             self.calls.push(format!("budgets {}", billing_account));
             Ok(self.budgets.get(billing_account).cloned().unwrap_or_default())
+        }
+        async fn iam_policy(&mut self, api: PolicyApi, resource: &str) -> Result<Option<serde_json::Value>, String> {
+            self.calls.push(format!("iam {:?} {}", api, resource));
+            self.iam.get(resource).cloned().unwrap_or_else(|| Err(format!("no policy fixture for {}", resource)))
         }
     }
 
@@ -1324,8 +1497,13 @@ import {
             policies_with_rules: BTreeSet::new(),
             searches: BTreeMap::new(),
             budgets: BTreeMap::new(),
+            iam: BTreeMap::new(),
             calls: vec![],
         };
+        f.iam.insert(
+            "folders/222".into(),
+            Ok(Some(serde_json::json!({ "bindings": [{ "role": "roles/viewer", "members": ["group:x@example.com"] }] }))),
+        );
         f.projects.insert("acme-infra-001".into(), "projects/100000000001".into());
         f.searches.insert(
             ("projects/acme-infra-001".into(), "test.googleapis.com/google_monitoring_alert_policy".into()),
@@ -1368,11 +1546,13 @@ import {
             outcome(&rs, "google_service_account.sa"),
             &Outcome::Resolved { id: "projects/acme-infra-001/serviceAccounts/svc-iac@acme-infra-001.iam.gserviceaccount.com".into(), verified: false }
         );
-        // the folder grant needs the folder NUMBER, which the lookup supplied
+        // the folder grant needs the folder NUMBER, which the lookup supplied, and
+        // is imported because that folder's live policy holds it
         assert_eq!(
             outcome(&rs, "google_folder_iam_member.grant"),
-            &Outcome::Resolved { id: "folders/222 roles/viewer group:x@example.com".into(), verified: false }
+            &Outcome::Resolved { id: "folders/222 roles/viewer group:x@example.com".into(), verified: true }
         );
+        assert!(live.calls.contains(&"iam ResourceManager folders/222".to_string()), "{:?}", live.calls);
         // the project is an existence check, not a template: it exists → verified
         assert_eq!(outcome(&rs, "google_project.infra"), &Outcome::Resolved { id: "acme-infra-001".into(), verified: true });
         assert!(live.calls.contains(&"project acme-infra-001".to_string()), "{:?}", live.calls);
@@ -1585,6 +1765,113 @@ import {
         let err = value_of(grant, "member", &manifest, &ids).unwrap_err();
         assert!(err.contains("only known after apply"), "{}", err);
         assert!(!err.contains("has no `member`"), "{}", err);
+    }
+
+    /// A grant's import id renders offline, so every declared grant used to be an
+    /// import candidate, and `--execute --import` ran `tofu import` for each one the
+    /// organisation did not hold — a failure line per grant apply was about to
+    /// create. The live policy of the parent decides now.
+    #[tokio::test]
+    async fn a_grant_is_imported_only_when_the_live_policy_of_its_parent_holds_it() {
+        let manifest = Manifest::parse(concat!(
+            "resource \"google_organization_iam_member\" \"held\" {\n  org_id = \"123456789012\"\n  role = \"roles/viewer\"\n  member = \"group:Auditors@example.com\"\n}\n",
+            "resource \"google_organization_iam_member\" \"absent\" {\n  org_id = \"123456789012\"\n  role = \"roles/billing.creator\"\n  member = \"group:billing-admins@example.com\"\n}\n",
+            "resource \"google_organization_iam_member\" \"only_conditional_live\" {\n  org_id = \"123456789012\"\n  role = \"roles/browser\"\n  member = \"group:auditors@example.com\"\n}\n",
+            "resource \"google_organization_iam_member\" \"cond_held\" {\n  org_id = \"123456789012\"\n  role = \"roles/browser\"\n  member = \"group:auditors@example.com\"\n  condition {\n    title = \"weekdays\"\n    expression = \"request.time.getDayOfWeek() < 5\"\n  }\n}\n",
+            "resource \"google_organization_iam_member\" \"cond_other\" {\n  org_id = \"123456789012\"\n  role = \"roles/browser\"\n  member = \"group:auditors@example.com\"\n  condition {\n    title = \"weekdays-only\"\n    expression = \"request.time.getDayOfWeek() < 5\"\n  }\n}\n",
+            "resource \"google_organization_iam_member\" \"cond_absent\" {\n  org_id = \"123456789012\"\n  role = \"roles/viewer\"\n  member = \"group:billing-admins@example.com\"\n  condition {\n    title = \"weekdays\"\n    expression = \"request.time.getDayOfWeek() < 5\"\n  }\n}\n",
+            "resource \"google_storage_bucket_iam_member\" \"gone\" {\n  bucket = \"acme-state\"\n  role = \"roles/storage.objectViewer\"\n  member = \"group:auditors@example.com\"\n}\n",
+            "resource \"google_project_iam_member\" \"denied\" {\n  project = \"acme-infra-001\"\n  role = \"roles/viewer\"\n  member = \"group:auditors@example.com\"\n}\n",
+        ));
+        let rules = rules(&[
+            ("google_organization_iam_member", Some("{org_id} {role} {member}"), None),
+            ("google_storage_bucket_iam_member", Some("b/{bucket} {role} {member}"), None),
+            ("google_project_iam_member", Some("{project} {role} {member}"), None),
+        ]);
+        let mut live = fake();
+        live.iam.insert(
+            "organizations/123456789012".into(),
+            Ok(Some(serde_json::json!({ "version": 3, "bindings": [
+                { "role": "roles/viewer", "members": ["group:auditors@example.com"] },
+                { "role": "roles/browser", "members": ["group:auditors@example.com"],
+                  "condition": { "title": "weekdays", "expression": "request.time.getDayOfWeek() < 5" } },
+            ]}))),
+        );
+        live.iam.insert("b/acme-state".into(), Ok(None));
+        live.iam.insert("projects/acme-infra-001".into(), Err("403 Forbidden [PERMISSION_DENIED]: getIamPolicy".into()));
+        let rs = resolve(&manifest, &rules, &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+
+        // held live, the member compared as IAM compares an address
+        assert_eq!(
+            outcome(&rs, "google_organization_iam_member.held"),
+            &Outcome::Resolved { id: "123456789012 roles/viewer group:Auditors@example.com".into(), verified: true }
+        );
+        // not in the policy: apply creates it, nothing is imported
+        assert_eq!(outcome(&rs, "google_organization_iam_member.absent"), &Outcome::OnApply);
+        // the member holds the role live only under a condition: the unconditional grant is not live
+        assert_eq!(outcome(&rs, "google_organization_iam_member.only_conditional_live"), &Outcome::OnApply);
+        // the same condition live: imported under the provider's id, which ends in the title
+        assert_eq!(
+            outcome(&rs, "google_organization_iam_member.cond_held"),
+            &Outcome::Resolved { id: "123456789012 roles/browser group:auditors@example.com weekdays".into(), verified: true }
+        );
+        // a live condition that is not the declared one is not guessed to be it
+        assert_eq!(
+            outcome(&rs, "google_organization_iam_member.cond_other"),
+            &Outcome::Ambiguous(vec!["weekdays: request.time.getDayOfWeek() < 5".into()])
+        );
+        assert_eq!(outcome(&rs, "google_organization_iam_member.cond_absent"), &Outcome::OnApply);
+        // the bucket does not exist: its grants are created with it
+        let gone = outcome(&rs, "google_storage_bucket_iam_member.gone");
+        assert!(matches!(gone, Outcome::ParentOnApply(why) if why.contains("b/acme-state")), "{:?}", gone);
+        // a policy that cannot be read is a failure, never an empty policy
+        let denied = outcome(&rs, "google_project_iam_member.denied");
+        assert!(matches!(denied, Outcome::Failed(e) if e.contains("projects/acme-infra-001") && e.contains("403")), "{:?}", denied);
+
+        // one read per parent, however many grants it carries
+        assert_eq!(live.calls.iter().filter(|c| *c == "iam ResourceManager organizations/123456789012").count(), 1, "{:?}", live.calls);
+        assert!(!rs.iter().any(|r| matches!(r.outcome, Outcome::Resolved { verified: false, .. })), "no grant is left derived");
+
+        let s = summary(&rs, &none());
+        assert!(s.starts_with("adopt: 2 to import (2 verified live, 0 derived)"), "{}", s);
+        assert!(s.contains("3 on apply, 1 on apply with their project, 1 ambiguous"), "{}", s);
+        assert!(s.contains("1 failed"), "{}", s);
+        let table = render_table(&rs, &none(), &manifest);
+        let absent = table.lines().find(|l| l.contains("iam_member.absent")).unwrap_or_default();
+        assert!(absent.contains("on apply") && absent.contains("apply creates it"), "{}", table);
+        // the ambiguous and the failed row stop the run before anything is imported
+        assert_eq!(unanswered(&rs, &none()), 2);
+    }
+
+    #[test]
+    fn a_grant_declared_under_an_unresolvable_condition_is_never_read_as_absent_when_the_member_holds_the_role_conditionally() {
+        let policy = serde_json::json!({ "bindings": [
+            { "role": "roles/browser", "members": ["user:a@example.com"], "condition": { "title": "t", "expression": "e" } },
+        ]});
+        let cond = DeclaredCondition::Undecidable;
+        assert_eq!(grant_in_policy(&policy, "roles/browser", "user:a@example.com", &cond), GrantLive::Unclear(vec!["t: e".into()]));
+        assert_eq!(grant_in_policy(&policy, "roles/viewer", "user:a@example.com", &cond), GrantLive::Absent);
+        // a principal that is not an address compares exactly
+        assert!(!same_member("principal://x/Subject/A", "principal://x/subject/a"));
+        assert!(same_member("serviceAccount:A@example.com", "serviceAccount:a@example.com"));
+    }
+
+    /// Every grant row whose id is `<parent> <role> <member>` is checked against the
+    /// live policy: a new one without a reader would be imported blind again.
+    #[test]
+    fn every_shipped_grant_template_has_a_live_policy_reader() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presets/import-config.yaml");
+        let cfg: ImportConfig = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).expect("import-config.yaml parses");
+        let grants: Vec<&String> = cfg
+            .resource_types
+            .iter()
+            .filter(|(_, row)| row.import_id.as_deref().is_some_and(|t| t.ends_with(" {role} {member}")))
+            .map(|(t, _)| t)
+            .collect();
+        assert!(grants.len() >= 9, "{:?}", grants);
+        for t in grants {
+            assert!(grant_parent(t, "x").is_some(), "{} renders a grant id but adopt reads no live policy for it", t);
+        }
     }
 
     #[tokio::test]
@@ -1964,7 +2251,7 @@ pub(crate) async fn run_adopt(
             })
             .collect();
         let (mut activated, mut imported, mut failed) = (0usize, 0usize, 0usize);
-        let (mut already_managed, mut moved) = (0usize, 0usize);
+        let (mut already_managed, mut moved, mut on_apply) = (0usize, 0usize, 0usize);
         for r in &resolutions {
             if in_state.manages(&r.address) {
                 println!("  {:60} already managed in the state — skipped", r.address);
@@ -2017,10 +2304,12 @@ pub(crate) async fn run_adopt(
                 Outcome::Resolved { id, .. } => id,
                 Outcome::OnApply => {
                     println!("  {:60} on apply — skipped (apply creates it)", r.address);
+                    on_apply += 1;
                     continue;
                 }
                 Outcome::ParentOnApply(why) => {
                     println!("  {:60} on apply — skipped ({})", r.address, why);
+                    on_apply += 1;
                     continue;
                 }
                 Outcome::AlreadyAdopted(_) | Outcome::Skipped => continue,
@@ -2038,8 +2327,8 @@ pub(crate) async fn run_adopt(
             }
         }
         println!(
-            "\nadopt: {} activated, {} imported, {} moved, {} already managed (skipped), {} failed.\nnext: `satz transpile {} --plan` — no create for what was imported and no destroy for what was moved.",
-            activated, imported, moved, already_managed, failed, input
+            "\nadopt: {} activated, {} imported, {} moved, {} already managed (skipped), {} on apply (skipped — apply creates them), {} failed.\nnext: `satz transpile {} --plan` — no create for what was imported and no destroy for what was moved.",
+            activated, imported, moved, already_managed, on_apply, failed, input
         );
         if failed > 0 {
             return Err(format!("adopt: {} activation(s)/import(s)/move(s) failed — see above", failed).into());

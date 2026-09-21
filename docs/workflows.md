@@ -548,7 +548,8 @@ A plan that says *replace* where it should say *no changes* means the labels or 
 resource ids do not line up. Two ways to fix it: declare `"import-id"` in the estate
 to bind the existing resource, or `tofu state mv` to move the existing state onto
 the new address. `satz adopt` resolves those ids for you where it can — natural-key
-lookups for folders, groups, memberships and org policies, `import_id`/`match_on`
+lookups for folders, groups, memberships and org policies, IAM grants against the
+live IAM policy of what they are granted on, `import_id`/`match_on`
 rules for the rest — and never guesses: one candidate resolves, several is
 ambiguous.
 
