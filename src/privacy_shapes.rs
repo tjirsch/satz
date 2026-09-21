@@ -44,7 +44,7 @@ pub(crate) enum Shape {
 
 impl Shape {
     /// In the order the gate reports them.
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     pub(crate) const ALL: &'static [Shape] = &[
         Shape::DirectoryId,
         Shape::Number,
