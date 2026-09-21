@@ -1112,6 +1112,11 @@ pub(crate) struct LineEdit {
 
 /// Make `n`'s line active: nothing when it is, uncomment it — gated on its own gate —
 /// when it is commented out, write it where the graph places it when it is absent.
+///
+/// A commented line that stands where the pack is not used — inside a folder's or a
+/// project's body, where an estate written before that was refused keeps its commented
+/// lines — is refused, naming the move: uncommented there, it is a `use` the compile
+/// refuses, and satz does not move an estate's lines for it.
 pub(crate) fn line_on(src: &str, graph: &PackGraph, n: &Node) -> Result<(String, Option<LineEdit>), String> {
     let s = scan(src);
     let named = |l: &&UseLine| node_of(graph, &l.written).is_some_and(|(m, _)| m.path == n.path);
@@ -1119,6 +1124,20 @@ pub(crate) fn line_on(src: &str, graph: &PackGraph, n: &Node) -> Result<(String,
         return Ok((src.to_string(), None));
     }
     if let Some(c) = s.uses.iter().filter(named).find(|l| l.commented) {
+        if !placed_right(n, c) {
+            let whence = match crate::template::place(n) {
+                Place::Menu => "at the top level of the file".to_string(),
+                Place::Block(b) => format!("in `{}`", b),
+            };
+            return Err(format!(
+                "`{}`'s line (line {}) is commented inside `{}`, and a pack is used {} — move the \
+                 commented line there, then switch the pack on",
+                n.path,
+                c.index + 1,
+                c.blocks.join("."),
+                whence
+            ));
+        }
         let mut line = format!("{}use \"{}\"", c.indent, c.written);
         if let Some(a) = &c.alias {
             line.push_str(&format!(" as {}", a));
@@ -1134,6 +1153,23 @@ pub(crate) fn line_on(src: &str, graph: &PackGraph, n: &Node) -> Result<(String,
     }
     let (out, at) = place_line(src, graph, n, false);
     Ok((out, Some(LineEdit { path: n.path.clone(), at_line: at, edit: "written" })))
+}
+
+/// What stops a yes to `gate` in `src`: each requirement of a pack on that gate that is
+/// off — the refusal `satz add-pack` gives without `--with-requirements`, so an answer and a
+/// switch refuse the same estate. Empty when nothing stops it.
+pub(crate) fn unmet_for_gate(graph: &PackGraph, presets_dir: &Path, src: &str, gate: &str) -> Result<Vec<String>, String> {
+    let lib = Library::load(graph, presets_dir).map_err(|e| e.to_string())?;
+    let view = View::new(graph, &lib, src)?;
+    let mut out = Vec::new();
+    for n in graph.lines().into_iter().filter(|n| n.gate.as_deref() == Some(gate)) {
+        let on = |p: &str| view.deploys(p) || p == n.path;
+        for r in view.requirements(n, &on).into_iter().filter(|r| !r.met) {
+            out.push(format!("{} — `satz add-pack` it first", view.requirement_text(n, &r)));
+        }
+    }
+    out.dedup();
+    Ok(out)
 }
 
 /// The lines a gate answered yes switches on: every pack on that gate whose line satz
@@ -1680,5 +1716,17 @@ mod tests {
         let (same, none) = gate_on(src, &g, "use_verification_runner").unwrap();
         assert!(none.iter().all(|e| e.path != "presets/ci/verification-runner-grant.satz"));
         assert!(same.contains("// use \"presets/ci/verification-runner-grant.satz\""));
+    }
+
+    /// An estate written before a pack's `use` was refused inside a folder keeps its commented
+    /// line there; uncommented where it stands it is a `use` the compile refuses. The yes is
+    /// refused and names the move — satz does not move the estate's line.
+    #[test]
+    fn a_commented_line_inside_a_folder_is_refused_naming_the_move() {
+        let g = graph();
+        let src = "google_folder {\n  infra {\n    // use \"presets/ci/verification-runner-grant.satz\" when use_verification_runner_grant\n  }\n}\n";
+        let e = gate_on(src, &g, "use_verification_runner_grant").unwrap_err();
+        assert!(e.contains("line 3") && e.contains("commented inside `google_folder.infra`"), "{e}");
+        assert!(e.contains("at the top level of the file"), "{e}");
     }
 }

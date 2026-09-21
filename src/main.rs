@@ -4029,8 +4029,23 @@ pub(crate) fn estate_declaration(
     runtime_config: &ToolConfig,
 ) -> Result<crate::gcp::identity::EstateDeclaration, String> {
     let refused = |e: String| format!("{} — satz cannot tell which identity this estate runs as, and runs nothing for it", e);
-    // a read or parse error names the file and the line already
-    let (src, env) = satz_estate_env(input_path, &runtime_config.include_dirs).map_err(|e| refused(e.to_string()))?;
+    // a read or parse error names the file and the line already; an `unknown param` gets
+    // what the pack graph says about it, as the compile's own refusal does — most often a
+    // pack whose provider is off, which is the one thing that makes the refusal fixable
+    let src = fsx::read_to_string(input_path).map_err(|e| refused(format!("{}: {}", input_path.display(), e)))?;
+    let loader = satz_loader(input_path, &runtime_config.include_dirs);
+    let env = satz_core::pipeline::estate_params(&input_path.to_string_lossy(), &src, &loader).map_err(|e| {
+        let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
+        let hinted = crate::packs::hinted(
+            e,
+            &graph,
+            &input_path.to_string_lossy(),
+            &estate_as_typed(input_path, runtime_config),
+            &src,
+            &runtime_config.validation_level,
+        );
+        refused(hinted.to_string())
+    })?;
     crate::gcp::identity::EstateDeclaration::from_env(named, &env).map_err(|e| {
         // at the line the estate binds it on — at none when a pack binds it, as the compile says it
         let at = crate::findings::param_line(&src, "deployment_mode").map(|l| format!(":{}", l)).unwrap_or_default();

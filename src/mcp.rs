@@ -2903,6 +2903,41 @@ mod confine_tests {
         assert!(made.created && f.root.join("yaml/new.satz").is_file(), "{made:?}");
     }
 
+    /// A yes to a pack whose requirement is off is refused the way `satz add-pack` refuses
+    /// the same switch, and the estate file is left as it was. The answer used to bind the
+    /// gate, switch the line on and then fail the report on the param the missing pack
+    /// declares, leaving on disk an estate `satz_open` refuses.
+    #[tokio::test]
+    async fn a_yes_whose_pack_needs_one_that_is_off_is_refused_and_writes_nothing() {
+        let f = fixture("interview-unmet");
+        // the repository's library and test schema, inside the root: `add-pack` compiles
+        for (from, to) in [("presets", "presets"), ("tests/schemas", "schemas")] {
+            let from = Path::new(env!("CARGO_MANIFEST_DIR")).join(from);
+            let copy = std::process::Command::new("cp").arg("-R").arg(&from).arg(f.root.join(to)).status().unwrap();
+            assert!(copy.success(), "copying {} into the root", from.display());
+        }
+        let opened = f.server.open(Parameters(serde_json::from_value(json!({"config": ".", "estate": "e.satz"})).unwrap())).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
+        interview(&f, json!({"estate": "new.satz", "create": true})).await.expect("a skeleton");
+        let map = f
+            .server
+            .add_pack(Parameters(serde_json::from_value(json!({"estate": "new.satz", "pack": "presets/estate-map.satz", "with_requirements": true})).unwrap()))
+            .await
+            .unwrap();
+        assert!(map.is_ok(), "{:?}", map.err().map(|r| text(&r)));
+
+        let estate = f.root.join("yaml/new.satz");
+        let before = std::fs::read(&estate).unwrap();
+        let said = interview(&f, json!({"estate": "new.satz", "answers": {"use_central_alerts": true}}))
+            .await
+            .expect_err("central alerts needs the audit archive, which is off");
+        assert!(
+            said.contains("presets/monitoring/organization-audit-logsink.satz") && said.contains("which is off"),
+            "{said}"
+        );
+        assert_eq!(std::fs::read(&estate).unwrap(), before, "a refused answer writes nothing");
+    }
+
     /// `against` names an estate, so it resolves the way every other estate argument
     /// does: inside `yaml_dir` when relative. It was read as a path under the server's
     /// root alone, so `C0example.satz` — the name that works for `estate` — was "no such

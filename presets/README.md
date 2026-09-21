@@ -1512,6 +1512,39 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.74.0
+
+**An answer that switches a pack on is refused while a pack it needs is off.** `satz
+interview` and `satz_interview` switch a pack on when its question is answered yes; the
+switch now refuses what `satz add-pack` refuses, and writes nothing:
+
+```
+use_central_alerts = yes: `presets/monitoring/organization-cis-log-alerts-central.satz` needs `presets/monitoring/organization-audit-logsink.satz` (`use_audit_logsink`), which is off (it reads `logsink_project_id`) — `satz add-pack` it first
+```
+
+**The edit:** switch the needed pack on first — answer its question yes, or `satz add-pack
+<estate> <pack>` — then answer again; or `satz add-pack <estate> <pack> --with-requirements`
+switches both.
+
+**A yes to a pack whose commented line stands inside a folder's or a project's body is
+refused, naming the move.** An estate written before v0.71.0 keeps its commented pack lines
+inside `google_folder { … }`; uncommented there, the line is a `use` the compile refuses. The
+answer and `satz add-pack` both say which line it is:
+
+```
+`presets/monitoring/organization-audit-logsink.satz`'s line (line 213) is commented inside `google_folder.infra_folder`, and a pack is used at the top level of the file — move the commented line there, then switch the pack on
+```
+
+**The edit:** move the commented line out of the folder's body to the top level of the file,
+as it is, then answer or `add-pack` again. A pack that creates a project names its folder with
+a param of its own (`logsink_project_folder` for the audit archive): bind it to the folder,
+`logsink_project_folder = "google_folder.infra_folder.name"`, so the project stays where the line
+stood.
+
+**An answer that would leave an estate satz refuses writes nothing.** Before, the answer was
+written and the refusal came after it, leaving on disk an estate `satz_open` and the compile
+refuse; the file is now as it was, and the refusal says so.
+
 ### v0.73.0
 
 **An estate that uses `presets/estate-core.satz` has one more question to answer, and
