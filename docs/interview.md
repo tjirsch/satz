@@ -171,8 +171,10 @@ That is why a fresh estate asks seventeen questions and not fifty-seven: day 0 i
 alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
 move to the service account, and only then does a pack go in — one at a time, each with its
 own plan. Answering a pack's question `true` switches its line on — uncommented, or written
-where the pack graph places it; `satz add-pack` does the same by the pack's gate or path, and
-first refuses while a pack it needs is off; `satz merge-presets` writes the line for a pack the
+where the pack graph places it; `satz add-pack` does the same by the pack's gate or path. Both
+refuse while a pack it needs is off, naming it, and both refuse a commented line that stands
+inside a folder's or a project's body, naming the move to the top level; an answer that would
+leave an estate satz refuses is refused and nothing is written; `satz merge-presets` writes the line for a pack the
 library has gained since; and the compile reports a question **this estate** has answered
 `true` whose line is still commented or missing, so they never drift apart. An answer is a
 binding in the estate's own `params {}`; a default in the map or in a pack is what the

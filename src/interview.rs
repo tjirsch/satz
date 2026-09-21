@@ -326,19 +326,92 @@ pub(crate) fn check_shape(row: &QuestionRow, value: &serde_yaml::Value) -> Resul
     ))
 }
 
+/// The gates an answer says yes to: the chosen option of a choice, or the param itself
+/// when it is answered `true`.
+fn gates_said_yes(row: &QuestionRow, value: &serde_yaml::Value) -> Vec<String> {
+    if row.kind == "oneof" {
+        return value.as_str().map(|s| vec![s.to_string()]).unwrap_or_default();
+    }
+    match value.as_bool() {
+        Some(true) => vec![row.subject.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Refuse a yes to a pack whose requirements are off in `src` — as `satz add-pack`
+/// refuses the same switch — before anything is written.
+fn refuse_unmet(
+    graph: Option<&PackGraph>,
+    runtime: &ToolConfig,
+    src: &str,
+    row: &QuestionRow,
+    value: &serde_yaml::Value,
+) -> Result<(), String> {
+    let Some(g) = graph else { return Ok(()) };
+    for gate in gates_said_yes(row, value) {
+        let unmet = crate::packs::unmet_for_gate(g, Path::new(&runtime.presets_dir), src, &gate)?;
+        if !unmet.is_empty() {
+            return Err(format!("{} = yes: {}", gate, unmet.join("; ")));
+        }
+    }
+    Ok(())
+}
+
+/// Write `after` over `before` only when the estate still reads with it — its params
+/// resolve and every line stands where it may — and restore `before` when it does not:
+/// an answer that leaves an estate satz refuses is refused, with the file as it was (the
+/// rule `satz add-pack` follows, ADR 0023). The questions report is the proof rather than
+/// the whole compile, because it needs no provider schema: an estate is answered on day
+/// 0, before `satz update-schema` has run.
+fn write_proven(estate: &Path, runtime: &ToolConfig, before: &str, after: &str) -> Result<(), String> {
+    crate::fsx::write_edited_satz(estate, before, after).map_err(|e| e.to_string())?;
+    match questions_report(estate, runtime) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(restored(estate, before, &format!("the answer leaves an estate satz refuses: {}", e))),
+    }
+}
+
+/// `why`, with the estate written back to `before`: said once it is back, and said
+/// louder when it could not be put back.
+fn restored(estate: &Path, before: &str, why: &str) -> String {
+    match crate::fsx::write_verbatim(estate, before) {
+        Ok(()) => format!("{} — nothing is written, {} is as it was", why, estate.display()),
+        Err(w) => format!("{} — and restoring {} failed: {}", why, estate.display(), w),
+    }
+}
+
 /// Bind a set of answers, each validated against a question the estate asks, and
 /// with `accept_defaults` every default the report offers. Returns how many params
-/// were written. Nothing is written when any answer is refused.
+/// were written. Nothing is written when any answer is refused, when a yes switches on
+/// a pack whose requirements are off, or when the result does not compile.
 pub(crate) fn apply(
     estate: &Path,
     runtime: &ToolConfig,
     answers: &BTreeMap<String, serde_yaml::Value>,
     accept_defaults: bool,
 ) -> Result<usize, String> {
+    let before = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    match apply_to(estate, runtime, answers, accept_defaults, &before) {
+        Ok(n) => Ok(n),
+        // `accept_defaults` writes once in the middle to read the report the answers
+        // leave; a refusal after that puts the file back
+        Err(e) => match crate::fsx::read_to_string(estate) {
+            Ok(now) if now != before => Err(restored(estate, &before, &e)),
+            _ => Err(e),
+        },
+    }
+}
+
+fn apply_to(
+    estate: &Path,
+    runtime: &ToolConfig,
+    answers: &BTreeMap<String, serde_yaml::Value>,
+    accept_defaults: bool,
+    before: &str,
+) -> Result<usize, String> {
     let report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
     let graph = crate::pack_graph::read(Path::new(&runtime.presets_dir)).map_err(|e| e.to_string())?;
-    let mut src = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
-    let before = src.clone();
+    let mut src = before.to_string();
     let notices = crate::notices::estate_notices(estate, runtime)?;
     let mut n = 0;
     for (name, value) in answers {
@@ -359,6 +432,7 @@ pub(crate) fn apply(
                 estate.display()
             )
         })?;
+        refuse_unmet(graph.as_ref(), runtime, &src, row, value)?;
         src = answer(&src, row, value, graph.as_ref())?;
         n += 1;
     }
@@ -368,18 +442,19 @@ pub(crate) fn apply(
         let now = if answers.is_empty() {
             report
         } else {
-            crate::fsx::write_edited_satz(estate, &before, &src).map_err(|e| e.to_string())?;
+            crate::fsx::write_edited_satz(estate, before, &src).map_err(|e| e.to_string())?;
             questions_report(estate, runtime).map_err(|e| e.to_string())?
         };
         for q in now.questions.iter().filter(|q| q.state == "unanswered") {
             if let Some(d) = &q.default {
+                refuse_unmet(graph.as_ref(), runtime, &src, q, d)?;
                 src = answer(&src, q, d, graph.as_ref())?;
                 n += 1;
             }
         }
     }
     if n > 0 {
-        crate::fsx::write_edited_satz(estate, &before, &src).map_err(|e| e.to_string())?;
+        write_proven(estate, runtime, before, &src)?;
     }
     Ok(n)
 }
@@ -513,14 +588,17 @@ pub(crate) fn run(
             }
         };
         let src = crate::fsx::read_to_string(estate).map_err(|e| e.to_string())?;
-        let new_src = match answer(&src, q, &value, graph.as_ref()) {
+        let new_src = match refuse_unmet(graph.as_ref(), runtime, &src, q, &value).and_then(|()| answer(&src, q, &value, graph.as_ref())) {
             Ok(s) => s,
             Err(e) => {
                 w(out, &format!("  {}\n", e))?;
                 continue;
             }
         };
-        crate::fsx::write_edited_satz(estate, &src, &new_src).map_err(|e| e.to_string())?;
+        if let Err(e) = write_proven(estate, runtime, &src, &new_src) {
+            w(out, &format!("  {}\n", e))?;
+            continue;
+        }
         w(out, &format!("  ✓ {} = {}\n", q.subject, literal(&value)))?;
         notices_opened(out)?;
         done.insert(q.subject.clone());
@@ -703,13 +781,10 @@ google_folder {
         // somebody's pack line is not what an answer does
         assert_eq!(pack_lines(src, "use_budget", &no, g).unwrap(), src);
 
-        // indentation is kept, so a pack inside a block stays inside it
-        let out = pack_lines(src, "use_audit_logsink", &yes, g).unwrap();
-        assert!(
-            out.contains("    use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink"),
-            "the line keeps its four spaces:\n{}",
-            out
-        );
+        // a pack is used at the top level: a commented line left inside a folder by an
+        // estate written before that is refused, naming the move, and nothing changes
+        let e = pack_lines(src, "use_audit_logsink", &yes, g).unwrap_err();
+        assert!(e.contains("commented inside `google_folder.infra_folder`") && e.contains("move the commented line"), "{e}");
 
         // a value that is not a boolean true, or no graph, leaves the file alone
         assert_eq!(pack_lines(src, "use_budget", &serde_yaml::Value::String("yes".into()), g).unwrap(), src);
