@@ -586,22 +586,22 @@ pub async fn bootstrap(
     };
 
     if !org_known && !greenfield {
-        // Printed ahead of the error: the detail first, then the one line `main` closes with.
-        eprintln!(
-            "\nThe estate's `customer_organization_id` is empty — there is no organization to install into.\n\
+        return Err("no organization id in the estate: `customer_organization_id` is empty — there is no organization to install into.\n\
              If the organization exists: `satz init --from-live` derives the id from your credentials, or fill the param.\n\
              If this is a brand-new tenant (directory + billing, no organization yet), run\n\
              `satz bootstrap <estate> --greenfield`: it creates the infra project WITHOUT a parent — the\n\
              documented trigger for Google's organization auto-provisioning — waits for the organization,\n\
-             moves the project under it and writes the id back into the estate.\n"
-        );
-        return Err("no organization id in the estate (see the greenfield guidance above)".into());
+             moves the project under it and writes the id back into the estate."
+            .into());
     }
 
-    // No default for the project id: the estate declares the project under its own
-    // `infra_project_name`, so a project bootstrap named itself is one the estate does
-    // not know. Unset, it is refused by the gate below, by name.
-    let bucket_name = final_bucket.or_else(|| final_proj_id.clone());
+    // No default for either name: the estate declares the project under its own
+    // `infra_project_name` and the state bucket under its own `infra_bucket_name`, so a
+    // project or bucket bootstrap named itself is one the estate does not know. The
+    // default lives in one place, `presets/estate-core.satz`
+    // (`{customer_shortname}-infra-001-state`), and the estate that uses the pack
+    // resolves it. Unset, each is refused by the gate below, by name.
+    let bucket_name = final_bucket;
     // the address the provider impersonates once the estate is in cloud mode — the
     // emitter's own derivation, so what bootstrap prints is what every later run acts as
     let sa_email = lookup_str(&["svc_iac_account"])
@@ -631,9 +631,7 @@ pub async fn bootstrap(
         project_id: final_proj_id.as_deref(),
         bucket_name: bucket_name.as_deref(),
     }) {
-        // Printed ahead of the error: the detail first, then the one line `main` closes with.
-        eprintln!("\n{}", detail);
-        return Err("the estate is not ready to bootstrap (the params are listed above)".into());
+        return Err(detail.into());
     }
     let (Some(project_id), Some(bucket_name)) = (final_proj_id, bucket_name) else {
         unreachable!("the gate refuses an estate that sets no infra_project_name or infra_bucket_name")
@@ -680,25 +678,21 @@ pub async fn bootstrap(
     let resolved_identity = crate::gcp::identity::resolve_adc_identity(&client, &token).await;
     match (&expected_admin, &resolved_identity) {
         (Some(expected), None) => {
-            // Printed ahead of the error: the detail first, then the one line `main` closes with.
-            eprintln!(
-                "\nCould not determine the identity of your Application Default Credentials,\n\
-                 so it cannot be checked against the configured admin '{expected}'.\n\n\
-                 Authenticate with:  gcloud auth application-default login {expected}\n"
-            );
-            return Err("could not verify the Application Default Credentials identity".into());
+            return Err(format!(
+                "could not verify the Application Default Credentials identity, so it cannot be \
+                 checked against the configured admin '{expected}'.\n\n\
+                 Authenticate with:  gcloud auth application-default login {expected}"
+            )
+            .into());
         }
         (Some(expected), Some((actual, source))) => {
             if !identity_matches(expected, actual) {
-                eprintln!(
-                    "\nApplication Default Credentials belong to '{actual}' (determined via {}),\n\
-                     but this config expects '{expected}'.\n\
-                     Bootstrap performs every action as the ADC identity, so it will not continue.\n\n\
-                     Authenticate with:  gcloud auth application-default login {expected}\n",
-                    source.label()
-                );
                 return Err(format!(
-                    "ADC identity '{actual}' does not match the configured admin '{expected}'"
+                    "ADC identity '{actual}' does not match the configured admin '{expected}'.\n\
+                     The Application Default Credentials belong to '{actual}' (determined via {}), \
+                     and bootstrap performs every action as the ADC identity, so it will not continue.\n\n\
+                     Authenticate with:  gcloud auth application-default login {expected}",
+                    source.label()
                 )
                 .into());
             }

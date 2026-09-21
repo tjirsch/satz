@@ -646,7 +646,8 @@ pub(crate) struct FmtResult {
 pub(crate) struct ReviewPackArgs {
     /// The pack file to review, inside the server's root
     pub pack: String,
-    /// Judge it inside this estate instead of a synthesised one
+    /// Judge it inside this estate instead of a synthesised one, e.g. `C0example.satz`
+    /// — read the way every other estate argument is, inside `yaml_dir` when relative
     #[serde(default)]
     pub against: Option<String>,
 }
@@ -943,16 +944,30 @@ impl SatzMcp {
         }
     }
 
-    fn permits(&self, g: Group) -> Result<(), CallToolResult> {
+    /// Whether this server's level grants what the tool needs — and, in the refusal, the
+    /// command the tool serves, so an agent reads what it was denied in the words the CLI
+    /// uses for it.
+    ///
+    /// `serves` is the handler's own `const SERVES`: the `MCP_PARITY` command it runs, or
+    /// `None` for the three tools that run none (`MCP_ONLY`). Declaring it beside the tool
+    /// and passing it here puts the claim on the code path rather than in a comment, and
+    /// `a_tool_declares_the_command_it_serves` joins the declarations against the table
+    /// both ways — a row that names a tool, and a tool that names its row's command.
+    fn permits(&self, g: Group, serves: Option<&str>) -> Result<(), CallToolResult> {
         let level = *self.level.lock().expect("the level lock is never poisoned");
         if level.allows(g) {
             return Ok(());
         }
+        let what = match serves {
+            Some(command) => format!("`satz {}` over this server", command),
+            None => "this tool".to_string(),
+        };
         Err(refused(format!(
-            "this server is running at level '{}' and the tool needs '{}'. \
+            "{} needs '{}', and this server is running at level '{}'. \
              Start `satz mcp --allow {}` to grant it.",
-            level.describe(),
+            what,
             g.name(),
+            level.describe(),
             g.name()
         )))
     }
@@ -1093,7 +1108,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<OpenArgs>,
     ) -> Result<Result<Json<OpenReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = None;
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let given = PathBuf::from(&args.config);
@@ -1152,7 +1168,8 @@ impl SatzMcp {
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn estates(&self) -> Result<Result<Json<EstatesReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = None;
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let mut configs = Vec::new();
@@ -1199,7 +1216,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<RequireArgs>,
     ) -> Result<Result<Json<crate::compliance::RequireReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("require");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1236,7 +1254,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<EstateArg>,
     ) -> Result<Result<Json<crate::questions::QuestionsReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("questions");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1266,7 +1285,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<InterviewArgs>,
     ) -> Result<Result<Json<InterviewReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("interview");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let open = match self.opened() {
@@ -1290,7 +1310,7 @@ impl SatzMcp {
                     estate.display()
                 ))));
             }
-            if let Err(r) = self.permits(Group::Write) {
+            if let Err(r) = self.permits(Group::Write, SERVES) {
                 return Ok(Err(r));
             }
             let stem = estate.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
@@ -1312,7 +1332,7 @@ impl SatzMcp {
         let mut written = 0;
         let mut notices = Vec::new();
         if !args.answers.is_empty() || args.accept_defaults {
-            if let Err(r) = self.permits(Group::Write) {
+            if let Err(r) = self.permits(Group::Write, SERVES) {
                 return Ok(Err(r));
             }
             let open_before = match crate::notices::open(&estate, &open.runtime) {
@@ -1363,7 +1383,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<EstateArg>,
     ) -> Result<Result<Json<crate::packs::PacksReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("packs");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1392,7 +1413,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<AddPackArgs>,
     ) -> Result<Result<Json<crate::packs::PackChange>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Write) {
+        const SERVES: Option<&str> = Some("add-pack");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1419,7 +1441,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<RemovePackArgs>,
     ) -> Result<Result<Json<crate::packs::PackChange>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Write) {
+        const SERVES: Option<&str> = Some("remove-pack");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1444,7 +1467,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<TriageArgs>,
     ) -> Result<Result<Json<crate::compliance::TriageReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("triage");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1484,7 +1508,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<EstateArg>,
     ) -> Result<Result<Json<crate::prowler::ProwlerPlan>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("prowler");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1510,7 +1535,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<EstateArg>,
     ) -> Result<Result<Json<CompileSummary>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("transpile");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1542,7 +1568,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<FmtArgs>,
     ) -> Result<Result<Json<FmtResult>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("fmt");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         match satz_core::fmt::format(&args.text) {
@@ -1571,7 +1598,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<ReviewPackArgs>,
     ) -> Result<Result<Json<crate::review_pack::Review>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("review-pack");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         // a pack is a file, not an estate, so the server's root is what bounds it
@@ -1579,14 +1607,19 @@ impl SatzMcp {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
-        let against = match args.against.as_deref().map(|a| self.file(a)) {
-            Some(Ok(p)) => Some(p),
-            Some(Err(r)) => return Ok(Err(r)),
-            None => None,
-        };
         let (open, _) = match self.target(None) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
+        };
+        // an estate, so it resolves as one: `C0example.satz` names the file in `yaml_dir`
+        // here exactly as it does in `estate`
+        let against = match args.against.as_deref() {
+            Some(a) => match self.estate_arg(a, &open.runtime) {
+                Ok(p) if p.is_file() => Some(p),
+                Ok(p) => return Ok(Err(refused(format!("no estate file at {}", p.display())))),
+                Err(r) => return Ok(Err(r)),
+            },
+            None => None,
         };
         match crate::review_pack::review(&pack, against.as_deref(), &open.tool, &open.runtime) {
             Ok(review) => Ok(Ok(Json(review))),
@@ -1606,7 +1639,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<EstateArg>,
     ) -> Result<Result<Json<crate::presets::CheckPresetsReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("check-presets");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1637,7 +1671,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<EstateArg>,
     ) -> Result<Result<Json<CompileSummary>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Write) {
+        const SERVES: Option<&str> = Some("transpile");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1715,7 +1750,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<RemediationArgs>,
     ) -> Result<Result<Json<RemediationItems>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("remediation-plan");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov.as_deref()) {
@@ -1747,7 +1783,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<AnnotateArgs>,
     ) -> Result<Result<Json<AnnotateReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Write) {
+        const SERVES: Option<&str> = Some("remediation-plan");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
         let run = match self.remediation(args.estate.as_deref(), &args.framework, &args.prowler, args.checkov.as_deref()) {
@@ -1806,14 +1843,15 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<AdoptArgs>,
     ) -> Result<Result<Json<AdoptReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(if args.execute { Group::Write } else { Group::Read }) {
+        const SERVES: Option<&str> = Some("adopt");
+        if let Err(r) = self.permits(if args.execute { Group::Write } else { Group::Read }, SERVES) {
             return Ok(Err(r));
         }
         // Judged before the organisation is read: a table that cannot be written
         // where it was asked for is not worth the lookups.
         let out = match &args.out {
             Some(out) => {
-                if let Err(r) = self.permits(Group::Write) {
+                if let Err(r) = self.permits(Group::Write, SERVES) {
                     return Ok(Err(r));
                 }
                 // `out` need not exist yet; it is judged where creating it would lead
@@ -1926,7 +1964,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<MergePresetsArgs>,
     ) -> Result<Result<Json<crate::presets::MergeReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Write) {
+        const SERVES: Option<&str> = Some("merge-presets");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -1969,7 +2008,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<GetPresetsArgs>,
     ) -> Result<Result<Json<crate::presets::GetPresetsReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Write) {
+        const SERVES: Option<&str> = Some("get-presets");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
         let (open, _estate) = match self.target(None) {
@@ -2005,12 +2045,13 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<PrerequisitesArgs>,
     ) -> Result<Result<Json<PrerequisitesResult>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("update-prerequisites");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         // the default writes, so the ceiling is checked for the default
         if !args.report_only {
-            if let Err(r) = self.permits(Group::Write) {
+            if let Err(r) = self.permits(Group::Write, SERVES) {
                 return Ok(Err(r));
             }
         }
@@ -2051,14 +2092,15 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<ScanArgs>,
     ) -> Result<Result<Json<ScanReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Exec) {
+        const SERVES: Option<&str> = Some("scan");
+        if let Err(r) = self.permits(Group::Exec, SERVES) {
             return Ok(Err(r));
         }
         // Both refusals come before Checkov runs: a report that cannot be written is
         // not worth the scan.
         let out = match &args.out {
             Some(out) => {
-                if let Err(r) = self.permits(Group::Write) {
+                if let Err(r) = self.permits(Group::Write, SERVES) {
                     return Ok(Err(r));
                 }
                 // `out` need not exist yet; it is judged where creating it would lead
@@ -2139,7 +2181,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<ReportComplianceArgs>,
     ) -> Result<Result<Json<serde_json::Value>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("report-compliance");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         let (open, estate) = match self.target(args.estate.as_deref()) {
@@ -2200,7 +2243,8 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<WhoamiArgs>,
     ) -> Result<Result<Json<crate::gcp::identity::WhoamiReport>, CallToolResult>, McpError> {
-        if let Err(r) = self.permits(Group::Read) {
+        const SERVES: Option<&str> = Some("whoami");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
         // "Who am I" has two answers, and which one is wanted depends on whether
@@ -2822,6 +2866,37 @@ mod confine_tests {
         assert!(made.created && f.root.join("yaml/new.satz").is_file(), "{made:?}");
     }
 
+    /// `against` names an estate, so it resolves the way every other estate argument
+    /// does: inside `yaml_dir` when relative. It was read as a path under the server's
+    /// root alone, so `C0example.satz` — the name that works for `estate` — was "no such
+    /// file" here, and only `yaml/C0example.satz` worked.
+    #[tokio::test]
+    async fn review_pack_resolves_against_inside_yaml_dir() {
+        let f = fixture("review-against");
+        let opened = f.server.open(Parameters(serde_json::from_value(json!({"config": ".", "estate": "e.satz"})).unwrap())).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
+        std::fs::write(f.root.join("p.satz"), "// A pack that says what it is.\n").unwrap();
+        let review = |args: serde_json::Value| {
+            let server = &f.server;
+            async move {
+                match server.review_pack(Parameters(serde_json::from_value(args).unwrap())).await.unwrap() {
+                    Ok(Json(_)) => String::new(),
+                    Err(r) => text(&r),
+                }
+            }
+        };
+        let said = review(json!({"pack": "p.satz", "against": "e.satz"})).await;
+        assert!(!said.contains("no such file"), "`against` did not resolve inside yaml_dir: {said}");
+        // and a name nothing holds is still refused, naming where it looked
+        let said = review(json!({"pack": "p.satz", "against": "absent.satz"})).await;
+        let in_yaml = Path::new("yaml").join("absent.satz").display().to_string();
+        assert!(said.contains("no estate file at") && said.contains(&in_yaml), "{said}");
+        // …and one beyond the root is refused as outside, before it is asked about
+        let outside = f.base.join("outside/present.satz").display().to_string();
+        let said = review(json!({"pack": "p.satz", "against": outside})).await;
+        assert!(said.contains("outside the server's root"), "{said}");
+    }
+
     /// An estate whose identity cannot be derived — a mode the compile refuses, params
     /// that do not parse — is refused by every call that would act as it, naming the
     /// estate and the reason: opening it, and each live tool that names it. None of them
@@ -2943,7 +3018,7 @@ mod parity_tests {
     //! documented tool list — must agree.
     use super::*;
     use clap::CommandFactory;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn table_tools() -> BTreeSet<&'static str> {
         MCP_PARITY
@@ -3016,6 +3091,62 @@ mod parity_tests {
         );
         assert!(unknown.is_empty(), "MCP_PARITY names commands the CLI does not have: {unknown:?}");
         assert_eq!(MCP_PARITY.len(), table.len(), "a command has two MCP_PARITY rows");
+    }
+
+    /// A row naming a tool was half the decision. The other half — that the tool runs
+    /// THAT command — nothing checked: a row could claim `satz_adopt` serves `adopt`
+    /// while the handler ran something else, and the table would still pass.
+    ///
+    /// Each handler declares it as its first line, `const SERVES`, and hands it to
+    /// `permits`, so the claim is on the code path. This joins the declarations against
+    /// the table both ways: every tool a row names declares that row's command, and every
+    /// tool declares one — or declares `None` and is in `MCP_ONLY`.
+    #[test]
+    fn a_tool_declares_the_command_it_serves() {
+        // the handlers, not this module: the test's own text would read as one more tool
+        let src = include_str!("mcp.rs");
+        let handlers = src.split("#[cfg(test)]").next().expect("the handlers stand before the tests");
+        let mut declared: BTreeMap<&str, Option<&str>> = BTreeMap::new();
+        for block in handlers.split("#[tool(").skip(1) {
+            let name = block
+                .split("name = \"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .expect("every tool is registered under a name");
+            // a tool that declares nothing serves nothing, and has to be in MCP_ONLY
+            let serves = block
+                .split("const SERVES: Option<&str> = ")
+                .nth(1)
+                .and_then(|rest| rest.split(';').next())
+                .and_then(|value| value.trim().strip_prefix("Some(\""))
+                .and_then(|v| v.split('"').next());
+            assert!(declared.insert(name, serves).is_none(), "{name} is registered twice");
+        }
+        let mut table: BTreeMap<&str, Option<&str>> = BTreeMap::new();
+        for (command, parity) in MCP_PARITY {
+            if let Parity::Tools(tools) = parity {
+                for t in *tools {
+                    table.insert(t, Some(command));
+                }
+            }
+        }
+        for t in MCP_ONLY {
+            table.insert(t, None);
+        }
+        let disagree: Vec<String> = table
+            .iter()
+            .filter(|(tool, command)| declared.get(**tool) != Some(command))
+            .map(|(tool, command)| {
+                format!("{tool}: the table says {command:?}, the handler declares {:?}", declared.get(*tool).copied().flatten())
+            })
+            .collect();
+        assert!(
+            disagree.is_empty(),
+            "MCP_PARITY and the handlers disagree about what a tool runs: {disagree:?} — \
+             the handler's `const SERVES` is the command it runs, and the row is what an agent is told"
+        );
+        let unlisted: Vec<&&str> = declared.keys().filter(|t| !table.contains_key(**t)).collect();
+        assert!(unlisted.is_empty(), "these handlers declare a command and no MCP_PARITY row names them: {unlisted:?}");
     }
 
     #[test]

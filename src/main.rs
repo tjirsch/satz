@@ -1238,10 +1238,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     // tool verbatim, which also swallows a `--config` written after
                     // those args. "config.toml not found" is baffling then, so name
                     // the actual fix.
-                    // Printed ahead of the error: the detail first, then the one line `main` closes with.
                     if let Some(hint) = misplaced_config_hint(&cmd_choice) {
-                        eprintln!("\n{}\n", hint);
-                        return Err("--config came after the pass-through arguments".into());
+                        return Err(format!("--config came after the pass-through arguments.\n\n{}", hint).into());
                     }
                     return Err("Config file 'config.toml' not found in current directory. Please provide it or specify --config <PATH>.".into());
                 }
@@ -1282,10 +1280,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let tool_config: ToolConfig = match parse_tool_config(&config_file_path) {
         Ok(c) => c,
-        // Printed ahead of the error: the detail first, then the one line `main` closes with.
         Err(described) => {
-            eprintln!("\n{}\n", described);
-            return Err(format!("could not parse '{}' as TOML", config_file_path.display()).into());
+            return Err(format!("could not parse '{}' as TOML.\n\n{}", config_file_path.display(), described).into())
         }
     };
     let mut runtime_config = resolved_config(&tool_config, &config_dir);
@@ -2056,7 +2052,7 @@ Thumbs.db
             SilenceSub::Add { selector, reason, machine } => silence::add(&selector, &reason, machine, &config_file_path),
             SilenceSub::Remove { selector, machine } => silence::remove(&selector, machine, &config_file_path),
         },
-        Commands::Fmt { paths, check, stdin } => run_fmt(&paths, check, stdin),
+        Commands::Fmt { paths, check, stdin } => run_fmt(&paths, check, stdin, Path::new(&runtime_config.yaml_dir)),
         Commands::Lsp => lsp::run().map_err(|e| e as Box<dyn std::error::Error>),
         Commands::Prowler { input, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
@@ -2226,13 +2222,7 @@ Thumbs.db
                 estate_file: &input_path,
                 hcl_dir: Path::new(&runtime_config.hcl_dir),
             };
-            // Printed, not returned: these messages carry a remedy on its own line
-            // (`chmod +x …`, the list of places a script was looked for), and the
-            // default `Error: {:?}` would hand the operator an escaped one-liner.
-            if let Err(e) = crate::actions::run(&out.actions, &opts) {
-                eprintln!("error: {}", e);
-                std::process::exit(1);
-            }
+            crate::actions::run(&out.actions, &opts)?;
             Ok(())
         }
         Commands::Scan { estate } => {
@@ -2355,13 +2345,9 @@ Thumbs.db
         }
         Commands::AddPack { input, pack, with_requirements, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            // Printed ahead of the error: the detail first, then the one line `main` closes with.
             let change = match crate::packs::add(&input_path, &tool_config, &runtime_config, &pack, with_requirements) {
                 Ok(c) => c,
-                Err(e) => {
-                    eprintln!("\n{}\n", e);
-                    return Err(format!("add-pack {}: nothing changed", pack).into());
-                }
+                Err(e) => return Err(format!("add-pack {}: nothing changed.\n\n{}", pack, e).into()),
             };
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
@@ -2371,13 +2357,9 @@ Thumbs.db
         }
         Commands::RemovePack { input, pack, cascade, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            // Printed ahead of the error: the detail first, then the one line `main` closes with.
             let change = match crate::packs::remove(&input_path, &tool_config, &runtime_config, &pack, cascade) {
                 Ok(c) => c,
-                Err(e) => {
-                    eprintln!("\n{}\n", e);
-                    return Err(format!("remove-pack {}: nothing changed", pack).into());
-                }
+                Err(e) => return Err(format!("remove-pack {}: nothing changed.\n\n{}", pack, e).into()),
             };
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
@@ -2740,13 +2722,30 @@ fn pipeline_b_compile(
         // The parser's error is a finding like any other — one row with its file and
         // line — so every reader gets a front-end refusal in the shape of any refusal.
         Err(e) => {
-            let hinted = crate::packs::hinted(e, &graph, &input_path.to_string_lossy(), &src, &runtime_config.validation_level);
+            let hinted = crate::packs::hinted(
+                e,
+                &graph,
+                &input_path.to_string_lossy(),
+                &estate_as_typed(input_path, runtime_config),
+                &src,
+                &runtime_config.validation_level,
+            );
             let mut refusal = crate::findings::CompileRefusal::front_end(hinted);
             refusal.findings = refusal.findings.into_iter().map(|f| estate_relative_file(f, runtime_config.dir.as_deref())).collect();
             return Err(Box::new(refusal));
         }
     };
-    let tail = compile_tail(&fe, &resolver, &registry, tool_config, &graph, &runtime_config.validation_level, input_path, &src);
+    let tail = compile_tail(
+        &fe,
+        &resolver,
+        &registry,
+        tool_config,
+        &graph,
+        &runtime_config.validation_level,
+        input_path,
+        &estate_as_typed(input_path, runtime_config),
+        &src,
+    );
     // A caller that reports the prerequisites itself is the one check that DROPS its
     // findings: it is about to say the same thing in its own output. Everything else a
     // reader asked not to see is silenced below — kept, marked and counted.
@@ -2850,6 +2849,9 @@ pub(crate) fn compile_tail(
     graph: &crate::pack_graph::Shipped,
     level: &str,
     estate: &Path,
+    // the same estate as a command takes it (`estate_as_typed`): what a finding's `fix`
+    // names, which is not the path the findings are located at
+    estate_arg: &str,
     estate_src: &str,
 ) -> Tail {
     use crate::findings::{Finding, Kind, Severity};
@@ -2860,7 +2862,7 @@ pub(crate) fn compile_tail(
     // of the decision; the rest are reported after the emitter.
     let label = estate.to_string_lossy().into_owned();
     let (exclusions, pack_findings) = match graph {
-        crate::pack_graph::Shipped::Graph(g, dir) => crate::packs::compile_findings(g, dir, &label, estate_src, level),
+        crate::pack_graph::Shipped::Graph(g, dir) => crate::packs::compile_findings(g, dir, &label, estate_arg, estate_src, level),
         _ => (Vec::new(), Vec::new()),
     };
     f.extend(exclusions);
@@ -2894,9 +2896,9 @@ pub(crate) fn compile_tail(
     missing_required_findings(&out.missing_required, level, &mut f);
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
-    prerequisite_findings(&out.manifest, &fe.env, estate, estate_src, level, &mut f);
+    prerequisite_findings(&out.manifest, &fe.env, estate, estate_arg, estate_src, level, &mut f);
     f.extend(pack_findings);
-    f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_src, crate::notices::Doing::Reading));
+    f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_arg, estate_src, crate::notices::Doing::Reading));
     match graph {
         crate::pack_graph::Shipped::Graph(..) => {}
         crate::pack_graph::Shipped::Missing(_) if crate::findings::at_level(level).is_none() => {}
@@ -3128,6 +3130,7 @@ fn prerequisite_findings(
     manifest: &crate::manifest::Manifest,
     env: &satz_core::pipeline::Env,
     estate: &Path,
+    estate_arg: &str,
     estate_src: &str,
     level: &str,
     f: &mut Vec<crate::findings::Finding>,
@@ -3158,7 +3161,7 @@ fn prerequisite_findings(
                     .collect::<Vec<_>>()
                     .join("\n  ")
             ),
-        ).fix_in(update, estate));
+        ).fix_in(update, estate_arg));
     }
     let (needs, unknown) = crate::prerequisites::needs(manifest);
     let granted = crate::prerequisites::granted(manifest, &sa);
@@ -3174,7 +3177,7 @@ fn prerequisite_findings(
                     crate::prerequisites::describe(&crate::prerequisites::plan(&missing, &granted)).join("\n  ")
                 ),
             )
-            .fix_in(update, estate)
+            .fix_in(update, estate_arg)
             .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "svc_iac_account")),
         );
     }
@@ -3900,11 +3903,7 @@ async fn enable_declared_apis(hcl_dir: &Path) -> Result<(), Box<dyn std::error::
             eprint!("{}", done.render());
             Ok(())
         }
-        Err(refusal) => {
-            // Printed ahead of the error: the detail first, then the one line `main` closes with.
-            eprint!("{}", refusal.render());
-            Err(refusal.summary().into())
-        }
+        Err(refusal) => Err(format!("{}\n{}", refusal.summary(), refusal.render().trim_end()).into()),
     }
 }
 
@@ -3924,9 +3923,8 @@ fn yaml_dialect_refusal(input: &Path, what: &str) -> Box<dyn std::error::Error> 
     let name = input.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let stem = input.file_stem().unwrap_or_default().to_string_lossy().into_owned();
     let last = satz_core::LAST_YAML_CONVERTING_RELEASE;
-    // Printed ahead of the error: the detail first, then the one line `main` closes with.
-    eprintln!(
-        "\n{what}: {name} is written in the pre-Satz YAML dialect, which satz does not read.\n\
+    format!(
+        "{what}: {name} is written in the pre-Satz YAML dialect, which satz does not read.\n\
          satz {last} is the last release that converts it:\n\
          \n    cargo install --git https://github.com/tjirsch/satz --tag {last} --locked\n\
          \x20   satz import {name} --kind estate            # --kind pack for a pack\n\
@@ -3934,9 +3932,9 @@ fn yaml_dialect_refusal(input: &Path, what: &str) -> Box<dyn std::error::Error> 
          \x20   satz fmt {stem}.satz\n\
          \x20   satz merge-presets --estate {stem}.satz\n\
          \nThe conversion may need edits; `satz transpile` and a `tofu plan` that shows no\n\
-         destroy for what the estate already manages is the check.\n"
-    );
-    format!("{name} is the pre-Satz YAML dialect: satz {last} converts it").into()
+         destroy for what the estate already manages is the check."
+    )
+    .into()
 }
 
 
@@ -5195,6 +5193,21 @@ pub(crate) fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathB
     PathBuf::from(&runtime_config.yaml_dir).join(estate)
 }
 
+/// The estate as a command takes it: what an operator types for this path, which is what
+/// a finding's `fix` line has to name for the line to run.
+///
+/// `estate_path` resolves a relative name inside `yaml_dir`, so the way back is to drop
+/// that prefix; a path that does not lie under it — an absolute one, or one given from
+/// another directory — is already what was typed. The file name alone is wrong for an
+/// estate in a subdirectory: `yaml/pk/e.satz` is `satz adopt pk/e.satz`, and `satz adopt
+/// e.satz` finds nothing.
+pub(crate) fn estate_as_typed(estate: &Path, runtime_config: &ToolConfig) -> String {
+    let bare = |p: &Path| p.strip_prefix(".").unwrap_or(p).to_path_buf();
+    let estate = bare(estate);
+    let yaml_dir = bare(Path::new(&runtime_config.yaml_dir));
+    estate.strip_prefix(&yaml_dir).unwrap_or(&estate).to_string_lossy().into_owned()
+}
+
 /// Configure the identity live estate commands run as: on a
 /// `deployment_mode = "cloud"` estate, the IaC service account
 /// (`{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com` — the
@@ -5953,7 +5966,12 @@ async fn run_self_update( open_docs: bool, check_only: bool, skip_checksum: bool
 /// `satz fmt`: every `.satz` under the given paths, rewritten in its canonical
 /// layout — or, with `--check`, named when it is not. `*.diff.satz` files are
 /// unified diffs and are skipped.
-fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool) -> Result<(), Box<dyn std::error::Error>> {
+/// `fmt` takes PATHS — files, directories, several at once — and resolves no estate
+/// name: it formats the whole tree, packs and library files included, most of which lie
+/// outside `yaml_dir`, and it rewrites in place, so the file it touches is the one named.
+/// A name that only exists inside `yaml_dir` is therefore not taken; the refusal says so
+/// and names the path that works (ADR 0049).
+fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool, yaml_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if stdin {
         let mut src = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut src)?;
@@ -5963,12 +5981,12 @@ fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool) -> Result<(), Box<dyn st
     if paths.is_empty() {
         return Err("fmt: name the files or directories to format (or --stdin)".into());
     }
-    fn collect(p: &Path, out: &mut Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    fn collect(p: &Path, yaml_dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
         if p.is_dir() {
             let mut entries: Vec<PathBuf> = std::fs::read_dir(p)?.map(|e| e.map(|e| e.path())).collect::<Result<_, _>>()?;
             entries.sort();
             for e in entries {
-                collect(&e, out)?;
+                collect(&e, yaml_dir, out)?;
             }
         } else if p.is_file() {
             let name = p.to_string_lossy();
@@ -5976,13 +5994,25 @@ fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool) -> Result<(), Box<dyn st
                 out.push(p.to_path_buf());
             }
         } else {
-            return Err(format!("fmt: {}: no such file or directory", p.display()).into());
+            let in_yaml_dir = yaml_dir.join(p);
+            let where_it_is = if p.is_relative() && in_yaml_dir.is_file() {
+                format!(" — {} is there: name it, or a directory to walk", in_yaml_dir.display())
+            } else {
+                String::new()
+            };
+            return Err(format!(
+                "fmt: {}: no such file or directory. fmt takes paths, and resolves no estate name inside {}{}",
+                p.display(),
+                yaml_dir.display(),
+                where_it_is
+            )
+            .into());
         }
         Ok(())
     }
     let mut files = Vec::new();
     for p in paths {
-        collect(p, &mut files)?;
+        collect(p, yaml_dir, &mut files)?;
     }
     if files.is_empty() {
         return Err("fmt: no .satz file under the given paths".into());
@@ -6033,6 +6063,36 @@ fn run_fmt(paths: &[PathBuf], check: bool, stdin: bool) -> Result<(), Box<dyn st
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod fmt_arguments {
+    //! `fmt` takes paths, not estate names (ADR 0049), and the refusal is where that is
+    //! said: it used to report "no such file or directory" for a name every other command
+    //! resolves, leaving the reader to guess that this one resolves differently.
+    use super::*;
+
+    #[test]
+    fn a_bare_estate_name_is_refused_with_the_path_that_works() {
+        let dir = std::env::temp_dir().join(format!("satz-fmt-args-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("yaml")).unwrap();
+        let yaml_dir = dir.join("yaml");
+        let estate = yaml_dir.join("e.satz");
+        std::fs::write(&estate, "estate e\n").unwrap();
+
+        let said = run_fmt(&[PathBuf::from("e.satz")], true, false, &yaml_dir).unwrap_err().to_string();
+        assert!(said.contains("fmt takes paths, and resolves no estate name inside"), "{said}");
+        assert!(said.contains(&estate.display().to_string()), "the path that works is named: {said}");
+
+        // a name nothing holds says the same about `fmt` and names no path
+        let said = run_fmt(&[PathBuf::from("absent.satz")], true, false, &yaml_dir).unwrap_err().to_string();
+        assert!(said.contains("fmt takes paths") && !said.contains("is there"), "{said}");
+
+        // and the path itself formats
+        run_fmt(std::slice::from_ref(&estate), true, false, &yaml_dir).expect("the estate is formatted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
@@ -8367,6 +8427,26 @@ mod estate_paths {
         assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", "."), None);
         assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", ""), None);
     }
+
+    /// The way back: a finding's `fix` is a command to paste, so it names the estate as a
+    /// command takes it. The FILE NAME does not do for an estate in a subdirectory of
+    /// `yaml_dir` — `yaml/pk/e.satz` gave `satz adopt e.satz`, which resolves to nothing.
+    #[test]
+    fn a_fix_names_the_estate_the_way_the_command_takes_it() {
+        let at = |yaml_dir: &str| {
+            let mut c = parse_tool_config(Path::new("/nonexistent/config.toml")).expect("the defaults");
+            c.yaml_dir = yaml_dir.to_string();
+            c
+        };
+        let typed = |estate: &str, yaml_dir: &str| estate_as_typed(Path::new(estate), &at(yaml_dir));
+        assert_eq!(typed("./yaml/e.satz", "./yaml"), "e.satz");
+        assert_eq!(typed("./yaml/pk/e.satz", "./yaml"), "pk/e.satz");
+        assert_eq!(typed("yaml/pk/e.satz", "yaml"), "pk/e.satz");
+        assert_eq!(typed("/abs/estate/yaml/e.satz", "/abs/estate/yaml"), "e.satz");
+        // outside yaml_dir it is already what was typed, and that is what resolves back
+        assert_eq!(typed("../other/e.satz", "./yaml"), "../other/e.satz");
+        assert_eq!(typed("/abs/other/e.satz", "/abs/estate/yaml"), "/abs/other/e.satz");
+    }
 }
 
 #[cfg(test)]
@@ -9220,7 +9300,7 @@ action "step" {
             .unwrap_or_else(|e| panic!("front-end failed: {}", e));
         let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
         let graph = crate::pack_graph::Shipped::Graph(crate::template::tests::shipped(), Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"));
-        compile_tail(&fe, &resolver, &reg, &cfg, &graph, level, Path::new("tail.satz"), src)
+        compile_tail(&fe, &resolver, &reg, &cfg, &graph, level, Path::new("tail.satz"), "tail.satz", src)
     }
 
     fn line_of(needle: &str) -> u32 {
@@ -9272,7 +9352,7 @@ action "step" {
         let fe = satz_core::pipeline::compile_estate("tail.satz", ESTATE, &resolver, &|p| Err(format!("no {}", p))).unwrap();
         let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
         let graph = crate::pack_graph::Shipped::Missing(PathBuf::from("presets/pack-graph.json"));
-        let t = compile_tail(&fe, &resolver, &reg, &cfg, &graph, "warn", Path::new("tail.satz"), ESTATE);
+        let t = compile_tail(&fe, &resolver, &reg, &cfg, &graph, "warn", Path::new("tail.satz"), "tail.satz", ESTATE);
         let menu: Vec<_> = t.findings.iter().filter(|f| f.kind == Kind::UnadoptedPack).collect();
         assert_eq!(menu.len(), 1, "{menu:?}");
         assert_eq!(menu[0].severity, Severity::Info);
@@ -9502,6 +9582,8 @@ google_storage_bucket {
         cfg.schema_dir = super::corpus::schema_dir();
         cfg.validation_level = "warn".to_string();
         cfg.dir = Some(dir.clone());
+        // the estates stand in `yaml_dir`, so a `fix` names them the way a command takes them
+        cfg.yaml_dir = dir.display().to_string();
         let good = dir.join("good.satz");
         std::fs::write(&good, ESTATE).unwrap();
         crate::findings::take_said();

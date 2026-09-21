@@ -145,7 +145,7 @@ pub(crate) fn open_errors(input: &Path, runtime: &ToolConfig) -> Result<Vec<Find
     let load = crate::questions::loader(input, runtime);
     let (_, notices, env) =
         estate_questions(&input.display().to_string(), &src, &load).map_err(|e| format!("{}:{}: {}", e.file, e.line, e.msg))?;
-    Ok(compile_findings(&notices, &env, input, &src, Doing::Writing)
+    Ok(compile_findings(&notices, &env, input, &crate::estate_as_typed(input, runtime), &src, Doing::Writing)
         .into_iter()
         .filter(|f| f.severity == Severity::Error)
         .collect())
@@ -167,7 +167,16 @@ pub(crate) fn acknowledge(estate: &Path, params: &[String]) -> Result<(), String
 /// A finding for each open notice, at the estate's `use` line of the pack that declares
 /// it — or at the notice itself when another pack uses that one — at the severity the
 /// pack declared, capped by what this run does (`Doing`).
-pub(crate) fn compile_findings(notices: &[PackNotices], env: &Env, estate: &Path, estate_src: &str, doing: Doing) -> Vec<Finding> {
+/// `estate_arg` is the estate as a command takes it (`crate::estate_as_typed`): the
+/// notice's `fix` line, unlike its location, is a command to paste.
+pub(crate) fn compile_findings(
+    notices: &[PackNotices],
+    env: &Env,
+    estate: &Path,
+    estate_arg: &str,
+    estate_src: &str,
+    doing: Doing,
+) -> Vec<Finding> {
     let open: Vec<NoticeRow> = rows(notices, env).into_iter().filter(|n| !n.acknowledged).collect();
     let header = "notices open — what a pack asks to be run once it is on";
     let scan = crate::packs::scan(estate_src);
@@ -194,7 +203,7 @@ pub(crate) fn compile_findings(notices: &[PackNotices], env: &Env, estate: &Path
             .shared(format!("{}\nOnce the command has run, bind each param named above `true` in the estate's params{}.", n.text, held))
             .in_group(header)
             .about(n.param.clone())
-            .fix_in(&n.run, estate);
+            .fix_in(&n.run, estate_arg);
             match scan.uses.iter().find(|l| !l.commented && l.written == n.pack) {
                 Some(l) => f.located(label.clone(), l.index as u32 + 1),
                 None => {
@@ -247,7 +256,7 @@ mod tests {
     fn an_open_notice_is_a_finding_whose_fix_is_the_packs_command() {
         let notices = decl("p_adopted", Declared::Error);
         let src = "estate e\nuse \"presets/p.satz\"\n";
-        let f = compile_findings(&notices, &Env::new(), Path::new("yaml/e.satz"), src, Doing::Reading);
+        let f = compile_findings(&notices, &Env::new(), Path::new("yaml/e.satz"), "e.satz", src, Doing::Reading);
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].fix.as_deref(), Some("satz adopt e.satz --execute --import"));
         assert_eq!(
@@ -271,7 +280,7 @@ mod tests {
     fn what_a_message_is_depends_on_the_pack_and_on_what_the_run_does() {
         let src = "estate e\nuse \"presets/p.satz\"\n";
         let at = |declared, doing| {
-            compile_findings(&decl("p_adopted", declared), &Env::new(), Path::new("yaml/e.satz"), src, doing)[0].severity
+            compile_findings(&decl("p_adopted", declared), &Env::new(), Path::new("yaml/e.satz"), "e.satz", src, doing)[0].severity
         };
         assert_eq!(at(Declared::Error, Doing::Writing), Severity::Error, "a run that writes refuses");
         assert_eq!(at(Declared::Error, Doing::Reading), Severity::Warning, "a compile says it and goes on");
@@ -279,7 +288,7 @@ mod tests {
         assert_eq!(at(Declared::Info, Doing::Writing), Severity::Info, "nothing waits for it");
         // and only an error names what it holds back
         let says = |declared| {
-            compile_findings(&decl("p_adopted", declared), &Env::new(), Path::new("yaml/e.satz"), src, Doing::Reading)[0]
+            compile_findings(&decl("p_adopted", declared), &Env::new(), Path::new("yaml/e.satz"), "e.satz", src, Doing::Reading)[0]
                 .message
                 .clone()
         };

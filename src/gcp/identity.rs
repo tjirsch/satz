@@ -482,8 +482,8 @@ fn runs_as(r: &WhoamiReport) -> String {
         ),
         (None, _) => format!(
             "{} — {} declares no IaC service account (svc_iac_account, infra_project_name), so \
-             nothing is impersonated",
-            you, e.path
+             nothing is impersonated; `satz migrate {} --mode cloud` is refused until both are bound",
+            you, e.path, e.path
         ),
     }
 }
@@ -1034,7 +1034,9 @@ mod whoami_render_tests {
         r.estate = Some(EstateIdentity::new(d, false, None));
         let line = runs_as_line(&r);
         assert!(line.starts_with("runs as:     person@example.com — e.satz declares no IaC service account"), "{line}");
-        assert!(!line.contains("migrate"), "{line}");
+        // the switch is named as what it is here: refused. A local estate that DOES name
+        // the account is offered it instead, two arms above.
+        assert!(line.contains("`satz migrate e.satz --mode cloud` is refused until both are bound"), "{line}");
     }
 
     #[test]

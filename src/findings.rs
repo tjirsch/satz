@@ -218,13 +218,14 @@ impl Finding {
     }
 
     /// The command that answers it, for one estate: `<estate>` in it — a pack's notice
-    /// writes its command that way — is the estate's file name, so the line is one to
-    /// paste.
-    pub(crate) fn fix_in(self, command: &str, estate: &std::path::Path) -> Self {
-        match estate.file_name() {
-            Some(name) => self.fix(command.replace("<estate>", &name.to_string_lossy())),
-            None => self.fix(command),
-        }
+    /// writes its command that way — is the estate as a command takes it, so the line is
+    /// one to paste.
+    ///
+    /// `estate_arg` is `crate::estate_as_typed`'s answer, never the file name: an estate
+    /// in a subdirectory of `yaml_dir` is `pk/e.satz`, and `satz adopt e.satz` finds
+    /// nothing.
+    pub(crate) fn fix_in(self, command: &str, estate_arg: &str) -> Self {
+        self.fix(command.replace("<estate>", estate_arg))
     }
 }
 
