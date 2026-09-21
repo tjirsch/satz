@@ -1,0 +1,4 @@
+// A GUID that is neither an example tenant nor a documented vendor default.
+tenant_id = "9f1c2e4a-%%7b3d-4c5e-8f6a-0b1c2d3e4f5a"
+// upper case: 9F1C2E4A-%%7B3D-4C5E-8F6A-0B1C2D3E4F5A
+// beside a vendor default: 33e01921-4d64-4f8c-a055-5bdaffd5e33d and 0a1b2c3d-%%4e5f-6a7b-8c9d-0e1f2a3b4c5d

@@ -1,0 +1,4 @@
+// Project ids in a resource path that are no example value.
+parent = "projects/%%realcorp-prod-42"
+// beside an example: projects/acme-log-001 and projects/%%rcx-shared
+// the flag form: --project %%realcorp-prod

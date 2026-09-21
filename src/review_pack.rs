@@ -221,6 +221,12 @@ pub(crate) fn review(
         }
     }
 
+    // no private data: a pack written against its author's own organisation carries its
+    // ids, domains and addresses, and each one becomes a param — or a documented example
+    // value — before the pack goes upstream. The rules and the allow-lists are the
+    // repository's privacy gate's (`src/privacy_shapes.rs`).
+    f.extend(private_shapes(&pack, &src));
+
     // The fold: a pack is a fragment, so what it emits is only knowable inside an
     // estate. Everything below reads that estate. The synthetic one lives in a scratch
     // directory this review alone owns, removed on every return below.
@@ -469,26 +475,42 @@ pub(crate) fn review(
         f.push(finding.clone());
     }
 
-    // The privacy shapes are not part of this command yet: a pack written against the
-    // author's own organisation carries ids, domains and addresses that must become
-    // params before it can leave their machine, and that gate is still the shell
-    // script in the repository.
-    f.push(at(
-        &pack,
-        None,
-        Severity::Info,
-        "not checked here: the privacy shapes (organisation and project ids, e-mail addresses, domains). \
-         `scripts/check-names.sh` in a satz checkout is what rejects them today, and what must become a \
-         param before a pack leaves the machine it was written on"
-            .to_string(),
-    ));
-
     Ok(Review {
         pack: pack.display().to_string(),
         folded_into,
         emits: mine.iter().map(|r| r.address()).collect(),
         findings: f,
     })
+}
+
+/// Every token of the pack shaped like private data that is not a documented example
+/// value, one finding each at its line. An error: the library's bar is the bar a pack
+/// goes upstream with, and a pack that keeps its author's organisation in it cannot.
+fn private_shapes(pack: &Path, src: &str) -> Vec<Finding> {
+    crate::privacy_shapes::scan(src)
+        .into_iter()
+        .map(|hit| {
+            Finding::new(
+                Severity::Error,
+                Kind::PrivateShape,
+                format!(
+                    "`{}` looks like {} — a pack that goes upstream names no organisation: make it a param, or \
+                     use the documented example value (docs/examples.md)",
+                    hit.token,
+                    hit.shape.describe()
+                ),
+            )
+            .in_group("shaped like private data")
+            // one block per shape: the rows name the tokens, the sentence is said once
+            .shared(format!(
+                "Each looks like {} — a pack that goes upstream names no organisation: make it a param, or \
+                 use the documented example value (docs/examples.md).",
+                hit.shape.describe()
+            ))
+            .about(hit.token)
+            .located(pack.display().to_string(), hit.line)
+        })
+        .collect()
 }
 
 /// The directory one review folds its pack in, removed when the review returns, however
@@ -692,6 +714,74 @@ mod tests {
         assert_eq!(f.severity, Severity::Warning);
         assert!(f.message.starts_with("google_storage_bucket.logs"), "{}", f.message);
         assert_eq!(f.line, Some(5), "at the declaring block");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pack written against its author's organisation: each value shaped like private
+    /// data is an error at its own line, naming the token and saying it becomes a param.
+    /// The values are built from parts, so this file carries none of them.
+    #[test]
+    fn a_private_value_in_the_pack_is_an_error_at_its_line() {
+        let org = format!("{}{}", "4815", "1623420");
+        let domain = format!("{}.{}", "realcorp", "de");
+        let text = format!(
+            "// A log sink written against its author's organisation.\n\
+             pack central_logs version \"1.0\"\n\n\
+             google_logging_organization_sink {{\n  central {{\n    org_id      = \"{org}\"\n    \
+             destination = \"storage.googleapis.com/acme-logs\"\n    filter      = \"{domain}\"\n  }}\n}}\n"
+        );
+        let found = private_shapes(Path::new("/tmp/x/central-logs.satz"), &text);
+        let at: Vec<(Option<u32>, Kind, Severity, Option<&str>)> =
+            found.iter().map(|f| (f.line, f.kind, f.severity, f.subject.as_deref())).collect();
+        assert_eq!(
+            at,
+            vec![
+                (Some(6), Kind::PrivateShape, Severity::Error, Some(org.as_str())),
+                (Some(8), Kind::PrivateShape, Severity::Error, Some(domain.as_str())),
+            ]
+        );
+        assert!(found[0].message.contains("make it a param"), "{}", found[0].message);
+        assert!(found[0].message.contains("an organisation, folder or project number"), "{}", found[0].message);
+    }
+
+    /// The documented example values are what a pack upstream names, and they pass.
+    #[test]
+    fn a_pack_naming_only_example_values_has_no_private_shape() {
+        let text = "// A log sink for the example customer.\npack central_logs version \"1.0\"\n\n\
+                    google_logging_organization_sink {\n  central {\n    org_id      = \"123456789012\"\n    \
+                    destination = \"storage.googleapis.com/projects/acme-log-001\"\n    \
+                    filter      = \"admin@example.com C0example 012345-6789AB-CDEF01\"\n  }\n}\n";
+        assert!(private_shapes(Path::new("/tmp/x/central-logs.satz"), text).is_empty());
+    }
+
+    /// The whole review reports it: a real review of a pack file carries the finding.
+    #[test]
+    fn the_review_carries_the_private_shape_finding() {
+        let dir = std::env::temp_dir().join(format!("satz-review-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg = crate::settings::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.schema_dir = crate::corpus::schema_dir();
+        let pack = dir.join("logs.satz");
+        let project = format!("{}-{}", "realcorp", "logs");
+        std::fs::write(
+            &pack,
+            format!(
+                "// A log bucket in its author's own project.\npack logs version \"1.0\"\n\n\
+                 google_storage_bucket {{\n  logs {{\n    project  = \"{project}\"\n    name     = \"acme-logs\"\n    \
+                 location = \"EU\"\n  }}\n}}\n"
+            ),
+        )
+        .unwrap();
+        let r = review(&pack, None, &cfg, &cfg).expect("the review runs");
+        let f = r
+            .findings
+            .iter()
+            .find(|f| f.kind == Kind::PrivateShape)
+            .unwrap_or_else(|| panic!("no private-shape finding: {:?}", r.findings));
+        assert_eq!((f.line, f.severity), (Some(6), Severity::Error));
+        assert!(!r.passed());
+        assert!(!r.findings.iter().any(|f| f.message.contains("not checked here")), "{:?}", r.findings);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

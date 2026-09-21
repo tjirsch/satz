@@ -15,6 +15,8 @@ account ids and repository URLs must never appear in a tracked file. Instead,
 values.** `scripts/check-names.sh` enforces it: any `C0…` id, any 11–13-digit
 number, any billing-account id, any GUID, any 32-hex string, any project id, any
 e-mail or `.de` domain that is not on this page fails the commit and the CI run.
+The values themselves are listed in `scripts/check-names-allow.txt`, which the gate
+and `satz review-pack` both read.
 
 All domains are IANA-reserved (`example.com/net/org`, the `.example` TLD), so
 nothing here can resolve. All numbers are visibly synthetic.
@@ -42,7 +44,7 @@ nothing here can resolve. All numbers are visibly synthetic.
 
 Some GUIDs are not anybody's secret: Microsoft and Google publish them, and every
 customer's estate carries the same value. Those are allowed by name, listed here and
-in `ALLOW_GUID` in the gate.
+in the `guid` list of `scripts/check-names-allow.txt`, the gate's allow-lists.
 
 | identifier | what it is |
 |---|---|
@@ -53,7 +55,8 @@ in `ALLOW_GUID` in the gate.
 
 **Adding one:** confirm the vendor publishes it and that it does not vary per
 customer — a tenant id that appears in the customer's generated script is theirs, not
-the vendor's, and belongs in a param. Then add it to `ALLOW_GUID` and to this table
+the vendor's, and belongs in a param. Then add it to the `guid` and `guid32` lists of
+`scripts/check-names-allow.txt` and to this table
 in the same commit. A GUID the gate does not know is assumed to identify a customer.
 
 ### Other placeholders

@@ -3758,6 +3758,7 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "pulldown-cmark",
+ "regex",
  "reqwest",
  "rmcp",
  "rust_xlsxwriter",

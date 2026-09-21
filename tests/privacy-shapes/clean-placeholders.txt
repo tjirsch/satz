@@ -1,0 +1,14 @@
+// What a pack carries in place of an identifier: params, placeholders, and text that
+// only resembles a shape. None of it is private.
+project = "${var.project_id}"
+parent  = "projects/${project_id}"
+parent  = "projects/<your-project>"
+parent  = "projects/{project}"
+project = "PROJECT_ID"
+member  = "<admin>@<customer-domain>"
+
+// files and versions: main.tf, review_pack.rs, satz 0.74.1, provider 7.12.0
+// numbers too short or too long for an id: 1234567890 and 12345678901234
+// a digest is one hex run, not an id:
+// sha256 8f3a1b2c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80
+// prose with dashes — and quotes “like these” — and a path ~/estates/bolt

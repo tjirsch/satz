@@ -83,6 +83,9 @@ kinds! {
     HclPassthrough => "hcl-passthrough",
     /// `review-pack`: a rule the preset library holds, judged on one pack
     Pack => "pack",
+    /// `review-pack`: a token in the pack shaped like private data — an id, a domain, an
+    /// address — that is no documented example value
+    PrivateShape => "private-shape",
 }
 
 impl Kind {

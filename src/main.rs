@@ -23,6 +23,7 @@ mod day_zero;
 mod init_params;
 mod prerequisites;
 mod review_pack;
+mod privacy_shapes;
 mod gcp;
 mod org_policy;
 mod cloud_identity;

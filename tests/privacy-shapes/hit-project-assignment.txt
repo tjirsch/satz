@@ -1,0 +1,4 @@
+// Project ids in an assignment that are no example value.
+project    = "%%realcorp-prod"
+project_id = "%%rcx-billing-01"
+project    = "acme-infra-001"

@@ -1,0 +1,26 @@
+// A pack that names only the documented example values (docs/examples.md). Every
+// shape the privacy gate knows appears here, and each one is allowed.
+pack example_values version "1.0"
+
+params {
+  customer_id              = "C0example"
+  customer_organization_id = "123456789012"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  infra_project_name       = "acme-infra-001"
+  customer_domain          = "example.com"
+}
+
+google_logging_project_sink {
+  audit {
+    project     = "acme-log-001"
+    destination = "storage.googleapis.com/acme-organization-audit-bucket"
+    parent      = "projects/acme-log-001"
+  }
+}
+
+// contacts: security@example.net, noc@mail.delta.example, ops@example.org
+// folder 123456789, project number 100000000001, the other customers 222222222222 and C0bolt002
+// tenant 11111111-1111-1111-1111-111111111111, pool 11111111111111111111111111111111
+// Sentinel's application id 2041288c-b303-4ca0-9076-9612db3beeb2 and Microsoft's
+// commercial tenant 33e019214d644f8ca0555bdaffd5e33d, issuer sts.windows.net
+// the estate lives in ~/estates/acme; the provider docs are at registry.terraform.io

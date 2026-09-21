@@ -1,0 +1,6 @@
+// Organisation, folder and project numbers that are no example value.
+customer_organization_id = "98765%%4321098"
+folder = "folders/5550%%1234567"
+number = 7654%%321098765
+// allowed and private on one line: 123456789012 and 3141%%59265358
+// beside a GUID, which is stripped first: 2718%%281828459 11111111-1111-1111-1111-111111111111

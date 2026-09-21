@@ -1,0 +1,24 @@
+// Central log sink for the organisation, written against the author's own
+// organisation before its values became params.
+pack central_logs version "1.0"
+
+google_logging_organization_sink {
+  central {
+    org_id      = "4815%%1623420"
+    destination = "logging.googleapis.com/projects/%%realcorp-logs/locations/eu/buckets/central"
+  }
+}
+
+google_project_iam_member {
+  log_reader {
+    project = "%%realcorp-logs"
+    role    = "roles/logging.viewer"
+    member  = "group:log-readers@realcorp%%.de"
+  }
+}
+
+google_billing_budget {
+  logs {
+    billing_account = "0A1B2C-%%3D4E5F-6A7B8C"
+  }
+}

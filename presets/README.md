@@ -40,7 +40,8 @@ back as `"import-id"`. Pack headers that mention adoption mean that command.
 
 **Writing one:** `satz review-pack <file> --format text --out -` judges a pack
 against everything on this page — it parses, it is formatted, its header opens with a
-sentence the index can print, its version has a changelog row below, it declares no
+sentence the index can print, its version has a changelog row below, it carries no value
+shaped like private data that is not a documented example value, it declares no
 membership, it runs no legacy constraint beside its managed replacement, every resource
 type it emits has a row in satz's prerequisite table, and it compiles inside an estate —
 and says what adopting it would cost that estate in roles and APIs. It warns on a type
