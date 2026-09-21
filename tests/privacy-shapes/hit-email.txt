@@ -2,3 +2,4 @@
 first_admin = "jane.doe@realcorp%%.de"
 // ops@example.com, sec@othercorp%%.com - the allowed one shields nothing
 owner = "Platform.Team@realcorp%%.co%%.uk"
+// an allowed domain that is only the start of the host: ops@example%%.com.realcorp%%.io

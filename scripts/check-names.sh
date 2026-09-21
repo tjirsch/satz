@@ -114,14 +114,20 @@ g() { # grep -Hn ERE over the file list; staged mode reads the index
   fi
   return 0
 }
-# tokens PATTERN ALLOW-ERE: from `file:line:content` lines on stdin, print
+# tokens PATTERN ALLOW-ERE [lower]: from `file:line:content` lines on stdin, print
 # `file:line: token` for every token matching PATTERN that does NOT match the
 # allowlist. Per TOKEN — one allowed address on a line never shields another.
+# `lower` reads the content lowercased first, for a shape whose case means nothing
+# (a host name): the token is reported lowercased.
 tokens() {
-  local pat="$1" allow="$2" l pre
+  local pat="$1" allow="$2" case="${3:-}" l pre
   while IFS= read -r l; do
     pre="${l%%:*}:$(printf '%s' "$l" | cut -d: -f2)"
-    printf '%s' "$l" | cut -d: -f3- | grep -o -E "$pat" | grep -i -v -E "$allow" | sed "s|^|$pre: |"
+    if [[ "$case" == lower ]]; then
+      printf '%s' "$l" | cut -d: -f3- | tr '[:upper:]' '[:lower:]' | grep -o -E "$pat" | grep -i -v -E "$allow" | sed "s|^|$pre: |"
+    else
+      printf '%s' "$l" | cut -d: -f3- | grep -o -E "$pat" | grep -i -v -E "$allow" | sed "s|^|$pre: |"
+    fi
   done
   return 0
 }
@@ -148,7 +154,7 @@ fi
 if [[ -n "$range" || -n "$msgfile" ]]; then
   report "directory id (C0…) in a commit message"      "$(printf '%s\n' "$msgs" | grep -o -E '\bC0[0-9a-z]{7}\b' | grep -v -E "\b($ALLOW_DIR)\b")"
   report "11–13 digit number in a commit message"       "$(printf '%s\n' "$msgs" | sed -E 's/[0-9a-fA-F]{20,}//g; s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}//g' | grep -o -E '\b[0-9]{11,13}\b' | grep -v -E "\b($ALLOW_NUM)\b")"
-  report "e-mail outside allowed domains in a message"  "$(printf '%s\n' "$msgs" | grep -o -E '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | grep -i -v -E "@($ALLOW_MAILDOM)\b")"
+  report "e-mail outside allowed domains in a message"  "$(printf '%s\n' "$msgs" | grep -o -E '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | grep -i -v -E "@($ALLOW_MAILDOM)$")"
 fi
 
 # ---- 1–6. content rules --------------------------------------------------------
@@ -159,10 +165,10 @@ report "11–13 digit number (org/project/folder id) that is not an example valu
 report "billing account id that is not an example value" \
   "$(g '\b[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}\b' | tokens '\b[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}\b' "($ALLOW_BILL)")"
 report "e-mail address outside reserved/vendor domains (placeholders like <customer-domain> are fine)" \
-  "$(g '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | tokens '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "@($ALLOW_MAILDOM)\b")"
+  "$(g '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | tokens '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "@($ALLOW_MAILDOM)$")"
 report "domain that is neither IANA-reserved nor a known vendor host (a real company's domain?)" \
-  "$(g '\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|io|dev|de|eu|ch|at|uk|us|fr|it|nl|cloud|app|ai|co)\b' \
-     | tokens '\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|io|dev|de|eu|ch|at|uk|us|fr|it|nl|cloud|app|ai|co)\b' "^($ALLOW_DOMAIN)$")"
+  "$(g '\b[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.([Cc][Oo][Mm]|[Oo][Rr][Gg]|[Nn][Ee][Tt]|[Ii][Oo]|[Dd][Ee][Vv]|[Dd][Ee]|[Ee][Uu]|[Cc][Hh]|[Aa][Tt]|[Uu][Kk]|[Uu][Ss]|[Ff][Rr]|[Ii][Tt]|[Nn][Ll]|[Cc][Ll][Oo][Uu][Dd]|[Aa][Pp][Pp]|[Aa][Ii]|[Cc][Oo])\b' \
+     | tokens '\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|io|dev|de|eu|ch|at|uk|us|fr|it|nl|cloud|app|ai|co)\b' "^($ALLOW_DOMAIN)$" lower)"
 report "GUID that is neither an example value nor a documented vendor default (an Entra tenant id?)" \
   "$(g '\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b' \
      | tokens '\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b' "^($ALLOW_GUID)$")"
@@ -172,7 +178,7 @@ report "32 hex characters — an Entra tenant id without dashes is the workload 
 # "$( … )", bash 3.2 — /bin/bash on macOS — misparses that nesting and both
 # rules matched nothing; a plain assignment has no enclosing double quotes.
 hits=$(g '(projects/[a-z][a-z0-9-]{3,28}[a-z0-9]|project(_id)?[[:space:]]*=[[:space:]]*"[^"]*"|--project[= ][a-z][a-z0-9-]{3,28}[a-z0-9])' \
-     | tokens 'projects/[a-z][a-z0-9-]{3,28}[a-z0-9]' "^projects/($ALLOW_PROJECT)$")
+     | tokens 'projects/[a-z][a-z0-9-]{3,28}[a-z0-9]|--project[= ][a-z][a-z0-9-]{3,28}[a-z0-9]' "^(projects/|--project[= ])($ALLOW_PROJECT)$")
 report "project id that is not an example value (projects/…, project = …, --project)" "$hits"
 hits=$(g 'project(_id)?[[:space:]]*=[[:space:]]*"[a-z][a-z0-9-]{4,28}[a-z0-9]"' \
      | tokens 'project(_id)?[[:space:]]*=[[:space:]]*"[a-z][a-z0-9-]{4,28}[a-z0-9]"' "=[[:space:]]*\"($ALLOW_PROJECT)\"$")
