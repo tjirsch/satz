@@ -8,9 +8,10 @@
 //!
 //! Typst is a typesetting engine written in Rust, so satz compiles the report
 //! itself: markdown in, PDF bytes out, no process, no PATH, nothing to install. The
-//! fonts are embedded too (Libertinus Serif for text, DejaVu Sans Mono for code and
-//! the status glyphs a compliance table is full of), because a PDF that renders
-//! differently on the auditor's machine is not evidence of anything.
+//! fonts are embedded too — `assets/fonts/`, Libertinus Serif for text and DejaVu
+//! Sans Mono for code and the status glyphs a compliance table is full of — because
+//! a PDF that renders differently on the auditor's machine is not evidence of
+//! anything.
 //!
 //! What is NOT here is a markdown renderer of our own: `markup` turns the markdown
 //! satz already produces into Typst markup, and Typst does the typesetting. The
@@ -39,6 +40,29 @@ const PREAMBLE: &str = r#"#set page(paper: "a4", margin: (x: 1.8cm, y: 2cm), num
 #show table.cell.where(y: 0): strong
 "#;
 
+/// The faces satz carries: the two families the preamble names, each in the four
+/// styles markup can ask for. A heading, a strong span and a table header are bold,
+/// an emphasised span is italic, and both at once is bold italic; a code span takes
+/// the weight and slant of whatever it sits in, so `` `code` `` inside a heading is
+/// bold monospace. A style whose face is absent is typeset in the nearest one that
+/// is present, with no diagnostic — so the square is complete rather than trimmed to
+/// what today's reports happen to reach.
+///
+/// The files are the `typst-assets` crate's own, committed under `assets/fonts/`
+/// with the licence texts the OFL and the Bitstream licence ask a redistributor to
+/// carry. What is left out is New Computer Modern, text and math: 7.3 MB of the
+/// 9.7 MB that crate bundles, and nothing a compliance report sets.
+const FACES: [(&str, &[u8]); 8] = [
+    ("LibertinusSerif-Regular.otf", include_bytes!("../assets/fonts/LibertinusSerif-Regular.otf")),
+    ("LibertinusSerif-Bold.otf", include_bytes!("../assets/fonts/LibertinusSerif-Bold.otf")),
+    ("LibertinusSerif-Italic.otf", include_bytes!("../assets/fonts/LibertinusSerif-Italic.otf")),
+    ("LibertinusSerif-BoldItalic.otf", include_bytes!("../assets/fonts/LibertinusSerif-BoldItalic.otf")),
+    ("DejaVuSansMono.ttf", include_bytes!("../assets/fonts/DejaVuSansMono.ttf")),
+    ("DejaVuSansMono-Bold.ttf", include_bytes!("../assets/fonts/DejaVuSansMono-Bold.ttf")),
+    ("DejaVuSansMono-Oblique.ttf", include_bytes!("../assets/fonts/DejaVuSansMono-Oblique.ttf")),
+    ("DejaVuSansMono-BoldOblique.ttf", include_bytes!("../assets/fonts/DejaVuSansMono-BoldOblique.ttf")),
+];
+
 /// One Typst source, compiled with the fonts satz carries.
 struct Report {
     library: LazyHash<Library>,
@@ -51,8 +75,12 @@ impl Report {
     fn new(typst_markup: String) -> Self {
         let mut book = FontBook::new();
         let mut fonts = Vec::new();
-        for (font, info) in typst_kit::fonts::embedded() {
-            book.push(info);
+        for (name, data) in FACES {
+            // One face per file, so index 0. A file that is not a font it can read is
+            // a broken build, not a report in a substituted face.
+            let font = Font::new(Bytes::new(data), 0)
+                .unwrap_or_else(|| panic!("the embedded font {} did not parse", name));
+            book.push(font.info().clone());
             fonts.push(font);
         }
         let vpath = VirtualPath::new("report.typ").expect("`report.typ` is a valid virtual path");
@@ -364,6 +392,41 @@ mod tests {
         assert!(wide.contains("#page(flipped: true)["), "{wide}");
         let narrow = markup("| a | b |\n|---|---|\n| 1 | 2 |\n");
         assert!(!narrow.contains("flipped"), "{narrow}");
+    }
+
+    /// Every style the markup can ask for has a face of its own. Typst answers a
+    /// request it has no face for with the nearest one it has and says nothing, so a
+    /// dropped face is a report set in the wrong weight or upright where it should
+    /// slant — this is what notices.
+    #[test]
+    fn each_family_carries_all_four_styles() {
+        use typst::text::{FontStretch, FontStyle, FontVariant, FontWeight};
+
+        let world = Report::new(String::new());
+        for family in ["libertinus serif", "dejavu sans mono"] {
+            let mut seen = Vec::new();
+            for (style, weight) in [
+                (FontStyle::Normal, FontWeight::REGULAR),
+                (FontStyle::Normal, FontWeight::BOLD),
+                (FontStyle::Italic, FontWeight::REGULAR),
+                (FontStyle::Italic, FontWeight::BOLD),
+            ] {
+                let wanted = FontVariant::new(style, weight, FontStretch::NORMAL);
+                let index = world
+                    .book
+                    .select(family, wanted)
+                    .unwrap_or_else(|| panic!("{family} has no face at all"));
+                let got = world.fonts[index].info().variant;
+                assert_eq!(got.weight, weight, "{family} {style:?} {weight:?} fell back to {got:?}");
+                assert_eq!(
+                    got.style == FontStyle::Normal,
+                    style == FontStyle::Normal,
+                    "{family} {style:?} {weight:?} fell back to {got:?}"
+                );
+                assert!(!seen.contains(&index), "{family} {style:?} {weight:?} shares a face with another style");
+                seen.push(index);
+            }
+        }
     }
 
     /// The whole point: bytes out, with no tool on PATH.

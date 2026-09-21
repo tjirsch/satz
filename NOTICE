@@ -29,29 +29,27 @@ The Rust crates satz is compiled from
 Typst, and the fonts it typesets with
 
     `--format pdf` is typeset by Typst, compiled into this binary rather than
-    called as a tool, so a PDF needs nothing installed. The engine and its
-    bundled assets travel with the binary.
+    called as a tool, so a PDF needs nothing installed. The engine and the eight
+    font faces in assets/fonts/ travel with the binary.
 
     Typst: Copyright (c) The Typst Project Developers.
     Licensed under the Apache License, Version 2.0.
     https://github.com/typst/typst
 
-    The fonts Typst embeds, and this binary therefore carries:
+    The font faces in assets/fonts/, taken from the `typst-assets` crate and
+    compiled into this binary:
 
-    Libertinus Serif — Copyright (c) 2012-2024 The Libertinus Project Authors.
-    Licensed under the SIL Open Font License, Version 1.1.
-    https://github.com/alerque/libertinus
+    Libertinus Serif, regular / bold / italic / bold italic — Copyright (c)
+    2012-2024 The Libertinus Project Authors. Licensed under the SIL Open Font
+    License, Version 1.1. https://github.com/alerque/libertinus
 
-    New Computer Modern (text and math) — Copyright (c) 2019-2024 Antonis
-    Tsolomitis. Licensed under the GUST Font License, Version 1.0.
-    https://ctan.org/pkg/newcomputermodern
+    DejaVu Sans Mono, regular / bold / oblique / bold oblique — Bitstream Vera
+    Fonts Copyright (c) 2003 Bitstream, Inc.; the DejaVu changes are in the
+    public domain. https://dejavu-fonts.github.io
 
-    DejaVu Sans Mono — Bitstream Vera Fonts Copyright (c) 2003 Bitstream, Inc.;
-    the DejaVu changes are in the public domain.
-    https://dejavu-fonts.github.io
-
-    The full texts are in the `typst-assets` crate's own NOTICE, which travels
-    with the source of this dependency.
+    Both licences ask a redistributor to carry their text with the files, so the
+    texts are beside them — assets/fonts/LICENSE-Libertinus-OFL.txt and
+    assets/fonts/LICENSE-DejaVu.txt — and travel in every release archive.
 
 tests/schemas/google.json
 

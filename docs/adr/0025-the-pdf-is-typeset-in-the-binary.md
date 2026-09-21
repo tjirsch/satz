@@ -33,8 +33,9 @@ an error, which is honest and still unhelpful.
 
 Option 4, decided 2026-09-15. `--format pdf` is typeset by satz itself: markdown in,
 PDF bytes out, no process, no PATH, nothing to install. The fonts travel with the
-binary too (Libertinus Serif, New Computer Modern, DejaVu Sans Mono), because a report
-that renders differently on the auditor's machine is not evidence of anything.
+binary too — Libertinus Serif for text, DejaVu Sans Mono for code and the status
+glyphs — because a report that renders differently on the auditor's machine is not
+evidence of anything.
 
 **What it costs, measured rather than guessed.** The stripped binary goes from 23 MB to
 64 MB and the installer download from 6.7 MB to 20 MB — about three times. Roughly
@@ -71,8 +72,14 @@ and silently eating it is data loss in a document meant as evidence.
 - `--format pdf` works everywhere, and CI can finally test it: the smoke matrix writes
   a real evidence PDF and asserts it is deterministic, on a runner with no pandoc.
 - The binary and every release artefact are about three times larger.
-- Typst, Libertinus Serif, New Computer Modern and DejaVu Sans Mono are named in
-  `NOTICE`, which Apache-2.0 asks a redistributor to carry (ADR 0022).
+- What it carries is the faces it sets, not an engine bundle: Libertinus Serif and
+  DejaVu Sans Mono in regular, bold, italic and bold italic, committed in
+  `assets/fonts/` and compiled in by `include_bytes!`. New Computer Modern, text and
+  math, is 7.3 MB of the bundle and nothing a compliance report sets.
+- Typst, Libertinus Serif and DejaVu Sans Mono are named in `NOTICE`, which
+  Apache-2.0 asks a redistributor to carry (ADR 0022), and the two font licences ask
+  for their text beside the files, which is what `assets/fonts/LICENSE-*.txt` are and
+  why `dist-workspace.toml` puts them in every release archive.
 - A Typst upgrade is now a satz dependency bump that can change how a report looks.
   The determinism test catches a change in the bytes; what it looks like is reviewed
   by opening one.

@@ -8,3 +8,8 @@
 # reproduces what the generator writes and `update-third-party-licenses.sh --check`
 # compares like for like on every platform.
 THIRD-PARTY-LICENSES.md -text
+
+# The font faces satz typesets PDFs with are upstream bytes, compiled in by
+# `include_bytes!`: never a diff, never a line ending.
+assets/fonts/*.otf binary
+assets/fonts/*.ttf binary
