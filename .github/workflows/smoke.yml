@@ -27,18 +27,18 @@ permissions:
 jobs:
   grammar:
     name: grammar
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: the grammar models every statement, and every Satz file parses with it
         run: bash scripts/check-grammar.sh
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -66,7 +66,7 @@ jobs:
     # stays on Linux
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -76,19 +76,25 @@ jobs:
       - name: tests
         run: cargo test --workspace --locked
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_wrapper: false
-      - uses: astral-sh/setup-uv@v6
+      # setup-uv publishes no moving major tag since v8: an exact release is the
+      # reference upstream documents, and it is bumped by hand.
+      # The cache is off — this repository has no dependency file for the cache key
+      # to read, so the key would never change and the cache would never invalidate.
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: false
       - name: build
         run: cargo build --release --quiet --locked
       # every `tofu init` in the matrix reads the providers from this cache
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/tofu-plugins
           key: tofu-plugins-${{ runner.os }}-${{ hashFiles('tests/smoke/config.toml', 'tests/smoke/tf/**') }}
