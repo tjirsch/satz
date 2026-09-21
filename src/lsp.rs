@@ -838,8 +838,7 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("when", "the param the pack's line is gated on"),
             ("phase", "opens a group of lines: what has to be finished before they go in"),
-            ("block", "the block the line is written inside, e.g. \"google_folder.infra_folder\""),
-            ("after_scaffold", "true: the line goes after the scaffold"),
+            ("block", "the resource type map the line is written inside, e.g. \"google_essential_contacts_contact\""),
             ("by_hand", "the line is written by hand; why"),
             ("requires", "packs it needs that its params do not show"),
             ("excludes", "packs it never goes in beside"),

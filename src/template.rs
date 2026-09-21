@@ -182,28 +182,24 @@ google_folder {
 }
 "#;
 
-/// Where an offered pack's line goes in the estate satz writes: the menu above the
-/// scaffold, the group after it, or inside a block of it. The graph's `block` and
-/// `after_scaffold` say which.
+/// Where an offered pack's line goes in the estate satz writes: the menu, or inside the
+/// resource type map the graph's `block` names. A pack is used at the top level of the
+/// estate, so the menu holds every line but those of the bare lists, which are the content
+/// of their type's map.
 ///
-/// A line after the scaffold is a top-level pack that reads a param a pack INSIDE the
-/// scaffold declares: the compile builds one namespace in file order, so a param is known
-/// from the line that declares it on, and a line above the folder that reads the logsink's
-/// params stops the compile with `unknown param` the moment it is uncommented.
-/// `merge-presets` treats it as top level: it appends at the end of the file, which is
-/// after the scaffold too.
+/// The menu is one list in the graph's order, and the compile builds one param namespace
+/// in file order: a pack that reads another pack's param has its line after that pack's,
+/// which is the order of the `offers` entries.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Place<'a> {
     Menu,
-    AfterScaffold,
     Block(&'a str),
 }
 
 pub(crate) fn place(n: &Node) -> Place<'_> {
-    match (&n.block, n.after_scaffold) {
-        (Some(b), _) => Place::Block(b.as_str()),
-        (None, true) => Place::AfterScaffold,
-        (None, false) => Place::Menu,
+    match &n.block {
+        Some(b) => Place::Block(b.as_str()),
+        None => Place::Menu,
     }
 }
 
@@ -245,25 +241,9 @@ fn pack_menu(graph: &PackGraph) -> String {
     )
 }
 
-/// The packs the skeleton writes after the scaffold, commented like the menu and under the
-/// same phases.
-fn packs_after_scaffold(graph: &PackGraph) -> String {
-    pack_group(
-        "\n// ---- the packs that read a param of a pack in the folder above ------------------\n\
-         //\n\
-         // A param is known from the line that declares it on, so a pack whose defaults name\n\
-         // another pack's param comes after that pack's line. These read what the audit logsink\n\
-         // or the central alerts declare — Sentinel's two log paths through Sentinel's own — and\n\
-         // those two sit inside the infrastructure folder above. Uncomment a line, or answer its\n\
-         // question yes, as with the list at the top.\n",
-        graph,
-        Place::AfterScaffold,
-    )
-}
-
 /// One group of commented pack lines: the offered packs placed `at`, each phase printed
-/// once above the lines it heads. A pack scoped to a block is written into that block, not
-/// into a group.
+/// once above the lines it heads. A pack written inside a resource type map is written into
+/// that map, not into a group.
 fn pack_group(header: &str, graph: &PackGraph, at: Place) -> String {
     let mut out = String::from(header);
     for n in graph.lines().into_iter().filter(|n| place(n) == at) {
@@ -277,25 +257,24 @@ fn pack_group(header: &str, graph: &PackGraph, at: Place) -> String {
     out
 }
 
-/// Write every offered pack placed in a block into that block of `src`. `Err` names the
-/// first block `src` lacks: the graph came with presets newer than this binary's scaffold.
-fn place_in_blocks(mut src: String, graph: &PackGraph) -> Result<String, String> {
+/// Write every offered pack written inside a resource type map into that map of `src`,
+/// writing the map itself where `src` does not have it.
+fn place_in_maps(mut src: String, graph: &PackGraph) -> String {
     for n in graph.lines() {
         if let Place::Block(at) = place(n) {
-            src = insert_into_block(&src, at, &pack_line(&n.path, n.gate.as_deref()), n.phase.as_deref().unwrap_or(""))
-                .ok_or_else(|| unknown_block(&n.path, at))?;
+            src = insert_into_map(&src, at, &pack_line(&n.path, n.gate.as_deref()), n.phase.as_deref().unwrap_or(""))
+                .unwrap_or_else(|| append_map(&src, at, &pack_line(&n.path, n.gate.as_deref()), n.phase.as_deref().unwrap_or("")));
         }
     }
-    Ok(src)
+    src
 }
 
 /// The whole menu of `graph` written into `src`, an estate that carries no pack line —
 /// `init` or `interview --create` wrote it without a graph: the top-level lines after the
-/// estate-core line, the group after the scaffold at the end, the block lines in their
-/// blocks. The result is the file those commands write with the graph. `None` when `src`
-/// has no estate-core line to place the menu after; an error when it lacks a block a line
-/// belongs in.
-pub(crate) fn with_menu(src: &str, graph: &PackGraph) -> Result<Option<String>, String> {
+/// estate-core line, and the lines of the bare lists inside the map of their type. The
+/// result is the file those commands write with the graph. `None` when `src` has no
+/// estate-core line to place the menu after.
+pub(crate) fn with_menu(src: &str, graph: &PackGraph) -> Option<String> {
     let core = "use \"presets/estate-core.satz\"";
     let mut at = 0usize;
     let mut found = false;
@@ -312,40 +291,25 @@ pub(crate) fn with_menu(src: &str, graph: &PackGraph) -> Result<Option<String>, 
         found = raw.trim().trim_start_matches("// ") == core;
     }
     if !found {
-        return Ok(None);
+        return None;
     }
     let mut out = format!("{}{}\n{}", &src[..at], pack_menu(graph), &src[at..]);
     if !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(&packs_after_scaffold(graph));
-    place_in_blocks(out, graph).map(Some)
+    Some(place_in_maps(out, graph))
 }
 
-/// The refusal for a pack the graph places in a block the scaffold of this binary does not
-/// have.
-pub(crate) fn unknown_block(path: &str, block: &str) -> String {
-    format!(
-        "the pack graph places `{}` in `{}`, a block the estate this satz writes does not have — the presets are \
-         newer than this binary: `satz self-update`, then run the command again",
-        path, block
-    )
-}
-
-/// Insert `line` (and its `//` phase comment, when given) as the first content of the block
-/// `at` names — `google_folder.infra` is `infra { … }` inside `google_folder { … }`. The
-/// indentation is the block's plus two, so the result is already in the canonical layout.
+/// Insert `line` (and its `//` phase comment, when given) as the first content of the
+/// resource type map `at` names, at the top level of `src`. The indentation is two spaces,
+/// so the result is already in the canonical layout.
 ///
-/// `None` when the estate has no such block: the caller reports that rather than writing the
-/// line somewhere it does not belong. A `use` at the top level is valid anywhere, but one of
-/// THESE packs is scoped by the block it sits in, so the wrong place is the wrong estate.
+/// `None` when the estate has no such map — [`append_map`] writes it whole.
 ///
 /// Both writers call this — the skeleton as it composes a new file, `merge-presets` on an
-/// estate that has no line for the pack — so a nested pack lands in one place, not two.
-pub(crate) fn insert_into_block(src: &str, at: &str, line: &str, phase: &str) -> Option<String> {
-    let mut depth_wanted = 0usize;
+/// estate that has no line for the pack — so the line lands in one place, not two.
+pub(crate) fn insert_into_map(src: &str, at: &str, line: &str, phase: &str) -> Option<String> {
     let mut open_at: Option<(usize, usize)> = None; // (byte after the opening line, indent)
-    let segments: Vec<&str> = at.split('.').collect();
     let mut i = 0usize;
     let mut depth = 0usize;
     for raw in src.split_inclusive('\n') {
@@ -355,23 +319,11 @@ pub(crate) fn insert_into_block(src: &str, at: &str, line: &str, phase: &str) ->
         if trimmed.starts_with("//") {
             continue;
         }
-        // a block this line opens: `<name> {` or `"<name>" {`
-        if depth == depth_wanted && depth_wanted < segments.len() {
-            let want = segments[depth_wanted];
-            let opens = trimmed
-                .strip_suffix('{')
-                .map(str::trim_end)
-                .is_some_and(|n| n == want || n.trim_matches('"') == want);
-            if opens {
-                depth_wanted += 1;
-                depth += 1;
-                if depth_wanted == segments.len() {
-                    let indent = raw.len() - raw.trim_start().len();
-                    open_at = Some((start + raw.len(), indent));
-                    break;
-                }
-                continue;
-            }
+        // the map this line opens, at the top level: `<type> {`
+        if depth == 0 && trimmed.strip_suffix('{').map(str::trim_end).is_some_and(|n| n == at) {
+            let indent = raw.len() - raw.trim_start().len();
+            open_at = Some((start + raw.len(), indent));
+            break;
         }
         depth += trimmed.matches('{').count();
         depth = depth.saturating_sub(trimmed.matches('}').count());
@@ -403,18 +355,18 @@ pub(crate) fn insert_into_block(src: &str, at: &str, line: &str, phase: &str) ->
     Some(out)
 }
 
-/// The block a single-segment placement names, written whole with its line inside — for an
-/// estate that has no such block at all. Only a resource-type map is created this way
-/// (`google_essential_contacts_contact`): it is content, and an empty one emits nothing. A
-/// nested path names structure the estate owns (`google_folder.infra_folder`), and a missing
-/// folder is reported, never invented.
-pub(crate) fn block_stub(at: &str, line: &str, phase: &str) -> Option<String> {
-    if at.contains('.') {
-        return None;
+/// `src` with the resource type map `at` names appended, holding `line` — for an estate
+/// that has no such map. A map is content the estate may always carry: an empty one emits
+/// nothing, and the line inside it is commented until the pack is switched on.
+pub(crate) fn append_map(src: &str, at: &str, line: &str, phase: &str) -> String {
+    let mut out = src.to_string();
+    if !out.ends_with('\n') {
+        out.push('\n');
     }
-    let mut out = phase_comment(phase, "");
+    out.push('\n');
+    out.push_str(&phase_comment(phase, ""));
     out.push_str(&format!("{} {{\n  {}\n}}\n", at, line));
-    Some(out)
+    out
 }
 
 /// One commented line, exactly as both writers must write it.
@@ -461,8 +413,8 @@ pub(crate) fn use_estate_core(estate: &Path) -> Result<bool, Box<dyn std::error:
 ///
 /// The lines come from `graph`, the pack graph that arrived with the presets. Without one
 /// the file carries no pack lines at all; `satz get-presets` then `satz merge-presets`
-/// write them. `Err` when the graph places a pack in a block this binary's scaffold lacks.
-pub(crate) fn skeleton(stem: &str, graph: Option<&PackGraph>) -> Result<String, String> {
+/// write them.
+pub(crate) fn skeleton(stem: &str, graph: Option<&PackGraph>) -> String {
     let composed = format!(
         r#"// Written for an interview: a question is open until its param is bound below.
 // `satz questions {stem}.satz --unanswered --format text --out -` lists what is still to decide;
@@ -480,25 +432,23 @@ use "presets/estate-core.satz"
 {menu}google_essential_contacts_contact {{
 }}
 
-{scaffold}{after}"#,
+{scaffold}"#,
         stem = stem,
         estate = estate_name(stem),
         scaffold = SCAFFOLD,
         menu = graph.map(|g| format!("{}\n", pack_menu(g))).unwrap_or_default(),
-        after = graph.map(packs_after_scaffold).unwrap_or_default(),
     );
-    // the packs scoped to a block go into that block, from the same graph
-    // `merge-presets` reads, so a nested pack has one writer and not two
+    // the bare lists go into the map of their type, from the same graph
+    // `merge-presets` reads, so such a line has one writer and not two
     match graph {
-        Some(g) => place_in_blocks(composed, g),
-        None => Ok(composed),
+        Some(g) => place_in_maps(composed, g),
+        None => composed,
     }
 }
 
-/// The skeleton with no pack line in it: the blocks this binary's scaffold has, which is
-/// what a graph's placements are checked against.
+/// The skeleton with no pack line in it: what a graph's placements are read against.
 pub(crate) fn bare_skeleton() -> String {
-    skeleton("x", None).expect("a skeleton without a graph places no line, so it cannot fail")
+    skeleton("x", None)
 }
 
 /// The estate `satz init` writes, with the pack lines of `graph` — none without one, as
@@ -527,6 +477,10 @@ params {{
   deployment_mode          = "local" // switched by `satz migrate`
   default_region           = "{region}"
   default_zone             = "{region}-a"
+  // The folder the audit archive's project is created in, read by
+  // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
+  // the folder: unbound, that pack creates its project under the organisation.
+  logsink_project_folder = "google_folder.infra_folder.name"
 }}
 
 // The day-0 params and their questions: init binds what it derived above, and this pack
@@ -538,10 +492,9 @@ params {{
 {menu}google_essential_contacts_contact {{
 }}
 
-{scaffold}{after}"#,
+{scaffold}"#,
         scaffold = SCAFFOLD,
         menu = graph.map(|g| format!("{}\n", pack_menu(g))).unwrap_or_default(),
-        after = graph.map(packs_after_scaffold).unwrap_or_default(),
         estate = estate_name(&args.customer_id),
         customer_id = args.customer_id,
         project_id = args.project_id,
@@ -553,11 +506,11 @@ params {{
         billing_id = args.billing_id,
         region = args.region,
     );
-    // the packs scoped to a block, from the same graph — so `init` and
+    // the bare lists into the map of their type, from the same graph — so `init` and
     // `interview --create` produce one shape and a pack is adoptable from
     // either door
     let content = match graph {
-        Some(g) => place_in_blocks(content, g)?,
+        Some(g) => place_in_maps(content, g),
         None => content,
     };
     crate::fsx::write_generated_satz(output_path, &content)?;
@@ -602,7 +555,7 @@ pub(crate) mod tests {
     /// on the bucket holding the state, beside `force_destroy = true`.
     #[test]
     fn the_scaffold_declares_versioning_on_the_state_bucket() {
-        let sk = skeleton("acme", None).unwrap();
+        let sk = skeleton("acme", None);
         let after = sk.split_once("google_storage_bucket {").expect("the scaffold declares the state bucket").1;
         let bucket = &after[..after.find("google_service_account").unwrap_or(after.len())];
         assert!(
@@ -620,7 +573,7 @@ pub(crate) mod tests {
     /// failure here is fixed in the template, never in the test.
     #[test]
     fn the_skeleton_is_in_the_canonical_layout() {
-        let sk = skeleton("acme", Some(&shipped())).unwrap();
+        let sk = skeleton("acme", Some(&shipped()));
         assert_eq!(satz_core::fmt::format(&sk).unwrap(), sk, "template::skeleton is not formatted");
     }
 
@@ -641,23 +594,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_placed_line_lands_in_its_block_and_a_second_one_after_the_first() {
-        // the block's own attributes first, then the pack lines in graph order,
-        // then the block's children — where the skeleton used to write them by hand
-        let src = "google_folder {\n  infra_folder {\n    display_name = infra_folder_name\n    google_project {\n      infra {\n      }\n    }\n  }\n}\n";
-        let one = insert_into_block(src, "google_folder.infra_folder", "// use \"a.satz\" when a", "first").unwrap();
-        let two = insert_into_block(&one, "google_folder.infra_folder", "// use \"b.satz\" when b", "").unwrap();
+    fn a_placed_line_lands_in_its_map_and_a_second_one_after_the_first() {
+        // the map's own content first, then the pack lines in graph order
+        let src = "google_essential_contacts_contact {\n  all {\n    email = \"x\"\n  }\n}\n";
+        let one = insert_into_map(src, "google_essential_contacts_contact", "// use \"a.satz\" when a", "first").unwrap();
+        let two = insert_into_map(&one, "google_essential_contacts_contact", "// use \"b.satz\" when b", "").unwrap();
         let at = |s: &str, needle: &str| two.lines().position(|l| l.contains(needle)).unwrap_or_else(|| panic!("{} not in {}", needle, s));
-        assert!(at(&two, "display_name") < at(&two, "a.satz"), "{}", two);
         assert!(at(&two, "a.satz") < at(&two, "b.satz"), "graph order is file order:\n{}", two);
-        assert!(at(&two, "b.satz") < at(&two, "google_project"), "before the block's children:\n{}", two);
-        assert!(two.contains("    // first\n"), "the phase comment rides along, at the line's indent:\n{}", two);
-        // a block the estate does not have
-        assert_eq!(insert_into_block(src, "google_essential_contacts_contact", "// use \"c.satz\"", ""), None);
-        // …which a resource-type map answers by being written whole, and a folder does not
-        assert!(block_stub("google_essential_contacts_contact", "// use \"c.satz\"", "why")
-            .is_some_and(|s| s.contains("google_essential_contacts_contact {\n  // use \"c.satz\"\n}\n") && s.starts_with("// why")));
-        assert_eq!(block_stub("google_folder.infra_folder", "// use \"c.satz\"", ""), None, "a folder is the estate's own structure");
+        assert!(at(&two, "b.satz") < at(&two, "all {"), "before the map's own content:\n{}", two);
+        assert!(two.contains("  // first\n"), "the phase comment rides along, at the line's indent:\n{}", two);
+        // a map the estate does not have is written whole, at the end
+        assert_eq!(insert_into_map(src, "google_org_policy_policy", "// use \"c.satz\"", ""), None);
+        let appended = append_map(src, "google_org_policy_policy", "// use \"c.satz\"", "why");
+        assert!(appended.starts_with(src), "{}", appended);
+        assert!(appended.ends_with("// why\ngoogle_org_policy_policy {\n  // use \"c.satz\"\n}\n"), "{}", appended);
+        // a map nested inside a node is not the top-level one the graph names
+        let nested = "google_folder {\n  infra_folder {\n    google_essential_contacts_contact {\n    }\n  }\n}\n";
+        assert_eq!(insert_into_map(nested, "google_essential_contacts_contact", "// use \"c.satz\"", ""), None);
     }
 
     #[test]
@@ -666,7 +619,7 @@ pub(crate) mod tests {
         // `use … when` lines. This is what keeps them equal.
         let map = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/presets/estate-map.satz")).unwrap();
         let map = satz_core::satz::parse(&map).unwrap();
-        let sk = skeleton("x", Some(&shipped())).unwrap();
+        let sk = skeleton("x", Some(&shipped()));
         for (name, _, _) in &map.params {
             assert!(
                 use_lines(&sk).any(|l| l.ends_with(&format!(" when {}", name))),
@@ -682,9 +635,24 @@ pub(crate) mod tests {
         }
         assert!(sk.contains("use \"presets/estate-map.satz\"\n"));
         assert!(
-            sk.contains("    // use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink\n"),
-            "the logging packs sit in the infrastructure folder, commented like every other pack"
+            sk.contains("\n// use \"presets/monitoring/organization-audit-logsink.satz\" when use_audit_logsink\n"),
+            "every pack line satz writes stands at the top level, commented"
         );
+        // the one exception: a bare list is the content of the map of its type
+        assert!(
+            sk.contains("  // use \"presets/essential-contacts-organization.satz\" when use_essential_contacts\n}\n"),
+            "the contacts pack's line is written inside the map of its type:\n{}",
+            sk
+        );
+        for line in sk.lines().filter(|l| l.trim_start().starts_with("// use \"presets/")) {
+            let indented = line.starts_with(' ');
+            assert_eq!(
+                indented,
+                line.contains("essential-contacts-organization"),
+                "a pack line stands at the top level unless it is a bare list: {}",
+                line
+            );
+        }
     }
 
     #[test]
@@ -701,7 +669,7 @@ pub(crate) mod tests {
             assert!(gated.contains(&name.as_str()), "the map declares `{}` and no line the graph offers is gated on it", name);
         }
         // and the menu enforces nothing until a line is uncommented
-        let sk = skeleton("x", Some(&shipped())).unwrap();
+        let sk = skeleton("x", Some(&shipped()));
         for line in use_lines(&sk).filter(|l| !l.contains("estate-core")) {
             assert!(line.starts_with("// use "), "a pack line in a fresh skeleton must be commented: {}", line);
         }
@@ -741,7 +709,7 @@ pub(crate) mod tests {
         let init = dir.join("C0example.satz");
         generate_template(&args("first.admin", "example.com"), Some(&shipped()), &init).unwrap();
         let graph = shipped();
-        let written = [("the interview skeleton", skeleton("x", Some(&graph)).unwrap()), ("the init estate", std::fs::read_to_string(&init).unwrap())];
+        let written = [("the interview skeleton", skeleton("x", Some(&graph))), ("the init estate", std::fs::read_to_string(&init).unwrap())];
         let mut early = Vec::new();
         for (writer, text) in &written {
             let line_of = |path: &str, gate: Option<&str>| {
@@ -783,7 +751,7 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             early.is_empty(),
-            "a pack line before the line of a pack whose param it reads — answering it yes stops the compile with `unknown param`. A top-level pack that reads a param of a pack inside the scaffold is placed `after_scaffold`:\n  {}",
+            "a pack line before the line of a pack whose param it reads — answering it yes stops the compile with `unknown param`. The order of the lines is the order of the `offers` entries, so the entry has to move:\n  {}",
             early.join("\n  ")
         );
     }

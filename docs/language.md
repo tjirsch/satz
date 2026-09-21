@@ -398,8 +398,8 @@ entry   := KEY "=" value | block | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
 ```
 
 An `item` stands at the top level of a file and nowhere else. A `use` is the one
-statement that is also an `entry`: it stands in the body of a folder or a project, in
-`google_folder { … }` and in a resource type map (§6.9).
+statement that is also an `entry`: it stands in `google_folder { … }` and in a resource
+type map (§6.9).
 
 **Header**
 
@@ -995,33 +995,41 @@ use "presets/essential-contacts-organization.satz" as google_essential_contacts_
 use "showcase-optional.satz" when want_optional                          # conditionally
 ```
 
-A `use` stands in one of four positions. The position decides what the used file's
-entries are read as and what scopes the resources it declares — the same pack `use`d
-at the top level and in a folder's body creates its project under the organisation and
-under that folder:
+A `use` stands at the top level of a file, in `google_folder { … }` or in a resource
+type map. The position decides what the used file's entries are read as and what scopes
+the resources it declares:
 
 | where the `use` stands | what the used file's entries are | what scopes them |
 |---|---|---|
 | the top level of a file | resource type maps, `use` lines | the organisation |
-| the body of a folder or of a project | resource type maps, `use` lines | that folder or project, as for a resource written there |
 | `google_folder { … }` | named folders, `use` lines | the folder the map stands in |
 | a resource type map, `google_x { … }` | labelled `google_x` bodies — members, in a grant map — and `use` lines | whatever scopes the map |
 
-`use "…" as google_x` is the fourth row written flat: the file's entries are the
-content of a `google_x` map standing where the `use` stands. It is valid at the top
-level and in `google_folder { … }`; inside a resource type map the map's type is the
-key, and an `as` naming another type is an error. `google_project { … }` takes
-projects and no `use`.
+`use "…" as google_x` is the third row written flat: the file's entries are the content
+of a `google_x` map standing where the `use` stands. It is valid at the top level and in
+`google_folder { … }`; inside a resource type map the map's type is the key, and an `as`
+naming another type is an error. `google_project { … }` takes projects and no `use`.
+
+**The body of a folder and the body of a project hold the estate's own resources, and
+take no `use`.** A pack is used at the top level, where it declares the same resources
+whatever else the estate holds; a pack that creates a project names the folder that
+project is created in with a param of its own
+(`logsink_project_folder`, `mdc_mgmt_project_folder`). A `use` in a node's body is
+refused, naming the node and the param to bind:
+
+```
+use "presets/monitoring/organization-audit-logsink.satz"` stands in the body of `google_folder.infra_folder`, which holds the estate's own resources — a pack is used at the top level of a file. Move the line to the top level. A pack that creates a project names the folder it is created in with a param of its own — `logsink_project_folder` in `presets/monitoring/organization-audit-logsink.satz`, `mdc_mgmt_project_folder` in `presets/integrations/microsoft-defender-for-cloud.satz` — so bind that param to `google_folder.infra_folder.name` in the estate's `params { … }`. Every other pack emits the same resources wherever its line stands
+```
 
 A file declares no kind. It is judged by whether its entries fit the position of its
 `use`: a pack that declares its own resource types — the CIS baseline and its
-extensions, most of the library — is `use`d at the top level or in the body of a folder
-or a project, and a file that is a bare list of labels, like the contacts pack above or
-`showcase-policies.satz`, is `use`d inside the map of its type. An entry that does not
-fit is an error at the `use` line, naming the entry's line in the used file:
+extensions, most of the library — is `use`d at the top level, and a file that is a bare
+list of labels, like the contacts pack above or `showcase-policies.satz`, is `use`d
+inside the map of its type. An entry that does not fit is an error at the `use` line,
+naming the entry's line in the used file:
 
 ```
-use "presets/cis/cmek.satz" inside `google_folder { … }`: presets/cis/cmek.satz:59 does not belong there — `google_org_policy_policy { … }` opens a map of its own, and directly inside `google_folder { … }` every key is a name — it is read as a folder named `google_org_policy_policy`. A file used inside `google_folder { … }` holds named folders. This one declares its own resource types, so it is written bare, at the top level or in the body of a folder or a project: `use "presets/cis/cmek.satz"`
+use "presets/cis/cmek.satz" inside `google_folder { … }`: presets/cis/cmek.satz:59 does not belong there — `google_org_policy_policy { … }` opens a map of its own, and directly inside `google_folder { … }` every key is a name — it is read as a folder named `google_org_policy_policy`. A file used inside `google_folder { … }` holds named folders. This one declares its own resource types, so it is written bare, at the top level: `use "presets/cis/cmek.satz"`
 ```
 
 Each pack states its own line in its header comment, and `presets/docs/` prints it.
@@ -1063,11 +1071,12 @@ google_organization_iam_member {
 }
 ```
 
-`use "team-platform.satz"` in the body of a folder creates the project in that folder;
-the group and the grant reach the organisation and the Cloud Identity customer from
-there, and the same file `use`d bare creates the project under the organisation. A
-resource whose type takes a `project` lands in the project it stands in — an org policy
-written inside a project's body gets `parent = "projects/<id>"`.
+`use "team-platform.satz"` creates the project under the organisation, and the group and
+the grant reach the organisation and the Cloud Identity customer. To create the project
+in a folder, the file gives it a `folder_id` — a param of the pack, bound by the estate
+to `google_folder.<label>.name`. A resource whose type takes a `project` lands in the
+project it stands in — an org policy written inside a project's body gets
+`parent = "projects/<id>"`.
 
 **The same type written INSIDE a project's body is refused.** A project is the bottom of
 the resource hierarchy, so nothing above it is placed by standing in its body; written
@@ -1084,7 +1093,8 @@ it.
 
 **A statement is written at the top level of a file.** Directly inside a resource type
 map, `google_folder { … }`, `google_project { … }`, or the body of a folder or a
-project, a block whose key is a statement keyword is an error:
+project, a block whose key is a statement keyword is an error (a `use` is the one
+statement that is also an entry, and stands where §6.9 says):
 
 ```
 `params` is a Satz statement: it is written at the top level of a file, where it goes to the estate's parameter namespace. Directly inside `google_essential_contacts_contact { … }` it is read as a resource `google_essential_contacts_contact.params`. Move it to the top level of the file; one that really is called `params` is written quoted, `"params" { … }`
@@ -1685,9 +1695,8 @@ offers "presets/cis/cloud-sql-dry-run.satz" {
 |---|---|---|
 | `when` | a param | the gate the pack's line carries (`use "…" when <param>`); every entry but the map's own has one |
 | `phase` | a string | opens a group of lines: what has to be finished before they can go in, written as the comment above them |
-| `block` | a block path | the line is written inside that block of the estate (`google_folder.infra_folder`) rather than in the menu at the top |
-| `after_scaffold` | `true` | the line is written after the scaffold — for a pack that reads a param of a pack inside it |
-| `by_hand` | a string | satz writes no line for the pack; the string says how it is used. Takes no `phase`, `block` or `after_scaffold` |
+| `block` | a resource type | the line is written inside that resource type map (`google_essential_contacts_contact`), for a pack that is a bare list of labelled bodies; a value naming a node of the estate is refused |
+| `by_hand` | a string | satz writes no line for the pack; the string says how it is used. Takes no `phase` and no `block` |
 | `requires` | a list of pack paths | packs this one needs in a way its params do not show |
 | `excludes` | a list of pack paths | packs this one never goes in beside |
 

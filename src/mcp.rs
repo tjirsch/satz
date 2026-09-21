@@ -1295,14 +1295,11 @@ impl SatzMcp {
             }
             let stem = estate.file_stem().and_then(|s| s.to_str()).unwrap_or("estate");
             let presets_dir = std::path::Path::new(&open.runtime.presets_dir);
-            let graph = match crate::pack_graph::for_writing(presets_dir) {
+            let graph = match crate::pack_graph::read(presets_dir) {
                 Ok(g) => g,
                 Err(e) => return Ok(Err(refused(e.to_string()))),
             };
-            let skeleton = match crate::template::skeleton(stem, graph.as_ref()) {
-                Ok(s) => s,
-                Err(e) => return Ok(Err(refused(e))),
-            };
+            let skeleton = crate::template::skeleton(stem, graph.as_ref());
             if let Err(e) = crate::fsx::write_generated_satz(&estate, &skeleton) {
                 return Ok(Err(refused(format!("{}: {}", estate.display(), e))));
             }

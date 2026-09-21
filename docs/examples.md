@@ -170,7 +170,7 @@ against in CI. In about a hundred lines it carries:
   (`google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }`),
   because it is a bare list of labels — its `params` and its `question` reach the
   estate from there, and the map receives the contact alone; the two monitoring packs
-  in the body of a folder, which is where their projects are created;
+  at the top level, the audit archive naming the folder its project is created in;
 - **a Cloud Identity group with a member**, and **organization IAM grants** in the
   member → roles form;
 - **a folder holding a project**, that project holding its enabled services and a

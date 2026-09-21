@@ -29,6 +29,7 @@ terraform {
 google_folder {
   logging {
     display_name = "Logging"
-    use "presets/monitoring/organization-cis-log-alerts-central.satz"
   }
 }
+
+use "presets/monitoring/organization-cis-log-alerts-central.satz"

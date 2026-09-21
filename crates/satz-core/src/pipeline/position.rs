@@ -10,9 +10,12 @@
 //! | position | what stands there |
 //! |---|---|
 //! | the top level of a file | statements, resource type maps, `use` |
-//! | the body of a folder or a project | the node's attributes, resource type maps, `use` |
+//! | the body of a folder or a project | the node's attributes, resource type maps |
 //! | `google_folder { … }`, `google_project { … }` | named nodes; in the folder map, `use` of a file of named nodes |
 //! | `google_x { … }` | labelled bodies (members, in a grant map); `use` of a file of those |
+//!
+//! A folder's or a project's body holds the estate's own resources, and a pack is used at
+//! the top level of the estate (ADR 0046): a `use` there is refused.
 //!
 //! A statement is written at the top level of a file and nowhere else. The statements of
 //! a `use`d file go where `STATEMENTS` says, whatever the position of the `use`.
@@ -26,8 +29,9 @@ pub(super) enum Position<'a> {
     /// The top level of a file: the estate's own, and a `use`d file's when its `use`
     /// stands at the top level or in a node's body.
     File,
-    /// The body of one folder or one project.
-    NodeBody { node: &'static str },
+    /// The body of one folder or one project, with the node's label — the refusal of a
+    /// `use` there names the folder to bind a pack's folder param to.
+    NodeBody { node: &'static str, label: &'a str },
     /// `google_folder { … }` / `google_project { … }`: every key names a node.
     NodeMap { node: &'static str },
     /// `google_x { … }`: every key is a label, or a member where the type is a grant.
@@ -39,7 +43,7 @@ impl Position<'_> {
     fn written(&self) -> String {
         match self {
             Position::File => "the top level of a file".to_string(),
-            Position::NodeBody { node } => format!("the body of a `{}`", node),
+            Position::NodeBody { node, .. } => format!("the body of a `{}`", node),
             Position::NodeMap { node } => format!("`{} {{ … }}`", node),
             Position::ResourceMap { tf_type, .. } => format!("`{} {{ … }}`", tf_type),
         }
@@ -49,19 +53,17 @@ impl Position<'_> {
     fn reads(&self, k: &str) -> String {
         match self {
             Position::File => format!("a resource type `{}`", k),
-            Position::NodeBody { node } => format!("an attribute block `{}` of the `{}`, which the provider does not have", k, node),
+            Position::NodeBody { node, .. } => format!("an attribute block `{}` of the `{}`, which the provider does not have", k, node),
             Position::NodeMap { node } => format!("a {} named `{}`", node.trim_start_matches("google_"), k),
             Position::ResourceMap { tf_type, .. } => format!("a resource `{}.{}`", tf_type, k),
         }
     }
 
-    /// Where a `use` in this position stands, and what a file used there holds.
+    /// Where a `use` in this position stands, and what a file used there holds. A `use`
+    /// never stands in a node's body, so that position never reaches this.
     fn stands_and_takes(&self) -> (String, String) {
         match self {
-            Position::File | Position::NodeBody { .. } => (
-                "at the top level or in the body of a folder or a project".to_string(),
-                "resource type maps".to_string(),
-            ),
+            Position::File | Position::NodeBody { .. } => ("at the top level".to_string(), "resource type maps".to_string()),
             Position::NodeMap { node } => (format!("inside {}", self.written()), format!("named {}s", node.trim_start_matches("google_"))),
             Position::ResourceMap { tf_type, .. } => (format!("inside {}", self.written()), format!("labelled `{}` bodies", tf_type)),
         }
@@ -200,16 +202,50 @@ fn key_text(key: &Key) -> String {
     }
 }
 
+/// What a line moved out of a node's body has to carry with it. Every pack emits the same
+/// resources wherever its line stands, bar the two that create a project: those name the
+/// folder the project is created in with a param of their own, and the param is what has
+/// to be bound once the line no longer stands in the folder.
+fn relocation_advice(node: &str, label: &str) -> String {
+    let packs = "`logsink_project_folder` in `presets/monitoring/organization-audit-logsink.satz`, \
+                 `mdc_mgmt_project_folder` in `presets/integrations/microsoft-defender-for-cloud.satz`";
+    match node {
+        "google_folder" => format!(
+            "A pack that creates a project names the folder it is created in with a param of its own — {packs} — \
+             so bind that param to `{node}.{label}.name` in the estate's `params {{ … }}`. Every other pack emits \
+             the same resources wherever its line stands",
+            packs = packs,
+            node = node,
+            label = label
+        ),
+        _ => format!(
+            "A resource of the pack that belongs in this project names the project itself; a pack that creates \
+             a project names the folder it is created in with a param of its own ({packs})",
+            packs = packs
+        ),
+    }
+}
+
 /// `Some` when `entry` does not belong at `pos`. Only an IDENTIFIER key is ever a
 /// statement or, inside a map of names, a type: a quoted key is a name, which is how a
 /// resource that really is called `params` is written.
 pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> Option<Misfit> {
     match entry {
-        Entry::Use { line, .. } => match pos {
+        Entry::Use { path, line, .. } => match pos {
             Position::NodeMap { node: "google_project" } => Some(Misfit {
                 line: *line,
                 what: "`use` directly inside `google_project { … }`, where every entry is a project".to_string(),
-                fix: "A `use` stands at the top level of a file, in the body of a folder or a project, in `google_folder { … }` or in a resource type map".to_string(),
+                fix: "A `use` stands at the top level of a file, in `google_folder { … }` or in a resource type map".to_string(),
+            }),
+            Position::NodeBody { node, label } => Some(Misfit {
+                line: *line,
+                what: format!(
+                    "`use \"{path}\"` stands in the body of `{node}.{label}`, which holds the estate's own resources — a pack is used at the top level of a file",
+                    path = path,
+                    node = node,
+                    label = label
+                ),
+                fix: format!("Move the line to the top level. {}", relocation_advice(node, label)),
             }),
             _ => None,
         },
@@ -258,7 +294,7 @@ pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> 
                         fix: "A label stands inside the map of its type: `google_x { \"…\" { … } }`".to_string(),
                     }),
                 },
-                Position::NodeBody { node: "google_project" } => {
+                Position::NodeBody { node: "google_project", .. } => {
                     plain(key).and_then(|k| above_a_project(k, types)).map(|what| Misfit {
                         line: *line,
                         what: format!(
@@ -488,27 +524,38 @@ question customer_shortname {
         }
     }
 
-    /// Rule 2: context places what a used file declares. The same pack, used at the top
-    /// level, in a folder's body and in a project's body, declares its bucket under that
-    /// node each time — and nowhere else.
+    /// Rule 2, as ADR 0046 leaves it: a pack is used at the top level of a file, where it
+    /// declares its resources under nothing. A `use` in the body of a folder or a project
+    /// is refused, and the refusal names the node and the edit.
     #[test]
-    fn a_used_pack_is_placed_by_the_position_of_its_use() {
-        let forms: [(&str, &str, &[&str]); 3] = [
-            ("at the top level", "estate t\n\nuse \"typed.satz\"\n", &[]),
-            ("in a folder's body", "estate t\n\ngoogle_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"typed.satz\"\n  }\n}\n", &["folder:shared"]),
+    fn a_pack_is_used_at_the_top_level_and_a_use_in_a_nodes_body_is_refused() {
+        let fe = compile("estate t\n\nuse \"typed.satz\"\n").expect("a pack is used at the top level");
+        let buckets: Vec<_> =
+            fe.fragments.iter().flat_map(|f| f.entities.values()).filter(|e| e.addr.tf_type == "google_storage_bucket").collect();
+        assert_eq!(buckets.len(), 1, "the pack's bucket is declared once");
+        assert_eq!(buckets[0].addr.label, "archive");
+        assert!(buckets[0].node_path.is_empty(), "a pack used at the top level stands under no node");
+
+        for (form, estate, node, advice) in [
+            (
+                "in a folder's body",
+                "estate t\n\ngoogle_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"typed.satz\"\n  }\n}\n",
+                "google_folder.shared",
+                "bind that param to `google_folder.shared.name`",
+            ),
             (
                 "in a project's body",
                 "estate t\n\ngoogle_project {\n  \"acme-host-001\" {\n    name = \"acme-host-001\"\n    use \"typed.satz\"\n  }\n}\n",
-                &["project:acme-host-001"],
+                "google_project.acme-host-001",
+                "names the project itself",
             ),
-        ];
-        for (form, estate, path) in forms {
-            let fe = compile(estate).unwrap_or_else(|e| panic!("{}: {}", form, e));
-            let buckets: Vec<_> =
-                fe.fragments.iter().flat_map(|f| f.entities.values()).filter(|e| e.addr.tf_type == "google_storage_bucket").collect();
-            assert_eq!(buckets.len(), 1, "{}: the pack's bucket is declared once", form);
-            assert_eq!(buckets[0].addr.label, "archive", "{}", form);
-            assert_eq!(buckets[0].node_path, path.iter().map(|s| s.to_string()).collect::<Vec<_>>(), "{}: placed where the `use` stands", form);
+        ] {
+            let err = refused(form, estate);
+            assert_eq!(err.file, "t.satz", "{}", form);
+            assert!(err.msg.contains(&format!("stands in the body of `{}`", node)), "{}: {}", form, err.msg);
+            assert!(err.msg.contains("a pack is used at the top level of a file"), "{}: {}", form, err.msg);
+            assert!(err.msg.contains("Move the line to the top level"), "{}: {}", form, err.msg);
+            assert!(err.msg.contains(advice), "{}: the refusal does not name the edit — {}", form, err.msg);
         }
     }
 
@@ -519,8 +566,6 @@ question customer_shortname {
     fn a_used_file_s_statements_reach_the_estate_from_every_position() {
         let forms = [
             ("at the top level", "estate t\n\nuse \"typed.satz\"\n", "logging", "want_archive", "archive_bucket"),
-            ("in a folder's body", "estate t\n\ngoogle_folder {\n  shared {\n    use \"typed.satz\"\n  }\n}\n", "logging", "want_archive", "archive_bucket"),
-            ("in a project's body", "estate t\n\ngoogle_project {\n  \"acme-host-001\" {\n    use \"typed.satz\"\n  }\n}\n", "logging", "want_archive", "archive_bucket"),
             ("in a resource type map", "estate t\n\ngoogle_essential_contacts_contact {\n  use \"list.satz\"\n}\n", "contacts", "contact_email", "contact_email"),
             ("as a resource type", "estate t\n\nuse \"list.satz\" as google_essential_contacts_contact\n", "contacts", "contact_email", "contact_email"),
             (

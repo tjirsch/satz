@@ -27,10 +27,10 @@ terraform {
 google_folder {
   logging {
     display_name = "Logging"
-    use "presets/monitoring/organization-cis-log-alerts-central.satz"
   }
 }
 
-// The archive project goes in the Logging folder, named by `logsink_project_folder`
-// rather than by where this line stands.
+// Both packs at the top level, as every pack is used. The archive project goes in the
+// Logging folder because `logsink_project_folder` names it.
 use "presets/monitoring/organization-audit-logsink.satz"
+use "presets/monitoring/organization-cis-log-alerts-central.satz"

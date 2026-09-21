@@ -80,7 +80,6 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             order: None,
             phase: None,
             block: None,
-            after_scaffold: false,
             by_hand: None,
             location: None,
             notices: notices_of(core),
@@ -98,7 +97,6 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             order: None,
             phase: None,
             block: None,
-            after_scaffold: false,
             by_hand: None,
             location: None,
             notices: notices_of(map),
@@ -173,7 +171,6 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             order: Some(order),
             phase: o.phase.clone(),
             block: o.block.clone(),
-            after_scaffold: o.after_scaffold,
             by_hand: o.by_hand.clone(),
             location: Some(at_map(o.line)),
             notices: notices_of(file),
@@ -370,7 +367,10 @@ fn check_notices(g: &PackGraph, by_path: &BTreeMap<String, &File>, declared: &BT
     out
 }
 
-/// Checks 3 to 8 over a built graph (1 and 2 are found while building it).
+/// Checks 3, 4, 5, 6 and 8 over a built graph (1 and 2 are found while building it).
+/// There is no 7: it held that every block a line is placed in exists in the estate satz
+/// writes, and a line now stands at the top level or in a resource type map, which is
+/// written where the estate lacks it. The numbers a finding prints are not reused.
 fn check(g: &PackGraph) -> Vec<Finding> {
     let mut out = Vec::new();
     let declared_between = |a: &str, b: &str| {
@@ -423,24 +423,17 @@ fn check(g: &PackGraph) -> Vec<Finding> {
     // 5. the provider of every data or gate edge is an ancestor of its consumer
     out.extend(provider_is_ancestor(g));
 
-    // 7. every block a line is placed in exists in the estate satz writes
+    // where each line stands in the estate satz writes: the menu, or the map of its own
+    // type, which the skeleton writes after the menu
     let skeleton = template::bare_skeleton();
     let mut place: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for n in g.nodes.iter().filter(|n| n.order.is_some() && n.by_hand.is_none()) {
         let order = n.order.unwrap_or_default();
-        let section = match (&n.block, n.after_scaffold) {
-            (Some(b), _) => match template::insert_into_block(&skeleton, b, "// pack-graph marker", "") {
-                Some(text) => text.lines().position(|l| l.trim() == "// pack-graph marker").unwrap_or_default(),
-                None => {
-                    out.push(finding(
-                        7,
-                        format!("{}: `{}` is placed in `{}`, a block the estate satz writes does not have", n.location.clone().unwrap_or_default(), n.path, b),
-                    ));
-                    continue;
-                }
-            },
-            (None, true) => usize::MAX,
-            (None, false) => 0,
+        let section = match &n.block {
+            Some(b) => template::insert_into_map(&skeleton, b, "// pack-graph marker", "")
+                .and_then(|text| text.lines().position(|l| l.trim() == "// pack-graph marker"))
+                .unwrap_or(usize::MAX),
+            None => 0,
         };
         place.insert(n.path.as_str(), (section, order));
     }
@@ -644,22 +637,6 @@ pub(crate) fn shipped(presets_dir: &Path) -> Shipped {
     }
 }
 
-/// [`read`], for a command that WRITES pack lines (`init`, `interview --create`,
-/// `merge-presets`): a graph that places a pack in a block this binary's scaffold does not
-/// have is refused here, before anything is written.
-pub(crate) fn for_writing(presets_dir: &Path) -> Result<Option<PackGraph>, BoxErr> {
-    let Some(g) = read(presets_dir)? else { return Ok(None) };
-    let skeleton = template::bare_skeleton();
-    for n in g.lines() {
-        if let template::Place::Block(b) = template::place(n) {
-            if template::insert_into_block(&skeleton, b, "// pack-graph marker", "").is_none() {
-                return Err(format!("{}: {}", presets_dir.join(GRAPH_FILE).display(), template::unknown_block(&n.path, b)).into());
-            }
-        }
-    }
-    Ok(Some(g))
-}
-
 /// What a command that writes an estate says when the presets carry no graph: the file is
 /// written without pack lines, and these two commands write them.
 pub(crate) fn no_menu_note(presets_dir: &Path) -> String {
@@ -803,18 +780,13 @@ mod tests {
 
     #[test]
     fn check_6_a_provider_placed_after_its_consumer() {
-        // the Sentinel shape: a line in the menu reading a param of a pack inside the folder
+        // the Sentinel shape: a line whose entry comes before the entry of the pack whose
+        // param it reads, so satz writes it above that pack's line
         let m = map(
             "  use_a = true\n  use_b = true",
-            "offers \"presets/b.satz\" {\n  when = use_b\n}\n\noffers \"presets/a.satz\" {\n  when  = use_a\n  block = \"google_folder.infra_folder\"\n}\n",
+            "offers \"presets/b.satz\" {\n  when = use_b\n}\n\noffers \"presets/a.satz\" {\n  when = use_a\n}\n",
         );
         assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", A), ("b.satz", B_READS_A)]), vec![6]);
-    }
-
-    #[test]
-    fn check_7_a_block_the_estate_does_not_have() {
-        let m = map("  use_a = true", "offers \"presets/a.satz\" {\n  when  = use_a\n  block = \"google_folder.nowhere\"\n}\n");
-        assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", A)]), vec![7]);
     }
 
     #[test]

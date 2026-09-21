@@ -119,20 +119,30 @@ use "presets/cis/cmek.satz" when cis_cmek_required
 use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
 use "presets/security-group-models/s2-security-groups.satz" when security_model_s2
 use "presets/billing-account-permissions.satz" when use_billing_permissions
+use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink
+use "presets/monitoring/organization-cis-log-alerts-central.satz" when use_central_alerts
 …
-google_folder {
-  infra_folder {
-    display_name = infra_folder_name
-    use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink
-    use "presets/monitoring/organization-cis-log-alerts-central.satz" when use_central_alerts
-    google_project { infra { … } }
-  }
-}
-
 use "presets/scc/scc-findings-mail.satz" when use_scc_findings_mail
 use "presets/integrations/microsoft-sentinel.satz" when use_sentinel
 …
+
+google_essential_contacts_contact {
+  use "presets/essential-contacts-organization.satz" when use_essential_contacts
+}
+
+google_folder {
+  infra_folder {
+    display_name = infra_folder_name
+    google_project { infra { … } }
+  }
+}
 ```
+
+Every line stands at the top level, in the order the map offers the packs, bar a pack
+that is a bare list of labelled bodies: its line is the content of the map of its type.
+The folder holds the estate's own resources and takes no `use`; a pack that creates a
+project names the folder it is created in with a param of its own, which `satz init`
+binds for the audit archive.
 
 Why the lines live in the estate and not in the map — and what stays hand-wired
 (Defender's plan fragments, the MSP-hosted runner, the per-project alert pack) — is

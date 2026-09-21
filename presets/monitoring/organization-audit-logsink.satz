@@ -5,17 +5,15 @@
 // Params are overridable defaults: define the same param in the estate to
 // override one. Claims are read from this source by the compliance plane.
 
-pack monitoring.organization_audit_logsink version "1.5"
+pack monitoring.organization_audit_logsink version "1.6"
 
 params {
   logsink_name                 = "{customer_shortname}-organization-audit-gcs"
   logsink_project_id           = "{customer_shortname}-log-infra-001"
-  // The folder the archive project is created in. Empty says nothing, and the
-  // node the `use` line stands in decides — the organisation at the top level.
-  // A folder the estate declares is named by reference,
-  // `google_folder.<label>.name`; one that already exists by its id,
-  // `"123456789012"`. Setting it is what makes this pack emit the same project
-  // wherever it is used.
+  // The folder the archive project is created in. Empty says nothing and the
+  // project is created under the organisation. A folder the estate declares is
+  // named by reference, `google_folder.<label>.name`; one that already exists by
+  // its id, `"123456789012"`.
   logsink_project_folder       = ""
   // What the console shows. Google defaults a project's display name to its id,
   // and so does this: set it only where the two should differ.
@@ -40,6 +38,13 @@ question logsink_project_id {
   blast    = high
 }
 
+question logsink_project_folder {
+  prompt   = "The folder the audit-archive project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone; an estate `satz init` wrote has its infrastructure folder as `google_folder.infra_folder.name`. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits."
+  reversal = edit
+  blast    = low
+}
+
 question logsink_bucket_name {
   prompt   = "The archive bucket's name (globally unique)"
   why      = "The bucket holds the organisation's audit history. Renaming it means a new bucket and copying the archive by hand, or losing continuity of the evidence."
@@ -61,8 +66,8 @@ question logsink_retention_days {
   blast    = high
 }
 
-// 0) The destination project. `logsink_project_folder` says where it is created;
-//    left empty, the node the `use` line stands in decides.
+// 0) The destination project. `logsink_project_folder` says the folder it is
+//    created in; left empty, it is created under the organisation.
 google_project {
   logsink_project {
     project_id      = logsink_project_id

@@ -1577,8 +1577,8 @@ grep -q 'organization-audit-logsink.satz` (`use_audit_logsink`), which is off' t
   || fail "the refusal must name the logsink's gate:\n$(cat tmp/pk/refused.txt)"
 "$satz" --config . add-pack "$PWD/tmp/pk/e.satz" use_central_alerts --with-requirements > tmp/pk/add.txt 2>&1 \
   || fail "add-pack --with-requirements failed:\n$(cat tmp/pk/add.txt)"
-grep -qE '^    use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink' tmp/pk/e.satz \
-  || fail "the requirement's line was not switched on inside the folder:\n$(grep -n logsink tmp/pk/e.satz)"
+grep -qE '^use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink' tmp/pk/e.satz \
+  || fail "the requirement's line was not switched on at the top level:\n$(grep -n logsink tmp/pk/e.satz)"
 grep -q 'cis_central_email' tmp/pk/add.txt || fail "add-pack must name the questions the pack opened:\n$(cat tmp/pk/add.txt)"
 "$satz" fmt --check "$PWD/tmp/pk/e.satz" || fail "add-pack left a formatted estate unformatted"
 # a pack others need is refused, naming them; --cascade switches them off too

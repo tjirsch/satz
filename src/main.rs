@@ -1686,7 +1686,7 @@ Thumbs.db
                         first_admin: first_admin.to_string(),
                     };
                     let presets_dir = Path::new(&runtime_config.presets_dir);
-                    let graph = crate::pack_graph::for_writing(presets_dir)?;
+                    let graph = crate::pack_graph::read(presets_dir)?;
                     crate::template::generate_template(&args, graph.as_ref(), &yaml_path)?;
                     if graph.is_none() {
                         println!("{}", crate::pack_graph::no_menu_note(presets_dir));
@@ -2344,8 +2344,8 @@ Thumbs.db
                     crate::fsx::create_dir_all(dir)?;
                 }
                 let presets_dir = Path::new(&runtime_config.presets_dir);
-                let graph = crate::pack_graph::for_writing(presets_dir)?;
-                crate::fsx::write_generated_satz(&input_path, &crate::template::skeleton(stem, graph.as_ref())?)?;
+                let graph = crate::pack_graph::read(presets_dir)?;
+                crate::fsx::write_generated_satz(&input_path, &crate::template::skeleton(stem, graph.as_ref()))?;
                 eprintln!("wrote {}", input_path.display());
                 if graph.is_none() {
                     eprintln!("{}", crate::pack_graph::no_menu_note(presets_dir));
@@ -6857,11 +6857,12 @@ mod corpus {
 #[cfg(test)]
 mod placement_gate {
     //! What a `use` places, and what it never emits, through the emitter — the rules
-    //! that hold by construction and that nothing pinned: a used pack's resources land
-    //! where its `use` stands, an organisation-level resource hoists to the organisation
-    //! from every position, a folder or a project written in a project's body is refused,
-    //! and a pack's `params`, `question` and `claim` statements reach the estate and never
-    //! `main.tf`.
+    //! that hold by construction and that nothing pinned: a pack is used at the top level
+    //! and its resources land at the organisation, a pack that creates a project names the
+    //! folder it is created in, an organisation-level resource hoists to the organisation
+    //! from every position an author may write it, a folder or a project written in a
+    //! project's body is refused, and a pack's `params`, `question` and `claim` statements
+    //! reach the estate and never `main.tf`.
     use super::*;
 
     const PACK: &str = r#"pack hosting version "1.0"
@@ -6894,10 +6895,9 @@ google_project {
 
     /// A pack of CONTENT, no node of its own: one project-scoped resource, one whose
     /// scope is a Resource Manager path, and one that belongs to the organisation
-    /// whatever encloses it.
-    const CONTENT: &str = r#"pack content version "1.0"
-
-google_storage_bucket {
+    /// whatever encloses it. `CONTENT_BODY` is the same three maps without the header, so
+    /// the same resources can be written by hand where a `use` no longer stands.
+    const CONTENT_BODY: &str = r#"google_storage_bucket {
   evidence {
     name                        = "acme-evidence-001"
     location                    = "EU"
@@ -6921,10 +6921,36 @@ google_organization_iam_member {
 }
 "#;
 
+    /// The same three maps, project-scoped only: a project's body takes neither the
+    /// organisation grant nor anything else that hangs off something above the project.
+    const CONTENT_BODY_IN_A_PROJECT: &str = r#"google_storage_bucket {
+  evidence {
+    name                        = "acme-evidence-001"
+    location                    = "EU"
+    uniform_bucket_level_access = true
+  }
+}
+
+google_org_policy_policy {
+  os_login {
+    name = "compute.requireOsLogin"
+    spec {
+      rules = [
+        { enforce = "TRUE" },
+      ]
+    }
+  }
+}
+"#;
+
+    fn content_pack() -> String {
+        format!("pack content version \"1.0\"\n\n{}", CONTENT_BODY)
+    }
+
     fn load(p: &str) -> Result<String, String> {
         match p {
             "hosting.satz" => Ok(PACK.to_string()),
-            "content.satz" => Ok(CONTENT.to_string()),
+            "content.satz" => Ok(content_pack()),
             other => Err(format!("no load: {}", other)),
         }
     }
@@ -6959,46 +6985,76 @@ google_organization_iam_member {
 
     const HEAD: &str = "estate t\n\nparams {\n  customer_organization_id = \"123456789012\"\n}\n\n";
 
-    const IN_FOLDER: &str = "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"content.satz\"\n  }\n}\n";
-    const IN_PROJECT: &str = "google_project {\n  outer {\n    name            = \"acme-outer-001\"\n    project_id      = \"acme-outer-001\"\n    billing_account = \"012345-6789AB-CDEF01\"\n    use \"content.satz\"\n  }\n}\n";
+    fn in_folder() -> String {
+        format!("google_folder {{\n  shared {{\n    display_name = \"Shared\"\n\n{}  }}\n}}\n", CONTENT_BODY)
+    }
+
+    fn in_project() -> String {
+        format!(
+            "google_project {{\n  outer {{\n    name            = \"acme-outer-001\"\n    project_id      = \"acme-outer-001\"\n    \
+             billing_account = \"012345-6789AB-CDEF01\"\n\n{}  }}\n}}\n",
+            CONTENT_BODY_IN_A_PROJECT
+        )
+    }
 
     #[test]
-    fn a_used_pack_lands_where_its_use_stands_and_its_statements_never_reach_main_tf() {
-        let forms = [
-            ("at the top level", "use \"hosting.satz\"\n".to_string(), "org_id = \"123456789012\""),
-            (
-                "in a folder's body",
-                "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"hosting.satz\"\n  }\n}\n".to_string(),
-                "folder_id = google_folder.shared.name",
-            ),
-        ];
-        for (form, tail, parent) in forms {
-            let (main_tf, tfvars, fe) = emit(&format!("{}{}", HEAD, tail));
-            let host = block(&main_tf, "google_project", "host");
-            assert!(host.contains(parent), "{}: the project is created where the `use` stands — got:\n{}", form, host);
-            // the statements: in the estate, resolved — and nowhere in the HCL
-            assert_eq!(fe.questions.len(), 1, "{}", form);
-            assert_eq!(fe.questions[0].questions[0].subject, "host_is_wanted", "{}", form);
-            assert_eq!(fe.claims.len(), 1, "{}", form);
-            assert!(tfvars.contains("host-project-id = \"acme-host-001\""), "{}: the param is a variable with its value:\n{}", form, tfvars);
-            for word in ["question", "prompt", "Is the hosting project wanted", "reversal", "blast", "params", "claim", "cis-gcp", "host_is_wanted"] {
-                assert!(!main_tf.contains(word), "{}: `{}` of the used pack reached main.tf:\n{}", form, word, main_tf);
-            }
+    fn a_pack_is_used_at_the_top_level_and_its_statements_never_reach_main_tf() {
+        let (main_tf, tfvars, fe) = emit(&format!("{}{}", HEAD, "use \"hosting.satz\"\n"));
+        let host = block(&main_tf, "google_project", "host");
+        assert!(host.contains("org_id = \"123456789012\""), "a pack used at the top level creates its project at the organisation:\n{}", host);
+        // the statements: in the estate, resolved — and nowhere in the HCL
+        assert_eq!(fe.questions.len(), 1);
+        assert_eq!(fe.questions[0].questions[0].subject, "host_is_wanted");
+        assert_eq!(fe.claims.len(), 1);
+        assert!(tfvars.contains("host-project-id = \"acme-host-001\""), "the param is a variable with its value:\n{}", tfvars);
+        for word in ["question", "prompt", "Is the hosting project wanted", "reversal", "blast", "params", "claim", "cis-gcp", "host_is_wanted"] {
+            assert!(!main_tf.contains(word), "`{}` of the used pack reached main.tf:\n{}", word, main_tf);
         }
     }
 
-    /// A pack's project names the folder it is created in, so the pack emits the same
-    /// HCL wherever its `use` line stands — byte for byte, which is what lets an estate
-    /// move that line and read an empty diff. The param's default is empty, which says
-    /// nothing: the node the `use` stands in decides, and at the top level that is the
-    /// organisation.
+    /// A folder's and a project's body hold the estate's own resources (ADR 0046). The
+    /// refusal names the line, the node and the edit — the param to bind, because the
+    /// folder was what put a pack's project there.
     #[test]
-    fn a_project_that_names_its_folder_emits_the_same_hcl_wherever_its_pack_is_used() {
-        let nested = format!(
-            "{}{}",
-            HEAD,
-            "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"hosting.satz\"\n  }\n}\n"
-        );
+    fn a_use_in_the_body_of_a_folder_or_a_project_is_refused() {
+        for (form, tail, node, advice) in [
+            (
+                "a folder's body",
+                "google_folder {\n  shared {\n    display_name = \"Shared\"\n    use \"hosting.satz\"\n  }\n}\n".to_string(),
+                "google_folder.shared",
+                "bind that param to `google_folder.shared.name`",
+            ),
+            (
+                "a project's body",
+                "google_project {\n  outer {\n    name            = \"acme-outer-001\"\n    project_id      = \"acme-outer-001\"\n    \
+                 billing_account = \"012345-6789AB-CDEF01\"\n    use \"hosting.satz\"\n  }\n}\n"
+                    .to_string(),
+                "google_project.outer",
+                "names the project itself",
+            ),
+        ] {
+            let Err(err) = try_emit(&format!("{}{}", HEAD, tail)) else {
+                panic!("{}: a `use` was accepted there", form);
+            };
+            assert!(err.contains(&format!("stands in the body of `{}`", node)), "{}: {}", form, err);
+            assert!(err.contains("a pack is used at the top level of a file"), "{}: {}", form, err);
+            assert!(err.contains("Move the line to the top level"), "{}: {}", form, err);
+            assert!(err.contains(advice), "{}: the refusal does not name the edit — {}", form, err);
+            assert!(
+                err.contains("`logsink_project_folder`") && err.contains("`mdc_mgmt_project_folder`"),
+                "{}: the refusal names the two packs whose project the folder placed — {}",
+                form,
+                err
+            );
+        }
+    }
+
+    /// A pack's project names the folder it is created in, and that param is what an
+    /// enclosure used to say. The proof is the project written BY HAND inside the folder:
+    /// the two emit the same `google_project` block, so an estate that moves a pack's line
+    /// to the top level and binds the param plans nothing.
+    #[test]
+    fn a_pack_s_project_is_created_in_the_folder_its_param_names() {
         let bare = concat!(
             "estate t\n\nparams {\n",
             "  customer_organization_id = \"123456789012\"\n",
@@ -7007,54 +7063,69 @@ google_organization_iam_member {
             "google_folder {\n  shared {\n    display_name = \"Shared\"\n  }\n}\n\n",
             "use \"hosting.satz\"\n"
         );
-        let (nested_tf, _, _) = emit(&nested);
+        let by_hand = format!(
+            "{}{}",
+            HEAD,
+            "google_folder {\n  shared {\n    display_name = \"Shared\"\n    google_project {\n      host {\n        \
+             name            = \"acme-host-001\"\n        project_id      = \"acme-host-001\"\n        \
+             billing_account = \"012345-6789AB-CDEF01\"\n      }\n    }\n  }\n}\n"
+        );
         let (bare_tf, _, _) = emit(bare);
-        assert_eq!(nested_tf, bare_tf, "the pack nested in a folder and used bare with that folder named emit different HCL");
+        let (by_hand_tf, _, _) = emit(&by_hand);
+        assert_eq!(
+            block(&bare_tf, "google_project", "host"),
+            block(&by_hand_tf, "google_project", "host"),
+            "the param does not reproduce what the enclosure wrote"
+        );
         assert!(
             block(&bare_tf, "google_project", "host").contains("folder_id = google_folder.shared.name"),
             "a folder named as a dotted path is a reference, not a quoted string:\n{}",
             bare_tf
         );
 
-        // The default says nothing, so a bare `use` still creates the project at the
-        // organisation — which is what every estate that names no folder gets.
+        // The default says nothing, so a pack that names no folder creates its project at
+        // the organisation.
         let (top_tf, _, _) = emit(&format!("{}{}", HEAD, "use \"hosting.satz\"\n"));
         let host = block(&top_tf, "google_project", "host");
         assert!(host.contains("org_id = \"123456789012\""), "{}", host);
         assert!(!host.contains("folder_id"), "an empty folder_id is not emitted:\n{}", host);
     }
 
-    /// Per SCOPE, where a used file's resources land. A project body places what it
-    /// encloses — including an org policy, whose parent is the Resource Manager path
-    /// `projects/<id>` and not the bare id a project reference gives. An
-    /// organisation-level resource keeps the organisation from every position: that
-    /// hoist is what lets an author write one beside the project it serves.
+    /// Per SCOPE, where a resource lands: a pack used at the top level reaches the
+    /// organisation, and a node's body places what it encloses — including an org policy,
+    /// whose parent is the Resource Manager path `projects/<id>` and not the bare id a
+    /// project reference gives. An organisation-level resource keeps the organisation
+    /// from every position an author may write it in: that hoist is what lets an author
+    /// write one beside the project it serves.
     #[test]
-    fn a_projects_body_places_what_it_encloses_and_an_organisation_level_resource_hoists() {
+    fn a_nodes_body_places_what_it_encloses_and_an_organisation_level_resource_hoists() {
         let forms = [
             (
-                "at the top level",
-                "use \"content.satz\"",
+                "a pack used at the top level",
+                "use \"content.satz\"".to_string(),
                 None,
                 "\"organizations/123456789012\"",
                 "\"organizations/123456789012/policies/compute.requireOsLogin\"",
+                true,
             ),
             (
-                "in a folder's body",
-                IN_FOLDER,
+                "written in a folder's body",
+                in_folder(),
                 None,
                 "google_folder.shared.name",
                 "\"${google_folder.shared.name}/policies/compute.requireOsLogin\"",
+                true,
             ),
             (
-                "in a project's body",
-                IN_PROJECT,
+                "written in a project's body",
+                in_project(),
                 Some("project = google_project.outer.project_id"),
                 "\"projects/${google_project.outer.project_id}\"",
                 "\"projects/${google_project.outer.project_id}/policies/compute.requireOsLogin\"",
+                false,
             ),
         ];
-        for (form, tail, bucket_project, policy_parent, policy_name) in forms {
+        for (form, tail, bucket_project, policy_parent, policy_name, grants) in forms {
             let (main_tf, _, _) = emit(&format!("{}{}", HEAD, tail));
 
             // project-scoped: the project the `use` stands in, or none at all
@@ -7079,10 +7150,12 @@ google_organization_iam_member {
                 policy
             );
 
-            // organisation-level: the organisation, wherever the `use` stands
-            let grant = block(&main_tf, "google_organization_iam_member", "iam_group_gcp_auditors_example_com_");
-            assert!(grant.contains("org_id = \"123456789012\""), "{}: the organisation grant did not hoist:\n{}", form, grant);
-            assert!(grant.contains("provider = google.google"), "{}: the organisation grant took a project's provider:\n{}", form, grant);
+            // organisation-level: the organisation, from every position it may stand in
+            if grants {
+                let grant = block(&main_tf, "google_organization_iam_member", "iam_group_gcp_auditors_example_com_");
+                assert!(grant.contains("org_id = \"123456789012\""), "{}: the organisation grant did not hoist:\n{}", form, grant);
+                assert!(grant.contains("provider = google.google"), "{}: the organisation grant took a project's provider:\n{}", form, grant);
+            }
         }
     }
 
