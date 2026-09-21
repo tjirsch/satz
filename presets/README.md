@@ -1518,6 +1518,22 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.75.0
+
+**`satz review-pack` refuses a pack that holds a value shaped like private data.** A
+directory id, an organisation, folder or project number, a billing account, a GUID, a project
+id, an e-mail address or a domain that is not one of the documented example values
+(`docs/examples.md`) is an error of kind `private-shape`, one per value at its line, and the
+review no longer passes:
+
+```
+error    private-shape     central-logs.satz:7   123456789012
+```
+
+**The edit:** make each value a param the estate binds, or replace it with the documented
+example value. A pack that stays private — a `.local.satz` in the estate's own library — does
+not need to pass `review-pack`; the check is the bar for a pack that goes upstream.
+
 ### v0.74.0
 
 **An answer that switches a pack on is refused while a pack it needs is off.** `satz
