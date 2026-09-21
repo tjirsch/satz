@@ -5,14 +5,19 @@
 //! `maybe_check_for_updates` is the same query without the install, run per the frequency in
 //! `~/.config/satz/satz.toml` and never for a command that owns stdout as a protocol.
 
-use crate::fsx;
-use crate::github::{api_error, api_get, API_URL, DOCS_URL, REPO};
-use crate::settings::GlobalSettings;
-use crate::{Commands};
-use crate::settings::{save_global_settings};
+use crate::github::{api_error, api_get, API_URL, REPO};
+use crate::settings::{save_global_settings, GlobalSettings};
+use crate::Commands;
 use serde::Deserialize;
+// The install is unix-only — on Windows `self-update` refuses before any download and says
+// to re-run the installer — so everything only the install path touches is gated with it.
+#[cfg(unix)]
+use crate::fsx;
+#[cfg(unix)]
+use crate::github::DOCS_URL;
+#[cfg(unix)]
 use std::path::Path;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::path::PathBuf;
 
 /// Fetches latest release from GitHub and returns (latest_version, html_url) if an update is available.
