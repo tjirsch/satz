@@ -747,8 +747,11 @@ pub(crate) struct ReportComplianceArgs {
     /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
     #[serde(default)]
     pub estate: Option<String>,
-    /// Catalog id, e.g. `cis-gcp-4.0`
-    pub framework: String,
+    /// Catalog id, e.g. `cis-gcp-5.0`. Omit to report every framework the estate's
+    /// `compliance_frameworks` names — the answer is then `{frameworks, reports}`
+    /// rather than one report
+    #[serde(default)]
+    pub framework: Option<String>,
     /// Prowler export to corroborate with, a path under the server's root
     #[serde(default)]
     pub prowler: Option<String>,
@@ -1224,7 +1227,7 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let (manifest, claims, _org) = match self.inputs(&open, &estate) {
+        let (manifest, claims, _org, _held_to) = match self.inputs(&open, &estate) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
@@ -1479,7 +1482,7 @@ impl SatzMcp {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
-        let (manifest, claims, _org) = match self.inputs(&open, &estate) {
+        let (manifest, claims, _org, _held_to) = match self.inputs(&open, &estate) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
@@ -1516,12 +1519,18 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let (manifest, claims, org) = match self.inputs(&open, &estate) {
+        let (manifest, claims, org, held_to) = match self.inputs(&open, &estate) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
         let now = crate::compliance::chrono_free_timestamp();
-        Ok(Ok(Json(crate::prowler::plan(&manifest, &claims, org.as_deref(), &now))))
+        Ok(Ok(Json(crate::prowler::plan(
+            &manifest,
+            &claims,
+            held_to.as_deref().unwrap_or_default(),
+            org.as_deref(),
+            &now,
+        ))))
     }
 
     #[tool(
@@ -1723,7 +1732,7 @@ impl SatzMcp {
             }
             None => None,
         };
-        let (manifest, claims, _org) = self.inputs(&open, &estate)?;
+        let (manifest, claims, _org, _held_to) = self.inputs(&open, &estate)?;
         let report = checkov.as_ref().map(|(_, r)| r);
         let mut run =
             crate::compliance::remediation_run(framework, &open.runtime.presets_dir, &claims, &manifest, &estate, &prowler, report)
@@ -2172,7 +2181,10 @@ impl SatzMcp {
                        Asset Inventory, manual-duty attestations and optional Prowler corroboration. \
                        Reads the organisation with the estate's credentials. Writes nothing — unlike \
                        the command, it does not append to the evidence history, because being ASKED \
-                       for state is not a report run. Check `live_status` before trusting the rows: \
+                       for state is not a report run. Name a `framework` for one report; omit it \
+                       to report every framework the estate is HELD TO \
+                       (`compliance_frameworks`), which answers `{frameworks, reports}` with one \
+                       report per framework. Check `live_status` before trusting the rows: \
                        a run whose inventory could not be read answers `live: false` with the reason \
                        in `warnings`, and every witness reads unverified.",
         annotations(read_only_hint = true, idempotent_hint = false, open_world_hint = true)
@@ -2200,30 +2212,51 @@ impl SatzMcp {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
-        let (manifest, claims, org_id) = match self.inputs(&open, &estate) {
+        let (manifest, claims, org_id, held_to) = match self.inputs(&open, &estate) {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::gcp::with_identity(
-            sa,
-            crate::compliance::report_compliance_evidence(
-            &args.framework,
+        let named = args.framework.is_some();
+        let frameworks = match crate::compliance::frameworks_to_report(
+            args.framework.as_deref(),
+            held_to.as_deref(),
             &estate,
             &open.runtime.presets_dir,
-            &claims,
-            &manifest,
-            org_id.as_deref(),
-            &self.ctx.root,
-            prowler,
-            None,
-            args.no_live,
-        ),
-        )
-        .await
-        {
-            Ok((evidence, _md)) => Ok(Ok(Json(evidence))),
-            Err(e) => Ok(Err(refused(format!("report-compliance: {}", e)))),
+        ) {
+            Ok(f) => f,
+            Err(e) => return Ok(Err(refused(format!("report-compliance: {}", e)))),
+        };
+        let mut evidences = Vec::new();
+        for framework in &frameworks {
+            match crate::gcp::with_identity(
+                sa.clone(),
+                crate::compliance::report_compliance_evidence(
+                    framework,
+                    &estate,
+                    &open.runtime.presets_dir,
+                    &claims,
+                    &manifest,
+                    org_id.as_deref(),
+                    &self.ctx.root,
+                    prowler.clone(),
+                    None,
+                    args.no_live,
+                    named,
+                ),
+            )
+            .await
+            {
+                Ok((evidence, _md)) => evidences.push(evidence),
+                Err(e) => return Ok(Err(refused(format!("report-compliance: {}", e)))),
+            }
         }
+        // The shape follows the question: one framework asked for, one report back; the
+        // estate's frameworks asked for, the set back — whether it holds one or three.
+        Ok(Ok(Json(if named {
+            evidences.remove(0)
+        } else {
+            serde_json::json!({ "frameworks": frameworks, "reports": evidences })
+        })))
     }
 
     #[tool(

@@ -477,6 +477,9 @@ params {{
   deployment_mode          = "local" // switched by `satz migrate`
   default_region           = "{region}"
   default_zone             = "{region}-a"
+  // The compliance frameworks this customer is held to, as catalog ids from
+  // `presets/catalogs/`. Not what this estate claims — that comes from its packs.
+  compliance_frameworks    = ["cis-gcp-5.0"]
   // The folder the audit archive's project is created in, read by
   // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
   // the folder: unbound, that pack creates its project under the organisation.

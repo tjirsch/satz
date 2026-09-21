@@ -1866,7 +1866,18 @@ value**, because an inventory lists a switched-off policy like an enforced one.
 ```
 satz report-compliance cis-gcp-4.0 C0example.satz --config ~/estates/acme \
   --format markdown --out evidence/cis-4.0.md
+satz report-compliance C0example.satz --config ~/estates/acme \
+  --format markdown --out evidence/held-to.md
 ```
+
+The framework is optional. Named, the report is that catalog's. Left out, it is every
+framework the estate is HELD TO — the catalog ids its `compliance_frameworks` param
+names ([§8.1](#81-compliance_frameworks--what-the-customer-answers-to)) — one section per
+framework in the one file `--out` names, each section the report that framework alone
+produces. `--format json` then answers `{frameworks, reports}`, one report per framework,
+whether the estate names one or three; named a framework, it answers that one report.
+An estate that binds no `compliance_frameworks` is refused with the catalogs it could
+name. One evidence record is appended per framework, named as it always is.
 
 The report has seven columns — `Control | Title | Status | Witnesses (declared →
 live) | Duties | Prowler | Checkov`; the title cell carries the catalog's own
@@ -1957,6 +1968,24 @@ not-enforced,drifted` (any status word, or `any`) makes the run fail for CI
 after the report is written. The report states check semantics: "a resource with
 these properties was verified at this time".
 
+### 8.1 `compliance_frameworks` — what the customer answers to
+
+What an estate CLAIMS comes from its packs. What its customer is HELD TO — a contract,
+an auditor, a regulator — is a different fact, and the estate states it as a day-0 param
+declared by `presets/estate-core.satz`:
+
+```satz
+params {
+  compliance_frameworks = ["cis-gcp-5.0", "iso27001-2022"]
+}
+```
+
+The values are catalog ids — the file stems in `<presets_dir>/catalogs/`: `cis-gcp-4.0`,
+`cis-gcp-5.0`, `iso27001-2022`. A value naming no catalog is a compile error at the line
+that binds it, with the catalogs that exist. The param decides what reports are written
+against; it switches no pack on. It is read by `report-compliance` with no framework, by
+`satz prowler`, and by a pack like any other param.
+
 ---
 
 ## 9. Quick reference
@@ -1998,7 +2027,7 @@ these properties was verified at this time".
 |---|---|---|
 | `transpile <estate>.satz` | Satz → HCL | emit `hcl/`; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the compile as data — estate, addresses, files written, findings — and exits 1 on a refusal |
 | `require <framework> <estate>.satz --format text\|json --out f` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
-| `report-compliance <framework> <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
+| `report-compliance [<framework>] <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). With no framework it reports each one the estate's `compliance_frameworks` names, one section per framework in the one file, and `--format json` answers `{frameworks, reports}`. `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |
 | `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
 | `packs <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it deploys, what it needs and what needs it, and the compile's pack findings; a `use` the graph does not know is `unmanaged` |

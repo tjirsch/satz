@@ -212,9 +212,9 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`\|`xlsx`, the decisions catalog as a workbook a customer fills in and sends back), `--out <FILE>`, `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
 | `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. A yes to a pack's question switches its line on as `add-pack` does, and prints the notice that pack carries. See [satz interview](docs/interview.md) |
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, *(catalog id, e.g. `cis-gcp-4.0`)* |
-| `report-compliance <FRAMEWORK> <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
+| `report-compliance [<FRAMEWORK>] <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
-| `prowler <INPUT>` | `--format` (`text`\|`json`) — the Prowler invocation this estate needs, printed. `text` puts the command line on stdout and NOTHING else, so it can be pasted into a shell or piped to a clipboard; what the line cannot say — a scan not narrowed to projects, a project left out of `--project-ids` because its id is built from a reference to another resource (which only an apply resolves), a claimed framework Prowler has no equivalent of, the command to run afterwards — goes to stderr. The organisation and the project ids the estate declares (a `{param}` in an id is its value), the frameworks it CLAIMS as `--compliance` (which also filters which checks run), `--output-formats json-ocsf`, and an output file under `evidence/prowler/<UTC date>/` named for the scope and the UTC minute (`org-2026-09-13T08-30Z.ocsf.json`) — Prowler appends to an output file that already exists, so each scan needs a name of its own: run `satz prowler` again for the next scan. satz never runs Prowler: the scan spends API quota in every project, and Prowler reads as whoever is logged in rather than as the estate's service account |
+| `prowler <INPUT>` | `--format` (`text`\|`json`) — the Prowler invocation this estate needs, printed. `text` puts the command line on stdout and NOTHING else, so it can be pasted into a shell or piped to a clipboard; what the line cannot say — a scan not narrowed to projects, a project left out of `--project-ids` because its id is built from a reference to another resource (which only an apply resolves), a framework the estate names that Prowler has no equivalent of, an estate that binds no `compliance_frameworks`, the command to run afterwards — goes to stderr. The organisation and the project ids the estate declares (a `{param}` in an id is its value), as `--compliance` the union of the frameworks it is HELD TO (`compliance_frameworks`) and the frameworks its packs CLAIM (which also filters which checks run), `--output-formats json-ocsf`, and an output file under `evidence/prowler/<UTC date>/` named for the scope and the UTC minute (`org-2026-09-13T08-30Z.ocsf.json`) — Prowler appends to an output file that already exists, so each scan needs a name of its own: run `satz prowler` again for the next scan. satz never runs Prowler: the scan spends API quota in every project, and Prowler reads as whoever is logged in rather than as the estate's service account |
 | `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json` — `{"rows": […]}`, the value the MCP tool `satz_triage` returns), `--out <FILE>`, `--fix` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims, and the checks Prowler maps to no control of the framework counted in a section of their own; `--fix` adds the estate delta they imply to the report (markdown only, proposed, never written) |
 | `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out-dir <DIR>`, `--merge <authored.json>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[Authored]` columns and who authored them, Review dropdown) + `meta.json` under `evidence/plan/<framework>-<UTC minute>/` (`cis-gcp-4.0-2026-09-13T08-30Z`, dashes for colons so the name is valid on every platform) unless `--out-dir` names another — a run in a minute that already has a folder takes the next free name (`…_002`), created by that run, so no run writes into another's; offline and deterministic (the dossier hash names the run). `--merge` fills the `[Authored]` columns from an `authored.json` written against this run's hash — every entry names `authored_by` and `authored_at` — and keeps it beside the run; `dossier.json` and its hash do not change |
 
@@ -271,7 +271,7 @@ satz init \
 - Fetches the latest provider schemas for the configured providers.
 
 **Without the flags:** `satz interview yaml/<name>.satz --create` writes an estate that
-asks for the same sixteen values one at a time and offers the derived ones as defaults;
+asks for the same seventeen values one at a time and offers the derived ones as defaults;
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
 
@@ -1288,7 +1288,14 @@ The exit code is 0 whatever the verdicts — the report is the deliverable;
 `--fail-on not-enforced,drifted` (any status word; `any` = everything that is
 not verified/declared) makes the run fail for CI after the report is written.
 
+The framework is optional: named, the report is that catalog's; left out, it is every
+framework the estate is HELD TO — the catalog ids its `compliance_frameworks` param
+names — one section per framework in the one file, each section the report that framework
+alone produces. `--format json` then answers `{frameworks, reports}`. An estate that
+binds no `compliance_frameworks` is refused with the catalogs it could name.
+
 ```bash
+satz report-compliance C0example.satz --format markdown --out evidence/held-to.md   # every framework this customer answers to
 satz report-compliance cis-gcp-4.0 C0example.satz --format markdown --out evidence/cis-4.0.md   # + history
 satz report-compliance cis-gcp-4.0 C0example.satz --format pdf --out evidence/cis-4.0.pdf --prowler prowler.json
 satz report-compliance cis-gcp-4.0 C0example.satz --format markdown --out evidence/cis-4.0.md --checkov   # + a Checkov column: failed checks on a control's witnesses

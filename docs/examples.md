@@ -160,7 +160,7 @@ id". See [from nothing to applied](workflows.md#from-nothing-to-applied).
 `tests/smoke/yaml/smoke.satz` is the fixture every estate-consuming command runs
 against in CI. In about a hundred lines it carries:
 
-- **params** — the sixteen an estate normally binds, including a param defined in
+- **params** — the seventeen an estate normally binds, including a param defined in
   terms of another (`cis_central_bucket_project = logsink_project_id`);
 - **`terraform` and `providers` blocks**, which become `providers.tf` and the
   backend;

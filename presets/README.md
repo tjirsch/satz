@@ -294,7 +294,7 @@ recipient; `notification_channels = []` passes CIS and notifies nobody.
 ## estate-core.satz
 
 The questions every estate has to answer on day 0, with the params they answer — the
-sixteen `satz init` writes, each with a `question`: what to ask, why,
+seventeen `satz init` writes, each with a `question`: what to ask, why,
 and what changing the answer later costs. Which packs make up the estate is the next
 pack, `estate-map.satz`; this one is the day-0 params and nothing else.
 
@@ -312,7 +312,15 @@ Two kinds of param, and the interview treats them differently:
 | kind | params | in the report |
 |---|---|---|
 | **no possible default** | `customer_id`, `customer_organization_id`, `customer_domain`, `customer_shortname`, `customer_longname`, `first_admin`, `billing_account_infra` | `blocking: true` — a value has to be typed |
-| **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `svc_iac_users_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, the security model | `default` offered — accepting it is an answer, recorded by writing it |
+| **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `svc_iac_users_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, `compliance_frameworks`, the security model | `default` offered — accepting it is an answer, recorded by writing it |
+
+`compliance_frameworks` is the one param here that is neither derived nor a
+convention: it is what the customer ANSWERS TO — a contract, an auditor, a regulator —
+as a list of catalog ids (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`), default
+`["cis-gcp-5.0"]`. It is not what the estate CLAIMS, which comes from its packs, and a
+value naming no catalog is a compile error with the list. `satz report-compliance
+<estate>` reports one section per framework named here, `satz prowler` scans for them
+beside the frameworks the packs claim, and a pack reads it like any other param.
 
 A derived default is offered only once what it derives from is answered:
 `infra_project_name` is `"{customer_shortname}-infra-001"`, which with the short name
@@ -1506,6 +1514,30 @@ estate, and what to write instead; the error satz prints names the file and the 
 
 ### v0.73.0
 
+**An estate that uses `presets/estate-core.satz` has one more question to answer, and
+`apply` refuses until it is.** The pack declares `compliance_frameworks` — the catalogs
+this customer is HELD TO, which is not the same fact as what the estate's packs claim.
+A question is answered by the estate binding its param, so an estate that used the pack
+and answered everything now has one open question:
+
+```
+apply refused: 1 question(s) unanswered — satz questions <estate> --unanswered
+```
+
+**The edit:** add the param to the estate's `params { }` with the catalog ids the
+customer answers to, or run `satz interview <estate>` and answer it:
+
+```satz
+params {
+  compliance_frameworks = ["cis-gcp-5.0"]
+}
+```
+
+The values are the catalog ids in `<presets_dir>/catalogs/`: `cis-gcp-4.0`,
+`cis-gcp-5.0`, `iso27001-2022`. A value that names no catalog is refused by the compile,
+with the list. An estate that does not use `estate-core` is unaffected, and every
+`satz report-compliance <framework> <estate>` invocation keeps working unchanged.
+
 **`bootstrap` refuses an estate that binds no `infra_bucket_name`.** The state bucket had
 two defaults: `presets/estate-core.satz` declares
 `infra_bucket_name = "{customer_shortname}-infra-001-state"`, and `bootstrap` took the
@@ -1810,6 +1842,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `estate_core` | 2.1 | 2026-09-21 | `compliance_frameworks`, the catalogs this customer is HELD TO — a contract, an auditor, a regulator — as a list of catalog ids, with the question that asks for them. What an estate CLAIMS comes from its packs and is a different fact: an estate can claim CIS controls while its customer is audited against ISO 27001. The default is `["cis-gcp-5.0"]`; the values are the ids of the catalogs in `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) and a value that names no catalog is refused by the compile, with the list. `satz report-compliance <estate>` reports one section per framework named here, `satz prowler` scans for them beside the frameworks the packs claim, and a pack reads the param like any other. An estate that binds nothing keeps working: `report-compliance <framework> <estate>` is unchanged |
 | `monitoring.organization_audit_logsink` | 1.6 | 2026-09-21 | a question for `logsink_project_folder`: the folder the audit-archive project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation; an estate `satz init` wrote answers `"google_folder.infra_folder.name"`, which init binds itself. Nothing emitted changes for an estate that already binds the param |
 | `integrations.microsoft_defender_for_cloud` | 0.4 | 2026-09-21 | a question for `mdc_mgmt_project_folder`: the folder the Defender management project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation, which is where every estate that binds nothing has it today |
 | `monitoring.organization_audit_logsink` | 1.5 | 2026-09-21 | `logsink_project_folder`: the folder the audit-archive project is created in, said by the estate instead of read from the node the `use` line stands in. The default is empty, which says nothing — the enclosing node decides, exactly as before — so no estate's plan moves. An estate whose `use "presets/monitoring/organization-audit-logsink.satz"` stands inside a folder's body writes `logsink_project_folder = "google_folder.<label>.name"` for that folder (`satz init` writes the line into `google_folder.infra_folder`, so `"google_folder.infra_folder.name"`) and may then move the `use` line to the top level: the emitted HCL is byte-identical either way. A folder that already exists rather than being declared here is named by its id, `"123456789012"` |

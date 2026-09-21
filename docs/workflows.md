@@ -140,7 +140,7 @@ satz init \
 
 **Without the flags**, `satz interview yaml/<name>.satz --create` writes the estate and
 asks for the
-same sixteen values one question at a time, offering the derived ones as defaults; an
+same seventeen values one question at a time, offering the derived ones as defaults; an
 agent does the same over MCP. Both end at the file `init` would have written, and
 [satz interview](interview.md) describes the rules they share: an answer is a param the
 estate binds, and nothing below runs while one is missing.
@@ -425,7 +425,7 @@ human who typed the command: `runs as: svc-iac-…@… — impersonated by you@�
 
 ### The params `init` writes
 
-The same sixteen, each with its question, are `presets/estate-core.satz` — what
+The same seventeen, each with its question, are `presets/estate-core.satz` — what
 `satz interview` asks when there are no flags. An estate `init` wrote binds all of
 them and is complete; one the interview wrote is complete when it says so.
 
@@ -447,6 +447,7 @@ them and is complete; one the interview wrote is complete when it says so.
 | `deployment_mode` | `"local"` | `local` for day 0 (user ADC); `cloud` for day 1+ (impersonation). Switched by `satz migrate`. |
 | `default_region` | `"europe-west3"` | Default region for regional resources. |
 | `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
+| `compliance_frameworks` | `["cis-gcp-5.0"]` | The frameworks this customer is HELD TO, as catalog ids from `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) — a contract, an auditor, a regulator. Not what the estate claims, which comes from its packs. A value naming no catalog is refused by the compile. |
 
 ---
 
@@ -570,7 +571,7 @@ live organisation matches it:
 | trigger | when | runs | fails when |
 |---|---|---|---|
 | `satz-check` | every push to `main` | `satz transpile --check <estate>` | the estate no longer compiles |
-| `satz-compliance` | nightly, Cloud Scheduler | `satz report-compliance <framework> <estate> --format markdown --out <file> --fail-on <statuses>` | a witness is DRIFTED or NOT ENFORCED |
+| `satz-compliance` | nightly, Cloud Scheduler | `satz report-compliance <estate> --format markdown --out <file> --fail-on <statuses>` | a witness is DRIFTED or NOT ENFORCED |
 
 Both are one pack:
 
@@ -636,12 +637,20 @@ C0example.satz | pbcopy`. What the line cannot say goes to stderr: the command t
 afterwards, a scan that is not narrowed to projects because no project id resolved, each
 project left out of `--project-ids` by its address because its id is built from a
 reference to another resource (`"acme-${{google_folder.x.folder_id}}"`), which only an
-apply resolves, and a framework this estate claims that Prowler has no equivalent of.
+apply resolves, and a framework this estate names that Prowler has no equivalent of.
 Every argument comes from what the estate declares — the organisation id, the project ids
-(a `{param}` in an id is its value, as everywhere in the compile), and the frameworks its
-claims name. A framework satz ships a catalog for but Prowler has no
-equivalent of is NAMED as unmapped rather than mapped to something that looks close: a
-wrong `--compliance` argument silently scans the wrong control set.
+(a `{param}` in an id is its value, as everywhere in the compile), and the frameworks it
+names.
+
+`--compliance` is the UNION of two sources: the frameworks the estate is HELD TO
+(`compliance_frameworks`, [the language reference](language.md#81-compliance_frameworks--what-the-customer-answers-to))
+and the frameworks its packs CLAIM. They are different facts — an estate can claim CIS
+controls while its customer is audited against ISO 27001 — and the export an auditor
+reads has to cover both. An estate that binds no `compliance_frameworks` is scanned for
+what its packs claim, and stderr says that is all the line had. A framework satz ships a
+catalog for but Prowler has no equivalent of is NAMED as unmapped rather than mapped to
+something that looks close: a wrong `--compliance` argument silently scans the wrong
+control set.
 
 `--format json` is the same answer for an agent, and `satz_prowler` serves it over MCP.
 
@@ -670,6 +679,8 @@ file, naming the line, column and byte offset where the second run begins.
 Then fold the export back in — any of the three read the same file:
 
 ```bash
+satz report-compliance C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13T08-30Z.ocsf.json \
+  --format markdown --out evidence/held-to.md
 satz report-compliance cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13T08-30Z.ocsf.json \
   --format markdown --out evidence/cis-4.0.md
 satz triage cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026-09-13/org-2026-09-13T08-30Z.ocsf.json \

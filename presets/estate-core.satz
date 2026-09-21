@@ -2,7 +2,7 @@
 //
 //   use "presets/estate-core.satz"
 //
-// `satz init` writes these sixteen params — from its flags where it has one, from
+// `satz init` writes these seventeen params — from its flags where it has one, from
 // its defaults otherwise; an INTERVIEW asks for
 // them one at a time, from the questions in this pack. Every param below has a
 // question, and every question says what changing the answer later costs, so a
@@ -23,7 +23,7 @@
 // This pack emits nothing. An estate that uses it and answers everything compiles
 // to exactly what `satz init` would have written.
 
-pack estate_core version "2.0"
+pack estate_core version "2.1"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
@@ -45,6 +45,9 @@ params {
   deployment_mode     = "local"
   default_region      = "europe-west3"
   default_zone        = "{default_region}-a"
+
+  // ---- what the customer answers to, which no pack can know -----------------
+  compliance_frameworks = ["cis-gcp-5.0"]
 }
 
 question customer_id {
@@ -157,4 +160,12 @@ question default_zone {
   prompt   = "The default zone, inside that region"
   reversal = edit
   blast    = low
+}
+
+question compliance_frameworks {
+  prompt    = "Which compliance frameworks is this customer held to, as catalog ids: cis-gcp-4.0, cis-gcp-5.0, iso27001-2022"
+  why       = "This is what the customer answers to — a contract, an auditor, a regulator — and it is not the same as what the packs in this estate claim. `satz report-compliance <estate>` writes one report section per framework named here, `satz prowler` scans for them, and an audit pack reads them. cis-gcp-4.0 and cis-gcp-5.0 are the two versions of the CIS Google Cloud Foundation Benchmark; 5.0 is the current one and the answer unless a signed contract names 4.0. iso27001-2022 is ISO/IEC 27001:2022, covered as a cross-walk: the packs keep claiming CIS, every technically evidenced Annex A control reads its verdict through the CIS controls that stand as its evidence, and the controls that are a human duty carry that duty and never read as satisfied by configuration alone. Naming a framework here does not switch a pack on; it decides what the reports are written against. A value that names no catalog is refused."
+  reversal  = edit
+  blast     = none
+  recommend = ["cis-gcp-5.0"]
 }
