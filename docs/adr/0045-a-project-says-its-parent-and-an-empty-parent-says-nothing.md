@@ -1,4 +1,4 @@
-# 0044 — a project says its parent, and an empty parent says nothing
+# 0045 — a project says its parent, and an empty parent says nothing
 
 - **Status:** accepted
 - **Date:** 2026-09-21

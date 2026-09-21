@@ -32,6 +32,7 @@ action "estate-step" {
 google_folder {
   logging {
     display_name = "Logging"
-    use "pack.satz"
   }
 }
+
+use "pack.satz"

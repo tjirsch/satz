@@ -85,7 +85,7 @@ globally unique without overrides):
 | Param | Default | Meaning |
 |---|---|---|
 | `logsink_project_id` | `"{customer_shortname}-log-infra-001"` | project_id of the destination project |
-| `logsink_project_folder` | `""` | the folder the destination project is created in — a folder the estate declares by reference (`google_folder.<label>.name`), one that already exists by its id. Empty says nothing, and the node the `use` line stands in decides: the organisation at the top level |
+| `logsink_project_folder` | `""` | the folder the destination project is created in — a folder the estate declares by reference (`google_folder.<label>.name`), one that already exists by its id. Empty says nothing and the project is created under the organisation |
 | `logsink_bucket_name` | `"{customer_shortname}-organization-audit-logs"` | GCS archive bucket |
 | `logsink_bucket_location` | `default_region` | bucket region |
 | `logsink_retention_days` | `400` | lifecycle delete age |
@@ -832,8 +832,7 @@ use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege
 what Microsoft's wizard uses as the pool id), `mdc_mgmt_project_id`,
 `mdc_mgmt_project_folder` (the folder that project is created in — a folder the estate
 declares by reference, `google_folder.<label>.name`, or one that already exists by its id;
-empty says nothing and the node the `use` line stands in decides, the organisation at the
-top level), `mdc_plan_cspm`, and
+empty says nothing and the project is created under the organisation), `mdc_plan_cspm`, and
 the access-mode pair `mdc_cspm_default_access` / `mdc_cspm_least_privilege`. Everything
 Microsoft-side — their tenant as the OIDC issuer, the per-plan `api://` audiences, the
 provider ids, the custom role ids, the API list — is an inlined constant, identical for
@@ -1507,6 +1506,52 @@ estate, and what to write instead; the error satz prints names the file and the 
 
 ### v0.71.0
 
+**A `use` inside a folder's or a project's body is refused.** A folder's and a project's
+body hold the estate's own resources; a pack is used at the top level of the estate.
+`google_folder { infra_folder { use "presets/…" } }` is refused with ``use "presets/…"`
+stands in the body of `google_folder.infra_folder`, which holds the estate's own resources
+— a pack is used at the top level of a file``, naming the estate file and the line. Find
+every one: `grep -nE '^[[:space:]]+(// *)?use "' <estate>.satz` — an indented `use` line,
+commented or not.
+
+**The edit, per line:** move the line to the top level of the estate file — out of every
+`{ … }`, at the left margin. Only the text moves: a line that was commented out stays
+commented out, a line that was active stays active, and its `when <param>` stays with it.
+Keep the order — a pack whose params another pack reads keeps its line above that pack's,
+because the compile builds one parameter namespace in file order.
+
+**Two packs need a param bound as well**, because they create a project and the folder the
+line used to stand in was what put that project there:
+
+- `presets/monitoring/organization-audit-logsink.satz` → `logsink_project_folder`
+- `presets/integrations/microsoft-defender-for-cloud.satz` → `mdc_mgmt_project_folder`
+
+In the estate's `params { … }`, bind the param to the folder the `use` line used to stand
+in, as a reference: `logsink_project_folder = "google_folder.infra_folder.name"` for a line
+that stood in `google_folder { infra_folder { … } }`. A folder that already exists rather
+than being declared in the estate is named by its numeric id, `"123456789012"`. With the
+param bound, the emitted HCL is byte-identical to what the nested line emitted — `satz
+transpile` before and after the edit produces the same `main.tf`. Without it the project is
+created under the organisation instead, which is a project move in the plan. Every other
+pack emits the same resources wherever its line stands, so it needs the move and nothing
+else.
+
+An estate `satz init` wrote has exactly two nested lines, both in `google_folder {
+infra_folder { … } }`: `presets/monitoring/organization-audit-logsink.satz` and
+`presets/monitoring/organization-cis-log-alerts-central.satz`. The first takes
+`logsink_project_folder = "google_folder.infra_folder.name"`; the second takes nothing.
+A new estate `satz init` writes both lines at the top level and binds
+`logsink_project_folder` itself.
+
+**`offers … { after_scaffold = true }` is gone, and `block` names a resource type map.**
+This is the pack graph, so it matters to a fork of `presets/estate-map.satz` and to
+nothing else. Every pack line satz writes now stands at the top level, in the order of the
+`offers` entries, bar a pack that is a bare list of labelled bodies, whose line is written
+inside the map of its type — that is what `block = "google_essential_contacts_contact"`
+says. A `block` naming a node of the estate (`block = "google_folder.infra_folder"`) is
+refused; delete the key, and the line joins the menu in its entry's order. Delete
+`after_scaffold = true` wherever it stands.
+
 **An organisation-level resource type written inside a project's body is refused.** A
 folder, a project, an organisation grant (`google_organization_iam_member`), a Cloud
 Identity group (`google_cloud_identity_group`) and a billing grant
@@ -1669,9 +1714,9 @@ types — `google_folder.google_org_policy_policy` — and to emit none of the p
 resources. The same pack inside a resource type map (`google_x { use … }`,
 `use … as google_x`) was refused before and still is.
 
-- To create the pack's resources in a folder, write the `use` in that folder's body:
-  `google_folder { shared { use "presets/<pack>.satz" } }`.
-- To create them at the organisation, write it at the top level: `use "presets/<pack>.satz"`.
+- A pack is used at the top level: `use "presets/<pack>.satz"`. Its resources reach the
+  organisation, and a pack that creates a project names the folder that project is created
+  in with a param of its own.
 - `google_folder { use "<file>" }` stays valid for a file whose entries are named
   folders.
 
@@ -1698,6 +1743,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `monitoring.organization_audit_logsink` | 1.6 | 2026-09-21 | a question for `logsink_project_folder`: the folder the audit-archive project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation; an estate `satz init` wrote answers `"google_folder.infra_folder.name"`, which init binds itself. Nothing emitted changes for an estate that already binds the param |
+| `integrations.microsoft_defender_for_cloud` | 0.4 | 2026-09-21 | a question for `mdc_mgmt_project_folder`: the folder the Defender management project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation, which is where every estate that binds nothing has it today |
 | `monitoring.organization_audit_logsink` | 1.5 | 2026-09-21 | `logsink_project_folder`: the folder the audit-archive project is created in, said by the estate instead of read from the node the `use` line stands in. The default is empty, which says nothing — the enclosing node decides, exactly as before — so no estate's plan moves. An estate whose `use "presets/monitoring/organization-audit-logsink.satz"` stands inside a folder's body writes `logsink_project_folder = "google_folder.<label>.name"` for that folder (`satz init` writes the line into `google_folder.infra_folder`, so `"google_folder.infra_folder.name"`) and may then move the `use` line to the top level: the emitted HCL is byte-identical either way. A folder that already exists rather than being declared here is named by its id, `"123456789012"` |
 | `integrations.microsoft_defender_for_cloud` | 0.3 | 2026-09-21 | `mdc_mgmt_project_folder`: the folder the Defender management project is created in, said by the estate instead of read from the node the `use` line stands in. The default is empty, which says nothing — the enclosing node decides, exactly as before — so no estate's plan moves. An estate whose `use "presets/integrations/microsoft-defender-for-cloud.satz"` stands inside a folder's body writes `mdc_mgmt_project_folder = "google_folder.<label>.name"` for that folder and may then move the `use` line to the top level: the emitted HCL is byte-identical either way. A folder that already exists rather than being declared here is named by its id, `"123456789012"` |
 | `CIS_GCP_Foundation_4_0` | 2.16 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |

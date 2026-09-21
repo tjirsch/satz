@@ -82,12 +82,10 @@ pub struct Node {
     /// the phase comment that opens this node's group of lines
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub phase: Option<String>,
-    /// the block of the estate the line is written inside
+    /// the resource type map the line is written inside, for a pack that is a bare list
+    /// of labelled bodies; every other line stands at the top level of the estate
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub block: Option<String>,
-    /// the line goes after the scaffold rather than in the menu above it
-    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
-    pub after_scaffold: bool,
     /// the line is written by hand, never by satz; why
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub by_hand: Option<String>,

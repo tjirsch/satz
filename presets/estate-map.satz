@@ -226,12 +226,13 @@ question use_exemption_tag {
 
 // ---- what the library offers, in the order the packs can be adopted ---------
 // One entry per pack. `when` is the gate its line carries; `phase` opens a group
-// of lines and says what has to be finished before they can go in; `block` puts
-// the line inside that block of the estate and `after_scaffold` after the
-// scaffold; `by_hand` offers a pack whose line is written by hand, with the
-// reason. `requires` and `excludes` name the edges the packs do not show by
-// their param references — `satz pack-graph` derives the rest and refuses a
-// declared edge it can derive.
+// of lines and says what has to be finished before they can go in; `block` names
+// the resource type map the line is written inside, for a pack that is a bare
+// list of labelled bodies; `by_hand` offers a pack whose line is written by hand,
+// with the reason. Every other line stands at the top level of the estate, in the
+// order of the entries below. `requires` and `excludes` name the edges the packs
+// do not show by their param references — `satz pack-graph` derives the rest and
+// refuses a declared edge it can derive.
 
 offers "presets/estate-map.satz" {
   phase = """once the estate runs as the service account — the map, which declares the questions
@@ -304,14 +305,12 @@ offers "presets/monitoring/organization-audit-logsink.satz" {
   when  = use_audit_logsink
   phase = """once the estate runs as the service account — the audit archive, which every later
 logging pack points at"""
-  block = "google_folder.infra_folder"
 }
 
 offers "presets/monitoring/organization-cis-log-alerts-central.satz" {
   when  = use_central_alerts
   phase = """once the archive exists — the alert project defaults to the logsink's, so this does
 not compile without it"""
-  block = "google_folder.infra_folder"
 }
 
 offers "presets/cis/CIS-GCP-Foundation-4.0.satz" {
@@ -420,9 +419,8 @@ offers "presets/scc/scc-findings-siem.satz" {
 }
 
 offers "presets/scc/scc-findings-mail.satz" {
-  when           = use_scc_findings_mail
-  phase          = "once the central alerts are in as well — the mailbox defaults to their address"
-  after_scaffold = true
+  when  = use_scc_findings_mail
+  phase = "once the central alerts are in as well — the mailbox defaults to their address"
 }
 
 offers "presets/integrations/microsoft-defender-for-cloud.satz" {
@@ -447,20 +445,17 @@ offers "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privil
 }
 
 offers "presets/integrations/microsoft-sentinel.satz" {
-  when           = use_sentinel
-  phase          = "once the audit archive exists — Sentinel's project defaults to the logsink's"
-  after_scaffold = true
+  when  = use_sentinel
+  phase = "once the audit archive exists — Sentinel's project defaults to the logsink's"
 }
 
 offers "presets/integrations/microsoft-sentinel-auditlogs.satz" {
-  when           = use_sentinel_auditlogs
-  phase          = "once Sentinel's federation is in — these read as the account it creates"
-  after_scaffold = true
+  when  = use_sentinel_auditlogs
+  phase = "once Sentinel's federation is in — these read as the account it creates"
 }
 
 offers "presets/integrations/microsoft-sentinel-network-logs.satz" {
-  when           = use_sentinel_network_logs
-  after_scaffold = true
+  when = use_sentinel_network_logs
 }
 
 offers "presets/ci/verification-runner.satz" {

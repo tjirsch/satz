@@ -177,10 +177,6 @@ fn node_of<'g>(graph: &'g PackGraph, written: &str) -> Option<(&'g Node, bool)> 
     graph.nodes.iter().find(|n| n.path == base).map(|n| (n, true))
 }
 
-fn segments(block: &str) -> Vec<String> {
-    block.split('.').map(str::to_string).collect()
-}
-
 /// Whether a line sits where the graph places its node. A line written by hand is the
 /// estate's to place.
 fn placed_right(n: &Node, l: &UseLine) -> bool {
@@ -188,8 +184,8 @@ fn placed_right(n: &Node, l: &UseLine) -> bool {
         return true;
     }
     match crate::template::place(n) {
-        Place::Block(b) => l.blocks == segments(b),
-        Place::Menu | Place::AfterScaffold => l.blocks.is_empty(),
+        Place::Block(b) => l.blocks == [b],
+        Place::Menu => l.blocks.is_empty(),
     }
 }
 
@@ -967,13 +963,6 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
 // Writing lines
 // ---------------------------------------------------------------------------
 
-/// A pack whose line has no place in the estate: the graph puts it in a block the
-/// estate does not have, and a folder is the estate's structure, never invented.
-#[derive(Debug)]
-pub(crate) struct Unplaced {
-    pub block: String,
-}
-
 fn lines_vec(src: &str) -> Vec<&str> {
     src.split_inclusive('\n').collect()
 }
@@ -1020,10 +1009,10 @@ fn active_line(path: &str, gate: Option<&str>) -> String {
 
 /// Where `n`'s line goes in `src`, by the graph's order: after the line of the pack
 /// before it in the same place, else before the one after it, else where the place
-/// starts — inside its block, after the estate-core line (or, in an estate without one,
-/// after the top-level `params`), or at the end for a pack placed after the scaffold.
+/// starts — inside the map of its type, or after the estate-core line (or, in an estate
+/// without one, after the top-level `params`).
 /// Returns the new text and the line's number, 1-based.
-pub(crate) fn place_line(src: &str, graph: &PackGraph, n: &Node, commented: bool) -> Result<(String, usize), Unplaced> {
+pub(crate) fn place_line(src: &str, graph: &PackGraph, n: &Node, commented: bool) -> (String, usize) {
     let s = scan(src);
     let text = if commented {
         crate::template::pack_line(&n.path, n.gate.as_deref())
@@ -1077,35 +1066,13 @@ pub(crate) fn place_line(src: &str, graph: &PackGraph, n: &Node, commented: bool
         insert_before(src, at, &block(&nx.indent, false, true))
     } else {
         match place {
-            Place::Block(b) => match crate::template::insert_into_block(src, b, &text, phase.unwrap_or("")) {
-                Some(o) => o,
-                None => match crate::template::block_stub(b, &text, phase.unwrap_or("")) {
-                    Some(stub) => {
-                        let mut o = src.to_string();
-                        if !o.ends_with('\n') {
-                            o.push('\n');
-                        }
-                        o.push('\n');
-                        o.push_str(&stub);
-                        o
-                    }
-                    None => return Err(Unplaced { block: b.to_string() }),
-                },
-            },
+            Place::Block(b) => crate::template::insert_into_map(src, b, &text, phase.unwrap_or(""))
+                .unwrap_or_else(|| crate::template::append_map(src, b, &text, phase.unwrap_or(""))),
             Place::Menu => {
                 let at = s.core.or(s.params_end).or(s.header).map(|i| i + 1).unwrap_or(0);
                 let mut b = String::from("\n");
                 b.push_str(&block("", false, false));
                 insert_before(src, at, &b)
-            }
-            Place::AfterScaffold => {
-                let mut o = src.to_string();
-                if !o.ends_with('\n') {
-                    o.push('\n');
-                }
-                o.push('\n');
-                o.push_str(&block("", false, false));
-                o
             }
         }
     };
@@ -1115,7 +1082,7 @@ pub(crate) fn place_line(src: &str, graph: &PackGraph, n: &Node, commented: bool
         .find(|l| l.written == n.path && l.commented == commented)
         .map(|l| l.index + 1)
         .unwrap_or(0);
-    Ok((out, at))
+    (out, at)
 }
 
 /// What a switch did to one line.
@@ -1151,10 +1118,8 @@ pub(crate) fn line_on(src: &str, graph: &PackGraph, n: &Node) -> Result<(String,
         let out = replace_line(src, c.index, &line);
         return Ok((out, Some(LineEdit { path: n.path.clone(), at_line: c.index + 1, edit: "uncommented" })));
     }
-    match place_line(src, graph, n, false) {
-        Ok((out, at)) => Ok((out, Some(LineEdit { path: n.path.clone(), at_line: at, edit: "written" }))),
-        Err(u) => Err(format!("`{}` belongs in a `{}` block and this estate has none — add the block, then run it again", n.path, u.block)),
-    }
+    let (out, at) = place_line(src, graph, n, false);
+    Ok((out, Some(LineEdit { path: n.path.clone(), at_line: at, edit: "written" })))
 }
 
 /// The lines a gate answered yes switches on: every pack on that gate whose line satz
@@ -1664,27 +1629,30 @@ mod tests {
     fn a_line_goes_where_the_graph_orders_it() {
         let g = graph();
         let node = |p: &str| g.nodes.iter().find(|n| n.path == p).unwrap();
-        // an imported estate: no estate-core line, a folder block, no pack line at all
+        // an imported estate: no estate-core line, a folder of its own, no pack line at all
         let src = "estate e\n\nparams {\n  x = 1\n}\n\ngoogle_folder {\n  infra_folder {\n    display_name = \"Infra\"\n  }\n}\n";
-        let (with_map, at) = place_line(src, &g, node("presets/estate-map.satz"), false).map_err(|u| u.block).unwrap();
+        let (with_map, at) = place_line(src, &g, node("presets/estate-map.satz"), false);
         let map_at = with_map.lines().position(|l| l.contains("estate-map.satz")).unwrap();
         let folder_at = with_map.lines().position(|l| l.starts_with("google_folder")).unwrap();
-        assert!(map_at < folder_at, "the map goes above the blocks whose lines it gates:\n{with_map}");
+        assert!(map_at < folder_at, "the map goes above the estate's own blocks:\n{with_map}");
         assert_eq!(at, map_at + 1);
-        // the alerts after the logsink in the folder, whichever is written first
-        let (a, _) = place_line(&with_map, &g, node("presets/monitoring/organization-cis-log-alerts-central.satz"), false).map_err(|u| u.block).unwrap();
-        let (b, _) = place_line(&a, &g, node("presets/monitoring/organization-audit-logsink.satz"), false).map_err(|u| u.block).unwrap();
+        // the alerts after the logsink, whichever is written first, and both at the top level
+        let (a, _) = place_line(&with_map, &g, node("presets/monitoring/organization-cis-log-alerts-central.satz"), false);
+        let (b, _) = place_line(&a, &g, node("presets/monitoring/organization-audit-logsink.satz"), false);
         let sink = b.lines().position(|l| l.contains("organization-audit-logsink")).unwrap();
         let alerts = b.lines().position(|l| l.contains("organization-cis-log-alerts-central")).unwrap();
         assert!(sink < alerts, "{b}");
         let s = scan(&b);
-        assert!(s.uses.iter().all(|l| l.written.contains("estate-map") || l.blocks == vec!["google_folder", "infra_folder"]), "{b}");
-        // a pack placed after the scaffold lands at the end, below the folder
-        let (c, _) = place_line(&b, &g, node("presets/integrations/microsoft-sentinel.satz"), true).map_err(|u| u.block).unwrap();
-        assert!(c.trim_end().ends_with("// use \"presets/integrations/microsoft-sentinel.satz\" when use_sentinel"), "{c}");
-        // no folder: reported, never invented
+        assert!(s.uses.iter().all(|l| l.blocks.is_empty()), "every line satz writes stands at the top level:\n{b}");
+        // a bare list's line goes inside the map of its type, written whole where the
+        // estate has none
+        let (c, _) = place_line(&b, &g, node("presets/essential-contacts-organization.satz"), true);
+        assert!(c.contains("google_essential_contacts_contact {\n  // use \"presets/essential-contacts-organization.satz\""), "{c}");
+        assert_eq!(scan(&c).uses.iter().filter(|l| l.blocks == ["google_essential_contacts_contact"]).count(), 1, "{c}");
+        // an estate with no block at all takes every line just the same
         let bare = "estate e\n\nparams {\n  x = 1\n}\n";
-        assert_eq!(place_line(bare, &g, node("presets/monitoring/organization-audit-logsink.satz"), false).unwrap_err().block, "google_folder.infra_folder");
+        let (d, _) = place_line(bare, &g, node("presets/monitoring/organization-audit-logsink.satz"), false);
+        assert!(scan(&d).uses.iter().any(|l| l.written.contains("organization-audit-logsink") && l.blocks.is_empty()), "{d}");
     }
 
     #[test]

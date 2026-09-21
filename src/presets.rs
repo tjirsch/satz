@@ -1143,7 +1143,7 @@ pub(crate) async fn run_merge_presets(
     let pristine = pristine_source(pristine_dir).await?;
     // The pack lines come from the graph that arrived with these packs. One placing a pack
     // in a block this binary's scaffold lacks is refused before anything changes.
-    let graph = crate::pack_graph::for_writing(&pristine)?;
+    let graph = crate::pack_graph::read(&pristine)?;
     if graph.is_none() && !report_only {
         events.push(MergeEvent::Note {
             text: format!(
@@ -1440,10 +1440,10 @@ pub(crate) async fn run_merge_presets(
     if !report_only {
         let lines = match (estate.as_deref(), &graph) {
             (Some(est), Some(g)) => adopt_pack_lines(est, g),
-            _ => Ok(PackLines::default()),
+            _ => Ok(Vec::new()),
         };
         match lines {
-            Ok(PackLines { added, unplaced }) => {
+            Ok(added) => {
                 for (path, phase) in &added {
                     events.push(MergeEvent::Note {
                         text: format!("  wrote a commented `use` line for {} ({})", path, phase),
@@ -1454,14 +1454,6 @@ pub(crate) async fn run_merge_presets(
                         text: format!(
                             "  {} pack line(s) added, commented — uncomment one, or answer its question, to use it",
                             added.len()
-                        ),
-                    });
-                }
-                for (path, at) in &unplaced {
-                    events.push(MergeEvent::Note {
-                        text: format!(
-                            "  {} needs a `{}` block and this estate has none — add the block, then re-run",
-                            path, at
                         ),
                     });
                 }
@@ -1689,16 +1681,6 @@ fn is_git_dirty(path: &Path) -> Result<bool, String> {
     Ok(!out.stdout.is_empty())
 }
 
-/// What [`adopt_pack_lines`] did: the lines it wrote, each with where it went, and the
-/// packs it could not place because the estate lacks the folder block they belong in.
-#[derive(Default)]
-struct PackLines {
-    added: Vec<(String, String)>,
-    /// `(pack path, block)` — a folder is the estate's own structure, so satz does not
-    /// invent one; the operator adds it and re-runs
-    unplaced: Vec<(String, String)>,
-}
-
 /// Write a commented `use` line for every pack `graph` offers that the estate has no line
 /// for — active or commented, under its pristine name or its `.local` fork — each where the
 /// graph's order puts it (`crate::packs::place_line`): after the pack before it in the same
@@ -1711,10 +1693,9 @@ struct PackLines {
 ///
 /// It prints nothing: `merge-presets` is also the `satz_merge_presets` tool, whose stdout
 /// is the MCP stream, so everything it has to say goes back to the caller.
-fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<PackLines, BoxErr> {
+fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<Vec<(String, String)>, BoxErr> {
     let src = crate::fsx::read_to_string(estate)?;
     let mut added: Vec<(String, String)> = Vec::new();
-    let mut unplaced: Vec<(String, String)> = Vec::new();
     let has_line = |text: &str, path: &str| {
         crate::packs::scan(text).uses.iter().any(|l| {
             let fork = crate::fsx::slash(&fork_sibling(Path::new(path)));
@@ -1724,17 +1705,16 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<PackLines, BoxEr
     // An estate with no pack line at all — `init` wrote it without a graph — gets the whole
     // menu where the skeleton puts it, so it ends as the file `init` writes with one.
     if graph.lines().iter().all(|n| !has_line(&src, &n.path)) {
-        if let Some(out) = crate::template::with_menu(&src, graph)? {
+        if let Some(out) = crate::template::with_menu(&src, graph) {
             crate::fsx::write_edited_satz(estate, &src, &out)?;
-            let added = graph
+            return Ok(graph
                 .lines()
                 .iter()
                 .map(|n| {
                     let summary = n.phase.as_deref().and_then(|p| p.lines().next()).unwrap_or("with the group above").trim();
                     (n.path.clone(), summary.to_string())
                 })
-                .collect();
-            return Ok(PackLines { added, unplaced });
+                .collect());
         }
     }
     let mut out = src.clone();
@@ -1749,24 +1729,19 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<PackLines, BoxEr
         // the first line of the phase is the summary
         let summary = n.phase.as_deref().and_then(|p| p.lines().next()).unwrap_or("").trim().to_string();
         let summary = if summary.is_empty() { "with the group above".to_string() } else { summary };
-        match crate::packs::place_line(&out, graph, n, true) {
-            Ok((next, _)) => {
-                out = next;
-                let summary = match crate::template::place(n) {
-                    crate::template::Place::Block(at) => format!("{} (in `{}`)", summary, at),
-                    _ => summary,
-                };
-                added.push((path.to_string(), summary));
-            }
-            // a folder is the estate's own structure, and is reported, never invented
-            Err(u) => unplaced.push((path.to_string(), u.block)),
-        }
+        let (next, _) = crate::packs::place_line(&out, graph, n, true);
+        out = next;
+        let summary = match crate::template::place(n) {
+            crate::template::Place::Block(at) => format!("{} (in `{}`)", summary, at),
+            crate::template::Place::Menu => summary,
+        };
+        added.push((path.to_string(), summary));
     }
     if added.is_empty() {
-        return Ok(PackLines { added, unplaced });
+        return Ok(added);
     }
     crate::fsx::write_edited_satz(estate, &src, &out)?;
-    Ok(PackLines { added, unplaced })
+    Ok(added)
 }
 
 /// Repoint every estate `use "..."` that resolves to `target` at `fork_rel`

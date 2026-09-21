@@ -1369,7 +1369,7 @@ impl Walk<'_> {
         // The folder itself is a Node-scoped entity. Entries whose key names a
         // resource type (or `folder`/`project`/`use`) are children; everything
         // else — attrs, labels-style maps — is folder body.
-        let (attrs, children) = self.split_body(body, file_name, "google_folder")?;
+        let (attrs, children) = self.split_body(body, file_name, "google_folder", fname)?;
         insert_entity(
             own,
             Address { tf_type: "google_folder".to_string(), label: fname.to_string() },
@@ -1390,11 +1390,12 @@ impl Walk<'_> {
         body: &[Entry],
         file_name: &str,
         node: &'static str,
+        label: &str,
     ) -> Result<(serde_yaml::Mapping, Vec<Entry>), PipelineError> {
         let mut attrs = serde_yaml::Mapping::new();
         let mut children = Vec::new();
         for e in body {
-            self.belongs(Position::NodeBody { node }, e, file_name)?;
+            self.belongs(Position::NodeBody { node, label }, e, file_name)?;
             match e {
                 Entry::Attr { key, value, line } => {
                     attrs.insert(
@@ -1402,7 +1403,11 @@ impl Walk<'_> {
                         resolve_value(value, &self.genv, file_name, *line)?,
                     );
                 }
-                Entry::Use { .. } => children.push(e.clone()),
+                // `belongs` has refused it: a pack is used at the top level of a file,
+                // never in the body of a folder or a project (ADR 0046).
+                Entry::Use { line, .. } => {
+                    return perr(file_name, *line, "a `use` reached the walk in the body of a folder or a project")
+                }
                 Entry::Map { key, line, .. } => {
                     let k = resolve_key(key, &self.genv, file_name, *line)?;
                     // Routing, not validation. A key that resolves only in its
@@ -1474,7 +1479,7 @@ impl Walk<'_> {
             }
         };
         for (pname, pbody, pline) in named {
-            let (mut attrs, children) = self.split_body(pbody, file_name, "google_project")?;
+            let (mut attrs, children) = self.split_body(pbody, file_name, "google_project", &pname)?;
             // project_service may arrive as an Attr list (already in attrs) or as
             // a Map — split_body routed non-resource maps into attrs already.
             if !attrs.contains_key(serde_yaml::Value::String("project_id".into())) {
@@ -2576,8 +2581,8 @@ mod review_2026_08_29_tests {
     }
 
     #[test]
-    fn use_as_inside_a_folder_keys_the_pack_by_that_type() {
-        let src = format!("{}google_folder {{ f {{ display_name = \"F\" use \"g.satz\" as google_cloud_identity_group }} }}\n", HEAD);
+    fn use_as_inside_the_folder_map_keys_the_pack_by_that_type() {
+        let src = format!("{}google_folder {{ use \"g.satz\" as google_cloud_identity_group }}\n", HEAD);
         let fe = compile_with(&src, &[("g.satz", "pack g\n\"log-admins\" { display_name = \"LA\" }\n")]).unwrap();
         let folded = fold_fragments(&Table, &fe.fragments);
         let kinds: Vec<&str> = folded.slots.keys().map(|a| a.tf_type.as_str()).collect();

@@ -1,5 +1,5 @@
-// Corpus case: two packs contribute the same resource-type map inside one
-// folder; the fragments don't collide — the fold composes them. Snapshot-gated.
+// Corpus case: two packs contribute the same resource-type map; the fragments
+// don't collide — the fold composes them. Snapshot-gated.
 
 estate corpus_depth_merge
 
@@ -16,7 +16,8 @@ terraform {
 google_folder {
   logging {
     display_name = "Logging"
-    use "pack-a.satz"
-    use "pack-b.satz"
   }
 }
+
+use "pack-a.satz"
+use "pack-b.satz"

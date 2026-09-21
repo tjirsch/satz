@@ -16,8 +16,8 @@
 //
 // Required from the estate: `customer_organization_id`. The management project
 // takes `billing_account_infra` unless the estate sets `billing_account` on it,
-// and it is created wherever `mdc_mgmt_project_folder` says — at the organisation
-// while that param says nothing.
+// and it is created in the folder `mdc_mgmt_project_folder` names — under the
+// organisation while that param says nothing.
 //
 // WHY the plans are separate files and not a list param: a pack cannot add to
 // another fragment's project — two fragments defining one project is a fold
@@ -37,7 +37,7 @@
 //      below. The estate must allow the `sts.windows.net/<microsoft tenant>`
 //      issuer, or document the exception.
 
-pack integrations.microsoft_defender_for_cloud version "0.3"
+pack integrations.microsoft_defender_for_cloud version "0.4"
 
 params {
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
@@ -86,6 +86,13 @@ question mdc_mgmt_project_id {
   why      = "Customers name projects their own way, so there is no default. The pool, the provider and the service accounts are created in this project; moving them is a new onboarding."
   reversal = recreate
   blast    = high
+}
+
+question mdc_mgmt_project_folder {
+  prompt   = "The folder the Defender management project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants the workload identity pool and the service accounts inside it inherit."
+  reversal = edit
+  blast    = low
 }
 
 question mdc_plan_cspm {

@@ -248,10 +248,10 @@ pub struct OffersDecl {
     pub when: Option<String>,
     /// opens a group of lines: what has to be finished before they can go in
     pub phase: Option<String>,
-    /// the block the line is written inside (`google_folder.infra_folder`)
+    /// the resource type map the line is written inside
+    /// (`google_essential_contacts_contact`), for a pack that is a bare list of
+    /// labelled bodies; every other line stands at the top level
     pub block: Option<String>,
-    /// the line goes after the scaffold rather than in the menu above it
-    pub after_scaffold: bool,
     /// the line is written by hand, never by satz; the reason why
     pub by_hand: Option<String>,
     pub requires: Vec<String>,
@@ -1357,7 +1357,6 @@ impl P {
             when: None,
             phase: None,
             block: None,
-            after_scaffold: false,
             by_hand: None,
             requires: Vec::new(),
             excludes: Vec::new(),
@@ -1382,10 +1381,19 @@ impl P {
                     o.phase = Some(lit_str(&parts, l, "offers: phase")?);
                 }
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "block" => {
-                    o.block = Some(lit_str(&parts, l, "offers: block")?);
-                }
-                Entry::Attr { key: Key::Ident(k), value: Value::Bool(b), .. } if k == "after_scaffold" => {
-                    o.after_scaffold = b;
+                    let b = lit_str(&parts, l, "offers: block")?;
+                    if b.contains('.') {
+                        return err(
+                            l,
+                            format!(
+                                "offers \"{}\": block = \"{}\" names a node of the estate, and a pack is used at the top level — \
+                                 `block` names the resource type map a bare list of labelled bodies is written inside, \
+                                 `google_essential_contacts_contact`",
+                                o.path, b
+                            ),
+                        );
+                    }
+                    o.block = Some(b);
                 }
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "by_hand" => {
                     o.by_hand = Some(lit_str(&parts, l, "offers: by_hand")?);
@@ -1401,20 +1409,17 @@ impl P {
                         line,
                         format!(
                             "offers \"{}\": unexpected entry {:?} — the keys are when = PARAM, phase, block, \
-                             after_scaffold, by_hand and requires / excludes = [\"<pack path>\", …]",
+                             by_hand and requires / excludes = [\"<pack path>\", …]",
                             o.path, other
                         ),
                     )
                 }
             }
         }
-        if o.block.is_some() && o.after_scaffold {
-            return err(line, format!("offers \"{}\": a line sits in a block or after the scaffold, not both", o.path));
-        }
-        if o.by_hand.is_some() && (o.block.is_some() || o.after_scaffold || o.phase.is_some()) {
+        if o.by_hand.is_some() && (o.block.is_some() || o.phase.is_some()) {
             return err(
                 line,
-                format!("offers \"{}\": a `by_hand` pack has no line satz writes, so it takes no phase, block or after_scaffold", o.path),
+                format!("offers \"{}\": a `by_hand` pack has no line satz writes, so it takes no phase and no block", o.path),
             );
         }
         Ok(o)
@@ -1935,12 +1940,11 @@ pub fn canonical_offers(file: &File) -> String {
     let mut out = String::new();
     for o in &file.offers {
         out.push_str(&format!(
-            "offers({}|{}|{}|{}|{}|{}|[{}]|[{}])\n",
+            "offers({}|{}|{}|{}|{}|[{}]|[{}])\n",
             o.path,
             o.when.as_deref().unwrap_or(""),
             o.phase.as_deref().unwrap_or(""),
             o.block.as_deref().unwrap_or(""),
-            o.after_scaffold,
             o.by_hand.as_deref().unwrap_or(""),
             o.requires.join(","),
             o.excludes.join(",")
@@ -2666,12 +2670,12 @@ mod review_2026_08_29_tests {
 
     #[test]
     fn the_map_offers_packs_in_file_order_and_nothing_else_may() {
-        let map = "pack estate_map version \"1.0\"\n\nparams {\n  use_a = true\n}\n\noffers \"presets/a.satz\" {\n  when     = use_a\n  phase    = \"\"\"first\nsecond\"\"\"\n  block    = \"google_folder.infra_folder\"\n  excludes = [\"presets/b.satz\"]\n}\n\noffers \"presets/b.satz\" {\n  when    = use_a\n  by_hand = \"why\"\n}\n";
+        let map = "pack estate_map version \"1.0\"\n\nparams {\n  use_a = true\n}\n\noffers \"presets/a.satz\" {\n  when     = use_a\n  phase    = \"\"\"first\nsecond\"\"\"\n  block    = \"google_essential_contacts_contact\"\n  excludes = [\"presets/b.satz\"]\n}\n\noffers \"presets/b.satz\" {\n  when    = use_a\n  by_hand = \"why\"\n}\n";
         let f = parse(map).unwrap();
         assert_eq!(f.offers.len(), 2);
         let a = &f.offers[0];
         assert_eq!((a.path.as_str(), a.when.as_deref(), a.phase.as_deref()), ("presets/a.satz", Some("use_a"), Some("first\nsecond")));
-        assert_eq!(a.block.as_deref(), Some("google_folder.infra_folder"));
+        assert_eq!(a.block.as_deref(), Some("google_essential_contacts_contact"));
         assert_eq!(a.excludes, vec!["presets/b.satz".to_string()]);
         assert_eq!(f.offers[1].by_hand.as_deref(), Some("why"));
         assert!(f.items.is_empty(), "an entry is no resource map");
@@ -2687,8 +2691,11 @@ mod review_2026_08_29_tests {
         // an unknown key, and a line in two places
         let e = parse("pack estate_map\n\noffers \"presets/a.satz\" {\n  gate = x\n}\n").unwrap_err();
         assert!(e.msg.contains("the keys are when"), "{}", e.msg);
-        let e = parse("pack estate_map\n\noffers \"presets/a.satz\" {\n  block = \"b\"\n  after_scaffold = true\n}\n").unwrap_err();
-        assert!(e.msg.contains("not both"), "{}", e.msg);
+        // `block` names a resource type map, never a node of the estate
+        let e = parse("pack estate_map\n\noffers \"presets/a.satz\" {\n  block = \"google_folder.infra_folder\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("a pack is used at the top level"), "{}", e.msg);
+        let e = parse("pack estate_map\n\noffers \"presets/a.satz\" {\n  block = \"b\"\n  by_hand = \"why\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("no phase and no block"), "{}", e.msg);
     }
 
     // ---- `notice` ---------------------------------------------------------

@@ -789,11 +789,10 @@ fn render(
         md.push_str("The packs the library offers an estate, in the order they can be adopted. Edges the packs show by their param references are derived by `satz pack-graph` and are not listed here.\n\n");
         md.push_str("| # | pack | gate | line | declared edges |\n|---|---|---|---|---|\n");
         for (i, o) in file.offers.iter().enumerate() {
-            let line = match (&o.by_hand, &o.block, o.after_scaffold) {
-                (Some(why), _, _) => format!("by hand — {}", why),
-                (None, Some(b), _) => format!("in `{}`", b),
-                (None, None, true) => "after the scaffold".to_string(),
-                (None, None, false) => "menu".to_string(),
+            let line = match (&o.by_hand, &o.block) {
+                (Some(why), _) => format!("by hand — {}", why),
+                (None, Some(b)) => format!("in `{}`", b),
+                (None, None) => "menu".to_string(),
             };
             let mut edges: Vec<String> = o.requires.iter().map(|p| format!("requires `{}`", p)).collect();
             edges.extend(o.excludes.iter().map(|p| format!("excludes `{}`", p)));

@@ -201,8 +201,8 @@ The packs the library offers an estate, in the order they can be adopted. Edges 
 | 9 | `presets/scc/scc-service-enablement.satz` | `use_scc_enablement` | menu | — |
 | 10 | `presets/monitoring/project-cis-log-alerts.satz` | `use_project_cis_log_alerts` | menu | — |
 | 11 | `presets/essential-contacts-organization.satz` | `use_essential_contacts` | in `google_essential_contacts_contact` | — |
-| 12 | `presets/monitoring/organization-audit-logsink.satz` | `use_audit_logsink` | in `google_folder.infra_folder` | — |
-| 13 | `presets/monitoring/organization-cis-log-alerts-central.satz` | `use_central_alerts` | in `google_folder.infra_folder` | — |
+| 12 | `presets/monitoring/organization-audit-logsink.satz` | `use_audit_logsink` | menu | — |
+| 13 | `presets/monitoring/organization-cis-log-alerts-central.satz` | `use_central_alerts` | menu | — |
 | 14 | `presets/cis/CIS-GCP-Foundation-4.0.satz` | `use_cis_baseline` | menu | — |
 | 15 | `presets/cis/block-project-ssh-keys.satz` | `cis_block_project_ssh_keys` | menu | — |
 | 16 | `presets/cis/shielded-vm.satz` | `cis_require_shielded_vm` | menu | — |
@@ -224,14 +224,14 @@ The packs the library offers an estate, in the order they can be adopted. Edges 
 | 32 | `presets/scc/scc-notifications.satz` | `use_scc_notifications` | menu | — |
 | 33 | `presets/scc/scc-export.satz` | `use_scc_export` | menu | — |
 | 34 | `presets/scc/scc-findings-siem.satz` | `use_scc_findings_siem` | menu | — |
-| 35 | `presets/scc/scc-findings-mail.satz` | `use_scc_findings_mail` | after the scaffold | — |
+| 35 | `presets/scc/scc-findings-mail.satz` | `use_scc_findings_mail` | menu | — |
 | 36 | `presets/integrations/microsoft-defender-for-cloud.satz` | `use_defender` | menu | — |
 | 37 | `presets/integrations/microsoft-defender-for-cloud-cspm.satz` | `mdc_plan_cspm` | by hand — a Defender plan fragment, written beside the Defender line once the plan is licensed, as that pack's header shows | — |
 | 38 | `presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz` | `mdc_cspm_default_access` | by hand — the CSPM plan's custom role in the default access mode, written with the plan fragment | — |
 | 39 | `presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz` | `mdc_cspm_least_privilege` | by hand — the CSPM plan's custom role in the least-privilege mode, written with the plan fragment | — |
-| 40 | `presets/integrations/microsoft-sentinel.satz` | `use_sentinel` | after the scaffold | — |
-| 41 | `presets/integrations/microsoft-sentinel-auditlogs.satz` | `use_sentinel_auditlogs` | after the scaffold | — |
-| 42 | `presets/integrations/microsoft-sentinel-network-logs.satz` | `use_sentinel_network_logs` | after the scaffold | — |
+| 40 | `presets/integrations/microsoft-sentinel.satz` | `use_sentinel` | menu | — |
+| 41 | `presets/integrations/microsoft-sentinel-auditlogs.satz` | `use_sentinel_auditlogs` | menu | — |
+| 42 | `presets/integrations/microsoft-sentinel-network-logs.satz` | `use_sentinel_network_logs` | menu | — |
 | 43 | `presets/ci/verification-runner.satz` | `use_verification_runner` | menu | — |
 | 44 | `presets/ci/verification-runner-grant.satz` | `use_verification_runner_grant` | menu | — |
 | 45 | `presets/exemptions/exemption-tag.satz` | `use_exemption_tag` | menu | — |
