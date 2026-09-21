@@ -114,6 +114,20 @@ exception with a named owner, never the default.
 - An exemption is visible in three places: the estate that declares the binding, the goal
   view that prints it under its control, and Cloud Asset Inventory, which answers the
   org-wide question — `gcloud asset search-all-resources --query='tagValues:…'`.
+- **ADDED — an undeclared binding is reported.** A binding made out of band (the
+  temporary kind) was invisible to satz. `report-compliance` now lists every
+  `cloudresourcemanager.googleapis.com/TagBinding` of the key through Cloud Asset
+  Inventory, subtracts the declared `google_tags_tag_binding` resources, and reports the
+  rest in a section of its own and beside each claimed control whose witness policy
+  conditions on the bound value. Three choices were taken with it. The key is the one at
+  `google_tags_tag_key.exemption` — the pack's address, which `use … as` does not change —
+  so a key of any other address is not an exemption. A declared target is compared as
+  written and with its project id replaced by the number, because Cloud Asset names a
+  project by number; a reference satz cannot resolve before an apply is named beside the
+  live binding it may be, never silently matched. And the row's status is NOT changed:
+  the rule of this record is that an exemption leaves the verdict intact and is printed
+  beside it, and an undeclared binding is an exemption nobody wrote down, not a switched-off
+  policy. Whether it should fail a `--fail-on` gate is open.
 - **CORRECTED 2026-09-13, before this record was a day old.** This consequence first
   read: "the CIS constraints cannot carry a condition without a language change — a param
   interpolates a VALUE, not a structural list, and `rules = {param}` is a parse error."

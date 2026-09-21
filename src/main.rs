@@ -27,6 +27,7 @@ mod gcp;
 mod org_policy;
 mod cloud_identity;
 mod compliance;
+mod exemption_bindings;
 mod frameworks;
 mod questions;
 mod interview;

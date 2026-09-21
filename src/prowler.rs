@@ -269,6 +269,7 @@ mod tests {
                 reset: false,
                 dry_run: false,
                 conditional: Vec::new(),
+                condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
             },

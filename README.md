@@ -1266,9 +1266,12 @@ out, and both are facts an auditor reads together:
 ```
 
 An exemption declared in the estate is the permanent, reviewed kind: it sits in the
-repository with its owner and its reason. A binding somebody adds out of band is not
-visible to satz yet; Cloud Asset Inventory serves tag bindings, so reporting an
-undeclared one as drift is the piece that makes temporary lifts auditable.
+repository with its owner and its reason. A binding added out of band is the temporary
+kind, and `report-compliance` reports it: it lists every live binding of the estate's
+exemption key through Cloud Asset Inventory, subtracts the ones the estate declares, and
+prints the rest in a section of their own — value, target, and the claimed controls whose
+policy conditions on that value — and under each of those controls. The control's status
+stays what its witnesses make it.
 
 ### Evidence report (`report-compliance`)
 
@@ -1283,6 +1286,12 @@ where the member is a sink's `writer_identity`, the value comes from the live si
 since Google issues it and no estate file holds it. Manual duties merge with `attestations.yaml` beside config.toml
 (`duty-id: {by, date, note}`), and a Prowler export can be ingested as
 corroboration (`--prowler findings.json` — the OCSF export of Prowler 5, `prowler gcp --output-formats json-ocsf`; a FAIL on one of a control's *verified* witnesses marks the row **CONTESTED**, a FAIL elsewhere is an unmanaged finding beside it). The report names the Prowler version that wrote the export; an export from an older Prowler, or with no version in `metadata.product`, is refused with the version it carries. An export that is not one JSON document is refused with the line, column and byte offset where it breaks; two scans written into one file — Prowler appends the second after the first's closing `]` — are named as the cause. FAIL findings whose check Prowler maps to no control of the framework are in no row; the report counts them per check in a section after the table and under `prowler_unmapped` in the JSON, and `triage` and `remediation-plan` (`meta.json`, the Provenance sheet) do the same.
+
+An estate that declares the exemption key of `presets/exemptions/exemption-tag.satz` gets
+one more section: the live bindings of that key the estate does not declare
+([Exemptions](#exemptions-keeping-the-control-on-and-letting-one-resource-out)), each
+marked on the claimed controls whose policy conditions on its value, and `exemption_bindings`
+in the JSON. A refused read says **NOT CHECKED** with the reason, never "none".
 
 The exit code is 0 whatever the verdicts — the report is the deliverable;
 `--fail-on not-enforced,drifted` (any status word; `any` = everything that is

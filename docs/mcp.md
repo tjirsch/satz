@@ -140,6 +140,12 @@ command prints to its terminal. The report degrades to unverifiable witnesses ra
 than failing the run; `live` and `live_status` tell a caller that cannot read stderr —
 an agent, a pipeline reading `--format json` — whether the witnesses were verified.
 
+**Undeclared exemptions have their own field.** For an estate that declares the exemption
+key, `exemption_bindings` lists the live bindings of that key the estate does not
+declare, and each row's `undeclared_exemptions` the ones that let its witness policies
+out. Its `status` says whether the bindings were read; `undeclared` is `null` unless they
+were ([language §8](language.md#8-evidence-report-compliance)).
+
 ## Structured output
 
 Every data tool returns its report as **`structuredContent`** and publishes the
