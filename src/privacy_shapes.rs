@@ -112,6 +112,9 @@ struct Rule {
     line: Option<Regex>,
     /// removed from the line before the tokens are taken
     strip: Vec<Regex>,
+    /// the line is lowercased before the tokens are taken — a shape whose case means
+    /// nothing (a host name); the script's `tokens … lower`
+    lower: bool,
     token: Regex,
     allow: Option<Regex>,
 }
@@ -153,6 +156,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             shape: Shape::DirectoryId,
             line: None,
             strip: Vec::new(),
+            lower: false,
             token: re(r"\bC0[0-9a-z]{7}\b"),
             allow: Some(allow_re(format!(r"\b({})\b", allow_list("dir")))),
         },
@@ -162,6 +166,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             // both are removed first, from a line that held a number to begin with
             line: Some(re(r"\b[0-9]{11,13}\b")),
             strip: vec![re(r"[0-9a-fA-F]{20,}"), re(GUID)],
+            lower: false,
             token: re(r"\b[0-9]{11,13}\b"),
             allow: Some(allow_re(format!(r"\b({})\b", allow_list("num")))),
         },
@@ -169,6 +174,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             shape: Shape::BillingAccount,
             line: None,
             strip: Vec::new(),
+            lower: false,
             token: re(r"\b[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}\b"),
             allow: Some(allow_re(format!("({})", allow_list("bill")))),
         },
@@ -176,13 +182,15 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             shape: Shape::Email,
             line: None,
             strip: Vec::new(),
+            lower: false,
             token: re(EMAIL),
-            allow: Some(allow_re(format!(r"@({})\b", domain))),
+            allow: Some(allow_re(format!("@({})$", domain))),
         },
         Rule {
             shape: Shape::Domain,
             line: None,
             strip: Vec::new(),
+            lower: true,
             token: re(DOMAIN),
             allow: Some(allow_re(format!("^({})$", domain))),
         },
@@ -190,6 +198,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             shape: Shape::Guid,
             line: None,
             strip: Vec::new(),
+            lower: false,
             token: re(&format!(r"\b{}\b", GUID)),
             allow: Some(allow_re(format!("^({})$", allow_list("guid")))),
         },
@@ -197,6 +206,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             shape: Shape::Guid32,
             line: None,
             strip: Vec::new(),
+            lower: false,
             token: re(r"\b[0-9a-fA-F]{32}\b"),
             allow: Some(allow_re(format!("^({})$", allow_list("guid32")))),
         },
@@ -204,13 +214,15 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             shape: Shape::ProjectPath,
             line: None,
             strip: Vec::new(),
-            token: re(r"projects/[a-z][a-z0-9-]{3,28}[a-z0-9]"),
-            allow: Some(allow_re(format!("^projects/({})$", project))),
+            lower: false,
+            token: re(r"projects/[a-z][a-z0-9-]{3,28}[a-z0-9]|--project[= ][a-z][a-z0-9-]{3,28}[a-z0-9]"),
+            allow: Some(allow_re(format!("^(projects/|--project[= ])({})$", project))),
         },
         Rule {
             shape: Shape::ProjectAssignment,
             line: None,
             strip: Vec::new(),
+            lower: false,
             token: re(r#"project(_id)?[[:space:]]*=[[:space:]]*"[a-z][a-z0-9-]{4,28}[a-z0-9]""#),
             allow: Some(allow_re(format!(r#"=[[:space:]]*"({})"$"#, project))),
         },
@@ -218,6 +230,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             shape: Shape::RepositoryUrl,
             line: None,
             strip: Vec::new(),
+            lower: false,
             // the longer alternative first: the script's grep takes the longest match
             // at a position, this engine the first alternative that matches
             token: re(r"source\.developers\.google\.com|~/projects/([a-z]+/[a-z]+-C0|organizations)"),
@@ -238,6 +251,9 @@ pub(crate) fn scan(text: &str) -> Vec<Hit> {
             let mut owned = line.to_vec();
             for s in &rule.strip {
                 owned = s.replace_all(&owned, &b""[..]).into_owned();
+            }
+            if rule.lower {
+                owned.make_ascii_lowercase();
             }
             for m in rule.token.find_iter(&owned) {
                 let token = m.as_bytes();
