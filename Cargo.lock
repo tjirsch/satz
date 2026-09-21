@@ -3773,7 +3773,6 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "toml_edit",
  "typst",
- "typst-kit",
  "typst-layout",
  "typst-pdf",
  "url",
@@ -4879,26 +4878,6 @@ dependencies = [
  "typst-timing",
  "typst-utils",
  "unicode-math-class",
-]
-
-[[package]]
-name = "typst-kit"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27ee52e27dfab0da5ac3d19e7e43a21fbc7ff83af9301119468bae89fa857a8b"
-dependencies = [
- "ecow",
- "once_cell",
- "parking_lot",
- "rustc-hash",
- "serde",
- "serde_json",
- "typst-assets",
- "typst-library",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
- "url",
 ]
 
 [[package]]

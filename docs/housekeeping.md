@@ -32,6 +32,7 @@ ships it).
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
 | `NOTICE` (its third-party entries) | by hand, one entry per piece of foreign material | material from outside the project enters or leaves the tree | **nothing** |
 | `THIRD-PARTY-LICENSES.md` | `scripts/update-third-party-licenses.sh` | `Cargo.lock` moves — a dependency added, removed or updated | the `checks` job of `smoke.yml`: `--check`, which compares byte for byte |
+| `assets/fonts/` — eight faces and the two licence texts | by hand, copied out of the `typst-assets` crate in the dependency tree | the `typst` pin moves | a missing face: `cargo test` (`each_family_carries_all_four_styles`); a face behind the crate: **nothing** |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
@@ -200,8 +201,38 @@ licences and the four release targets, `about.hbs` the layout. The privacy gate 
 the file: it is upstream authors' e-mail addresses and domains, written by a tool.
 
 The two files divide the subject: a crate's licence is here, and everything that is
-not a crate — the provider schema fixture, the fonts Typst embeds, the control
+not a crate — the provider schema fixture, the fonts satz typesets with, the control
 identifiers in the catalogs — is in `NOTICE`.
+
+## The embedded fonts
+
+`assets/fonts/` holds the faces `--format pdf` typesets with, compiled into the
+binary by `include_bytes!` in `src/pdf.rs`: Libertinus Serif and DejaVu Sans Mono,
+each in regular, bold, italic and bold italic. They are the `typst-assets` crate's
+own files, copied out of the crate in the dependency tree, so the bytes are the ones
+that engine version renders with:
+
+```bash
+cp ~/.cargo/registry/src/*/typst-assets-<version>/files/fonts/{LibertinusSerif-{Regular,Bold,Italic,BoldItalic}.otf,DejaVuSansMono{,-Bold,-Oblique,-BoldOblique}.ttf} assets/fonts/
+```
+
+Eight faces are 2.3 MB; the crate's whole bundle is 9.7 MB, the difference being New
+Computer Modern text and math, which nothing here sets. Two families in four styles
+is the square the markup can ask for: a heading, a strong span and a table header are
+bold, an emphasised span is italic, a code span takes the weight and slant of
+whatever it sits in. Typst answers a request it has no face for with the nearest face
+it has and reports nothing, so `cargo test`
+(`each_family_carries_all_four_styles`) resolves all eight and fails when one
+collapses onto another.
+
+The trigger to refresh is the `typst` version pin in `Cargo.toml` moving: nothing
+compares the committed faces with the crate's. The licence texts beside them —
+`LICENSE-Libertinus-OFL.txt` (SIL Open Font License 1.1) and `LICENSE-DejaVu.txt`
+(the Bitstream Vera licence) — come from the same crate's `NOTICE` and are what those
+licences ask a redistributor to carry with the files; `include` in
+`dist-workspace.toml` names both, so they travel in every release archive beside
+`NOTICE` and `THIRD-PARTY-LICENSES.md`. The privacy gate skips the whole directory:
+upstream bytes and upstream licence text, written by nobody here.
 
 ## Versions
 
