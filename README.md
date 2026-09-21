@@ -387,8 +387,9 @@ satz update-prerequisites --format json          # the table: per resource type,
   the billing account (`google_billing_account_iam_member`).
 - `google_cloud_identity_group` needs the Groups Admin role of the Google Workspace
   admin console. It is not an IAM role, so `testIamPermissions` cannot see it: `whoami
-  <estate>` checks it through the Admin SDK, and `migrate --mode cloud` assigns it, when
-  your login carries the role-management scope.
+  <estate>` asks the IaC service account first, as itself, and your login only when the
+  service account lacks the role; `migrate --mode cloud` then assigns it, when your login
+  carries the role-management scope.
 - No role in the table deletes a project. Google makes a project's creator its owner,
   so the account deletes the projects it created; a project it did not create is
   deleted by a person, or with `roles/resourcemanager.projectDeleter` granted for the
@@ -807,7 +808,7 @@ satz migrate <INPUT> --mode <MODE>
 **Under the Hood:**
 - **Update the estate**: Binds `deployment_mode` in the estate's `params` block — the value is replaced where the estate binds it, and the line is added where it does not. An estate with no mode in its params — neither its own nor a pack's default — runs in `local` mode, as the emitter and `whoami` read it. `--mode cloud` on an estate that sets no `svc_iac_account` or no `infra_project_name` is refused before the file is touched, naming the param: cloud mode runs as the account the two name.
 - **Regenerate**: Runs `transpile` to update the backend configuration (Local vs GCS) and provider authentication (ADC vs Impersonation).
-- **Groups Admin** (`--mode cloud`, when the estate manages Cloud Identity groups): from here the IaC service account manages them, which needs the Workspace Groups Admin role. `migrate` checks for it and assigns it through the Admin SDK Directory API, as you — the service account cannot give itself an admin role. That needs a login carrying the role-management scope — `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/admin.directory.rolemanagement` — the Admin SDK API (`admin.googleapis.com`) on your quota project, and a Workspace admin who may assign roles. When any is missing, the migration goes on and prints which one, with the admin-console path (Account → Admin roles → Groups Admin → Admins → Assign service accounts).
+- **Groups Admin** (`--mode cloud`, when the estate manages Cloud Identity groups): from here the IaC service account manages them, which needs the Workspace Groups Admin role. `migrate` checks in this order. First the service account, as itself: it lists the groups of the estate's `customer_id` directory through the Cloud Identity API, and when that succeeds the step ends there and asks nothing of your login. Only when the service account is refused is your login tested the same way; when your login lacks the role too, `migrate` names the admin-console path for a Workspace super admin. When your login holds it, `migrate` assigns the role to the service account through the Admin SDK Directory API, as you — the service account cannot give itself an admin role. A test that gives no answer (a disabled API, a quota project the caller may not use) is printed as that, never read as a missing role. The assignment needs a login carrying the role-management scope — `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/admin.directory.rolemanagement` — the Admin SDK API (`admin.googleapis.com`) on your quota project, and a Workspace admin who may assign roles. When any is missing, the migration goes on and prints which one, with the admin-console path (Account → Admin roles → Groups Admin → Admins → Assign service accounts).
 - **Migrate State**: Executes `tofu init -migrate-state` to move the Terraform state to the new backend.
 
 ### Creating an estate from what exists (`import`)
@@ -2199,10 +2200,13 @@ live commands run as: organization needs on the organization, project needs on t
 project, which inherits the organization's grants as every project does, and
 billing-account needs on the billing account. A missing permission is named with the
 role that carries it, and `whoami` exits non-zero. The Workspace Groups Admin role is
-checked through the Admin SDK Directory API as your own login — it counts as tested when
-the service account holds it, and is named as not tested with the reason and the next
-step otherwise (your login lacks the scope, the Admin SDK API is off on the quota
-project, or you may not read admin roles).
+checked by asking the IaC service account first, as itself, whether it may list the
+groups of the estate's `customer_id` directory; your login is asked the same way only when
+the service account is refused. It counts as tested when the service account holds it, and
+is named as not tested with the reason and the next step otherwise: your login holds it and
+`migrate --mode cloud` assigns it, neither holds it and a super admin assigns it in the
+admin console, the estate sets no `customer_id`, or a test gave no answer (the Cloud
+Identity API off on the quota project, a quota project the caller may not use).
 
 **If your ADC already impersonates** — `gcloud auth application-default login
 --impersonate-service-account` — satz uses it as-is when it names the estate's own

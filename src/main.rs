@@ -3109,9 +3109,9 @@ async fn assign_groups_admin(estate: &Path, runtime_config: &ToolConfig) {
         eprintln!("⚠️  Groups Admin not checked: the estate names no IaC service account (svc_iac_account, infra_project_name)");
         return;
     };
-    let customer = get("customer_id").unwrap_or_else(|| "my_customer".to_string());
+    let customer = get("customer_id");
     println!("Checking Groups Admin for {} (the groups are its to manage from here)...", sa);
-    match crate::gcp::workspace::groups_admin(&customer, &sa, true).await {
+    match crate::gcp::workspace::groups_admin(customer.as_deref(), &sa, true).await {
         crate::gcp::workspace::GroupsAdmin::Held => println!("Groups Admin: {} holds it", sa),
         crate::gcp::workspace::GroupsAdmin::Assigned => println!("Groups Admin: assigned to {}", sa),
         crate::gcp::workspace::GroupsAdmin::NotDone(why) => {
