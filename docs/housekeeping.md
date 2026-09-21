@@ -16,7 +16,7 @@ ships it).
 | file | refreshed by | trigger | what catches staleness |
 |---|---|---|---|
 | `tests/schemas/google.json` | `scripts/update_schema_fixture.py --add` | the provider pin moves | **nothing** — run `--check` |
-| `presets/cai-asset-types.txt` | by hand, from Google's docs | new asset types appear | indirect: unfilled `import-config` rows |
+| `presets/cai-asset-types.txt` | `scripts/update_cai_asset_types.py`, from Google's published list | new asset types appear | `--check` against the page, run by hand; indirect: unfilled `import-config` rows |
 | `presets/import-config.yaml` (rows) | `scripts/update_import_config.py --config-file … --schema-dir … --provider-version …` | the provider pin moves | `cargo test`: `provider_version` must equal the pin |
 | `presets/import-config.yaml` (`asset_type`) | `scripts/update_import_config.py --config-file … --cai-types <list>`, then `--probe <parent>` | the CAI list above changes; Google changes what ListAssets serves | smoke: *"every derivable asset_type is filled"*; a type ListAssets refuses: the live import aborts naming it |
 | `presets/type-map.yaml` — in an estate's `presets_dir`, not in this repository | `satz map-types`, from the Discovery Documents and the provider schema | the provider pin moves; Google changes an API | **nothing** |
@@ -70,17 +70,25 @@ that are used.
 
 ## The Cloud Asset Inventory type list
 
-`presets/cai-asset-types.txt` — 584 asset types, Google's list, one per line.
+`presets/cai-asset-types.txt` — 601 asset types, Google's list, one per line.
 
 `satz import` can only discover a resource type that carries a CAI asset type, so
 this list is the ceiling on discovery coverage. `scripts/update_import_config.py
 --cai-types` fills the `asset_type` column of `presets/import-config.yaml` from it
-(449 of the 1280 rows carry one) — the column is never filled by hand.
+(453 of the 1280 rows carry one) — the column is never filled by hand.
 
-**Refreshing it is manual.** Copy the full list from Google's asset-types
-documentation page (all sections expanded), keep the four header comment lines,
-and re-run `update_import_config.py --cai-types`. Scraping the page does not work:
-it paginates, and a plain fetch returns about 85 of the 584 entries.
+**Refreshing it is `scripts/update_cai_asset_types.py`,** then
+`update_import_config.py --cai-types`. The script reads the names from Google's
+asset-types page with the markup removed: the page breaks each name for wrapping with
+`<wbr>` tags, which is why matching the raw HTML finds only a fraction of them. A type
+the file carries that the page no longer names stops the run and is listed; delete its
+line by hand once checked. `--check` says whether the file is behind the page and
+writes nothing.
+
+The 388 rows that stay `TODO/UNKNOWN` are Terraform types Google's list does not carry
+under the name the deriver builds — most are not Cloud Asset resources at all. Filling
+one takes a `KIND_OVERRIDES` entry in `update_import_config.py`, written by hand for a
+type worth discovering; a refreshed list does not fill them.
 
 Staleness shows up indirectly: rows in `import-config.yaml` whose `asset_type` stays
 `TODO`/`UNKNOWN` when the type demonstrably has one. The smoke step *"import-config:
@@ -281,6 +289,7 @@ second kind.
 |---|---|---|
 | `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
 | `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
+| `update_cai_asset_types.py` | helper | refresh `presets/cai-asset-types.txt` from Google's published asset-type list; refuses when a type it carries is no longer published, `--check` says whether it is behind |
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every PR and every push to `main` |
 | `mcp-probe.py` | gate | every tool of `satz mcp` over raw JSON-RPC, per capability group: no stdout byte that is not JSON-RPC, results valid against their published schema, refusals as prose, each tool's largest result. Run by hand, not by CI |
 | `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it emitted before. Not run by CI — CI has no estates. Run it after every release |
@@ -648,10 +657,8 @@ uv run --with ruamel.yaml scripts/update_import_config.py \
   --config-file presets/import-config.yaml --probe organizations/<n>
 ```
 
-To refresh the list itself: the page
-<https://docs.cloud.google.com/asset-inventory/docs/asset-types> renders its
-table client-side, so copy the rendered text and keep one
-`service.googleapis.com/Kind` per line; update the date in the header.
+To refresh the list itself, run `uv run scripts/update_cai_asset_types.py` first
+([the list](#the-cloud-asset-inventory-type-list)).
 
 At the live shape an enabled row with `asset_type: TODO/UNKNOWN` (or an
 unknown `content_type`) is a hard error; an enabled row with no `asset_type`

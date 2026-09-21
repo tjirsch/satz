@@ -1,5 +1,5 @@
 # Cloud Asset Inventory asset types (RESOURCE content type), one per line.
-# Source: https://docs.cloud.google.com/asset-inventory/docs/asset-types (2026-08-29).
+# Source: https://docs.cloud.google.com/asset-inventory/docs/asset-types (2026-09-21).
 # Read by scripts/update_import_config.py --cai-types: an import-config row gets
 # its asset_type only when the name derived from its Terraform type is in here.
 accessapproval.googleapis.com/AccessApprovalSettings
@@ -46,6 +46,7 @@ apigee.googleapis.com/Instance
 apigee.googleapis.com/Organization
 apigee.googleapis.com/SecurityAction
 apigee.googleapis.com/SecurityMonitoringCondition
+apigee.googleapis.com/SecurityProfileV2
 apihub.googleapis.com/ApiHubInstance
 apikeys.googleapis.com/Key
 appengine.googleapis.com/Application
@@ -356,10 +357,12 @@ healthcare.googleapis.com/ConsentStore
 healthcare.googleapis.com/Dataset
 healthcare.googleapis.com/DicomStore
 healthcare.googleapis.com/FhirStore
+healthcare.googleapis.com/Hl7V2Store
 hypercomputecluster.googleapis.com/Cluster
 iam.googleapis.com/OauthClient
 iam.googleapis.com/OauthClientCredential
 iam.googleapis.com/PolicyBinding
+iam.googleapis.com/PolicyV2
 iam.googleapis.com/PrincipalAccessBoundaryPolicy
 iam.googleapis.com/Role
 iam.googleapis.com/ServiceAccount
@@ -372,7 +375,14 @@ iam.googleapis.com/WorkloadIdentityPoolManagedIdentity
 iam.googleapis.com/WorkloadIdentityPoolNamespace
 iam.googleapis.com/WorkloadIdentityPoolProvider
 iam.googleapis.com/WorkloadIdentityPoolProviderKey
+iap.googleapis.com/Tunnel
 iap.googleapis.com/TunnelDestGroup
+iap.googleapis.com/TunnelInstance
+iap.googleapis.com/TunnelZone
+iap.googleapis.com/Web
+iap.googleapis.com/WebService
+iap.googleapis.com/WebServiceVersion
+iap.googleapis.com/WebType
 identity.accesscontextmanager.googleapis.com/AccessLevel
 identity.accesscontextmanager.googleapis.com/AccessPolicy
 identity.accesscontextmanager.googleapis.com/ServicePerimeter
@@ -438,6 +448,7 @@ networkconnectivity.googleapis.com/RegionalEndpoint
 networkconnectivity.googleapis.com/RouteTable
 networkconnectivity.googleapis.com/Spoke
 networkmanagement.googleapis.com/ConnectivityTest
+networkmanagement.googleapis.com/VpcFlowLogsConfig
 networksecurity.googleapis.com/AddressGroup
 networksecurity.googleapis.com/AuthorizationPolicy
 networksecurity.googleapis.com/AuthzPolicy
@@ -562,9 +573,13 @@ storageinsights.googleapis.com/ReportConfig
 storageinsights.googleapis.com/ReportDetail
 storagetransfer.googleapis.com/TransferJob
 tpu.googleapis.com/Node
+tpu.googleapis.com/QueuedResource
 transcoder.googleapis.com/Job
 transcoder.googleapis.com/JobTemplate
 videostitcher.googleapis.com/CdnKey
+videostitcher.googleapis.com/LiveConfig
+videostitcher.googleapis.com/Slate
+videostitcher.googleapis.com/VodConfig
 vmmigration.googleapis.com/CloneJob
 vmmigration.googleapis.com/CutoverJob
 vmmigration.googleapis.com/DatacenterConnector
@@ -583,6 +598,8 @@ vmwareengine.googleapis.com/PrivateCloud
 vmwareengine.googleapis.com/PrivateConnection
 vmwareengine.googleapis.com/VmwareEngineNetwork
 vpcaccess.googleapis.com/Connector
+websecurityscanner.googleapis.com/ScanConfig
+workflows.googleapis.com/Workflow
 workstations.googleapis.com/Workstation
 workstations.googleapis.com/WorkstationCluster
 workstations.googleapis.com/WorkstationConfig
