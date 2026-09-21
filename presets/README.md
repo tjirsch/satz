@@ -1244,9 +1244,14 @@ gcloud asset search-all-resources --scope=organizations/ORG \
   --query='tagValues:<shortname>-exemption/service-account-keys'
 ```
 
-A binding somebody adds out of band is not visible to satz yet. Cloud Asset Inventory
-serves `cloudresourcemanager.googleapis.com/TagBinding`, so reporting an undeclared
-binding as drift is the piece that would make temporary lifts auditable.
+A binding somebody adds out of band — the temporary kind — is reported by
+`satz report-compliance`. It lists every `cloudresourcemanager.googleapis.com/TagBinding`
+of the organisation through Cloud Asset Inventory, keeps the bindings of this key,
+subtracts the `google_tags_tag_binding` resources the estate declares, and prints the rest
+in a section of its own, with each one's value and target. A binding whose value a claimed
+control's policy conditions on is also printed under that control
+(`**undeclared exemption**: <org>/<shortname>-exemption/service-account-keys bound to …`);
+the control's status stays what its witnesses make it.
 
 ### Before granting any exemption
 

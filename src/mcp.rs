@@ -2186,7 +2186,9 @@ impl SatzMcp {
                        (`compliance_frameworks`), which answers `{frameworks, reports}` with one \
                        report per framework. Check `live_status` before trusting the rows: \
                        a run whose inventory could not be read answers `live: false` with the reason \
-                       in `warnings`, and every witness reads unverified.",
+                       in `warnings`, and every witness reads unverified. `exemption_bindings` lists \
+                       the live bindings of the estate's exemption tag key that the estate does not \
+                       declare; its `undeclared` is null unless they were read.",
         annotations(read_only_hint = true, idempotent_hint = false, open_world_hint = true)
     )]
     async fn report_compliance(

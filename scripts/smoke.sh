@@ -631,6 +631,9 @@ assert o["live"] is False, o["live"]
 assert o["live_status"] == "skipped", o["live_status"]
 assert o["warnings"] == [], o["warnings"]
 assert any(r["witnesses"] for r in o["rows"]), "no row carries a witness"
+# the estate declares no exemption key: no undeclared-binding section at all
+assert o["exemption_bindings"] is None, o["exemption_bindings"]
+assert all(r["undeclared_exemptions"] == [] for r in o["rows"])
 PYEOF
 
 step "report-compliance with no framework: one section per framework the estate is HELD TO"

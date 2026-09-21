@@ -52,6 +52,11 @@ pub(crate) struct EmittedResource {
     /// verdict (`enforce` does, from the unconditional rule) and they are what an
     /// auditor has to see beside it: the control is on, and here is who is let out.
     pub conditional: Vec<String>,
+    /// The `expression` of every conditional rule of the policy's `spec`, in emission
+    /// order, as the emitter wrote it (`${…}` references included). Which tag values a
+    /// policy conditions on is read from these: a live binding of such a value is an
+    /// exemption from this policy.
+    pub condition_expressions: Vec<String>,
     /// The `import { to id }` block emitted for this resource, if any — i.e.
     /// the estate already adopted it.
     pub import_id: Option<String>,
@@ -240,7 +245,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
     // the compliance plane the moment it let one resource out. This is the same rule
     // `live_enforcement` applies to a policy read back from the organisation, so the
     // declared and the live side now answer the question the same way.
-    let (mut found, conditional) = spec_rules(b.body());
+    let (mut found, conditional, condition_expressions) = spec_rules(b.body());
     let enforce = match found.as_mut_slice() {
         [only] => Some(*only),
         _ => None,
@@ -260,6 +265,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         reset,
         dry_run,
         conditional,
+        condition_expressions,
         import_id: None,
         origin: None,
     })
@@ -308,14 +314,14 @@ fn string_value(expr: &hcl::Expression) -> Option<String> {
 }
 
 /// The `spec` rules of an org policy, split into what decides the verdict and what
-/// does not: the unconditional rules' `enforce` values, and one line per conditional
-/// rule saying what it exempts.
+/// does not: the unconditional rules' `enforce` values, one line per conditional
+/// rule saying what it exempts, and each conditional rule's expression.
 ///
 /// A conditional rule's line prefers its `title`, then its `expression`, mirroring
 /// what `live_enforcement` renders for a policy read back from the organisation — the
 /// two sides of the same question should read the same way.
-fn spec_rules(body: &hcl::Body) -> (Vec<bool>, Vec<String>) {
-    let (mut unconditional, mut conditional) = (Vec::new(), Vec::new());
+fn spec_rules(body: &hcl::Body) -> (Vec<bool>, Vec<String>, Vec<String>) {
+    let (mut unconditional, mut conditional, mut expressions) = (Vec::new(), Vec::new(), Vec::new());
     for spec in body.blocks().filter(|nb| nb.identifier() == "spec") {
         for rule in spec.body().blocks().filter(|rb| rb.identifier() == "rules") {
             let cond = rule.body().blocks().find(|cb| cb.identifier() == "condition");
@@ -353,11 +359,12 @@ fn spec_rules(body: &hcl::Body) -> (Vec<bool>, Vec<String>) {
                         _ => "enforce unstated",
                     };
                     conditional.push(format!("{} where {}", on_off, what));
+                    expressions.extend(text("expression"));
                 }
             }
         }
     }
-    (unconditional, conditional)
+    (unconditional, conditional, expressions)
 }
 
 #[cfg(test)]

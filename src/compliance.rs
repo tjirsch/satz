@@ -1096,6 +1096,7 @@ mod tests {
             reset: false,
             dry_run: false,
             conditional: vec!["enforce OFF where exempted service accounts".to_string()],
+            condition_expressions: Vec::new(),
             import_id: None,
             origin: None,
         };
@@ -1141,6 +1142,7 @@ mod tests {
                 reset: false,
                 dry_run: true,
                 conditional: Vec::new(),
+                condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
             },
@@ -1878,7 +1880,7 @@ fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessSco
 /// IAM policy set on it. Cloud Asset Inventory serves them as two content
 /// types, so a type needing both is fetched twice.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum LiveContent {
+pub(crate) enum LiveContent {
     Resource,
     IamPolicy,
 }
@@ -2082,9 +2084,9 @@ async fn project_numbers(ids: &BTreeSet<String>) -> Result<BTreeMap<String, Stri
 /// The data used to be discarded, which capped live verification at "does a
 /// resource with this identifier exist". For an org policy that is not the
 /// control: a policy with enforcement OFF exists just as much as one with it on.
-type Inventory = BTreeMap<(String, LiveContent), BTreeMap<String, serde_json::Value>>;
+pub(crate) type Inventory = BTreeMap<(String, LiveContent), BTreeMap<String, serde_json::Value>>;
 
-async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String, LiveContent)>) -> Result<Inventory, BoxErr> {
+pub(crate) async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String, LiveContent)>) -> Result<Inventory, BoxErr> {
     use google_cloud_asset_v1::model::ContentType;
     use google_cloud_gax::options::RequestOptionsBuilder;
     let client = crate::gcp::asset_service().await?;
@@ -2671,6 +2673,12 @@ pub(crate) async fn report_compliance_evidence(
             }
         }
     }
+    // ---- undeclared exemption bindings (the estate's exemption key only) ----
+    let mut exemptions = crate::exemption_bindings::check(manifest, org_id, no_live).await;
+    if let Some(crate::exemption_bindings::Outcome::Unavailable(why)) = exemptions.as_ref().map(|c| &c.outcome) {
+        warnings.push(format!("undeclared exemption bindings not checked: {}", why));
+    }
+    let conditioned = crate::exemption_bindings::conditioned_policies(manifest, org_id);
     for w in &warnings {
         eprintln!("warning: {}", w);
     }
@@ -2900,6 +2908,21 @@ pub(crate) async fn report_compliance_evidence(
             .filter(|(_, c)| &c.control == id && !c.interpretation.is_empty())
             .map(|(_, c)| c.interpretation.clone())
             .collect();
+        // A binding nobody declared, of a value this control's policy lets out: the
+        // row's verdict stands, and the binding is printed beside it like a declared
+        // exemption is.
+        let undeclared: Vec<serde_json::Value> = exemptions
+            .as_mut()
+            .map(|c| crate::exemption_bindings::attach(c, id, goal_witnesses(goal), &conditioned))
+            .unwrap_or_default();
+        let witness_cell = undeclared.iter().fold(witness_cell, |cell, u| {
+            format!(
+                "{}<br>**undeclared exemption**: `{}` bound to `{}`",
+                cell,
+                u["value"].as_str().unwrap_or_default(),
+                u["target"].as_str().unwrap_or_default()
+            )
+        });
         let witness_cell = if interpretations.is_empty() {
             witness_cell
         } else {
@@ -2920,6 +2943,7 @@ pub(crate) async fn report_compliance_evidence(
             "duties": duty_cell, "prowler": prowler_cell.replace("**",""),
             "prowler_findings": prowler_findings.cloned().unwrap_or_default(),
             "checkov": checkov_cell.replace("**","").replace('`',""),
+            "undeclared_exemptions": undeclared,
         }));
     }
 
@@ -2929,6 +2953,9 @@ pub(crate) async fn report_compliance_evidence(
         md.push_str(&format!("\nProwler: {}. No row above carries a Prowler finding.\n", why));
     }
     md.push_str(&render_unmapped(&catalog, &prowler_unmapped));
+    if let Some(c) = &exemptions {
+        md.push_str(&c.render());
+    }
 
     let evidence = serde_json::json!({
         "framework": catalog.catalog, "version": catalog.version,
@@ -2938,6 +2965,9 @@ pub(crate) async fn report_compliance_evidence(
         "prowler_version": prowler_version,
         // FAIL findings per Prowler check that map to no control of this framework
         "prowler_unmapped": prowler_unmapped,
+        // live bindings of the estate's exemption tag key that it does not declare;
+        // null when the estate declares no exemption key
+        "exemption_bindings": exemptions.as_ref().map(|c| c.to_json()),
         "rows": json_rows,
     });
 
@@ -4405,6 +4435,7 @@ mod iam_witness_tests {
                 reset: false,
                 dry_run: false,
                 conditional: Vec::new(),
+                condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
             },
@@ -4425,6 +4456,7 @@ mod iam_witness_tests {
                 reset: false,
                 dry_run: false,
                 conditional: Vec::new(),
+                condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
             },
@@ -4546,6 +4578,7 @@ mod evidence_facts_tests {
                 reset: false,
                 dry_run: false,
                 conditional: Vec::new(),
+                condition_expressions: Vec::new(),
                 import_id: None,
                 origin: Some(("presets/x.satz".to_string(), 12)),
             },

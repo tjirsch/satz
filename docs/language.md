@@ -1919,6 +1919,30 @@ for one) are listed beside the verdict. A policy with no unconditional rule or m
 than one, or a list constraint, yields no verdict, and a policy whose live state
 cannot be read reports *unverifiable*, never *verified*.
 
+**Undeclared exemption bindings.** An estate that declares the exemption key —
+`google_tags_tag_key.exemption`, from `presets/exemptions/exemption-tag.satz` — gets a
+section after the table. `report-compliance` lists every
+`cloudresourcemanager.googleapis.com/TagBinding` of the organisation through Cloud Asset
+Inventory, keeps those whose value's namespaced name is `<org>/<key short name>/…`, and
+subtracts the `google_tags_tag_binding` resources the estate declares on the key's values.
+Bindings of any other tag key are not exemptions and are not listed. A live binding
+matches a declared one when the value and the target agree; the target is compared as the
+estate writes it and with its project id replaced by the project's number, the form Cloud
+Asset gives a project. A reference in a declared `parent` resolves through the manifest —
+a `google_project` to its `project_id`, an adopted `google_folder` to its `import-id`, a
+`google_service_account` to its email; any other reference is not known before an apply,
+and a live binding of the same value is listed with that declaration named beside it.
+
+Each binding that remains is listed with its value's namespaced name and its target. A
+claimed control whose witness policy has a conditional rule naming the value — a
+`${{google_tags_tag_value.<x>.name}}` reference, `matchTag('<org>/<key>', '<value>')`, or
+a literal `tagValues/<id>` — is named beside the binding, and its row's witness cell
+carries `**undeclared exemption**: <value> bound to <target>`. The row's status stays
+what its witnesses make it, and `--fail-on` reads statuses only. A read that is refused
+makes the section **NOT CHECKED** with the reason and adds a warning; `--no-live` and an
+estate without a customer-organization-id say so in the section. An estate without the
+key has no section.
+
 **Attestations** discharge manual duties. `attestations.yaml` beside
 `config.toml`, one entry per duty id:
 
@@ -1943,7 +1967,13 @@ control with `control`, `title`, `status`, `responsibility`, `duties`,
 those an OBJECT: `address`, `state` (`verified` · `missing` · `diverged` ·
 `unverifiable` · `not-checked`), `live_id`, `detail`, `conditional` (an org
 policy's conditional rules, one line each) and `declared_at`
-(`file` + `line`). The report's witness column is markdown; the data carries
+(`file` + `line`), and `undeclared_exemptions` — one `{value, target, policy}` per
+undeclared exemption binding that lets one of the row's witness policies out.
+`exemption_bindings` is `null` for an estate without the exemption key, and otherwise
+`status` (`checked` · `skipped` · `no-organization-id` · `unavailable`), `key`,
+`declared`, `live` (the live bindings of the key), `reason` and `undeclared` — each
+`value`, `value_id`, `target`, `controls` and `unresolved_declared` — which is `null`
+unless the check ran, so a refused read never reads as none found. The report's witness column is markdown; the data carries
 none, so an agent can build an audit list from it. `responsibility` is `inherited`, `customer`,
 `shared`, `satz-managed` or `unassigned` — the shared-responsibility split as a
 derived fact, not a written-up matrix; `unassigned` means nobody has taken the
