@@ -2469,6 +2469,12 @@ pub(crate) async fn report_compliance_evidence(
     prowler_path: Option<PathBuf>,
     checkov: Option<&crate::scan::Report>,
     no_live: bool,
+    // The operator NAMED this framework, so an export that maps to none of its controls
+    // is a mistake to stop on. False when satz chose the frameworks from the estate's
+    // `compliance_frameworks`: one of them having no Prowler equivalent (a management
+    // standard read through a cross-walk) is ordinary, and the report says so under that
+    // framework's table rather than refusing the whole run.
+    prowler_must_map: bool,
 ) -> Result<(serde_json::Value, String), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
     // Checkov findings by emitted address: a failed check on a WITNESS is
@@ -2679,11 +2685,21 @@ pub(crate) async fn report_compliance_evidence(
             Attestations::default()
         }
     };
+    let mut prowler_says_nothing: Option<String> = None;
     let prowler_export = match &prowler_path {
         Some(p) => {
             let export = read_prowler(p, &catalog.catalog, &catalog.version)?;
-            export.require_mapping(p, &catalog)?;
-            Some(export)
+            match export.require_mapping(p, &catalog) {
+                Ok(()) => Some(export),
+                Err(e) if !prowler_must_map => {
+                    let why = e.to_string();
+                    eprintln!("warning: {}", why);
+                    warnings.push(why.clone());
+                    prowler_says_nothing = Some(why);
+                    None
+                }
+                Err(e) => return Err(e),
+            }
         }
         None => None,
     };
@@ -2907,6 +2923,11 @@ pub(crate) async fn report_compliance_evidence(
         }));
     }
 
+    if let Some(why) = &prowler_says_nothing {
+        // Not a silent omission: the Prowler column of every row above is empty, and
+        // this says which export was read and why it corroborates nothing here.
+        md.push_str(&format!("\nProwler: {}. No row above carries a Prowler finding.\n", why));
+    }
     md.push_str(&render_unmapped(&catalog, &prowler_unmapped));
 
     let evidence = serde_json::json!({
@@ -2927,9 +2948,18 @@ pub(crate) async fn report_compliance_evidence(
 /// inventory × attestations × optional Prowler corroboration into an
 /// auditor-shaped report, and appends the run to the evidence history. The IO lives
 /// here so the computation above can be called by anything.
+///
+/// `frameworks` is the one catalog id the command named, and otherwise every framework
+/// the estate's `compliance_frameworks` names. Each gets its OWN section and its own
+/// evidence record — one control numbering per section, because CIS 1.1 and ISO A.5.1
+/// interleaved in one table is a table nobody can hand an auditor. The file is still one
+/// file: `--out` names it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_report_compliance(
-    framework: &str,
+    frameworks: &[String],
+    // the command named the framework, so `--prowler` must map to it and `--format json`
+    // answers with that one report; false when satz read the frameworks off the estate
+    named: bool,
     input: &Path,
     presets_dir: &str,
     included_claims: &[(String, Claim)],
@@ -2943,18 +2973,36 @@ pub(crate) async fn run_report_compliance(
     no_live: bool,
     fail_on: &[String],
 ) -> Result<(), BoxErr> {
-    let (evidence, md) = report_compliance_evidence(
-        framework, input, presets_dir, included_claims, manifest, org_id, config_dir, prowler_path,
-        checkov, no_live,
-    )
-    .await?;
-    let verified_at = evidence
-        .get("verified_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let empty = Vec::new();
-    let json_rows = evidence.get("rows").and_then(|r| r.as_array()).unwrap_or(&empty);
+    let mut reports: Vec<(String, serde_json::Value, String)> = Vec::new();
+    for framework in frameworks {
+        let (evidence, md) = report_compliance_evidence(
+            framework, input, presets_dir, included_claims, manifest, org_id, config_dir,
+            prowler_path.clone(), checkov, no_live, named,
+        )
+        .await?;
+        reports.push((framework.clone(), evidence, md));
+    }
+
+    let mut json_rows: Vec<serde_json::Value> = Vec::new();
+    for (_, evidence, _) in &reports {
+        if let Some(rows) = evidence.get("rows").and_then(|r| r.as_array()) {
+            json_rows.extend(rows.iter().cloned());
+        }
+    }
+    // One report when the command named a framework. Asked for the estate's frameworks,
+    // the caller gets the set, whether the estate names one or three: the shape follows
+    // the question, never the data.
+    let document = if named {
+        reports[0].1.clone()
+    } else {
+        serde_json::json!({
+            "frameworks": frameworks,
+            "reports": reports.iter().map(|(_, e, _)| e.clone()).collect::<Vec<_>>(),
+        })
+    };
+    // Each section is byte-identical to the report that framework alone produces, with a
+    // rule between them; a reader scrolls to the framework they came for.
+    let md = reports.iter().map(|(_, _, md)| md.as_str()).collect::<Vec<_>>().join("\n---\n\n");
 
     // Append-only history — but NOT when the caller asked for the evidence as
     // data. The history is the audit trail of a deliberate report run; a caller
@@ -2962,14 +3010,25 @@ pub(crate) async fn run_report_compliance(
     // it, and a "read-only" wrapper that silently wrote files would be a lie.
     let what = format!("{} control(s)", json_rows.len());
     if format == crate::OutFormat::Json {
-        crate::write_report(out, serde_json::to_string_pretty(&evidence)?.as_bytes(), &what)?
+        crate::write_report(out, serde_json::to_string_pretty(&document)?.as_bytes(), &what)?
     } else {
         let hist_dir = config_dir.join("evidence");
         crate::fsx::create_dir_all(&hist_dir)?;
-        let hist = append_evidence(&hist_dir, framework, &verified_at, serde_json::to_string_pretty(&evidence)?.as_bytes())?;
+        // One record per framework, named as it always was: a history is read per
+        // framework, and a combined record would be a different shape from every
+        // record before it.
+        let mut hist = Vec::new();
+        for (framework, evidence, _) in &reports {
+            let verified_at = evidence.get("verified_at").and_then(|v| v.as_str()).unwrap_or_default();
+            hist.push(
+                append_evidence(&hist_dir, framework, verified_at, serde_json::to_string_pretty(evidence)?.as_bytes())?
+                    .display()
+                    .to_string(),
+            );
+        }
         match format {
             crate::OutFormat::Pdf => crate::pdf_from_markdown(&md, out, &what)?,
-            _ => crate::write_report(out, md.as_bytes(), &format!("{what} (history: {})", hist.display()))?,
+            _ => crate::write_report(out, md.as_bytes(), &format!("{what} (history: {})", hist.join(", ")))?,
         }
     }
     // the report is written whatever the verdicts; the EXIT CODE is the gate,
@@ -2989,6 +3048,42 @@ pub(crate) async fn run_report_compliance(
         }
     }
     Ok(())
+}
+
+/// The frameworks a `report-compliance` run covers: the one the command named, or the
+/// ones the estate says it is HELD TO.
+///
+/// An estate that binds no `compliance_frameworks` has stated nothing, and a report over
+/// nothing is refused rather than guessed at — the whole reason the param exists is that
+/// what an estate CLAIMS and what its customer ANSWERS TO are different facts.
+pub(crate) fn frameworks_to_report(
+    named: Option<&str>,
+    held_to: Option<&[crate::frameworks::Framework]>,
+    estate: &Path,
+    presets_dir: &str,
+) -> Result<Vec<String>, BoxErr> {
+    if let Some(f) = named {
+        return Ok(vec![f.to_string()]);
+    }
+    let listed = crate::frameworks::available(presets_dir).join(", ");
+    match held_to {
+        Some(fs) if !fs.is_empty() => Ok(fs.iter().map(|f| f.id.clone()).collect()),
+        Some(_) => Err(format!(
+            "{}: `{}` is empty, so this estate states it is held to no framework. Name a catalog to report one anyway: {}",
+            estate.display(),
+            crate::frameworks::PARAM,
+            listed
+        )
+        .into()),
+        None => Err(format!(
+            "no framework named, and {} binds no `{}`, so nothing says which framework this estate answers to. \
+             Name a catalog ({}), or use \"presets/estate-core.satz\" and run `satz interview` to record it.",
+            estate.display(),
+            crate::frameworks::PARAM,
+            listed
+        )
+        .into()),
+    }
 }
 
 /// UTC timestamp without a chrono dependency (SystemTime → ISO-8601, minute precision).
@@ -3094,6 +3189,55 @@ pub(crate) fn take_remediation_plan_dir(config_dir: &Path, framework: &str, now:
         now
     )
     .into())
+}
+
+#[cfg(test)]
+mod frameworks_to_report_tests {
+    //! Which frameworks a `report-compliance` run covers, and what it refuses.
+    use super::frameworks_to_report;
+    use crate::frameworks::Framework;
+    use std::path::Path;
+
+    fn presets() -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("presets").to_string_lossy().into_owned()
+    }
+
+    fn held(id: &str) -> Framework {
+        Framework { id: id.into(), catalog: "cis-gcp".into(), version: "5.0".into() }
+    }
+
+    #[test]
+    fn a_named_framework_is_the_whole_answer_whatever_the_estate_says() {
+        // The command's argument wins: an operator asking for one catalog gets that
+        // catalog, and the estate's list is not quietly added to it.
+        let got = frameworks_to_report(Some("cis-gcp-4.0"), Some(&[held("cis-gcp-5.0")]), Path::new("e.satz"), &presets()).unwrap();
+        assert_eq!(got, vec!["cis-gcp-4.0"]);
+    }
+
+    #[test]
+    fn with_no_argument_the_estates_own_list_decides_in_its_own_order() {
+        let held = [held("cis-gcp-5.0"), Framework { id: "iso27001-2022".into(), catalog: "iso27001".into(), version: "2022".into() }];
+        let got = frameworks_to_report(None, Some(&held), Path::new("e.satz"), &presets()).unwrap();
+        assert_eq!(got, vec!["cis-gcp-5.0", "iso27001-2022"]);
+    }
+
+    #[test]
+    fn an_estate_that_states_nothing_is_refused_with_the_catalogs_it_could_name() {
+        // Guessing a framework here would put a heading on a report that nobody asked
+        // for and an auditor would take at its word.
+        let e = frameworks_to_report(None, None, Path::new("e.satz"), &presets()).unwrap_err().to_string();
+        assert!(e.contains("binds no `compliance_frameworks`"), "{e}");
+        assert!(e.contains("cis-gcp-4.0, cis-gcp-5.0, iso27001-2022"), "{e}");
+    }
+
+    #[test]
+    fn an_empty_list_is_an_answer_and_still_reports_nothing() {
+        // "held to nothing" is a stated position, not a missing one, and it names a
+        // different fix: report a framework anyway by naming it.
+        let e = frameworks_to_report(None, Some(&[]), Path::new("e.satz"), &presets()).unwrap_err().to_string();
+        assert!(e.contains("is empty"), "{e}");
+        assert!(e.contains("Name a catalog to report one anyway"), "{e}");
+    }
 }
 
 #[cfg(test)]

@@ -26,6 +26,8 @@ params {
   deployment_mode          = "local"
   default_region           = "europe-west3"
   default_zone             = "europe-west3-a"
+  // what this customer ANSWERS TO, which is not what the packs below claim
+  compliance_frameworks    = ["cis-gcp-5.0", "iso27001-2022"]
 }
 
 terraform {

@@ -63,6 +63,8 @@ kinds! {
     MissingScope => "missing-scope",
     /// an estate's `deployment_mode` that is neither `local` nor `cloud`
     DeploymentMode => "deployment-mode",
+    /// an entry of `compliance_frameworks` that names no catalog in the preset library
+    ComplianceFramework => "compliance-framework",
     /// an emitted attribute whose value the provider refuses by its shape
     AttributeShape => "attribute-shape",
     Prerequisites => "prerequisites",

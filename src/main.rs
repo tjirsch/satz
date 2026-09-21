@@ -24,6 +24,7 @@ mod gcp;
 mod org_policy;
 mod cloud_identity;
 mod compliance;
+mod frameworks;
 mod questions;
 mod interview;
 mod findings;
@@ -588,10 +589,14 @@ pub(crate) enum Commands {
     /// Inventory), manual-duty attestations and optional Prowler corroboration —
     /// written as an auditor-shaped report plus an append-only evidence history.
     ReportCompliance {
-        /// Catalog id, e.g. cis-gcp-4.0
+        /// Catalog id, e.g. cis-gcp-5.0. Given ALONE — with no estate after it — this
+        /// argument is the estate, and the report covers every framework the estate's
+        /// `compliance_frameworks` names, one section each
+        #[arg(value_name = "FRAMEWORK")]
         framework: String,
         /// Estate file (.satz, inside yaml_dir if relative)
-        input: String,
+        #[arg(value_name = "ESTATE")]
+        input: Option<String>,
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json]))]
         format: OutFormat,
@@ -2056,10 +2061,16 @@ Thumbs.db
         Commands::Lsp => lsp::run().map_err(|e| e as Box<dyn std::error::Error>),
         Commands::Prowler { input, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let (manifest, included_claims, org_id) =
+            let (manifest, included_claims, org_id, held_to) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let now = crate::compliance::chrono_free_timestamp();
-            let plan = crate::prowler::plan(&manifest, &included_claims, org_id.as_deref(), &now);
+            let plan = crate::prowler::plan(
+                &manifest,
+                &included_claims,
+                held_to.as_deref().unwrap_or_default(),
+                org_id.as_deref(),
+                &now,
+            );
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&plan)?),
                 // stdout is the command and nothing else, so it can be piped into a
@@ -2078,7 +2089,7 @@ Thumbs.db
             // value, never on disk. The stage-B block belongs in `transpile`
             // only; pasted here it once made the command silently regenerate
             // hcl/ and return without a report.
-            let (manifest, included_claims, _org_id) =
+            let (manifest, included_claims, _org_id, _held_to) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
 
             let report = crate::compliance::require_report(
@@ -2099,16 +2110,40 @@ Thumbs.db
             Ok(())
         }
         Commands::ReportCompliance { framework, input, format, out, prowler, no_live, checkov, fail_on } => {
+            // One positional is the estate; two are the framework and then the estate.
+            // The count decides it, never the shape of the word — but a lone argument
+            // that names a catalog is a forgotten estate, and says so.
+            let (named, input) = match input {
+                Some(estate) => (Some(framework), estate),
+                None => {
+                    let as_estate = estate_path(PathBuf::from(&framework), &runtime_config);
+                    if !as_estate.exists() && crate::frameworks::available(&runtime_config.presets_dir).contains(&framework) {
+                        return Err(format!(
+                            "{} is a framework, not an estate: name the estate after it, or give the estate alone to report every framework it is held to",
+                            framework
+                        )
+                        .into());
+                    }
+                    (None, framework)
+                }
+            };
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             configure_estate_impersonation(&input_path, &runtime_config)?;
             // Reports, never emits — see the note in `require`.
-            let (manifest, included_claims, org_id) =
+            let (manifest, included_claims, org_id, held_to) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            let frameworks = crate::compliance::frameworks_to_report(
+                named.as_deref(),
+                held_to.as_deref(),
+                &input_path,
+                &runtime_config.presets_dir,
+            )?;
             let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
 
             crate::compliance::run_report_compliance(
-                &framework,
+                &frameworks,
+                named.is_some(),
                 &input_path,
                 &runtime_config.presets_dir,
                 &included_claims,
@@ -2153,12 +2188,12 @@ Thumbs.db
                     .into());
             }
             let input_path = if Path::new(&input).is_absolute() { PathBuf::from(&input) } else { PathBuf::from(&runtime_config.yaml_dir).join(&input) };
-            let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            let (manifest, included_claims, _org_id, _held_to) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             crate::compliance::run_triage(&framework, &runtime_config.presets_dir, &included_claims, &manifest, &prowler, format, &out, fix)
         }
         Commands::RemediationPlan { framework, input, prowler, checkov, out_dir, merge } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let (manifest, included_claims, _org_id) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
+            let (manifest, included_claims, _org_id, _held_to) = compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let checkov_report = if checkov { Some(crate::scan::run(Path::new(&runtime_config.hcl_dir))?) } else { None };
             crate::compliance::run_remediation_dossier(
                 &framework,
@@ -2522,6 +2557,10 @@ struct PipelineBOut {
     /// CLI printed — as data, for MCP. An error never reaches here: the compile is
     /// `Err` instead.
     findings: Vec<crate::findings::Finding>,
+    /// The estate's resolved params. The compliance plane reads `compliance_frameworks`
+    /// from here — what a pack reads as a param, a command reads as the same value off
+    /// the same compile.
+    env: satz_core::pipeline::Env,
 }
 
 use satz_core::pipeline::ResolvedType;
@@ -2741,6 +2780,7 @@ fn pipeline_b_compile(
         &registry,
         tool_config,
         &graph,
+        &runtime_config.presets_dir,
         &runtime_config.validation_level,
         input_path,
         &estate_as_typed(input_path, runtime_config),
@@ -2783,8 +2823,11 @@ fn pipeline_b_compile(
             _ => None,
         })
         .collect();
-    let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-    // computed before the struct below takes ownership of `fe`'s fields
+    // computed before the struct below takes ownership of `fe`'s fields, `env` included
+    let (customer_id, org_id) = {
+        let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        (ctx.customer_id.clone(), ctx.org_id.clone())
+    };
     let descriptions = question_descriptions(&fe);
     Ok(PipelineBOut {
         actions: fe.actions,
@@ -2796,12 +2839,13 @@ fn pipeline_b_compile(
         imports_tf: out.imports_tf,
         claims: fe.claims,
         org_policies,
-        customer_id: ctx.customer_id.clone(),
+        customer_id,
         // EmitCtx defaults it to the empty string when the estate declares no
         // customer_organization_id; the compliance plane wants None there so it
         // reports "no customer-organization-id" instead of querying org "".
-        org_id: Some(ctx.org_id.clone()).filter(|s| !s.is_empty()),
+        org_id: Some(org_id).filter(|s| !s.is_empty()),
         findings,
+        env: fe.env,
     })
 }
 
@@ -2847,6 +2891,9 @@ pub(crate) fn compile_tail(
     registry: &ResourceRegistry,
     tool_config: &ToolConfig,
     graph: &crate::pack_graph::Shipped,
+    // the library as this run resolved it: the catalogs `compliance_frameworks` is
+    // judged against live here, not the possibly-relative path in the config file
+    presets_dir: &str,
     level: &str,
     estate: &Path,
     // the same estate as a command takes it (`estate_as_typed`): what a finding's `fix`
@@ -2873,6 +2920,7 @@ pub(crate) fn compile_tail(
     // conflicts and the emitter, so a compile one of them stops still names a mode it
     // has no backend for.
     let mode_ok = deployment_mode_finding(&fe.env, estate, estate_src, &mut f);
+    compliance_frameworks_finding(&fe.env, presets_dir, estate, estate_src, &mut f);
     let mut folded = satz_core::pipeline::fold_fragments(resolver, &fe.fragments);
     // Subtractive override channel: estate suppressions apply before conflict
     // reporting (suppressing a conflicted address resolves the conflict).
@@ -2948,6 +2996,30 @@ fn deployment_mode_finding(
             );
             false
         }
+    }
+}
+
+/// `compliance_frameworks` against the catalogs the library actually holds.
+///
+/// The frameworks an estate is HELD TO are what `report-compliance` reports with no
+/// argument, what `satz prowler` scans for and what an audit pack reads. A value that
+/// names no catalog is refused here, at the compile every one of those commands runs
+/// first, rather than at the point a report is written: a typo found in the report is a
+/// framework that was silently out of scope until an audit.
+fn compliance_frameworks_finding(
+    env: &satz_core::pipeline::Env,
+    presets_dir: &str,
+    estate: &Path,
+    estate_src: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    if let Err(e) = crate::frameworks::resolve(env, presets_dir) {
+        f.push(
+            Finding::new(Severity::Error, Kind::ComplianceFramework, e)
+                .about(crate::frameworks::PARAM)
+                .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, crate::frameworks::PARAM)),
+        );
     }
 }
 
@@ -4962,7 +5034,15 @@ async fn run_adopt(
     Ok(())
 }
 
-type ComplianceInputs = (crate::manifest::Manifest, Vec<(String, crate::compliance::Claim)>, Option<String>);
+/// What every compliance tool starts from: the emission manifest, the claims of the
+/// packs the estate really uses, the organisation it declares, and the frameworks it
+/// says it is HELD TO (`None` when the estate binds no `compliance_frameworks`).
+type ComplianceInputs = (
+    crate::manifest::Manifest,
+    Vec<(String, crate::compliance::Claim)>,
+    Option<String>,
+    Option<Vec<crate::frameworks::Framework>>,
+);
 
 /// The one-line description for each param a question asks about. A pack that
 /// bothered to write a prompt has already written the sentence `variables.tf`
@@ -4993,7 +5073,11 @@ fn compliance_inputs(
     reject_yaml_dialect(input_path, "this command")?;
     let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
     let claims = crate::compliance::claims_from_frontend(&out.claims);
-    Ok((out.manifest, claims, out.org_id))
+    // The compile already refused an entry that names no catalog, so this only fails
+    // when the library moved under the run — which is still an error, never an empty
+    // list that would read as an estate held to nothing.
+    let held_to = crate::frameworks::resolve(&out.env, &runtime_config.presets_dir)?;
+    Ok((out.manifest, claims, out.org_id, held_to))
 }
 
 /// Append `hcl { … }` bodies verbatim to the generated main.tf, each under a
@@ -9293,6 +9377,12 @@ action "step" {
         tail_of(ESTATE, level)
     }
 
+    /// The repository's own library, so `compliance_frameworks` is judged against the
+    /// catalogs satz ships rather than against nothing.
+    fn presets_dir() -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("presets").to_string_lossy().into_owned()
+    }
+
     fn tail_of(src: &str, level: &str) -> Tail {
         let reg = super::corpus::registry();
         let resolver = EstateResolver { registry: &reg };
@@ -9300,7 +9390,7 @@ action "step" {
             .unwrap_or_else(|e| panic!("front-end failed: {}", e));
         let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
         let graph = crate::pack_graph::Shipped::Graph(crate::template::tests::shipped(), Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"));
-        compile_tail(&fe, &resolver, &reg, &cfg, &graph, level, Path::new("tail.satz"), "tail.satz", src)
+        compile_tail(&fe, &resolver, &reg, &cfg, &graph, &presets_dir(), level, Path::new("tail.satz"), "tail.satz", src)
     }
 
     fn line_of(needle: &str) -> u32 {
@@ -9352,7 +9442,7 @@ action "step" {
         let fe = satz_core::pipeline::compile_estate("tail.satz", ESTATE, &resolver, &|p| Err(format!("no {}", p))).unwrap();
         let cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
         let graph = crate::pack_graph::Shipped::Missing(PathBuf::from("presets/pack-graph.json"));
-        let t = compile_tail(&fe, &resolver, &reg, &cfg, &graph, "warn", Path::new("tail.satz"), "tail.satz", ESTATE);
+        let t = compile_tail(&fe, &resolver, &reg, &cfg, &graph, &presets_dir(), "warn", Path::new("tail.satz"), "tail.satz", ESTATE);
         let menu: Vec<_> = t.findings.iter().filter(|f| f.kind == Kind::UnadoptedPack).collect();
         assert_eq!(menu.len(), 1, "{menu:?}");
         assert_eq!(menu[0].severity, Severity::Info);

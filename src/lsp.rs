@@ -605,7 +605,7 @@ fn compile_for_diagnostics(
     };
     // Everything `transpile --check` checks after the front end, as findings: at the
     // file and line each names, or on the estate's first line when it names none.
-    let tail = crate::compile_tail(&fe, &resolver, registry, config, &graph, &config.validation_level, root, &estate_arg, src);
+    let tail = crate::compile_tail(&fe, &resolver, registry, config, &graph, &config.presets_dir, &config.validation_level, root, &estate_arg, src);
     // The editor shows what the estate and this machine have not silenced — the same
     // rows `satz transpile` reads, so a file is not clean in the terminal and marked up
     // here. The run tier cannot reach this: `--silence` is refused for `satz lsp`.

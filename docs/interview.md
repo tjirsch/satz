@@ -12,8 +12,8 @@ There are three ways to start an estate, and they end at the same file:
 | `satz interview <estate> [--create]` | a person at a terminal | one question at a time, the default in brackets, Enter accepts it |
 | `satz_interview` over MCP | a customer, through an agent | the agent asks in its own words, the human decides, the agent writes the param or passes it as an `answer` |
 
-`init` takes ten of the sixteen day-0 values as flags and writes the rest from its
-defaults. The other two ask for all sixteen, and also ask every question a pack adds,
+`init` takes ten of the seventeen day-0 values as flags and writes the rest from its
+defaults. The other two ask for all seventeen, and also ask every question a pack adds,
 which `init` has no flag for.
 
 ## What a question is, and what an answer is
@@ -86,7 +86,7 @@ and `bootstrap` refuse while a `severity = error` notice is open.
 An interview follows the estate file's order, and the skeleton is written so that
 order is a path:
 
-1. **`presets/estate-core.satz`** — the sixteen params `init` writes,
+1. **`presets/estate-core.satz`** — the seventeen params `init` writes,
    each with its question. Seven have no possible default and block until typed; the
    rest offer one, the two derived names once the short name is in. The pack emits
    nothing. An estate written by `init` does not use it and does not need to: given
@@ -167,7 +167,7 @@ params, so their lines follow the folder: a param is known from the line that de
 and a line above the folder that reads one stops the compile with `unknown param` once it is
 uncommented.
 
-That is why a fresh estate asks sixteen questions and not fifty-six: day 0 is the scaffold
+That is why a fresh estate asks seventeen questions and not fifty-seven: day 0 is the scaffold
 alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
 move to the service account, and only then does a pack go in — one at a time, each with its
 own plan. Answering a pack's question `true` switches its line on — uncommented, or written
@@ -248,7 +248,7 @@ Its arguments:
 The loop an agent runs:
 
 1. `satz_interview {create: true}` on a new name → every open question of the path —
-   the sixteen day-0 ones, the map's choices, the baseline's ten, the packs the
+   the seventeen day-0 ones, the map's choices, the baseline's ten, the packs the
    defaults switch on — sixteen of them `blocking` until their inputs land, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
    and `default` where one is usable.
 2. Ask the human, in whatever order and words fit the conversation. Offer the

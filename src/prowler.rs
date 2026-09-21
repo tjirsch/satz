@@ -52,10 +52,14 @@ pub(crate) struct ProwlerPlan {
     /// resource (`"acme-${google_folder.x.folder_id}"`), which only an apply resolves:
     /// `<address> (<id as written>)`, sorted. They are not in `--project-ids`.
     pub unresolved_projects: Vec<String>,
-    /// Prowler framework ids for the catalogs the estate's claims name.
+    /// Prowler framework ids for every catalog this estate names — the ones it is HELD
+    /// TO (`compliance_frameworks`) and the ones its packs CLAIM, together.
     pub compliance: Vec<String>,
-    /// Catalogs the estate claims that Prowler has no framework for, with why it
-    /// matters — those controls are simply not in the scan.
+    /// The catalog ids the estate's `compliance_frameworks` names, in the estate's
+    /// order. Empty when the estate binds none.
+    pub held_to: Vec<String>,
+    /// Catalogs this estate names that Prowler has no framework for — those controls
+    /// are simply not in the scan.
     pub unmapped_frameworks: Vec<String>,
     /// Directory the export belongs in, relative to the estate: one per UTC date.
     pub output_directory: String,
@@ -82,6 +86,7 @@ pub(crate) struct ProwlerPlan {
 pub(crate) fn plan(
     manifest: &Manifest,
     claims: &[(String, Claim)],
+    held_to: &[crate::frameworks::Framework],
     org_id: Option<&str>,
     now: &str,
 ) -> ProwlerPlan {
@@ -106,16 +111,24 @@ pub(crate) fn plan(
     let projects: Vec<String> = projects.into_iter().collect();
     unresolved_projects.sort();
 
+    // Two sources, UNION. The frameworks the customer is HELD TO are what an auditor
+    // reads the scan against, and they come first for that reason; the ones the packs
+    // CLAIM are not the same set, and dropping one would narrow the scan below what the
+    // estate itself asserts. A framework in both is scanned once.
     let mut compliance: Vec<String> = Vec::new();
     let mut unmapped: Vec<String> = Vec::new();
     let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
-    for (_, c) in claims {
-        if !seen.insert((c.framework.clone(), c.framework_version.clone())) {
+    let named = held_to
+        .iter()
+        .map(|f| (f.catalog.clone(), f.version.clone()))
+        .chain(claims.iter().map(|(_, c)| (c.framework.clone(), c.framework_version.clone())));
+    for (catalog, version) in named {
+        if !seen.insert((catalog.clone(), version.clone())) {
             continue;
         }
-        match prowler_framework(&c.framework, &c.framework_version) {
+        match prowler_framework(&catalog, &version) {
             Some(f) => compliance.push(f.to_string()),
-            None => unmapped.push(format!("{} {}", c.framework, c.framework_version)),
+            None => unmapped.push(format!("{} {}", catalog, version)),
         }
     }
     compliance.sort();
@@ -158,11 +171,15 @@ pub(crate) fn plan(
         projects,
         unresolved_projects,
         compliance,
+        held_to: held_to.iter().map(|f| f.id.clone()).collect(),
         unmapped_frameworks: unmapped,
         output_directory: dir,
         output_filename: stem,
+        // With the frameworks the estate is held to on record, the report needs no
+        // framework argument — it covers each of them.
         then: format!(
-            "satz report-compliance <framework> <estate> --prowler {} --format markdown --out <file>",
+            "satz report-compliance {} --prowler {} --format markdown --out <file>",
+            if held_to.is_empty() { "<framework> <estate>" } else { "<estate>" },
             output_path
         ),
         output_path,
@@ -215,11 +232,16 @@ pub(crate) fn notes(p: &ProwlerPlan) -> String {
         ));
     }
     if p.compliance.is_empty() {
-        out.push_str("note: no --compliance — this estate claims no framework Prowler has, so every check runs\n");
+        out.push_str("note: no --compliance — this estate names no framework Prowler has, so every check runs\n");
+    }
+    if p.held_to.is_empty() {
+        out.push_str(
+            "note: this estate binds no `compliance_frameworks`, so the scan covers what its packs CLAIM and not what its customer is held to\n",
+        );
     }
     if !p.unmapped_frameworks.is_empty() {
         out.push_str(&format!(
-            "note: claimed here, and Prowler has no framework for it: {} — those controls are not in this scan; `require` and `report-compliance` still judge them\n",
+            "note: named by this estate, and Prowler has no framework for it: {} — those controls are not in this scan; `require` and `report-compliance` still judge them\n",
             p.unmapped_frameworks.join(", ")
         ));
     }
@@ -253,6 +275,10 @@ mod tests {
         )
     }
 
+    fn held(id: &str, catalog: &str, version: &str) -> crate::frameworks::Framework {
+        crate::frameworks::Framework { id: id.into(), catalog: catalog.into(), version: version.into() }
+    }
+
     fn claim(framework: &str, version: &str) -> (String, Claim) {
         (
             "pack".to_string(),
@@ -275,10 +301,11 @@ mod tests {
         m.resources.extend([project("b", "acme-log-001"), project("a", "acme-infra-001")]);
         let claims = vec![claim("cis-gcp", "4.0"), claim("cis-gcp", "5.0"), claim("cis-gcp", "4.0")];
 
-        let p = plan(&m, &claims, Some("123456789012"), "2026-09-13T08:30Z");
+        let p = plan(&m, &claims, &[held("cis-gcp-5.0", "cis-gcp", "5.0")], Some("123456789012"), "2026-09-13T08:30Z");
 
         // Projects sorted and de-duplicated, so two runs produce the same line.
         assert_eq!(p.projects, vec!["acme-infra-001", "acme-log-001"]);
+        assert_eq!(p.held_to, vec!["cis-gcp-5.0"]);
         assert_eq!(p.compliance, vec!["cis_4.0_gcp", "cis_5.0_gcp"]);
         assert!(p.unmapped_frameworks.is_empty());
         assert_eq!(
@@ -302,7 +329,7 @@ mod tests {
     fn a_framework_prowler_does_not_have_is_named_not_guessed() {
         // A wrong --compliance argument silently scans the wrong control set, so an
         // unmapped catalog is reported rather than mapped to something that looks close.
-        let p = plan(&Manifest::default(), &[claim("iso27001", "2022")], None, "2026-09-13T08:30Z");
+        let p = plan(&Manifest::default(), &[claim("iso27001", "2022")], &[], None, "2026-09-13T08:30Z");
         assert!(p.compliance.is_empty());
         assert_eq!(p.unmapped_frameworks, vec!["iso27001 2022"]);
         assert!(!p.command.contains("--compliance"));
@@ -329,7 +356,7 @@ mod tests {
             project("b", "acme-${google_folder.x.folder_id}"),
             (whole, by_ref),
         ]);
-        let p = plan(&m, &[], None, "2026-09-13T08:30Z");
+        let p = plan(&m, &[], &[], None, "2026-09-13T08:30Z");
         assert_eq!(p.projects, vec!["acme-infra-001"]);
         assert_eq!(
             p.unresolved_projects,
@@ -388,7 +415,7 @@ google_project {
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("the estate emits");
 
-        let p = plan(&out.manifest, &[], Some("123456789012"), "2026-09-13T08:30Z");
+        let p = plan(&out.manifest, &[], &[], Some("123456789012"), "2026-09-13T08:30Z");
         assert_eq!(p.projects, vec!["acme-built-001", "acme-literal-001"]);
         assert_eq!(p.unresolved_projects, vec!["google_project.referenced (acme-${google_folder.x.folder_id})"]);
         assert!(p.command.contains("--project-ids acme-built-001 acme-literal-001 "), "{}", p.command);
@@ -401,8 +428,8 @@ google_project {
         // Prowler appends to an output file that already exists: a rescan after an
         // apply, written under the morning's name, would leave one file that no longer
         // parses and mixes both runs. Each plan names its own file, the day one folder.
-        let morning = plan(&Manifest::default(), &[], Some("123456789012"), "2026-09-13T08:30Z");
-        let after_apply = plan(&Manifest::default(), &[], Some("123456789012"), "2026-09-13T14:05Z");
+        let morning = plan(&Manifest::default(), &[], &[], Some("123456789012"), "2026-09-13T08:30Z");
+        let after_apply = plan(&Manifest::default(), &[], &[], Some("123456789012"), "2026-09-13T14:05Z");
         assert_eq!(morning.output_directory, "evidence/prowler/2026-09-13");
         assert_eq!(after_apply.output_directory, morning.output_directory);
         assert_eq!(morning.output_filename, "org-2026-09-13T08-30Z");
@@ -423,9 +450,43 @@ google_project {
         );
         // a scan narrowed to projects only says so in its name
         assert_eq!(
-            plan(&Manifest::default(), &[], None, "2026-09-13T14:05Z").output_filename,
+            plan(&Manifest::default(), &[], &[], None, "2026-09-13T14:05Z").output_filename,
             "projects-2026-09-13T14-05Z"
         );
+    }
+
+    #[test]
+    fn the_scan_covers_what_the_customer_answers_to_and_what_the_packs_claim() {
+        // Two different facts. The frameworks a customer is HELD TO are what an auditor
+        // reads the export against; the frameworks the packs CLAIM are what this estate
+        // asserts about itself. Scanning only one of them writes an export that is
+        // narrower than one of the two, and neither is safe to drop.
+        let held = [held("cis-gcp-5.0", "cis-gcp", "5.0"), held("iso27001-2022", "iso27001", "2022")];
+        let p = plan(&Manifest::default(), &[claim("cis-gcp", "4.0")], &held, None, "2026-09-13T08:30Z");
+        assert_eq!(p.compliance, vec!["cis_4.0_gcp", "cis_5.0_gcp"]);
+        assert_eq!(p.held_to, vec!["cis-gcp-5.0", "iso27001-2022"]);
+        // ISO is a management standard read through a cross-walk; Prowler has no
+        // framework for it, and the note says so rather than the scan quietly omitting it.
+        assert_eq!(p.unmapped_frameworks, vec!["iso27001 2022"]);
+        let notes = notes(&p);
+        assert!(notes.contains("named by this estate, and Prowler has no framework for it: iso27001 2022"), "{notes}");
+        // A framework in both sources is scanned once.
+        let both = plan(&Manifest::default(), &[claim("cis-gcp", "5.0")], &held[..1], None, "2026-09-13T08:30Z");
+        assert_eq!(both.compliance, vec!["cis_5.0_gcp"]);
+        // With the frameworks on record, the fold-back command needs no framework argument.
+        assert!(both.then.starts_with("satz report-compliance <estate> --prowler"), "{}", both.then);
+    }
+
+    #[test]
+    fn an_estate_that_states_no_frameworks_is_told_what_the_scan_is_missing() {
+        // The claims still decide the scan, and the note says that is all it had: a
+        // customer's contract is not in this export unless the estate records it.
+        let p = plan(&Manifest::default(), &[claim("cis-gcp", "5.0")], &[], None, "2026-09-13T08:30Z");
+        assert_eq!(p.compliance, vec!["cis_5.0_gcp"]);
+        assert!(p.held_to.is_empty());
+        let notes = notes(&p);
+        assert!(notes.contains("binds no `compliance_frameworks`"), "{notes}");
+        assert!(p.then.starts_with("satz report-compliance <framework> <estate> --prowler"), "{}", p.then);
     }
 
     #[test]
