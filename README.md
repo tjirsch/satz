@@ -1295,7 +1295,10 @@ in the JSON. A refused read says **NOT CHECKED** with the reason, never "none".
 
 The exit code is 0 whatever the verdicts — the report is the deliverable;
 `--fail-on not-enforced,drifted` (any status word; `any` = everything that is
-not verified/declared) makes the run fail for CI after the report is written.
+not verified/declared) makes the run fail for CI after the report is written;
+`--fail-on undeclared-exemption` fails it on a live binding of the estate's exemption tag
+key the estate does not declare, and on a run that could not check them. `any` does not
+include it.
 
 The framework is optional: named, the report is that catalog's; left out, it is every
 framework the estate is HELD TO — the catalog ids its `compliance_frameworks` param

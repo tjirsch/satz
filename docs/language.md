@@ -1938,7 +1938,10 @@ claimed control whose witness policy has a conditional rule naming the value —
 `${{google_tags_tag_value.<x>.name}}` reference, `matchTag('<org>/<key>', '<value>')`, or
 a literal `tagValues/<id>` — is named beside the binding, and its row's witness cell
 carries `**undeclared exemption**: <value> bound to <target>`. The row's status stays
-what its witnesses make it, and `--fail-on` reads statuses only. A read that is refused
+what its witnesses make it. `--fail-on undeclared-exemption` fails the run on any binding
+the section lists, and on a section that was not checked — `--no-live`, a refused read, no
+organisation id — because a gate asked to look that could not look has not passed; `any`
+does not include it, so a pipeline names it. A read that is refused
 makes the section **NOT CHECKED** with the reason and adds a warning; `--no-live` and an
 estate without a customer-organization-id say so in the section. An estate without the
 key has no section.
@@ -1995,7 +1998,8 @@ reads **NOT VERIFIED** instead of naming the service it never reached. The other
 outcomes are `verified`, `skipped` (`--no-live`), `no-organization-id` and
 `no-witnesses`. The exit code is 0 whatever the verdicts; `--fail-on
 not-enforced,drifted` (any status word, or `any`) makes the run fail for CI
-after the report is written. The report states check semantics: "a resource with
+after the report is written; `undeclared-exemption` beside them fails it on an exemption
+binding the estate does not declare. The report states check semantics: "a resource with
 these properties was verified at this time".
 
 ### 8.1 `compliance_frameworks` — what the customer answers to

@@ -3065,19 +3065,57 @@ pub(crate) async fn run_report_compliance(
     // opted into per status so CI can fail on what the operator decides
     if !fail_on.is_empty() {
         let wanted: Vec<String> = fail_on.iter().map(|s| s.trim().to_lowercase().replace('-', " ")).collect();
-        let hits: Vec<String> = json_rows
+        let (exemption, statuses): (Vec<String>, Vec<String>) = wanted.into_iter().partition(|w| w == UNDECLARED_EXEMPTION);
+        let mut hits: Vec<String> = json_rows
             .iter()
             .filter_map(|r| {
                 let status = r.get("status").and_then(|s| s.as_str()).unwrap_or("").to_lowercase();
-                wanted.iter().any(|w| w == "any" && !status.starts_with("verified") && status != "declared" || status.contains(w.as_str()))
+                statuses.iter().any(|w| w == "any" && !status.starts_with("verified") && status != "declared" || status.contains(w.as_str()))
                     .then(|| format!("{} ({})", r.get("control").and_then(|c| c.as_str()).unwrap_or("?"), status))
             })
             .collect();
+        if !exemption.is_empty() {
+            hits.extend(exemption_gate(reports.iter().map(|(_, e, _)| e)));
+        }
         if !hits.is_empty() {
-            return Err(format!("report-compliance: --fail-on {}: {} row(s): {}", fail_on.join(","), hits.len(), hits.join(", ")).into());
+            return Err(format!("report-compliance: --fail-on {}: {} finding(s): {}", fail_on.join(","), hits.len(), hits.join(", ")).into());
         }
     }
     Ok(())
+}
+
+/// `--fail-on undeclared-exemption`, as the gate normalises it. Not a row status: it reads the
+/// report's exemption-binding section, and `any` does not include it, so a pipeline opts in by
+/// name.
+const UNDECLARED_EXEMPTION: &str = "undeclared exemption";
+
+/// What `--fail-on undeclared-exemption` fails on, per report: each live binding of the estate's
+/// exemption key the estate does not declare, and a check that did not run — skipped by
+/// `--no-live`, refused by Cloud Asset Inventory, or without an organisation id — because a
+/// gate asked to look that could not look has not passed. An estate that declares no exemption
+/// key has nothing to check.
+fn exemption_gate<'a>(reports: impl IntoIterator<Item = &'a serde_json::Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    for r in reports {
+        let Some(section) = r.get("exemption_bindings").filter(|s| !s.is_null()) else { continue };
+        let key = section.get("key").and_then(|k| k.as_str()).unwrap_or("the exemption key");
+        match section.get("status").and_then(|s| s.as_str()) {
+            Some("checked") => {
+                for u in section.get("undeclared").and_then(|u| u.as_array()).into_iter().flatten() {
+                    out.push(format!(
+                        "undeclared exemption {} on {}",
+                        u.get("value").and_then(|v| v.as_str()).unwrap_or("?"),
+                        u.get("target").and_then(|v| v.as_str()).unwrap_or("?")
+                    ));
+                }
+            }
+            other => {
+                let why = section.get("reason").and_then(|r| r.as_str()).map(|r| format!(": {}", r)).unwrap_or_default();
+                out.push(format!("the bindings of {} were not checked ({}{})", key, other.unwrap_or("no status"), why));
+            }
+        }
+    }
+    out
 }
 
 /// The frameworks a `report-compliance` run covers: the one the command named, or the
@@ -3533,6 +3571,34 @@ mod prowler_ocsf_tests {
         assert!(e.contains("one JSON value ends and more text begins at line 2, column 1 (byte offset 9)"), "{e}");
         assert!(e.contains("one JSON array of findings"), "{e}");
         assert!(!e.contains("two scans"), "{e}");
+    }
+
+    /// `--fail-on undeclared-exemption` fails on each undeclared binding, and on a section that
+    /// could not look; an estate without the key, or with every binding declared, passes.
+    #[test]
+    fn the_exemption_gate_fails_on_an_undeclared_binding_and_on_a_check_that_did_not_run() {
+        use serde_json::json;
+        let report = |section: serde_json::Value| json!({ "rows": [], "exemption_bindings": section });
+        let found = report(json!({
+            "status": "checked", "key": "123456789012/acme-exemption", "declared": 1, "live": 2,
+            "undeclared": [{"value": "123456789012/acme-exemption/public-storage", "value_id": "tagValues/1",
+                            "target": "//cloudresourcemanager.googleapis.com/folders/123456789"}]
+        }));
+        let lines = exemption_gate([&found]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("acme-exemption/public-storage") && lines[0].contains("folders/123456789"), "{lines:?}");
+
+        let clean = report(json!({"status": "checked", "key": "k", "declared": 2, "live": 2, "undeclared": []}));
+        assert!(exemption_gate([&clean]).is_empty());
+
+        for (status, reason) in [("skipped", None), ("unavailable", Some("PERMISSION_DENIED")), ("no-organization-id", None)] {
+            let r = report(json!({"status": status, "key": "k", "declared": 1, "reason": reason, "undeclared": null}));
+            let lines = exemption_gate([&r]);
+            assert!(lines.len() == 1 && lines[0].contains("not checked") && lines[0].contains(status), "{lines:?}");
+        }
+
+        // no key, no section: nothing to look at
+        assert!(exemption_gate([&json!({"rows": [], "exemption_bindings": null})]).is_empty());
     }
 
     #[test]
