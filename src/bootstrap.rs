@@ -1035,7 +1035,8 @@ pub(crate) fn next_steps(estate: &str, sa_email: Option<&str>, bucket: &str) -> 
          \x20      as you, in local mode: creates the groups, {sa} and its roles\n\
          \x20 3. satz migrate {estate} --mode cloud\n\
          \x20      moves the state into gs://{bucket}, makes every run impersonate {sa},\n\
-         \x20      and assigns it Groups Admin (a Workspace role, not an IAM grant) when your login may — else it says how\n\
+         \x20      and, unless it holds it already, assigns it Groups Admin (a Workspace role, not an IAM grant)\n\
+         \x20      when your login may — else it says how\n\
          \x20 4. satz whoami {estate}, then satz transpile {estate} --plan\n\
          \x20      must report {sa} impersonated by your login, and plan \"No changes\"\n"
     )

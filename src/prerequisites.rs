@@ -568,12 +568,12 @@ pub(crate) async fn test_live(probe: &Probe) -> PermissionCheck {
         }
     }
     if probe.needs.iter().any(|n| n.scope == Scope::Workspace) {
-        // Not an IAM role, so testIamPermissions cannot see it: the Admin SDK can, when
-        // the login carries its scope. Read-only here — `migrate --mode cloud` assigns it.
+        // Not an IAM role, so testIamPermissions cannot see it: the service account is
+        // asked as itself, the login only when it lacks the role. Read-only here —
+        // `migrate --mode cloud` assigns it.
         match &probe.service_account {
             Some(sa) => {
-                let customer = probe.customer.as_deref().unwrap_or("my_customer");
-                match crate::gcp::workspace::groups_admin(customer, sa, false).await {
+                match crate::gcp::workspace::groups_admin(probe.customer.as_deref(), sa, false).await {
                     crate::gcp::workspace::GroupsAdmin::Held | crate::gcp::workspace::GroupsAdmin::Assigned => check.tested += 1,
                     crate::gcp::workspace::GroupsAdmin::NotDone(why) => {
                         check.not_tested.push(format!("Groups Admin (Google Workspace, not an IAM role): {}", why))

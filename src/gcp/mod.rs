@@ -168,6 +168,21 @@ pub(crate) async fn scoped_base_token(scopes: &[&str]) -> Result<String, String>
         .map_err(|e| e.to_string())
 }
 
+/// A cloud-platform token AS `sa`, whatever identity the process is bound to — for the
+/// one question only that account can answer about itself: whether it holds Groups
+/// Admin. `--no-impersonate` pinned the run to the credential itself, so it refuses
+/// rather than answering for the wrong identity.
+pub(crate) async fn token_as(sa: &str) -> Result<String, String> {
+    if impersonation_disabled() {
+        return Err(format!("--no-impersonate pins this run to your own credential, so nothing runs as {}", sa));
+    }
+    let base = base_access_token().await?;
+    match plan_impersonation(adc_impersonation_target().as_deref(), Some(sa))? {
+        Exchange::UseBase => Ok(base),
+        Exchange::Mint(sa) => cached_impersonated_token(&base, &sa).await,
+    }
+}
+
 static BASE_CREDENTIALS: std::sync::Mutex<Option<google_cloud_auth::credentials::AccessTokenCredentials>> =
     std::sync::Mutex::new(None);
 
