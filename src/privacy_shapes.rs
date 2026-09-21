@@ -254,12 +254,14 @@ pub(crate) fn scan(text: &str) -> Vec<Hit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     /// The corpus files are committed with every private-looking value split by this
     /// marker, so the repository's own gate — which reads every tracked file — finds no
     /// shape in them. The test removes it before either implementation reads the text.
+    #[cfg(unix)]
     const JOIN: &str = "%%";
 
     fn corpus_dir() -> PathBuf {
