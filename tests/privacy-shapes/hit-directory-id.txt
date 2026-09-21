@@ -1,0 +1,3 @@
+// A Workspace directory id that is no example value, alone and beside an allowed one.
+customer_id = "C0%%zq8x4mn"
+// C0example and C0%%k3v9p2w on one line: the allowed one shields nothing

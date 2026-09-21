@@ -192,7 +192,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking. Writes the commented line for every pack the pack graph of the pristine source offers and the estate lacks — the whole menu into an estate that has none — and gates every active line of a gated pack written without `when`, binding its gate `true` |
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
-| `review-pack <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-pack) |
+| `review-pack <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-pack) |
 | `pack-graph` | `--presets-dir <DIR>` (default `presets_dir` from the config), `--check` — checks the library and writes `<presets_dir>/pack-graph.json`, the pack graph that ships with the presets: every pack with its gate, phase, block and adoption order from the map's `offers` entries, and the edges between packs — derived from their param references and `ask_when`, declared on the entries where the packs do not show them. Nothing is written while a check fails; `--check` fails when the file is behind the library. See [The pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
 | `doc-packs` | `--out-dir <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file, plus a grouped index; `--check` fails when the pages are behind, a claim names a control its catalog lacks, a pack header says nothing the index can print, or a pack version has no changelog row |
 
@@ -320,7 +320,10 @@ satz review-pack my-pack.satz --against C0example.satz --format text --out -
 It checks, in the order a pack fails them: it **parses**; it is **formatted** (`satz fmt
 <file>` is the whole fix); its **header** opens with a sentence saying what it is, which
 is what the pack index prints; it declares a **version** in-file and that version has a
-row in the library's `## Changelog`; it declares **no membership** — presets define
+row in the library's `## Changelog`; it carries **no private data** — no token shaped like
+an organisation, folder or project number, a directory id, a billing account, a GUID, a
+project id, an e-mail address, a domain or a repository URL that is not one of the
+documented example values (`docs/examples.md`); it declares **no membership** — presets define
 groups, humans grant membership; it runs **no legacy org-policy constraint beside its
 managed replacement** (`presets/managed-constraint-equivalents.txt`); every **resource
 type it emits has a row** in satz's prerequisite table, so the roles and the API it needs
@@ -341,10 +344,11 @@ reads those needs nothing new to show them, and the text report prints them as e
 command does ([How a finding is printed](#how-a-finding-is-printed)). `satz_review_pack` serves the same review over MCP,
 read-only. The command exits non-zero when the pack does not clear the bar.
 
-Not checked here: the **privacy shapes** — organisation and project ids, e-mail addresses,
-domains. A pack written against its author's own organisation is full of them, and they
-are what must become params before it can leave that machine;
-`scripts/check-names.sh` in a satz checkout is what rejects them today.
+Each private-looking token is an error of kind `private-shape` at its line, naming the
+token: a pack goes upstream with a param in its place, or with the documented example
+value. The rules and their allow-lists are the ones `scripts/check-names.sh` holds this
+repository to ([housekeeping](docs/housekeeping.md#check-namessh--the-privacy-gate)): what
+`review-pack` flags in a pack is what that gate flags in it.
 
 ### What an estate must declare (`update-prerequisites`)
 

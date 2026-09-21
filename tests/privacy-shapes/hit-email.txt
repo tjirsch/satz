@@ -1,0 +1,4 @@
+// E-mail addresses outside the reserved and vendor domains.
+first_admin = "jane.doe@realcorp%%.de"
+// ops@example.com, sec@othercorp%%.com - the allowed one shields nothing
+owner = "Platform.Team@realcorp%%.co%%.uk"

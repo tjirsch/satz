@@ -34,6 +34,7 @@ ships it).
 | `THIRD-PARTY-LICENSES.md` | `scripts/update-third-party-licenses.sh` | `Cargo.lock` moves — a dependency added, removed or updated | the `checks` job of `smoke.yml`: `--check`, which compares byte for byte |
 | `.github/workflows/release.yml` | `dist generate`, run with the cargo-dist version `dist-workspace.toml` pins | `dist-workspace.toml` changes; the `cargo-dist-version` pin moves | the `release-workflow` job of `smoke.yml`: `dist generate --check`, which prints the diff |
 | `assets/fonts/` — eight faces and the two licence texts | by hand, copied out of the `typst-assets` crate in the dependency tree | the `typst` pin moves | a missing face: `cargo test` (`each_family_carries_all_four_styles`); a face behind the crate: **nothing** |
+| `src/privacy_shapes.rs` (the gate's content rules, a second copy of `scripts/check-names.sh`'s) | by hand, in the same change as the script | a rule of the gate changes | `cargo test` (`the_gate_script_and_satz_flag_the_same_tokens_in_every_corpus_file`): both copies over `tests/privacy-shapes/`, token by token |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
@@ -300,7 +301,7 @@ second kind.
 | `check_prerequisites.py` | gate | hold the prerequisite table's roles (`src/prerequisites.rs`) against Google's predefined role definitions; needs ADC, not run by CI |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
-| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure) |
+| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure). Its allow-lists are `scripts/check-names-allow.txt`, which satz compiles in for `review-pack` |
 | `update-third-party-licenses.sh` | helper | regenerate `THIRD-PARTY-LICENSES.md`, the licence text of every crate compiled into satz, from `Cargo.lock` with `cargo about`; `--check` fails on a stale file or a licence outside the allow-list. CI runs `--check` in the `checks` job |
 | `check-grammar.sh` | gate | hold the tree-sitter grammar `editors/zed/extension.toml` pins against the parser: every keyword in `STATEMENT_KEYWORDS` must be a node the grammar declares, and every `.satz` under `presets/` and `tests/` must parse with no `ERROR` or `MISSING` node; CI runs it on every PR and every push to `main` (`smoke.yml`, job `grammar`) |
 
@@ -330,6 +331,24 @@ shape is refused. **It judges tokens, not lines** — an allowed address never
 shields a private one beside it — and an unusable commit range or a missing file
 is a failure, never a pass. It runs under bash 3.2 (`/bin/bash` on macOS) as well
 as bash 5.
+
+The allow-lists — the example values, the vendor hosts, the vendor-default GUIDs — are
+one file, `scripts/check-names-allow.txt`: one entry per line, `<list> <ERE>`, the entries
+of a list joined into one alternation. The script refuses to run without it or with a
+list that has no entry.
+
+The content rules exist twice. The script is the gate: it runs with no toolchain and on
+a tree that does not compile. `src/privacy_shapes.rs` is the same rules in satz, so
+`satz review-pack` refuses a pack that carries a private-looking token (kind
+`private-shape`) on any machine, with no checkout of this repository. Both read the one
+allow-list file, and a `cargo test` runs the script (`FILE` mode, `LC_ALL=C`) and satz
+over every file in `tests/privacy-shapes/` and fails on any token that one flags and the
+other does not, on a `clean-` file that flags anything, on a `hit-` file that flags
+nothing and on a rule no file exercises. A change to a rule changes both copies and adds
+the fixture that shows it. The fixtures carry every private-looking value split by `%%`,
+which the test removes before either reads them, so the gate finds nothing in the
+committed files. For that test, a content rule prints one `    <file>:<line>: <token>`
+row per token under its `✗ <rule>` title.
 
 What it **cannot** see is a NAME. A display name or a company in prose has no
 shape, and "Log Admins" and a real customer's project name are the same kind of

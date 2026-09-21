@@ -1,0 +1,4 @@
+// A customer's repository URL and checkout paths.
+source = "https://source.developers.%%google.com/p/x/r/estate"
+// cd ~/projects/%%organizations/estate
+// cd ~/projects/%%zeta/zeta-C0abc

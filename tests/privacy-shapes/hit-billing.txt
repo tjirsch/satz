@@ -1,0 +1,3 @@
+// A billing account id that is no example value.
+billing_account = "01A2B3-%%C4D5E6-F7A8B9"
+// beside the example one: 012345-6789AB-CDEF01 and 0F0F0F-%%1E1E1E-2D2D2D

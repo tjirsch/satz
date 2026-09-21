@@ -40,7 +40,8 @@ back as `"import-id"`. Pack headers that mention adoption mean that command.
 
 **Writing one:** `satz review-pack <file> --format text --out -` judges a pack
 against everything on this page — it parses, it is formatted, its header opens with a
-sentence the index can print, its version has a changelog row below, it declares no
+sentence the index can print, its version has a changelog row below, it carries no value
+shaped like private data that is not a documented example value, it declares no
 membership, it runs no legacy constraint beside its managed replacement, every resource
 type it emits has a row in satz's prerequisite table, and it compiles inside an estate —
 and says what adopting it would cost that estate in roles and APIs. It warns on a type
@@ -1516,6 +1517,22 @@ the API's Discovery Document and the provider schema. Overrides go into
 What a satz release refuses that the release before it compiled, and the edit that
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
+
+### v0.75.0
+
+**`satz review-pack` refuses a pack that holds a value shaped like private data.** A
+directory id, an organisation, folder or project number, a billing account, a GUID, a project
+id, an e-mail address or a domain that is not one of the documented example values
+(`docs/examples.md`) is an error of kind `private-shape`, one per value at its line, and the
+review no longer passes:
+
+```
+error    private-shape     central-logs.satz:7   123456789012
+```
+
+**The edit:** make each value a param the estate binds, or replace it with the documented
+example value. A pack that stays private — a `.local.satz` in the estate's own library — does
+not need to pass `review-pack`; the check is the bar for a pack that goes upstream.
 
 ### v0.74.0
 

@@ -1,0 +1,5 @@
+// Domains that are neither IANA-reserved nor a known vendor host.
+customer_domain = "realcorp%%.de"
+url = "https://portal.realcorp%%.com/login"
+// a subdomain of a reserved name: sub.%%example.com
+// capitals: RealCorp%%.de

@@ -1,0 +1,114 @@
+# The privacy gate's allow-lists: the values that are shaped like private data and
+# are not. ONE source, read by two readers: scripts/check-names.sh, and satz itself
+# (src/privacy_shapes.rs compiles this file in, and `satz review-pack` judges a pack
+# with it). A value added here is allowed by both at once.
+#
+# One entry per line: `<list> <extended regular expression>`. The entries of a list
+# are joined with `|` into one alternation, so an entry is an ERE fragment — escape
+# the dots. `#` starts a comment line; blank lines are skipped.
+#
+# What each list is (docs/examples.md is the register these values come from):
+#   dir      Google Workspace directory ids (C0…)
+#   num      11–13-digit organisation, project and folder numbers
+#   bill     billing account ids
+#   domain   domains and e-mail domains: the IANA-reserved names, and the vendors
+#            and standards bodies this project references
+#   guid     GUIDs: the four example tenants and the vendor defaults every customer
+#            shares (each listed with what it is in docs/examples.md)
+#   guid32   the same GUIDs without dashes (a workload identity pool id)
+#   project  project ids: the example customers' projects, the placeholders the docs
+#            use, and anything still carrying a param or a placeholder
+
+# example customers (docs/examples.md) + documented legacy placeholders
+dir C0example
+dir C0bolt002
+dir C0cedar03
+dir C0delta04
+dir C01234567
+dir C0abcd123
+
+num 123456789012
+num 222222222222
+num 333333333333
+num 444444444444
+num 100000000001
+num 200000000002
+num 300000000003
+num 400000000004
+num 123456789
+num 222222222
+num 333333333
+num 444444444
+
+bill 012345-6789AB-CDEF01
+bill 0B0B0B-0B0B0B-0B0B02
+bill 0C0C0C-0C0C0C-0C0C03
+bill 0D0D0D-0D0D0D-0D0D04
+bill 123456-123456-123456
+bill A12345-B67890-C12345
+
+# IANA-reserved names
+domain example\.(com|org|net)
+domain [a-z0-9.-]+\.(example|test|invalid|localhost)
+# vendors and standards bodies
+domain [a-z0-9.-]*googleapis\.com
+domain [a-z0-9.-]*gserviceaccount\.com
+domain [a-z0-9.-]*google\.com
+domain google\.cloud
+domain [a-z0-9.-]*googleusercontent\.com
+domain [a-z0-9.-]*gcr\.io
+domain [a-z0-9.-]*github\.com
+domain [a-z0-9.-]*githubusercontent\.com
+domain [a-z0-9.-]*github\.io
+domain [a-z0-9.-]*opentofu\.org
+domain [a-z0-9.-]*terraform\.io
+domain [a-z0-9.-]*hashicorp\.com
+domain [a-z0-9.-]*cisecurity\.org
+domain [a-z0-9.-]*apache\.org
+domain [a-z0-9.-]*w3\.org
+domain [a-z0-9.-]*contributor-covenant\.org
+domain crates\.io
+domain docs\.rs
+domain ctan\.org
+domain [a-z0-9.-]*dejavu-fonts\.github\.io
+domain [a-z0-9.-]*rust-lang\.org
+domain [a-z0-9.-]*rustup\.rs
+domain [a-z0-9.-]*anthropic\.com
+domain [a-z0-9.-]*claude\.ai
+domain [a-z0-9.-]*astral\.sh
+domain [a-z0-9.-]*prowler\.com
+domain [a-z0-9.-]*axo\.dev
+domain [a-z0-9.-]*axodotdev\.github\.io
+domain [a-z0-9.-]*windows\.net
+domain [a-z0-9.-]*microsoft\.com
+domain [a-z0-9.-]*microsoftonline\.com
+
+# the four example tenants
+guid 11111111-1111-1111-1111-111111111111
+guid 22222222-2222-2222-2222-222222222222
+guid 33333333-3333-3333-3333-333333333333
+guid 44444444-4444-4444-4444-444444444444
+guid 00000000-0000-0000-0000-000000000000
+# vendor defaults (docs/examples.md, "Vendor default identifiers")
+guid 33e01921-4d64-4f8c-a055-5bdaffd5e33d
+guid d17a7d74-7e73-4e7d-bd41-8d9525e86cab
+guid 6e81e733-9e7f-474a-85f0-385c097f7f52
+guid 2041288c-b303-4ca0-9076-9612db3beeb2
+
+guid32 11111111111111111111111111111111
+guid32 22222222222222222222222222222222
+guid32 33333333333333333333333333333333
+guid32 44444444444444444444444444444444
+guid32 00000000000000000000000000000000
+guid32 33e019214d644f8ca0555bdaffd5e33d
+guid32 d17a7d747e734e7dbd418d9525e86cab
+guid32 6e81e7339e7f474a85f0385c097f7f52
+guid32 2041288cb3034ca090769612db3beeb2
+
+project (acme|bolt|cedar|delta|corp)-[a-z0-9-]+
+project my-project
+project my-prj
+project p-one
+project example-[a-z0-9-]+
+project [A-Za-z_-]*PROJECT[_-]?ID[A-Za-z_-]*
+project [^"]*[{<][^"]*
