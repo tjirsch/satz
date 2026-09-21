@@ -1525,6 +1525,31 @@ upgrading: `satz transpile <estate>.satz` names one key per run.
 group's `member`, `manager`, `owner` and `email`. `depends_on` is not among them — satz
 derives the ordering a plan needs itself.
 
+**A `.yaml` estate or pack is refused, and satz no longer converts one.** The pre-Satz
+YAML dialect — `variables:` with `&anchor` / `*alias`, `!include`, `!include-if`,
+`!import-include`, `!format`, `!join`, `!expr`, resource keys written without the
+`google_` prefix — is read by no command. `satz import <file>.yaml` used to convert it;
+it now refuses it, as `transpile`, `adopt`, `migrate`, `run-actions` and `scan` already
+did. The `--kind`, `--gate` and `--fork` flags and the `yaml` value of `--from` are gone
+with it. Find what is affected: a `.yaml` file in your `yaml_dir`, or a `use "….yaml"`
+line in an estate.
+
+**The edit:** convert with the last release that reads the dialect, then come back to the
+current binary. The refusal prints this sequence:
+
+```bash
+cargo install --git https://github.com/tjirsch/satz --tag v0.71.0 --locked
+satz import old-estate.yaml --kind estate          # --kind pack for a pack
+cargo install --git https://github.com/tjirsch/satz --locked
+satz fmt old-estate.satz
+satz merge-presets --estate old-estate.satz
+```
+
+Convert the packs an estate `use`s before the estate itself, then `satz transpile` and a
+`tofu plan` that shows no destroy for what the estate already manages. `import-config.yaml`
+and the catalogs under `presets/catalogs/` are data files, not estates — they are YAML
+and stay YAML.
+
 ### v0.71.0
 
 **A `use` inside a folder's or a project's body is refused.** A folder's and a project's

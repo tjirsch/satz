@@ -838,16 +838,17 @@ grep -q 'id = "organizations/123456789012/policies/compute.skipDefaultNetworkCre
 "$satz" --config . import state.json --customer-shortname acme -o imported-state-named.satz > /dev/null 2>&1 || fail "import with --customer-shortname failed"
 grep -qE '^  customer_shortname += "acme"$' yaml/imported-state-named.satz || fail "--customer-shortname did not win over the inference"
 
-step "import, yaml shape (the legacy dialect converter): an estate on a YAML pack is refused, then converted"
-cp "$root/tests/corpus/yaml-estate/main.yaml" "$root/tests/corpus/yaml-estate/pack.yaml" tmp/
-if "$satz" --config . import tmp/main.yaml --kind estate >tmp/still.txt 2>&1; then
-  fail "an estate that still uses a YAML pack must be refused"
+step "a YAML estate is refused by name, with the release that reads it"
+printf 'variables:\n  a: &a 1\n' > tmp/old-estate.yaml
+if "$satz" --config . import tmp/old-estate.yaml >tmp/yaml-refusal.txt 2>&1; then
+  fail "satz import must refuse a YAML-dialect file"
 fi
-grep -q 'convert them first' tmp/still.txt || fail "refusal did not name the packs to convert:\n$(cat tmp/still.txt)"
-"$satz" --config . import tmp/pack.yaml --kind pack
-"$satz" --config . import tmp/main.yaml --kind estate | tee tmp/import-yaml.txt
-grep -q 'CONVERTED' tmp/import-yaml.txt || fail "yaml import did not report CONVERTED"
-"$satz" fmt --check tmp/pack.satz tmp/main.satz || fail "the converter wrote files that are not in the canonical layout"
+grep -q 'pre-Satz YAML dialect' tmp/yaml-refusal.txt || fail "the refusal did not name the dialect:\n$(cat tmp/yaml-refusal.txt)"
+grep -q -- '--tag v' tmp/yaml-refusal.txt || fail "the refusal did not name the release that converts:\n$(cat tmp/yaml-refusal.txt)"
+if "$satz" --config . transpile tmp/old-estate.yaml >tmp/yaml-transpile.txt 2>&1; then
+  fail "transpile must refuse a YAML-dialect estate"
+fi
+grep -q 'pre-Satz YAML dialect' tmp/yaml-transpile.txt || fail "transpile's refusal did not name the dialect:\n$(cat tmp/yaml-transpile.txt)"
 
 step "import, hcl shape: literal resources become Satz, positional ones wrap; --wrap-all wraps every block"
 "$satz" --config . import tf --wrap-all -o imported-hcl.satz --verbose | tee tmp/import-hcl.txt

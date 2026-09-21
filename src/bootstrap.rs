@@ -562,21 +562,21 @@ pub async fn bootstrap(
         })
     };
 
-    let sn = lookup_str(&["customer-shortname", "shortname"])
-        .ok_or_else(|| format!("Missing 'customer-shortname' in {}", config_file.display()))?;
-    let bid = lookup_str(&["billing-account-infra", "billing_id"])
-        .ok_or_else(|| format!("Missing 'billing-account-infra' in {}", config_file.display()))?;
+    let sn = lookup_str(&["customer_shortname"])
+        .ok_or_else(|| format!("Missing `customer_shortname` in {}", config_file.display()))?;
+    let bid = lookup_str(&["billing_account_infra"])
+        .ok_or_else(|| format!("Missing `billing_account_infra` in {}", config_file.display()))?;
     // the default `presets/estate-core.satz` declares, taken — and said — for an estate
     // that binds none and does not use the pack
-    let r = lookup_str(&["default-region", "region"]).unwrap_or_else(|| {
+    let r = lookup_str(&["default_region"]).unwrap_or_else(|| {
         println!("default_region not set — using {}, the documented default", DEFAULT_REGION);
         DEFAULT_REGION.to_string()
     });
     // Empty = greenfield territory: allowed only with --greenfield, checked
     // below before any credentials are needed.
-    let oid_val = lookup_str(&["customer-organization-id"]).unwrap_or_default();
-    let final_proj_id = lookup_str(&["infra-project-name"]);
-    let final_bucket = lookup_str(&["infra-bucket-name"]);
+    let oid_val = lookup_str(&["customer_organization_id"]).unwrap_or_default();
+    let final_proj_id = lookup_str(&["infra_project_name"]);
+    let final_bucket = lookup_str(&["infra_bucket_name"]);
 
     let org_known = !oid_val.trim().is_empty();
     let parent = if org_known {
@@ -604,7 +604,7 @@ pub async fn bootstrap(
     let bucket_name = final_bucket.or_else(|| final_proj_id.clone());
     // the address the provider impersonates once the estate is in cloud mode — the
     // emitter's own derivation, so what bootstrap prints is what every later run acts as
-    let sa_email = lookup_str(&["svc-iac-account"])
+    let sa_email = lookup_str(&["svc_iac_account"])
         .filter(|a| !a.trim().is_empty())
         .zip(final_proj_id.as_deref())
         .map(|(a, p)| format!("{}@{}.iam.gserviceaccount.com", a, p));
@@ -667,7 +667,7 @@ pub async fn bootstrap(
     // Every call below is made as the ADC principal, so running as anyone else either
     // fails on a missing permission or, worse, succeeds against the wrong identity.
     // Check before touching anything.
-    let expected_admin = match (lookup_str(&["first-admin"]), lookup_str(&["customer-domain"])) {
+    let expected_admin = match (lookup_str(&["first_admin"]), lookup_str(&["customer_domain"])) {
         (Some(local), Some(domain)) if !local.is_empty() && !domain.is_empty() => {
             // `first-admin` is normally the local part, but accept a full address too.
             Some(if local.contains('@') { local } else { format!("{}@{}", local, domain) })
@@ -723,7 +723,7 @@ pub async fn bootstrap(
             )
             .into());
         }
-        let customer_id = lookup_str(&["customer-id"]);
+        let customer_id = lookup_str(&["customer_id"]);
         // The org-scope pre-flight needs the organization, which the parentless
         // create below brings into being; the billing half does not, so it runs
         // before anything exists.
@@ -736,12 +736,12 @@ pub async fn bootstrap(
     // 2. Pre-flight: the REQUIRED permissions on the scope root and the
     // billing account, tested before anything is created — and self-granted
     // where the caller holds setIamPolicy there. Read-only on a dry run.
-    let infra_folder_name = lookup_str(&["infra-folder-name"]).filter(|s| !s.is_empty());
+    let infra_folder_name = lookup_str(&["infra_folder_name"]).filter(|s| !s.is_empty());
     let infra_folder_name = infra_folder_name.as_deref();
     let principal = resolved_identity.as_ref().map(|(email, _)| email.as_str());
     // the estate binds the directory customer id as well: the pre-flight cross-checks
     // the two, so an organisation that is not this customer's is named as that
-    let estate_customer_id = lookup_str(&["customer-id"]);
+    let estate_customer_id = lookup_str(&["customer_id"]);
     crate::preflight::run(
         &client,
         &token,

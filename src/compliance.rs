@@ -20,7 +20,7 @@
 //! this module through the fragment pipeline's front end, produced by the same
 //! compile that produced the `main.tf` whose addresses supply the witnesses. One
 //! read, so claims and witnesses can never disagree about which estate they
-//! describe. There is no sidecar route: a YAML-dialect estate is rejected here.
+//! describe. There is no sidecar route.
 
 // schemars comes through rmcp: one version in the tree, no second dependency to pin
 use rmcp::schemars;

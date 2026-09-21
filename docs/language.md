@@ -253,7 +253,7 @@ are claims and 60 are questions.
 
 **What changes** for common tasks:
 
-| to… | HCL / the YAML dialect | Satz |
+| to… | HCL | Satz |
 |---|---|---|
 | decline one control a pack provides | fork the pack | one `suppress` line in the estate |
 | override one preset value | copy-edit, or define the anchor above the include in order | bind the param, any order |
@@ -2013,7 +2013,7 @@ these properties was verified at this time".
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `hcl-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir` |
 | `run-actions <estate>.satz [--check\|--execute] [--only n,…] [--phase p]` | Satz | run the estate's declared `action`s (§6.13). Prints and stops by default; `--check` runs each action's own dry-run form, `--execute` the form that writes. Global `--no-actions`, `--no-pack-actions` |
-| `import [<source>] [--all] [--only t,…] [--exclude t,…] [--import-config f] [-o <file>] [--into <estate>] [--wrap-all] [--kind estate\|pack] [--gate <estate>] [--fork]` | — | create an estate from what exists (§12): a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, a directory of `.tf`, or a legacy `.yaml` file; `--from` forces the shape; `--into` imports only what the estate does not declare, as packs it `use`s; checked by `transpile` + `tofu plan` |
+| `import [<source>] [--all] [--only t,…] [--exclude t,…] [--import-config f] [-o <file>] [--into <estate>] [--wrap-all]` | — | create an estate from what exists (§12): a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, or a directory of `.tf`; `--from` forces the shape; `--into` imports only what the estate does not declare, as packs it `use`s; checked by `transpile` + `tofu plan` |
 | `triage <framework> <estate>.satz --prowler f --format markdown\|pdf\|json --out f` | Evidence | every Prowler FAIL sorted into buckets A–E (a pack covers it / Satz declares it / declared exception / unmanaged / manual) — the remediation plan's skeleton; `--fix` adds the estate delta the buckets imply to the report (markdown only) |
 | `scan [<estate>.satz]` | HCL | Checkov over `hcl_dir`, findings pointed at the Satz line that declared the resource; failed checks exit 1 |
 | `review-pack <pack>.satz --format text\|json --out f [--against <estate>.satz]` | Satz | one pack against the library's bar — parses, formatted, a header sentence, a version with its changelog row, no membership, no legacy constraint beside its managed replacement, a prerequisite row for every type it emits, and it compiles. A pack is a fragment, so it is folded into a synthesised estate (the documented example params, the pack's own defaults) unless `--against` names a real one |
@@ -2050,7 +2050,7 @@ params: `a` is declared twice — the second binding would be ignored
 a second `estate` header (f) — the file is already `e`
 use ... as: given twice
 `lifecycle_rule` is given twice in this block (first at line 12) — a repeated key would silently last-win; write a list (`lifecycle_rule = [ … ]`) or remove one
-block `folder`: unknown resource type. Satz names Terraform types in full — write `google_folder`. (Leaving the provider prefix off is a YAML-dialect shorthand; it is not Satz.)
+block `folder`: unknown resource type. Satz names Terraform types in full — write `google_folder`.
 `x` is an attribute at the top level of the file — attributes live inside a resource block
 pack header: `content` is not a header word — the header is `pack <name> [version "…"]`; delete `content`
 `hcl` is a Satz statement: it is written at the top level of a file, never inside a block — move it out
@@ -2058,7 +2058,7 @@ use "presets/estate-core.satz" inside `google_essential_contacts_contact { … }
 use "x.satz": x.satz:3 is a `suppress`, which is read from the estate alone — in a used file it is never applied. Write it in the estate, or take the resource out of the used file
 use … when want_cs: unknown param `want_cs` — a `when` on a param nobody declares would silently drop the pack
 use … as google_cloud_identity_group inside `google_org_policy_policy { … }`: the pack is this map's content; move the `use` to the folder or top level to re-key it
-use "old-pack.yaml": packs are Satz — convert it first: `satz import old-pack.yaml --kind pack`
+use "old-pack.yaml": a pack is Satz — satz v0.71.0 is the last release that converts the pre-Satz YAML dialect
 use "x.satz": file not found
 cyclic `use`: main.satz → a.satz → b.satz → a.satz
 `terraform` is declared twice — one block per estate
@@ -2071,7 +2071,7 @@ suppress … role on google_organization_iam_member "group:x@example.com": the a
 <type>.<label>: 2 disagreeing definitions — a.satz:12, b.satz:40   (under `composition conflicts`, at each site)
 `deployment_mode = "boot"`: the mode is "local" (the state in a file) or "cloud" (the state in the gcs bucket), and no backend is emitted for anything else
 `deployment_mode = "cloud"` without a value for `svc_iac_account`: cloud mode runs every live call and `tofu` as `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`, so the estate binds both — bind it in `params {}`, or keep `deployment_mode = "local"`
-transpile: `estate.yaml` is the legacy YAML dialect — convert it: `satz import estate.yaml --kind estate`
+transpile: estate.yaml is written in the pre-Satz YAML dialect, which satz does not read. satz v0.71.0 is the last release that converts it
 ```
 
 The same address declared twice in one file with the SAME body is idempotent;
@@ -2134,7 +2134,6 @@ that default; the first apply writes it and nothing about the resource changes.
 | `import organizations/<n>` \| `folders/<n>` \| `projects/<id>` (or bare `import` with `root:` in `import-config.yaml`) | brownfield: nothing is in Terraform yet | one Cloud Asset sweep of the scope; every enabled type; folders and projects nested, folders labelled by display name (the number appended only where two share one), grants collapsed to member → roles with one line per edge (a bucket's or a service account's pinned to its scope in the map, one map per scope), services into `project_service` with one line per service, an org policy as its bare constraint with `spec { … }`, a single nested block as a block, the organization referenced as `customer_organization_id` wherever its number was written; what the platform owns — the built-in `_Default`/`_Required` sinks, service agents' grants, the legacy bucket grants, Google-created service accounts, a project that is no longer ACTIVE — skipped and listed under the `skip:` pattern of its import-config row that matched; the providers' quota project is the first project (by id) that enables the Org Policy and Service Usage APIs, and the report names it, or says that none does; the day-0 params (`presets/estate-core.satz`) bound from what the ADC states (`customer_id`, `customer_domain`, `first_admin`, a single open billing account) and what the sweep implies — the service account granted organizationAdmin at the organization gives `svc_iac_account` and `infra_project_name`, that project gives `infra_folder_name`, `infra_bucket_name` (its one versioned bucket) and `billing_account_infra`, the members give `svc_iac_users_group`, the regional resources give `default_region`, the leading token of the project and bucket names gives `customer_shortname` (`--customer-shortname` wins) — an inferred value carrying `// inferred:` with its rule, a value nothing states left out and reported (`customer_longname` always), and every bound literal referenced wherever the body repeats it (`"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"`); import ids = the row's `import_id` template rendered from the resource (`{project} {name}` for a log metric), else the asset path with the project named by ID; required attributes the asset lacks derived (`parent`, `org_id`/`folder`/`project`, `location`/`region` from the asset name, a `*_id` from its last segment — `secret_id`, `repository_id` —, a service account's `account_id`); API vocabulary the provider spells differently is renamed per the row's `map:` (a firewall's `allowed[].IPProtocol` → `allow { protocol }`), and self-link `region`/`zone` and full-name `name` values are shortened to what the provider takes | only rows with `import: true` AND an `asset_type` are swept (21 enabled by default — the landing-zone types plus VPC network/subnet/firewall, Pub/Sub topic, Secret Manager secret, log metric, Artifact Registry repository, each verified live to plan as import-only; `--all` switches on every row with an `asset_type`; `--only` narrows, never widens; `--exclude` leaves types out; an enabled row with `asset_type: TODO` is an error); IAM conditions are not carried; no Cloud Identity groups (not in Cloud Asset — state shape or `adopt`); a resource whose required attribute cannot be derived is skipped and named; one fetch error aborts the run; a page is 1000 assets; a grant one principal holds on two folders or two projects is refused (the map form emits one address per member and role) unless `--on-collision counter` writes the second and later as labelled resources with a running number |
 | `--into <estate>` | the estate exists; take over what it does not declare yet | packs `imported-<scope>[-<container>].satz` plus `use` lines inserted at the declaring folder/project | live shape only; if ANY declared resource fails to resolve live (error, ambiguity), nothing is written; the packs are regenerated wholesale on every run — hand edits go into the estate, never into an `imported-*` pack; a `use` is inserted automatically only where the container is declared in the estate file itself |
 | `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out`) | `variable`/`locals` promoted to params; schema-known, identifier-labelled `resource` blocks whose values are literals, params or `${…}` references as Satz resources placed under the folder/project they reference; a `count = length(<promoted list>)` whose `count.index` indexes that list expanded into one resource per entry, labelled after the entry; everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block | `terraform`/`provider` blocks are always dropped (the emitter writes them), `--wrap-all` included — and `--wrap-all` promotes nothing, since a param is a translation; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit; no import ids (`adopt`); a `${…}` reference is opaque to the compliance plane |
-| `import <file>.yaml --kind estate\|pack [--gate <estate>] [--fork]` | the YAML dialect, for migration | `<stem>.satz` beside the source, proven by compiling it (`CONVERTED … N resources emitted`) | refuses while a `use` still points at a YAML pack (each named — convert packs first); a result that does not compile is deleted and reported; `--fork` writes `<stem>.local.satz` (packs only); a pack without `--gate` is only parsed; interior comments are not carried; a `!include` in a `!format` value is refused (inline it) |
 
 ### 12.1 From existing Terraform (`./hcl/`)
 
@@ -2167,91 +2166,30 @@ opaque to the compliance plane: a claim cannot reason about it.
 | a `variable` or `locals` whose value is not literal | wrapped, and the names it declares stay Terraform variables |
 | `terraform`, `provider` | dropped (one note each), also under `--wrap-all`. A `provider` block's default `project` is carried as **placement**: a resource that named no project of its own lands in that project when the default resolves to one of the imported projects, and the dropped row says so |
 
-### 12.2 From the YAML dialect
+### 12.2 The pre-Satz YAML dialect
 
-A YAML dialect with custom tags is read only by `satz import <file>.yaml`,
-which converts it to Satz: `transpile` and every other command take `.satz` and
-refuse a `.yaml` estate with a pointer to the converter. (Brownfield estates never
-need the dialect: the state and live shapes above write a Satz estate directly,
-through the same printer.)
-
-**How the dialect maps to Satz:**
-
-| YAML dialect | Satz |
-|---|---|
-| `org_policy_policy:` (implicit `google_`) | `google_org_policy_policy { … }` — the schema's type name |
-| `&anchor` / `*anchor` | params are declarations; a bare identifier references one |
-| `!format ["organizations/{}", *customer-organization-id]` | `"organizations/{customer_organization_id}"` |
-| identity-`!format` aliasing | `a = b` |
-| override an anchor *above* the `!include`, in textual order | bind the param; the compiler sorts by dependency |
-| `!include x.yaml` / `!include-if anchor x.yaml` | `use "x.satz"` / `use "x.satz" when param` |
-| `!expr google_x.y.z` | `"${{google_x.y.z}}"` — doubled braces |
-| `<pack>.claims.yaml` sidecar | `claim … { … }` in the pack |
-| `kebab-case` anchors | `snake_case` identifiers (the emitter maps `logsink_bucket_name` ↔ `logsink-bucket-name`) |
-
-Side by side, one org policy:
-
-```yaml
-iam-managed-disableServiceAccountKeyCreation:
-  name: iam.managed.disableServiceAccountKeyCreation
-  parent: !format ["organizations/{}", *customer-organization-id]
-  spec:
-    rules:
-      - enforce: "TRUE"
-```
+satz reads no YAML estate or pack. `transpile`, `import` and every other command
+take `.satz` and refuse a `.yaml` file by name, pointing at satz v0.71.0 — the
+last release that converts it:
 
 ```
-"iam-managed-disableServiceAccountKeyCreation" {
-  name   = "iam.managed.disableServiceAccountKeyCreation"
-  parent = "organizations/{customer_organization_id}"
-  spec {
-    rules = [ { enforce = "TRUE" } ]
-  }
-}
+transpile: estate.yaml is written in the pre-Satz YAML dialect, which satz does not read.
+satz v0.71.0 is the last release that converts it:
+
+    cargo install --git https://github.com/tjirsch/satz --tag v0.71.0 --locked
+    satz import estate.yaml --kind estate            # --kind pack for a pack
+    cargo install --git https://github.com/tjirsch/satz --locked
+    satz fmt estate.satz
+    satz merge-presets --estate estate.satz
 ```
 
-**A list instead of a mapping.** The dialect can also write org policies as a
-*sequence* whose entries carry their identity in `constraint:`, with no address
-at all:
+`satz fmt` puts the conversion in the canonical layout and `merge-presets` brings
+it up to the current preset library. The conversion may need edits; `satz
+transpile` and a `tofu plan` that shows no destroy for what the estate already
+manages is the check.
 
-```yaml
-org_policy_policy:
-  - constraint: iam.managed.disableServiceAccountKeyCreation
-    parent: !format ["organizations/{}", *customer-organization-id]
-    spec:
-      rules:
-        - enforce: "TRUE"
-  - constraint: gcp.resourceLocations
-    type: list          # a dialect-only marker
-    parent: !format ["organizations/{}", *customer-organization-id]
-    spec: { rules: [ { values: { allowedValues: ["in:eu-locations"] } } ] }
-```
+`presets/import-config.yaml` and the catalogs under `presets/catalogs/` are data
+files, not estates. They are YAML and stay YAML.
 
-Satz addresses every resource, so the converter supplies the address the same
-way the preset library spells it — the constraint with dots turned into dashes,
-`iam-managed-disableServiceAccountKeyCreation` — and the constraint becomes the
-resource's `name`. The dialect-only `type:` marker is dropped: the provider has
-no such attribute, and carrying it over would produce an estate the schema
-rejects.
-The same list may appear nested inside a project, and converts the same way.
-A duplicate constraint in one list is refused, since the two entries would land
-on one address.
-
-**How a conversion is checked.** `satz import <file>.yaml` converts a file and
-compiles the result through the fragment pipeline — the pipeline that will
-actually read it — and prints the emitted resource set (`CONVERTED: … N
-resources emitted`). An estate is gated on itself; a pack is gated on the
-`.satz` estate you pass with `--gate`, or only parsed when there is none. A
-result that does not compile is deleted and reported; a conversion that cannot
-be checked in context says `NEEDS-REVIEW`; the final check is `satz transpile`
-and a `tofu plan` that shows no destroy for what the YAML estate managed. An
-estate that used the dialect's `!import-include` converts to a plain `use`
-with a `NEEDS ADOPTION` note: run `satz adopt` afterwards.
-
-**Packs first.** An estate whose `use` still points at `x.yaml` is refused by
-the converter and by the compiler alike (`use "x.yaml": packs are Satz —
-convert it first: satz import x.yaml --kind pack`).
-
-**The dialect is parsed only to be migrated.** YAML is never transpiled or
-generated, and no other command reads it. A migrated estate may need manual
-edits.
+A brownfield estate never needs the dialect: the state, live and HCL shapes above
+write Satz directly, through the same printer.

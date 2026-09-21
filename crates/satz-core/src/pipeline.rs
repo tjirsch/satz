@@ -1,11 +1,9 @@
 //! Stage B pipeline: Satz sources → per-file `Fragment`s → `algebra::fold` →
 //! emission from `Folded`. (docs/stage-b.md is the plan of record.)
 //!
-//! The front-end is deliberately Satz-first: the YAML dialect composes textually
-//! (packs reference their includer's anchors and cannot parse standalone), so
-//! per-file fragments are only possible where parameters have real scoping —
-//! which Satz has. Params resolve here, in the front-end; the fold never sees a
-//! parameter, only canonical bodies.
+//! Per-file fragments need parameters with real scoping, which Satz has: a pack
+//! parses standalone. Params resolve here, in the front-end; the fold never sees
+//! a parameter, only canonical bodies.
 //!
 //! v0 (increment I0) covers: param resolution (pack defaults, user of the pack
 //! wins), `use` recursion (one Fragment per source file), the `folder` tree,
@@ -210,8 +208,8 @@ pub struct FrontEnd {
     /// Estate-level config blocks (terraform, providers), resolved.
     pub config: BTreeMap<String, serde_yaml::Value>,
     /// Union of every included file's declared params (resolved values), first
-    /// definition wins — the estate declares before its packs. This mirrors the
-    /// YAML dialect's merged `variables:` blocks and feeds tfvars emission.
+    /// definition wins — the estate declares before its packs. Feeds tfvars
+    /// emission.
     pub tfvars: Env,
     /// Resolved estate-level suppressions (subtractive override channel).
     pub suppressions: Vec<ResolvedSuppression>,
@@ -957,7 +955,7 @@ fn collect_params(
                     }
                 }
                 if path.ends_with(".yaml") || path.ends_with(".yml") {
-                    return perr(file_name, *line, format!("use \"{}\": packs are Satz — convert it first: `satz import {} --kind pack`", path, path));
+                    return perr(file_name, *line, format!("use \"{}\": a pack is Satz — satz {} is the last release that converts the pre-Satz YAML dialect", path, crate::LAST_YAML_CONVERTING_RELEASE));
                 }
                 let src = (load)(path)
                     .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
@@ -990,14 +988,13 @@ pub fn normalized_tf_type(key: &str) -> String {
 /// The message for a resource key the type table does not know.
 ///
 /// Satz names Terraform types in full. When the `google_`-prefixed form WOULD
-/// resolve, the key is almost certainly the YAML dialect's shorthand, so say so
-/// and give the exact replacement instead of just refusing.
+/// resolve, the key is the provider prefix left off, so give the exact
+/// replacement instead of just refusing.
 fn unknown_type_msg(types: &dyn TypeResolver, key: &str, what: &str) -> String {
     let full = normalized_tf_type(key);
     if full != key && types.resolve(&full).is_some() {
         format!(
-            "{} `{}`: unknown resource type. Satz names Terraform types in full — write `{}`. \
-             (Leaving the provider prefix off is a YAML-dialect shorthand; it is not Satz.)",
+            "{} `{}`: unknown resource type. Satz names Terraform types in full — write `{}`.",
             what, key, full
         )
     } else {
@@ -1105,11 +1102,9 @@ fn truthy(v: Option<&serde_yaml::Value>) -> bool {
 struct Walk<'a> {
     types: &'a dyn TypeResolver,
     load: &'a dyn Fn(&str) -> Result<String, String>,
-    /// The accumulated parameter namespace. The YAML dialect's variables merge
-    /// into ONE document-ordered namespace (first definition wins, packs see
-    /// every earlier file's params) — pipeline B mirrors that exactly. True
-    /// lexical pack scoping is a deliberate future semantics change, not a
-    /// parity item.
+    /// The accumulated parameter namespace: ONE document-ordered namespace, first
+    /// definition wins, and a pack sees every earlier file's params. True lexical
+    /// pack scoping is a deliberate future semantics change.
     genv: Env,
     /// Estate-level config blocks (terraform, providers) — resolved values,
     /// consumed by the providers/variables emitters.
@@ -1281,7 +1276,7 @@ impl Walk<'_> {
     /// The caller pops the chain after descending.
     fn enter_use(&mut self, use_path: &str, file_name: &str, line: usize) -> Result<satz::File, PipelineError> {
         if use_path.ends_with(".yaml") || use_path.ends_with(".yml") {
-            return perr(file_name, line, format!("use \"{}\": packs are Satz — convert it first: `satz import {} --kind pack`", use_path, use_path));
+            return perr(file_name, line, format!("use \"{}\": a pack is Satz — satz {} is the last release that converts the pre-Satz YAML dialect", use_path, crate::LAST_YAML_CONVERTING_RELEASE));
         }
         if self.use_chain.iter().any(|f| f == use_path) {
             return perr(
@@ -1378,9 +1373,8 @@ impl Walk<'_> {
                                 }
                                 self.config.insert(k, resolved);
                             } else {
-                                // Previously ignored. Silently dropping a block the
-                                // author wrote means a typo — or a dialect shorthand —
-                                // deletes infrastructure with no diagnostic at all.
+                                // Silently dropping a block the author wrote means a
+                                // typo deletes infrastructure with no diagnostic at all.
                                 return perr(file_name, *line, unknown_type_msg(self.types, &k, "block"));
                             }
                         }
@@ -1871,9 +1865,7 @@ fn insert_grant(
     for r in list {
         let (role, condition, import_id) = match r {
             serde_yaml::Value::String(s) => (s, String::new(), String::new()),
-            // Conditional binding: `{ role = "…", condition = { … } }`. The YAML
-            // dialect's null-valued role key is rewritten to this form by the
-            // converter, so it is the only spelling the fold reads.
+            // Conditional binding: `{ role = "…", condition = { … } }`.
             // The condition is part of the binding's IDENTITY — the emitted label
             // hashes it — so it travels with the edge through the fold.
             serde_yaml::Value::Mapping(m) => {
@@ -2561,9 +2553,9 @@ google_org_policy_policy {
 
 #[cfg(test)]
 mod full_type_name_tests {
-    //! Satz names Terraform types in full. The YAML dialect's implicit `google_`
-    //! prefix is not Satz, and — this is the part with teeth — a key that fails
-    //! to resolve must be REJECTED, not quietly dropped.
+    //! Satz names Terraform types in full. A key with the provider prefix left
+    //! off is not Satz, and — this is the part with teeth — a key that fails to
+    //! resolve must be REJECTED, not quietly dropped.
     use super::*;
 
     struct Google;
@@ -2946,10 +2938,11 @@ mod review_2026_08_29_tests {
     }
 
     #[test]
-    fn using_a_yaml_pack_names_the_converter() {
+    fn using_a_yaml_pack_names_the_release_that_reads_it() {
         let src = format!("{}use \"old-pack.yaml\"\n", HEAD);
         let err = compile_with(&src, &[("old-pack.yaml", "variables:\n  a: 1\n")]).must_fail("a YAML pack must not be parsed as Satz");
-        assert!(err.msg.contains("satz import old-pack.yaml --kind pack"), "{}", err.msg);
+        assert!(err.msg.contains("old-pack.yaml"), "{}", err.msg);
+        assert!(err.msg.contains(crate::LAST_YAML_CONVERTING_RELEASE), "{}", err.msg);
     }
 
     #[test]
