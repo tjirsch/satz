@@ -3,13 +3,11 @@
 //! "Satz": German for both *sentence* and *theorem* — a file is simultaneously a
 //! statement of intent and a provable claim.
 //!
-//! v0 compiles Satz to the existing satz YAML dialect, deterministically, and the
-//! proven pipeline does the rest. That is a deliberate strangler-fig move: authoring
-//! drops the YAML layer now; the runtime drops it later when the typed IR replaces
-//! the dialect underneath, with no surface change. What already dissolves at the
-//! surface: anchors (params are lexically scoped declarations), the identity-!format
-//! wrapper (aliasing is `a = b`), `!format` (string interpolation `"{param}"`),
-//! textual override ordering (the emitter places params before uses).
+//! A file parses to a `File` of params, `use`s, claims, questions and typed
+//! resource bodies; the pipeline resolves it into per-file fragments. A param is
+//! a lexically scoped declaration, aliasing is `a = b`, a string interpolates
+//! with `"{param}"`, and a binding holds wherever it is written — the emitter
+//! places params before the uses that read them.
 //!
 //! # Grammar (v0, line-oriented, brace-blocked)
 //!
@@ -36,11 +34,8 @@
 //! comment     := "//" to end of line | "#" to end of line
 //! ```
 //!
-//! Identifiers use snake_case; the emitter maps param identifiers to the YAML
-//! dialect's kebab-case anchors (`logsink_bucket_name` <-> `logsink-bucket-name`),
-//! which keeps migrated names identical to the original YAML packs' anchors. Resource
-//! attribute names are 1:1 the Terraform provider names — the registry docs are the
-//! docs.
+//! Identifiers use snake_case. Resource attribute names are 1:1 the Terraform
+//! provider names — the registry docs are the docs.
 
 
 // ---------------------------------------------------------------------------

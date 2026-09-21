@@ -608,14 +608,14 @@ fn resolve_org_and_vars(
     let org_id = if let Some(o) = org_id_override {
         o.to_string()
     } else {
-        vars.get("customer-organization-id")
+        vars.get("customer_organization_id")
             .and_then(yaml_scalar_to_string)
-            .ok_or("Missing 'customer-organization-id' (pass --customer-organization-id or set it in the config variables)")?
+            .ok_or("Missing `customer_organization_id` (pass --customer-organization-id or set it in the config variables)")?
     };
 
     // Let an explicit override flow through to preset resolution too.
     vars.insert(
-        "customer-organization-id".to_string(),
+        "customer_organization_id".to_string(),
         serde_yaml::Value::String(org_id.clone()),
     );
 
@@ -1153,7 +1153,7 @@ fn json_to_yaml(v: &Value) -> serde_yaml::Value {
 
 /// Default output base name `<Cxxxx>` from `customer-id` var, falling back to org id.
 fn output_basename(parent: &str, vars: &HashMap<String, serde_yaml::Value>) -> String {
-    vars.get("customer-id")
+    vars.get("customer_id")
         .and_then(yaml_scalar_to_string)
         .unwrap_or_else(|| parent.replace('/', "-"))
 }

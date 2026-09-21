@@ -460,14 +460,14 @@ pub(crate) enum Commands {
     ///
     /// The source decides the shape: a state file (`state.json`, `*.tfstate`,
     /// `-` for `tofu show -json` on stdin), a live scope
-    /// (`organizations/<n>`, `folders/<n>`, `projects/<id>`), or a legacy
-    /// YAML-dialect file. With no source the live root comes from the import
-    /// config. Every import ends with `satz transpile` and `tofu plan` — the
-    /// plan is the check
+    /// (`organizations/<n>`, `folders/<n>`, `projects/<id>`), or a directory of
+    /// `.tf` files. With no source the live root comes from the import config.
+    /// Every import ends with `satz transpile` and `tofu plan` — the plan is the
+    /// check
     Import {
         /// What to import from (see above); omit to use the import config's `root`
         source: Option<String>,
-        /// Force the shape when the source does not tell: state | org | yaml | hcl
+        /// Force the shape when the source does not tell: state | org | hcl
         #[arg(long)]
         from: Option<String>,
         /// Resource types to import, comma-separated, `*` wildcards allowed
@@ -482,22 +482,13 @@ pub(crate) enum Commands {
         /// (overrides `exclude` in the import config)
         #[arg(long, value_delimiter = ',')]
         exclude: Vec<String>,
-        /// Output file inside yaml_dir (state, live and hcl shapes; default discovered.satz,
-        /// imported-hcl.satz for hcl — the yaml shape writes beside its source)
+        /// Output file inside yaml_dir (default discovered.satz,
+        /// imported-hcl.satz for hcl)
         #[arg(long, short)]
         output: Option<PathBuf>,
         /// Import configuration (default: <presets_dir>/import-config.yaml)
         #[arg(long)]
         import_config: Option<PathBuf>,
-        /// yaml shape: estate used to compile a converted pack in context
-        #[arg(long)]
-        gate: Option<PathBuf>,
-        /// yaml shape: declared kind of the converted file
-        #[arg(long, default_value = "pack", value_parser = ["pack", "estate"])]
-        kind: String,
-        /// yaml shape: write the conversion as a `<stem>.local.satz` fork
-        #[arg(long)]
-        fork: bool,
         /// live shape: import only what this estate does not already declare
         /// (matched by live id), as packs the estate `use`s
         #[arg(long)]
@@ -1326,10 +1317,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     config_dir.join(sd).to_string_lossy().to_string()
                 };
             }
-            // Satz only (M5, 2026-08-29): the legacy walk is gone. A `.yaml`
-            // estate is migrated, never transpiled — `reject_yaml_estate` says
-            // so and names the converter.
-            reject_yaml_estate(&input_path, "transpile")?;
+            reject_yaml_dialect(&input_path, "transpile")?;
             if format == OutFormat::Json {
                 if print_variables || plan || apply || scan {
                     return Err("--format json is the compile as data; --print-variables, --plan, --apply and --scan print their own output — run them without it".into());
@@ -1795,7 +1783,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, all, exclude, output, import_config, gate, kind, fork, into, wrap_all, on_collision, customer_shortname } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, into, wrap_all, on_collision, customer_shortname } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1803,18 +1791,8 @@ Thumbs.db
             };
             match shape.as_str() {
                 "yaml" => {
-                    let src = source.ok_or("the yaml shape needs a file to convert")?;
-                    // the conversion lands beside its source (or as its `.local` fork):
-                    // an --output it would ignore is refused rather than dropped
-                    if let Some(o) = &output {
-                        return Err(format!(
-                            "--output {}: the yaml shape writes the conversion beside {} (or its `.local` fork with --fork) — leave --output off",
-                            o.display(),
-                            src
-                        )
-                        .into());
-                    }
-                    convert_yaml_to_satz(PathBuf::from(src), gate, kind, fork, &tool_config, &runtime_config)
+                    let src = source.ok_or("the yaml shape needs a file")?;
+                    Err(yaml_dialect_refusal(Path::new(&src), "import"))
                 }
                 "hcl" => {
                     let src = source.ok_or("the hcl shape needs a directory of .tf files, or one file")?;
@@ -1881,12 +1859,12 @@ Thumbs.db
                         }
                     }
                 }
-                other => Err(format!("unknown import shape {:?} — one of state, org, yaml, hcl", other).into()),
+                other => Err(format!("unknown import shape {:?} — one of state, org, hcl", other).into()),
             }
         }
         Commands::Bootstrap { estate, dry_run, greenfield, no_default_grants } => {
-            // Satz-native: no .gen.yaml twin build. The vars table and the
-            // declared policy set both come from the fragment pipeline.
+            // The vars table and the declared policy set both come from the
+            // fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
             // The quality gate: an estate may not touch an organisation while a
             // question is open. A dry run is how you look, so it warns instead.
@@ -1992,7 +1970,7 @@ Thumbs.db
                 return Err(format!("Input file not found: {}", input_path.display()).into());
             }
 
-            reject_yaml_estate(&input_path, "migrate")?;
+            reject_yaml_dialect(&input_path, "migrate")?;
             let switch = mode_switch(&input_path, &runtime_config, mode)?;
             let target_mode = switch.to.clone();
             let Some(after) = &switch.after else {
@@ -2210,7 +2188,7 @@ Thumbs.db
         }
         Commands::RunActions { input, check, execute, only, phase } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            reject_yaml_estate(&input_path, "run-actions")?;
+            reject_yaml_dialect(&input_path, "run-actions")?;
             if let Some(p) = &phase {
                 if p != "before-apply" && p != "after-apply" {
                     return Err(format!(
@@ -2261,7 +2239,7 @@ Thumbs.db
             let manifest = match estate {
                 Some(e) => {
                     let path = estate_path(PathBuf::from(e), &runtime_config);
-                    reject_yaml_estate(&path, "scan")?;
+                    reject_yaml_dialect(&path, "scan")?;
                     Some(pipeline_b_generate(&path, &tool_config, &runtime_config)?.manifest)
                 }
                 None => None,
@@ -2579,14 +2557,10 @@ impl satz_core::pipeline::TypeResolver for EstateResolver<'_> {
             _ => {}
         }
         // Existence is the schema's call. EXACT lookup only: Satz names
-        // Terraform types in full, so `org_policy_policy` is not a resource
-        // key here. `find_resource` deliberately falls back to a `google_`
-        // prefix — that shorthand belongs to the YAML dialect, which keeps
-        // it — so this path must not go through it.
-        //
-        // (`google_cloud_identity_group` used to be special-cased to accept
-        // the bare form; it is a real schema type, so the registry answers
-        // for it like any other.)
+        // Terraform types in full, so `org_policy_policy` is not a resource key
+        // here. `find_resource` falls back to a `google_` prefix, which is how a
+        // discovered document's short keys are normalised, so this path must not
+        // go through it.
         if !self.registry.resources.contains_key(key) {
             return None;
         }
@@ -3383,7 +3357,7 @@ pub(crate) struct PrerequisitesReport {
 fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
     Ok(satz_estate_params(path, &runtime_config.include_dirs)?
         .into_iter()
-        .filter_map(|(k, v)| v.as_str().map(|s| (k.replace('-', "_"), s.to_string())))
+        .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
         .collect())
 }
 
@@ -3934,177 +3908,37 @@ async fn enable_declared_apis(hcl_dir: &Path) -> Result<(), Box<dyn std::error::
     }
 }
 
-/// satz reads Satz estates. A `.yaml` estate is not an error the user can fix
-/// by editing — it is a file in a dialect the tool no longer speaks — so say what
-/// to run instead of failing somewhere deep in a YAML scanner.
-fn reject_yaml_estate(input: &Path, what: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// satz reads Satz. A `.yaml` estate or pack is written in the pre-Satz dialect,
+/// which no command reads: name the release that converts it and the two
+/// commands that bring the conversion up to date.
+fn reject_yaml_dialect(input: &Path, what: &str) -> Result<(), Box<dyn std::error::Error>> {
     if input.extension().and_then(|e| e.to_str()) == Some("satz") {
         return Ok(());
     }
+    Err(yaml_dialect_refusal(input, what))
+}
+
+/// The refusal itself, for the callers that already know the file is the
+/// dialect and take no `.satz` at all.
+fn yaml_dialect_refusal(input: &Path, what: &str) -> Box<dyn std::error::Error> {
+    let name = input.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let stem = input.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let last = satz_core::LAST_YAML_CONVERTING_RELEASE;
     // Printed ahead of the error: the detail first, then the one line `main` closes with.
     eprintln!(
-        "\n{}: {} is a YAML-dialect estate. Every command reads Satz; the dialect\n\
-         exists only to be converted. Convert once — the conversion compiles the\n\
-         result through the fragment pipeline and reports what it emits:\n\n    satz import {} --kind estate\n",
-        what,
-        input.display(),
-        input.file_name().unwrap_or_default().to_string_lossy()
+        "\n{what}: {name} is written in the pre-Satz YAML dialect, which satz does not read.\n\
+         satz {last} is the last release that converts it:\n\
+         \n    cargo install --git https://github.com/tjirsch/satz --tag {last} --locked\n\
+         \x20   satz import {name} --kind estate            # --kind pack for a pack\n\
+         \x20   cargo install --git https://github.com/tjirsch/satz --locked\n\
+         \x20   satz fmt {stem}.satz\n\
+         \x20   satz merge-presets --estate {stem}.satz\n\
+         \nThe conversion may need edits; `satz transpile` and a `tofu plan` that shows no\n\
+         destroy for what the estate already manages is the check.\n"
     );
-    Err("YAML-dialect estate: convert it with `satz import <file>.yaml` first".into())
+    format!("{name} is the pre-Satz YAML dialect: satz {last} converts it").into()
 }
 
-/// The two facts `require` and `report-compliance` need: the emitted `main.tf`
-/// as a value, and the claims the estate actually pulled in.
-///
-/// `.satz` estates run the fragment pipeline — same compile as `transpile`, so
-/// the witnesses the goal view matches against are exactly the ones that would
-/// be written to disk. The emission manifest, not the rendered text, is what
-/// the compliance plane reads: a witness inside a raw `hcl { … }` block is
-/// therefore not a witness, as documented.
-/// Where `discover-* --satz` writes: the given path inside `yaml_dir`, with the
-/// legacy `.yaml` default turned into `.satz`.
-/// The yaml shape of `satz import`: convert a legacy-dialect file (estate or
-/// pack) to Satz and compile the result through the fragment pipeline (an
-/// estate on itself, a pack in the `gate` estate), reporting what it emits.
-/// A migrated estate may need a manual edit; an old `!import-include`
-/// becomes `satz adopt`.
-fn convert_yaml_to_satz(
-    input: PathBuf,
-    gate: Option<PathBuf>,
-    kind: String,
-    fork: bool,
-    tool_config: &ToolConfig,
-    runtime_config: &ToolConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Resolve the file: as given, else under yaml_dir, else presets_dir.
-    let resolve = |p: &PathBuf| -> PathBuf {
-        if p.exists() { return p.clone(); }
-        let y = Path::new(&runtime_config.yaml_dir).join(p);
-        if y.exists() { return y; }
-        Path::new(&runtime_config.presets_dir).join(p)
-    };
-    let src_path = resolve(&input);
-    let src = fsx::read_to_string(&src_path)?;
-    let name = src_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("converted")
-        .replace(['-', '.'], "_");
-    // An include of a LIST is a value, not a pack: inline it before converting.
-    // Targets resolve the way a use-path does — beside the file, then the
-    // include dirs.
-    let include_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let include_dirs = runtime_config.include_dirs.clone();
-    let load = |p: &str| -> Option<String> {
-        std::iter::once(include_base.join(p))
-            .chain(include_dirs.iter().map(|d| Path::new(d).join(p)))
-            .find(|c| c.is_file())
-            .and_then(|c| std::fs::read_to_string(c).ok())
-    };
-    let (src, inlined) = satz_core::migrate::inline_sequence_includes(&src, &load)
-        .map_err(|e| format!("{} ({})", e, src_path.display()))?;
-    for i in &inlined {
-        println!("inlined: {} — an include of a list is a value, not a pack", i);
-    }
-    let satz = satz_core::migrate::convert(&src, &kind, &name)
-        .map_err(|e| format!("{} ({})", e, src_path.display()))?;
-    // The dialect's implicit `google_` prefix is not Satz, so a verbatim
-    // copy of the YAML keys would not compile. Schemas decide.
-    let type_registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
-        .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
-    let satz = satz_core::migrate::normalize_type_keys(&satz, &|t: &str| type_registry.resources.contains_key(t));
-    // …and point `use` at converted packs, resolved the way the compiler
-    // resolves a use-path: beside the file first, then the include dirs.
-    let use_base = src_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let use_dirs = runtime_config.include_dirs.clone();
-    let satz = satz_core::migrate::retarget_uses(&satz, &|p: &str| {
-        use_base.join(p).exists() || use_dirs.iter().any(|d| Path::new(d).join(p).exists())
-    });
-    // A `use` that still points at a YAML pack cannot compile; say which and
-    // how to fix it rather than letting the parser report `unexpected
-    // character ':'` on a line of that pack (live-run F6).
-    let yaml_uses: Vec<String> = satz
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("use \""))
-        .filter_map(|rest| rest.split('"').next())
-        .filter(|p| p.ends_with(".yaml") || p.ends_with(".yml"))
-        .map(String::from)
-        .collect();
-    if !yaml_uses.is_empty() {
-        // Printed ahead of the error: the detail first, then the one line `main` closes with.
-        eprintln!("\n{} still `use`s {} YAML pack(s) — convert them first, then re-run:", src_path.display(), yaml_uses.len());
-        for p in &yaml_uses {
-            eprintln!("    satz import {} --kind pack", p);
-        }
-        eprintln!();
-        return Err(format!("{} YAML pack(s) still in use — convert them first", yaml_uses.len()).into());
-    }
-    let satz_path = if fork {
-        if kind == "estate" {
-            return Err("--fork applies to packs, not estates".into());
-        }
-        let stem = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("converted");
-        src_path.with_file_name(format!("{}.local.satz", stem))
-    } else {
-        src_path.with_extension("satz")
-    };
-
-    fsx::write_generated_satz(&satz_path, &satz)?;
-    println!("converted {} -> {}", src_path.display(), satz_path.display());
-    if satz.contains("// NEEDS ADOPTION") {
-        println!("note: the source used `!import-include` — run `satz adopt` on the converted estate to import what already exists.");
-    }
-
-    // The gate (M5, 2026-08-29): the conversion must compile through the
-    // pipeline that will actually read it, and the operator sees what it
-    // emits. The old byte-identity proof through the legacy walk is gone
-    // with the walk — a conversion may need manual edits, and says so.
-    let gate_estate = match &gate {
-        Some(g) => Some(resolve(g)),
-        None if kind == "estate" => Some(satz_path.clone()),
-        None => None,
-    };
-    match gate_estate {
-        Some(estate) if estate.extension().is_some_and(|e| e == "satz") => {
-            match pipeline_b_generate(&estate, tool_config, runtime_config) {
-                Ok(out) => {
-                    let n = out.manifest.resources.len();
-                    let mut by_type: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-                    for r in out.manifest.resources.values() {
-                        *by_type.entry(r.tf_type.as_str()).or_default() += 1;
-                    }
-                    println!("CONVERTED: {} compiles — {} resources emitted:", estate.display(), n);
-                    for (t, c) in by_type {
-                        println!("  {:4} {}", c, t);
-                    }
-                    println!("Review the .satz, then `satz transpile` and `tofu plan`: the plan must show no destroy for what the old estate managed.");
-                    Ok(())
-                }
-                Err(e) => {
-                    let _ = std::fs::remove_file(&satz_path);
-                    Err(format!("conversion produced Satz that does not compile (removed): {}", e).into())
-                }
-            }
-        }
-        Some(estate) => {
-            println!(
-                "NEEDS-REVIEW: the gate estate {} is still YAML, so the pack cannot be compiled in context — convert the estate too, then re-run with --gate <estate>.satz.",
-                estate.display()
-            );
-            Ok(())
-        }
-        None => {
-            // A pack on its own: it must at least parse as Satz.
-            satz_core::satz::parse(&satz)
-                .map_err(|e| format!("conversion produced Satz that does not parse: {} in {}", e, satz_path.display()))?;
-            println!("CONVERTED: {} parses — pass --gate <estate>.satz to compile it in context.", satz_path.display());
-            if fork {
-                println!("fork written; repoint the estate `use` to {}.", satz_path.display());
-            }
-            Ok(())
-        }
-    }
-}
 
 /// The state shape of `satz import`: `tofu show -json` (a file, or run now).
 #[allow(clippy::too_many_arguments)]
@@ -4229,7 +4063,7 @@ fn detect_import_shape(source: Option<&str>, root: Option<&crate::config::Import
         return if root.is_some_and(|r| r.organization.is_some() || r.folder.is_some() || r.project.is_some()) {
             Ok("org".into())
         } else {
-            Err("nothing to import: give a source (a state file, organizations/<n>, folders/<n>, projects/<id>, a .yaml file) or set `root` in the import config".into())
+            Err("nothing to import: give a source (a state file, organizations/<n>, folders/<n>, projects/<id>, a directory of .tf files) or set `root` in the import config".into())
         };
     };
     if src == "-" {
@@ -4243,10 +4077,11 @@ fn detect_import_shape(source: Option<&str>, root: Option<&crate::config::Import
         return Ok("hcl".into());
     }
     match path.extension().and_then(|e| e.to_str()) {
+        // recognised only so the refusal names what the file is
         Some("yaml") | Some("yml") => Ok("yaml".into()),
         Some("tf") => Ok("hcl".into()),
         Some("json") | Some("tfstate") => Ok("state".into()),
-        _ => Err(format!("cannot tell what {:?} is — pass --from state|org|yaml|hcl", src).into()),
+        _ => Err(format!("cannot tell what {:?} is — pass --from state|org|hcl", src).into()),
     }
 }
 
@@ -4585,7 +4420,7 @@ async fn import_delta(
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::delta;
-    reject_yaml_estate(&estate, "import --into")?;
+    reject_yaml_dialect(&estate, "import --into")?;
     println!("import: root {} → into {}", parent, estate.display());
 
     // 1. what the estate already covers, by live id (adopt's resolution, dry)
@@ -4923,7 +4758,7 @@ async fn run_adopt(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::adopt::{self, Outcome};
     let input_path = estate_path(PathBuf::from(input), runtime_config);
-    reject_yaml_estate(&input_path, "adopt")?;
+    reject_yaml_dialect(&input_path, "adopt")?;
     configure_estate_impersonation(&input_path, runtime_config)?;
     // a run over every declared resource is the one a notice naming `satz adopt` asks for
     let whole = only.is_empty();
@@ -5157,7 +4992,7 @@ fn compliance_inputs(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<ComplianceInputs, Box<dyn std::error::Error>> {
-    reject_yaml_estate(input_path, "this command")?;
+    reject_yaml_dialect(input_path, "this command")?;
     let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
     let claims = crate::compliance::claims_from_frontend(&out.claims);
     Ok((out.manifest, claims, out.org_id))
@@ -5465,19 +5300,13 @@ fn mode_switch(
     Ok(ModeSwitch { from, to, before, after: Some(after) })
 }
 
-/// The parameter table of a `.satz` estate, in the dialect's kebab-case
-/// spelling.
-///
-/// The rename is not cosmetic: `anchor()` in the Satz YAML emitter maps
-/// `snake_case` params to `kebab-case` anchor names, so every consumer of this
-/// table — `customer-organization-id` lookups, and `build_variables_block`,
-/// whose emitted `&anchors` a compiled pack references by name — keys on the
-/// kebab form. It stays until those consumers are converted too.
+/// The parameter table of a `.satz` estate, keyed the way the estate spells a
+/// param: `snake_case`, the compile's own names.
 pub(crate) fn satz_estate_params(
     input: &Path,
     include_dirs: &[String],
 ) -> Result<HashMap<String, serde_yaml::Value>, Box<dyn std::error::Error>> {
-    Ok(satz_estate_env(input, include_dirs)?.1.into_iter().map(|(k, v)| (k.replace('_', "-"), v)).collect())
+    Ok(satz_estate_env(input, include_dirs)?.1.into_iter().collect())
 }
 
 /// The source of a `.satz` estate and its parameter table as the compile reads it:
@@ -6747,18 +6576,18 @@ mod satz_vars_parity {
 
         let via_pipeline = satz_estate_params(&estate, &[]).expect("pipeline route");
 
-        // The facts that matter: kebab keys reach the table, first-definition-wins
-        // held, and interpolation was resolved. (This used to also compare against
-        // the YAML-twin route; that route is retired with the walk — M5.)
+        // The facts that matter: a `use`d pack's params reach the table under the
+        // names the estate spells, first-definition-wins held, and interpolation
+        // was resolved.
         assert_eq!(
-            via_pipeline.get("customer-organization-id").and_then(|v| v.as_str()),
+            via_pipeline.get("customer_organization_id").and_then(|v| v.as_str()),
             Some("123456789")
         );
-        assert_eq!(via_pipeline.get("widget-name").and_then(|v| v.as_str()), Some("overridden-widget"));
-        assert_eq!(via_pipeline.get("widget-location").and_then(|v| v.as_str()), Some("europe-west3"));
-        assert_eq!(via_pipeline.get("contact-email").and_then(|v| v.as_str()), Some("ops@example.com"));
+        assert_eq!(via_pipeline.get("widget_name").and_then(|v| v.as_str()), Some("overridden-widget"));
+        assert_eq!(via_pipeline.get("widget_location").and_then(|v| v.as_str()), Some("europe-west3"));
+        assert_eq!(via_pipeline.get("contact_email").and_then(|v| v.as_str()), Some("ops@example.com"));
         assert_eq!(
-            via_pipeline.get("admins-group").and_then(|v| v.as_str()),
+            via_pipeline.get("admins_group").and_then(|v| v.as_str()),
             Some("gcp-organization-admins"),
             "a grant pack's params must reach the table — the walk has to classify \
              google_organization_iam_member as a grant map to get that far"
@@ -7199,207 +7028,6 @@ google_org_policy_policy {
         let (main_tf, _, _) = emit(&estate);
         let grant = block(&main_tf, "google_organization_iam_member", "iam_group_gcp_auditors_example_com_");
         assert!(grant.contains("org_id = \"123456789012\""), "the grant beside the project did not reach the organisation:\n{}", grant);
-    }
-}
-
-#[cfg(test)]
-mod yaml_estate_gate {
-    //! THE gate for the legacy YAML dialect. The dialect is migration input
-    //! only (owner, 2026-08-29): nothing transpiles it, `satz import <file>.yaml`
-    //! converts it. So what must keep working is the CONVERSION — the fixture
-    //! and its `!include` pack become Satz that compiles through the fragment
-    //! pipeline and declares every resource the YAML declared.
-    //!
-    //! Self-contained: no schema registry, no live org, no customer repo.
-    use super::*;
-
-    fn fixture() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/yaml-estate")
-    }
-
-    /// Addresses the fixture declares. Written out rather than counted, because
-    /// the failure mode being guarded is resources DISAPPEARING — a count is
-    /// satisfied by the wrong set, and "it got smaller" was exactly the bug.
-    const EXPECTED: &[&str] = &[
-        "google_org_policy_policy.compute_requireOsLogin",
-        "google_organization_iam_member.",
-        "google_folder.infra_folder",
-        "google_project.demo_project",
-        "google_project_iam_member.",
-    ];
-
-    /// The fixture's type table: an explicit ALLOWLIST standing in for the
-    /// provider schemas. Not "anything starting with `google_`" — that claims
-    /// `google_labels` exists and sends a genuine `labels { … }` attribute
-    /// block down the resource path.
-    struct FixtureTypes;
-    impl FixtureTypes {
-        fn known(&self, t: &str) -> bool {
-            matches!(
-                t,
-                "google_org_policy_policy"
-                    | "google_organization_iam_member"
-                    | "google_project_iam_member"
-                    | "google_folder"
-                    | "google_project"
-            )
-        }
-    }
-    impl satz_core::pipeline::TypeResolver for FixtureTypes {
-        fn resolve(&self, key: &str) -> Option<satz_core::pipeline::ResolvedType> {
-            if !self.known(key) {
-                return None;
-            }
-            let (class, scope) = satz_core::pipeline::type_facts(key);
-            Some(satz_core::pipeline::ResolvedType { tf_type: key.to_string(), class, scope })
-        }
-        /// The fixture table is a list of type names with no schema behind it, so it
-        /// has no verdict on a body's keys. The estate resolver, which does, is what
-        /// the key check is tested through.
-        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<satz_core::pipeline::BodyKeys> {
-            None
-        }
-    }
-    impl satz_core::algebra::TypeTable for FixtureTypes {
-        fn merge_class(&self, t: &str) -> satz_core::MergeClass {
-            satz_core::pipeline::type_facts(t).0
-        }
-        fn scope(&self, t: &str) -> satz_core::Scope {
-            satz_core::pipeline::type_facts(t).1
-        }
-    }
-
-    #[test]
-    fn a_converted_yaml_estate_compiles_and_declares_every_resource() {
-        let src_dir = fixture();
-        let tmp = std::env::temp_dir().join(format!("satz-yaml-gate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-
-        let is_type = |t: &str| FixtureTypes.known(t);
-        let exists = |p: &str| tmp.join(p).exists();
-
-        for (file, kind, name) in
-            [("pack.yaml", "pack", "yaml_gate_pack"), ("main.yaml", "estate", "yaml_gate")]
-        {
-            let src = std::fs::read_to_string(src_dir.join(file)).unwrap();
-            let satz = satz_core::migrate::convert(&src, kind, name)
-                .unwrap_or_else(|e| panic!("{} failed to convert: {}", file, e));
-            let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-            let satz = satz_core::migrate::retarget_uses(&satz, &exists);
-            std::fs::write(tmp.join(file.replace(".yaml", ".satz")), &satz).unwrap();
-        }
-
-        let converted = std::fs::read_to_string(tmp.join("main.satz")).unwrap();
-        assert!(
-            converted.contains("use \"pack.satz\""),
-            "the converted estate must point at the converted pack, not the YAML:\n{}",
-            converted
-        );
-        assert!(
-            converted.contains("google_org_policy_policy"),
-            "shorthand keys must gain the provider prefix:\n{}",
-            converted
-        );
-
-        let tmp_for_load = tmp.clone();
-        let fe = satz_core::pipeline::compile_estate(
-            "main.satz",
-            &converted,
-            &FixtureTypes,
-            &|p| std::fs::read_to_string(tmp_for_load.join(p)).map_err(|e| e.to_string()),
-        )
-        .unwrap_or_else(|e| panic!("converted estate does not compile as Satz: {:?}", e));
-        let folded = satz_core::pipeline::fold_fragments(&FixtureTypes, &fe.fragments);
-        assert!(folded.conflicts().is_empty(), "conflicts: {:?}", folded.conflicts());
-        let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
-        let addrs: Vec<String> = out.manifest.addresses().into_iter().collect();
-        for want in EXPECTED {
-            assert!(
-                addrs.iter().any(|a| a.starts_with(want)),
-                "{} missing after conversion — declared resources must never be \
-                 silently dropped.\ngot: {:?}",
-                want,
-                addrs
-            );
-        }
-        // `labels` is an ATTRIBUTE of the project, not a resource of its own.
-        assert!(
-            !addrs.iter().any(|a| a.contains("google_labels")),
-            "a nested attribute block was emitted as a resource: {:?}",
-            addrs
-        );
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    /// The Tier-2 spelling: org policies as a SEQUENCE identified by
-    /// `constraint:`, at the top level and nested in a project. Every estate
-    /// still on the dialect writes them this way, and the converter took none
-    /// of them — the sequence printed as a top-level attribute, which does not
-    /// compile. Guarded here because the fleet is the only other place it would
-    /// have shown up, one estate at a time, years after the fact.
-    #[test]
-    fn the_tier2_org_policy_list_form_converts_to_addressed_resources() {
-        let src = std::fs::read_to_string(fixture().join("tier2.yaml")).unwrap();
-        let is_type = |t: &str| FixtureTypes.known(t);
-        let satz = satz_core::migrate::convert(&src, "estate", "tier2_gate")
-            .unwrap_or_else(|e| panic!("the Tier-2 fixture failed to convert: {}", e));
-        let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-
-        // The address is the constraint, dots to dashes — the spelling the
-        // preset library uses, so a converted estate and the pack that later
-        // replaces it name the same resource.
-        for want in [
-            "\"iam-disableServiceAccountKeyCreation\"",
-            "\"iam-managed-disableServiceAccountKeyUpload\"",
-            "\"gcp-resourceLocations\"",
-            "\"compute-skipDefaultNetworkCreation\"",
-        ] {
-            assert!(satz.contains(want), "{} missing from the conversion:\n{}", want, satz);
-        }
-        // Comments are excluded: the fixture's own header explains this failure
-        // mode and would otherwise match the text it warns about.
-        let code = |needle: &str| {
-            satz.lines().any(|l| !l.trim_start().starts_with("//") && l.contains(needle))
-        };
-        assert!(
-            !code("org_policy_policy ="),
-            "the list form printed as an attribute instead of a block:\n{}",
-            satz
-        );
-        // `type: list` is the dialect's own marker; the provider has no such
-        // attribute, so an estate carrying it would not validate.
-        assert!(!code("type = \"list\""), "the dialect-only `type:` marker reached the estate:\n{}", satz);
-
-        let fe = satz_core::pipeline::compile_estate(
-            "tier2.satz",
-            &satz,
-            &FixtureTypes,
-            &|p: &str| Err(format!("the Tier-2 fixture includes nothing, asked for {}", p)),
-        )
-        .unwrap_or_else(|e| panic!("the converted Tier-2 estate does not compile: {:?}", e));
-        let folded = satz_core::pipeline::fold_fragments(&FixtureTypes, &fe.fragments);
-        assert!(folded.conflicts().is_empty(), "conflicts: {:?}", folded.conflicts());
-        let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
-        let out = crate::emitter::emit(&folded, &ctx).expect("emit");
-        let addrs: Vec<String> = out.manifest.addresses().into_iter().collect();
-        for want in [
-            "google_org_policy_policy.iam_disableServiceAccountKeyCreation",
-            "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
-            "google_org_policy_policy.gcp_resourceLocations",
-            "google_org_policy_policy.compute_skipDefaultNetworkCreation",
-            "google_folder.infra_folder",
-            "google_project.infra",
-        ] {
-            assert!(
-                addrs.iter().any(|a| a == want),
-                "{} missing after conversion — declared resources must never be \
-                 silently dropped.\ngot: {:?}",
-                want,
-                addrs
-            );
-        }
     }
 }
 

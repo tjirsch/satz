@@ -166,7 +166,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
-| `import [SOURCE]` | `--from` (`state`\|`org`\|`yaml`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--on-collision error|counter`, `--customer-shortname`; yaml shape: `--kind pack|estate`, `--gate`, `--fork`; hcl shape: `--wrap-all` |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--on-collision error|counter`, `--customer-shortname`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
 | `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
@@ -462,7 +462,7 @@ the account can grant. The reasoning is in
 [ADR 0009](docs/adr/0009-iac-service-account-named-roles.md).
 
 ### Transpile (`transpile`)
-Compiles the estate to HCL. Input is a `.satz` estate; a legacy `.yaml` estate is refused with a pointer to `satz import`.
+Compiles the estate to HCL. Input is a `.satz` estate; a `.yaml` estate is written in the pre-Satz YAML dialect and is refused by name, with the release that converts it.
 
 ```bash
 satz transpile <INPUT> [options]
@@ -808,8 +808,8 @@ satz migrate <INPUT> --mode <MODE>
 
 ### Creating an estate from what exists (`import`)
 
-One verb, four input shapes: a state file, the live organization, a legacy YAML
-estate, existing `.tf` files. The result is a Satz estate that compiles as-is: a local backend, `customer_organization_id`, every
+One verb, three input shapes: a state file, the live organization, existing `.tf`
+files. The result is a Satz estate that compiles as-is: a local backend, `customer_organization_id`, every
 resource carrying its `"import-id"`, keys normalised to provider type names.
 Review it, `satz transpile`, then `tofu plan` — the plan is the check: no destroy,
 no unexpected create.
@@ -820,7 +820,6 @@ tofu show -json | satz import -              # …or on stdin
 satz import organizations/123456789012       # live, whole org (Cloud Asset Inventory)
 satz import folders/456789                   # live, one folder
 satz import projects/my-prj                  # live, one project
-satz import old-estate.yaml --kind estate    # the legacy YAML dialect (until the last org is moved)
 satz import ./terraform                      # existing .tf: variables → params, resources → Satz, the rest verbatim in `hcl trust`
 satz import ./terraform --wrap-all           # …or every block verbatim, nothing promoted
 satz import                                  # live, root taken from the import config
@@ -828,16 +827,15 @@ satz import organizations/123456789012 --into C0example.satz   # only what the e
 ```
 
 **Parameters:**
-- `SOURCE`: what to import from; the shape is read off its form (`--from state|org|yaml|hcl` when it cannot tell). Omit it to use the import config's `root`.
+- `SOURCE`: what to import from; the shape is read off its form (`--from state|org|hcl` when it cannot tell). Omit it to use the import config's `root`.
 - `--all`: every type the source can deliver, not only the rows marked `import: true` — at the live shape every row with a Cloud Asset Inventory name, from a state file every row. `--only` and `--exclude` apply after it.
 - `--only <types>`: comma-separated resource types, `*` wildcards allowed (`google_*_iam_member`); everything else is switched off for this run. Overrides `only` in the import config.
 - `--exclude <types>`: comma-separated resource types, `*` wildcards allowed; these are switched off for this run. Overrides `exclude` in the import config.
-- `--output, -o <FILE>`: output inside `yaml_dir` for the state, live and hcl shapes (default `discovered.satz`, `imported-hcl.satz` for hcl; the extension is always `.satz`). The yaml shape writes beside its source and refuses `--output`.
+- `--output, -o <FILE>`: output inside `yaml_dir` (default `discovered.satz`, `imported-hcl.satz` for hcl; the extension is always `.satz`).
 - `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
 - `--customer-shortname <NAME>` (state and live shapes): the customer's short name, which no platform fact carries; it wins over the inference from the leading token of the project and bucket names.
 - `--on-collision error|counter` (state and live shapes): a grant one principal holds on two folders or two projects would emit one address, because the map form's label is member and role. `error` (the default) refuses the import and names them; `counter` keeps the first in the map form and writes the second and later as labelled resources with a running number (`folderAdmin_alice_2`), one line of output each.
-- yaml shape: `--kind estate|pack`, `--gate <estate>.satz` (compile a converted pack in context), `--fork` (write `<stem>.local.satz`).
-- Tier-2 files, written for CDKTF, convert too: unanchored top-level scalars become `params` entries (kebab→snake_case) and the top-level `version:` dialect marker is dropped — both mappings are named in the converted file's header, and a scalar that duplicates a `variables:` entry is refused rather than merged.
+- A `.yaml` source is the pre-Satz YAML dialect: it is refused by name, with the release that converts it (see [docs/language.md §12.2](docs/language.md#122-the-pre-satz-yaml-dialect)).
 
 **The import config** (`presets/import-config.yaml`, YAML — it is data that
 configures an import, not an estate) is the repeatable form of the command line:
@@ -910,7 +908,6 @@ the subnet's flow logs do not change.
 - state: reads `tofu show -json` (file, stdin, or run now); only the types with `import: true` are taken; read-only/computed fields are dropped against the provider schema.
 - live: one Cloud Asset Inventory sweep under the root; needs `cloudasset.assets.searchAllResources`; useful for infrastructure nobody manages with Terraform yet. Only asset types the config maps are seen. Folders are labelled by display name; the built-in `_Default`/`_Required` sinks, service agents' grants, the legacy bucket grants, Google-created service accounts and projects that are no longer ACTIVE are skipped and listed — each row's `skip:` patterns in `import-config.yaml` say what, and a copy of the table without a pattern imports it. The providers' quota project is the first project that enables the Org Policy and Service Usage APIs (organization-scoped reads are billed to it and fail with 403 elsewhere), and the report names it.
 - every shape: the document is written in the language's forms — one line per grant edge and per service, a single nested block as a block, an org policy as its bare constraint, the organization referenced as `customer_organization_id` — so the file reads like an estate a person wrote. The `params` block is the day-0 vocabulary `init` writes, bound from what the ADC states (live shape) and what the resources imply: the service account granted organizationAdmin names `svc_iac_account` and `infra_project_name`, that project its folder, versioned bucket and billing account, the members `svc_iac_users_group`, the regional resources `default_region`, the leading name token `customer_shortname`. An inferred value carries `// inferred:` with its rule; a value nothing states is left out and reported; every bound literal is referenced wherever the body repeats it.
-- yaml: the legacy-dialect converter (`!include` → `use`, anchors → params, `!format` → interpolation), compiled through the fragment pipeline afterwards and reporting what it emits; an old `!import-include` becomes `use` plus `satz adopt`.
 - hcl (`satz import ./hcl-dir`): three tiers. A `variable` with a literal `default` and a `locals` entry with a literal value are **promoted to params** — params are Satz's variables, so the imported estate stays re-parameterisable instead of carrying baked-in literals; `var.x` becomes a bare param reference and `"a-${var.x}"` the interpolation `"a-{x}"`. A `variable` with no `default` is named in the header and given no value, so `satz transpile` stops with `unknown param` until it is bound — the same gate the source had. A `resource` block of a schema-known type is **translated** when every value is a literal, a promoted param, or a reference to a managed resource (carried verbatim as `${{…}}`, which emits back byte-identically); folders, projects, services and grants are **placed** by the folder/project they reference, so the tree comes back and `customer_organization_id` is inferred, and a resource that named no project of its own inherits a dropped `provider` block's default when that resolves to one of the imported projects. A `*_iam_member` whose scope is neither project, folder nor organisation — a service account's, a bucket's — becomes the scope-pinned member map (`bucket = …` beside the members, one map per scope), the same rule the live and state shapes write by; a resource naming its project by a literal id that a `google_project` in the input carries is placed under it, as a reference would be. A block whose `count` is `length()` of a promoted list of scalars, and whose every `count.index` indexes THAT list, is **expanded**: one Satz resource per entry, each taking the entry where the source wrote `var.list[count.index]`, labelled after it (`state_europe_west3`) or by its position when the entry makes no identifier. Terraform's idiom for "one of these per entry" IS one resource per entry in Satz. Any other `count` — over a list this import cannot resolve, or with a `count.index` that indexes something else — leaves the block verbatim, because half an expansion would be a guess about what the source meant. Everything else — `module`, `data`, `output`, blocks using `for_each`/`dynamic`/`provider`/`depends_on` or a `count` of another shape, function calls, conditionals, groups, memberships, billing grants, authoritative IAM bindings, unknown types, labels that are not identifiers — is carried verbatim inside `hcl trust "imported from <file>:<line>" { … }` and the report says why, per block. A promoted declaration that a wrapped block still reads is carried verbatim too, so its `var.x` keeps resolving. `terraform`/`provider` blocks are dropped with a note; the emitter owns `providers.tf`. `--wrap-all` wraps everything and promotes nothing. Either way the estate deploys exactly as the source did: `tofu plan` against the source's state shows no changes. A translated block is not verified: a `${…}` reference is opaque to the compliance plane. Also the way in for `gcloud beta resource-config bulk-export --resource-format=terraform` and `tofu plan -generate-config-out` output.
 
 ### Update Schemas (`update-schema`)
@@ -1812,11 +1809,9 @@ so a claim naming a witness the compile does not emit is reported as broken. Cov
 assertion about what the witnesses DO: `implements` over an org policy that is switched
 off, or `deviates` over one that enforces, is reported as a contradicted claim. Literal Terraform `${…}` references
 inside strings need doubled braces (`"${{google_project.x.project_id}}"`) since `{…}`
-interpolates params. Every command reads `.satz`. The legacy YAML dialect is
-accepted only as input to `satz import <file>.yaml`, which converts an estate or a pack,
-gated by compiling the result through the fragment pipeline and reporting what it emits —
-a migrated estate may need a manual edit, and `tofu plan` is the final check
-(see [docs/language.md §12](docs/language.md)).
+interpolates params. Every command reads `.satz`; a `.yaml` estate or pack is the
+pre-Satz YAML dialect and is refused by name, with the release that converts it
+(see [docs/language.md §12.2](docs/language.md#122-the-pre-satz-yaml-dialect)).
 
 Driving satz from an agent? **[`docs/llms.md`](docs/llms.md)** is the working subset
 written for that — the MCP server serves it as `satz://guide`, so an agent gets it without
@@ -2052,14 +2047,13 @@ Manages Terraform provider schemas (loaded as JSON).
 Writes the day-0 estate for a new customer.
 - **Declarative Bootstrap**: Generates the Satz estate representing the Day 0 infrastructure (Project, Services, Bucket, SA) under the labels `bootstrap` imports by name.
 
-#### 4. Migration (`crates/satz-core/src/migrate.rs`)
-The only reader of the legacy YAML dialect: `satz import <file>.yaml` converts an estate or a pack
-(`!include` → `use`, anchors → params, `!format` → `"{param}"` interpolation, `!expr` →
-`"${{…}}"`), then compiles the result through the fragment pipeline and reports what it
-emits. An old `!import-include` becomes `use` plus a `NEEDS ADOPTION` note — its job is
-`satz adopt`. The dialect's older, addressless spelling of org policies — a list of
-entries identified by `constraint:` — becomes addressed resources, the constraint with
-dots turned into dashes ([docs/language.md §12.2](docs/language.md)).
+#### 4. The Satz printer (`crates/satz-core/src/migrate.rs`)
+A `serde_yaml` document in, Satz text out. Every import writes through it: the state and
+live shapes hand it the discovered configuration, the HCL importer the blocks it
+translated, `export-organizational-policies` the pack it snapshots. A caller builds param
+references and interpolations with `param_ref`, `interpolation` and `interpolated`, so the
+printer owns the rendering; `normalize_type_keys` then gives a container key written
+without the provider prefix its full Terraform type name, against the schemas.
 
 #### 5. Discovery Engine
 `satz import organizations/<n>` (and the `folders/`, `projects/`, `state.json` shapes) write a Satz estate from what exists.

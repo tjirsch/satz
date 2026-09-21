@@ -245,7 +245,7 @@ impl ResourceRegistry {
     /// body, each further element a block key one level down. `None` where the registry
     /// has no such type, or the schema no such block.
     pub fn block_at(&self, tf_type: &str, path: &[&str]) -> Option<&BlockSchema> {
-        // EXACT lookup: the `google_` fallback belongs to the YAML dialect, and a body
+        // EXACT lookup: a bare type name is not Satz, and a body
         // is judged against the type the estate actually names.
         let (_, schema) = self.resources.get(tf_type)?;
         let mut block = &schema.block;

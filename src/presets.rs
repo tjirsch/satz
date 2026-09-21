@@ -142,7 +142,7 @@ pub(crate) enum Drift {
 
 /// Every pack SOURCE under `dir`: the `.satz` files. (`.yaml` files in a presets
 /// dir — catalogs, `import-config.yaml` — are data refreshed as artifacts,
-/// not packs to classify; the YAML pack dialect is gone.)
+/// not packs to classify.)
 fn walk_preset_sources(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> Result<(), BoxErr> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
@@ -160,7 +160,7 @@ fn walk_preset_sources(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> Resul
 
 /// Which preset files does this estate actually use, relative to `presets_dir`?
 ///
-/// A `.satz` estate declares `use "presets/…"`; the YAML dialect uses `!include`.
+/// A `.satz` estate declares `use "presets/…"`.
 /// The old code only knew the second, so for a Satz estate the "included" set came
 /// back EMPTY and every drift was reported against nothing.
 ///

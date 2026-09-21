@@ -54,6 +54,12 @@
 //! `dedup_resource_blocks` and the `MERGE_KEY_PREFIX` rename/fold machinery deleted,
 //! replaced by one fold whose laws are the property tests in this crate.
 
+/// The last release that converts the pre-Satz YAML dialect. satz reads no
+/// YAML estate or pack; every refusal that meets one names this release, so an
+/// operator gets the one binary that reads it rather than a parse error from
+/// the middle of a YAML document.
+pub const LAST_YAML_CONVERTING_RELEASE: &str = "v0.71.0";
+
 pub mod algebra;
 pub mod condense;
 pub mod fmt;

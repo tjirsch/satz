@@ -316,8 +316,8 @@ contacts and monitoring packs, a group with a member, org grants, a project with
 services and a bucket): `transpile` (then `tofu validate` when `tofu` is on PATH —
 no state, no cloud), `require`, `check-presets` against the repository's own
 presets (must be clean), `import` in its state shape (with the skipped report and
-import blocks), hcl shape (translated, then `tofu validate`; and `--wrap-all`) and
-yaml shape (including the refusal that names a pack still in YAML), `adopt` (a
+import blocks), hcl shape (translated, then `tofu validate`; and `--wrap-all`),
+the refusal a `.yaml` estate gets from `import` and from `transpile`, `adopt` (a
 credentials error without ADC), `scan` against a stand-in `checkov` that prints a
 report, every MCP tool, then `cargo test`. The providers every `tofu init` needs are
 downloaded once, into `TF_PLUGIN_CACHE_DIR` (default

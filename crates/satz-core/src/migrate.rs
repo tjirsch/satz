@@ -1,19 +1,15 @@
-//! The yaml shape of `satz import`: mechanical conversion of the YAML dialect to Satz.
+//! The Satz printer: a `serde_yaml` document in, Satz text out.
 //!
-//! This is the repeatable half of the migration loop: convert, then the caller
-//! GATES the result (transpile old vs new, sorted-compare) and only a PROVEN
-//! conversion moves on. The converter therefore prefers erroring on anything it
-//! does not fully understand over guessing — an unconverted file is fine, a
-//! silently wrong one is not.
+//! Every import writes through here. The state and live shapes hand it the
+//! discovered `Config`, the HCL importer the blocks it translated, the
+//! org-policy export the pack it snapshots. Callers build param references,
+//! interpolations and rendered param values with `param_ref`,
+//! `interpolation`, `interpolated` and `param_value` rather than spelling the
+//! printer's internal frames themselves.
 //!
-//! Strategy: serde_yaml resolves anchors/aliases away (losing parameterization),
-//! so a textual pre-pass first extracts the `variables:` block (→ params) and
-//! substitutes alias tokens and include directives with sentinel strings; the
-//! remaining document then parses cleanly and the walker emits Satz, decoding
-//! sentinels into param refs, interpolations and `use` statements.
-//!
-//! Known, printed limitation: interior comments do not survive (the leading
-//! header comment block does).
+//! The printer refuses what it cannot render exactly — a null value, an
+//! unknown tag, a non-string key — because a silently wrong estate is worse
+//! than an unconverted one.
 
 use std::fmt::Write as _;
 
@@ -31,296 +27,13 @@ fn err<T>(msg: impl Into<String>) -> Result<T, MigrateError> {
     Err(MigrateError { msg: msg.into() })
 }
 
-// Sentinel frames (printable, never occurring in the dialect):
+// The frame a param reference travels in, so a reference survives a round trip
+// through `serde_yaml::Value` without being mistaken for a literal string.
 const REF_L: &str = "\u{ab}R:";  // «R:name»
 const REF_R: &str = "\u{bb}";
-const USE_L: &str = "\u{ab}U:";  // «U:form|path|cond»
-const USE_K: &str = "\u{ab}UK";  // «UK<n>» — synthetic key for Form A in mappings
 
 fn ident_from_name(name: &str) -> String {
     name.replace(['-', '.'], "_")
-}
-
-/// Replace `*alias` tokens (value or key position) with sentinel strings so the
-/// document parses without anchors. Boundary-aware; leaves comments alone (they
-/// are dropped by the YAML parse anyway).
-fn substitute_aliases(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let b: Vec<char> = line.chars().collect();
-    let mut i = 0;
-    let mut in_str = false;
-    while i < b.len() {
-        let c = b[i];
-        if c == '"' {
-            in_str = !in_str;
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        let boundary_before = i == 0
-            || matches!(b[i - 1], ' ' | '[' | ',' | ':' | '(' | '{');
-        if c == '*' && !in_str && boundary_before {
-            let mut j = i + 1;
-            let mut name = String::new();
-            while j < b.len()
-                && (b[j].is_ascii_alphanumeric() || b[j] == '-' || b[j] == '_' || b[j] == '.')
-            {
-                name.push(b[j]);
-                j += 1;
-            }
-            if !name.is_empty() {
-                out.push('"');
-                out.push_str(REF_L);
-                out.push_str(&name);
-                out.push_str(REF_R);
-                out.push('"');
-                i = j;
-                continue;
-            }
-        }
-        out.push(c);
-        i += 1;
-    }
-    out
-}
-
-/// Pre-pass over the raw text. Returns (yaml-for-parse, header_comment, params, uses_at_top).
-struct PrePassed {
-    yaml: String,
-    header: Vec<String>,
-    /// (snake name, satz value expression)
-    params: Vec<(String, String)>,
-    /// The source used `!import-include`, the dialect's transpile-time live
-    /// import. Converted as a plain include; the operator runs `satz adopt`.
-    import_include_seen: bool,
-}
-
-fn pre_pass(src: &str) -> Result<PrePassed, MigrateError> {
-    let lines: Vec<&str> = src.lines().collect();
-    let mut header = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let t = lines[i].trim();
-        if t.starts_with('#') {
-            header.push(t.trim_start_matches('#').trim_start().to_string());
-            i += 1;
-        } else if t.is_empty() && header.is_empty() {
-            i += 1;
-        } else {
-            break;
-        }
-    }
-
-    let mut out: Vec<String> = Vec::new();
-    let mut params: Vec<(String, String)> = Vec::new();
-    let mut in_vars = false;
-    let mut use_n = 0usize;
-    let mut import_include_seen = false;
-
-    while i < lines.len() {
-        let line = lines[i];
-        let trimmed = line.trim_start();
-        let indent = line.len() - trimmed.len();
-
-        // top-level variables block extraction
-        if indent == 0 && trimmed == "variables:" {
-            in_vars = true;
-            i += 1;
-            continue;
-        }
-        if in_vars {
-            if !line.starts_with(' ') && !trimmed.is_empty() && !trimmed.starts_with('#') {
-                in_vars = false; // fall through to normal handling of this line
-            } else {
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    i += 1;
-                    continue;
-                }
-                // entry: key: &anchor VALUE   (VALUE may be inline !format or block !format)
-                let Some(colon) = trimmed.find(':') else {
-                    return err(format!("variables: unparseable line: {}", line));
-                };
-                let key = trimmed[..colon].trim().to_string();
-                let after = trimmed[colon + 1..].trim();
-                let Some(rest) = after.strip_prefix('&') else {
-                    return err(format!("variables entry without anchor: {}", line));
-                };
-                let end = rest
-                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
-                    .unwrap_or(rest.len());
-                let anchor = &rest[..end];
-                if anchor != key {
-                    return err(format!(
-                        "variables entry where anchor '{}' differs from key '{}' — convert by hand",
-                        anchor, key
-                    ));
-                }
-                let mut value_text = rest[end..].trim().to_string();
-                if value_text == "!format" || value_text.is_empty() {
-                    // block form: consume following "- item" lines (deeper indent)
-                    let tag_block = value_text == "!format";
-                    let mut items = Vec::new();
-                    let mut j = i + 1;
-                    while j < lines.len() {
-                        let lt = lines[j].trim_start();
-                        let li = lines[j].len() - lt.len();
-                        if li > indent && lt.starts_with("- ") {
-                            items.push(lt[2..].trim().to_string());
-                            j += 1;
-                        } else if lt.is_empty() {
-                            j += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    if !tag_block || items.is_empty() {
-                        return err(format!("variables entry with empty value: {}", line));
-                    }
-                    value_text = format!("!format [{}]", items.join(", "));
-                    i = j - 1;
-                }
-                let satz_value = convert_scalar_text(&substitute_aliases(&value_text))?;
-                params.push((ident_from_name(&key), satz_value));
-                i += 1;
-                continue;
-            }
-        }
-
-        // include directives (either form), preserved positionally via sentinels
-        let subst = substitute_aliases(line);
-        let strimmed = subst.trim_start();
-        let sindent = subst.len() - strimmed.len();
-        let mk_use = |form: &str, path: &str, cond: Option<&str>, extra: &str| {
-            format!(
-                "{}\"{}{}»\": \"{}{}|{}|{}»\"",
-                " ".repeat(sindent),
-                USE_K,
-                extra,
-                USE_L,
-                form,
-                path,
-                cond.unwrap_or("")
-            )
-        };
-        // `!import-include` was the transpile-time live import of the dialect;
-        // Satz has no such tag — the file is `use`d like any other and the
-        // adoption happens through `satz adopt` afterwards. Convert it as a
-        // plain include and tell the operator.
-        let subst = if strimmed.contains("!import-include ") && !strimmed.starts_with('#') {
-            import_include_seen = true;
-            subst.replace("!import-include ", "!include ")
-        } else {
-            subst
-        };
-        let strimmed = subst.trim_start();
-        if !strimmed.starts_with('#') {
-            if let Some(rest) = strimmed.strip_prefix("!include-if ") {
-                let mut parts = rest.trim().splitn(2, ' ');
-                let cond = parts.next().unwrap_or("").trim_start_matches(['*', '&']);
-                let path = parts.next().unwrap_or("").trim();
-                out.push(mk_use("A", path, Some(cond), &use_n.to_string()));
-                use_n += 1;
-                i += 1;
-                continue;
-            }
-            if let Some(rest) = strimmed.strip_prefix("!include ") {
-                out.push(mk_use("A", rest.trim(), None, &use_n.to_string()));
-                use_n += 1;
-                i += 1;
-                continue;
-            }
-            if let Some(colon) = strimmed.find(": !include") {
-                let key = strimmed[..colon].trim().to_string();
-                let after = &strimmed[colon + 2..];
-                let (path, cond) = if let Some(rest) = after.strip_prefix("!include-if ") {
-                    let mut parts = rest.trim().splitn(2, ' ');
-                    let c = parts.next().unwrap_or("").trim_start_matches(['*', '&']).to_string();
-                    (parts.next().unwrap_or("").trim().to_string(), c)
-                } else if let Some(rest) = after.strip_prefix("!include ") {
-                    (rest.trim().to_string(), String::new())
-                } else {
-                    (String::new(), String::new())
-                };
-                if !path.is_empty() {
-                    out.push(format!(
-                        "{}{}: \"{}B|{}|{}»\"",
-                        " ".repeat(sindent), key, USE_L, path, cond
-                    ));
-                    i += 1;
-                    continue;
-                }
-            }
-        }
-        out.push(subst);
-        i += 1;
-    }
-
-    // Preserve the source's final newline: a literal block (`|`) as the file's last
-    // content keeps its trailing \n only if the text still ends with one — losing it
-    // silently changes block-scalar chomping semantics (found by one estate's conversion gate).
-    let mut yaml = out.join("\n");
-    if src.ends_with('\n') {
-        yaml.push('\n');
-    }
-    Ok(PrePassed { yaml, header, params, import_include_seen })
-}
-
-/// Convert a scalar value's TEXT (from the variables pre-pass) into a Satz value
-/// expression: quoted string, number, bool, param ref, or interpolation.
-fn convert_scalar_text(text: &str) -> Result<String, MigrateError> {
-    let t = text.trim();
-    if let Some(rest) = t.strip_prefix("!format ") {
-        let inner = rest.trim();
-        let inner = inner
-            .strip_prefix('[')
-            .and_then(|x| x.strip_suffix(']'))
-            .ok_or_else(|| MigrateError { msg: format!("unsupported !format: {}", t) })?;
-        let args = split_top_commas(inner);
-        let vals: Vec<serde_yaml::Value> = args
-            .iter()
-            .map(|a| serde_yaml::from_str(a.trim()).map_err(|e| MigrateError {
-                msg: format!("!format arg '{}': {}", a, e),
-            }))
-            .collect::<Result<_, _>>()?;
-        return Ok(format!("\"{}\"", format_to_interpolation(&vals)?));
-    }
-    if let Some(rest) = t.strip_prefix('*') {
-        return Ok(ident_from_name(rest));
-    }
-    let v: serde_yaml::Value =
-        serde_yaml::from_str(t).map_err(|e| MigrateError { msg: format!("value '{}': {}", t, e) })?;
-    scalar_value(&v)
-}
-
-fn split_top_commas(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut depth = 0;
-    let mut in_str = false;
-    let mut cur = String::new();
-    for c in s.chars() {
-        match c {
-            '"' => {
-                in_str = !in_str;
-                cur.push(c);
-            }
-            '[' | '{' if !in_str => {
-                depth += 1;
-                cur.push(c);
-            }
-            ']' | '}' if !in_str => {
-                depth -= 1;
-                cur.push(c);
-            }
-            ',' if !in_str && depth == 0 => {
-                out.push(std::mem::take(&mut cur));
-            }
-            _ => cur.push(c),
-        }
-    }
-    if !cur.trim().is_empty() {
-        out.push(cur);
-    }
-    out
 }
 
 /// Escape a literal string chunk for a Satz interpolated string.
@@ -384,38 +97,6 @@ fn format_to_interpolation(vals: &[serde_yaml::Value]) -> Result<String, Migrate
         return Err(MigrateError { msg: format!("!format: more args than {{}} in '{}'", template) });
     }
     Ok(out)
-}
-
-/// The legacy YAML dialect spells a conditional IAM binding as a null-valued role
-/// key with a sibling `condition:`:
-///
-/// ```yaml
-/// - roles/storage.objectViewer:
-///   condition: { title: …, expression: … }
-/// ```
-///
-/// Satz says the same thing explicitly — `{ role = "…", condition = { … } }` —
-/// which both pipelines accept. Rewrite the legacy shape on the way through;
-/// anything else passes untouched.
-fn normalise_conditional_binding(m: &serde_yaml::Mapping) -> serde_yaml::Mapping {
-    let has_condition = m.contains_key(serde_yaml::Value::String("condition".into()));
-    if !has_condition || m.contains_key(serde_yaml::Value::String("role".into())) {
-        return m.clone();
-    }
-    let role = m.iter().find_map(|(k, v)| match (k.as_str(), v) {
-        (Some(k), serde_yaml::Value::Null) if k != "condition" && k != "import-id" => Some(k.to_string()),
-        _ => None,
-    });
-    let Some(role) = role else { return m.clone() };
-    let mut out = serde_yaml::Mapping::new();
-    out.insert(serde_yaml::Value::String("role".into()), serde_yaml::Value::String(role.clone()));
-    for (k, v) in m {
-        if k.as_str() == Some(role.as_str()) {
-            continue;
-        }
-        out.insert(k.clone(), v.clone());
-    }
-    out
 }
 
 /// A value that prints on one line: a scalar, or a tagged value that renders
@@ -485,14 +166,13 @@ fn value_expr(v: &serde_yaml::Value, indent: usize) -> Result<String, MigrateErr
             for item in seq {
                 match item {
                     serde_yaml::Value::Mapping(m) => {
-                        let m = normalise_conditional_binding(m);
                         // an object of scalars is one line — the form adopt
                         // writes for a grant edge with its import id, and the
                         // library's `rules = [ { enforce = "TRUE" } ]`; the
                         // formatter keeps an inline construct inline
                         if m.values().all(is_scalar_like) {
                             let mut fields = Vec::new();
-                            for (k, v) in &m {
+                            for (k, v) in m {
                                 let (key, _) = key_expr(k)?;
                                 fields.push(format!("{} = {}", key, value_expr(v, indent + 2)?));
                             }
@@ -500,7 +180,7 @@ fn value_expr(v: &serde_yaml::Value, indent: usize) -> Result<String, MigrateErr
                             continue;
                         }
                         let _ = writeln!(out, "{}{{", pad);
-                        emit_entries(&m, &mut out, indent + 4)?;
+                        emit_entries(m, &mut out, indent + 4)?;
                         let _ = writeln!(out, "{}}},", pad);
                     }
                     other => {
@@ -540,114 +220,6 @@ fn key_expr(k: &serde_yaml::Value) -> Result<(String, bool), MigrateError> {
     }
 }
 
-fn is_use_sentinel(v: &serde_yaml::Value) -> Option<(String, String, Option<String>)> {
-    let s = v.as_str()?;
-    let inner = s.strip_prefix(USE_L)?.strip_suffix('»')?;
-    let mut parts = inner.splitn(3, '|');
-    let form = parts.next()?.to_string();
-    let path = parts.next()?.to_string();
-    let cond = parts.next().filter(|c| !c.is_empty()).map(ident_from_name);
-    Some((form, path, cond))
-}
-
-fn emit_use(out: &mut String, indent: usize, path: &str, cond: &Option<String>, as_key: Option<&str>) {
-    let pad = " ".repeat(indent);
-    let _ = write!(out, "{}use \"{}\"", pad, path);
-    if let Some(k) = as_key {
-        let _ = write!(out, " as {}", k);
-    }
-    if let Some(c) = cond {
-        let _ = write!(out, " when {}", c);
-    }
-    out.push('\n');
-}
-
-/// The Tier-2 (CDKTF-era) spelling of a resource-type block: a SEQUENCE of
-/// entries that carry their identity in a field, instead of the mapping of
-/// address → body every other estate uses.
-///
-/// ```yaml
-/// org_policy_policy:
-///   - constraint: iam.disableServiceAccountKeyCreation
-///     parent: organizations/123456789
-///     spec: { rules: [ { enforce: "TRUE" } ] }
-/// ```
-///
-/// Satz has no such form — a block's keys ARE the addresses — and without this
-/// the sequence fell through to the attribute arm and printed
-/// `org_policy_policy = [ … ]` at the top level, which is not a resource block
-/// and does not compile. The four estates still on the dialect all spell their
-/// org policies this way, so the converter could take none of them.
-///
-/// The identifying field becomes both the address and the resource's own
-/// `name`, spelled the way the preset library spells it: the constraint with
-/// its dots turned into dashes (`iam-disableServiceAccountKeyCreation`), so a
-/// converted estate and the pack that later replaces it agree on the address.
-///
-/// Returns `None` when the sequence is not this form, leaving the caller's
-/// normal path to handle it — a list of roles under an IAM member key is a
-/// value, not a block.
-fn list_form(key: &str, seq: &[serde_yaml::Value]) -> Result<Option<serde_yaml::Mapping>, MigrateError> {
-    /// The dialect's identifying field, per type. Only the shapes that exist in
-    /// the wild are listed: a sequence under any other key stays a value.
-    fn id_field(key: &str) -> Option<(&'static str, &'static str)> {
-        match key.trim_start_matches("google_") {
-            // (field carrying the identity, attribute it becomes)
-            "org_policy_policy" => Some(("constraint", "name")),
-            _ => None,
-        }
-    }
-    /// `type: list` is a dialect marker telling the old generator which API
-    /// shape to post. The provider has no such attribute, so carrying it over
-    /// produces an estate the schema rejects.
-    const DIALECT_ONLY: &[&str] = &["type"];
-
-    let Some((id, attr)) = id_field(key) else { return Ok(None) };
-    if seq.is_empty() {
-        return Ok(None);
-    }
-    let mut out = serde_yaml::Mapping::new();
-    for item in seq {
-        let serde_yaml::Value::Mapping(body) = item else {
-            return err(format!(
-                "`{}` is a list whose entries are not mappings — the Tier-2 list form needs `- {}: …` entries",
-                key, id
-            ));
-        };
-        let Some(id_val) = body.get(serde_yaml::Value::String(id.to_string())) else {
-            return err(format!(
-                "an entry of `{}` has no `{}` — the Tier-2 list form identifies each entry by it",
-                key, id
-            ));
-        };
-        let Some(id_str) = id_val.as_str() else {
-            return err(format!("`{}: {:?}` in `{}` is not a string", id, id_val, key));
-        };
-        let address = id_str.replace('.', "-");
-        let mut converted = serde_yaml::Mapping::new();
-        converted.insert(
-            serde_yaml::Value::String(attr.to_string()),
-            serde_yaml::Value::String(id_str.to_string()),
-        );
-        for (k, v) in body {
-            let Some(ks) = k.as_str() else {
-                converted.insert(k.clone(), v.clone());
-                continue;
-            };
-            if ks == id || DIALECT_ONLY.contains(&ks) {
-                continue;
-            }
-            converted.insert(k.clone(), v.clone());
-        }
-        let addr_key = serde_yaml::Value::String(address.clone());
-        if out.contains_key(&addr_key) {
-            return err(format!("`{}` declares `{}` twice — the addresses would collide", key, id_str));
-        }
-        out.insert(addr_key, serde_yaml::Value::Mapping(converted));
-    }
-    Ok(Some(out))
-}
-
 /// A grant type carrying a SEQUENCE of maps — one scope-pinned member map per
 /// bucket, service account, … (`google_storage_bucket_iam_member { bucket = "a"
 /// … } google_storage_bucket_iam_member { bucket = "b" … }`): resource-type maps
@@ -666,45 +238,17 @@ fn repeated_grant_maps<'a>(k: &serde_yaml::Value, v: &'a serde_yaml::Value) -> O
 }
 
 /// The body a key opens as a `{ … }` block, or `None` when the value is an
-/// attribute. A mapping is always a block; a sequence is one only in the
-/// Tier-2 list form (`list_form`), never as a plain list of values.
-fn as_block(
-    k: &serde_yaml::Value,
-    v: &serde_yaml::Value,
-) -> Result<Option<serde_yaml::Mapping>, MigrateError> {
+/// attribute. A mapping is a block; every other value is an attribute.
+fn as_block(v: &serde_yaml::Value) -> Option<&serde_yaml::Mapping> {
     match v {
-        serde_yaml::Value::Mapping(child) => Ok(Some(child.clone())),
-        serde_yaml::Value::Sequence(seq) => match k.as_str() {
-            Some(ks) => list_form(ks, seq),
-            None => Ok(None),
-        },
-        _ => Ok(None),
+        serde_yaml::Value::Mapping(child) => Some(child),
+        _ => None,
     }
 }
 
 fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Result<(), MigrateError> {
     let pad = " ".repeat(indent);
     for (k, v) in m {
-        // Form A use sentinel: key "\x01U<n>", value carries the payload
-        if let Some(ks) = k.as_str() {
-            if ks.starts_with(USE_K) {
-                if let Some((_, path, cond)) = is_use_sentinel(v) {
-                    emit_use(out, indent, &path, &cond, None);
-                    continue;
-                }
-            }
-        }
-        // Form B use sentinel: real key, sentinel value
-        if let Some((form, path, cond)) = is_use_sentinel(v) {
-            if form == "B" {
-                let (key, is_ident) = key_expr(k)?;
-                if !is_ident {
-                    return err(format!("use ... as with non-identifier key {}", key));
-                }
-                emit_use(out, indent, &path, &cond, Some(&key));
-                continue;
-            }
-        }
         let (key, _) = key_expr(k)?;
         if let Some(maps) = repeated_grant_maps(k, v) {
             for child in maps {
@@ -714,10 +258,10 @@ fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Res
             }
             continue;
         }
-        match as_block(k, v)? {
+        match as_block(v) {
             Some(child) => {
                 let _ = writeln!(out, "{}{} {{", pad, key);
-                emit_entries(&child, out, indent + 2)?;
+                emit_entries(child, out, indent + 2)?;
                 let _ = writeln!(out, "{}}}", pad);
             }
             None => {
@@ -728,17 +272,14 @@ fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Res
     Ok(())
 }
 
-/// Convert one YAML-dialect file to Satz. `kind_keyword` is "pack" or "estate";
-/// `name` becomes the declared name.
 /// Keys that look like a shorthand type name but are not: Satz's own block
 /// keywords, and the one attribute (`project_service`) a project body carries
 /// as a list.
 ///
 /// `folder` and `project` are deliberately NOT here. They are structural in
-/// Satz, but structure is not a reason to invent a bare keyword — they are
-/// real Terraform types (`google_folder`, `google_project`) and Satz names
-/// every type in full, so the dialect's short spelling gets rewritten like any
-/// other.
+/// Satz, but structure is not a reason to invent a bare keyword — they are real
+/// Terraform types (`google_folder`, `google_project`) and Satz names every type
+/// in full, so the short spelling gets rewritten like any other.
 const NEVER_A_TYPE_KEY: &[&str] = &[
     "params",
     "terraform",
@@ -754,18 +295,16 @@ const NEVER_A_TYPE_KEY: &[&str] = &[
     "project_service",
 ];
 
-/// Rewrite YAML-dialect shorthand resource keys into full Terraform type names.
+/// Give a shorthand resource key its provider prefix (`folder` →
+/// `google_folder`).
 ///
-/// The dialect lets a key drop the provider prefix; Satz does not (v0.41.0), so
-/// a conversion that copied keys verbatim produced a file `transpile` refuses —
-/// and the converter's own gate could not see it, because that gate runs the
-/// LEGACY walk, which still accepts the shorthand. It reported PROVEN on an
-/// estate that would not compile.
-///
-/// Operates on the converter's own output, whose formatting is known: a block
-/// opener is `<indent><ident> {` on its own line. `is_type` answers from the
-/// provider schemas — a key is only rewritten when the prefixed form is a real
-/// type and the bare form is not, so `labels { … }` is left alone.
+/// A discovered document names its containers the way the `Config` shape spells
+/// them, without the prefix; Satz names every Terraform type in full, so a
+/// verbatim key would not compile. Operates on the printer's own output, whose
+/// formatting is known: a block opener is `<indent><ident> {` on its own line.
+/// `is_type` answers from the provider schemas — a key is only rewritten when
+/// the prefixed form is a real type and the bare form is not, so `labels { … }`
+/// is left alone.
 pub fn normalize_type_keys(satz: &str, is_type: &dyn Fn(&str) -> bool) -> String {
     fn full(ident: &str, is_type: &dyn Fn(&str) -> bool) -> Option<String> {
         if NEVER_A_TYPE_KEY.contains(&ident) || is_type(ident) {
@@ -782,20 +321,6 @@ pub fn normalize_type_keys(satz: &str, is_type: &dyn Fn(&str) -> bool) -> String
         let indent_len = body.len() - body.trim_start().len();
         let (indent, rest) = body.split_at(indent_len);
 
-        // `use "…" as <ident>`
-        if let Some(as_pos) = rest.find("\" as ") {
-            let (head, tail) = rest.split_at(as_pos + "\" as ".len());
-            let ident = tail.trim();
-            if rest.starts_with("use \"") && !ident.is_empty() {
-                if let Some(f) = full(ident, is_type) {
-                    out.push_str(indent);
-                    out.push_str(head);
-                    out.push_str(&f);
-                    out.push_str(trailing);
-                    continue;
-                }
-            }
-        }
         // `<ident> {`
         if let Some(ident) = rest.strip_suffix('{').map(str::trim_end) {
             let is_ident = !ident.is_empty()
@@ -814,240 +339,6 @@ pub fn normalize_type_keys(satz: &str, is_type: &dyn Fn(&str) -> bool) -> String
         out.push_str(line);
     }
     out
-}
-
-/// Repoint `use "X.yaml"` at `X.satz` wherever that sibling exists.
-///
-/// A converted estate inherits its `!include` targets verbatim, which point at
-/// the YAML packs — or, once those are converted, at the twins the pack
-/// conversion leaves behind for the still-YAML estate to keep working. Either
-/// way the result is a Satz estate that `use`s YAML, and the fragment pipeline
-/// cannot load a `.yaml` pack. The legacy walk could, which is why this went
-/// unnoticed: the conversion gate ran pipeline A and was perfectly happy.
-///
-/// `exists` is supplied by the caller so this stays free of filesystem access;
-/// it answers whether a use-path resolves, the same way the compiler resolves it.
-pub fn retarget_uses(satz: &str, exists: &dyn Fn(&str) -> bool) -> String {
-    let mut out = String::with_capacity(satz.len());
-    for line in satz.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("use \"") {
-            if let Some(open) = line.find('"') {
-                if let Some(close) = line[open + 1..].find('"') {
-                    let path = &line[open + 1..open + 1 + close];
-                    if let Some(stem) = path.strip_suffix(".yaml") {
-                        let satz_path = format!("{}.satz", stem);
-                        if exists(&satz_path) {
-                            out.push_str(&line[..open + 1]);
-                            out.push_str(&satz_path);
-                            out.push_str(&line[open + 1 + close..]);
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-        out.push_str(line);
-    }
-    out
-}
-
-/// Inline every `!include` whose target is a YAML sequence, before conversion.
-///
-/// The dialect includes a file wherever it is written, including in a value
-/// position — `group:x@example.com:` followed by an indented `!include roles.yaml`
-/// gives the member its list of roles. A list is a value, not a fragment, so it
-/// cannot become a `use` of a pack: it is inlined here, at the include's
-/// indentation, and the target's own includes are inlined the same way. A target
-/// that is a mapping stays an include and becomes a `use`. A conditional include
-/// of a list has no Satz form and is refused.
-///
-/// Returns the text and, per inlined include, `path (line n)`.
-pub fn inline_sequence_includes(
-    src: &str,
-    load: &dyn Fn(&str) -> Option<String>,
-) -> Result<(String, Vec<String>), MigrateError> {
-    let mut inlined = Vec::new();
-    let mut text = inline_walk(src, load, 0, &mut inlined)?;
-    if src.ends_with('\n') && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    Ok((text, inlined))
-}
-
-fn is_sequence(text: &str) -> bool {
-    text.lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty() && !l.starts_with('#') && *l != "---")
-        .is_some_and(|l| l == "-" || l.starts_with("- "))
-}
-
-fn inline_walk(
-    src: &str,
-    load: &dyn Fn(&str) -> Option<String>,
-    depth: usize,
-    inlined: &mut Vec<String>,
-) -> Result<String, MigrateError> {
-    if depth > 16 {
-        return err("`!include` nested more than 16 deep — the includes form a cycle");
-    }
-    let path_of = |rest: &str| rest.split(" #").next().unwrap_or("").trim().to_string();
-    let mut out: Vec<String> = Vec::new();
-    for (n, line) in src.lines().enumerate() {
-        let t = line.trim_start();
-        let indent = line.len() - t.len();
-        if t.starts_with('#') {
-            out.push(line.to_string());
-            continue;
-        }
-        let conditional = t.strip_prefix("!include-if ").or_else(|| t.find(": !include-if ").map(|c| &t[c + ": !include-if ".len()..]));
-        if let Some(rest) = conditional {
-            let path = path_of(rest.trim().split_once(' ').map_or("", |(_, p)| p));
-            if load(&path).is_some_and(|x| is_sequence(&x)) {
-                return err(format!(
-                    "line {}: `!include-if` of {} — a list — has no Satz form: `use … when` includes a pack, not a value. Write the list in place, or bind it to a param the condition selects",
-                    n + 1,
-                    path
-                ));
-            }
-            out.push(line.to_string());
-            continue;
-        }
-        // Form A: `!include path` alone on its line; Form B: `key: !include path`
-        let (key, path, child_indent) = if let Some(rest) = t.strip_prefix("!include ") {
-            (None, path_of(rest), indent)
-        } else if let Some(c) = t.find(": !include ") {
-            (Some(&t[..c]), path_of(&t[c + ": !include ".len()..]), indent + 2)
-        } else {
-            out.push(line.to_string());
-            continue;
-        };
-        let Some(target) = load(&path).filter(|x| is_sequence(x)) else {
-            out.push(line.to_string());
-            continue;
-        };
-        let inner = inline_walk(&target, load, depth + 1, inlined)?;
-        if let Some(k) = key {
-            out.push(format!("{}{}:", " ".repeat(indent), k));
-        }
-        for l in inner.lines() {
-            let lt = l.trim();
-            if lt.is_empty() || lt.starts_with('#') || lt == "---" {
-                continue;
-            }
-            out.push(format!("{}{}", " ".repeat(child_indent), l));
-        }
-        inlined.push(format!("{} (line {})", path, n + 1));
-    }
-    Ok(out.join("\n"))
-}
-
-pub fn convert(src: &str, kind_keyword: &str, name: &str) -> Result<String, MigrateError> {
-    let pre = pre_pass(src)?;
-    let doc: serde_yaml::Value = serde_yaml::from_str(&pre.yaml)
-        .map_err(|e| MigrateError { msg: format!("pre-passed document does not parse: {}", e) })?;
-    // A variables-only pack leaves an empty document after extraction — legal:
-    // it compiles to a params-only Satz file.
-    let mut top = match doc {
-        serde_yaml::Value::Mapping(m) => m,
-        serde_yaml::Value::Null => serde_yaml::Mapping::new(),
-        _ => return err("top level is not a mapping"),
-    };
-    let mut params = pre.params.clone();
-    let mut header = pre.header.clone();
-    header.push(String::new());
-    header.push("Converted by `satz import` — interior comments were not carried.".to_string());
-
-    // The Tier-2 (CDKTF-era) spelling: a top-level `version:` dialect marker,
-    // and the params written as unanchored top-level scalars instead of a
-    // `variables:` block. The marker is dropped (a Satz file carries no
-    // estate version); the scalars ARE the params and are converted as such
-    // — estates only, and only true scalars: a top-level `key = [roles]`
-    // grant in a fragment pack is legal Satz and stays where it is. Both
-    // mappings are named in the file header, never silent.
-    let mut promoted: Vec<String> = Vec::new();
-    let mut dropped_version = false;
-    for k in top.keys().cloned().collect::<Vec<_>>() {
-        let Some(ks) = k.as_str() else { continue };
-        let Some(v) = top.get(&k) else { continue };
-        if ks.starts_with(USE_K) || is_use_sentinel(v).is_some() {
-            continue;
-        }
-        if !matches!(
-            v,
-            serde_yaml::Value::String(_) | serde_yaml::Value::Number(_) | serde_yaml::Value::Bool(_)
-        ) {
-            continue;
-        }
-        if ks == "version" {
-            top.remove(&k);
-            dropped_version = true;
-            continue;
-        }
-        if kind_keyword != "estate" {
-            continue;
-        }
-        if let serde_yaml::Value::String(vs) = v {
-            // `x: *x` self-references keep their existing drop in the printer.
-            if as_ref_name(vs).is_some() {
-                continue;
-            }
-        }
-        let name_snake = ident_from_name(ks);
-        if params.iter().any(|(n, _)| *n == name_snake) {
-            return err(format!(
-                "top-level `{}` duplicates the param `{}` from the variables block — convert by hand",
-                ks, name_snake
-            ));
-        }
-        let rendered = value_expr(v, 0)?;
-        params.push((name_snake, rendered));
-        promoted.push(ks.to_string());
-        top.remove(&k);
-    }
-    if dropped_version {
-        header.push(
-            "The top-level `version:` dialect marker was dropped — a Satz file carries no estate version.".to_string(),
-        );
-    }
-    if !promoted.is_empty() {
-        header.push(format!("Top-level scalars became params: {}.", promoted.join(", ")));
-    }
-    // The Tier-2 dialect carries no `terraform:` block: the old generator built
-    // the backend from `infra-bucket-name` + `customer-id` + a shortname, and
-    // one of those was an empty array on at least one estate, so the live prefix
-    // is not derivable from the file. Without the block the conversion failed in
-    // the EMITTER ("Missing 'terraform' block"), which names neither the cause
-    // nor the fix. A local backend is written instead — it compiles, and it
-    // cannot silently read or write another estate's remote state — with the
-    // review note that says what to do. `satz migrate --mode cloud` or an edit
-    // then points it at the real bucket and prefix.
-    if kind_keyword == "estate" && !top.contains_key(serde_yaml::Value::String("terraform".into()))
-    {
-        let mut local = serde_yaml::Mapping::new();
-        local.insert(
-            serde_yaml::Value::String("path".into()),
-            serde_yaml::Value::String("terraform.tfstate".into()),
-        );
-        let mut backend = serde_yaml::Mapping::new();
-        backend.insert(serde_yaml::Value::String("local".into()), serde_yaml::Value::Mapping(local));
-        let mut tf = serde_yaml::Mapping::new();
-        tf.insert(serde_yaml::Value::String("backend".into()), serde_yaml::Value::Mapping(backend));
-        top.insert(serde_yaml::Value::String("terraform".into()), serde_yaml::Value::Mapping(tf));
-        header.push(
-            "NEEDS REVIEW: the source declared no backend, so a LOCAL one was written."
-                .to_string(),
-        );
-        header.push(
-            "Point it at the state this estate already has before any plan — the bucket and prefix are not in the source."
-                .to_string(),
-        );
-    }
-    if pre.import_include_seen {
-        header.push("NEEDS ADOPTION: the source used `!import-include` (a transpile-time live import).".to_string());
-        header.push("It is a plain `use` here; run `satz adopt <estate> --execute` after converting to import what already exists.".to_string());
-    }
-    convert_value(&top, kind_keyword, name, &params, &header)
 }
 
 /// A value that prints as an interpolated Satz string: `template` with one
@@ -1104,11 +395,9 @@ pub fn param_value(v: &serde_yaml::Value) -> Result<String, MigrateError> {
     value_expr(v, 2)
 }
 
-/// Print an already-parsed document as Satz: the printer behind `convert`,
-/// for callers that hold plain data rather than dialect text — discovery
-/// hands it a `Config` with no anchors, tags or includes. `params` are
-/// `(name, already-rendered value)` pairs; `header` lines become leading
-/// `//` comments (an empty line stays a blank comment line).
+/// Print a document as Satz. `params` are `(name, already-rendered value)`
+/// pairs; `header` lines become leading `//` comments (an empty line stays a
+/// blank comment line).
 pub fn convert_value(
     top: &serde_yaml::Mapping,
     kind_keyword: &str,
@@ -1137,38 +426,7 @@ pub fn convert_value(
         out.push_str("}\n\n");
     }
 
-    let param_names: std::collections::HashSet<&str> =
-        params.iter().map(|(n, _)| n.as_str()).collect();
-
     for (k, v) in top {
-        // Form A use at top level
-        if let Some(ks) = k.as_str() {
-            if ks.starts_with(USE_K) {
-                if let Some((_, path, cond)) = is_use_sentinel(v) {
-                    emit_use(&mut out, 0, &path, &cond, None);
-                    continue;
-                }
-            }
-        }
-        if let Some((form, path, cond)) = is_use_sentinel(v) {
-            if form == "B" {
-                let (key, is_ident) = key_expr(k)?;
-                if !is_ident {
-                    return err(format!("use ... as with non-identifier key {}", key));
-                }
-                emit_use(&mut out, 0, &path, &cond, Some(&key));
-                continue;
-            }
-        }
-        // Drop redundant top-level self-references (`x: *x`) — merge_variables
-        // promotes params to the root anyway.
-        if let (Some(ks), serde_yaml::Value::String(vs)) = (k.as_str(), v) {
-            if let Some(refname) = as_ref_name(vs) {
-                if ident_from_name(refname) == ident_from_name(ks) && param_names.contains(ident_from_name(ks).as_str()) {
-                    continue;
-                }
-            }
-        }
         let (key, is_ident) = key_expr(k)?;
         if let Some(maps) = repeated_grant_maps(k, v) {
             for child in maps {
@@ -1178,10 +436,10 @@ pub fn convert_value(
             }
             continue;
         }
-        match as_block(k, v)? {
+        match as_block(v) {
             Some(child) => {
                 let _ = writeln!(out, "{} {{", key);
-                emit_entries(&child, &mut out, 2)?;
+                emit_entries(child, &mut out, 2)?;
                 out.push_str("}\n\n");
             }
             None => {
@@ -1200,139 +458,7 @@ pub fn convert_value(
 mod tests {
     use super::*;
 
-    #[test]
-    fn repro_sva_logging_block() {
-        // literal block as the FILE'S LAST content — trailing newline must survive
-        let y = "variables:\n  sink-name: &sink-name \"s\"\n  org-id: &org-id \"1\"\nsec:\n  *sink-name:\n    org_id: *org-id\n    include_children: True\n    filter: |\n      lineA \"q\"\n      lineB:\"z\"\n";
-        let s = convert(y, "pack", "t").unwrap();
-        assert!(s.contains("lineA \\\"q\\\"\\nlineB:\\\"z\\\"\\n\""), "TRAILING LOST:\n{s}");
-    }
-
-    #[test]
-    fn tier2_top_level_scalars_become_params_and_the_version_marker_drops() {
-        // The CDKTF-era spelling: no variables block, the params written as
-        // bare top-level scalars, and a `version:` dialect marker.
-        let y = "version: 1.0\ninfra-project-name: \"demo-infra\"\ndeployment-mode: \"local\"\nfolder:\n  f:\n    display_name: \"F\"\n";
-        let s = convert(y, "estate", "t").unwrap();
-        assert!(s.contains("infra_project_name = \"demo-infra\""), "{s}");
-        assert!(s.contains("deployment_mode = \"local\""), "{s}");
-        assert!(
-            !s.lines().any(|l| !l.starts_with("//") && l.contains("version")),
-            "the marker must drop: {s}"
-        );
-        assert!(s.contains("dialect marker was dropped"), "{s}");
-        assert!(s.contains("Top-level scalars became params: infra-project-name, deployment-mode."), "{s}");
-
-        // A fragment PACK's top-level scalar stays where it is — top-level
-        // `key = value` is legal Satz and may be a grant, not a param…
-        let p = convert("version: 1.0\nsome-key: \"v\"\n", "pack", "t").unwrap();
-        assert!(p.contains("some-key\" = \"v\"") || p.contains("some_key = \"v\""), "{p}");
-        assert!(!p.lines().any(|l| !l.starts_with("//") && l.contains("version")), "{p}");
-
-        // …and a top-level scalar that duplicates a variables-block param is
-        // refused, never merged.
-        let dup = "variables:\n  a-b: &a-b \"x\"\na-b: \"y\"\n";
-        assert!(convert(dup, "estate", "t").is_err(), "a duplicate must be refused");
-    }
-
-    #[test]
-    fn import_include_converts_to_use_with_an_adoption_note() {
-        let y = "org_policy_policy: !import-include presets/cis.yaml\n!import-include presets/groups.yaml\n";
-        let s = convert(y, "estate", "t").unwrap();
-        assert!(s.contains("use \"presets/cis.yaml\" as org_policy_policy"), "{s}");
-        assert!(s.contains("use \"presets/groups.yaml\""), "{s}");
-        // the directive is gone from the body; only the note mentions it
-        assert!(!s.lines().any(|l| !l.starts_with("//") && l.contains("import-include")), "{s}");
-        assert!(s.contains("// NEEDS ADOPTION") && s.contains("satz adopt"), "{s}");
-        // a source without the tag carries no note
-        let s2 = convert("!include a.yaml\n", "estate", "t").unwrap();
-        assert!(!s2.contains("NEEDS ADOPTION"), "{s2}");
-    }
-
-    #[test]
-    fn variables_become_params_and_selfrefs_drop() {
-        let y = "variables:\n  a-b: &a-b \"x\"\n  n: &n 400\na-b: *a-b\nsection:\n  item:\n    k: *a-b\n";
-        let s = convert(y, "pack", "t").unwrap();
-        assert!(s.contains("a_b = \"x\""), "{s}");
-        assert!(s.contains("n = 400"), "{s}");
-        assert!(!s.contains("\na_b ="), "self-ref dropped: {s}");
-        assert!(s.contains("k = a_b"), "{s}");
-    }
-
-    #[test]
-    fn format_inline_and_block_to_interpolation() {
-        let y = "variables:\n  p: &p !format [\"{}-x\", *customer-shortname]\n  q: &q !format\n    - \"a{}b\"\n    - *p\nsection:\n  i:\n    d: !format [\"projects/{}/b\", *p]\n";
-        let s = convert(y, "pack", "t").unwrap();
-        assert!(s.contains("p = \"{customer_shortname}-x\""), "{s}");
-        assert!(s.contains("q = \"a{p}b\""), "{s}");
-        assert!(s.contains("d = \"projects/{p}/b\""), "{s}");
-    }
-
-    #[test]
-    fn alias_keys_and_format_keys() {
-        let y = "variables:\n  g: &g \"grp\"\nsection:\n  *g:\n    display_name: \"D\"\n  !format [\"group:{}\", *g]: [\"roles/x\"]\n";
-        let s = convert(y, "pack", "t").unwrap();
-        assert!(s.contains("\"{g}\" {"), "{s}");
-        assert!(s.contains("\"group:{g}\" = ["), "{s}");
-    }
-
-    #[test]
-    fn a_value_include_of_a_list_is_inlined_and_a_mapping_stays_a_use() {
-        let load = |p: &str| match p {
-            "roles.yaml" => Some("# the roles\n- roles/viewer\n- roles/browser\n".to_string()),
-            "nested.yaml" => Some("- roles/a\n".to_string()),
-            "deep.yaml" => Some("- roles/deep\n".to_string()),
-            "policies.yaml" => Some("p1:\n  name: x\n".to_string()),
-            _ => None,
-        };
-        // Form A under a key, Form B on the key's line, a mapping target, and an
-        // unknown target left for the converter to report
-        let src = "google_organization_iam_member:\n  group:a@example.com:\n    !include roles.yaml\n  group:b@example.com: !include nested.yaml\n!include policies.yaml\n!include missing.yaml\n";
-        let (text, inlined) = inline_sequence_includes(src, &load).unwrap();
-        assert_eq!(
-            text,
-            "google_organization_iam_member:\n  group:a@example.com:\n    - roles/viewer\n    - roles/browser\n  group:b@example.com:\n    - roles/a\n!include policies.yaml\n!include missing.yaml\n"
-        );
-        assert_eq!(inlined, vec!["roles.yaml (line 3)".to_string(), "nested.yaml (line 4)".to_string()]);
-
-        // the inlined text converts to the member's role list, not a `use`
-        let (text, _) = inline_sequence_includes("google_organization_iam_member:\n  group:a@example.com:\n    !include roles.yaml\n", &load).unwrap();
-        let s = convert(&text, "estate", "t").unwrap();
-        assert!(s.contains("roles/viewer") && s.contains("roles/browser"), "{s}");
-        assert!(!s.contains("use \""), "{s}");
-
-        // an include inside an included list is inlined too
-        let load2 = |p: &str| match p {
-            "outer.yaml" => Some("- roles/outer\n!include deep.yaml\n".to_string()),
-            other => load(other),
-        };
-        let (text, _) = inline_sequence_includes("k:\n  !include outer.yaml\n", &load2).unwrap();
-        assert_eq!(text, "k:\n  - roles/outer\n  - roles/deep\n");
-
-        // a conditional include of a list has no Satz form
-        let e = inline_sequence_includes("k:\n  !include-if want roles.yaml\n", &load).unwrap_err();
-        assert!(e.msg.contains("`!include-if` of roles.yaml"), "{}", e.msg);
-    }
-
-    #[test]
-    fn includes_both_forms_and_conditions() {
-        let y = "key: !include a.yaml\n!include b.yaml\n!include-if cond-x c.yaml\nfolder:\n  f:\n    !include d.yaml\n";
-        let s = convert(y, "estate", "t").unwrap();
-        assert!(s.contains("use \"a.yaml\" as key"), "{s}");
-        assert!(s.contains("\nuse \"b.yaml\"\n"), "{s}");
-        assert!(s.contains("use \"c.yaml\" when cond_x"), "{s}");
-        assert!(s.contains("    use \"d.yaml\""), "{s}");
-    }
-
-    #[test]
-    fn literal_blocks_and_tf_refs_escape() {
-        let y = "section:\n  i:\n    d: |\n      line1\n      line2\n    m: \"${a.b.c}\"\n";
-        let s = convert(y, "pack", "t").unwrap();
-        assert!(s.contains("d = \"line1\\nline2\\n\""), "{s}");
-        assert!(s.contains("m = \"${{a.b.c}}\""), "{s}");
-    }
-
-    /// The three helpers `satz-hcl` builds its param references with. A bare ref
+    /// The three helpers callers build their param references with. A bare ref
     /// must stay bare (that is what preserves a list's type), and a literal
     /// chunk must be escaped even when it contains the interpolation syntax —
     /// which is exactly why the chunk travels as an argument, not a template.
@@ -1365,24 +491,72 @@ mod tests {
         assert_eq!(param_value(&list).unwrap(), "[\n    \"a\",\n    \"b\",\n  ]");
     }
 
+    /// `interpolated` names the template itself, so its `{}` placeholders are
+    /// syntax and the params fill them in order — what the org-policy export
+    /// writes a pack's `parent` with.
     #[test]
-    fn converted_output_parses_as_satz() {
-        // The gate in miniature: converted output must parse as Satz (the full
-        // compile is the yaml_estate_gate in the binary).
-        let y = "variables:\n  v: &v \"x\"\nsection:\n  a:\n    k: *v\n    n: [1, 2]\n";
-        let s = convert(y, "pack", "t").unwrap();
+    fn an_interpolated_template_fills_its_placeholders_in_order() {
+        let mut inner = serde_yaml::Mapping::new();
+        inner.insert("parent".into(), interpolated("organizations/{}", &["customer_organization_id"]));
+        let mut t = serde_yaml::Mapping::new();
+        t.insert("p".into(), serde_yaml::Value::Mapping(inner));
+        let mut top = serde_yaml::Mapping::new();
+        top.insert("google_org_policy_policy".into(), serde_yaml::Value::Mapping(t));
+        let s = convert_value(&top, "pack", "t", &[], &[]).unwrap();
+        assert!(s.contains(r#"parent = "organizations/{customer_organization_id}""#), "{s}");
+    }
+
+    /// What the printer writes must parse as Satz. Every import shape rides on
+    /// this.
+    #[test]
+    fn printed_output_parses_as_satz() {
+        let mut body = serde_yaml::Mapping::new();
+        body.insert("display_name".into(), "f".into());
+        let mut block = serde_yaml::Mapping::new();
+        block.insert("a".into(), serde_yaml::Value::Mapping(body));
+        let mut top = serde_yaml::Mapping::new();
+        top.insert("google_folder".into(), serde_yaml::Value::Mapping(block));
+        let s = convert_value(&top, "pack", "t", &[("v".to_string(), "\"x\"".to_string())], &[]).unwrap();
         let f = crate::satz::parse(&s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
         assert!(f.params.iter().any(|(n, _, _)| n == "v"), "{}", s);
-        assert!(s.contains("k = v"), "{}", s);
+    }
+
+    /// A literal Terraform reference keeps its braces doubled, and a multi-line
+    /// string travels as one escaped Satz string.
+    #[test]
+    fn literal_blocks_and_tf_refs_escape() {
+        let mut body = serde_yaml::Mapping::new();
+        body.insert("d".into(), "line1\nline2\n".into());
+        body.insert("m".into(), "${a.b.c}".into());
+        let mut block = serde_yaml::Mapping::new();
+        block.insert("i".into(), serde_yaml::Value::Mapping(body));
+        let mut top = serde_yaml::Mapping::new();
+        top.insert("section".into(), serde_yaml::Value::Mapping(block));
+        let s = convert_value(&top, "pack", "t", &[], &[]).unwrap();
+        assert!(s.contains("d = \"line1\\nline2\\n\""), "{s}");
+        assert!(s.contains("m = \"${{a.b.c}}\""), "{s}");
+    }
+
+    /// A null value has no Satz spelling, so the printer refuses rather than
+    /// inventing one.
+    #[test]
+    fn a_null_value_is_refused() {
+        let mut body = serde_yaml::Mapping::new();
+        body.insert("k".into(), serde_yaml::Value::Null);
+        let mut block = serde_yaml::Mapping::new();
+        block.insert("i".into(), serde_yaml::Value::Mapping(body));
+        let mut top = serde_yaml::Mapping::new();
+        top.insert("section".into(), serde_yaml::Value::Mapping(block));
+        let e = convert_value(&top, "pack", "t", &[], &[]).unwrap_err();
+        assert!(e.msg.contains("null values"), "{}", e.msg);
     }
 }
 
 #[cfg(test)]
-mod conversion_output_tests {
-    //! The converter's own gate runs the LEGACY walk, which still accepts the
-    //! YAML dialect's shorthand and can read `.yaml` packs. So it reported
-    //! PROVEN on output that `transpile` refused. These pin the two rewrites
-    //! that make a conversion produce valid Satz rather than plausible Satz.
+mod type_key_tests {
+    //! A discovered document names its containers without the provider prefix.
+    //! Satz names every type in full, so the printer's output is normalised
+    //! against the schemas before it is written.
     use super::*;
 
     fn types(t: &str) -> bool {
@@ -1410,9 +584,9 @@ mod conversion_output_tests {
     }
 
     /// Structure is not a reason to keep a bare keyword: `folder` and `project`
-    /// are real Terraform types, so the dialect's short spelling is rewritten
-    /// like any other. Satz has no keyword resource types at all — the schema
-    /// is the only authority on what a type is called.
+    /// are real Terraform types, so the short spelling is rewritten like any
+    /// other. Satz has no keyword resource types at all — the schema is the only
+    /// authority on what a type is called.
     #[test]
     fn structural_types_are_rewritten_too() {
         let out = normalize_type_keys("folder {\n  a {\n  }\n}\nproject {\n  b {\n  }\n}\n", &types);
@@ -1435,22 +609,5 @@ mod conversion_output_tests {
     fn attribute_blocks_are_left_alone() {
         let out = normalize_type_keys("project_iam_member {\n  labels {\n  }\n}\n", &types);
         assert!(out.contains("  labels {"), "{}", out);
-    }
-
-    #[test]
-    fn uses_are_repointed_at_converted_packs() {
-        let src = "use \"cis.yaml\"\nuse \"not-converted.yaml\"\nuse \"other.satz\"\n";
-        let out = retarget_uses(src, &|p| p == "cis.satz");
-        assert!(out.contains("use \"cis.satz\""), "{}", out);
-        assert!(out.contains("use \"not-converted.yaml\""), "{}", out);
-        assert!(out.contains("use \"other.satz\""), "{}", out);
-    }
-
-    #[test]
-    fn repointing_keeps_the_as_and_when_clauses() {
-        let out = retarget_uses("  use \"cis.yaml\" as google_org_policy_policy\n", &|p| p == "cis.satz");
-        assert_eq!(out, "  use \"cis.satz\" as google_org_policy_policy\n");
-        let out = retarget_uses("use \"cis.yaml\" when flag\n", &|p| p == "cis.satz");
-        assert_eq!(out, "use \"cis.satz\" when flag\n");
     }
 }
