@@ -60,6 +60,34 @@ jobs:
           cargo binstall -y --locked "cargo-about@$(sed -n 's/^WANT=//p' scripts/update-third-party-licenses.sh)"
           cargo fetch --locked
           bash scripts/update-third-party-licenses.sh --check
+  release-workflow:
+    # `.github/workflows/release.yml` is generated from `dist-workspace.toml` by
+    # cargo-dist, so a hand edit to it is a change nothing else would notice until a
+    # release runs. The gate cannot live in `release.yml` itself — it would be
+    # regenerated away — and it is its own job rather than a step in `checks`, so a
+    # stale workflow file reads as a stale workflow file and `checks` stays the
+    # verdict on the code.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # the version `dist-workspace.toml` pins, installed the way release.yml's own
+      # `plan` job installs it: another version generates the file differently, and
+      # reading the pin here is what keeps the two from drifting apart
+      - name: install dist
+        shell: bash
+        run: |
+          want=$(sed -n 's/^cargo-dist-version = "\(.*\)"/\1/p' dist-workspace.toml)
+          echo "dist $want"
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            "https://github.com/axodotdev/cargo-dist/releases/download/v$want/cargo-dist-installer.sh" | sh
+      - name: release.yml is what dist-workspace.toml generates
+        shell: bash
+        run: |
+          if ! dist generate --check; then
+            want=$(sed -n 's/^cargo-dist-version = "\(.*\)"/\1/p' dist-workspace.toml)
+            echo "::error file=.github/workflows/release.yml::.github/workflows/release.yml is not what dist-workspace.toml generates. Install cargo-dist $want (dist selfupdate, or the installer this job runs), run 'dist generate', and commit the result. The file is generated: edit dist-workspace.toml, never release.yml. Ignore the 'run dist init' hint above — init rewrites dist-workspace.toml."
+            exit 1
+          fi
   windows-checks:
     # the same two gates on Windows: satz ships a Windows build, so clippy and the tests
     # run there on every pull request and push to main — the smoke matrix is bash and
