@@ -208,8 +208,8 @@ customer. Outer beats inner; everything globally unique derives from
 
 **Schema-typed resources** are what the fold relies on. Block keys are matched
 exactly against the loaded provider schemas, so the compiler tells a resource
-map from a nested attribute block without guessing, and an unknown type is a
-parse-time error, not a plan-time one.
+map from a nested attribute block without guessing, and an unknown type — or an
+argument a type does not have — is a parse-time error, not a plan-time one.
 
 **`use` and the ⊕ fold** are why an estate is a composition rather than a copy.
 Two files defining the *same address differently* is a conflict naming both
@@ -520,6 +520,24 @@ the loaded schemas do not know is a hard error. That applies to types nested
 inside a `google_project { … }` or `google_folder { … }` body as well, which
 are otherwise indistinguishable from a nested attribute block such as
 `labels { … }` — the schema is what tells the two apart.
+
+**The keys inside a resource body are the schema's too**, level by level: an
+argument or block the provider does not have is a parse error naming the file,
+the line and the key. A block's own body is checked the same way
+(`spec { … }` of an org policy, `condition { … }` under its rules); what an
+attribute carries is a value, so the keys of a `labels` map are the estate's
+own. Nine keys are satz's rather than the provider's and are written in any body
+they belong to:
+
+| key | what it is |
+| --- | --- |
+| `"import-id"` | the live id of the resource this block adopts — it becomes an `import` block (§6.7) |
+| `lifecycle` | Terraform's meta-argument, emitted as written |
+| `provider` | Terraform's meta-argument, emitted as a reference (`google.google`) |
+| `project_service` | on `google_project`: the APIs to enable, one `google_project_service` each |
+| `org` | on `google_project`: the organisation the project states as its parent |
+| `member`, `manager`, `owner` | on `google_cloud_identity_group`: the memberships to create (§6.4) |
+| `email` | on `google_cloud_identity_group`: the group address, where the label is not it |
 
 The only bare block keywords are Satz's own: `estate`, `pack`, `params`,
 `terraform`, `providers`, `use`, `suppress`, `claim`, `question`, `action`, `notice`, `offers`,

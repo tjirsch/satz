@@ -1504,6 +1504,27 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.72.0
+
+**A key a resource type does not have is refused.** Every key of a resource body is
+checked against the provider schema at parse time, block bodies included, and a key the
+schema does not name stops the compile: ``google_project: unknown key `parent` — the
+provider schema names no such argument or block here``, with the file and the line. It
+used to be written into `main.tf` as an argument, where `tofu validate` was the first
+thing to object.
+
+**The edit, per key:** write the argument the provider has. A project's parent is
+`folder_id` (a reference to a folder the estate declares, `google_folder.infra.name`, or
+a numeric id) or `org_id` — never `parent`, which is the Resource Manager path and
+belongs to an org policy. For any other type, the provider's registry page lists its
+arguments under the name satz uses, to the underscore. Find what is affected before
+upgrading: `satz transpile <estate>.satz` names one key per run.
+
+**Nine keys are satz's own and stay**, in the body of every type that takes them:
+`"import-id"`, `lifecycle`, `provider`, a project's `project_service` and `org`, and a
+group's `member`, `manager`, `owner` and `email`. `depends_on` is not among them — satz
+derives the ordering a plan needs itself.
+
 ### v0.71.0
 
 **A `use` inside a folder's or a project's body is refused.** A folder's and a project's

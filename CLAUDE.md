@@ -209,7 +209,9 @@ and in the maintainer's notes. Nothing in this file names a customer.
 
 - The fragment pipeline parses Satz directly: per-file fragments, the ⊕ fold
   (same address, different body = hard error naming both files), schema-typed
-  resources (an unknown block key is a parse-time error), `use` / `use … as` /
+  resources (an unknown block key is a parse-time error, and so is a key inside a
+  body that the schema does not name — the nine satz reads itself are a closed
+  list in `satz_body_key`, ADR 0047), `use` / `use … as` /
   `use … when`, `suppress` (subtractive; a suppression that matches nothing is
   a hard error), `claim` with `implements` / `contributes` / `deviates`
   (`reason` mandatory on a deviation), `hcl { … }` raw passthrough that warns

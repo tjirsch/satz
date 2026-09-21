@@ -440,8 +440,8 @@ pub(crate) fn lifecycle_block(v: &serde_yaml::Value, resolve: ValueResolver) -> 
 
 /// The generic resource emission: context inheritance (schema-driven narrowest
 /// scope), org-policy name/parent/spec handling, lifecycle, attr-vs-block by
-/// schema. Extracted verbatim from the walk's `transpile_single_resource`; both
-/// pipelines call THIS.
+/// schema. A project never arrives here — `emit_project` builds it, with its
+/// services and its parent — so this walk holds no rule of its own about one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn single_resource_block(
 tf_type: &str,
@@ -450,9 +450,7 @@ attrs: &serde_yaml::Mapping,
 resource_schema: Option<&crate::schema::ResourceSchema>,
 ctx: &ResCtx,
 provider_alias: Option<&str>,
-billing_fallback: Option<&serde_yaml::Value>,
 resolve: ValueResolver,
-validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
 ) -> Result<ResourceBlock, Box<dyn std::error::Error>> {
     let label = res_name.replace("-", "_");
     let mut needs_scope: Option<&'static str> = None;
@@ -474,30 +472,7 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
     // Removal of import-existing logic (as requested by user)
     final_attrs.remove(serde_yaml::Value::String("import-existing".to_string()));
 
-    if tf_type == "google_project" {
-        let has_org = attrs.contains_key(serde_yaml::Value::String("org_id".to_string())) ||
-                      attrs.contains_key(serde_yaml::Value::String("org".to_string()));
-        let has_folder = attrs.contains_key(serde_yaml::Value::String("folder_id".to_string()));
-
-        if !has_folder && !has_org {
-            if let Some(f_ref) = &ctx.folder_ref {
-                block_builder = block_builder.add_attribute(hcl::Attribute::new("folder_id", parse_expr(f_ref)));
-                final_attrs.insert(serde_yaml::Value::String("folder_id".to_string()), serde_yaml::Value::String(f_ref.clone()));
-            } else if let Some(org_id) = &ctx.org_id {
-                block_builder = block_builder.add_attribute(hcl::Attribute::new("org_id", org_id.clone()));
-                final_attrs.insert(serde_yaml::Value::String("org_id".to_string()), serde_yaml::Value::String(org_id.clone()));
-            }
-        }
-
-        // Inject billing_account if missing and variable exists
-        if !attrs.contains_key(serde_yaml::Value::String("billing_account".to_string())) {
-            if let Some(ba) = billing_fallback {
-                if let Some(val) = render_value_r(resolve, ba) {
-                    block_builder = block_builder.add_attribute(hcl::Attribute::new("billing_account", val));
-                }
-            }
-        }
-    } else if tf_type == "google_org_policy_policy" {
+    if tf_type == "google_org_policy_policy" {
         let name_val = attrs.get(serde_yaml::Value::String("name".to_string()))
             .and_then(|v| v.as_str())
             .ok_or_else(|| format!(
@@ -770,10 +745,6 @@ validate: Option<&dyn Fn(&serde_yaml::Mapping)>,
                 block_builder = block_builder.add_attribute(hcl::Attribute::new(k_str.as_str(), val));
             }
         }
-    }
-
-    if let Some(validate) = validate {
-        validate(&final_attrs);
     }
 
     Ok(ResourceBlock { block: block_builder.build(), import_id, label, needs_scope })
