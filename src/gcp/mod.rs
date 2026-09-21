@@ -5,6 +5,7 @@
 
 pub(crate) mod billing;
 pub(crate) mod discovery_doc;
+pub(crate) mod iam_policy;
 pub(crate) mod identity;
 pub(crate) mod resourcemanager;
 pub(crate) mod serviceusage;

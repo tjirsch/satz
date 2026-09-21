@@ -960,8 +960,10 @@ groups by email, org policies by constraint (activating managed constraints
 with `--activate`), any other GCP-assigned id through Cloud Asset Inventory
 under the resource's own scope on the row's `match_on` attributes (contacts by
 email, alert policies by display name), user-chosen ids from the `import_id`
-templates in `presets/import-config.yaml` — and `--execute` writes them back: an
-`"import-id"` line into a block, the object form into a list entry. Derived
+templates in `presets/import-config.yaml`, IAM grants only when the live IAM
+policy of what they are granted on holds them — and `--execute` writes them back: an
+`"import-id"` line into a block, the object form into a list entry. A grant the
+live policy does not hold is created by `apply` and gets no id. Derived
 ids are written too; `tofu plan` verifies each through its import block. It
 does not rewrite an entry it cannot find in the source (an interpolated member),
 and does not edit a **pristine pack** — packs are upstream-owned, so their
