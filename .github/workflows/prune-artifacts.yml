@@ -13,9 +13,11 @@ name: Prune Run Artifacts
 #
 # Left alone they sit for the default 90 days: a full multi-platform payload per
 # release, which is how a 500 MB quota dies in four releases and every workflow in
-# the account starts failing on artifact upload. `retention-days` cannot be set here
-# instead, because `release.yml` is generated — the `plan` job runs
-# `dist generate --check` and a hand-edited line fails it.
+# the account starts failing on artifact upload. `retention-days` cannot be set on
+# those uploads instead, because they are steps of `release.yml`, which cargo-dist
+# generates from `dist-workspace.toml`: the line would be overwritten by the next
+# `dist generate`, and the `release-workflow` job of `smoke.yml` fails any commit
+# whose `release.yml` differs from what `dist generate` produces.
 #
 # A FAILED release keeps its artifacts: the job only runs once the announce step has,
 # so a run that broke halfway is still there to debug. Delete those by hand, or

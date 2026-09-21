@@ -50,6 +50,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   (`$NAMES_DENYLIST`) is for, and what review is for.
 - **Release flow:** work commits on `main`; `cargo release patch|minor
   --execute --no-confirm` bumps, tags and pushes; the tag triggers cargo-dist.
+  `.github/workflows/release.yml` is generated from `dist-workspace.toml`: change
+  that file and run `dist generate` with the version its `cargo-dist-version`
+  names, never edit the workflow. The `release-workflow` job of `smoke.yml` runs
+  `dist generate --check` on every PR and every push to `main` and fails on a
+  hand-edited or un-regenerated `release.yml`, printing the diff.
   **Minor or patch (2026-09-11, ADR 0010):** a release is a MINOR when the same
   estate or input, run through the new binary, needs an edit, is refused, or
   plans differently — a language change, a removed or renamed command or flag,
