@@ -22,7 +22,7 @@ use satz_core::satz::{File, Value};
 
 use crate::findings::{Finding, Kind, Severity};
 use crate::template::Place;
-use crate::ToolConfig;
+use crate::settings::ToolConfig;
 
 type BoxErr = Box<dyn std::error::Error>;
 

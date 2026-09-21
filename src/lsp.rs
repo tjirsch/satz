@@ -16,7 +16,8 @@
 //! progress goes to stderr, where Zed's log shows it.
 
 use crate::schema::{BlockSchema, ResourceRegistry};
-use crate::{parse_tool_config, resolved_config, EstateResolver, ToolConfig};
+use crate::{EstateResolver};
+use crate::settings::{ToolConfig, parse_tool_config, resolved_config};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, Notification as _,

@@ -18,7 +18,7 @@ use satz_core::pipeline::{acknowledged, estate_questions, Env, PackNotices};
 use satz_core::satz::Severity as Declared;
 
 use crate::findings::{Finding, Kind, Severity};
-use crate::ToolConfig;
+use crate::settings::ToolConfig;
 
 /// What the run this finding is produced for does to the organisation. The pack's
 /// declared severity is the floor and this is the ceiling: a run that only reads says an

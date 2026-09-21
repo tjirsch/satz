@@ -34,7 +34,7 @@ use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
 use crate::findings::{Finding, Kind, Severity};
-use crate::ToolConfig;
+use crate::settings::ToolConfig;
 
 /// Which of the three said so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
@@ -240,7 +240,7 @@ pub(crate) fn run_tier(flags: &[String], env: Option<&str>) -> Result<Vec<Rule>,
 
 /// Where the machine tier lives, said in an error.
 fn machine_file() -> String {
-    crate::global_settings_path().map(|p| p.display().to_string()).unwrap_or_else(|| "~/.config/satz/satz.toml".into())
+    crate::settings::global_settings_path().map(|p| p.display().to_string()).unwrap_or_else(|| "~/.config/satz/satz.toml".into())
 }
 
 /// `satz silence list`: both files, every rule, its reason, and — when an estate is
@@ -325,12 +325,12 @@ pub(crate) fn add(selector_text: &str, reason: &str, machine: bool, config: &Pat
             )
             .into());
         }
-        let mut settings = crate::load_global_settings()?;
+        let mut settings = crate::settings::load_global_settings()?;
         if settings.silence.iter().any(|r| r.kind == rule.kind && r.subject == rule.subject) {
             return Err(format!("{}: `{}` is already silenced there", machine_file(), rule.selector()).into());
         }
         settings.silence.push(rule.clone());
-        crate::save_global_settings(&settings)?;
+        crate::settings::save_global_settings(&settings)?;
         println!("silenced on this machine: {} — {}\n  {}", rule.selector(), rule.reason, machine_file());
         return Ok(());
     }
@@ -356,13 +356,13 @@ pub(crate) fn remove(selector_text: &str, machine: bool, config: &Path) -> Resul
     let (kind, subject) = selector(selector_text)?;
     let wanted = Rule { kind, subject, reason: String::new() }.selector();
     if machine {
-        let mut settings = crate::load_global_settings()?;
+        let mut settings = crate::settings::load_global_settings()?;
         let before = settings.silence.len();
         settings.silence.retain(|r| r.selector() != wanted);
         if settings.silence.len() == before {
             return Err(format!("{}: nothing there silences `{}`", machine_file(), wanted).into());
         }
-        crate::save_global_settings(&settings)?;
+        crate::settings::save_global_settings(&settings)?;
         println!("no longer silenced on this machine: {}\n  {}", wanted, machine_file());
         return Ok(());
     }

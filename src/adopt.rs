@@ -24,8 +24,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmcp::schemars;
 
+use std::path::{Path, PathBuf};
+
 use crate::config::ImportConfig;
 use crate::manifest::{EmittedResource, Manifest};
+use crate::{configure_estate_impersonation, estate_path, load_import_config, pipeline_b_generate, reject_yaml_dialect, PipelineBOut};
+use crate::settings::{ToolConfig};
 
 /// What a natural-key lookup found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1805,4 +1809,271 @@ mod state_aware_tests {
         let conflicts = move_conflicts(&rs, &state);
         assert_eq!(conflicts, vec![(NEW.to_string(), OLD.to_string())]);
     }
+}
+
+/// The adopt dry run, computed: the estate's compile, every declared resource
+/// resolved against the live organisation, the live client (activation needs it),
+/// and what the state already manages. No printing — the CLI and `satz_adopt`
+/// share it. The identity is the caller's: the CLI binds it for the process, the
+/// MCP tool scopes it to the call.
+pub(crate) struct AdoptPlan {
+    pub out: PipelineBOut,
+    pub resolutions: Vec<crate::adopt::Resolution>,
+    pub live: crate::adopt::RealLive,
+    /// What the state already manages, read ONCE and used by both halves of the
+    /// command. The dry run has to know it: `--execute --import` skips those
+    /// addresses, so a table that ranks them as "IMPORT" describes a run that
+    /// will not happen.
+    ///
+    /// Unreadable is a NOTE for the dry run, never a failure — a first adopt has
+    /// no state, and refusing to describe the estate because of that would be
+    /// refusing the only thing a dry run is for. The import path still fails
+    /// fast, because there the imports really would all fail the same way.
+    pub state: Result<crate::bootstrap::StateIndex, String>,
+}
+
+pub(crate) async fn adopt_plan(
+    input_path: &Path,
+    only: Vec<String>,
+    activate: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<AdoptPlan, Box<dyn std::error::Error>> {
+    // Same compile the emitter uses, so the adopted addresses are exactly the
+    // ones `apply` will act on.
+    let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
+    let rules = load_import_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
+        "adoption rules live in <presets_dir>/import-config.yaml — run `satz get-presets` so it exists",
+    )?;
+    let opts = crate::adopt::Options { only: only.into_iter().collect(), activate };
+    let mut live = crate::adopt::RealLive::new(&out.customer_id).await?;
+    let resolutions = crate::adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
+    let state = crate::bootstrap::state_index(&runtime_config.tf_tool, Path::new(&runtime_config.hcl_dir));
+    Ok(AdoptPlan { out, resolutions, live, state })
+}
+
+// ── the command line's own arm ─────────────────────────────────────────────
+// Everything ABOVE this line is reached by `satz_adopt` over MCP, where stdout
+// carries the JSON-RPC protocol: it must never print there, and the gate in
+// `src/mcp.rs` asserts it over exactly this region. `run_adopt` below is the CLI
+// arm and prints the table a human reads, so the gate stops here.
+
+/// `satz adopt`: compile, resolve every declared resource against the live
+/// org, report, and — only with `--execute` — write the verified ids into the
+/// estate or import them into state now.
+pub(crate) async fn run_adopt(
+    input: &str,
+    only: Vec<String>,
+    execute: bool,
+    import: bool,
+    activate: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::adopt::{self, Outcome};
+    let input_path = estate_path(PathBuf::from(input), runtime_config);
+    reject_yaml_dialect(&input_path, "adopt")?;
+    configure_estate_impersonation(&input_path, runtime_config)?;
+    // a run over every declared resource is the one a notice naming `satz adopt` asks for
+    let whole = only.is_empty();
+    let AdoptPlan { out, resolutions, mut live, state } =
+        adopt_plan(&input_path, only, activate, tool_config, runtime_config).await?;
+    let in_state = state.clone().unwrap_or_default();
+
+    println!("\nadopt {} — {} resources declared\n", input_path.display(), out.manifest.resources.len());
+    print!("{}", adopt::render_table(&resolutions, &in_state, &out.manifest));
+    println!("\n{}", adopt::summary(&resolutions, &in_state));
+    if let Err(e) = &state {
+        println!(
+            "\nnote: the state could not be read ({}), so nothing below is marked as already \
+             managed — run `{} init` in {} for the full picture",
+            e.lines().next().unwrap_or("(no output)"),
+            runtime_config.tf_tool,
+            runtime_config.hcl_dir
+        );
+    }
+
+    // A table with a FAILED / unresolvable / ambiguous / no-rule row did not
+    // answer its question: that is an error exit, not a summary count. The
+    // table is above; nothing has been changed at this point.
+    let unanswered = adopt::unanswered(&resolutions, &in_state);
+    if unanswered > 0 {
+        return Err(format!(
+            "adopt: {} resolution(s) failed, unresolvable, ambiguous or without a rule — see the rows above; nothing was changed",
+            unanswered
+        )
+        .into());
+    }
+
+    // One live object with two declarations. A move would not resolve that —
+    // it would only change which of the two the next plan wants to create — so
+    // the run stops and names both ends. The estate has to drop one first.
+    let conflicts = adopt::move_conflicts(&resolutions, &in_state);
+    if !conflicts.is_empty() {
+        let mut msg =
+            String::from("adopt: the estate declares both ends of a state move; nothing was changed:\n");
+        for (new_address, old_address) in &conflicts {
+            msg.push_str(&format!(
+                "  {} is the same live object as {}, which the estate still declares\n",
+                new_address, old_address
+            ));
+        }
+        msg.push_str("  drop one of the two declarations, then re-run adopt");
+        return Err(msg.into());
+    }
+
+    if !execute {
+        println!(
+            "\ndry run — nothing was changed. Re-run with --execute to write the verified \"import-id\"s into the estate, \
+             or --execute --import to run `{} import` now (derived ids are verified by the import itself).",
+            runtime_config.tf_tool
+        );
+        return Ok(());
+    }
+
+    if import {
+        let hcl_dir = Path::new(&runtime_config.hcl_dir);
+        // E04: with no "import-id" in the estate every resolvable resource
+        // counts as "to import", and a re-run then issued `tofu import` for
+        // addresses the state already manages (17/18 once) — noisy, slow, and
+        // each a needless state write. The read above already has them.
+        // A FIRST adopt is fine: an initialized empty state lists nothing and
+        // errors nothing. An UNREADABLE state (uninitialized dir, changed
+        // backend) means every import below would fail the same way — so this
+        // fails fast with the fix instead of printing it 117 times. The dry run
+        // above only noted it, because describing an estate needs no state.
+        let in_state = state.map_err(|e| {
+            format!(
+                "could not read the state ({}) — the imports would fail the same way; run `{} init` \
+                 (or `init -reconfigure` after a backend change) in {} first",
+                e.lines().next().unwrap_or("(no output)"),
+                runtime_config.tf_tool,
+                runtime_config.hcl_dir
+            )
+        })?;
+        // activation posts the DECLARED spec — parameterized managed
+        // constraints (allowedContactDomains, allowedPolicyMembers) require
+        // their `parameters` and reject a synthesized enforce-only rule
+        let declared_specs: std::collections::BTreeMap<String, serde_yaml::Value> = out
+            .org_policies
+            .iter()
+            .filter_map(|(_, body)| {
+                let name = body.get("name")?.as_str()?;
+                let spec = body.get("spec")?.clone();
+                Some((crate::org_policy::constraint_name(name), spec))
+            })
+            .collect();
+        let (mut activated, mut imported, mut failed) = (0usize, 0usize, 0usize);
+        let (mut already_managed, mut moved) = (0usize, 0usize);
+        for r in &resolutions {
+            if in_state.manages(&r.address) {
+                println!("  {:60} already managed in the state — skipped", r.address);
+                already_managed += 1;
+                continue;
+            }
+            // Before the outcome is read: the outcome says IMPORT, and for a
+            // renamed block importing is what puts one live object in the state
+            // twice. The object is already managed — only its name changed.
+            if let Some(old_address) = adopt::moved_from(r, &in_state) {
+                if crate::bootstrap::run_state_mv(
+                    &runtime_config.tf_tool,
+                    hcl_dir,
+                    old_address,
+                    &r.address,
+                ) {
+                    moved += 1;
+                } else {
+                    failed += 1;
+                }
+                continue;
+            }
+            let id = match &r.outcome {
+                Outcome::NeedsActivation { id, .. } => {
+                    let Some((parent, constraint)) = &r.org_policy else { continue };
+                    println!("  {:60} activating (managed, not live)...", r.address);
+                    let spec = match declared_specs
+                        .get(constraint)
+                        .ok_or_else(|| format!("{} declares no spec", constraint))
+                        .and_then(crate::org_policy::declared_spec_to_api)
+                    {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("  {:60} activation FAILED: {}", r.address, e);
+                            failed += 1;
+                            continue;
+                        }
+                    };
+                    let client = live.org_policy_client().await?;
+                    match client.create_policy(parent, constraint, spec).await {
+                        Ok(()) => activated += 1,
+                        Err(e) => {
+                            eprintln!("  {:60} activation FAILED: {}", r.address, e);
+                            failed += 1;
+                            continue;
+                        }
+                    }
+                    id
+                }
+                Outcome::Resolved { id, .. } => id,
+                Outcome::OnApply => {
+                    println!("  {:60} on apply — skipped (apply creates it)", r.address);
+                    continue;
+                }
+                Outcome::ParentOnApply(why) => {
+                    println!("  {:60} on apply — skipped ({})", r.address, why);
+                    continue;
+                }
+                Outcome::AlreadyAdopted(_) | Outcome::Skipped => continue,
+                other => {
+                    // unanswered rows already ended the run above; this arm
+                    // only exists so a new Outcome can never be skipped silently
+                    println!("  {:60} skipped ({:?})", r.address, other);
+                    continue;
+                }
+            };
+            if crate::bootstrap::run_import(&runtime_config.tf_tool, hcl_dir, &r.address, id) {
+                imported += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        println!(
+            "\nadopt: {} activated, {} imported, {} moved, {} already managed (skipped), {} failed.\nnext: `satz transpile {} --plan` — no create for what was imported and no destroy for what was moved.",
+            activated, imported, moved, already_managed, failed, input
+        );
+        if failed > 0 {
+            return Err(format!("adopt: {} activation(s)/import(s)/move(s) failed — see above", failed).into());
+        }
+        // Every declared resource answered and nothing failed: the notices that ask for
+        // this run are done, and the estate says so.
+        if whole {
+            let done: Vec<String> = crate::notices::open(&input_path, runtime_config)?
+                .into_iter()
+                .filter(|n| n.run.split_whitespace().take(2).eq(["satz", "adopt"]))
+                .map(|n| n.param)
+                .collect();
+            crate::notices::acknowledge(&input_path, &done)?;
+            for p in &done {
+                println!("adopt: acknowledged the notice {} — bound {} = true in {}", p, p, input_path.display());
+            }
+        }
+    } else {
+        let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)))?;
+        for w in &written {
+            println!("  wrote {}", w);
+        }
+        for h in &hints {
+            println!("  note: {}", h);
+        }
+        let pending_activation = resolutions.iter().filter(|r| matches!(r.outcome, Outcome::NeedsActivation { .. })).count();
+        if pending_activation > 0 {
+            println!("  note: {} managed constraint(s) need activation — that is `--execute --import --activate`, activation cannot be written into the estate", pending_activation);
+        }
+        println!(
+            "\nadopt: {} \"import-id\"(s) written. Run `satz transpile {}` to regenerate imports.tf, then `satz plan`.",
+            written.len(),
+            input
+        );
+    }
+    Ok(())
 }

@@ -15,7 +15,7 @@ use std::path::Path;
 
 use satz_core::pipeline::{estate_questions, Env};
 
-use crate::ToolConfig;
+use crate::settings::ToolConfig;
 
 /// One question, joined with the answer the estate currently carries.
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]

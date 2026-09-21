@@ -50,7 +50,7 @@ use rmcp::service::RequestContext;
 use rmcp::RoleServer;
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
 
-use crate::ToolConfig;
+use crate::settings::ToolConfig;
 
 /// What a tool is allowed to do. Not a severity ladder — three different kinds
 /// of consequence, granted independently.
@@ -1129,12 +1129,12 @@ impl SatzMcp {
                 config.display()
             ))));
         }
-        let tool = match crate::parse_tool_config(&config) {
+        let tool = match crate::settings::parse_tool_config(&config) {
             Ok(c) => c,
             Err(described) => return Ok(Err(refused(described))),
         };
         let dir = config.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-        let runtime = crate::resolved_config(&tool, &dir);
+        let runtime = crate::settings::resolved_config(&tool, &dir);
 
         let estate = match self.estate_arg(&args.estate, &runtime) {
             Ok(p) => p,
@@ -1180,9 +1180,9 @@ impl SatzMcp {
         configs.sort();
         let mut estates = Vec::new();
         for config in configs {
-            let Ok(tool) = crate::parse_tool_config(&config) else { continue };
+            let Ok(tool) = crate::settings::parse_tool_config(&config) else { continue };
             let dir = config.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-            let runtime = crate::resolved_config(&tool, &dir);
+            let runtime = crate::settings::resolved_config(&tool, &dir);
             let Ok(entries) = std::fs::read_dir(&runtime.yaml_dir) else { continue };
             let mut found: Vec<PathBuf> = entries
                 .flatten()
@@ -1883,7 +1883,7 @@ impl SatzMcp {
         };
         let plan = match crate::gcp::with_identity(
             sa,
-            crate::adopt_plan(&estate, args.only, false, &open.tool, &open.runtime),
+            crate::adopt::adopt_plan(&estate, args.only, false, &open.tool, &open.runtime),
         )
         .await
         {
@@ -2681,7 +2681,8 @@ mod tests {
     /// stdout, which is correct for a CLI command.)
     #[test]
     fn the_token_path_never_writes_to_stdout() {
-        let mut regions: Vec<(&str, &str)> = vec![("src/gcp/mod.rs", include_str!("gcp/mod.rs"))];
+        use crate::source_gate::production_only;
+        let mut regions: Vec<(&str, String)> = vec![("src/gcp/mod.rs", include_str!("gcp/mod.rs").to_string())];
 
         // Just the three announce functions, not the whole file.
         let identity = include_str!("gcp/identity.rs");
@@ -2692,11 +2693,11 @@ mod tests {
             .find("pub(crate) fn mark_announced")
             .expect("mark_announced moved — re-point this gate");
         assert!(start < end, "the announce path is no longer one contiguous region");
-        regions.push(("src/gcp/identity.rs (announce path)", &identity[start..end]));
+        regions.push(("src/gcp/identity.rs (announce path)", identity[start..end].to_string()));
 
         // `satz_check_presets` downloads the pristine library and compares; the
         // download counted itself on stdout once, which corrupted the stream.
-        regions.push(("src/github.rs", include_str!("github.rs")));
+        regions.push(("src/github.rs", production_only(include_str!("github.rs"))));
         let presets = include_str!("presets.rs");
         let start = presets
             .find("async fn pristine_source")
@@ -2705,20 +2706,23 @@ mod tests {
             .find("pub(crate) async fn check_presets_report")
             .and_then(|at| presets[at..].find("\n}\n").map(|e| at + e))
             .expect("check_presets_report moved — re-point this gate");
-        regions.push(("src/presets.rs (the check-presets path)", &presets[start..end]));
+        regions.push(("src/presets.rs (the check-presets path)", presets[start..end].to_string()));
 
         // `satz_get_presets` and `satz_adopt` reach these in full.
         let start = presets.find("pub(crate) async fn get_presets").expect("get_presets moved — re-point this gate");
         let end = presets.find("/// What `get-presets` did to the library.").expect("GetPresetsReport moved — re-point this gate");
-        regions.push(("src/presets.rs (get_presets)", &presets[start..end]));
+        regions.push(("src/presets.rs (get_presets)", presets[start..end].to_string()));
+        // `adopt.rs` up to the CLI arm: the whole engine plus `adopt_plan`, which both
+        // halves share. `run_adopt` below that line is the command line's own and prints
+        // the table a human reads, so the region stops there — the comment at that line
+        // says the same from the other side.
         let adopt = include_str!("adopt.rs");
-        regions.push(("src/adopt.rs", adopt.split("#[cfg(test)]").next().unwrap_or(adopt)));
-        let main = include_str!("main.rs");
-        let start = main.find("pub(crate) async fn adopt_plan").expect("adopt_plan moved — re-point this gate");
-        let end = main[start..].find("\n}\n").map(|e| start + e).expect("adopt_plan has no end");
-        regions.push(("src/main.rs (adopt_plan)", &main[start..end]));
+        let end = adopt
+            .find("// ── the command line's own arm")
+            .expect("the adopt boundary moved — re-point this gate");
+        regions.push(("src/adopt.rs", production_only(&adopt[..end])));
 
-        for (what, src) in regions {
+        for (what, src) in &regions {
             for line in src.lines() {
                 let code = line
                     .split("//")
