@@ -523,7 +523,7 @@ pub(crate) enum Commands {
         /// Skip live verification (declared-estate report only)
         #[arg(long)]
         no_live: bool,
-        /// Exit non-zero when a row's status contains one of these (comma list, e.g. `not-enforced,drifted,unmet`; `any` = anything that is not verified/declared)
+        /// Exit non-zero when a row's status contains one of these (comma list, e.g. `not-enforced,drifted,unmet`; `any` = anything that is not verified/declared), or with `undeclared-exemption` when a live exemption binding is undeclared or could not be checked
         ///
         /// The report is written either way.
         #[arg(long, value_delimiter = ',')]
