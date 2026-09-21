@@ -3464,7 +3464,7 @@ resource_types:
   google_healthcare_hl7_v2_store:
     description: Auto-generated entry for google_healthcare_hl7_v2_store
     import: false
-    asset_type: TODO/UNKNOWN
+    asset_type: healthcare.googleapis.com/Hl7V2Store
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_healthcare_hl7_v2_store_iam_binding:
@@ -5257,7 +5257,7 @@ resource_types:
   google_apigee_security_profile_v2:
     description: Auto-generated entry for google_apigee_security_profile_v2
     import: false
-    asset_type: TODO/UNKNOWN
+    asset_type: apigee.googleapis.com/SecurityProfileV2
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_apihub_api_hub_instance:
@@ -6696,7 +6696,7 @@ resource_types:
   google_network_management_vpc_flow_logs_config:
     description: Auto-generated entry for google_network_management_vpc_flow_logs_config
     import: false
-    asset_type: TODO/UNKNOWN
+    asset_type: networkmanagement.googleapis.com/VpcFlowLogsConfig
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_network_security_authorization_policy:
@@ -7190,7 +7190,7 @@ resource_types:
   google_tpu_v2_queued_resource:
     description: Auto-generated entry for google_tpu_v2_queued_resource
     import: false
-    asset_type: TODO/UNKNOWN
+    asset_type: tpu.googleapis.com/QueuedResource
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_tpu_v2_vm:
