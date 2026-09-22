@@ -414,8 +414,13 @@ pub(crate) fn refs_in_entry(e: &Entry, out: &mut Refs) {
 pub(crate) fn needs_at(file: &File) -> Refs {
     let mut out = Refs::new();
     file.items.iter().for_each(|e| refs_in_entry(e, &mut out));
-    for (_, v, line) in &file.params {
+    for (name, v, line) in &file.params {
         refs_in_value(v, *line, &mut out);
+        // A contribution needs the param it adds to exactly as a reference does: the
+        // pack that declares it has to be in the estate, or there is nothing to add to.
+        if let Some(target) = satz_core::satz::contribution_target(name) {
+            out.entry(target.to_string()).or_insert(*line);
+        }
     }
     for a in &file.actions {
         a.args.iter().chain(&a.execute_args).for_each(|p| refs_in_str(p, a.line, &mut out));
@@ -428,6 +433,14 @@ pub(crate) fn needs_at(file: &File) -> Refs {
 /// The names `needs_at` finds, without their lines.
 pub(crate) fn needs(file: &File) -> BTreeSet<String> {
     needs_at(file).into_keys().collect()
+}
+
+/// The params the file CONTRIBUTES to rather than reads. Both make the pack need the one
+/// that declares the param, and only a read makes the order of the two `use` lines
+/// matter: a contribution is merged before the walk, so it reaches its param wherever
+/// the contributing line stands.
+pub(crate) fn contributed(file: &File) -> BTreeSet<String> {
+    file.params.iter().filter_map(|(n, _, _)| satz::contribution_target(n)).map(str::to_string).collect()
 }
 
 /// Which pack declares which param, across the whole library.
@@ -607,9 +620,23 @@ fn address(typ: &str, label: &str) -> String {
 
 /// The params a pack offers an estate: its own, without the acknowledgements its
 /// notices are bound through — those are the Notices section's, and an estate binds one
-/// when the command has run, not when it takes the pack.
+/// when the command has run, not when it takes the pack — and without its
+/// `contributes_…` declarations, which are the Contributes section's: an estate binds
+/// the param they add to, never the contribution.
 fn configurable(file: &File) -> Vec<&(String, satz_core::satz::Value, usize)> {
-    file.params.iter().filter(|(n, _, _)| !file.notices.iter().any(|x| &x.param == n)).collect()
+    file.params
+        .iter()
+        .filter(|(n, _, _)| !file.notices.iter().any(|x| &x.param == n))
+        .filter(|(n, _, _)| satz::contribution_target(n).is_none())
+        .collect()
+}
+
+/// What the pack adds to another pack's list params, target by target.
+fn contributions(file: &File) -> Vec<(&str, &satz_core::satz::Value)> {
+    file.params
+        .iter()
+        .filter_map(|(n, v, _)| satz::contribution_target(n).map(|t| (t, v)))
+        .collect()
 }
 
 fn use_it(rel: &Path, file: &File, sh: &Shape, h: &Header, lib: &Library) -> Result<String, BoxErr> {
@@ -811,6 +838,14 @@ fn render(
     let off: BTreeSet<&str> = sh.resources.iter().filter(|r| r.off).map(|r| r.label.as_str()).collect();
     let mark = |l: &String| if off.contains(l.as_str()) { format!("`{}` *(off)*", l) } else { format!("`{}`", l) };
     md.push_str("## Contributes\n\n");
+    for (target, value) in contributions(file) {
+        let Value::List(items) = value else { continue };
+        md.push_str(&format!("To `{}`, while this pack is on:\n\n", target));
+        for item in items {
+            md.push_str(&format!("- `{}`\n", value_text(item).trim_matches('"')));
+        }
+        md.push('\n');
+    }
     if !sh.uses.is_empty() {
         for u in &sh.uses {
             md.push_str(&format!("- `{}`\n", u));

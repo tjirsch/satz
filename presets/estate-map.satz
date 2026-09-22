@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.0"
+pack estate_map version "2.1"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -45,6 +45,7 @@ params {
 
   // ---- optional: off until the customer asks --------------------------------
   use_budget                    = false
+  use_billing_export            = false
   use_project_cis_log_alerts    = false
   use_scc_enablement            = false
   use_scc_notifications         = false
@@ -117,6 +118,13 @@ question use_budget {
   why      = "The one alarm on runaway cost. The pack carries an import-id placeholder for adopting a budget that already exists — delete it for a fresh one, as its header says."
   reversal = recreate
   blast    = none
+}
+
+question use_billing_export {
+  prompt   = "Export Cloud Billing usage and cost data to BigQuery, in a project of its own?"
+  why      = "A budget says when a threshold is crossed; the export says what the money went on, per project, per SKU, per day. It creates a project and a dataset, and it allows Google's export account past domain-restricted sharing while it is on. Switching the export itself on is a console step Cloud Billing has no API for, which the pack's notice names. Turning the pack off later destroys the project and the spend history in it."
+  reversal = recreate
+  blast    = low
 }
 
 question use_project_cis_log_alerts {
@@ -281,6 +289,10 @@ the grant has nothing to land on until they are applied"""
 offers "presets/organization-budget.satz" {
   when  = use_budget
   phase = "once the estate runs as the service account — these stand alone"
+}
+
+offers "presets/billing-export.satz" {
+  when = use_billing_export
 }
 
 offers "presets/security-audit/sa-security-audit.satz" {

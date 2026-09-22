@@ -72,7 +72,10 @@ google_storage_bucket {
 - **First definition wins, outer beats inner.** The estate declares before its packs,
   so an estate param overrides a pack default. That is the customisation channel:
   reach for a param before forking a pack.
-- Overriding a list **replaces** it. There is no concatenation.
+- Overriding a list **replaces** it. There is no concatenation for an estate.
+- A PACK adds to another file's list param with `contributes_<param> = [ … ]` in its
+  own `params`. The entries go after whatever the list holds, each once, they leave
+  when the pack is switched off, and they are no variable of their own.
 
 ## Hierarchy is nesting
 

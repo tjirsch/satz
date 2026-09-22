@@ -24,6 +24,14 @@ params {
   pack_bucket_adopted      = true           # acknowledges showcase-pack's `notice` — the command has run
   // A project's parent, said rather than nested — see the `google_project` below.
   archive_project_folder   = "google_folder.infra.name"
+  // A list param a PACK adds to: showcase-pack declares
+  // `contributes_infra_project_services` and its entry lands here, after these two,
+  // while that pack is used. A contribution is no param of its own — nothing binds it,
+  // and it is no variable — so this list is still the estate's to say.
+  infra_project_services = [
+    "cloudresourcemanager.googleapis.com",
+    "storage.googleapis.com",
+  ]
 }
 // ---------------------------------------------------------------------------
 // QUESTIONS — what to ask a customer so a param can be filled, and what getting
@@ -135,10 +143,7 @@ google_folder {
         name            = "corp-IaC"
         project_id      = infra_project_name
         billing_account = billing_account_infra
-        project_service = [
-          "cloudresourcemanager.googleapis.com",
-          "storage.googleapis.com",
-        ]
+        project_service = infra_project_services
         google_storage_bucket {
           audit_logs {
             name                        = "{customer_shortname}-audit-logs"

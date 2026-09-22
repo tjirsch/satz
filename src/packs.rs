@@ -616,8 +616,32 @@ impl<'a> View<'a> {
             excludes: self.graph.excluded_by(&n.path).iter().map(|m| m.path.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
             by_hand: n.by_hand.clone(),
             notices: self.notices(n, line),
+            contributes: self.contributes(n, line),
             findings: findings.iter().filter(|(p, _)| p == &n.path).map(|(_, f)| f.message.clone()).collect(),
         }
+    }
+
+    /// What the file this estate uses for `n` adds to other packs' list params — its
+    /// `.local` fork's where the line names one, the pack's own otherwise, as `notices`
+    /// reads them.
+    fn contributes(&self, n: &Node, line: Option<&UseLine>) -> Vec<Contributed> {
+        let path = line.filter(|l| l.written != n.path).map(|l| l.written.as_str()).unwrap_or(&n.path);
+        let Some(file) = self.lib.files.get(path).or_else(|| self.lib.files.get(&n.path)) else {
+            return Vec::new();
+        };
+        file.params
+            .iter()
+            .filter_map(|(name, v, _)| satz_core::satz::contribution_target(name).map(|t| (t, v)))
+            .map(|(param, v)| Contributed {
+                param: param.to_string(),
+                values: match v {
+                    satz_core::satz::Value::List(items) => {
+                        items.iter().map(|i| crate::doc_packs::value_text(i).trim_matches('"').to_string()).collect()
+                    }
+                    other => vec![crate::doc_packs::value_text(other)],
+                },
+            })
+            .collect()
     }
 
     /// The notices of the file this estate uses for `n`: its `.local` fork's where the
@@ -780,8 +804,21 @@ pub(crate) struct PackRow {
     /// is not `acknowledged`
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notices: Vec<crate::notices::NoticeRow>,
+    /// what the pack adds to another pack's list params while it deploys — the entries
+    /// beside the estate's own, so a reader sees which pack put each one there
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contributes: Vec<Contributed>,
     /// the compile's findings about this pack
     pub findings: Vec<String>,
+}
+
+/// One pack's entries in another pack's list param.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct Contributed {
+    /// the list param the entries are added to
+    pub param: String,
+    /// the entries, as the pack wrote them
+    pub values: Vec<String>,
 }
 
 /// A `use` of a file the pack graph does not know.
@@ -900,6 +937,14 @@ pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> Str
                 (false, false) => "when on",
             };
             s.push_str(&format!("    notice {} [{}] — run `{}`, then bind `{} = true`\n", state, n.severity, n.run, n.param));
+        }
+        for c in &p.contributes {
+            s.push_str(&format!(
+                "    {} {} — {}\n",
+                if p.deploys { "contributes to" } else { "would contribute to" },
+                c.param,
+                c.values.join(", ")
+            ));
         }
     }
     if !r.unmanaged.is_empty() {

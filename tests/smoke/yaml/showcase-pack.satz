@@ -7,6 +7,17 @@ params {
   pack_bucket_location = "EU"
   // acknowledges the notice below; the estate binds it true once the command has run
   pack_bucket_adopted  = false
+
+  // A CONTRIBUTION, not a param: `contributes_<param>` adds its entries to the list
+  // param `<param>` that another file declares — here the estate's
+  // `infra_project_services`. The entries are added to whatever that list holds and
+  // leave with this pack; an entry it already holds is not added twice; and where this
+  // `use` line stands decides nothing, because the merge happens before the compile.
+  // A pack that needs an API, or a principal let past an org policy, says so itself
+  // instead of asking every estate to edit a list by hand.
+  contributes_infra_project_services = [
+    "bigquery.googleapis.com",
+  ]
 }
 
 // A pack may name ONE command to run once it is switched on. satz shows it then, and

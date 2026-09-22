@@ -179,7 +179,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 **allowed_policy_member_principal_sets** — The default is the customer's own organisation. A partner organisation whose identities need roles here has to be listed, or every grant to them is refused; one listed too many opens the estate to a directory the customer does not control.
 
 
-**allowed_policy_member_subjects** — The default is Security Command Center's five organisation-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding.
+**allowed_policy_member_subjects** — The default is Security Command Center's five organisation-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding. A pack that needs a principal allowed contributes it itself; this answer is for the estate's own exceptions.
 
 
 ## Notices
