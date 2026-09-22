@@ -68,6 +68,10 @@ pub enum SkipReason {
     /// deleted project stays visible for 30 days and nothing can be managed
     /// in it.
     NotActive(String),
+    /// Several enabled rows claim its asset type and nothing in the asset
+    /// decides between them — the provider has two resource types for one
+    /// Cloud Asset type. The detail names them and the lever that picks one.
+    Ambiguous(String),
 }
 
 impl std::fmt::Display for SkipReason {
@@ -76,11 +80,173 @@ impl std::fmt::Display for SkipReason {
             SkipReason::TypeOff => write!(f, "type off (import: false)"),
             SkipReason::Filtered => write!(f, "filtered by --only/--exclude"),
             SkipReason::Unmapped(d) => write!(f, "unmapped: {}", d),
+            SkipReason::Ambiguous(d) => write!(f, "ambiguous: {}", d),
             SkipReason::ParentNotFound(p) => write!(f, "parent not imported: {}", p),
             SkipReason::PlatformOwned(p) => write!(f, "platform-owned: matches skip pattern `{}` on its import-config row", p),
             SkipReason::NotActive(s) => write!(f, "project is {}, not ACTIVE (Cloud Asset lists a deleted project for 30 days)", s),
         }
     }
+}
+
+/// Which parent a Terraform type is FOR, read off its own name. The provider
+/// spells the parent into the type — `google_logging_project_sink`,
+/// `google_logging_billing_account_sink` — and a type that names none
+/// (`google_storage_bucket`) serves whatever parent the asset hangs under.
+///
+/// The billing account is tested first: `google_logging_billing_account_sink`
+/// would otherwise have to be told apart from a project type by a longer rule.
+/// The answers are the scopes [`Discoverer::get_asset_scope`] reads off an asset
+/// name, so the two sides compare as strings.
+fn type_scope(tf_type: &str) -> Option<&'static str> {
+    for (needle, scope) in [
+        ("_billing_account_", "billing_account"),
+        ("_project_", "project"),
+        ("_folder_", "folder"),
+        ("_organization_", "organization"),
+    ] {
+        if tf_type.contains(needle) {
+            return Some(scope);
+        }
+    }
+    None
+}
+
+/// The rows of the import table that name one Cloud Asset type, sorted by
+/// Terraform type. `resource_types` is a map with no order of its own, so the
+/// candidates are sorted before anything reads them: which type an asset
+/// becomes may not depend on how a hash landed.
+fn rows_by_asset_type(
+    config: Option<&ImportConfig>,
+) -> HashMap<&str, Vec<(&str, &crate::config::ImportResourceConfig)>> {
+    let mut out: HashMap<&str, Vec<(&str, &crate::config::ImportResourceConfig)>> = HashMap::new();
+    for (tf_type, row) in config.iter().flat_map(|c| c.resource_types.iter()) {
+        if let Some(asset_type) = row.asset_type.as_deref() {
+            out.entry(asset_type).or_default().push((tf_type.as_str(), row));
+        }
+    }
+    for rows in out.values_mut() {
+        rows.sort_by_key(|(t, _)| *t);
+    }
+    out
+}
+
+/// Which import-config row a live asset becomes — the ONE place a Terraform
+/// type is chosen for an asset, read by the discovery statistics and by both
+/// construction passes, so the counts say what the estate gets.
+///
+/// Several Terraform types share one Cloud Asset type: the four
+/// `logging.googleapis.com/LogSink` types are one per parent, and
+/// `storage.googleapis.com/Bucket` is the bucket and its IAM policy. Two things
+/// decide, in this order:
+///
+/// 1. the CONTENT type — an asset carrying `resource` is the resource, one
+///    carrying `iam_policy` is the grant;
+/// 2. the PARENT the asset hangs under, read off its own name
+///    (`projects/…`, `folders/…`, `organizations/…`, `billingAccounts/…`) and
+///    compared with the parent each candidate type is for ([`type_scope`]). A
+///    type that names no parent serves any, and is used only when no type that
+///    names one fits.
+///
+/// What neither decides is not guessed: several types left for one asset is
+/// [`SkipReason::Ambiguous`], naming them and the `--only` that picks one, and
+/// a parent no enabled row is for is reported as what it is. Choosing by the
+/// table's order instead cost every log sink and every log bucket of a live
+/// organisation under `--all` — all 23 sinks became
+/// `google_logging_billing_account_sink` and were then dropped for want of a
+/// `billing_account` the asset never had.
+fn row_for_asset<'a>(
+    asset: &Asset,
+    scope: &str,
+    rows: &HashMap<&'a str, Vec<(&'a str, &'a crate::config::ImportResourceConfig)>>,
+) -> Result<(&'a str, &'a crate::config::ImportResourceConfig), SkipReason> {
+    let Some(candidates) = rows.get(asset.asset_type.as_str()) else {
+        return Err(SkipReason::Unmapped(format!("no import-config row has asset_type {}", asset.asset_type)));
+    };
+    let content = if asset.resource.is_some() { "RESOURCE" } else { "IAM_POLICY" };
+    let named = |rows: &[(&'a str, &'a crate::config::ImportResourceConfig)]| {
+        rows.iter().map(|(t, _)| *t).collect::<Vec<_>>().join(", ")
+    };
+    let fits: Vec<_> =
+        candidates.iter().filter(|(_, c)| c.content_type.as_deref() == Some(content)).copied().collect();
+    if fits.is_empty() {
+        return Err(SkipReason::Unmapped(format!(
+            "no row for {} with content_type {} (rows: {})",
+            asset.asset_type,
+            content,
+            named(candidates)
+        )));
+    }
+    let on: Vec<_> = fits.iter().filter(|(_, c)| c.import).copied().collect();
+    if on.is_empty() {
+        return Err(SkipReason::TypeOff);
+    }
+    // Three groups, not two: a row for ANOTHER parent is out of the running
+    // altogether, and is not to be confused with one that names no parent.
+    let mut for_this_parent = Vec::new();
+    let mut for_any_parent = Vec::new();
+    for row in on.iter().copied() {
+        match type_scope(row.0) {
+            Some(s) if s == scope => for_this_parent.push(row),
+            Some(_) => {}
+            None => for_any_parent.push(row),
+        }
+    }
+    let chosen = if for_this_parent.is_empty() { &for_any_parent } else { &for_this_parent };
+    match chosen.len() {
+        1 => Ok(chosen[0]),
+        0 => Err(SkipReason::Unmapped(format!(
+            "every enabled row for {} is for another parent, and this asset hangs under a {} ({})",
+            asset.asset_type,
+            scope,
+            named(&on)
+        ))),
+        n => Err(SkipReason::Ambiguous(format!(
+            "{} enabled rows claim {} and nothing in the asset decides between them: {} — name the one to import with --only",
+            n,
+            asset.asset_type,
+            named(chosen)
+        ))),
+    }
+}
+
+/// What a failed Cloud Asset sweep says, given the failures and the identity the
+/// requests ran as.
+///
+/// Two causes reach the same place, and the message names the one the failure
+/// looks like. A refusal is about the CREDENTIAL: on an estate satz set up,
+/// `roles/cloudasset.viewer` is held by the IaC service account and by nobody
+/// else, so a sweep on the caller's own Application Default Credentials is
+/// denied the scope. Anything else is about the TABLE: an asset type ListAssets
+/// does not serve is named in its own message.
+///
+/// The identity is always named, because "as whom" is the first thing either
+/// answer needs and no output above says it when the run never minted a token.
+fn fetch_refusal(errors: &[String], identity: Option<&str>) -> String {
+    let denied = errors
+        .iter()
+        .any(|e| e.contains("PERMISSION_DENIED") || e.contains("403") || e.contains("Missing required IAM permission"));
+    let who = match identity {
+        Some(sa) => format!("The sweep ran as {}, the service account the estate it was given impersonates.", sa),
+        None => "The sweep ran as the caller's own Application Default Credentials: no estate was named, \
+                 so there is no service account to be."
+            .to_string(),
+    };
+    let cause = if denied {
+        "Cloud Asset Inventory refused the scope, which is a question about the credential: \
+         roles/cloudasset.viewer on the organisation is the IaC service account's, not the caller's. \
+         Name the estate whose account holds it — `--as <estate>` to read the scope as it, `--into <estate>` \
+         to write the delta into it."
+    } else {
+        "An asset type ListAssets refuses is named in the message: leave its row out with --exclude, \
+         and correct the table with scripts/update_import_config.py --probe."
+    };
+    format!(
+        "import aborted — {} request(s) failed, nothing written:\n  {}\n{}\n{}",
+        errors.len(),
+        errors.join("\n  "),
+        who,
+        cause
+    )
 }
 
 /// The `skip:` pattern on the row that matches `what`, if one does.
@@ -990,6 +1156,14 @@ impl Discoverer {
             let after = name.split("/organizations/").last().unwrap_or("");
             let oid = after.split('/').next().unwrap_or(after).to_string();
             return Some(("organization".to_string(), oid));
+        } else if name.contains("/billingAccounts/") {
+            // A billing account is a parent Cloud Asset names but the estate has
+            // no node for: the scope picks the billing-account Terraform type, and
+            // placing the resource then fails with that reason rather than with a
+            // wrong parent.
+            let after = name.split("/billingAccounts/").last().unwrap_or("");
+            let bid = after.split('/').next().unwrap_or(after);
+            return Some(("billing_account".to_string(), format!("billingAccounts/{}", bid)));
         }
         for ancestor in &asset.ancestors {
             if let Some(pid) = ancestor.strip_prefix("projects/") {
@@ -1062,6 +1236,7 @@ impl Discoverer {
         let mut stats: HashMap<String, usize> = HashMap::new();
         let mut fetch_errors: Vec<String> = Vec::new();
         let mut unscoped: Vec<(String, String)> = Vec::new();
+        let rows = rows_by_asset_type(discovery_config.as_ref());
 
         for (ctype_int, asset_types) in type_map {
             let ctype = ContentType::from(ctype_int as i32);
@@ -1098,29 +1273,11 @@ impl Discoverer {
                                  continue;
                              };
 
-                             if let Some(config) = &discovery_config {
-                                  for (tf_type, r_config) in &config.resource_types {
-                                      if r_config.import && r_config.asset_type.as_deref() == Some(&asset.asset_type) {
-                                          // Removed: if verbose || asset.asset_type.contains("Service") { println!("DEBUG: Checking match for {}. tf_type: {}, scope: {}", asset.asset_type, tf_type, scope); }
-                                          let is_match = if tf_type.contains("_project_") {
-                                              scope == "project"
-                                          } else if tf_type.contains("_folder_") {
-                                              scope == "folder"
-                                          } else if tf_type.contains("_organization_") {
-                                              scope == "organization"
-                                          } else if tf_type == "google_folder" {
-                                              scope == "folder" || asset.asset_type == "cloudresourcemanager.googleapis.com/Folder"
-                                          } else if tf_type == "google_project" {
-                                              scope == "project" || asset.asset_type == "cloudresourcemanager.googleapis.com/Project"
-                                          } else {
-                                              true
-                                          };
-                                          
-                                          if is_match {
-                                              *stats.entry(tf_type.clone()).or_insert(0) += 1;
-                                          }
-                                      }
-                                  }
+                             // The statistics count what the construction below will
+                             // build, so they read the same selector; a count taken
+                             // any other way is a number nothing has to honour.
+                             if let Ok((tf_type, _)) = row_for_asset(&asset, &scope, &rows) {
+                                 *stats.entry(tf_type.to_string()).or_insert(0) += 1;
                              }
                              all_assets.push(asset);
                          },
@@ -1137,14 +1294,7 @@ impl Discoverer {
         // Fail fast: an estate built from a partial sweep would be silently
         // missing whole types, and the plan would then propose to create them.
         if !fetch_errors.is_empty() {
-            return Err(format!(
-                "import aborted — {} request(s) failed, nothing written:\n  {}\n\
-                 An asset type ListAssets refuses is named in the message: leave its row out with \
-                 --exclude, and correct the table with scripts/update_import_config.py --probe.",
-                fetch_errors.len(),
-                fetch_errors.join("\n  ")
-            )
-            .into());
+            return Err(fetch_refusal(&fetch_errors, crate::gcp::impersonation_target().as_deref()).into());
         }
 
         if stats.is_empty() {
@@ -1189,14 +1339,7 @@ impl Discoverer {
         let mut project_id_to_parent: HashMap<String, String> = HashMap::new();
         let mut gcp_id_to_yaml_name: HashMap<String, String> = HashMap::new();
         
-        let mut asset_type_to_config: HashMap<String, Vec<(String, &crate::config::ImportResourceConfig)>> = HashMap::new();
-        if let Some(config) = discovery_config {
-             for (tf_type, resource_config) in &config.resource_types {
-                 if let Some(cat) = &resource_config.asset_type {
-                     asset_type_to_config.entry(cat.clone()).or_default().push((tf_type.clone(), resource_config));
-                 }
-             }
-        }
+        let rows = rows_by_asset_type(discovery_config);
 
         // Pass 1: Folders and Projects first, to establish the hierarchy and the
         // id → key map (a Project asset carries both projectId and projectNumber;
@@ -1214,19 +1357,24 @@ impl Discoverer {
                  continue;
              }
 
-             let configs = if let Some(v) = asset_type_to_config.get(&asset.asset_type) { v } else { continue; };
-             let (tf_type, res_config) = if let Some(found) = configs.iter().find(|(t, c)| (t == "google_folder" || t == "google_project") && c.content_type.as_deref() == Some("RESOURCE")) { found } else { continue; };
-
-             if !res_config.import {
-                 skipped.push(Skipped { tf_type: tf_type.clone(), what: asset.name.clone(), reason: SkipReason::TypeOff });
-                 continue;
-             }
+             // The same selector pass 2 uses: for these two asset types the
+             // content type alone decides, the resource half being `google_folder`
+             // and `google_project` and the other half their IAM policies.
+             let scope = Self::get_asset_scope(asset).map(|(s, _)| s).unwrap_or_default();
+             let (tf_type, res_config) = match row_for_asset(asset, &scope, &rows) {
+                 Ok(found) => found,
+                 Err(SkipReason::Unmapped(_)) => continue,
+                 Err(reason) => {
+                     skipped.push(Skipped { tf_type: asset.asset_type.clone(), what: asset.name.clone(), reason });
+                     continue;
+                 }
+             };
 
              if tf_type == "google_folder" {
                  Self::discover_google_folder(asset, res_config, &mut folder_map, &mut folder_id_to_parent, &mut gcp_id_to_yaml_name);
              } else if tf_type == "google_project" {
                  if let Err(reason) = Self::discover_google_project(asset, res_config, &mut project_map, &mut project_id_to_parent, &mut gcp_id_to_yaml_name) {
-                     skipped.push(Skipped { tf_type: tf_type.clone(), what: asset.name.clone(), reason });
+                     skipped.push(Skipped { tf_type: tf_type.to_string(), what: asset.name.clone(), reason });
                  }
              }
         }
@@ -1239,15 +1387,6 @@ impl Discoverer {
                  continue;
              }
 
-             let Some(configs) = asset_type_to_config.get(&asset.asset_type) else {
-                 skipped.push(Skipped {
-                     tf_type: asset.asset_type.clone(),
-                     what: asset.name.clone(),
-                     reason: SkipReason::Unmapped(format!("no import-config row has asset_type {}", asset.asset_type)),
-                 });
-                 continue;
-             };
-
              let Some((scope, scope_id)) = Self::get_asset_scope(asset) else {
                  skipped.push(Skipped {
                      tf_type: asset.asset_type.clone(),
@@ -1257,42 +1396,12 @@ impl Discoverer {
                  continue;
              };
 
-             let matched_config = configs.iter().find(|(tf_type, c)| {
-                 // Skip projects and folders as they are already handled
-                 if tf_type == "google_folder" || tf_type == "google_project" {
-                     return false;
+             let (tf_type, res_config) = match row_for_asset(asset, &scope, &rows) {
+                 Ok(found) => found,
+                 Err(reason) => {
+                     skipped.push(Skipped { tf_type: asset.asset_type.clone(), what: asset.name.clone(), reason });
+                     continue;
                  }
-
-                 let type_match = if asset.resource.is_some() { 
-                     c.content_type.as_deref() == Some("RESOURCE") 
-                 } else { 
-                     c.content_type.as_deref() == Some("IAM_POLICY") 
-                 };
-                 
-                 if !type_match { return false; }
-                 
-                 if !c.import { return false; }
-                 
-                 if tf_type.contains("_project_") { return scope == "project"; }
-                 if tf_type.contains("_folder_") { return scope == "folder"; }
-                 if tf_type.contains("_organization_") { return scope == "organization"; }
-                 
-                 true
-             });
-
-             let Some((tf_type, res_config)) = matched_config else {
-                 let content = if asset.resource.is_some() { "RESOURCE" } else { "IAM_POLICY" };
-                 let reason = if configs.iter().any(|(_, c)| !c.import) {
-                     SkipReason::TypeOff
-                 } else {
-                     SkipReason::Unmapped(format!(
-                         "no row for {} with content_type {} at {} scope (rows: {})",
-                         asset.asset_type, content, scope,
-                         configs.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(", ")
-                     ))
-                 };
-                 skipped.push(Skipped { tf_type: asset.asset_type.clone(), what: asset.name.clone(), reason });
-                 continue;
              };
 
              if tf_type == "google_org_policy_policy" {
@@ -2608,6 +2717,7 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
             SkipReason::TypeOff => "type off (import: false)".to_string(),
             SkipReason::Filtered => "filtered by --only/--exclude".to_string(),
             SkipReason::Unmapped(_) => "unmapped (no import-config row fits)".to_string(),
+            SkipReason::Ambiguous(_) => "ambiguous (several import-config rows fit; --verbose names them)".to_string(),
             SkipReason::ParentNotFound(_) => "parent not imported".to_string(),
             // one line per pattern: the operator sees what each one took
             SkipReason::PlatformOwned(p) => format!("platform-owned, skip pattern `{}`", p),
@@ -3194,5 +3304,195 @@ mod asset_attributes {
         let lost = losses(&dropped);
         assert_eq!(lost.len(), 2, "{:?}", dropped);
         assert!(lost.iter().all(|l| l.contains("public_access_prevention") && l.contains("disagree")), "{:?}", lost);
+    }
+}
+
+#[cfg(test)]
+mod row_selection_tests {
+    //! Which Terraform type a live asset becomes, judged against the SHIPPED
+    //! table: several types share one Cloud Asset type, and the table's order is
+    //! a hash map's, so nothing but the asset itself may decide.
+    //!
+    //! Measured on a live organisation: under `--all` every log sink — project,
+    //! folder and organization alike — became `google_logging_billing_account_sink`
+    //! and was then dropped for want of a `billing_account` the asset never had,
+    //! and every log bucket went the same way. The default run imported the same
+    //! sinks correctly, so `--all` lost what the default kept.
+    use super::*;
+
+    /// The table `satz import` ships with.
+    fn shipped(all: bool) -> ImportConfig {
+        let mut cfg: ImportConfig =
+            serde_yaml::from_str(include_str!("../presets/import-config.yaml")).expect("the shipped table parses");
+        if all {
+            cfg.apply_all(true);
+        }
+        cfg
+    }
+
+    fn asset(asset_type: &str, name: &str) -> Asset {
+        Asset::new()
+            .set_name(name)
+            .set_asset_type(asset_type)
+            .set_resource(google_cloud_asset_v1::model::Resource::new())
+    }
+
+    /// What the selector makes of one asset against one table.
+    fn chosen(cfg: &ImportConfig, asset: &Asset) -> Result<String, SkipReason> {
+        let rows = rows_by_asset_type(Some(cfg));
+        let (scope, _) = Discoverer::get_asset_scope(asset).expect("the fixtures all name a parent");
+        row_for_asset(asset, &scope, &rows).map(|(t, _)| t.to_string())
+    }
+
+    /// One sink and one bucket under each of the four parents Cloud Asset names.
+    fn logging_assets() -> Vec<(&'static str, Asset)> {
+        let sink = |p: &str| asset("logging.googleapis.com/LogSink", &format!("//logging.googleapis.com/{}/sinks/audit", p));
+        let bucket =
+            |p: &str| asset("logging.googleapis.com/LogBucket", &format!("//logging.googleapis.com/{}/locations/global/buckets/audit", p));
+        vec![
+            ("project", sink("projects/acme-infra-001")),
+            ("folder", sink("folders/123456789")),
+            ("organization", sink("organizations/123456789012")),
+            ("billing account", sink("billingAccounts/012345-6789AB-CDEF01")),
+            ("project", bucket("projects/acme-infra-001")),
+            ("folder", bucket("folders/123456789")),
+            ("organization", bucket("organizations/123456789012")),
+            ("billing account", bucket("billingAccounts/012345-6789AB-CDEF01")),
+        ]
+    }
+
+    #[test]
+    fn the_parent_segment_of_the_name_picks_the_logging_type() {
+        let all = shipped(true);
+        let expected = [
+            "google_logging_project_sink",
+            "google_logging_folder_sink",
+            "google_logging_organization_sink",
+            "google_logging_billing_account_sink",
+            "google_logging_project_bucket_config",
+            "google_logging_folder_bucket_config",
+            "google_logging_organization_bucket_config",
+            "google_logging_billing_account_bucket_config",
+        ];
+        for ((parent, a), want) in logging_assets().into_iter().zip(expected) {
+            assert_eq!(chosen(&all, &a).as_deref(), Ok(want), "{} under a {}", a.name, parent);
+        }
+    }
+
+    /// The default run takes the three sink rows that are on; the bucket rows and
+    /// the billing-account sink are off, and each says which of the two it is.
+    #[test]
+    fn the_default_run_takes_the_sinks_that_are_on_and_says_why_it_leaves_the_rest() {
+        let default = shipped(false);
+        let assets = logging_assets();
+        for (i, want) in [
+            (0, "google_logging_project_sink"),
+            (1, "google_logging_folder_sink"),
+            (2, "google_logging_organization_sink"),
+        ] {
+            assert_eq!(chosen(&default, &assets[i].1).as_deref(), Ok(want));
+        }
+        let billing = chosen(&default, &assets[3].1).unwrap_err();
+        let SkipReason::Unmapped(why) = &billing else { panic!("{billing:?}") };
+        assert!(
+            why.contains("is for another parent") && why.contains("billing_account"),
+            "a sink under a parent no enabled row is for says so: {why}"
+        );
+        assert_eq!(chosen(&default, &assets[4].1).unwrap_err(), SkipReason::TypeOff, "every bucket row is off by default");
+    }
+
+    /// `--all` switches rows ON; it may never take a resource away. Before the
+    /// parent decided, it did: the sinks the default run imported were claimed by
+    /// the billing-account row the moment `--all` switched that row on.
+    #[test]
+    fn all_never_drops_what_the_default_run_imports() {
+        let (default, all) = (shipped(false), shipped(true));
+        let mut kept = 0;
+        for (parent, a) in logging_assets() {
+            if let Ok(want) = chosen(&default, &a) {
+                assert_eq!(chosen(&all, &a).as_deref(), Ok(want.as_str()), "--all lost {} under a {}", a.name, parent);
+                kept += 1;
+            }
+        }
+        assert_eq!(kept, 3, "the fixtures the default run imports");
+    }
+
+    /// Where the provider has several types for one asset type and none of them
+    /// names a parent, nothing in the asset decides — so the import says so and
+    /// names the lever, instead of taking whichever row the hash map handed it
+    /// first. The types are listed sorted, so the message is the same every run.
+    #[test]
+    fn several_rows_and_nothing_to_tell_them_apart_is_reported_not_guessed() {
+        let router = asset(
+            "compute.googleapis.com/Router",
+            "//compute.googleapis.com/projects/acme-infra-001/regions/europe-west3/routers/nat",
+        );
+        let reason = chosen(&shipped(true), &router).unwrap_err();
+        let SkipReason::Ambiguous(why) = &reason else { panic!("{reason:?}") };
+        assert!(
+            why.contains(
+                "google_compute_router, google_compute_router_interface, google_compute_router_nat, google_compute_router_peer"
+            ),
+            "the rows are named, in one order: {why}"
+        );
+        assert!(why.contains("--only"), "the message names what picks one: {why}");
+        assert!(reason.to_string().starts_with("ambiguous: "), "{reason}");
+    }
+
+    /// The content type decides first: a bucket's asset and its IAM policy carry
+    /// the same asset type and are two Terraform types.
+    #[test]
+    fn the_content_type_tells_a_resource_from_its_grant() {
+        let all = shipped(true);
+        let bucket = asset("storage.googleapis.com/Bucket", "//storage.googleapis.com/acme-organization-audit-bucket")
+            .set_ancestors(["projects/acme-infra-001"]);
+        assert_eq!(chosen(&all, &bucket).as_deref(), Ok("google_storage_bucket"));
+        // the grant is the same asset without the RESOURCE half: the sweep asks for
+        // the two content types in separate requests
+        let grant = bucket.clone().set_or_clear_resource(None::<google_cloud_asset_v1::model::Resource>);
+        assert_eq!(chosen(&all, &grant).as_deref(), Ok("google_storage_bucket_iam_member"));
+    }
+}
+
+#[cfg(test)]
+mod fetch_refusal_tests {
+    //! A sweep that fails says which of the two causes it looks like, and names
+    //! the identity it ran as.
+    //!
+    //! Measured on a live organisation: `satz import organizations/<id>` was
+    //! refused by Cloud Asset Inventory because `roles/cloudasset.viewer` is the
+    //! IaC service account's, and the message sent the operator to the asset-type
+    //! table instead.
+    use super::*;
+
+    const DENIED: &str =
+        "1 type(s) logging.googleapis.com/LogSink: PERMISSION_DENIED: Missing required IAM permission on requested scope";
+
+    #[test]
+    fn a_refused_scope_names_the_credential_and_the_flags_that_change_it() {
+        let msg = fetch_refusal(&[DENIED.to_string()], None);
+        assert!(msg.contains("nothing written"), "{msg}");
+        assert!(msg.contains("Application Default Credentials"), "the identity it ran as is not named: {msg}");
+        assert!(msg.contains("roles/cloudasset.viewer"), "the role the estate's account holds is not named: {msg}");
+        assert!(msg.contains("--as <estate>") && msg.contains("--into <estate>"), "neither flag is offered: {msg}");
+        assert!(!msg.contains("--exclude"), "a denied scope is not an asset-type problem: {msg}");
+    }
+
+    #[test]
+    fn a_refused_scope_under_an_estate_names_the_service_account_it_ran_as() {
+        let sa = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com";
+        let msg = fetch_refusal(&[DENIED.to_string()], Some(sa));
+        assert!(msg.contains(sa), "the service account the run bound is not named: {msg}");
+        assert!(msg.contains("roles/cloudasset.viewer"), "{msg}");
+    }
+
+    /// Anything that is not a refusal is still the table's problem, and still says
+    /// as whom the sweep ran.
+    #[test]
+    fn a_type_list_assets_does_not_serve_still_points_at_the_table() {
+        let msg = fetch_refusal(&["1 type(s) x/Y: INVALID_ARGUMENT: unsupported asset type".to_string()], None);
+        assert!(msg.contains("--exclude") && msg.contains("update_import_config.py --probe"), "{msg}");
+        assert!(msg.contains("Application Default Credentials"), "{msg}");
+        assert!(!msg.contains("cloudasset.viewer"), "{msg}");
     }
 }

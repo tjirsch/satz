@@ -65,6 +65,10 @@ pub(crate) fn import_state(
 
 /// The live shape of `satz import`: one Cloud Asset Inventory sweep under
 /// `parent` (`organizations/<n>`, `folders/<n>` or `projects/<id>`).
+///
+/// `impersonate` is the service account the run is bound to: `--as <estate>`
+/// reads the scope as that estate's IaC service account, and without it the
+/// sweep runs as the caller's own credentials.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn import_org(
     parent: &str,
@@ -75,6 +79,7 @@ pub(crate) async fn import_org(
     customer_shortname: Option<&str>,
     verbose: bool,
     generate_unmapped: bool,
+    impersonate: Option<String>,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -102,9 +107,9 @@ pub(crate) async fn import_org(
     let written = write_imported(&found.config, output, org_hint.as_deref(), &registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
     if generate_unmapped {
-        // No estate, so no identity to be and nothing declared to subtract: the
-        // whole skipped list, read as the human's own credentials.
-        generate_unmapped_config(&found.skipped, &[], &registry, &written, None, verbose, tool_config, runtime_config)?;
+        // Nothing declared to subtract — a new file declares nothing — so the
+        // whole skipped list, read as whoever the sweep above it read as.
+        generate_unmapped_config(&found.skipped, &[], &registry, &written, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
     }
     Ok(())
 }
@@ -121,9 +126,10 @@ pub(crate) async fn import_org(
 /// commands it names finish the job by hand.
 ///
 /// It runs as the identity the run is bound to — `impersonate` is the estate's IaC
-/// service account under `--into` and `None` for a plain sweep, which stays on the
-/// human's Application Default Credentials (`IDENTITIES`, `src/main.rs`). The child
-/// inherits the environment; the provider block carries the impersonation.
+/// service account whenever the sweep was given an estate (`--into` or `--as`), and
+/// `None` when it was given none and stayed on the caller's Application Default
+/// Credentials (`IDENTITIES`, `src/main.rs`). The child inherits the environment;
+/// the provider block carries the impersonation.
 ///
 /// `already` is what the estate declares by that live id under `--into`: reported
 /// here with the rest, never generated for.
