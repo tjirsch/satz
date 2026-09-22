@@ -124,7 +124,9 @@ fn label(import_id: &str, taken: &mut BTreeSet<String>) -> String {
 /// Only `Unmapped` is a candidate: it is the mapping gap this fallback closes. A
 /// type switched off (`import: false`, `--only`, `--exclude`), a platform-owned
 /// object and a resource whose parent is outside the import were all left out on
-/// purpose, and generating configuration for them would undo the instruction.
+/// purpose, and generating configuration for them would undo the instruction. An
+/// `Ambiguous` one is refused with its own reason: several Terraform types claim
+/// its asset type, so there is no type to write an import block for.
 ///
 /// `known_type` answers whether the provider schema has that resource type. The
 /// live sweep puts the Terraform type in `tf_type` where a row gave it one and
@@ -134,8 +136,16 @@ pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool) -> Pl
     let mut out = Plan::default();
     let mut taken = BTreeSet::new();
     for s in skipped {
-        if !matches!(s.reason, SkipReason::Unmapped(_)) {
-            continue;
+        match &s.reason {
+            SkipReason::Unmapped(_) => {}
+            // No Terraform type was chosen, so there is no import block to write —
+            // but the resource is live and unmanaged, which is what this report is
+            // for, so it says so here instead of disappearing between the two.
+            SkipReason::Ambiguous(why) => {
+                out.refused.push((s.what.clone(), why.clone()));
+                continue;
+            }
+            _ => continue,
         }
         let Some(import_id) = crate::discovery::asset_resource_name(&s.what) else {
             out.refused.push((

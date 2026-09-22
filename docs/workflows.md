@@ -470,6 +470,15 @@ Or straight from Google Cloud, with no state at all:
 satz import organizations/123456789012 -o migration-discovery.satz
 ```
 
+The sweep reads the organisation with your own Application Default Credentials,
+which need `roles/cloudasset.viewer` on it. On an organisation satz set up, that
+role is the estate's IaC service account's: name the estate with `--as` and the
+sweep reads as that account, the one `tofu` applies with.
+
+```bash
+satz import organizations/123456789012 --as C0example.satz -o migration-discovery.satz
+```
+
 The resource types marked `import: true` in `presets/import-config.yaml` are the
 default set. `--all` takes every type the source can deliver instead: from a state
 file every row, live every row with an `asset_type`. `--only` narrows either set,

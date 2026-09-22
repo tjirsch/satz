@@ -965,6 +965,31 @@ grep -qi 'credential\|token\|auth\|ADC' tmp/gen-into.txt \
 ls yaml | grep -q -- '-generate$' && fail "a run that reached no provider wrote a scratch directory"
 ls yaml | grep -q -- '-generated.satz' && fail "a run that reached no provider wrote a generated estate"
 
+step "import --as: the live sweep is told which estate's service account to read as"
+# Offline the run gets as far as the live sweep and stops there for want of
+# credentials, which is what this can assert; the binding itself is unit-tested
+# against a fixture estate (`import_identity`, src/main.rs).
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
+  "$satz" --config . import organizations/123456789012 --as smoke.satz >tmp/import-as.txt 2>&1; then
+  fail "a sweep must not succeed without credentials:\n$(cat tmp/import-as.txt)"
+fi
+grep -q 'import: root organizations/123456789012' tmp/import-as.txt \
+  || fail "--as did not reach the live sweep:\n$(cat tmp/import-as.txt)"
+grep -qi 'credential\|token\|auth\|ADC' tmp/import-as.txt \
+  || fail "the sweep stopped for a reason other than credentials:\n$(cat tmp/import-as.txt)"
+# --into names the estate already, so the two together are refused, not reconciled
+if "$satz" --config . import organizations/123456789012 --as smoke.satz --into smoke.satz >tmp/import-as-into.txt 2>&1; then
+  fail "--as and --into must be refused together"
+fi
+grep -q 'cannot be used with' tmp/import-as-into.txt \
+  || fail "the two flags are not refused together:\n$(cat tmp/import-as-into.txt)"
+# the shapes that read a file call no Google API, so there is nobody to be
+if "$satz" --config . import state.json --as smoke.satz >tmp/import-as-state.txt 2>&1; then
+  fail "--as must be refused on the state shape"
+fi
+grep -q 'applies to the live shape' tmp/import-as-state.txt \
+  || fail "the state refusal did not say which shape --as belongs to:\n$(cat tmp/import-as-state.txt)"
+
 step "a YAML estate is refused by name, with the release that reads it"
 printf 'variables:\n  a: &a 1\n' > tmp/old-estate.yaml
 if "$satz" --config . import tmp/old-estate.yaml >tmp/yaml-refusal.txt 2>&1; then

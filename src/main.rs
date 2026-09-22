@@ -406,6 +406,15 @@ pub(crate) enum Commands {
         /// (matched by live id), as packs the estate `use`s
         #[arg(long)]
         into: Option<PathBuf>,
+        /// live shape: read the scope as this estate's IaC service account,
+        /// writing a new file rather than into the estate
+        ///
+        /// The account the estate applies with is the one that holds
+        /// roles/cloudasset.viewer on the organisation. Without an estate the
+        /// sweep runs as your own credentials. `--into` names an estate
+        /// already, and binds the same way.
+        #[arg(long = "as", value_name = "ESTATE", conflicts_with = "into")]
+        as_estate: Option<PathBuf>,
         /// hcl shape: carry every block verbatim inside `hcl trust` (the
         /// zero-risk form; the estate deploys exactly as the source did)
         #[arg(long)]
@@ -1583,12 +1592,18 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, all, exclude, output, import_config, into, wrap_all, on_collision, customer_shortname, generate_unmapped } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, into, as_estate, wrap_all, on_collision, customer_shortname, generate_unmapped } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
                 None => detect_import_shape(source.as_deref(), cfg_opt.as_ref().and_then(|c| c.root.as_ref()))?,
             };
+            // `--as` answers "as whom", and only a live sweep asks anyone: the
+            // state and hcl shapes read a file and call no Google API. Refused
+            // here, for every shape at once, rather than accepted and ignored.
+            if as_estate.is_some() && shape != "org" {
+                return Err("--as applies to the live shape (organizations/…, folders/…, projects/…): it names the estate whose IaC service account reads the scope, and the state and hcl shapes read a file, calling no Google API".into());
+            }
             match shape.as_str() {
                 "yaml" => {
                     let src = source.ok_or("the yaml shape needs a file")?;
@@ -1647,25 +1662,27 @@ Thumbs.db
                         };
                         import_state(state_json, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, &tool_config, &runtime_config)
                     } else {
-                        // `--into` names an existing estate, and the delta runs
-                        // exactly `adopt`'s read path — the same Cloud Asset
-                        // searches and the same natural-key lookups. So it runs
-                        // as the same identity: the estate's service account.
-                        // Without `--into` there is no estate to be (the output
-                        // is a new file), so discovery stays on the human's ADC,
-                        // like `init`.
+                        // A live sweep reads a customer's organisation, so it runs
+                        // as that organisation's IaC service account — the account
+                        // that holds `roles/cloudasset.viewer` on an estate satz set
+                        // up. Two flags name the estate it is: `--into`, which also
+                        // writes the delta into it, and `--as`, which only borrows
+                        // the identity and writes a new file. Given neither, there is
+                        // no estate to be and the sweep reads as the caller, like
+                        // `init` — which is what the organisation has to allow.
                         let into_path = into.map(|estate| estate_path(estate, &runtime_config));
+                        let bind = import_binds_to(into_path.clone(), as_estate.map(|estate| estate_path(estate, &runtime_config)));
                         // `--generate-unmapped` runs `tofu` against the platform, so it
                         // is told the same answer: the binding is satz's own, and the
                         // provider block the child reads with carries it.
                         let mut impersonate = None;
-                        if let Some(estate) = &into_path {
+                        if let Some(estate) = &bind {
                             impersonate = configure_estate_impersonation(estate, &runtime_config)?;
                         }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         match into_path {
                             Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, generate_unmapped, impersonate, &tool_config, &runtime_config).await,
-                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, generate_unmapped, &tool_config, &runtime_config).await,
+                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, generate_unmapped, impersonate, &tool_config, &runtime_config).await,
                         }
                     }
                 }
@@ -4049,6 +4066,16 @@ pub(crate) fn estate_as_typed(estate: &Path, runtime_config: &ToolConfig) -> Str
     estate.strip_prefix(&yaml_dir).unwrap_or(&estate).to_string_lossy().into_owned()
 }
 
+/// Which estate a live import runs as, from the two flags that name one:
+/// `--into`, which also writes the delta into it, and `--as`, which borrows the
+/// identity alone and writes a new file. `None` is the answer when neither is
+/// given: the sweep has no estate to be and reads as the caller's own
+/// credentials, which is what an organisation must allow for the bare form to
+/// work. clap refuses the two flags together, so the order here settles nothing.
+fn import_binds_to(into: Option<PathBuf>, as_estate: Option<PathBuf>) -> Option<PathBuf> {
+    into.or(as_estate)
+}
+
 /// Configure the identity live estate commands run as: on a
 /// `deployment_mode = "cloud"` estate, the IaC service account
 /// (`{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com` — the
@@ -4798,13 +4825,21 @@ mod command_groups {
         ("adopt-org-policies", Identity::EstateSa),
         ("report-compliance", Identity::EstateSa),
         ("adopt", Identity::EstateSa),
-        // Only `--into` names an estate; plain discovery writes a NEW file and so
-        // has no estate to be, exactly like `init`. `--generate-unmapped` runs
-        // `tofu plan -generate-config-out` as whatever the run is bound to: the
-        // provider block it writes carries the estate's service account under
-        // `--into` and impersonates nobody without it, so the child reads the
-        // platform as the principal the sweep read it as.
-        ("import", Identity::EstateSa),
+        // Two flags name an estate: `--into`, which writes the delta into it, and
+        // `--as`, which only reads the scope as it. Either binds that estate's IaC
+        // service account, which is the account that holds
+        // `roles/cloudasset.viewer` on an organisation satz set up. Given neither,
+        // the sweep writes a NEW file and has no estate to be, exactly like `init`.
+        // `--generate-unmapped` runs `tofu plan -generate-config-out` as whatever
+        // the run is bound to: the provider block it writes carries the estate's
+        // service account when one was named and impersonates nobody otherwise, so
+        // the child reads the platform as the principal the sweep read it as.
+        (
+            "import",
+            Identity::HumanOrEstate(
+                "bare, the scope is read with the caller's own credentials; given an estate — `--into` or `--as` — with that estate's service account",
+            ),
+        ),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
         ("init", Identity::Human("--from-live runs before the estate exists")),
         (
@@ -6885,6 +6920,87 @@ mod migrate_mode {
         assert_eq!(fsx::read_to_string(&path).unwrap(), text, "the refused switch edited the estate");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
+}
+
+#[cfg(test)]
+mod import_identity {
+    //! As whom a live `satz import` reads a customer's organisation.
+    //!
+    //! `roles/cloudasset.viewer` on an organisation satz set up is the IaC service
+    //! account's and nobody else's, so a sweep that cannot be that account cannot
+    //! read the organisation satz itself prescribes: `satz import
+    //! organizations/<id>` was refused by Cloud Asset Inventory while the same
+    //! sweep through `--into` succeeded. Two flags now name the estate to be, and
+    //! either binds the same account `tofu` applies with.
+    use super::*;
+
+    const SA: &str = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com";
+
+    /// A cloud-mode estate in its own directory, named as the command line names it.
+    fn estate() -> (PathBuf, ToolConfig) {
+        let dir = std::env::temp_dir().join(format!("satz-import-identity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("acme.satz");
+        std::fs::write(
+            &path,
+            "estate acme\n\nparams {\n  svc_iac_account    = \"svc-iac-001\"\n  infra_project_name = \"acme-infra-001\"\n  deployment_mode    = \"cloud\"\n}\n\nterraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n",
+        )
+        .unwrap();
+        let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.include_dirs = Vec::new();
+        (path, cfg)
+    }
+
+    fn parsed(args: &[&str]) -> Commands {
+        let mut argv = vec!["satz"];
+        argv.extend_from_slice(args);
+        match Cli::try_parse_from(argv) {
+            Ok(cli) => cli.command.expect("a subcommand"),
+            Err(e) => panic!("{args:?} does not parse: {e}"),
+        }
+    }
+
+    /// The scope form given an estate binds that estate's service account — the
+    /// one the emitter writes into the provider block and `tofu` applies with.
+    #[test]
+    fn the_scope_form_given_an_estate_reads_as_that_estates_service_account() {
+        let (path, cfg) = estate();
+        for flag in ["--as", "--into"] {
+            let Commands::Import { into, as_estate, .. } =
+                parsed(&["import", "organizations/123456789012", flag, "acme.satz"])
+            else {
+                panic!("{flag} is an import flag")
+            };
+            let bind = import_binds_to(into.clone(), as_estate.clone()).expect("{flag} names the estate to be");
+            assert_eq!(bind, PathBuf::from("acme.satz"), "{flag} binds the estate it names");
+            assert_eq!(
+                estate_impersonation_target(&path, &cfg).unwrap().as_deref(),
+                Some(SA),
+                "{flag} does not bind the account the estate applies with"
+            );
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Given no estate there is none to be: the sweep writes a new file and reads
+    /// as the caller's own credentials, which is what `IDENTITIES` says.
+    #[test]
+    fn the_scope_form_given_no_estate_reads_as_the_caller() {
+        let Commands::Import { into, as_estate, .. } = parsed(&["import", "organizations/123456789012"]) else {
+            panic!("import")
+        };
+        assert_eq!(import_binds_to(into, as_estate), None);
+    }
+
+    /// `--into` names the estate already, and the two answers could differ.
+    #[test]
+    fn naming_the_estate_twice_is_refused() {
+        let args = ["satz", "import", "organizations/123456789012", "--into", "acme.satz", "--as", "bolt.satz"];
+        let Err(err) = Cli::try_parse_from(args) else { panic!("--into and --as together are refused") };
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
+
 }
 
 #[cfg(test)]

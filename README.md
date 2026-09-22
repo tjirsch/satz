@@ -166,7 +166,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
-| `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--on-collision error|counter`, `--customer-shortname`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error|counter`, `--customer-shortname`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
 | `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
@@ -829,6 +829,7 @@ satz import projects/my-prj                  # live, one project
 satz import ./terraform                      # existing .tf: variables → params, resources → Satz, the rest verbatim in `hcl trust`
 satz import ./terraform --wrap-all           # …or every block verbatim, nothing promoted
 satz import                                  # live, root taken from the import config
+satz import organizations/123456789012 --as C0example.satz     # read the organization as that estate's IaC service account
 satz import organizations/123456789012 --into C0example.satz   # only what the estate does not declare
 satz import organizations/123456789012 --generate-unmapped     # …and ask the provider for what satz cannot map (--into takes it too)
 ```
@@ -840,6 +841,7 @@ satz import organizations/123456789012 --generate-unmapped     # …and ask the 
 - `--exclude <types>`: comma-separated resource types, `*` wildcards allowed; these are switched off for this run. Overrides `exclude` in the import config.
 - `--output, -o <FILE>`: output inside `yaml_dir` (default `discovered.satz`, `imported-hcl.satz` for hcl; the extension is always `.satz`).
 - `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
+- `--as <ESTATE>` (live shape): read the scope as that estate's IaC service account, writing a new file rather than into the estate. `roles/cloudasset.viewer` on an organization satz set up is that account's, so the sweep is refused on your own credentials; naming the estate binds the account `tofu` applies with. `--into` names an estate already and binds the same way, so the two are refused together. Without either, the sweep reads as your own Application Default Credentials.
 - `--customer-shortname <NAME>` (state and live shapes): the customer's short name, which no platform fact carries; it wins over the inference from the leading token of the project and bucket names.
 - `--on-collision error|counter` (state and live shapes): a grant one principal holds on two folders or two projects would emit one address, because the map form's label is member and role. `error` (the default) refuses the import and names them; `counter` keeps the first in the map form and writes the second and later as labelled resources with a running number (`folderAdmin_alice_2`), one line of output each.
 - `--generate-unmapped` (live shape): the resources the sweep reports as `unmapped` — a required attribute that is not in the asset data and cannot be derived, data that holds nothing the provider schema knows, a content type or scope no row covers — are handed to the provider instead of being left out. satz writes `<base>-generate/imports.tf` with one `import` block per resource (the id is the asset's relative resource name), runs `tofu init` and `tofu plan -generate-config-out=generated.tf` there, and reads the result back through the hcl shape into `<base>-generated.satz`. `<base>` is the file the run is named after: the estate a plain sweep writes (`discovered-generated.satz`), the scope's top-level pack with `--into` (`imported-organizations-123456789012-generated.satz`). With `--into`, what the estate already declares by that live id is named and left out, and the `tofu` child reads as the estate's IaC service account, through the `impersonate_service_account` of the provider block satz writes. The generated file is never `use`d from the estate: joining it is one line, and which of it belongs there is a reading decision. What satz cannot write a block for is listed with the reason; what the provider refuses fails the command with the tool's own output, and `imports.tf` stays for the ids to be corrected by hand. Refused on the state and hcl shapes.
@@ -866,12 +868,25 @@ candidates; nothing is guessed. The run prints the effective root and filter.
 
 **An import may be partial; every run ends with the skipped list** — each resource the source had and the estate does not, with
 its reason: `type off (import: false)`, `filtered by --only/--exclude`, `unmapped` (no
-import-config row fits the asset), or `parent not imported`. Counts by reason
+import-config row fits the asset), `ambiguous` (several fit), or `parent not imported`. Counts by reason
 always — the filtered types as a count too; every name with `--verbose`. A resource
 dropped because `--only` or `--exclude` left its parent's TYPE out is named in the normal
 output with the type to add: `9 google_monitoring_alert_policy need google_project, which
 --only/--exclude left out — add google_project to --only`. The levers are the `import:`
 rows and `--only`.
+
+**Which Terraform type an asset becomes.** Several types share one Cloud Asset
+type: `logging.googleapis.com/LogSink` is four (`google_logging_project_sink`,
+`_folder_sink`, `_organization_sink`, `_billing_account_sink`), and
+`storage.googleapis.com/Bucket` is the bucket and its IAM policy. Two things
+decide, in this order: the content type — an asset carrying the resource is the
+resource, one carrying an IAM policy is the grant — and the parent the asset
+hangs under, read off its own name (`projects/…`, `folders/…`,
+`organizations/…`, `billingAccounts/…`) and compared with the parent each type
+is for. A type that names no parent serves any, and is used only where no type
+that names one fits. Where several types are still left — the provider has four
+for `compute.googleapis.com/Router` and none of them names a parent — the
+resource is reported `ambiguous`, naming the types; `--only <type>` picks one.
 
 A resource's key is its name, sanitized. Where two containers hold the same
 name for one type — every project has a `_Default` log sink — the copies take
@@ -2236,8 +2251,8 @@ estate's service account.** Every exception is listed here with its reason.
 | Command | Runs as | |
 |---|---|---|
 | `export-`/`diff-`/`report-organizational-policies`, `report-compliance`, `adopt`, `adopt-org-policies` | the estate's service account | |
-| `import --into <estate>` | the estate's service account | it runs `adopt`'s read path, so it runs `adopt`'s identity — `--generate-unmapped` writes it into the provider block its `tofu` child reads with |
-| `import` without `--into` | the human's ADC | the output is a new file; there is no estate to be — including the `tofu plan -generate-config-out` child of `--generate-unmapped`, which inherits it and impersonates nobody |
+| `import --into <estate>`, `import --as <estate>` | the estate's service account | the sweep reads a customer's organization, and `roles/cloudasset.viewer` on it is that account's — `--generate-unmapped` writes the account into the provider block its `tofu` child reads with |
+| `import` given no estate | the human's ADC | the output is a new file; there is no estate to be — including the `tofu plan -generate-config-out` child of `--generate-unmapped`, which inherits it and impersonates nobody. The scope must be readable by the credentials themselves; `--as <estate>` is how it is read by the account that holds the role |
 | `bootstrap`, `init` | the human's ADC | day 0 — the service account does not exist yet |
 | `whoami` | the human's ADC | the question *is* who the human is |
 | `whoami <estate>` | the estate's service account in cloud mode; the human's ADC in local mode | a different question — who that estate acts as — so a different answer |
