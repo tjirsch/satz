@@ -132,7 +132,7 @@
     },
     {
       "path": "presets/cis/CIS-GCP-Foundation-4.0.satz",
-      "version": "2.16",
+      "version": "2.17",
       "role": "pack",
       "gate": "use_cis_baseline",
       "gate_declared_in": "presets/estate-map.satz",
