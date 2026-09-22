@@ -1106,7 +1106,14 @@ How a resource is resolved depends on who chose its identity:
   A binding of the role that holds the member → verified import; no such binding
   → *on apply*, and `--execute --import` runs no `tofu import` for it; a parent
   that does not exist (404) → *on apply (parent)*; a policy that cannot be read →
-  *FAILED* with the API's answer. A grant with a `condition` imports only when a
+  *FAILED* with the API's answer. Grants are resolved after everything else, so a
+  grant whose parent is a resource the estate declares — `service_account_id =
+  "${google_service_account.<label>.name}"`, `folder = google_folder.<label>.name`
+  — is followed to the id this run resolved for that resource; when that resource
+  is itself not live, the grant reads *on apply (parent)* and is created with it.
+  A reference satz cannot follow — an attribute that is neither a literal nor the
+  resource's live id, a resource the estate does not emit — is **unresolvable**,
+  naming both. A grant with a `condition` imports only when a
   live binding carries the same condition title and expression, under the
   provider's id `<parent> <role> <member> <title>`; when the member holds the role
   live only under a different condition, the grant is **AMBIGUOUS** and the live

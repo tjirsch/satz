@@ -149,11 +149,61 @@ pub(crate) fn adoptable(rules: &ImportConfig, tf_type: &str) -> bool {
 #[cfg(test)]
 pub(crate) fn render_rule(rules: &ImportConfig, r: &EmittedResource, manifest: &Manifest) -> Option<Result<String, String>> {
     let Rule::Template(template) = rule_for(rules, &r.tf_type) else { return None };
-    Some(match render_template(&template, r, manifest, &BTreeMap::new()) {
+    Some(match render_template(&template, r, manifest, &Known::default()) {
         (_, Outcome::Resolved { id, .. }) => Ok(id),
         (_, Outcome::Unresolvable(why)) => Err(why),
         (_, other) => Err(format!("{other:?}")),
     })
+}
+
+/// What the run has decided about the resources it has already reached: the live
+/// id of each one that has one, and the verdict of every one — a later resource
+/// that references an earlier one reads both here.
+#[derive(Default)]
+struct Known {
+    ids: BTreeMap<String, String>,
+    verdicts: BTreeMap<String, Outcome>,
+}
+
+impl Known {
+    fn record(&mut self, address: &str, outcome: &Outcome) {
+        if let Outcome::Resolved { id, .. } | Outcome::NeedsActivation { id, .. } | Outcome::AlreadyAdopted(id) = outcome {
+            self.ids.insert(address.to_string(), id.clone());
+        }
+        self.verdicts.insert(address.to_string(), outcome.clone());
+    }
+}
+
+/// Why a value the resolution needs could not be produced, and what that means
+/// for the resource that needed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Missing {
+    /// The resource the value comes from is not live: `apply` creates it, and
+    /// whatever needs its id is created with it.
+    NotLive(String),
+    /// The lookup behind the value failed — never read as absence.
+    Failed(String),
+    /// Nothing satz can follow: an expression, a resource the estate does not
+    /// emit, an attribute that is neither a literal nor a live id.
+    Unresolvable(String),
+}
+
+impl Missing {
+    fn outcome(self) -> Outcome {
+        match self {
+            Missing::NotLive(why) => Outcome::ParentOnApply(why),
+            Missing::Failed(why) => Outcome::Failed(why),
+            Missing::Unresolvable(why) => Outcome::Unresolvable(why),
+        }
+    }
+}
+
+impl std::fmt::Display for Missing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Missing::NotLive(why) | Missing::Failed(why) | Missing::Unresolvable(why) => f.write_str(why),
+        }
+    }
 }
 
 fn rule_for(rules: &ImportConfig, tf_type: &str) -> Rule {
@@ -172,7 +222,7 @@ pub(crate) async fn resolve<L: Live>(
     opts: &Options,
     live: &mut L,
 ) -> Vec<Resolution> {
-    let mut resolved_ids: BTreeMap<String, String> = BTreeMap::new();
+    let mut known = Known::default();
     // Projects that are not live (absent, or unanswerable), by address and by
     // project id — a child names its project either by reference or by the
     // literal id, and both must read the same verdict.
@@ -192,46 +242,36 @@ pub(crate) async fn resolve<L: Live>(
         note: None,
         };
         if let Some(id) = &r.import_id {
-            resolved_ids.insert(r.address(), id.clone());
             res.outcome = Outcome::AlreadyAdopted(id.clone());
-            out.push(res);
-            continue;
-        }
-        if !opts.only.is_empty() && !opts.only.contains(&r.tf_type) {
+        } else if !opts.only.is_empty() && !opts.only.contains(&r.tf_type) {
             res.outcome = Outcome::Skipped;
-            out.push(res);
-            continue;
-        }
-        // A resource inside a project that is not live inherits that verdict
-        // before any rule runs: nothing under it can be adopted yet.
-        if let Some(parent_verdict) = parent_not_live(r, manifest, &not_live) {
+        } else if let Some(parent_verdict) = parent_not_live(r, manifest, &not_live) {
+            // A resource inside a project that is not live inherits that verdict
+            // before any rule runs: nothing under it can be adopted yet.
             res.outcome = parent_verdict;
-            out.push(res);
-            continue;
-        }
-        let outcome = match r.tf_type.as_str() {
-            "google_folder" => resolve_folder(r, manifest, &resolved_ids, live).await,
-            "google_project" => resolve_project(r, live).await,
-            "google_cloud_identity_group" => resolve_group(r, live).await,
-            "google_cloud_identity_group_membership" => resolve_membership(r, &resolved_ids, live).await,
-            "google_org_policy_policy" => resolve_org_policy(r, manifest, &resolved_ids, opts, live, &mut res).await,
-            "google_billing_budget" => resolve_budget(r, live).await,
-            _ => match rule_for(rules, &r.tf_type) {
-                Rule::Template(t) => match render_template(&t, r, manifest, &resolved_ids) {
-                    (_, Outcome::Resolved { id, verified: false }) if grant_parent(&r.tf_type, "").is_some() => {
-                        resolve_grant(r, &id, manifest, &resolved_ids, &mut iam_policies, live).await
-                    }
-                    other => other,
+        } else {
+            let outcome = match r.tf_type.as_str() {
+                "google_folder" => resolve_folder(r, manifest, &known, live).await,
+                "google_project" => resolve_project(r, live).await,
+                "google_cloud_identity_group" => resolve_group(r, live).await,
+                "google_cloud_identity_group_membership" => resolve_membership(r, &known, live).await,
+                "google_org_policy_policy" => resolve_org_policy(r, manifest, &known, opts, live, &mut res).await,
+                "google_billing_budget" => resolve_budget(r, live).await,
+                _ => match rule_for(rules, &r.tf_type) {
+                    Rule::Template(t) => match render_template(&t, r, manifest, &known) {
+                        (_, Outcome::Resolved { id, verified: false }) if grant_parent(&r.tf_type, "").is_some() => {
+                            resolve_grant(r, &id, manifest, &known, &mut iam_policies, live).await
+                        }
+                        other => other,
+                    },
+                    Rule::Match(on, asset_type) => resolve_match(r, &on, asset_type.as_deref(), manifest, &known, live).await,
+                    Rule::None => (String::new(), Outcome::NoRule),
                 },
-                Rule::Match(on, asset_type) => resolve_match(r, &on, asset_type.as_deref(), manifest, &resolved_ids, live).await,
-                Rule::None => (String::new(), Outcome::NoRule),
-            },
-        };
-        res.natural_key = outcome.0;
-        res.outcome = outcome.1;
-        if let Outcome::Resolved { id, .. } | Outcome::NeedsActivation { id, .. } = &res.outcome {
-            resolved_ids.insert(r.address(), id.clone());
+            };
+            res.natural_key = outcome.0;
+            res.outcome = outcome.1;
         }
+        known.record(&res.address, &res.outcome);
         if r.tf_type == "google_project" {
             if let Some(verdict) = project_verdict_for_children(r, &res.outcome) {
                 not_live.insert(r.address(), verdict.clone());
@@ -295,7 +335,11 @@ async fn resolve_project<L: Live>(r: &EmittedResource, live: &mut L) -> (String,
     }
 }
 
-/// Folders by depth (parent chain length), then everything else by address.
+/// Folders by depth (parent chain length), then everything else by address, and
+/// the IAM grants last: a grant is decided against the live IAM policy of the
+/// resource it is made on, and when the estate declares that resource the grant
+/// names it by reference — so its verdict and its live id must be in hand before
+/// the grant is reached, whatever the two addresses sort like.
 fn ordered(manifest: &Manifest) -> Vec<&EmittedResource> {
     let depth = |r: &EmittedResource| -> usize {
         let mut d = 0;
@@ -316,11 +360,14 @@ fn ordered(manifest: &Manifest) -> Vec<&EmittedResource> {
     // can be adopted at all.
     let mut projects: Vec<&EmittedResource> = manifest.of_type("google_project").collect();
     projects.sort_by_key(|r| r.address());
-    let rest = manifest
+    let is_grant = |r: &EmittedResource| grant_parent(&r.tf_type, "").is_some();
+    let others = manifest
         .resources
         .values()
         .filter(|r| r.tf_type != "google_folder" && r.tf_type != "google_project");
-    folders.into_iter().chain(projects).chain(rest).collect()
+    let rest = others.clone().filter(|r| !is_grant(r));
+    let grants = others.filter(|r| is_grant(r));
+    folders.into_iter().chain(projects).chain(rest).chain(grants).collect()
 }
 
 /// `google_T.L.A` → (`google_T.L`, `A`).
@@ -332,59 +379,81 @@ fn ref_target(traversal: &str) -> Option<(String, String)> {
     Some((addr.to_string(), attr.to_string()))
 }
 
+/// The attributes whose value IS the referenced resource's live id — the id
+/// adoption resolves for that resource, not an attribute the estate declares.
+/// A reference to one of them is answered from what this run has resolved, so
+/// the id comes from the lookup and is never derived a second time.
+fn denotes_live_id(tf_type: &str, attr: &str) -> bool {
+    matches!(
+        (tf_type, attr),
+        ("google_folder", "name" | "id")
+            | ("google_cloud_identity_group", "name" | "id")
+            // `projects/<project>/serviceAccounts/<email>` — what the account's
+            // own import id is, and how a grant on it names its parent
+            | ("google_service_account", "name" | "id")
+    )
+}
+
 /// The value of attribute `key` on `r`: a literal, or a reference followed to
 /// the resource it names — its resolved live id when that is what the
-/// reference denotes (`google_folder.x.name`, `google_cloud_identity_group.x.id`),
+/// reference denotes (`google_folder.x.name`, `google_service_account.x.name`),
 /// else that resource's own attribute (`google_project.x.project_id`).
-fn value_of(
-    r: &EmittedResource,
-    key: &str,
-    manifest: &Manifest,
-    resolved_ids: &BTreeMap<String, String>,
-) -> Result<String, String> {
+fn value_of(r: &EmittedResource, key: &str, manifest: &Manifest, known: &Known) -> Result<String, Missing> {
     if let Some(v) = r.attrs.get(key) {
         // A value carrying an interpolation is not a literal: matching it
         // against live state would search for the text `${…}` and silently
         // find nothing. Say so instead (R9).
         if crate::manifest::has_interpolation(v) {
-            return Err(format!(
+            return Err(Missing::Unresolvable(format!(
                 "{}: `{}` = \"{}\" carries a reference that is only known after apply — it cannot be resolved before the resource exists",
                 r.address(),
                 key,
                 v
-            ));
+            )));
         }
         return Ok(v.clone());
     }
     let Some(traversal) = r.refs.get(key) else {
-        return Err(format!("{} has no `{}`", r.address(), key));
+        return Err(Missing::Unresolvable(format!("{} has no `{}`", r.address(), key)));
     };
     let Some((target, attr)) = ref_target(traversal) else {
-        return Err(format!("{}: `{}` = {} is not a resource reference", r.address(), key, traversal));
+        return Err(Missing::Unresolvable(format!("{}: `{}` = {} is not a resource reference", r.address(), key, traversal)));
     };
     let Some(t) = manifest.resources.get(&target) else {
-        return Err(format!("{}: `{}` references {}, which is not emitted", r.address(), key, target));
+        return Err(Missing::Unresolvable(format!("{}: `{}` references {}, which is not emitted", r.address(), key, target)));
     };
-    let denotes_live_id = matches!(
-        (t.tf_type.as_str(), attr.as_str()),
-        ("google_folder", "name") | ("google_folder", "id") | ("google_cloud_identity_group", "id") | ("google_cloud_identity_group", "name")
-    );
-    if denotes_live_id {
-        return resolved_ids
-            .get(&target)
-            .cloned()
-            .ok_or_else(|| format!("{} is not resolved yet ({} on it must be adopted or pinned first)", target, key));
+    if denotes_live_id(&t.tf_type, &attr) {
+        if let Some(id) = known.ids.get(&target) {
+            return Ok(id.clone());
+        }
+        // The reference is followable and the target was reached — its own
+        // verdict is the answer, and the one thing it never becomes is a
+        // guessed id.
+        return Err(match known.verdicts.get(&target) {
+            Some(Outcome::OnApply) | Some(Outcome::ParentOnApply(_)) => Missing::NotLive(format!("{} is not live — created with it", target)),
+            Some(Outcome::Failed(e)) => Missing::Failed(format!("{}: {}", target, e)),
+            Some(Outcome::Skipped) => {
+                Missing::Unresolvable(format!("{} was left out by --only, so its live id is not resolved in this run", target))
+            }
+            _ => Missing::Unresolvable(format!("{} is not resolved yet ({} on it must be adopted or pinned first)", target, key)),
+        });
     }
     match t.attrs.get(&attr) {
-        Some(v) if crate::manifest::has_interpolation(v) => Err(format!(
+        Some(v) if crate::manifest::has_interpolation(v) => Err(Missing::Unresolvable(format!(
             "{}: `{}` references {}.{}, which is itself a reference known only after apply",
             r.address(),
             key,
             target,
             attr
-        )),
+        ))),
         Some(v) => Ok(v.clone()),
-        None => Err(format!("{}: `{}` references {}.{}, which is not a literal", r.address(), key, target, attr)),
+        None => Err(Missing::Unresolvable(format!(
+            "{}: `{}` references {}.{}, which is not a literal and is not this run's id for it",
+            r.address(),
+            key,
+            target,
+            attr
+        ))),
     }
 }
 
@@ -398,7 +467,7 @@ async fn resolve_match<L: Live>(
     on: &[String],
     asset_type: Option<&str>,
     manifest: &Manifest,
-    resolved_ids: &BTreeMap<String, String>,
+    known: &Known,
     live: &mut L,
 ) -> (String, Outcome) {
     let key_text = on.join(", ");
@@ -407,18 +476,18 @@ async fn resolve_match<L: Live>(
     let Some(asset_type) = asset_type else {
         return (key_text, Outcome::Unresolvable(format!("{} has match_on but no asset_type in import-config.yaml", r.tf_type)));
     };
-    let scope = match match_scope(r, manifest, resolved_ids) {
+    let scope = match match_scope(r, manifest, known) {
         Ok(s) => s,
-        Err(e) => return (key_text, Outcome::Unresolvable(e)),
+        Err(e) => return (key_text, e.outcome()),
     };
     let mut wanted: Vec<(String, String)> = Vec::new();
     for k in on {
         let v = r.attrs.get(k).or_else(|| r.nested.get(k)).cloned();
         let v = match v {
             Some(v) => v,
-            None => match value_of(r, k, manifest, resolved_ids) {
+            None => match value_of(r, k, manifest, known) {
                 Ok(v) => v,
-                Err(e) => return (key_text, Outcome::Unresolvable(e)),
+                Err(e) => return (key_text, e.outcome()),
             },
         };
         wanted.push((k.clone(), v));
@@ -447,24 +516,24 @@ async fn resolve_match<L: Live>(
 
 /// The scope to list under: the resource's `parent`, else its project,
 /// folder or organization attribute.
-fn match_scope(r: &EmittedResource, manifest: &Manifest, resolved_ids: &BTreeMap<String, String>) -> Result<String, String> {
+fn match_scope(r: &EmittedResource, manifest: &Manifest, known: &Known) -> Result<String, Missing> {
     // the first scope attribute the resource HAS decides; a present attribute
     // that cannot be resolved (its folder is ambiguous, say) is an error, not a
     // reason to try the next one and search the wrong scope
     let has = |k: &str| r.attrs.contains_key(k) || r.refs.contains_key(k);
     if has("parent") {
-        return value_of(r, "parent", manifest, resolved_ids);
+        return value_of(r, "parent", manifest, known);
     }
     if has("project") {
-        return value_of(r, "project", manifest, resolved_ids).map(|p| format!("projects/{}", p.trim_start_matches("projects/")));
+        return value_of(r, "project", manifest, known).map(|p| format!("projects/{}", p.trim_start_matches("projects/")));
     }
     if has("folder") {
-        return value_of(r, "folder", manifest, resolved_ids).map(|f| format!("folders/{}", f.trim_start_matches("folders/")));
+        return value_of(r, "folder", manifest, known).map(|f| format!("folders/{}", f.trim_start_matches("folders/")));
     }
     if has("org_id") {
-        return value_of(r, "org_id", manifest, resolved_ids).map(|o| format!("organizations/{}", o.trim_start_matches("organizations/")));
+        return value_of(r, "org_id", manifest, known).map(|o| format!("organizations/{}", o.trim_start_matches("organizations/")));
     }
-    Err(format!("{} has no parent, project, folder or org_id to scope the lookup", r.address()))
+    Err(Missing::Unresolvable(format!("{} has no parent, project, folder or org_id to scope the lookup", r.address())))
 }
 
 /// `group_key.id` → data["groupKey"]["id"], as text.
@@ -485,13 +554,13 @@ fn data_at(data: &serde_json::Value, dotted: &str) -> Option<String> {
 async fn resolve_folder<L: Live>(
     r: &EmittedResource,
     manifest: &Manifest,
-    resolved_ids: &BTreeMap<String, String>,
+    known: &Known,
     live: &mut L,
 ) -> (String, Outcome) {
     let display_name = r.attrs.get("display_name").cloned().unwrap_or_default();
-    let parent = match value_of(r, "parent", manifest, resolved_ids) {
+    let parent = match value_of(r, "parent", manifest, known) {
         Ok(p) => p,
-        Err(e) => return (display_name, Outcome::Unresolvable(e)),
+        Err(e) => return (display_name, e.outcome()),
     };
     let key = format!("{} under {}", display_name, parent);
     match live.folder(&parent, &display_name).await {
@@ -539,7 +608,7 @@ async fn resolve_budget<L: Live>(r: &EmittedResource, live: &mut L) -> (String, 
 
 async fn resolve_membership<L: Live>(
     r: &EmittedResource,
-    resolved_ids: &BTreeMap<String, String>,
+    known: &Known,
     live: &mut L,
 ) -> (String, Outcome) {
     let Some(email) = r.nested.get("preferred_member_key.id").cloned() else {
@@ -548,7 +617,7 @@ async fn resolve_membership<L: Live>(
     let Some((group_addr, _)) = r.refs.get("group").and_then(|g| ref_target(g)) else {
         return (email, Outcome::Unresolvable(format!("{} has no group reference", r.address())));
     };
-    let Some(group_name) = resolved_ids.get(&group_addr) else {
+    let Some(group_name) = known.ids.get(&group_addr) else {
         // The group is not live (OnApply) or could not be resolved: neither can
         // its memberships be.
         return (email, Outcome::OnApply);
@@ -564,7 +633,7 @@ async fn resolve_membership<L: Live>(
 async fn resolve_org_policy<L: Live>(
     r: &EmittedResource,
     manifest: &Manifest,
-    resolved_ids: &BTreeMap<String, String>,
+    known: &Known,
     opts: &Options,
     live: &mut L,
     res: &mut Resolution,
@@ -574,12 +643,12 @@ async fn resolve_org_policy<L: Live>(
     // The compile guarantees `parent` is a literal or a reference; an
     // unresolvable one is reported as such — never scraped out of the policy
     // name, which is how a wrong parent once became a confident lookup.
-    let parent = match value_of(r, "parent", manifest, resolved_ids) {
+    let parent = match value_of(r, "parent", manifest, known) {
         Ok(p) => match crate::org_policy::qualify_parent(&p) {
             Ok(q) => q,
             Err(e) => return (constraint, Outcome::Unresolvable(format!("{}: {}", r.address(), e))),
         },
-        Err(e) => return (constraint, Outcome::Unresolvable(e)),
+        Err(e) => return (constraint, e.outcome()),
     };
     res.org_policy = Some((parent.clone(), constraint.clone()));
     let id = crate::org_policy::full_policy_name(&parent, &constraint);
@@ -615,7 +684,7 @@ fn render_template(
     template: &str,
     r: &EmittedResource,
     manifest: &Manifest,
-    resolved_ids: &BTreeMap<String, String>,
+    known: &Known,
 ) -> (String, Outcome) {
     let mut out = String::new();
     let mut rest = template;
@@ -625,9 +694,9 @@ fn render_template(
             return (template.to_string(), Outcome::Unresolvable(format!("unterminated placeholder in rule `{}`", template)));
         };
         let key = &rest[start + 1..start + end];
-        match value_of(r, key, manifest, resolved_ids) {
+        match value_of(r, key, manifest, known) {
             Ok(v) => out.push_str(&v),
-            Err(e) => return (template.to_string(), Outcome::Unresolvable(e)),
+            Err(e) => return (template.to_string(), e.outcome()),
         }
         rest = &rest[start + end + 1..];
     }
@@ -747,13 +816,13 @@ async fn resolve_grant<L: Live>(
     r: &EmittedResource,
     id: &str,
     manifest: &Manifest,
-    resolved_ids: &BTreeMap<String, String>,
+    known: &Known,
     policies: &mut IamPolicies,
     live: &mut L,
 ) -> (String, Outcome) {
-    let (role, member) = match (value_of(r, "role", manifest, resolved_ids), value_of(r, "member", manifest, resolved_ids)) {
+    let (role, member) = match (value_of(r, "role", manifest, known), value_of(r, "member", manifest, known)) {
         (Ok(role), Ok(member)) => (role, member),
-        (Err(e), _) | (_, Err(e)) => return (id.to_string(), Outcome::Unresolvable(e)),
+        (Err(e), _) | (_, Err(e)) => return (id.to_string(), e.outcome()),
     };
     let Some(parent) = id.strip_suffix(&format!(" {} {}", role, member)) else {
         return (
@@ -1756,13 +1825,13 @@ import {
              resource \"google_storage_bucket\" \"b\" {\n  name = \"acme-audit\"\n  project = \"${google_project.mgmt.project_id}\"\n}\n\
              resource \"google_service_account_iam_member\" \"a\" {\n  role = \"roles/iam.workloadIdentityUser\"\n  member = \"principalSet://iam.googleapis.com/projects/${google_project.mgmt.number}/locations/global/workloadIdentityPools/p/*\"\n}\n",
         );
-        let ids = BTreeMap::new();
+        let known = Known::default();
         // whole-value reference: followed to the target's own attribute
         let bucket = &manifest.resources["google_storage_bucket.b"];
-        assert_eq!(value_of(bucket, "project", &manifest, &ids).unwrap(), "acme-mdc-mgmt");
+        assert_eq!(value_of(bucket, "project", &manifest, &known).unwrap(), "acme-mdc-mgmt");
         // embedded reference: not a literal, and not silently searched for
         let grant = &manifest.resources["google_service_account_iam_member.a"];
-        let err = value_of(grant, "member", &manifest, &ids).unwrap_err();
+        let err = value_of(grant, "member", &manifest, &known).unwrap_err().to_string();
         assert!(err.contains("only known after apply"), "{}", err);
         assert!(!err.contains("has no `member`"), "{}", err);
     }
@@ -1841,6 +1910,138 @@ import {
         assert!(absent.contains("on apply") && absent.contains("apply creates it"), "{}", table);
         // the ambiguous and the failed row stop the run before anything is imported
         assert_eq!(unanswered(&rs, &none()), 2);
+    }
+
+    /// The estate that declares a service account grants on it by reference:
+    /// `service_account_id = "${google_service_account.x.name}"`. `name` is the
+    /// account's live id, not an attribute the estate writes, so the reference is
+    /// answered from the id this run resolved for that account — and the grant is
+    /// then decided against that account's live IAM policy like any other.
+    #[tokio::test]
+    async fn a_grant_follows_the_reference_to_the_account_it_is_made_on() {
+        let manifest = grants_on_an_account();
+        let mut live = fake();
+        live.iam.insert(
+            SA.into(),
+            Ok(Some(serde_json::json!({ "version": 3, "bindings": [
+                { "role": "roles/iam.serviceAccountTokenCreator", "members": ["group:auditors@example.com"] },
+            ]}))),
+        );
+        live.iam.insert(
+            HAND_MADE.into(),
+            Ok(Some(serde_json::json!({ "version": 3, "bindings": [
+                { "role": "roles/iam.serviceAccountUser", "members": ["group:auditors@example.com"] },
+            ]}))),
+        );
+        let rs = resolve(&manifest, &account_rules(), &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+
+        assert_eq!(
+            outcome(&rs, "google_service_account_iam_member.held"),
+            &Outcome::Resolved { id: format!("{} roles/iam.serviceAccountTokenCreator group:auditors@example.com", SA), verified: true }
+        );
+        // the policy was read on the account the reference names
+        assert!(live.calls.contains(&format!("iam ServiceAccount {}", SA)), "{:?}", live.calls);
+        // a grant that account's policy does not hold is created by apply
+        assert_eq!(outcome(&rs, "google_service_account_iam_member.absent"), &Outcome::OnApply);
+        // a literal parent resolves the same way
+        assert_eq!(
+            outcome(&rs, "google_service_account_iam_member.elsewhere"),
+            &Outcome::Resolved { id: format!("{} roles/iam.serviceAccountUser group:auditors@example.com", HAND_MADE), verified: true }
+        );
+        assert_eq!(unanswered(&rs, &none()), 0, "{}", render_table(&rs, &none(), &manifest));
+    }
+
+    /// An account that does not exist yet takes its grants with it — whether the
+    /// account is absent live or its project is: "on apply (parent)", and the run
+    /// answers everything it was asked.
+    #[tokio::test]
+    async fn a_grant_on_an_account_that_is_not_live_reads_on_apply_with_it() {
+        let manifest = grants_on_an_account();
+        let mut live = fake();
+        live.iam.insert(SA.into(), Ok(None)); // the account does not exist live
+        live.iam.insert(HAND_MADE.into(), Ok(None));
+        let rs = resolve(&manifest, &account_rules(), &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+        let held = outcome(&rs, "google_service_account_iam_member.held");
+        assert!(matches!(held, Outcome::ParentOnApply(why) if why.contains(SA)), "{:?}", held);
+        assert_eq!(unanswered(&rs, &none()), 0, "a grant whose account apply creates is a finding, not a failure");
+        let table = render_table(&rs, &none(), &manifest);
+        assert!(table.lines().any(|l| l.contains("iam_member.held") && l.contains("on apply (parent)")), "{}", table);
+
+        // the same verdict one step earlier: the account's project is not live, so
+        // the account is not either — and no policy is read under an id nothing has
+        let mut live = fake();
+        live.projects.clear();
+        live.iam.insert(HAND_MADE.into(), Ok(None));
+        let rs = resolve(&manifest, &account_rules(), &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+        let held = outcome(&rs, "google_service_account_iam_member.held");
+        assert!(matches!(held, Outcome::ParentOnApply(why) if why.contains("google_service_account.sa")), "{:?}", held);
+        assert!(!live.calls.iter().any(|c| c.contains(SA)), "{:?}", live.calls);
+        assert_eq!(unanswered(&rs, &none()), 0, "{}", render_table(&rs, &none(), &manifest));
+    }
+
+    /// A reference adoption cannot follow is still unresolvable, and names the
+    /// resource and why: the run stops instead of importing a guessed id.
+    #[tokio::test]
+    async fn a_reference_adopt_cannot_follow_stays_unresolvable() {
+        let manifest = Manifest::parse(concat!(
+            "resource \"google_service_account\" \"sa\" {\n  account_id = \"svc-iac\"\n  project = \"acme-infra-001\"\n}\n",
+            "resource \"google_service_account_iam_member\" \"ghost\" {\n  service_account_id = \"${google_service_account.gone.name}\"\n  role = \"roles/iam.serviceAccountUser\"\n  member = \"group:auditors@example.com\"\n}\n",
+            "resource \"google_service_account_iam_member\" \"by_email\" {\n  service_account_id = \"${google_service_account.sa.email}\"\n  role = \"roles/iam.serviceAccountUser\"\n  member = \"group:auditors@example.com\"\n}\n",
+        ));
+        let mut live = fake();
+        let rs = resolve(&manifest, &account_rules(), &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+        let ghost = outcome(&rs, "google_service_account_iam_member.ghost");
+        assert!(
+            matches!(ghost, Outcome::Unresolvable(why) if why.contains("google_service_account.gone") && why.contains("not emitted")),
+            "{:?}",
+            ghost
+        );
+        let by_email = outcome(&rs, "google_service_account_iam_member.by_email");
+        assert!(
+            matches!(by_email, Outcome::Unresolvable(why) if why.contains("google_service_account.sa.email") && why.contains("not a literal")),
+            "{:?}",
+            by_email
+        );
+        assert!(!live.calls.iter().any(|c| c.starts_with("iam ")), "no policy is read for a parent nothing named: {:?}", live.calls);
+        assert_eq!(unanswered(&rs, &none()), 2, "{}", render_table(&rs, &none(), &manifest));
+    }
+
+    /// Grants are resolved last. Address order alone does not put a grant behind
+    /// the resource it is made on — `google_folder_iam_member.grant` sorts before
+    /// `google_widget.w` — so the order does, and a grant always reads a parent
+    /// whose verdict and live id the run already holds.
+    #[test]
+    fn grants_are_resolved_after_every_resource_they_can_be_made_on() {
+        let m = manifest();
+        let order: Vec<String> = ordered(&m).iter().map(|r| r.address()).collect();
+        let at = |a: &str| order.iter().position(|x| x == a).unwrap_or_else(|| panic!("{} is not in {:?}", a, order));
+        assert!(at("google_folder_iam_member.grant") > at("google_service_account.sa"), "{:?}", order);
+        assert!("google_folder_iam_member.grant" < "google_widget.w", "address order would reach the grant first");
+        assert!(at("google_folder_iam_member.grant") > at("google_widget.w"), "{:?}", order);
+    }
+
+    /// `projects/<project>/serviceAccounts/<email>` — the id the account's own rule
+    /// renders, and what `google_service_account.sa.name` denotes.
+    const SA: &str = "projects/acme-infra-001/serviceAccounts/svc-iac@acme-infra-001.iam.gserviceaccount.com";
+    /// An account the estate does not declare: its grant names it literally.
+    const HAND_MADE: &str = "projects/acme-infra-001/serviceAccounts/hand-made@acme-infra-001.iam.gserviceaccount.com";
+
+    fn grants_on_an_account() -> Manifest {
+        Manifest::parse(concat!(
+            "resource \"google_project\" \"infra\" {\n  project_id = \"acme-infra-001\"\n}\n",
+            "resource \"google_service_account\" \"sa\" {\n  account_id = \"svc-iac\"\n  project = \"${google_project.infra.project_id}\"\n}\n",
+            "resource \"google_service_account_iam_member\" \"held\" {\n  service_account_id = \"${google_service_account.sa.name}\"\n  role = \"roles/iam.serviceAccountTokenCreator\"\n  member = \"group:auditors@example.com\"\n}\n",
+            "resource \"google_service_account_iam_member\" \"absent\" {\n  service_account_id = \"${google_service_account.sa.name}\"\n  role = \"roles/iam.workloadIdentityUser\"\n  member = \"group:auditors@example.com\"\n}\n",
+            "resource \"google_service_account_iam_member\" \"elsewhere\" {\n  service_account_id = \"projects/acme-infra-001/serviceAccounts/hand-made@acme-infra-001.iam.gserviceaccount.com\"\n  role = \"roles/iam.serviceAccountUser\"\n  member = \"group:auditors@example.com\"\n}\n",
+        ))
+    }
+
+    fn account_rules() -> ImportConfig {
+        rules(&[
+            ("google_project", Some("{project_id}"), None),
+            ("google_service_account", Some("projects/{project}/serviceAccounts/{account_id}@{project}.iam.gserviceaccount.com"), None),
+            ("google_service_account_iam_member", Some("{service_account_id} {role} {member}"), None),
+        ])
     }
 
     #[test]
