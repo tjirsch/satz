@@ -1,6 +1,8 @@
 # 0052 — the `-generate-config-out` fallback is a flag on the live import and writes a second file
 
-- **Status:** accepted
+- **Status:** accepted; the `--into` refusal of point 2 is superseded by
+  [0053](0053-the-generate-config-fallback-runs-under-into-as-well.md), which also
+  names the files that run writes and the identity its child reads as
 - **Date:** 2026-09-22
 - **Shipped in:** the release that follows
 

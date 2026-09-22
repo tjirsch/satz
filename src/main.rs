@@ -1609,9 +1609,6 @@ Thumbs.db
                     if generate_unmapped && shape != "org" {
                         return Err("--generate-unmapped applies to the live shape (organizations/…, folders/…, projects/…): `tofu plan -generate-config-out` reads each resource from the platform. A state's resources are already managed, and their configuration is the `.tf` the state was applied from — import that directory with the hcl shape".into());
                     }
-                    if generate_unmapped && into.is_some() {
-                        return Err("--generate-unmapped and --into do not go together: --into writes packs of what an estate does not yet declare, and generated configuration is not one of them. Run the plain live import for it".into());
-                    }
                     if shape == "state" {
                         let state_json = match source.as_deref() {
                             None | Some("-") => None,
@@ -1627,12 +1624,16 @@ Thumbs.db
                         // is a new file), so discovery stays on the human's ADC,
                         // like `init`.
                         let into_path = into.map(|estate| estate_path(estate, &runtime_config));
+                        // `--generate-unmapped` runs `tofu` against the platform, so it
+                        // is told the same answer: the binding is satz's own, and the
+                        // provider block the child reads with carries it.
+                        let mut impersonate = None;
                         if let Some(estate) = &into_path {
-                            configure_estate_impersonation(estate, &runtime_config)?;
+                            impersonate = configure_estate_impersonation(estate, &runtime_config)?;
                         }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         match into_path {
-                            Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, &tool_config, &runtime_config).await,
+                            Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, generate_unmapped, impersonate, &tool_config, &runtime_config).await,
                             None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, generate_unmapped, &tool_config, &runtime_config).await,
                         }
                     }
@@ -4007,11 +4008,18 @@ pub(crate) fn estate_as_typed(estate: &Path, runtime_config: &ToolConfig) -> Str
 /// Errors, binding nothing, when the estate's identity cannot be derived — see
 /// `estate_impersonation_target` — and when the process is already acting as a
 /// different estate — see `gcp::configure_impersonation`.
+///
+/// Hands back WHO it bound, for the caller that has to tell a child process the
+/// same answer: `import --into --generate-unmapped` writes it into the provider
+/// block `tofu` reads with. `None` is the plain ADC — a local-mode estate, or
+/// `--no-impersonate`, which outranks the estate.
 fn configure_estate_impersonation(
     input_path: &Path,
     runtime_config: &ToolConfig,
-) -> Result<(), String> {
-    crate::gcp::configure_impersonation(estate_impersonation_target(input_path, runtime_config)?)
+) -> Result<Option<String>, String> {
+    let target = estate_impersonation_target(input_path, runtime_config)?;
+    crate::gcp::configure_impersonation(target.clone())?;
+    Ok(target.filter(|_| !crate::gcp::impersonation_disabled()))
 }
 
 /// WHICH service account an estate's live calls run as — the derivation alone,
@@ -4727,9 +4735,10 @@ mod command_groups {
         ("adopt", Identity::EstateSa),
         // Only `--into` names an estate; plain discovery writes a NEW file and so
         // has no estate to be, exactly like `init`. `--generate-unmapped` runs
-        // `tofu plan -generate-config-out` under the plain shape, which inherits
-        // that same identity: the provider block it writes impersonates nobody,
-        // and the flag is refused with `--into`, so there is no second binding.
+        // `tofu plan -generate-config-out` as whatever the run is bound to: the
+        // provider block it writes carries the estate's service account under
+        // `--into` and impersonates nobody without it, so the child reads the
+        // platform as the principal the sweep read it as.
         ("import", Identity::EstateSa),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
         ("init", Identity::Human("--from-live runs before the estate exists")),

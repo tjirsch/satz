@@ -829,7 +829,7 @@ satz import ./terraform                      # existing .tf: variables → param
 satz import ./terraform --wrap-all           # …or every block verbatim, nothing promoted
 satz import                                  # live, root taken from the import config
 satz import organizations/123456789012 --into C0example.satz   # only what the estate does not declare
-satz import organizations/123456789012 --generate-unmapped     # …and ask the provider for what satz cannot map
+satz import organizations/123456789012 --generate-unmapped     # …and ask the provider for what satz cannot map (--into takes it too)
 ```
 
 **Parameters:**
@@ -841,7 +841,7 @@ satz import organizations/123456789012 --generate-unmapped     # …and ask the 
 - `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
 - `--customer-shortname <NAME>` (state and live shapes): the customer's short name, which no platform fact carries; it wins over the inference from the leading token of the project and bucket names.
 - `--on-collision error|counter` (state and live shapes): a grant one principal holds on two folders or two projects would emit one address, because the map form's label is member and role. `error` (the default) refuses the import and names them; `counter` keeps the first in the map form and writes the second and later as labelled resources with a running number (`folderAdmin_alice_2`), one line of output each.
-- `--generate-unmapped` (live shape): the resources the sweep reports as `unmapped` — a required attribute that is not in the asset data and cannot be derived, data that holds nothing the provider schema knows, a content type or scope no row covers — are handed to the provider instead of being left out. satz writes `<estate>-generate/imports.tf` with one `import` block per resource (the id is the asset's relative resource name), runs `tofu init` and `tofu plan -generate-config-out=generated.tf` there, and reads the result back through the hcl shape into `<estate>-generated.satz`, beside the estate the sweep wrote. What it cannot write a block for is listed with the reason; what the provider refuses fails the command with the tool's own output, and `imports.tf` stays for the ids to be corrected by hand. Refused on the state and hcl shapes and with `--into`.
+- `--generate-unmapped` (live shape): the resources the sweep reports as `unmapped` — a required attribute that is not in the asset data and cannot be derived, data that holds nothing the provider schema knows, a content type or scope no row covers — are handed to the provider instead of being left out. satz writes `<base>-generate/imports.tf` with one `import` block per resource (the id is the asset's relative resource name), runs `tofu init` and `tofu plan -generate-config-out=generated.tf` there, and reads the result back through the hcl shape into `<base>-generated.satz`. `<base>` is the file the run is named after: the estate a plain sweep writes (`discovered-generated.satz`), the scope's top-level pack with `--into` (`imported-organizations-123456789012-generated.satz`). With `--into`, what the estate already declares by that live id is named and left out, and the `tofu` child reads as the estate's IaC service account, through the `impersonate_service_account` of the provider block satz writes. The generated file is never `use`d from the estate: joining it is one line, and which of it belongs there is a reading decision. What satz cannot write a block for is listed with the reason; what the provider refuses fails the command with the tool's own output, and `imports.tf` stays for the ids to be corrected by hand. Refused on the state and hcl shapes.
 - A `.yaml` source is the pre-Satz YAML dialect: it is refused by name, with the release that converts it (see [docs/language.md §12.3](docs/language.md#123-the-pre-satz-yaml-dialect)).
 
 **The import config** (`presets/import-config.yaml`, YAML — it is data that
@@ -2153,7 +2153,7 @@ estate's service account.** Every exception is listed here with its reason.
 | Command | Runs as | |
 |---|---|---|
 | `export-`/`diff-`/`report-organizational-policies`, `report-compliance`, `adopt`, `adopt-org-policies` | the estate's service account | |
-| `import --into <estate>` | the estate's service account | it runs `adopt`'s read path, so it runs `adopt`'s identity |
+| `import --into <estate>` | the estate's service account | it runs `adopt`'s read path, so it runs `adopt`'s identity — `--generate-unmapped` writes it into the provider block its `tofu` child reads with |
 | `import` without `--into` | the human's ADC | the output is a new file; there is no estate to be — including the `tofu plan -generate-config-out` child of `--generate-unmapped`, which inherits it and impersonates nobody |
 | `bootstrap`, `init` | the human's ADC | day 0 — the service account does not exist yet |
 | `whoami` | the human's ADC | the question *is* who the human is |

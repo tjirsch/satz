@@ -260,6 +260,32 @@ fn prune(map: &mut serde_yaml::Mapping, declared: &Declared, project_ctx: Option
     }
 }
 
+/// The delta's subtraction applied to what the sweep could not map
+/// (`--generate-unmapped`): a skipped resource whose relative resource name IS a
+/// live id the estate already resolved to is declared, so the provider is not
+/// asked for its configuration. Everything else is handed on.
+///
+/// The test is equality of the id, the same identity the rest of the delta runs
+/// on. A resource whose type the estate declares under an id of another form
+/// stays in the list and is generated for — satz does not decide two ids are the
+/// same object because they look alike.
+///
+/// Returns `(handed on, (what, declared address) of the ones left out)`.
+pub(crate) fn undeclared(
+    skipped: &[crate::discovery::Skipped],
+    declared: &Declared,
+) -> (Vec<crate::discovery::Skipped>, Vec<(String, String)>) {
+    let mut keep = Vec::new();
+    let mut already = Vec::new();
+    for s in skipped {
+        match crate::discovery::asset_resource_name(&s.what).and_then(|id| declared.ids.get(id)) {
+            Some(address) => already.push((s.what.clone(), address.clone())),
+            None => keep.push(s.clone()),
+        }
+    }
+    (keep, already)
+}
+
 /// The pack file name for a scope: `imported-organizations-123.satz`,
 /// `imported-folders-456-infra_folder.satz`.
 pub(crate) fn pack_name(scope: &str, container: Option<&str>) -> String {
@@ -471,6 +497,31 @@ folder:
         assert!(from_imported_pack(&Some(("./yaml/imported-organizations-1.satz".into(), 3))));
         assert!(!from_imported_pack(&Some(("./yaml/C0example.satz".into(), 3))));
         assert!(!from_imported_pack(&None));
+    }
+
+    /// `--generate-unmapped` with `--into`: what the estate already declares by
+    /// that live id is not handed to the provider; everything else is, including
+    /// a resource of a declared type whose id the estate does not carry.
+    #[test]
+    fn the_fallback_leaves_out_what_the_estate_declares_by_id() {
+        use crate::discovery::{SkipReason, Skipped};
+        let mut declared = Declared::default();
+        declared.ids.insert("projects/acme-net/managedZones/corp".into(), "google_dns_managed_zone.corp".into());
+        let skipped = |what: &str| Skipped {
+            tf_type: "google_dns_managed_zone".into(),
+            what: what.into(),
+            reason: SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()),
+        };
+        let (keep, already) = undeclared(
+            &[
+                skipped("//dns.googleapis.com/projects/acme-net/managedZones/corp"),
+                skipped("//dns.googleapis.com/projects/acme-net/managedZones/lab"),
+            ],
+            &declared,
+        );
+        assert_eq!(already, vec![("//dns.googleapis.com/projects/acme-net/managedZones/corp".to_string(), "google_dns_managed_zone.corp".to_string())]);
+        assert_eq!(keep.len(), 1);
+        assert!(keep[0].what.ends_with("/lab"), "{:?}", keep[0]);
     }
 
     #[test]

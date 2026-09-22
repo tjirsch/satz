@@ -102,7 +102,9 @@ pub(crate) async fn import_org(
     let written = write_imported(&found.config, output, org_hint.as_deref(), &registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
     if generate_unmapped {
-        generate_unmapped_config(&found.skipped, &registry, &written, verbose, tool_config, runtime_config)?;
+        // No estate, so no identity to be and nothing declared to subtract: the
+        // whole skipped list, read as the human's own credentials.
+        generate_unmapped_config(&found.skipped, &[], &registry, &written, None, verbose, tool_config, runtime_config)?;
     }
     Ok(())
 }
@@ -110,33 +112,48 @@ pub(crate) async fn import_org(
 /// `--generate-unmapped`: hand the resources this sweep could not map to the
 /// provider, and read back what it writes.
 ///
-/// The estate above is already on disk — this adds a SECOND file beside it,
-/// `<estate>-generated.satz`, because what the provider writes has a different
+/// What the run already wrote is on disk — this adds a SECOND file beside it,
+/// `<base>-generated.satz`, because what the provider writes has a different
 /// provenance from what satz translated and the operator merges it deliberately.
-/// The scratch directory stays: with a refused import id it is what the operator
-/// edits, and the two commands it names finish the job by hand.
+/// `base` is the file the run is named after: the estate a plain sweep wrote, the
+/// scope's top-level pack under `--into`. The scratch directory, `<base>-generate/`,
+/// stays: with a refused import id it is what the operator edits, and the two
+/// commands it names finish the job by hand.
 ///
-/// It runs as the identity the sweep ran as — the human's Application Default
-/// Credentials, which `import` without `--into` binds nothing over (`IDENTITIES`,
-/// `src/main.rs`): the child inherits the environment, and the provider block
-/// written below impersonates nobody.
+/// It runs as the identity the run is bound to — `impersonate` is the estate's IaC
+/// service account under `--into` and `None` for a plain sweep, which stays on the
+/// human's Application Default Credentials (`IDENTITIES`, `src/main.rs`). The child
+/// inherits the environment; the provider block carries the impersonation.
+///
+/// `already` is what the estate declares by that live id under `--into`: reported
+/// here with the rest, never generated for.
+#[allow(clippy::too_many_arguments)]
 fn generate_unmapped_config(
     skipped: &[crate::discovery::Skipped],
+    already: &[(String, String)],
     registry: &ResourceRegistry,
-    estate: &Path,
+    base: &Path,
+    impersonate: Option<&str>,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::generate_config;
     let plan = generate_config::plan(skipped, &|t| registry.resources.contains_key(t));
+    // The third count is `--into`'s alone: a plain sweep has no estate to declare
+    // anything, so the line does not offer a zero to read.
+    let declared = if already.is_empty() { String::new() } else { format!(", {} the estate declares", already.len()) };
     println!(
-        "\ngenerate-unmapped: {} unmapped resource(s) the provider can be asked for, {} it cannot:",
+        "\ngenerate-unmapped: {} unmapped resource(s) the provider can be asked for, {} it cannot{}:",
         plan.candidates.len(),
-        plan.refused.len()
+        plan.refused.len(),
+        declared
     );
     for (what, why) in &plan.refused {
         println!("  not generated  {} — {}", what, why);
+    }
+    for (what, address) in already {
+        println!("  declared       {} — the estate has it as {}", what, address);
     }
     if plan.candidates.is_empty() {
         println!("  nothing to generate — no child process ran and nothing was written.");
@@ -148,9 +165,8 @@ fn generate_unmapped_config(
         }
     }
     let providers = providers_for(&plan.candidates, registry, tool_config);
-    let stem = estate.file_stem().and_then(|s| s.to_str()).unwrap_or("discovered").to_string();
-    let work_dir = estate.with_file_name(format!("{}-generate", stem));
-    let generated = generate_config::generate(&work_dir, &plan.candidates, &providers, &mut generate_config::Tofu { tool: &tool_config.tf_tool })
+    let (work_dir, out_name) = generate_config::output_names(base);
+    let generated = generate_config::generate(&work_dir, &plan.candidates, &providers, impersonate, &mut generate_config::Tofu { tool: &tool_config.tf_tool })
         .map_err(|e| {
             format!(
                 "{}\nThe import blocks are in {} — correct the ids the provider refused, then \
@@ -164,7 +180,7 @@ fn generate_unmapped_config(
         })?;
     println!("\ngenerate-unmapped: {} — reading it back as Satz", generated.display());
     let src = generated.to_str().ok_or_else(|| format!("{}: the generated path is not UTF-8", generated.display()))?;
-    import_hcl(src, PathBuf::from(format!("{}-generated.satz", stem)), false, verbose, runtime_config)
+    import_hcl(src, PathBuf::from(out_name), false, verbose, runtime_config)
 }
 
 /// The providers the candidates' types come from, at the versions the tool
@@ -575,6 +591,11 @@ impl satz_hcl::Schema for RegistrySchema<'_> {
 }
 
 /// The live shape with `--into`: the delta against what the estate declares.
+///
+/// `impersonate` is the identity the command is bound to — the estate's IaC
+/// service account, or `None` for a local-mode estate. The sweep runs as it
+/// already; `--generate-unmapped` passes it to the `tofu` child so the fallback
+/// reads the platform as the same principal.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn import_delta(
     parent: &str,
@@ -583,6 +604,8 @@ pub(crate) async fn import_delta(
     filtered: std::collections::HashSet<String>,
     on_collision: crate::discovery::OnCollision,
     verbose: bool,
+    generate_unmapped: bool,
+    impersonate: Option<String>,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -735,6 +758,13 @@ pub(crate) async fn import_delta(
     crate::discovery::report_skipped(&found, &filtered, verbose);
     if written.is_empty() {
         println!("import: nothing to add — the estate already declares everything the sweep found.");
+    }
+    if generate_unmapped {
+        // Named after this scope's packs, not after the estate: two scopes
+        // imported into one estate keep their own files, the way their packs do.
+        let base = yaml_dir.join(delta::pack_name(parent, None));
+        let (unmapped, already) = delta::undeclared(&found.skipped, &declared);
+        generate_unmapped_config(&unmapped, &already, &registry, &base, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
     }
     Ok(())
 }
@@ -1177,6 +1207,23 @@ folder:
         let none: Config = serde_yaml::from_str("project:\n  alpha:\n    project_id: alpha-001\n").unwrap();
         assert_eq!(quota_project(&none).as_deref(), Some("alpha-001"), "the first project, and the report says why it may fail");
         assert_eq!(quota_project(&Config::default()), None);
+    }
+
+    /// The delta path answers for everything it does not write: what the sweep
+    /// skipped, and — with `--generate-unmapped` — the unmapped resources it
+    /// hands to the provider. Neither runs here (both need a live sweep), so the
+    /// source is the gate: a delta import that lost either call would leave live
+    /// resources in no file and say nothing about them.
+    #[test]
+    fn the_delta_path_reports_what_it_skipped_and_generates_for_what_it_could_not_map() {
+        let src = crate::source_gate::production_only(include_str!("import.rs"));
+        let body = src.split("pub(crate) async fn import_delta").nth(1).expect("import_delta is in this file");
+        let body = body.split("\npub(crate) ").next().expect("the function ends");
+        assert!(
+            body.contains("report_skipped(&found, &filtered, verbose)"),
+            "the delta import no longer reports what the sweep left out"
+        );
+        assert!(body.contains("generate_unmapped_config("), "--generate-unmapped no longer reaches the delta import");
     }
 
     #[test]
