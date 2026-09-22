@@ -12,10 +12,11 @@
 //! naming the same list. A command that writes markdown writes pdf too — the
 //! markdown typeset — which a test holds every command to.
 //!
-//! Two commands answer on the console instead, because what they produce is not a
+//! Three commands answer on the console instead, because what they produce is not a
 //! document: `update-prerequisites`, which edits the estate and reports what it
-//! wrote, and `prowler`, which
-//! prints a command line to paste.
+//! wrote, `prowler`, which
+//! prints a command line to paste, and `mcp-config`, which prints the block an MCP
+//! client reads.
 
 use std::path::{Path, PathBuf};
 
