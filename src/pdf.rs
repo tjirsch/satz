@@ -29,8 +29,8 @@ use typst::{Library, LibraryExt, World};
 use typst_layout::PagedDocument;
 
 /// The document preamble: A4, a readable size, and the table shape a compliance
-/// report needs — full width, so a wide table wraps inside the page instead of
-/// running off it.
+/// report needs. The column widths come from the content (`column_widths`) and the
+/// orientation from the whole document (`markup`), so neither is set here.
 const PREAMBLE: &str = r#"#set page(paper: "a4", margin: (x: 1.8cm, y: 2cm), numbering: "1")
 #set text(font: ("Libertinus Serif", "DejaVu Sans Mono"), size: 9.5pt)
 #set par(justify: false, leading: 0.6em)
@@ -173,6 +173,69 @@ fn escape(text: &str) -> String {
     out
 }
 
+/// A column whose longest cell is at most this many characters is sized to its
+/// content: the status glyph a compliance row starts with, a verdict, a short id. It
+/// is small enough that `auto` cannot overflow the page, and wide enough to hold a
+/// header word like `verdict` over a column of single glyphs.
+const AUTO_COLUMN: usize = 12;
+
+/// What a prose column's weight is allowed to be, in characters. The floor keeps a
+/// column of short answers from being squeezed to nothing beside a column of
+/// sentences; the ceiling keeps one long cell from taking the page, so the widest
+/// prose column is at most four and a half times the narrowest.
+const WEIGHT_FLOOR: f64 = 10.0;
+const WEIGHT_CEILING: f64 = 45.0;
+
+/// A table this wide turns the document. A4 portrait leaves 17.4cm of text, which is
+/// about 108 characters at 9.5pt, and each column spends 0.35cm of it on its insets:
+/// five columns leave some 19 characters each, which is a word and a half per line.
+/// Landscape leaves 26.1cm, about 163 characters, and the same five columns get 30.
+const WIDE_TABLE: usize = 5;
+
+/// The `columns:` tuple for a table, from the plain text of its cells in row-major
+/// order, header row first. A column no wider than [`AUTO_COLUMN`] is sized to its
+/// content; the rest share what is left in proportion to the mean length of their
+/// filled cells, clamped and rounded to a half.
+fn column_widths(columns: usize, cells: &[String]) -> String {
+    let columns = columns.max(1);
+    let mut by_column: Vec<Vec<usize>> = vec![Vec::new(); columns];
+    for (i, cell) in cells.iter().enumerate() {
+        // a cell holds line breaks (`<br>` in the compliance report), and what a
+        // column has to hold is its longest LINE, not the sum of them
+        let widest = cell.lines().map(|line| line.trim().chars().count()).max().unwrap_or(0);
+        by_column[i % columns].push(widest);
+    }
+    let weights: Vec<Option<f64>> = by_column
+        .iter()
+        .map(|lengths| {
+            if lengths.iter().copied().max().unwrap_or(0) <= AUTO_COLUMN {
+                return None;
+            }
+            // empty cells are what a continuation row leaves behind — counting them
+            // would say a column is half as wide as its filled cells need
+            let filled: Vec<usize> = lengths.iter().copied().filter(|n| *n > 0).collect();
+            let mean = filled.iter().sum::<usize>() as f64 / filled.len() as f64;
+            Some(mean.clamp(WEIGHT_FLOOR, WEIGHT_CEILING))
+        })
+        .collect();
+    let narrowest = weights.iter().flatten().copied().fold(f64::INFINITY, f64::min);
+    weights
+        .iter()
+        .map(|weight| match weight {
+            None => "auto".to_string(),
+            Some(w) => {
+                let share = (w / narrowest * 2.0).round() / 2.0;
+                if share.fract() == 0.0 {
+                    format!("{}fr", share as i64)
+                } else {
+                    format!("{:.1}fr", share)
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The markdown satz writes, as Typst markup. Everything the reports use — headings,
 /// emphasis, inline code, links, lists, tables, fenced code, rules, block quotes —
 /// and the two HTML tags the compliance report puts inside a cell (`<br>`, `<small>`).
@@ -183,9 +246,14 @@ pub(crate) fn markup(markdown: &str) -> String {
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     let mut out = String::new();
-    // a table is buffered: Typst takes the cells as arguments, not as rows
-    let mut table: Option<(usize, Vec<String>)> = None;
+    // a table is buffered: Typst takes the cells as arguments, not as rows. Each cell
+    // is kept twice — as markup, and as the plain text the column widths are measured
+    // from, where a link is its label and `*bold*` is the word inside it.
+    let mut table: Option<(usize, Vec<(String, String)>)> = None;
     let mut cell = String::new();
+    let mut plain = String::new();
+    // set by the widest table in the document: one orientation for all of it
+    let mut landscape = false;
     let mut in_cell = false;
     let mut in_code = false;
     let mut list_markers: Vec<Option<u64>> = Vec::new();
@@ -195,6 +263,13 @@ pub(crate) fn markup(markdown: &str) -> String {
             cell.push_str(s);
         } else {
             out.push_str(s);
+        }
+    };
+    // the text a reader sees in a cell, which is what its column has to be wide enough
+    // for: markup the converter adds around it is not part of it
+    let measure = |plain: &mut String, in_cell: bool, s: &str| {
+        if in_cell {
+            plain.push_str(s);
         }
     };
 
@@ -259,34 +334,41 @@ pub(crate) fn markup(markdown: &str) -> String {
                 out.push_str("```\n\n");
             }
             // ---- tables: Typst takes the cells as arguments -------------------
-            Event::Start(Tag::Table(alignments)) => table = Some((alignments.len(), Vec::new())),
+            Event::Start(Tag::Table(alignments)) => {
+                landscape |= alignments.len() >= WIDE_TABLE;
+                table = Some((alignments.len(), Vec::new()));
+            }
             Event::End(TagEnd::Table) => {
                 if let Some((columns, cells)) = table.take() {
                     let columns = columns.max(1);
-                    // A compliance table is seven columns of prose. On a portrait page
-                    // every cell wraps to four lines and the report doubles in length,
-                    // so a wide one turns the page instead — the same decision a person
-                    // makes in a word processor, and the reason the PDF is worth having.
-                    let wide = columns >= 5;
-                    if wide {
-                        out.push_str("\n#page(flipped: true)[\n");
+                    let measured: Vec<String> = cells.iter().map(|(_, plain)| plain.clone()).collect();
+                    out.push_str(&format!("\n#table(\n  columns: ({}),\n", column_widths(columns, &measured)));
+                    let mut rest = cells.iter().map(|(markup, _)| markup.trim());
+                    // the first row is the header: Typst repeats it on every page the
+                    // table spans, and the show rule in the preamble sets it bold
+                    let header: Vec<&str> = rest.by_ref().take(columns).collect();
+                    if !header.is_empty() {
+                        out.push_str("  table.header(\n    repeat: true,\n");
+                        for c in header {
+                            out.push_str(&format!("    [{}],\n", c));
+                        }
+                        out.push_str("  ),\n");
                     }
-                    out.push_str(&format!("\n#table(\n  columns: ({}),\n", vec!["1fr"; columns].join(", ")));
-                    for c in cells {
-                        out.push_str(&format!("  [{}],\n", c.trim()));
+                    for c in rest {
+                        out.push_str(&format!("  [{}],\n", c));
                     }
-                    out.push_str(")\n");
-                    out.push_str(if wide { "]\n\n" } else { "\n" });
+                    out.push_str(")\n\n");
                 }
             }
             Event::Start(Tag::TableCell) => {
                 in_cell = true;
                 cell.clear();
+                plain.clear();
             }
             Event::End(TagEnd::TableCell) => {
                 in_cell = false;
                 if let Some((_, cells)) = table.as_mut() {
-                    cells.push(std::mem::take(&mut cell));
+                    cells.push((std::mem::take(&mut cell), std::mem::take(&mut plain)));
                 }
             }
             Event::Start(Tag::TableHead | Tag::TableRow) | Event::End(TagEnd::TableHead | TagEnd::TableRow) => {}
@@ -294,10 +376,12 @@ pub(crate) fn markup(markdown: &str) -> String {
             Event::Text(t) => {
                 let text = if in_code { t.to_string() } else { escape(&t) };
                 push(&mut out, &mut cell, in_cell, &text);
+                measure(&mut plain, in_cell, &t);
             }
             Event::Code(t) => {
                 // a raw span: backticks, with any backtick inside neutralised
                 push(&mut out, &mut cell, in_cell, &format!("`{}`", t.replace('`', "'")));
+                measure(&mut plain, in_cell, &t);
             }
             Event::Html(h) | Event::InlineHtml(h) => {
                 // The compliance report writes `<br>` and `<small>` inside cells, and
@@ -308,12 +392,20 @@ pub(crate) fn markup(markdown: &str) -> String {
                 let formatting = ["<br", "<small", "</small", "<sub", "</sub", "<sup", "</sup", "<b>", "</b>", "<i>", "</i>"];
                 if tag.starts_with("<br") {
                     push(&mut out, &mut cell, in_cell, " \\\n");
+                    measure(&mut plain, in_cell, "\n");
                 } else if !formatting.iter().any(|f| tag.starts_with(f)) {
                     push(&mut out, &mut cell, in_cell, &escape(&h));
+                    measure(&mut plain, in_cell, &h);
                 }
             }
-            Event::SoftBreak => push(&mut out, &mut cell, in_cell, " "),
-            Event::HardBreak => push(&mut out, &mut cell, in_cell, " \\\n"),
+            Event::SoftBreak => {
+                push(&mut out, &mut cell, in_cell, " ");
+                measure(&mut plain, in_cell, " ");
+            }
+            Event::HardBreak => {
+                push(&mut out, &mut cell, in_cell, " \\\n");
+                measure(&mut plain, in_cell, "\n");
+            }
             Event::Rule => out.push_str("\n#line(length: 100%, stroke: 0.4pt + luma(70%))\n\n"),
             Event::TaskListMarker(done) => {
                 push(&mut out, &mut cell, in_cell, if done { "\\[x\\] " } else { "\\[ \\] " })
@@ -329,10 +421,16 @@ pub(crate) fn markup(markdown: &str) -> String {
             | Event::Start(Tag::DefinitionListDefinition)
             | Event::End(TagEnd::DefinitionListDefinition) => {}
             Event::Start(Tag::Superscript | Tag::Subscript) | Event::End(TagEnd::Superscript | TagEnd::Subscript) => {}
-            Event::InlineMath(t) | Event::DisplayMath(t) => push(&mut out, &mut cell, in_cell, &escape(&t)),
+            Event::InlineMath(t) | Event::DisplayMath(t) => {
+                push(&mut out, &mut cell, in_cell, &escape(&t));
+                measure(&mut plain, in_cell, &t);
+            }
         }
     }
-    out
+    // One orientation for the whole document: a report that turns the page around
+    // every table reads as two documents interleaved, and the headings between the
+    // tables sat on the portrait ones.
+    if landscape { format!("#set page(flipped: true)\n{}", out) } else { out }
 }
 
 #[cfg(test)]
@@ -348,13 +446,67 @@ mod tests {
     }
 
     /// The reports are mostly tables, and Typst takes their cells as arguments
-    /// rather than as rows — so this is the shape that has to be right.
+    /// rather than as rows — so this is the shape that has to be right. The first
+    /// row is the header: Typst repeats it on every page the table spans.
     #[test]
-    fn a_table_becomes_a_typst_table_with_one_cell_per_argument() {
+    fn a_table_becomes_a_typst_table_whose_first_row_is_a_repeating_header() {
         let t = markup("| control | verdict |\n|---|---|\n| 1.4 | satisfied |\n");
-        assert!(t.contains("#table(\n  columns: (1fr, 1fr),"), "{t}");
-        assert!(t.contains("[control],"), "{t}");
+        assert!(t.contains("#table(\n  columns: (auto, auto),"), "{t}");
+        assert!(t.contains("table.header(\n    repeat: true,\n    [control],\n    [verdict],\n  ),"), "{t}");
         assert!(t.contains("[satisfied],"), "{t}");
+        // the header is in the header and nowhere else
+        assert_eq!(t.matches("[control],").count(), 1, "{t}");
+    }
+
+    /// The complaint this answers: a compliance table's leading column holds status
+    /// glyphs and got the same width as the prose beside it, so the prose wrapped for
+    /// nothing. A column that cannot be wide is sized to its content; the rest share
+    /// what is left in proportion to what they hold.
+    #[test]
+    fn a_glyph_column_is_sized_to_its_content_and_prose_columns_share_the_rest() {
+        let cells: Vec<String> = vec![
+            String::new(),
+            "decision".into(),
+            "why it is asked".into(),
+            "✓".into(),
+            "x".repeat(20),
+            "x".repeat(40),
+            "✓".into(),
+            "x".repeat(20),
+            "x".repeat(40),
+        ];
+        assert_eq!(column_widths(3, &cells), "auto, 1fr, 2fr");
+    }
+
+    /// One cell of an essay must not starve the columns beside it, and a column of
+    /// short answers must not be squeezed to a letter a line: the weight is clamped
+    /// at both ends, so the widest prose column is 4.5 times the narrowest.
+    #[test]
+    fn one_long_cell_cannot_take_the_page() {
+        let cells: Vec<String> = vec!["name".into(), "note".into(), "x".repeat(15), "x".repeat(200)];
+        // unclamped these mean 9.5 and 102 characters, which is eleven to one
+        assert_eq!(column_widths(2, &cells), "1fr, 4.5fr");
+    }
+
+    /// A continuation row leaves its other cells empty — the compliance sheet writes
+    /// one under every question — and an empty cell says nothing about how wide its
+    /// column has to be.
+    #[test]
+    fn an_empty_cell_does_not_shrink_its_column() {
+        let filled: Vec<String> = vec!["a".repeat(20), "b".repeat(40)];
+        let with_a_continuation: Vec<String> =
+            vec!["a".repeat(20), "b".repeat(40), String::new(), String::new()];
+        assert_eq!(column_widths(2, &filled), column_widths(2, &with_a_continuation));
+    }
+
+    #[test]
+    fn a_single_column_and_an_empty_table_are_sized_without_panicking() {
+        assert_eq!(column_widths(1, &["ok".to_string()]), "auto");
+        assert_eq!(column_widths(1, &["x".repeat(80)]), "1fr");
+        assert_eq!(column_widths(3, &[]), "auto, auto, auto");
+        assert_eq!(column_widths(0, &[]), "auto");
+        let t = markup("| a |\n|---|\n");
+        assert!(t.contains("#table(\n  columns: (auto),"), "{t}");
     }
 
     /// Typst syntax inside report text is text, not syntax: an estate is full of
@@ -384,13 +536,18 @@ mod tests {
         assert!(!t.contains("small"), "{t}");
     }
 
-    /// Seven columns of prose do not fit a portrait page: every cell wraps to four
-    /// lines and the report doubles in length, so a wide table turns the page.
+    /// Five columns of prose do not fit a portrait page: every cell wraps to a word
+    /// and a half a line and the report doubles in length. The document turns once —
+    /// per table it turned back for every heading between them.
     #[test]
-    fn a_wide_table_turns_the_page_and_a_narrow_one_does_not() {
-        let wide = markup("| a | b | c | d | e |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |\n");
-        assert!(wide.contains("#page(flipped: true)["), "{wide}");
-        let narrow = markup("| a | b |\n|---|---|\n| 1 | 2 |\n");
+    fn a_wide_table_turns_the_whole_document_once_and_a_narrow_one_leaves_it_upright() {
+        let wide = markup(
+            "# Decisions\n\n| a | b | c | d | e |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |\n\n\
+             ## more\n\n| a | b | c | d | e |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |\n",
+        );
+        assert!(wide.starts_with("#set page(flipped: true)\n"), "{wide}");
+        assert_eq!(wide.matches("flipped").count(), 1, "{wide}");
+        let narrow = markup("| a | b | c | d |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n");
         assert!(!narrow.contains("flipped"), "{narrow}");
     }
 
@@ -429,13 +586,60 @@ mod tests {
         }
     }
 
+    /// The text a compiled page carries, with the face each run was set in, so a
+    /// header that is not repeated or not bold is caught where it happens — in the
+    /// laid-out document, not in the markup.
+    fn words(frame: &typst::layout::Frame, into: &mut Vec<(String, typst::text::FontWeight)>) {
+        for (_, item) in frame.items() {
+            match item {
+                typst::layout::FrameItem::Text(text) => {
+                    into.push((text.text.to_string(), text.font.info().variant.weight))
+                }
+                typst::layout::FrameItem::Group(group) => words(&group.frame, into),
+                _ => {}
+            }
+        }
+    }
+
+    /// A decisions sheet is one table of five columns and dozens of rows. It is
+    /// landscape from the first page to the last, and the column titles stand over
+    /// the columns on every one of them — a table that breaks across pages and leaves
+    /// its header on page one is a page of unlabelled cells.
+    #[test]
+    fn a_long_wide_table_is_landscape_throughout_and_repeats_its_header_in_bold() {
+        let mut md = String::from(
+            "# Decisions\n\n| | decision | your answer | how | changing it later |\n|---|---|---|---|---|\n",
+        );
+        for i in 0..80 {
+            md.push_str(&format!(
+                "| ✓ | the question number {i} this estate has to answer before it is applied | `answer-{i}` | \
+                 chosen for this estate | the resource is destroyed and made again and the running \
+                 organisation feels it |\n"
+            ));
+        }
+        let world = Report::new(format!("{}\n{}", PREAMBLE, markup(&md)));
+        let document = typst::compile::<PagedDocument>(&world).output.expect("the decisions sheet compiles");
+        assert!(document.pages().len() > 1, "one page: the table has to break for this to prove anything");
+        for (n, page) in document.pages().iter().enumerate() {
+            let size = page.frame.size();
+            assert!(size.x > size.y, "page {} is portrait: {:?}", n + 1, size);
+            let mut seen = Vec::new();
+            words(&page.frame, &mut seen);
+            let header = seen
+                .iter()
+                .find(|(text, _)| text == "decision")
+                .unwrap_or_else(|| panic!("page {} carries no header row", n + 1));
+            assert_eq!(header.1, typst::text::FontWeight::BOLD, "the header on page {} is not bold", n + 1);
+        }
+    }
+
     /// The whole point: bytes out, with no tool on PATH.
     #[test]
     fn a_report_renders_to_a_pdf_without_anything_installed() {
         let md = "# satz evidence report\n\nCIS GCP 4.0, verified 2026-09-15.\n\n\
-                  | control | verdict | witness |\n|---|---|---|\n\
-                  | 1.4 | ✓ satisfied | `google_org_policy_policy.sa_key` |\n\
-                  | 2.13 | ○ unmet | — |\n\n\
+                  | control | verdict | witness | framework | scope |\n|---|---|---|---|---|\n\
+                  | 1.4 | ✓ satisfied | `google_org_policy_policy.sa_key` | CIS GCP 4.0 | the organisation |\n\
+                  | 2.13 | ○ unmet | — | CIS GCP 4.0 | every project |\n\n\
                   - a list item with a `#` and an @ in it\n";
         let bytes = render(md).expect("renders");
         assert!(bytes.starts_with(b"%PDF-"), "not a PDF: {:?}", &bytes[..8.min(bytes.len())]);
