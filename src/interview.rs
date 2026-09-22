@@ -18,6 +18,7 @@ use std::path::Path;
 use crate::questions::{questions_report, short, QuestionRow, QuestionsReport};
 use crate::settings::ToolConfig;
 use satz_core::pack_graph::PackGraph;
+use satz_core::satz::{lex_spanned, Tok, Token};
 
 /// A value as a Satz literal, as it goes into `params {}`.
 pub(crate) fn literal(v: &serde_yaml::Value) -> String {
@@ -33,102 +34,147 @@ pub(crate) fn literal(v: &serde_yaml::Value) -> String {
     }
 }
 
-/// The estate's top-level `params { … }` block as byte offsets: just after the
-/// opening brace, and at the closing one. Brace counting steps over strings and
-/// `//` comments, so a `}` inside either does not end the block early.
-fn params_block(src: &str) -> Result<(usize, usize), String> {
-    let mut at = 0usize;
-    let open = loop {
-        let rest = &src[at..];
-        let Some(rel) = rest.find("params") else {
-            return Err("the estate has no `params { }` block — add one; answers are written there".to_string());
-        };
-        let start = at + rel;
-        let line_start = src[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let at_line_start = src[line_start..start].trim().is_empty();
-        let after = &src[start + "params".len()..];
-        let brace = after.trim_start().starts_with('{');
-        if at_line_start && brace {
-            break start + "params".len() + (after.len() - after.trim_start().len()) + 1;
-        }
-        at = start + "params".len();
-    };
-    let bytes = src.as_bytes();
-    let mut depth = 1usize;
-    let mut i = open;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => {
+/// The estate's `params { … }` blocks and the bindings in them, read with the
+/// language's own lexer: a comment in any of its forms, a string, a raw `hcl { … }`
+/// body and a second binding on one line are what the lexer says they are, never what
+/// a brace count guesses. A brace count that guessed wrong wrote a second `x = …`
+/// beside the one already there, and satz refuses that estate on the next read.
+#[derive(Default)]
+struct Params {
+    /// Per top-level block, as byte offsets: just after its `{`, and at its `}`.
+    blocks: Vec<(usize, usize)>,
+    /// Every binding in those blocks: its name, and the byte range of its VALUE.
+    bound: Vec<(String, usize, usize)>,
+}
+
+impl Params {
+    /// The byte range of the value `name` is bound to, in whichever block binds it —
+    /// a second `params { }` block counts, which is how a subject that looked unbound
+    /// was bound a second time.
+    fn value_of(&self, name: &str) -> Option<(usize, usize)> {
+        self.bound.iter().find(|(n, _, _)| n == name).map(|(_, from, to)| (*from, *to))
+    }
+}
+
+/// The byte offset of every character, plus the end: the lexer spans characters and
+/// the splices below cut bytes.
+fn byte_offsets(src: &str) -> Vec<usize> {
+    src.char_indices().map(|(i, _)| i).chain(std::iter::once(src.len())).collect()
+}
+
+/// Every top-level `params { … }` of `src`. A nested one — a body key, a block inside
+/// a resource — is not the estate's: only depth 0 counts.
+fn params_of(src: &str) -> Result<Params, String> {
+    let toks = lex_spanned(src, false).map_err(|e| e.to_string())?;
+    let off = byte_offsets(src);
+    let mut out = Params::default();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        match &toks[i].tok {
+            Tok::Ident(id) if id == "params" && depth == 0 && matches!(toks.get(i + 1).map(|t| &t.tok), Some(Tok::LBrace)) => {
+                i = read_block(&toks, i + 2, off[toks[i + 1].end], &off, &mut out)?;
+            }
+            Tok::LBrace | Tok::LBrack => {
+                depth += 1;
                 i += 1;
-                while i < bytes.len() && bytes[i] != b'"' {
-                    if bytes[i] == b'\\' {
-                        i += 1;
-                    }
-                    i += 1;
-                }
             }
-            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
+            Tok::RBrace | Tok::RBrack => {
+                depth -= 1;
+                i += 1;
             }
-            b'{' => depth += 1,
-            b'}' => {
+            _ => i += 1,
+        }
+    }
+    Ok(out)
+}
+
+/// One block, from the token after its `{`: every `name = value` in it and the
+/// block's own span, and the token index just past its `}`.
+fn read_block(toks: &[Token], mut i: usize, open: usize, off: &[usize], out: &mut Params) -> Result<usize, String> {
+    loop {
+        let Some(t) = toks.get(i) else {
+            return Err("the estate's `params {` block never closes".to_string());
+        };
+        if t.tok == Tok::RBrace {
+            out.blocks.push((open, off[t.start]));
+            return Ok(i + 1);
+        }
+        let Tok::Ident(name) = &t.tok else {
+            return Err(format!("params: line {}: expected a name or `}}`", t.line));
+        };
+        if toks.get(i + 1).map(|t| &t.tok) != Some(&Tok::Eq) {
+            return Err(format!("params: line {}: `{}` is not followed by `=`", t.line, name));
+        }
+        let end = end_of_value(toks, i + 2)?;
+        out.bound.push((name.clone(), off[toks[i + 2].start], off[toks[end - 1].end]));
+        i = end;
+    }
+}
+
+/// The token index just past the value that starts at `at`: one token, or a list or
+/// map to its matching bracket — however many lines it takes.
+fn end_of_value(toks: &[Token], at: usize) -> Result<usize, String> {
+    let Some(first) = toks.get(at) else {
+        return Err("params: a binding without a value".to_string());
+    };
+    if !matches!(first.tok, Tok::LBrack | Tok::LBrace) {
+        return Ok(at + 1);
+    }
+    let mut depth = 0i32;
+    for (k, t) in toks.iter().enumerate().skip(at) {
+        match t.tok {
+            Tok::LBrack | Tok::LBrace => depth += 1,
+            Tok::RBrack | Tok::RBrace => {
                 depth -= 1;
                 if depth == 0 {
-                    return Ok((open, i));
+                    return Ok(k + 1);
                 }
             }
             _ => {}
         }
-        i += 1;
     }
-    Err("the estate's `params {` block never closes".to_string())
+    Err(format!("params: line {}: the value opens a list or a map that never closes", first.line))
 }
 
-/// Bind `name = value` in the estate's `params {}`: replace an existing binding in
-/// place, else append before the closing brace. Text surgery rather than a re-emit,
-/// so the comments and the ordering of a hand-edited file survive the interview —
-/// the VALUE alone is replaced, and the line keeps its indentation and its trailing
-/// comment. When the answer is APPENDED, the `params` block is re-aligned by the
-/// formatter's own rule, because a new `name = value` would otherwise break the `=`
-/// column of every binding around it; a replaced value changes no width and touches
-/// nothing but itself. Everything outside the block stays as the author laid it out.
+/// The literal `name` is bound to in the estate's params, exactly as it is written
+/// there, or `None` when nothing binds it.
+pub(crate) fn bound_literal(src: &str, name: &str) -> Result<Option<String>, String> {
+    Ok(params_of(src)?.value_of(name).map(|(from, to)| src[from..to].to_string()))
+}
+
+/// Bind `name = value` in the estate's `params {}`: replace the binding it already
+/// has, in place, and append one only when nothing binds the name. Every writer of a
+/// param lands here — `init`, the interview and `satz_interview`, `add-pack` and
+/// `remove-pack`, the notice `adopt --execute --import` acknowledges, `migrate`'s
+/// deployment mode, the greenfield write-back — so no two of them can leave a subject
+/// bound twice, which satz refuses to compile.
+///
+/// Text surgery rather than a re-emit, so the comments and the ordering of a
+/// hand-edited file survive the write — the VALUE alone is replaced, and the line
+/// keeps its indentation and its trailing comment. When the binding is APPENDED, the
+/// `params` block is re-aligned by the formatter's own rule, because a new
+/// `name = value` would otherwise break the `=` column of every binding around it; a
+/// replaced value changes no width and touches nothing but itself. Everything outside
+/// the block stays as the author laid it out.
 pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<String, String> {
-    let (open, close) = params_block(src)?;
+    let params = params_of(src)?;
     let lit = literal(value);
+    if let Some((from, to)) = params.value_of(name) {
+        return Ok(format!("{}{}{}", &src[..from], lit, &src[to..]));
+    }
+    let (_, close) = *params
+        .blocks
+        .first()
+        .ok_or_else(|| "the estate has no `params { }` block — add one; answers are written there".to_string())?;
     let mut out = String::with_capacity(src.len() + 64);
-    out.push_str(&src[..open]);
-    let mut replaced = false;
-    for line in src[open..close].split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let binds_it = !replaced
-            && trimmed
-                .strip_prefix(name)
-                .map(|rest| rest.trim_start().starts_with('='))
-                .unwrap_or(false);
-        if binds_it {
-            let (from, to) = value_span(line, name)?;
-            out.push_str(&line[..from]);
-            out.push_str(&lit);
-            out.push_str(&line[to..]);
-            replaced = true;
-        } else {
-            out.push_str(line);
-        }
+    out.push_str(&src[..close]);
+    if !out.ends_with('\n') {
+        out.push('\n');
     }
-    if !replaced {
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(&format!("  {name} = {lit}\n"));
-    }
+    out.push_str(&format!("  {name} = {lit}\n"));
     out.push_str(&src[close..]);
-    // A replaced value changes no name's width, so the author's columns — and their
-    // hand-placed trailing comments — are left exactly as they were. Only an APPENDED
-    // line has to fit a column, and only then is the block re-laid.
-    Ok(if replaced { out } else { align_params(&out) })
+    Ok(align_params(&out))
 }
 
 /// The `params` block as `satz fmt` lays it out, spliced back into text whose rest is
@@ -139,75 +185,13 @@ pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<S
 /// the writer refuses it next, and says why.
 fn align_params(text: &str) -> String {
     let Ok(formatted) = satz_core::fmt::format(text) else { return text.to_string() };
-    match (params_block(text), params_block(&formatted)) {
-        (Ok((open, close)), Ok((fopen, fclose))) => {
+    let first = |s: &str| params_of(s).ok().and_then(|p| p.blocks.first().copied());
+    match (first(text), first(&formatted)) {
+        (Some((open, close)), Some((fopen, fclose))) => {
             format!("{}{}{}", &text[..open], &formatted[fopen..fclose], &text[close..])
         }
         _ => text.to_string(),
     }
-}
-
-/// The value of `name = …` on this line, as a byte range: from the first character
-/// after the `=` to the end of the value, with the trailing whitespace and any
-/// trailing comment left outside it. A `#` or `//` inside a string is text, not a
-/// comment.
-///
-/// A value that does not finish on its line — an open list or string — is refused
-/// rather than half-rewritten: `bind` works a line at a time, and replacing the
-/// first line of a multi-line list would leave its tail behind as stray text.
-fn value_span(line: &str, name: &str) -> Result<(usize, usize), String> {
-    let eq = line[line.find(name).unwrap_or(0)..]
-        .find('=')
-        .map(|i| line.find(name).unwrap_or(0) + i)
-        .ok_or_else(|| format!("{}: the binding has no `=`", name))?;
-    let from = line[eq + 1..]
-        .find(|c: char| !c.is_whitespace())
-        .map(|i| eq + 1 + i)
-        .ok_or_else(|| format!("{}: the binding has no value on its line", name))?;
-
-    let bytes = line.as_bytes();
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut i = from;
-    let mut end = line.len();
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_string {
-            match c {
-                b'\\' => i += 1,
-                b'"' => in_string = false,
-                _ => {}
-            }
-        } else {
-            match c {
-                b'"' => in_string = true,
-                b'[' | b'{' => depth += 1,
-                b']' | b'}' => depth -= 1,
-                b'#' if depth == 0 => {
-                    end = i;
-                    break;
-                }
-                b'/' if depth == 0 && bytes.get(i + 1) == Some(&b'/') => {
-                    end = i;
-                    break;
-                }
-                b'\n' => {
-                    end = i;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    if in_string || depth != 0 {
-        return Err(format!(
-            "{}: its value does not finish on one line — write that param by hand, or `satz fmt` it first",
-            name
-        ));
-    }
-    let end = line[..end].trim_end().len();
-    Ok((from, end))
 }
 
 /// Write one answer, given the question it answers. A `oneof` takes an option's
@@ -748,6 +732,49 @@ mod tests {
         assert!(bind("estate x\n", "a", &yaml("v")).unwrap_err().contains("no `params { }` block"));
     }
 
+    /// Found on a live estate: `cis_baseline_adopted = true` stood twice in one
+    /// `params {}` — a writer had appended beside a binding that was already there,
+    /// and satz refuses to compile what it wrote. Whatever the shape of the block, a
+    /// subject that is bound is REPLACED.
+    #[test]
+    fn a_subject_that_is_already_bound_is_replaced_never_appended_beside() {
+        let once = |src: &str| {
+            let out = bind(src, "cis_baseline_adopted", &serde_yaml::Value::Bool(true)).unwrap();
+            assert_eq!(out.matches("cis_baseline_adopted").count(), 1, "bound twice:\n{out}");
+            assert!(out.contains("cis_baseline_adopted = true"), "{out}");
+        };
+        // a `}` in a `#` comment and in a block comment ends no block
+        once("estate e\n\nparams {\n  # not the end }\n  cis_baseline_adopted = false\n}\n");
+        once("estate e\n\nparams {\n  /* nor this } */\n  cis_baseline_adopted = false\n}\n");
+        // two bindings on one line are two bindings
+        once("estate e\n\nparams {\n  other = 1 cis_baseline_adopted = false\n}\n");
+        // a second block binds it, and the first is where an append would have landed
+        once("estate e\n\nparams {\n  other = 1\n}\n\nparams {\n  cis_baseline_adopted = false\n}\n");
+        // a raw HCL body is opaque: what it says is not the estate's params
+        once("estate e\n\nhcl trust \"reviewed\" {\n  locals {\n    params { other = 1 }\n  }\n}\n\nparams {\n  cis_baseline_adopted = false\n}\n");
+    }
+
+    /// A binding that is commented out binds nothing — the answer is appended, once,
+    /// and the comment is left where its author put it.
+    #[test]
+    fn a_commented_out_binding_is_not_a_binding() {
+        let src = "estate e\n\nparams {\n  // cis_baseline_adopted = true\n}\n";
+        let out = bind(src, "cis_baseline_adopted", &serde_yaml::Value::Bool(true)).unwrap();
+        assert_eq!(out, "estate e\n\nparams {\n  // cis_baseline_adopted = true\n  cis_baseline_adopted = true\n}\n");
+        // and the second write replaces the first: one live binding, whatever the run
+        let again = bind(&out, "cis_baseline_adopted", &serde_yaml::Value::Bool(true)).unwrap();
+        assert_eq!(again, out);
+    }
+
+    /// The replace touches the value and nothing else: the rest of the file is the
+    /// same bytes it was.
+    #[test]
+    fn a_replaced_value_is_the_only_byte_that_moves() {
+        let src = "estate e\n\nparams {\n  a                    = 1\n  cis_baseline_adopted = false // day 0\n  z                    = \"x\"\n}\n\ngoogle_folder {\n  f {\n    display_name =  \"F\"\n  }\n}\n";
+        let out = bind(src, "cis_baseline_adopted", &serde_yaml::Value::Bool(true)).unwrap();
+        assert_eq!(out, src.replace("= false // day 0", "= true // day 0"));
+    }
+
     #[test]
     fn answering_yes_switches_on_that_pack_and_nothing_else() {
         let src = "\
@@ -973,14 +1000,14 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         assert!(out.contains("  logsink_filter = \"x\"\n"), "{out}");
     }
 
-    /// `bind` works a line at a time, so a value that opens a list and closes it three
-    /// lines down cannot be replaced by rewriting one line: say so instead of leaving
-    /// the tail behind as stray text.
+    /// A value that opens a list and closes it three lines down is one value, and the
+    /// whole of it is what an answer replaces — never its first line, with the tail
+    /// left behind as stray text.
     #[test]
-    fn a_value_that_spans_lines_is_refused_not_half_written() {
-        let src = "estate e\n\nparams {\n  members = [\n    \"a\",\n  ]\n}\n";
-        let e = bind(src, "members", &yaml("x")).unwrap_err();
-        assert!(e.contains("does not finish on one line"), "{e}");
+    fn a_value_that_spans_lines_is_replaced_whole() {
+        let src = "estate e\n\nparams {\n  members = [\n    \"a\",\n  ]\n  other   = 1\n}\n";
+        let out = bind(src, "members", &serde_yaml::Value::Sequence(vec![yaml("b")])).unwrap();
+        assert_eq!(out, "estate e\n\nparams {\n  members = [\"b\"]\n  other   = 1\n}\n");
     }
 
     #[test]

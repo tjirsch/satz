@@ -2111,7 +2111,7 @@ newline in single-line string (use """ for multi-line)
 unterminated block comment
 malformed number `1.2.3`
 unknown param 'no_such_param'
-params: `a` is declared twice — the second binding would be ignored
+params: `a` is declared twice — line 3 and line 7; the second binding would be ignored, so delete the one that is not meant
 a second `estate` header (f) — the file is already `e`
 use ... as: given twice
 `lifecycle_rule` is given twice in this block (first at line 12) — a repeated key would silently last-win; write a list (`lifecycle_rule = [ … ]`) or remove one
