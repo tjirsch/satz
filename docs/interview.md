@@ -28,6 +28,14 @@ default into the estate — so a reader of the file can tell "decided" from "nev
 looked", which the fold alone cannot, because a pack default and an estate's decision
 resolve to the same value there.
 
+**A param is bound once.** Every command that writes one — `init` on a re-run, the
+interview and `satz_interview`, `add-pack` and `remove-pack`, the notice `adopt
+--execute --import` acknowledges, `migrate`'s deployment mode, `bootstrap`'s greenfield
+write-back — replaces the binding the estate already has, where it stands: the line
+keeps its indentation, its `=` column and its trailing comment. A param nothing binds
+yet is appended to the block, and the block is re-aligned. A param bound twice in one
+estate is refused by name, with both lines.
+
 The states `satz questions` reports:
 
 | state | meaning |

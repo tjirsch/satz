@@ -270,51 +270,31 @@ async fn resolve_greenfield_parent(
     Ok(org)
 }
 
-/// Rewrite one `param = "value"` line in the estate — the greenfield
-/// write-back. Exactly one matching line; a present, different, non-empty
-/// value is an error, never a silent overwrite.
+/// Write the organisation the greenfield run created into the estate's params.
 fn write_param_value(estate: &Path, param: &str, value: &str) -> Result<(), String> {
-    let text =
-        std::fs::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
-    let rewritten = rewrite_param_line(&text, param, value)?;
+    let text = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let rewritten = fill_param(&text, param, value)?;
     crate::fsx::write_edited_satz(estate, &text, &rewritten).map_err(|e| e.to_string())
 }
 
-/// The pure half of the write-back, pinned by tests. Preserves the line's
-/// indentation and alignment; only the quoted value changes.
-fn rewrite_param_line(text: &str, param: &str, value: &str) -> Result<String, String> {
-    let mut out = Vec::new();
-    let mut hits = 0;
-    for line in text.lines() {
-        let is_param_line = line
-            .trim_start()
-            .strip_prefix(param)
-            .map(|rest| rest.trim_start().starts_with('='))
-            .unwrap_or(false);
-        if !is_param_line {
-            out.push(line.to_string());
-            continue;
-        }
-        hits += 1;
-        let Some((head, rest)) = line.split_once('"') else {
-            return Err(format!("param `{}` is not a quoted string in the estate", param));
-        };
-        let Some((current, tail)) = rest.split_once('"') else {
-            return Err(format!("param `{}`: unterminated string", param));
-        };
-        if !current.is_empty() && current != value {
-            return Err(format!(
-                "param `{}` already carries {:?} (expected empty or {:?}) — not overwriting",
-                param, current, value
-            ));
-        }
-        out.push(format!("{}\"{}\"{}", head, value, tail));
+/// The pure half of the write-back, pinned by tests. The estate binds the param
+/// already — greenfield fills what `init` left empty — and a present, different value
+/// is an error, never a silent overwrite. The write itself is `interview::bind`, the
+/// one writer of a param, so the line keeps its indentation and its alignment and
+/// nothing is ever bound a second time.
+fn fill_param(text: &str, param: &str, value: &str) -> Result<String, String> {
+    let current = crate::interview::bound_literal(text, param)?
+        .ok_or_else(|| format!("param `{}` not found in the estate", param))?;
+    let Some(current) = current.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+        return Err(format!("param `{}` is not a quoted string in the estate", param));
+    };
+    if !current.is_empty() && current != value {
+        return Err(format!(
+            "param `{}` already carries {:?} (expected empty or {:?}) — not overwriting",
+            param, current, value
+        ));
     }
-    match hits {
-        1 => Ok(out.join("\n") + if text.ends_with('\n') { "\n" } else { "" }),
-        0 => Err(format!("param `{}` not found in the estate", param)),
-        n => Err(format!("param `{}` appears {} times — cannot rewrite safely", param, n)),
-    }
+    crate::interview::bind(text, param, &Value::String(value.to_string()))
 }
 
 /// What the state manages: every address, and the live object behind each one.
@@ -1107,33 +1087,34 @@ mod tests {
     // --- greenfield write-back ---------------------------------------------
 
     #[test]
-    fn rewrite_fills_an_empty_param_and_preserves_alignment() {
+    fn filling_an_empty_param_preserves_the_alignment() {
         let text = "params {\n  customer_organization_id = \"\"\n  other = \"x\"\n}\n";
-        let out = rewrite_param_line(text, "customer_organization_id", "123456789012").unwrap();
+        let out = fill_param(text, "customer_organization_id", "123456789012").unwrap();
         assert_eq!(
             out,
             "params {\n  customer_organization_id = \"123456789012\"\n  other = \"x\"\n}\n"
         );
         // Idempotent: the value already written is accepted.
-        let again = rewrite_param_line(&out, "customer_organization_id", "123456789012").unwrap();
+        let again = fill_param(&out, "customer_organization_id", "123456789012").unwrap();
         assert_eq!(again, out);
     }
 
     #[test]
-    fn rewrite_never_overwrites_a_different_value() {
-        let text = "customer_organization_id = \"222222222222\"\n";
-        let err = rewrite_param_line(text, "customer_organization_id", "123456789012").unwrap_err();
+    fn filling_never_overwrites_a_different_value() {
+        let text = "params {\n  customer_organization_id = \"222222222222\"\n}\n";
+        let err = fill_param(text, "customer_organization_id", "123456789012").unwrap_err();
         assert!(err.contains("not overwriting"), "{err}");
     }
 
     #[test]
-    fn rewrite_fails_on_missing_duplicate_or_prefix_params() {
-        assert!(rewrite_param_line("other = \"x\"\n", "customer_organization_id", "1").is_err());
-        let dup = "customer_organization_id = \"\"\ncustomer_organization_id = \"\"\n";
-        assert!(rewrite_param_line(dup, "customer_organization_id", "1").is_err());
+    fn filling_fails_on_a_param_the_estate_does_not_bind() {
+        assert!(fill_param("params {\n  other = \"x\"\n}\n", "customer_organization_id", "1").is_err());
         // A param that merely starts with the name is not a match.
-        let prefixed = "customer_organization_id_backup = \"\"\n";
-        assert!(rewrite_param_line(prefixed, "customer_organization_id", "1").is_err());
+        let prefixed = "params {\n  customer_organization_id_backup = \"\"\n}\n";
+        assert!(fill_param(prefixed, "customer_organization_id", "1").is_err());
+        // A value that is not a string is not the one greenfield fills.
+        let typed = "params {\n  customer_organization_id = 222222222222\n}\n";
+        assert!(fill_param(typed, "customer_organization_id", "1").unwrap_err().contains("not a quoted string"));
     }
 
     // --- state parsing -----------------------------------------------------

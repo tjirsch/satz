@@ -105,23 +105,15 @@ impl Derivations {
     }
 }
 
-/// The literal a param is bound to in an estate's `params` block, if it is bound
-/// at all. Textual on purpose: this runs on a file that may not compile yet.
-pub(crate) fn current_value(src: &str, param: &str) -> Option<String> {
-    for line in src.lines() {
-        let t = line.trim_start();
-        let Some(rest) = t.strip_prefix(param) else { continue };
-        let rest = rest.trim_start();
-        let Some(rest) = rest.strip_prefix('=') else { continue };
-        let rest = rest.trim_start();
-        // a quoted literal; anything else (a reference, an interpolation) is
-        // reported as-is up to a trailing comment
-        if let Some(inner) = rest.strip_prefix('"') {
-            return inner.split('"').next().map(str::to_string);
-        }
-        return Some(rest.split("//").next().unwrap_or(rest).trim().to_string());
-    }
-    None
+/// The value a param is bound to in an estate's `params` block, if it is bound at
+/// all: a string without its quotes, anything else (a reference, a number) as it is
+/// written. Lexical, not compiled: this runs on a file whose params are still empty.
+pub(crate) fn current_value(src: &str, param: &str) -> Result<Option<String>, String> {
+    let Some(lit) = crate::interview::bound_literal(src, param)? else { return Ok(None) };
+    Ok(Some(match lit.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        Some(inner) => inner.to_string(),
+        None => lit,
+    }))
 }
 
 /// One param's fate in a merge.
@@ -140,7 +132,7 @@ pub(crate) fn merge(src: &str, stated: &Stated) -> Result<(String, Vec<Merged>),
     let mut out = src.to_string();
     let mut log = Vec::new();
     for (param, value) in stated.params() {
-        let before = current_value(&out, param).unwrap_or_default();
+        let before = current_value(&out, param)?.unwrap_or_default();
         if before == value {
             log.push(Merged::Same { param, value });
             continue;
@@ -210,6 +202,18 @@ params {
         assert!(matches!(&log[0], Merged::Changed { param: "infra_bucket_name", from, .. } if from.is_empty()));
     }
 
+    /// A re-run writes into the binding the estate has, wherever the block's comments
+    /// put it: two bindings of one param is a file satz refuses to compile.
+    #[test]
+    fn a_rerun_never_writes_a_second_binding_of_the_same_param() {
+        let src = "estate c0example\n\nparams {\n  # filled in on day 0 }\n  customer_shortname = \"old\"\n}\n";
+        let stated = Stated { customer_shortname: Some("acme".into()), ..Default::default() };
+        let (out, log) = merge(src, &stated).unwrap();
+        assert_eq!(out.matches("customer_shortname").count(), 1, "{out}");
+        assert!(out.contains("customer_shortname = \"acme\""), "{out}");
+        assert_eq!(log, vec![Merged::Changed { param: "customer_shortname", from: "old".into(), to: "acme".into() }]);
+    }
+
     #[test]
     fn the_admin_address_is_split_to_the_local_part_the_packs_compose_from() {
         let stated = Stated { iac_user: Some("alice@example.com".into()), ..Default::default() };
@@ -220,12 +224,15 @@ params {
 
     #[test]
     fn current_value_reads_a_binding_without_compiling_the_file() {
-        assert_eq!(current_value(ESTATE, "customer_shortname").as_deref(), Some("acme"));
-        assert_eq!(current_value(ESTATE, "customer_organization_id").as_deref(), Some(""));
-        assert_eq!(current_value(ESTATE, "customer_domain").as_deref(), Some("example.com"), "the comment is not the value");
-        assert_eq!(current_value(ESTATE, "infra_bucket_name"), None);
+        let read = |src: &str, p: &str| current_value(src, p).unwrap();
+        assert_eq!(read(ESTATE, "customer_shortname").as_deref(), Some("acme"));
+        assert_eq!(read(ESTATE, "customer_organization_id").as_deref(), Some(""));
+        assert_eq!(read(ESTATE, "customer_domain").as_deref(), Some("example.com"), "the comment is not the value");
+        assert_eq!(read(ESTATE, "infra_bucket_name"), None);
         // a reference rather than a literal
-        assert_eq!(current_value("params {\n  a = other_param\n}\n", "a").as_deref(), Some("other_param"));
+        assert_eq!(read("params {\n  a = other_param\n}\n", "a").as_deref(), Some("other_param"));
+        // a binding that is commented out binds nothing
+        assert_eq!(read("params {\n  // a = \"x\"\n}\n", "a"), None);
     }
 
     #[test]

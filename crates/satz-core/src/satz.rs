@@ -1587,8 +1587,14 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                             };
                             p.expect(Tok::Eq, "'=' in param")?;
                             let v = p.value()?;
-                            if file.params.iter().any(|(n, _, _)| n == &name) {
-                                return err(line, format!("params: `{}` is declared twice — the second binding would be ignored", name));
+                            if let Some((_, _, first)) = file.params.iter().find(|(n, _, _)| n == &name) {
+                                return err(
+                                    line,
+                                    format!(
+                                        "params: `{}` is declared twice — line {} and line {}; the second binding would be ignored, so delete the one that is not meant",
+                                        name, first, line
+                                    ),
+                                );
                             }
                             file.params.push((name, v, line));
                         }
@@ -2638,6 +2644,10 @@ mod review_2026_08_29_tests {
     #[test]
     fn duplicate_params_and_headers_are_errors() {
         assert!(parse("estate e\nparams { a = \"1\" a = \"2\" }\n").unwrap_err().msg.contains("declared twice"));
+        // both bindings are named, so the one to delete can be read off the error
+        let e = parse("estate e\nparams {\n  a = \"1\"\n}\n\nparams {\n  a = \"2\"\n}\n").unwrap_err();
+        assert_eq!(e.line, 7);
+        assert!(e.msg.contains("line 3 and line 7"), "{}", e.msg);
         assert!(parse("estate e\nestate f\n").unwrap_err().msg.contains("second `estate` header"));
         assert!(parse("estate e\nuse \"p\" as x as y\n").unwrap_err().msg.contains("given twice"));
     }

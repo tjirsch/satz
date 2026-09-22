@@ -296,6 +296,25 @@ mod tests {
         assert!(!says(Declared::Warning).contains("refuses"), "{}", says(Declared::Warning));
     }
 
+    /// `satz adopt --execute --import` acknowledges the notice it ran for. An estate
+    /// that already binds the param — bound by hand, or by an earlier run — keeps ONE
+    /// binding: a second one is a file satz refuses to compile.
+    #[test]
+    fn acknowledging_a_param_the_estate_already_binds_leaves_one_binding() {
+        let dir = std::env::temp_dir().join(format!("satz-ack-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let estate = dir.join("e.satz");
+        let before = "estate e\n\nparams {\n  # adopt has run for this estate }\n  cis_baseline_adopted = false\n}\n";
+        crate::fsx::write_verbatim(&estate, before).unwrap();
+        acknowledge(&estate, &["cis_baseline_adopted".to_string()]).unwrap();
+        let after = crate::fsx::read_to_string(&estate).unwrap();
+        assert_eq!(after.matches("cis_baseline_adopted").count(), 1, "{after}");
+        assert!(after.contains("cis_baseline_adopted = true"), "{after}");
+        // and a second run says the same thing
+        acknowledge(&estate, &["cis_baseline_adopted".to_string()]).unwrap();
+        assert_eq!(crate::fsx::read_to_string(&estate).unwrap(), after);
+    }
+
     #[test]
     fn a_switch_shows_what_it_opened_and_nothing_else() {
         let before = vec![row("a", false)];
