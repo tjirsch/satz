@@ -340,9 +340,10 @@ few minutes.
 
 ### The API preflight
 
-Every provider block carries `user_project_override = true` with `billing_project =
-<infrastructure project>`, so Google bills every call to that project and wants the API
-enabled there. `tofu apply` refreshes every resource in state before it creates
+The estate's `google` provider carries `user_project_override = true` with
+`billing_project = <infrastructure project>`, so Google bills every call it makes to
+that project and wants the API enabled there; a project's own alias bills to that
+project. `tofu apply` refreshes every resource in state before it creates
 anything, and an API the estate declares as a `google_project_service` but the project
 has off stops that refresh — before the declaration that would enable it is created.
 

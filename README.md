@@ -402,13 +402,14 @@ The roles granted are the `google_organization_iam_member` and
 `serviceAccount:<svc_iac_account>@<infra_project_name>.iam.gserviceaccount.com`, in the
 estate and in every pack it uses.
 
-**What the estate must enable.** Every provider block carries `user_project_override`
-with `billing_project = infra_project_name`, so Google bills every call the provider
-makes to the infrastructure project and requires the API enabled THERE, whatever the
-resource's own scope is — a budget hangs off the billing account and an org policy off
-the organization, and both still need their API on that project. The APIs are judged
-against the infrastructure project's `project_service` list; a pack that enables an API
-on a project of its own has answered a different question, for its own calls.
+**What the estate must enable.** The estate's `google` provider carries
+`user_project_override` with `billing_project = infra_project_name`, so Google bills
+every call it makes to the infrastructure project and requires the API enabled THERE,
+whatever the resource's own scope is — a budget hangs off the billing account and an
+org policy off the organization, and both still need their API on that project. A
+resource written inside a `google_project { … }` is served by that project's provider
+alias, which is billed to the project itself and needs the API on it. The APIs are
+judged against the infrastructure project's `project_service` list.
 
 **The emitted HCL carries the ordering.** A resource waits for the
 `google_project_service` that enables its API — `depends_on`, added by the compiler for

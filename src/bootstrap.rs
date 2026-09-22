@@ -69,8 +69,10 @@ impl RunSummary {
 }
 
 /// `default_region` as `presets/estate-core.satz` declares it — the region bootstrap
-/// creates the state bucket in when the estate binds none.
-const DEFAULT_REGION: &str = "europe-west3";
+/// creates the state bucket in, and the one `satz init` writes, when the estate
+/// binds none. The one place the region is written in code: what an estate really
+/// works in is read from the estate, never from here.
+pub(crate) const DEFAULT_REGION: &str = "europe-west3";
 
 /// One shared hint for quota-class 403s: the failure names the billed project,
 /// not the caller's permissions, and the fix is one gcloud command.

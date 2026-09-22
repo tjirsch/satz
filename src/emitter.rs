@@ -423,9 +423,10 @@ fn order_org_policies_per_parent(blocks: &mut [hcl::Block]) {
 ///
 /// Every resource whose type the prerequisite table knows gets a `depends_on` on
 /// the services that enable its APIs, bounded to the two projects that can matter:
-/// the project the resource lives in, and the infra project every provider call is
-/// billed to (`user_project_override` + `billing_project`). A service on a third
-/// project is nothing to it.
+/// the project the resource lives in — which is also the project its calls are
+/// billed to when a per-project alias serves it — and the infra project the
+/// default provider bills to (`user_project_override` + `billing_project`). A
+/// service on a third project is nothing to it.
 ///
 /// No edge is added into a service block's own dependency closure, and a service
 /// is never ordered after a service. That is what keeps the graph acyclic: the
@@ -1092,6 +1093,23 @@ pub(crate) fn deployment_mode(env: &Env) -> Result<&'static str, String> {
     }
 }
 
+/// The region the estate's own `google` provider works in, read from the
+/// `providers` block it wrote (already `{param}`-resolved by the front end, so
+/// `region = default_region` arrives here as the bound value). Every
+/// per-project alias carries it, and an estate whose provider names no region
+/// gets aliases that name none.
+fn google_provider_region(config: &std::collections::BTreeMap<String, serde_yaml::Value>) -> Option<String> {
+    config
+        .get("providers")?
+        .as_mapping()?
+        .get(serde_yaml::Value::String("google".into()))?
+        .as_mapping()?
+        .get(serde_yaml::Value::String("region".into()))?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 /// providers.tf from the estate config + folded projects: terraform block
 /// (mode-matched backend, required_providers), root providers, one alias per
 /// project — the same shapes the walk emits, from the same shared builders.
@@ -1111,6 +1129,7 @@ pub(crate) fn emit_providers(
         } else {
             None
         },
+        region: google_provider_region(config),
     };
 
     let mut blocks: Vec<hcl::Block> = Vec::new();
@@ -1453,6 +1472,185 @@ mod backend_identity_tests {
             );
             assert_eq!(emitted, Err(e));
         }
+    }
+}
+
+#[cfg(test)]
+mod project_alias_tests {
+    //! The per-project provider alias — `provider "google" { alias =
+    //! project_<label> }`, which serves every resource written inside that
+    //! project node.
+    //!
+    //! It used to carry `region = "europe-west3"` as a literal and
+    //! `billing_project = <infra project>`: an estate working in another region
+    //! created its regional resources in Frankfurt, and a resource whose own
+    //! project had its API on was refused with a 403 naming the infra project,
+    //! whose API was off. `providers.tf` is in no corpus snapshot, so these
+    //! tests are its gate.
+
+    use super::*;
+    use std::collections::{BTreeMap, HashMap};
+
+    /// An estate: the backend, a `google` provider working in `region`, and one
+    /// project entity beside the infra project.
+    fn config(region: &str) -> BTreeMap<String, serde_yaml::Value> {
+        let tf: serde_yaml::Value =
+            serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n").expect("valid test YAML");
+        let providers: serde_yaml::Value = serde_yaml::from_str(&format!(
+            "google:\n  alias: google\n  project: corp-infra-001\n  region: {}\n  user_project_override: true\n  billing_project: corp-infra-001\n",
+            region
+        ))
+        .expect("valid test YAML");
+        BTreeMap::from([("terraform".to_string(), tf), ("providers".to_string(), providers)])
+    }
+
+    fn folded_projects(projects: &[(&str, &str)]) -> Folded {
+        let mut slots = BTreeMap::new();
+        for (label, project_id) in projects {
+            let addr = satz_core::Address { tf_type: "google_project".into(), label: (*label).into() };
+            let body: serde_yaml::Value =
+                serde_yaml::from_str(&format!("project_id: {}\nname: {}\n", project_id, label)).expect("valid test YAML");
+            slots.insert(
+                addr.clone(),
+                Slot::Ok(satz_core::algebra::Entity {
+                    addr,
+                    scope: satz_core::Scope::Node,
+                    body: Body::Attrs(body),
+                    provenance: Vec::new(),
+                    node_path: Vec::new(),
+                }),
+            );
+        }
+        Folded { slots }
+    }
+
+    fn env() -> Env {
+        BTreeMap::from([
+            ("deployment_mode".to_string(), serde_yaml::Value::from("local")),
+            ("infra_project_name".to_string(), serde_yaml::Value::from("corp-infra-001")),
+        ])
+    }
+
+    fn providers_tf(region: &str, projects: &[(&str, &str)]) -> String {
+        emit_providers(&config(region), &folded_projects(projects), &env(), &HashMap::new(), &HashMap::new())
+            .expect("providers.tf emits")
+    }
+
+    /// The alias block, by its alias, as its lines.
+    fn alias_block(out: &str, alias: &str) -> Vec<String> {
+        let body = hcl::parse(out).expect("emitted providers.tf parses");
+        for b in body.blocks() {
+            if b.identifier() != "provider" || b.labels().first().map(|l| l.as_str()) != Some("google") {
+                continue;
+            }
+            let is_it = b.body().attributes().any(|a| {
+                a.key() == "alias" && matches!(a.expr(), hcl::Expression::String(s) if s == alias)
+            });
+            if is_it {
+                return b
+                    .body()
+                    .attributes()
+                    .map(|a| format!("{} = {}", a.key(), hcl::format::to_string(a.expr()).unwrap().trim()))
+                    .collect();
+            }
+        }
+        panic!("no provider block with alias {}:\n{}", alias, out);
+    }
+
+    /// The region is the estate's, wherever the estate works.
+    #[test]
+    fn every_alias_works_in_the_region_the_estate_declares() {
+        for region in ["europe-west3", "us-central1", "australia-southeast2"] {
+            let out = providers_tf(region, &[("infra", "corp-infra-001"), ("data", "corp-data-001")]);
+            for alias in ["project_infra", "project_data"] {
+                assert!(
+                    alias_block(&out, alias).contains(&format!("region = \"{}\"", region)),
+                    "alias {} does not work in {}:\n{}",
+                    alias,
+                    region,
+                    out
+                );
+            }
+            assert!(
+                !out.contains("europe-west3") || region == "europe-west3",
+                "a region literal survived in:\n{}",
+                out
+            );
+        }
+    }
+
+    /// An estate whose `google` provider names no region gets aliases that name
+    /// none: a regional resource that writes no `region` is then refused by the
+    /// provider, rather than created where the estate never said.
+    #[test]
+    fn an_estate_that_names_no_region_gets_aliases_that_name_none() {
+        let tf: serde_yaml::Value =
+            serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n").expect("valid test YAML");
+        let providers: serde_yaml::Value =
+            serde_yaml::from_str("google:\n  alias: google\n  project: corp-infra-001\n").expect("valid test YAML");
+        let config = BTreeMap::from([("terraform".to_string(), tf), ("providers".to_string(), providers)]);
+        let out = emit_providers(
+            &config,
+            &folded_projects(&[("data", "corp-data-001")]),
+            &env(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .expect("providers.tf emits");
+        assert!(
+            !alias_block(&out, "project_data").iter().any(|l| l.starts_with("region =")),
+            "an alias invented a region:\n{}",
+            out
+        );
+    }
+
+    /// The quota project of a project's alias is that project. Billing it to the
+    /// infra project asks Google for the API on a project the resource has
+    /// nothing to do with, and the create is refused with a 403 naming it.
+    #[test]
+    fn a_projects_alias_bills_to_that_project() {
+        let out = providers_tf("europe-west3", &[("infra", "corp-infra-001"), ("data", "corp-data-001")]);
+        assert!(
+            alias_block(&out, "project_data").contains(&"billing_project = \"corp-data-001\"".to_string()),
+            "the alias for corp-data-001 does not bill to it:\n{}",
+            out
+        );
+        assert!(
+            alias_block(&out, "project_data").contains(&"user_project_override = true".to_string()),
+            "the quota project is named and not switched on:\n{}",
+            out
+        );
+        // the estate's own default provider is untouched: org-scoped calls have
+        // no project of their own and are billed to the infra project
+        assert!(
+            alias_block(&out, "google").contains(&"billing_project = \"corp-infra-001\"".to_string()),
+            "the default provider stopped billing to the infra project:\n{}",
+            out
+        );
+    }
+
+    /// Cloud mode: the alias acts as the estate's IaC service account, like
+    /// every other block in the file.
+    #[test]
+    fn an_alias_impersonates_the_estates_service_account() {
+        let mut env = env();
+        env.insert("deployment_mode".to_string(), serde_yaml::Value::from("cloud"));
+        env.insert("svc_iac_account".to_string(), serde_yaml::Value::from("svc-iac-001"));
+        let out = emit_providers(
+            &config("europe-west3"),
+            &folded_projects(&[("data", "corp-data-001")]),
+            &env,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .expect("providers.tf emits");
+        assert!(
+            alias_block(&out, "project_data").contains(
+                &"impersonate_service_account = \"svc-iac-001@corp-infra-001.iam.gserviceaccount.com\"".to_string()
+            ),
+            "the alias runs as whoever is logged in:\n{}",
+            out
+        );
     }
 }
 
