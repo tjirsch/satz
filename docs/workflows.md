@@ -534,6 +534,11 @@ What is left is what only a person decides:
   `satz adopt` resolves their ids.
 - Look through the skipped list and the numbered grants (`--on-collision counter`),
   and keep or drop them deliberately.
+- Write the switches no API reports, so no import can read them: `force_destroy` on
+  a bucket is Terraform's own, and an estate that wants it declares it. The
+  attributes the import names as not carried — the provider knows them, the sweep
+  had a value, satz could not place it — belong in the same pass: left out, the
+  first apply resets them on the live resource.
 
 ### Reconcile
 

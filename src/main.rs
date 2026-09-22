@@ -4310,7 +4310,12 @@ fn load_import_config(
         for (t, tm) in maps {
             if let Some(row) = config.resource_types.get_mut(&t) {
                 if !tm.map.is_empty() {
-                    row.map = Some(tm.map);
+                    // the generated rows join the hand-maintained ones, which
+                    // win where both name a field: the table is where a wrong
+                    // alignment is corrected, and a refresh never undoes that
+                    let mut merged = tm.map;
+                    merged.extend(row.map.take().unwrap_or_default());
+                    row.map = Some(merged);
                 }
             }
         }
@@ -6597,7 +6602,14 @@ mod import_skipped_report {
         ]}}}"#).unwrap();
         let enabled = ["google_project", "google_storage_bucket"].into_iter().map(String::from).collect();
         let found = Discoverer::new(state, Some(reg), Some(enabled), Default::default(), Default::default()).discover().unwrap();
-        assert_eq!(found.dropped_attrs, vec![("google_storage_bucket".to_string(), "lifecycle".to_string())]);
+        let dropped: Vec<(&str, &str, &str)> =
+            found.dropped_attrs.iter().map(|d| (d.tf_type.as_str(), d.what.as_str(), d.path.as_str())).collect();
+        assert_eq!(dropped, vec![("google_storage_bucket", "logs", "lifecycle.rule")]);
+        assert!(
+            found.dropped_attrs.iter().all(|d| d.why == crate::discovery::DropReason::Vocabulary),
+            "{:?}",
+            found.dropped_attrs
+        );
         let bucket = &found.config.project.as_ref().unwrap()["infra"].extra["google_storage_bucket"];
         let text = serde_yaml::to_string(bucket).unwrap();
         assert!(!text.contains("lifecycle"), "{}", text);
