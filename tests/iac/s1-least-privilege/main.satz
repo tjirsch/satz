@@ -1,4 +1,4 @@
-// IaC-roles gate: the S1 group model in one file, and Defender for Cloud's CSPM
+// IaC-roles gate: the S1 group model, and Defender for Cloud's CSPM
 // role in least-privilege mode. Neither can share an estate with `all-packs` —
 // S1 and S2 define the same groups, the two CSPM role modes the same role.
 

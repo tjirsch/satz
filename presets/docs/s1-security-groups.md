@@ -9,10 +9,8 @@ The S1 security group model in ONE file: the five admin groups and their
 organization-level role grants.
 
 Resource-type sections may repeat across files with distinct ids, so a typed
-pack sits beside the estate's own groups and grants. The same groups and
-grants as s1-group-definitions + s1-group-permissions, the spelling as two
-content packs `use`d under a resource type; an estate takes ONE of the two
-spellings, never both.
+pack sits beside the estate's own groups and grants. The pack is used at the
+top level of the estate:
 
 To adopt groups that already exist in the tenant:
 satz adopt <estate> --only google_cloud_identity_group --execute
@@ -95,7 +93,7 @@ _None — this pack proves no control by itself._
 |---|---|---|
 | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | 1.1 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |
-| 1.0 | 2026-09-02 | the S1 model in ONE typed file (groups + org grants) for top-level `use`; content-identical to `s1_group_definitions` 1.2 + `s1_group_permissions` 1.1, which stay for the under-a-type spelling — an estate takes one of the two, never both |
+| 1.0 | 2026-09-02 | the S1 model in ONE typed file (groups + org grants) for a top-level `use` |
 
 The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 
@@ -103,11 +101,9 @@ The whole library's history: [the changelog](../README.md#changelog) in `presets
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-The S1 model in one typed file. Content-identical to
-[`s1_group_definitions`](s1-group-definitions.md) 1.2 +
-[`s1_group_permissions`](s1-group-permissions.md) 1.1 (the two content packs
-`use`d under their resource types) — an estate takes ONE of the two spellings.
-For the role-by-role comparison with S2 and when to pick which, see
+The S1 model in one typed file, used at the top level of the estate: the five
+admin groups and their organization-level role grants together. For the
+role-by-role comparison with S2 and when to pick which, see
 [`s2_security_groups`](s2-security-groups.md).
 
 <!-- notes:end -->

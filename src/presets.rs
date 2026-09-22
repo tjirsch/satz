@@ -1686,10 +1686,6 @@ fn is_git_dirty(path: &Path) -> Result<bool, String> {
 /// place, inside the block the graph names, never at the end of a file whose blocks read
 /// a param the line's pack declares.
 ///
-/// A pack the estate carries in another spelling under the same gate — an `excludes`
-/// neighbour such as the S1 model's two-file form — gets no line: uncommented, it would
-/// declare the same resources twice.
-///
 /// It prints nothing: `merge-presets` is also the `satz_merge_presets` tool, whose stdout
 /// is the MCP stream, so everything it has to say goes back to the caller.
 fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<Vec<(String, String)>, BoxErr> {
@@ -1718,11 +1714,8 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<Vec<(String, Str
     }
     let mut out = src.clone();
     for n in graph.lines() {
-        let (path, gate) = (n.path.as_str(), n.gate.as_deref());
+        let path = n.path.as_str();
         if has_line(&out, path) {
-            continue;
-        }
-        if graph.excluded_by(path).iter().any(|o| o.gate.is_some() && o.gate.as_deref() == gate && has_line(&out, &o.path)) {
             continue;
         }
         // the first line of the phase is the summary

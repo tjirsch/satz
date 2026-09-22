@@ -160,9 +160,7 @@ that team split is already visible on the org chart: moving from S1 to S2
 later is a pack swap plus re-adopting the new group, but every project admin
 silently loses two roles at that apply — announce it.
 
-Both are typed packs for a top-level `use`; the two-file S1 spelling
-(`s1-group-definitions` + `s1-group-permissions` under their resource types)
-stays for the estates on it and is content-identical to `s1_security_groups`.
+Both are typed packs for a top-level `use`, one line each.
 
 **Memberships** are never in a pack: adopt the groups (`satz adopt --only
 google_cloud_identity_group --execute`), then humans add members in the
