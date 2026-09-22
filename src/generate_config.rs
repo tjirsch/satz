@@ -19,6 +19,11 @@
 //! An unmapped resource that cannot even get an import block is listed with the
 //! reason: no Terraform type corresponds to its asset type, or its name is not a
 //! Cloud Asset resource name.
+//!
+//! The child reads the platform as the identity the sweep read it as: the
+//! provider block carries `impersonate_service_account` when the run is bound to
+//! an estate's IaC service account (`--into`), and nothing when it is the
+//! human's Application Default Credentials.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -160,7 +165,11 @@ pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool) -> Pl
 
 /// The scratch directory's only hand-written file: the providers to download and
 /// one `import` block per candidate.
-pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider]) -> String {
+///
+/// `impersonate` is the service account the run is bound to, and every provider
+/// block carries it — the child then reads each resource as the principal the
+/// sweep above it read the organisation as, rather than as whoever is logged in.
+pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider], impersonate: Option<&str>) -> String {
     let mut out = String::from(
         "# Written by `satz import --generate-unmapped`: one import block per live resource\n\
          # satz's own mapping left unmatched. `tofu plan -generate-config-out=generated.tf`\n\
@@ -175,7 +184,13 @@ pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider]) -> St
     }
     out.push_str("  }\n}\n");
     for p in providers {
-        out.push_str(&format!("\nprovider \"{}\" {{}}\n", p.name));
+        match impersonate {
+            Some(sa) => out.push_str(&format!(
+                "\nprovider \"{}\" {{\n  impersonate_service_account = \"{}\"\n}}\n",
+                p.name, sa
+            )),
+            None => out.push_str(&format!("\nprovider \"{}\" {{}}\n", p.name)),
+        }
     }
     for c in candidates {
         out.push_str(&format!(
@@ -184,6 +199,19 @@ pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider]) -> St
         ));
     }
     out
+}
+
+/// Where a run's fallback works and what it writes, both hung off the name of
+/// the file the run is known by — the estate a plain sweep wrote, the scope's
+/// top-level pack under `--into`.
+///
+/// `(scratch directory, the Satz file name)`: `<base>-generate/` beside the base,
+/// and `<base>-generated.satz`, which lands where every other file of the run
+/// does. One base, one pair of names, so a second scope imported into the same
+/// estate neither overwrites the first nor plans in its directory.
+pub(crate) fn output_names(base: &Path) -> (PathBuf, String) {
+    let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("discovered");
+    (base.with_file_name(format!("{}-generate", stem)), format!("{}-generated.satz", stem))
 }
 
 /// The file `tofu plan -generate-config-out` writes inside the scratch directory.
@@ -200,6 +228,7 @@ pub(crate) fn generate(
     work_dir: &Path,
     candidates: &[Candidate],
     providers: &[Provider],
+    impersonate: Option<&str>,
     runner: &mut dyn Runner,
 ) -> Result<PathBuf, String> {
     if candidates.is_empty() {
@@ -216,7 +245,7 @@ pub(crate) fn generate(
         fsx::remove_file(&generated).map_err(|e| format!("{}: {}", generated.display(), e))?;
     }
     let imports = work_dir.join(IMPORTS_TF);
-    fsx::write(&imports, imports_tf(candidates, providers)).map_err(|e| format!("{}: {}", imports.display(), e))?;
+    fsx::write(&imports, imports_tf(candidates, providers, impersonate)).map_err(|e| format!("{}: {}", imports.display(), e))?;
     eprintln!(
         "generate-unmapped: {} import block(s) in {} — `init` downloads the provider once, then \
          `plan -generate-config-out` reads each resource …",
@@ -309,10 +338,31 @@ mod tests {
                 what: "//dns.googleapis.com/projects/acme-net/managedZones/corp".into(),
             }]
         );
-        let tf = imports_tf(&plan.candidates, &google());
+        let tf = imports_tf(&plan.candidates, &google(), None);
         assert!(tf.contains("to = google_dns_managed_zone.corp"), "{tf}");
         assert!(tf.contains("id = \"projects/acme-net/managedZones/corp\""), "{tf}");
         assert!(tf.contains("version = \"7.14.1\""), "{tf}");
+        assert!(tf.contains("provider \"google\" {}"), "the plain ADC impersonates nobody:\n{tf}");
+    }
+
+    /// Bound to an estate (`--into`), the child reads as that estate's IaC
+    /// service account: the provider block carries the impersonation, so one
+    /// command reads the platform as one principal.
+    #[test]
+    fn a_bound_run_writes_the_impersonation_into_the_provider_block() {
+        let plan = plan(
+            &[skipped(
+                "google_dns_managed_zone",
+                "//dns.googleapis.com/projects/acme-net/managedZones/corp",
+                SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()),
+            )],
+            &|_| true,
+        );
+        let tf = imports_tf(&plan.candidates, &google(), Some("svc-iac-001@acme-infra-001.iam.gserviceaccount.com"));
+        assert!(
+            tf.contains("impersonate_service_account = \"svc-iac-001@acme-infra-001.iam.gserviceaccount.com\""),
+            "{tf}"
+        );
     }
 
     /// A type neither matched nor generatable is listed, with the reason. It is
@@ -337,6 +387,19 @@ mod tests {
         assert_eq!(plan.refused.len(), 2, "only the unmapped ones are this fallback's business: {:?}", plan.refused);
         assert!(plan.refused[0].1.contains("no import-config row names asset type aiplatform.googleapis.com/Dataset"), "{:?}", plan.refused);
         assert!(plan.refused[1].1.contains("is not a Cloud Asset resource name"), "{:?}", plan.refused);
+    }
+
+    /// Both shapes hang their files off the name of the file the run is known
+    /// by: the estate a plain sweep wrote, the scope's top-level pack with
+    /// `--into`. Two scopes into one estate therefore never share either.
+    #[test]
+    fn the_scratch_directory_and_the_generated_file_are_named_after_the_run() {
+        let (dir, file) = output_names(Path::new("yaml/discovered.satz"));
+        assert_eq!(dir, PathBuf::from("yaml/discovered-generate"));
+        assert_eq!(file, "discovered-generated.satz");
+        let (dir, file) = output_names(Path::new("yaml/imported-organizations-123456789012.satz"));
+        assert_eq!(dir, PathBuf::from("yaml/imported-organizations-123456789012-generate"));
+        assert_eq!(file, "imported-organizations-123456789012-generated.satz");
     }
 
     /// Two resources whose names end in the same segment get two addresses.
@@ -366,7 +429,7 @@ mod tests {
             &|_| true,
         );
         let mut fake = FakeTofu::new(&dir);
-        let out = generate(&dir, &plan_.candidates, &google(), &mut fake).expect("generated");
+        let out = generate(&dir, &plan_.candidates, &google(), None, &mut fake).expect("generated");
         assert_eq!(out, dir.join(GENERATED_TF));
         assert_eq!(
             *fake.calls.borrow(),
@@ -387,7 +450,7 @@ mod tests {
         );
         let mut fake = FakeTofu::new(&dir);
         fake.fail_at = Some("plan");
-        let said = generate(&dir, &plan_.candidates, &google(), &mut fake).unwrap_err();
+        let said = generate(&dir, &plan_.candidates, &google(), None, &mut fake).unwrap_err();
         assert!(said.contains("Cannot import non-existent remote object"), "{said}");
         assert!(!dir.join(GENERATED_TF).exists(), "nothing was generated");
         // the import blocks stay on disk: they are what the operator edits
@@ -405,7 +468,7 @@ mod tests {
         );
         let mut fake = FakeTofu::new(&dir);
         fake.write_output = false;
-        let said = generate(&dir, &plan_.candidates, &google(), &mut fake).unwrap_err();
+        let said = generate(&dir, &plan_.candidates, &google(), None, &mut fake).unwrap_err();
         assert!(said.contains("wrote no generated.tf"), "{said}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -415,7 +478,7 @@ mod tests {
     fn nothing_to_generate_runs_nothing() {
         let dir = scratch("empty");
         let mut fake = FakeTofu::new(&dir);
-        let said = generate(&dir, &[], &google(), &mut fake).unwrap_err();
+        let said = generate(&dir, &[], &google(), None, &mut fake).unwrap_err();
         assert!(said.contains("no resource to generate configuration for"), "{said}");
         assert!(fake.calls.borrow().is_empty());
         assert!(!dir.exists(), "no scratch directory without a candidate");

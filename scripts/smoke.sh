@@ -872,7 +872,7 @@ grep -q 'id = "organizations/123456789012/policies/compute.skipDefaultNetworkCre
 "$satz" --config . import state.json --customer-shortname acme -o imported-state-named.satz > /dev/null 2>&1 || fail "import with --customer-shortname failed"
 grep -qE '^  customer_shortname += "acme"$' yaml/imported-state-named.satz || fail "--customer-shortname did not win over the inference"
 
-step "import --generate-unmapped: the fallback is the live shape's, and the others say so"
+step "import --generate-unmapped: the fallback is the live shape's, plain or --into; the other shapes say so"
 if "$satz" --config . import state.json --generate-unmapped >tmp/gen-state.txt 2>&1; then
   fail "--generate-unmapped must be refused on the state shape"
 fi
@@ -882,8 +882,21 @@ if "$satz" --config . import tf --generate-unmapped >tmp/gen-hcl.txt 2>&1; then
   fail "--generate-unmapped must be refused on the hcl shape"
 fi
 grep -q -- '-generate-config-out' tmp/gen-hcl.txt || fail "the hcl refusal did not say that this shape already reads that output:\n$(cat tmp/gen-hcl.txt)"
+# The delta import takes the flag: offline the run gets as far as the live sweep
+# and stops there for want of credentials, which is what this can assert. The
+# generated file itself needs a live object to read (§12.2).
+if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
+  "$satz" --config . import organizations/123456789012 --into smoke.satz --generate-unmapped >tmp/gen-into.txt 2>&1; then
+  fail "a delta import must not succeed without credentials:\n$(cat tmp/gen-into.txt)"
+fi
+grep -q 'do not go together' tmp/gen-into.txt && fail "--generate-unmapped and --into are refused together again:\n$(cat tmp/gen-into.txt)"
+grep -q 'import: root organizations/123456789012 . into' tmp/gen-into.txt \
+  || fail "the delta import did not start with --generate-unmapped:\n$(cat tmp/gen-into.txt)"
+grep -qi 'credential\|token\|auth\|ADC' tmp/gen-into.txt \
+  || fail "the delta import stopped for a reason other than credentials:\n$(cat tmp/gen-into.txt)"
 [ -d yaml/imported-state-generate ] && fail "a refused run wrote a scratch directory"
-ls yaml | grep -q -- '-generated.satz' && fail "a refused run wrote a generated estate"
+ls yaml | grep -q -- '-generate$' && fail "a run that reached no provider wrote a scratch directory"
+ls yaml | grep -q -- '-generated.satz' && fail "a run that reached no provider wrote a generated estate"
 
 step "a YAML estate is refused by name, with the release that reads it"
 printf 'variables:\n  a: &a 1\n' > tmp/old-estate.yaml
