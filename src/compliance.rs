@@ -2567,7 +2567,7 @@ pub(crate) async fn report_compliance_evidence(
                         "the three usual causes — cloudasset.googleapis.com not enabled on the quota \
                          project (the init template's infra project lists it); the caller without org-wide \
                          cloudasset read access: roles/cloudasset.viewer, granted to the security groups by \
-                         s1-group-permissions v1.1 (roles/iam.securityReviewer does NOT carry it); or a quota \
+                         the security-group model (roles/iam.securityReviewer does NOT carry it); or a quota \
                          project the credentials cannot reach at all — `satz whoami` checks that one and \
                          names the fix"
                             .to_string(),

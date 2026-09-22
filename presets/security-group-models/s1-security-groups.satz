@@ -2,10 +2,8 @@
 // organization-level role grants.
 //
 // Resource-type sections may repeat across files with distinct ids, so a typed
-// pack sits beside the estate's own groups and grants. The same groups and
-// grants as s1-group-definitions + s1-group-permissions, the spelling as two
-// content packs `use`d under a resource type; an estate takes ONE of the two
-// spellings, never both.
+// pack sits beside the estate's own groups and grants. The pack is used at the
+// top level of the estate:
 //
 //   use "presets/security-group-models/s1-security-groups.satz"
 //

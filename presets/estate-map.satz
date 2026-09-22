@@ -20,14 +20,14 @@
 // The CIS baseline is the first choice and barely one: the estate exists for it,
 // and its opt-in extensions are the baseline pack's own questions. It is asked
 // because it is thirty organisation policies in one apply, not because an estate
-// is expected to go without. Defender's plan fragments and the second spelling of
-// the S1 model are offered with `by_hand`: their gates are the Defender pack's own
-// and the S1 model's, and their lines are written by hand, as their headers show.
+// is expected to go without. Defender's plan fragments are offered with `by_hand`:
+// their gates are the Defender pack's own, and their lines are written by hand
+// beside the Defender line, as their headers show.
 //
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.1"
+pack estate_map version "2.2"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -257,24 +257,9 @@ offers "presets/security-group-models/s2-security-groups.satz" {
   when = security_model_s2
 }
 
-// The S1 model's second spelling: two content packs, each `use`d under the
-// resource type it fills. It shares the model's gate and replaces the one-file
-// spelling, never beside it.
-offers "presets/security-group-models/s1-group-definitions.satz" {
-  when     = security_model_s1
-  by_hand  = "the S1 model's second spelling, `use`d inside the `google_cloud_identity_group` block in place of s1-security-groups"
-  excludes = ["presets/security-group-models/s1-security-groups.satz"]
-}
-
-offers "presets/security-group-models/s1-group-permissions.satz" {
-  when     = security_model_s1
-  by_hand  = "the S1 model's second spelling, `use`d inside the `google_organization_iam_member` block in place of s1-security-groups"
-  excludes = ["presets/security-group-models/s1-security-groups.satz"]
-}
-
 // It grants to the model's billing-admins group by the group's address, which is
-// a literal, not a param the model declares — so the edge is declared. Any one
-// of the three satisfies it: they exclude one another.
+// a literal, not a param the model declares — so the edge is declared. Either
+// model satisfies it: the two exclude one another.
 offers "presets/billing-account-permissions.satz" {
   when  = use_billing_permissions
   phase = """once the groups exist — this grants to the model's billing-admins group by name, so
@@ -282,7 +267,6 @@ the grant has nothing to land on until they are applied"""
   requires = [
     "presets/security-group-models/s1-security-groups.satz",
     "presets/security-group-models/s2-security-groups.satz",
-    "presets/security-group-models/s1-group-definitions.satz",
   ]
 }
 

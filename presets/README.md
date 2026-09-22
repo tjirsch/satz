@@ -381,9 +381,9 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 The CIS baseline is the map's first choice: the skeleton writes its line commented under
 its phase, like every pack's, and answering `use_cis_baseline` yes puts it in. It is
 asked rather than assumed because its thirty policies reach the organisation in one
-apply. Defender's plan fragments and the S1 model's two-file spelling are offered with
-`by_hand`: they are gated on Defender's own params and on the S1 choice, and their lines
-are written by hand, as their headers show.
+apply. Defender's plan fragments are offered with `by_hand`: they are gated on
+Defender's own params, and their lines are written by hand beside the Defender line, as
+their headers show.
 
 ## security-group-models/
 
@@ -395,15 +395,12 @@ deliberate: `gcp-security-admins` holds `roles/orgpolicy.policyAdmin` and can re
 policy, and that is a much bigger thing to hand someone than "may let one service account
 hold a key".
 
-The security group models: admin groups plus their org-level role grants.
-Two spellings of S1 exist — an estate takes ONE of them, never both:
+The security group models: admin groups plus their org-level role grants. Each
+model is one typed file, used at the top level of the estate:
 
-- **s1-security-groups.satz** — S1 in ONE typed file (groups AND grants), for
-  a top-level `use`. Resource-type sections may repeat across files with
-  distinct ids, so the pack's `google_cloud_identity_group { … }` sits beside
-  the estate's own.
-- **s1-group-definitions.satz** + **s1-group-permissions.satz** — the same S1
-  as two bare lists `use`d UNDER a resource type.
+- **s1-security-groups.satz** — S1 in ONE typed file (groups AND grants).
+  Resource-type sections may repeat across files with distinct ids, so the
+  pack's `google_cloud_identity_group { … }` sits beside the estate's own.
 - **s2-security-groups.satz** — S2: S1 plus a distinct **`gcp-network-admins`**
   group. The network authority moves out of project-admins (which lose
   `compute.networkAdmin` and `compute.xpnAdmin`) into a team that owns VPCs,
@@ -440,12 +437,8 @@ param.
 **Use:**
 
 ```
-// one typed file (S1 or S2)
-use "presets/security-group-models/s2-security-groups.satz"
-
-// or the two S1 bare lists under their resource types
-google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
-google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
+// one line at the top level of the estate — s1-security-groups or s2-security-groups
+use "presets/security-group-models/s1-security-groups.satz"
 ```
 
 To adopt groups (and their declared members) that already exist in the tenant, run
@@ -1580,6 +1573,51 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.77.0
+
+**The S1 security group model ships in one spelling, and the two files of the other one
+are gone.** The library no longer carries
+`presets/security-group-models/s1-group-definitions.satz` (the five admin groups) or
+`presets/security-group-models/s1-group-permissions.satz` (their organization-level role
+grants). An estate that uses either gets a file-not-found refusal from every command that
+reads it, naming the file and the line:
+
+```
+error    front-end  main.satz:18
+    use "presets/security-group-models/s1-group-definitions.satz": file not found
+```
+
+**The edit:** delete the two lines the estate holds today — one nested inside the
+`google_cloud_identity_group` block, one inside `google_organization_iam_member`:
+
+```satz
+google_cloud_identity_group { use "presets/security-group-models/s1-group-definitions.satz" }
+google_organization_iam_member { use "presets/security-group-models/s1-group-permissions.satz" }
+```
+
+and write one line in their place, at the top level of the estate file, where the other
+pack lines stand:
+
+```satz
+use "presets/security-group-models/s1-security-groups.satz" when security_model_s1
+```
+
+(`when security_model_s1` for an estate that uses `presets/estate-map.satz`; without the
+map, the bare `use` line.) A `google_cloud_identity_group { }` or
+`google_organization_iam_member { }` block left empty by the deletion is deleted with it;
+a block that also holds the estate's own groups or grants stays as it is.
+
+The params do not change: `gcp_organization_admins_name`, `gcp_project_admins_name`,
+`gcp_security_admins_name`, `gcp_security_viewers_name` and `gcp_billing_admins_name`
+are the same five names with the same defaults, declared by the pack that remains, and
+whatever the estate binds keeps applying. The five questions are the same five
+questions.
+
+**The plan does not move.** The emitted HCL is byte-identical: the same five
+`google_cloud_identity_group` resources and the same six `google_organization_iam_member`
+addresses, with the same bodies. `satz transpile` after the edit and `tofu plan` reports
+no change.
+
 ### v0.76.0
 
 **A param whose name begins with `contributes_` is a CONTRIBUTION, not a param.** The
@@ -1983,6 +2021,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `estate_map` | 2.2 | 2026-09-22 | the S1 model is offered as one entry, `security-group-models/s1-security-groups.satz`, at the top level: the two `by_hand` entries for `s1-group-definitions.satz` and `s1-group-permissions.satz` are gone with the packs, and the billing grants require one of the two models rather than one of three files |
 | `billing_export` | 1.0 | 2026-09-22 | Cloud Billing usage and cost data exported to BigQuery: a project of its own, the BigQuery API on it, the dataset, and Google's export account's dataEditor on it — with that account contributed to `allowed_policy_member_subjects`, and a notice for the console step Cloud Billing has no API for |
 | `estate_map` | 2.1 | 2026-09-22 | offers `billing-export` on `use_billing_export`, off by default |
 | `integrations.microsoft_defender_for_cloud` | 0.5 | 2026-09-22 | contributes the agentless disk-scanning account to `allowed_policy_member_subjects` instead of naming it as a manual prerequisite in the header |
@@ -2053,7 +2092,6 @@ the private history recorded them.
 | `CIS_GCP_Foundation_4_0` | 2.9 | 2026-09-12 | one new flag, and the first that defaults to TRUE: `cis_dns_logging`, for the new `cis-extensions/dns-logging.satz`. It asks what the control covers and what it breaks; answering no is a deviation whose reason the compliance report carries |
 | `s2_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `s1_security_groups` | 1.2 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
-| `s1_group_definitions` | 1.4 | 2026-09-11 | the security-admins group's description says what its roles do — organisation policies, folder IAM, Security Command Center, logging and monitoring, read access — instead of the Security Admin role and organisation, folder and project IAM admin, which the group never held. An in-place description update on the group; no role changes |
 | `CIS_GCP_Foundation_4_0` | 2.8 | 2026-09-11 | three more opt-in flags with their questions — `cis_access_approval`, `cis_block_internet_ssh_rdp`, `cis_cloud_sql_iam_and_deletion_protection` — for the three new `cis-extensions/` fragments. Nothing emitted changes; an estate using the pack has three more questions, all defaulting to off |
 | `cis_extensions.access_approval` | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
 | `cis_extensions.internet_ssh_rdp` | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
@@ -2075,7 +2113,6 @@ the private history recorded them.
 | `billing_account_permissions` | 1.2 | 2026-09-10 | one `question` block on the billing-admins group: it can move projects between billing accounts and see every cost. Nothing emitted changes |
 | `s2_security_groups` | 1.1 | 2026-09-10 | six `question` blocks, one per group name — each a group's identity, so changing it later is a new group, moved members and re-granted roles. Nothing emitted changes |
 | `s1_security_groups` | 1.1 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |
-| `s1_group_definitions` | 1.3 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |
 | `ci.verification_runner` | 1.1 | 2026-09-10 | four `question` blocks — the hosting project, the watched estate's infra project, the repository name, the estate file: what the pack cannot know when an MSP hosts the runner. Schedule, time zone, region, catalog, fail-on and release stay technical defaults. Nothing emitted changes |
 | `ci.verification_runner_grant` | 1.1 | 2026-09-10 | one `question` block on the runner service account — the binding IS the pack, and a wrong address hands the estate to an account nobody meant. Nothing emitted changes |
 | `monitoring.organization_audit_logsink` | 1.3 | 2026-09-10 | four `question` blocks — the archive project, the bucket, its location, the retention — each with what changing it later costs (the first three are recreates; shortening the retention deletes what is already archived). Sink name and filter stay technical defaults, unasked. Nothing emitted changes |
@@ -2121,13 +2158,8 @@ the private history recorded them.
 | `CIS_GCP_Foundation_4_0` | 1.4 | 2026-08-22 | `essential_contacts_allowed_domain` param (driven by E03's conversion) |
 | `CIS_GCP_Foundation_4_0` | 1.3 | 2026-08-21 | subjects param on `iam_managed_allowedPolicyMembers` (`allowedMemberSubjects` explicit) |
 | `CIS_GCP_Foundation_4_0` | 1.2 | 2026-08-20 | pristine baseline as converted to Satz |
-| `s1_group_definitions` | 1.2 | 2026-08-28 | group `lifecycle { ignore_changes = [initial_group_config] }` — an adopted group no longer plans as "must be replaced" |
-| `s1_group_definitions` | 1.1 | 2026-08-21 | ships NO human memberships — presets define groups, humans grant membership |
-| `s1_group_definitions` | 1.0 | 2026-08-20 | the five S1 admin groups |
-| `s1_security_groups` | 1.0 | 2026-09-02 | the S1 model in ONE typed file (groups + org grants) for top-level `use`; content-identical to `s1_group_definitions` 1.2 + `s1_group_permissions` 1.1, which stay for the under-a-type spelling — an estate takes one of the two, never both |
+| `s1_security_groups` | 1.0 | 2026-09-02 | the S1 model in ONE typed file (groups + org grants) for a top-level `use` |
 | `s2_security_groups` | 1.0 | 2026-09-02 | S2 = S1 plus a distinct `gcp-network-admins` group (`compute.networkAdmin`, `compute.xpnAdmin`, `compute.securityAdmin`, `dns.admin`, `networkconnectivity.hubAdmin`, `networkmanagement.admin` + viewer roles); project-admins lose `compute.networkAdmin` and `compute.xpnAdmin`; one typed file |
-| `s1_group_permissions` | 1.1 | 2026-09-02 | `roles/cloudasset.viewer` for security-admins and security-viewers — `report-compliance` reads witnesses through Cloud Asset Inventory and `iam.securityReviewer` does not carry the search permissions |
-| `s1_group_permissions` | 1.0 | 2026-08-20 | org-level role grants for the S1 groups; `roles/viewer` for the security-viewers group is the fleet standard |
 | `essential_contacts_organization` | 1.2 | 2026-09-02 | commented per-category contacts (BILLING, SUSPENSION, SECURITY, TECHNICAL, LEGAL, PRODUCT_UPDATES, and a multi-category example) with their own address params, ready to uncomment; the shipped shape is unchanged (one contact on ALL) |
 | `essential_contacts_organization` | 1.1 | 2026-08-23 | `essential_contacts_email` param — a customer pins its contact without a fork; content pack |
 | `essential_contacts_organization` | 1.0 | 2026-08-20 | organization-wide essential contact, all categories |

@@ -268,7 +268,7 @@ deviated control is the same signal from the other side.
     "prowler": [{"check": "iam_sa_no_user_managed_keys", "status": "PASS", "resources": 14}]
   }],
   "layers": {
-    "identity":   {"packs": ["s1-group-definitions@1.1", "s1-group-permissions@1.0"], "groups": 9, "memberships": "human-owned"},
+    "identity":   {"packs": ["s1-security-groups@1.2"], "groups": 9, "memberships": "human-owned"},
     "preventive": {"packs": ["CIS_GCP_Foundation_4_0@2.1"], "org_policies": 18, "enforced": 17, "deviations": 1},
     "detective":  {"packs": ["organization-audit-logsink@1.1", "organization-cis-log-alerts-central@1.0"],
                    "sinks": 2, "metrics": 8, "alert_policies": 8, "scc": "premium (not codeable, see #27)"},

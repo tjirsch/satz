@@ -2,8 +2,8 @@
 // unconditionally, compiled against the corpus schema fixture. Every resource
 // type it emits must have a row in the IaC service account's role table
 // (`src/prerequisites.rs`). The alternatives that cannot share an estate with these —
-// the S1 group model in its two spellings, Defender's least-privilege role — are
-// the other cases under `tests/iac/`; together they use every pack.
+// the S1 group model, Defender's least-privilege role — are the other cases under
+// `tests/iac/`; together they use every pack.
 
 estate iac_all_packs
 

@@ -451,24 +451,16 @@ impl<'a> View<'a> {
         }
     }
 
-    /// A pack an `excludes` neighbour on the same gate stands in for — the S1 model's
-    /// two-file spelling for `s1-security-groups` — is used when that neighbour is.
-    fn stood_in_for(&self, n: &Node, test: &dyn Fn(&str) -> bool) -> bool {
-        self.graph.excluded_by(&n.path).iter().any(|o| o.gate.is_some() && o.gate == n.gate && test(&o.path))
-    }
-
     // ---- findings ------------------------------------------------------------
 
-    /// Two packs on two gates that exclude one another, both on: always an error, found
-    /// before the fold, which would name the files instead of the decision. Two packs on
-    /// ONE gate that exclude one another are two spellings of the same resources — the S1
-    /// model's one-file and two-file forms — and fold as one where they agree.
+    /// Two packs that exclude one another, both on: always an error, found before the
+    /// fold, which would name the files instead of the decision.
     fn exclusion_findings(&self, label: &str, src: &str) -> Vec<(String, Finding)> {
         let mut clashes: Vec<(&Node, &Node, bool)> = Vec::new();
         let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
         for e in self.graph.edges.iter().filter(|e| e.kind == EdgeKind::Excludes) {
             let (Some(a), Some(b)) = (self.node(&e.from), self.node(&e.to)) else { continue };
-            if a.gate == b.gate || !seen.insert((a.path.as_str(), b.path.as_str())) || !self.deploys(&a.path) || !self.deploys(&b.path) {
+            if !seen.insert((a.path.as_str(), b.path.as_str())) || !self.deploys(&a.path) || !self.deploys(&b.path) {
                 continue;
             }
             // a dry-run twin declares its edge to the enforcing pack
@@ -520,7 +512,7 @@ impl<'a> View<'a> {
             // default is not an answer: a fresh skeleton uses the map, whose defaults
             // propose six packs, and every line is commented on day 0 by design.
             if let (Some(g), true) = (&n.gate, n.order.is_some() && n.by_hand.is_none()) {
-                if self.answered(g) == Some(true) && matches!(state, "commented" | "absent") && !self.stood_in_for(n, &|p| self.lines_of(p).0.is_some()) {
+                if self.answered(g) == Some(true) && matches!(state, "commented" | "absent") {
                     let msg = if state == "commented" {
                         format!("`{}` is true and `{}` is still commented out — the command uncomments it", g, n.path)
                     } else {
@@ -1223,12 +1215,6 @@ pub(crate) fn gate_on(src: &str, graph: &PackGraph, gate: &str) -> Result<(Strin
     let mut out = src.to_string();
     let mut edits = Vec::new();
     for n in graph.lines().into_iter().filter(|n| n.gate.as_deref() == Some(gate)) {
-        // the other spelling of this pack is in use: its line stays as it is
-        let s = scan(&out);
-        let has = |p: &str| s.uses.iter().any(|l| node_of(graph, &l.written).is_some_and(|(m, _)| m.path == p));
-        if graph.excluded_by(&n.path).iter().any(|o| o.gate.as_deref() == Some(gate) && has(&o.path)) {
-            continue;
-        }
         let (next, edit) = line_on(&out, graph, n)?;
         out = next;
         edits.extend(edit);
@@ -1653,15 +1639,12 @@ mod tests {
     }
 
     #[test]
-    fn packs_that_exclude_one_another_under_one_gate_are_alternatives() {
+    fn a_model_answered_for_with_no_line_is_found() {
         let head = HEAD.replace("x = 1", "security_model_s1 = true\n  security_model_s2 = false");
-        let split = format!(
-            "{}google_cloud_identity_group {{\n  use \"presets/security-group-models/s1-group-definitions.satz\" when security_model_s1\n}}\n",
-            head
-        );
-        assert!(messages(&split).iter().all(|m| !m.contains("s1-security-groups")), "{:?}", messages(&split));
-        let neither = messages(&head);
-        assert!(neither.iter().any(|m| m.contains("s1-security-groups.satz")), "{neither:?}");
+        let with_line = format!("{}use \"presets/security-group-models/s1-security-groups.satz\" when security_model_s1\n", head);
+        assert!(messages(&with_line).iter().all(|m| !m.contains("s1-security-groups")), "{:?}", messages(&with_line));
+        let without = messages(&head);
+        assert!(without.iter().any(|m| m.contains("s1-security-groups.satz")), "{without:?}");
     }
 
     #[test]
@@ -1711,13 +1694,6 @@ mod tests {
         assert_eq!(stop.len(), 1, "{stop:?}");
         assert_eq!(stop[0].kind, Kind::DryRunConflict);
         assert!(stop[0].message.contains("REPLACES enforcement"), "{}", stop[0].message);
-        // the S1 model's two spellings on one gate fold as one: no error
-        let both = format!(
-            "{}use \"presets/security-group-models/s1-security-groups.satz\" when security_model_s1\ngoogle_cloud_identity_group {{\n  use \"presets/security-group-models/s1-group-definitions.satz\" when security_model_s1\n}}\n",
-            HEAD.replace("x = 1", "security_model_s1 = true\n  security_model_s2 = false")
-        );
-        let (stop, _) = compile_findings(&g, &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"), "e.satz", "e.satz", &both, "warn");
-        assert!(stop.is_empty(), "{stop:?}");
     }
 
     #[test]

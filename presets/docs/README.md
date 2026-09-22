@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's conventions and its per-family prose are [`presets/README.md`](../README.md); its version history is [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under **History** on each page here.
 
-**47 packs · 227 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**45 packs · 216 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Root — `presets/*.satz`
 
@@ -13,7 +13,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`billing_export`](billing-export.md) | 1.0 | Cloud Billing usage and cost data, exported to BigQuery in a project of its own — where the spend is KEPT, as opposed to the budget that alarms on it. | 3 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.4 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
 | [`estate_core`](estate-core.md) | 2.1 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
-| [`estate_map`](estate-map.md) | 2.1 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
+| [`estate_map`](estate-map.md) | 2.2 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`organization_budget`](organization-budget.md) | 1.0 | An organization-wide budget on the infrastructure billing account, with alert thresholds at 50, 80 and 100 % of current spend. | 1 | — |
 
 ## `ci/`
@@ -92,8 +92,6 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`s1_group_definitions`](s1-group-definitions.md) | 1.4 | The five S1 admin groups, defined but not populated. | 5 | — |
-| [`s1_group_permissions`](s1-group-permissions.md) | 1.1 | Organization-level role grants for the five S1 admin groups. | 6 | — |
 | [`s1_security_groups`](s1-security-groups.md) | 1.2 | The S1 security group model in ONE file: the five admin groups and their organization-level role grants. | 11 | — |
 | [`s2_security_groups`](s2-security-groups.md) | 1.2 | The S2 security group model: S1's five admin groups plus a distinct NETWORK ADMINS group, and the org-level grants split accordingly. | 13 | — |
 
