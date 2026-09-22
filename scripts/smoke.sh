@@ -725,6 +725,73 @@ assert d["compliance"] == ["cis_4.0_gcp", "cis_5.0_gcp"], d
 assert d["projects"], "no project reached the plan"
 PYEOF
 
+step "mcp-config: the block a client reads to start the server, printed and then written"
+"$satz" --config . mcp-config smoke.satz > tmp/mcp-config.json 2> tmp/mcp-config-notes.txt \
+  || fail "satz mcp-config failed on the smoke estate"
+# stdout is the block and nothing else: it is piped into a file or a clipboard.
+python3 - <<'PYEOF' || fail "satz mcp-config did not print the .mcp.json shape"
+import json, os, pathlib
+d = json.loads(pathlib.Path("tmp/mcp-config.json").read_text())
+s = d["mcpServers"]["satz"]
+assert s["type"] == "stdio", s
+assert os.path.isabs(s["command"]), s["command"]
+assert s["args"][:2] == ["mcp", "--root"], s["args"]
+assert os.path.isabs(s["args"][2]), s["args"]
+# the ceiling is written out even when it is the default
+assert s["args"][3:] == ["--allow", "read"], s["args"]
+PYEOF
+grep -q '^then: satz mcp-config ' tmp/mcp-config-notes.txt \
+  || fail "the notes do not name the write:\n$(cat tmp/mcp-config-notes.txt)"
+[ ! -e .mcp.json ] || fail "satz mcp-config wrote a file — printing is the default"
+
+"$satz" --config . mcp-config smoke.satz --client claude-desktop --allow read,write > tmp/mcp-desktop.json 2>/dev/null \
+  || fail "satz mcp-config --client claude-desktop failed"
+python3 - <<'PYEOF' || fail "satz mcp-config --client claude-desktop did not print the block Claude Desktop takes"
+import json, pathlib
+d = json.loads(pathlib.Path("tmp/mcp-desktop.json").read_text())
+(key,) = d["mcpServers"]
+assert key == "satz-smoke", key
+s = d["mcpServers"][key]
+assert "type" not in s, s
+assert s["args"][3:] == ["--allow", "read,write"], s["args"]
+PYEOF
+
+# --write owns one key of the file and leaves every other server alone; a second run
+# writes nothing.
+mkdir -p tmp/clients
+cat > tmp/clients/claude_desktop_config.json <<'JSONEOF'
+{"globalShortcut":"Alt+Space","mcpServers":{"filesystem":{"command":"npx","args":["-y","server-filesystem","/tmp"]}}}
+JSONEOF
+"$satz" --config . mcp-config smoke.satz --client claude-desktop --write --file tmp/clients/claude_desktop_config.json \
+  > /dev/null 2> tmp/mcp-write.txt || fail "satz mcp-config --write failed:\n$(cat tmp/mcp-write.txt)"
+grep -q '1 other server(s) untouched' tmp/mcp-write.txt \
+  || fail "the write does not say what it left alone:\n$(cat tmp/mcp-write.txt)"
+"$satz" --config . mcp-config smoke.satz --client claude-desktop --write --file tmp/clients/claude_desktop_config.json \
+  > /dev/null 2> tmp/mcp-write2.txt || fail "a second --write failed:\n$(cat tmp/mcp-write2.txt)"
+grep -q '^unchanged ' tmp/mcp-write2.txt || fail "--write is not idempotent:\n$(cat tmp/mcp-write2.txt)"
+python3 - <<'PYEOF' || fail "--write did not merge into the client's file"
+import json, pathlib
+d = json.loads(pathlib.Path("tmp/clients/claude_desktop_config.json").read_text())
+assert d["globalShortcut"] == "Alt+Space", d
+assert d["mcpServers"]["filesystem"]["args"] == ["-y", "server-filesystem", "/tmp"], d
+assert d["mcpServers"]["satz-smoke"]["args"][:2] == ["mcp", "--root"], d
+PYEOF
+# the same estate at another ceiling is a different server: refused, then replaced
+if "$satz" --config . mcp-config smoke.satz --client claude-desktop --allow read,write --write \
+   --file tmp/clients/claude_desktop_config.json > /dev/null 2> tmp/mcp-refuse.txt; then
+  fail "a satz key with other arguments was overwritten without --force"
+fi
+grep -q -- '--force replaces it' tmp/mcp-refuse.txt || fail "the refusal does not name --force:\n$(cat tmp/mcp-refuse.txt)"
+"$satz" --config . mcp-config smoke.satz --client claude-desktop --allow read,write --write --force \
+  --file tmp/clients/claude_desktop_config.json > /dev/null 2> tmp/mcp-force.txt \
+  || fail "--force did not replace the key:\n$(cat tmp/mcp-force.txt)"
+grep -q '^replaced ' tmp/mcp-force.txt || fail "the replacement is not reported:\n$(cat tmp/mcp-force.txt)"
+# and the Claude Code half writes .mcp.json into the estate's own directory
+"$satz" --config . mcp-config smoke.satz --write --file tmp/clients/.mcp.json > /dev/null 2>&1 \
+  || fail "satz mcp-config --write failed for claude-code"
+python3 -c "import json;d=json.load(open('tmp/clients/.mcp.json'));assert d['mcpServers']['satz']['type']=='stdio',d" \
+  || fail ".mcp.json does not hold the stdio server"
+
 step "review-pack: the library's own bar, as a command, on a good pack and a bad one"
 # A pack every gate in this repository already accepts must clear the command too,
 # or the command is not the same bar.

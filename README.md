@@ -157,7 +157,7 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below), before the command or after it. `satz --help` lists them; a command's own help lists only that command's options. `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
-Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. A table in a PDF is laid out from what it holds: a column of status glyphs is as wide as a glyph and the prose columns share the rest in proportion to their text, the first row is a header that repeats on every page the table spans, and a document that holds a table of five columns or more is landscape from its first page to its last. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out - | jq` is a clean pipe. Two commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, and `prowler`, which prints a command line to paste. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
+Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. A table in a PDF is laid out from what it holds: a column of status glyphs is as wide as a glyph and the prose columns share the rest in proportion to their text, the first row is a header that repeats on every page the table spans, and a document that holds a table of five columns or more is landscape from its first page to its last. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out - | jq` is a clean pipe. Three commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, `prowler`, which prints a command line to paste, and `mcp-config`, which prints the block an MCP client reads. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
 
 **Estate**
 
@@ -230,6 +230,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
 | `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. 25 tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
+| `mcp-config <INPUT>` | `--client` (`claude-code`\|`claude-desktop`; default `claude-code`), `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--write`, `--force`, `--file <FILE>`, `--name <KEY>` — the MCP client configuration this estate needs, printed on stdout and nothing else, so it can be piped into a file or a clipboard; what the block cannot say goes to stderr. See [Configuring an MCP client](#configuring-an-mcp-client-mcp-config) |
 | `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and what the estate's live commands run as — in cloud mode its IaC service account, impersonated by the ADC account; in local mode the ADC account itself, with the `satz migrate` that switches to the declared account — checked: may this credential become that account, is the quota project reachable, and does it hold the permissions the estate's resource types need |
 
 Details for each command are below.
@@ -1631,6 +1632,71 @@ where the editor's log shows it.
 - The smoke matrix drives the server the way an editor does (`tests/smoke/lsp_client.py`):
   initialize, open, completion, hover, definition, formatting, a parse error and a
   pipeline error, shutdown.
+
+### Configuring an MCP client (`mcp-config`)
+
+`satz mcp` is the server an MCP client starts. `satz mcp-config` prints the block that
+client reads to start it, for one estate:
+
+```bash
+satz mcp-config C0example.satz                              # Claude Code's .mcp.json
+satz mcp-config C0example.satz --client claude-desktop      # Claude Desktop's block
+satz mcp-config C0example.satz --allow read,write --write   # write it where the client reads it
+```
+
+```json
+{
+  "mcpServers": {
+    "satz": {
+      "type": "stdio",
+      "command": "/Users/you/.local/bin/satz",
+      "args": [
+        "mcp",
+        "--root",
+        "/Users/you/estates/acme",
+        "--allow",
+        "read"
+      ]
+    }
+  }
+}
+```
+
+Three things are decided for you, and each is why the command exists:
+
+- **The binary** is the satz that prints the block, by absolute path
+  (`std::env::current_exe`). A client starts a process, not a shell, so its `PATH` is
+  not the terminal's — a desktop application on macOS has almost none. Run the satz you
+  want the client to run: a binary in `target/release` names itself, and so writes a
+  configuration that starts that build.
+- **The root** is the estate's own directory — the one holding its `config.toml`,
+  `yaml/`, `presets/` and `schemas/` — canonicalised, because the client starts the
+  server from a working directory of its own. One server serves everything under that
+  root, and a call opens an estate inside it.
+- **The ceiling** is always written out, whatever `--allow` says and even when it says
+  what `satz mcp` already defaults to. A block that leaves `--allow` out grants `read`
+  without saying so, and the next person to read it cannot tell that anyone chose.
+
+`--client claude-code` (the default) writes the `.mcp.json` shape under the key `satz`:
+one file per project, one satz server in it. `--client claude-desktop` writes the shape
+that file takes — command and args, no transport key — under `satz-<estate>`, derived
+from the estate as you named it (`C0example.satz` → `satz-C0example`), because Claude
+Desktop keeps every server a person has in one file. `--name <KEY>` writes another key.
+
+`--write` puts the block where the client reads it: `.mcp.json` in the estate's
+directory, or Claude Desktop's own file
+(`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS,
+`%APPDATA%\Claude\claude_desktop_config.json` on Windows,
+`~/.config/Claude/claude_desktop_config.json` elsewhere); `--file` names another. satz
+owns one key of that file and merges into it: every other server is read, kept and
+written back. A key of satz's own that is already there with other arguments is refused,
+printing what is there — `--force` replaces it. A file that is not JSON, or whose
+`mcpServers` is not an object, is refused and left alone; `--force` does not cover it,
+because satz cannot merge into what it cannot read. Running the same command twice
+writes nothing the second time.
+
+The command reads the estate's name and its directory, compiles nothing, calls no Google
+API and touches no credential.
 
 ### How a finding is printed
 

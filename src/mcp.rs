@@ -120,7 +120,7 @@ impl Level {
         (!self.read || ceiling.read) && (!self.write || ceiling.write) && (!self.exec || ceiling.exec)
     }
 
-    fn describe(self) -> String {
+    pub(crate) fn describe(self) -> String {
         let mut v = Vec::new();
         for (on, name) in [(self.read, "read"), (self.write, "write"), (self.exec, "exec")] {
             if on {
@@ -204,6 +204,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("open-readme", Parity::Off("it opens a browser")),
     ("help", Parity::Off("clap prints it")),
     ("mcp", Parity::Off("this is the server")),
+    ("mcp-config", Parity::Off("it writes the client's own configuration file — what a human runs to reach satz over MCP at all; an agent that is already here has it")),
 ];
 
 /// The satz command each tool stands for, so an agent that knows the CLI can
@@ -228,7 +229,7 @@ fn served_by() -> String {
 fn not_served() -> String {
     let mut rows: Vec<String> = MCP_PARITY
         .iter()
-        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "fmt" | "lsp" | "silence"))
+        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "mcp-config" | "fmt" | "lsp" | "silence"))
         .filter_map(|(c, p)| match p {
             Parity::Off(why) => Some(format!("{} ({})", c, why)),
             Parity::Tools(_) => None,

@@ -36,6 +36,7 @@ mod findings;
 mod silence;
 mod lsp;
 mod mcp;
+mod mcp_config;
 mod dossier;
 mod presets;
 mod doc_packs;
@@ -147,7 +148,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Compliance and audit", &["require", "questions", "interview", "report-compliance", "scan", "prowler", "triage", "remediation-plan"]),
-    ("Tool", &["update-schema", "map-types", "fmt", "lsp", "silence", "self-update", "completion", "open-readme", "whoami", "help", "mcp"]),
+    ("Tool", &["update-schema", "map-types", "fmt", "lsp", "silence", "self-update", "completion", "open-readme", "whoami", "help", "mcp", "mcp-config"]),
 ];
 
 #[derive(Subcommand)]
@@ -888,6 +889,36 @@ pub(crate) enum Commands {
         /// Let the client LOWER its own level at runtime (never raise it)
         #[arg(long)]
         self_gated: bool,
+    },
+    /// The MCP client configuration this estate needs — printed, never installed
+    ///
+    /// `satz mcp` is the server; this is the block a client reads to start it. The
+    /// binary is the satz that prints it, named by absolute path; the root is the
+    /// estate's own directory; and the capability ceiling is always written out, so
+    /// no configuration hands an agent a level nobody chose. `--write` puts it where
+    /// the client reads it — satz's own key, and nothing else in the file.
+    McpConfig {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// The client whose file this is for: claude-code (`.mcp.json` beside the
+        /// estate) or claude-desktop (the `mcpServers` block of its own file)
+        #[arg(long, value_enum, default_value = "claude-code")]
+        client: crate::mcp_config::Client,
+        /// Capability groups the server is granted, comma-separated: read, write, exec
+        #[arg(long, default_value = "read")]
+        allow: String,
+        /// Write the server into the client's file instead of printing it
+        #[arg(long)]
+        write: bool,
+        /// Replace satz's own key where it is already there with other arguments
+        #[arg(long)]
+        force: bool,
+        /// Write into this file instead of the one that client reads
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// The key to write the server under, instead of the one derived from the estate
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Open the documentation site in the browser
     OpenReadme,
@@ -2230,6 +2261,35 @@ Thumbs.db
             };
             let root = crate::fsx::canonicalize(&root).map_err(|e| format!("{}: {}", root.display(), e))?;
             crate::mcp::serve(root, ceiling, self_gated).await
+        }
+        Commands::McpConfig { input, client, allow, write, force, file, name } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            reject_yaml_dialect(&input_path, "mcp-config")?;
+            if !input_path.exists() {
+                return Err(format!("mcp-config: {}: no such estate", input_path.display()).into());
+            }
+            if force && !write {
+                return Err("--force replaces what --write would refuse to; without --write nothing is written".into());
+            }
+            let ceiling = crate::mcp::Level::parse(&allow)?;
+            // The root is the estate's own directory — the one holding config.toml,
+            // its presets and its schemas — canonicalised, because the client starts
+            // the server from a working directory of its own.
+            let root = crate::fsx::canonicalize(&config_dir)
+                .map_err(|e| format!("{}: {}", config_dir.display(), e))?;
+            let exe = std::env::current_exe()?;
+            let typed = estate_as_typed(&input_path, &runtime_config);
+            let cfg = crate::mcp_config::plan(client, &typed, &root, ceiling, &exe, name.as_deref(), file.as_deref())?;
+            if write {
+                let what = crate::mcp_config::write(&cfg, force)?;
+                eprint!("{}", crate::mcp_config::wrote(&cfg, &what));
+            } else {
+                // stdout is the block and nothing else, so it can be piped into a file
+                // or a clipboard; what it cannot say goes to stderr.
+                print!("{}", cfg.block());
+                eprint!("{}", crate::mcp_config::notes(&cfg));
+            }
+            Ok(())
         }
         Commands::OpenReadme => open_url(DOCS_URL),
         Commands::UpdatePrerequisites { input, report_only, format } => {
@@ -4772,6 +4832,7 @@ mod command_groups {
         ("pack-graph", Identity::NoGoogleApi),
         ("require", Identity::NoGoogleApi),
         ("prowler", Identity::NoGoogleApi),
+        ("mcp-config", Identity::NoGoogleApi),
         ("fmt", Identity::NoGoogleApi),
         ("lsp", Identity::NoGoogleApi),
         ("silence", Identity::NoGoogleApi),

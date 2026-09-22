@@ -87,6 +87,7 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::Triage { .. }
         | Commands::RemediationPlan { .. }
         | Commands::Prowler { .. }
+        | Commands::McpConfig { .. }
         | Commands::Scan { .. }
         | Commands::ScanPlan { .. }
         | Commands::GenerateMigration { .. }

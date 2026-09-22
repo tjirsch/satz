@@ -210,6 +210,29 @@ Your own file is `.claude.json` in your home directory:
 A `project` server is the same JSON in `.mcp.json` at the repository root on all three
 platforms, which is the scope that puts an estate's server in the estate's own repository.
 
+### Written by satz
+
+`satz mcp-config` prints the block for one estate, and `--write` puts it in `.mcp.json`
+in that estate's directory — the `project` scope above, which is where an estate's
+server belongs:
+
+```bash
+satz mcp-config C0example.satz                              # print it
+satz mcp-config C0example.satz --write                      # write .mcp.json beside the estate
+satz mcp-config C0example.satz --allow read,write --write
+```
+
+satz fills in the three values a hand-written block gets wrong. The **binary** is the
+satz that prints the block, by absolute path, so the client needs no `PATH` of its own.
+The **root** is the estate's own directory, canonicalised. The **ceiling** is written
+out even when it is the default, because a block that omits `--allow` grants `read`
+without saying that anyone chose it.
+
+`--write` merges satz's own key and leaves every other server in the file as it is. A
+`satz` key already there with other arguments is printed and refused — `--force`
+replaces it — and a file that is not JSON is refused and left alone, since satz cannot
+merge into what it cannot read. A second run writes nothing.
+
 ### Written by hand
 
 ```json
@@ -273,6 +296,39 @@ tokens, and fails the run on one over `--limit-tokens`
 
 Run the same command in a terminal to see what the client cannot show you: it holds the
 line waiting for a client, and says so when stdin closes.
+
+## Claude Desktop
+
+Claude Desktop reads one file, which holds every server a person has:
+
+| platform | path |
+|---|---|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Linux | `~/.config/Claude/claude_desktop_config.json` |
+
+An entry in it is a command and its arguments:
+
+```json
+{
+  "mcpServers": {
+    "satz-C0example": {
+      "command": "/Users/you/.local/bin/satz",
+      "args": ["mcp", "--root", "/Users/you/estates/acme", "--allow", "read"]
+    }
+  }
+}
+```
+
+`satz mcp-config C0example.satz --client claude-desktop` prints that block, and `--write`
+merges it into the file at the path above — `--file` names another. The key carries the
+estate's name because one file holds every server: a second estate is a second key beside
+the first, and `--name <KEY>` writes a key of your choosing, which is what two estates
+with the same file name under two different roots need.
+
+satz owns that one key. Every other server in the file is read, kept and written back
+with its command, its arguments and its environment; the refusals are the same as for
+`.mcp.json`. Claude Desktop reads the file when it starts, so restart it after a write.
 
 ## The MCP SDK
 
