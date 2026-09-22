@@ -5992,9 +5992,9 @@ mod prerequisites_gate {
 
         // and every placeholder of a template names something the resource declares: a
         // placeholder the packs never bind would only surface as `unresolvable` on a
-        // customer's adopt. A value that is a reference to a folder's or group's live id,
-        // or to an attribute known only after apply, legitimately does not render
-        // offline — a placeholder with nothing behind it at all is the data bug.
+        // customer's adopt. A value that is a reference to a folder's, group's or service
+        // account's live id, or to an attribute known only after apply, legitimately does
+        // not render offline — a placeholder with nothing behind it at all is the data bug.
         let mut rendered = 0;
         for entry in std::fs::read_dir(root.join("tests/iac")).expect("tests/iac").flatten() {
             let (out, _) = super::manifest_gate::emit_case(&entry.path(), &reg);
