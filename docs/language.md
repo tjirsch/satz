@@ -2239,9 +2239,9 @@ that default; the first apply writes it and nothing about the resource changes.
 | shape | when | what you get | limitations |
 |---|---|---|---|
 | `import state.json` (or `-` for `tofu show -json` on stdin) | you already run Terraform/OpenTofu and want the estate that reproduces its state | folders/projects nested, grants collapsed to member → roles with one line per edge, services into `project_service` with one line per service, a single nested block as a block, the organization referenced as `customer_organization_id`, the day-0 params bound from what the state implies (the live row says which rules; the ADC's facts are not read here) with inferred values marked `// inferred:`, every resource with its `"import-id"` from the state id; labels are the state's own (they are its addresses) | only `tofu show -json` output (a raw `.tfstate` is refused); a resource without `id` gets no import id; grant conditions are not carried; a row's attribute `exclude`/`map` are not applied to this shape; rows with `import: false` are skipped and listed (`type off`) unless `--all` takes every row; a grant one principal holds on two folders or two projects is refused (the map form emits one address per member and role) unless `--on-collision counter` writes the second and later as labelled resources with a running number |
-| `import organizations/<n>` \| `folders/<n>` \| `projects/<id>` (or bare `import` with `root:` in `import-config.yaml`) | brownfield: nothing is in Terraform yet | one Cloud Asset sweep of the scope; every enabled type; folders and projects nested, folders labelled by display name (the number appended only where two share one), grants collapsed to member → roles with one line per edge (a bucket's or a service account's pinned to its scope in the map, one map per scope), services into `project_service` with one line per service, an org policy as its bare constraint with `spec { … }`, a single nested block as a block, the organization referenced as `customer_organization_id` wherever its number was written; what the platform owns — the built-in `_Default`/`_Required` sinks, service agents' grants, the legacy bucket grants, Google-created service accounts, a project that is no longer ACTIVE — skipped and listed under the `skip:` pattern of its import-config row that matched; the providers' quota project is the first project (by id) that enables the Org Policy and Service Usage APIs, and the report names it, or says that none does; the day-0 params (`presets/estate-core.satz`) bound from what the ADC states (`customer_id`, `customer_domain`, `first_admin`, a single open billing account) and what the sweep implies — the service account granted organizationAdmin at the organization gives `svc_iac_account` and `infra_project_name`, that project gives `infra_folder_name`, `infra_bucket_name` (its one versioned bucket) and `billing_account_infra`, the members give `svc_iac_users_group`, the regional resources give `default_region`, the leading token of the project and bucket names gives `customer_shortname` (`--customer-shortname` wins) — an inferred value carrying `// inferred:` with its rule, a value nothing states left out and reported (`customer_longname` always), and every bound literal referenced wherever the body repeats it (`"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"`); import ids = the row's `import_id` template rendered from the resource (`{project} {name}` for a log metric), else the asset path with the project named by ID; required attributes the asset lacks derived (`parent`, `org_id`/`folder`/`project`, `location`/`region` from the asset name, a `*_id` from its last segment — `secret_id`, `repository_id` —, a service account's `account_id`); API vocabulary the provider spells differently is renamed per the row's `map:` (a firewall's `allowed[].IPProtocol` → `allow { protocol }`), and self-link `region`/`zone` and full-name `name` values are shortened to what the provider takes | only rows with `import: true` AND an `asset_type` are swept (21 enabled by default — the landing-zone types plus VPC network/subnet/firewall, Pub/Sub topic, Secret Manager secret, log metric, Artifact Registry repository, each verified live to plan as import-only; `--all` switches on every row with an `asset_type`; `--only` narrows, never widens; `--exclude` leaves types out; an enabled row with `asset_type: TODO` is an error); IAM conditions are not carried; no Cloud Identity groups (not in Cloud Asset — state shape or `adopt`); a resource whose required attribute cannot be derived is skipped and named; one fetch error aborts the run; a page is 1000 assets; a grant one principal holds on two folders or two projects is refused (the map form emits one address per member and role) unless `--on-collision counter` writes the second and later as labelled resources with a running number |
+| `import organizations/<n>` \| `folders/<n>` \| `projects/<id>` (or bare `import` with `root:` in `import-config.yaml`) | brownfield: nothing is in Terraform yet | one Cloud Asset sweep of the scope; every enabled type; folders and projects nested, folders labelled by display name (the number appended only where two share one), grants collapsed to member → roles with one line per edge (a bucket's or a service account's pinned to its scope in the map, one map per scope), services into `project_service` with one line per service, an org policy as its bare constraint with `spec { … }`, a single nested block as a block, the organization referenced as `customer_organization_id` wherever its number was written; what the platform owns — the built-in `_Default`/`_Required` sinks, service agents' grants, the legacy bucket grants, Google-created service accounts, a project that is no longer ACTIVE — skipped and listed under the `skip:` pattern of its import-config row that matched; the providers' quota project is the first project (by id) that enables the Org Policy and Service Usage APIs, and the report names it, or says that none does; the day-0 params (`presets/estate-core.satz`) bound from what the ADC states (`customer_id`, `customer_domain`, `first_admin`, a single open billing account) and what the sweep implies — the service account granted organizationAdmin at the organization gives `svc_iac_account` and `infra_project_name`, that project gives `infra_folder_name`, `infra_bucket_name` (its one versioned bucket) and `billing_account_infra`, the members give `svc_iac_users_group`, the regional resources give `default_region`, the leading token of the project and bucket names gives `customer_shortname` (`--customer-shortname` wins) — an inferred value carrying `// inferred:` with its rule, a value nothing states left out and reported (`customer_longname` always), and every bound literal referenced wherever the body repeats it (`"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"`); import ids = the row's `import_id` template rendered from the resource (`{project} {name}` for a log metric), else the asset path with the project named by ID; required attributes the asset lacks derived (`parent`, `org_id`/`folder`/`project`, `location`/`region` from the asset name, a `*_id` from its last segment — `secret_id`, `repository_id` —, a service account's `account_id`); API vocabulary the provider spells differently is renamed per the row's `map:` (a firewall's `allowed[].IPProtocol` → `allow { protocol }`), and self-link `region`/`zone` and full-name `name` values are shortened to what the provider takes | only rows with `import: true` AND an `asset_type` are swept (21 enabled by default — the landing-zone types plus VPC network/subnet/firewall, Pub/Sub topic, Secret Manager secret, log metric, Artifact Registry repository, each verified live to plan as import-only; `--all` switches on every row with an `asset_type`; `--only` narrows, never widens; `--exclude` leaves types out; an enabled row with `asset_type: TODO` is an error); IAM conditions are not carried; no Cloud Identity groups (not in Cloud Asset — state shape or `adopt`); a resource whose required attribute cannot be derived is skipped and named; one fetch error aborts the run; a page is 1000 assets; a grant one principal holds on two folders or two projects is refused (the map form emits one address per member and role) unless `--on-collision counter` writes the second and later as labelled resources with a running number; a type no row maps is skipped as `unmapped` — `--generate-unmapped` asks the provider for its configuration instead (§12.2) |
 | `--into <estate>` | the estate exists; take over what it does not declare yet | packs `imported-<scope>[-<container>].satz` plus `use` lines inserted at the declaring folder/project | live shape only; if ANY declared resource fails to resolve live (error, ambiguity), nothing is written; the packs are regenerated wholesale on every run — hand edits go into the estate, never into an `imported-*` pack; a `use` is inserted automatically only where the container is declared in the estate file itself |
-| `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out`) | `variable`/`locals` promoted to params; schema-known, identifier-labelled `resource` blocks whose values are literals, params or `${…}` references as Satz resources placed under the folder/project they reference; a `count = length(<promoted list>)` whose `count.index` indexes that list expanded into one resource per entry, labelled after the entry; everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block | `terraform`/`provider` blocks are always dropped (the emitter writes them), `--wrap-all` included — and `--wrap-all` promotes nothing, since a param is a translation; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit; no import ids (`adopt`); a `${…}` reference is opaque to the compliance plane |
+| `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out` — run by hand, or by `import --generate-unmapped`) | `variable`/`locals` promoted to params; schema-known, identifier-labelled `resource` blocks whose values are literals, params or `${…}` references as Satz resources placed under the folder/project they reference; a `count = length(<promoted list>)` whose `count.index` indexes that list expanded into one resource per entry, labelled after the entry; everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block | `terraform`/`provider` blocks are always dropped (the emitter writes them), `--wrap-all` included — and `--wrap-all` promotes nothing, since a param is a translation; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit; no import ids (`adopt`); a `${…}` reference is opaque to the compliance plane |
 
 ### 12.1 From existing Terraform (`./hcl/`)
 
@@ -2274,7 +2274,66 @@ opaque to the compliance plane: a claim cannot reason about it.
 | a `variable` or `locals` whose value is not literal | wrapped, and the names it declares stay Terraform variables |
 | `terraform`, `provider` | dropped (one note each), also under `--wrap-all`. A `provider` block's default `project` is carried as **placement**: a resource that named no project of its own lands in that project when the default resolves to one of the imported projects, and the dropped row says so |
 
-### 12.2 The pre-Satz YAML dialect
+### 12.2 What the live sweep cannot map (`--generate-unmapped`)
+
+The live sweep fetches the asset types the enabled import-config rows name and
+maps each asset through its row. What comes back and cannot be expressed is
+skipped and listed as `unmapped`: a required attribute that is not in the asset
+data and cannot be derived, an asset whose data holds nothing the provider schema
+knows, an asset whose content type or scope no row covers, an asset with no
+organisation/folder/project scope at all. (A type no row names is never fetched,
+so it is not among them — give it a row.) `satz import <scope>
+--generate-unmapped` hands exactly those to the provider:
+
+```bash
+satz import organizations/123456789012 --generate-unmapped
+```
+
+It writes a scratch directory beside the estate — `<estate>-generate/` — holding
+`imports.tf`: the providers at the versions `config.toml` pins, and one
+
+```hcl
+import {
+  to = google_dns_managed_zone.corp
+  id = "projects/acme-infra-001/managedZones/corp"
+}
+```
+
+per unmapped resource. The id is the asset's relative resource name, the same
+derivation the mapped resources' `"import-id"` uses. Then `tofu init` and `tofu
+plan -generate-config-out=generated.tf` run there, and `generated.tf` goes
+through the hcl shape of §12.1 into `<estate>-generated.satz`, beside the estate
+the sweep wrote. The two files stay separate: one is what satz translated, the
+other what the provider wrote, and which of it belongs in the estate is a reading
+decision.
+
+Only `unmapped` is generated for. A type switched off (`import: false`, `--only`,
+`--exclude`), a platform-owned object and a resource whose parent is outside the
+import were left out on instruction, and the fallback does not undo it.
+
+What it cannot generate for is listed with the reason, one line each:
+
+```
+generate-unmapped: 4 unmapped resource(s) the provider can be asked for, 1 it cannot:
+  not generated  //aiplatform.googleapis.com/projects/acme-infra-001/locations/europe-west3/datasets/9 — no import-config
+                 row names asset type aiplatform.googleapis.com/Dataset, so there is no Terraform
+                 type to import as
+```
+
+The provider reads each resource, so an id it refuses fails the plan. satz
+reports the tool's own output and stops; `imports.tf` stays where it is, and
+correcting the ids there and running the two commands by hand — `tofu plan
+-generate-config-out=generated.tf`, then `satz import <that file>` — finishes the
+run.
+
+The flag is the live shape's. On a state file it is refused: those resources are
+already managed, and their configuration is the `.tf` the state was applied from,
+which the hcl shape reads. On the hcl shape it is refused too — that shape is
+what READS `-generate-config-out` output. With `--into` it is refused: that run
+writes packs of what an estate does not declare, and generated configuration is
+not one of them.
+
+### 12.3 The pre-Satz YAML dialect
 
 satz reads no YAML estate or pack. `transpile`, `import` and every other command
 take `.satz` and refuse a `.yaml` file by name, pointing at satz v0.71.0 — the

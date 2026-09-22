@@ -74,6 +74,8 @@ pub(crate) async fn import_org(
     on_collision: crate::discovery::OnCollision,
     customer_shortname: Option<&str>,
     verbose: bool,
+    generate_unmapped: bool,
+    tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("import: root {}", parent);
@@ -97,9 +99,100 @@ pub(crate) async fn import_org(
     let org = organization_of(&found.config, org_hint.as_deref());
     let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), Some(&facts), customer_shortname);
     vocab.apply_billing(&mut found.config);
-    write_imported(&found.config, output, org_hint.as_deref(), &registry, &vocab, runtime_config)?;
+    let written = write_imported(&found.config, output, org_hint.as_deref(), &registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
+    if generate_unmapped {
+        generate_unmapped_config(&found.skipped, &registry, &written, verbose, tool_config, runtime_config)?;
+    }
     Ok(())
+}
+
+/// `--generate-unmapped`: hand the resources this sweep could not map to the
+/// provider, and read back what it writes.
+///
+/// The estate above is already on disk — this adds a SECOND file beside it,
+/// `<estate>-generated.satz`, because what the provider writes has a different
+/// provenance from what satz translated and the operator merges it deliberately.
+/// The scratch directory stays: with a refused import id it is what the operator
+/// edits, and the two commands it names finish the job by hand.
+///
+/// It runs as the identity the sweep ran as — the human's Application Default
+/// Credentials, which `import` without `--into` binds nothing over (`IDENTITIES`,
+/// `src/main.rs`): the child inherits the environment, and the provider block
+/// written below impersonates nobody.
+fn generate_unmapped_config(
+    skipped: &[crate::discovery::Skipped],
+    registry: &ResourceRegistry,
+    estate: &Path,
+    verbose: bool,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::generate_config;
+    let plan = generate_config::plan(skipped, &|t| registry.resources.contains_key(t));
+    println!(
+        "\ngenerate-unmapped: {} unmapped resource(s) the provider can be asked for, {} it cannot:",
+        plan.candidates.len(),
+        plan.refused.len()
+    );
+    for (what, why) in &plan.refused {
+        println!("  not generated  {} — {}", what, why);
+    }
+    if plan.candidates.is_empty() {
+        println!("  nothing to generate — no child process ran and nothing was written.");
+        return Ok(());
+    }
+    if verbose {
+        for c in &plan.candidates {
+            println!("  generating     {}.{} = {}", c.tf_type, c.label, c.import_id);
+        }
+    }
+    let providers = providers_for(&plan.candidates, registry, tool_config);
+    let stem = estate.file_stem().and_then(|s| s.to_str()).unwrap_or("discovered").to_string();
+    let work_dir = estate.with_file_name(format!("{}-generate", stem));
+    let generated = generate_config::generate(&work_dir, &plan.candidates, &providers, &mut generate_config::Tofu { tool: &tool_config.tf_tool })
+        .map_err(|e| {
+            format!(
+                "{}\nThe import blocks are in {} — correct the ids the provider refused, then \
+                 `{} plan -generate-config-out={}` there and `satz import {}` on what it writes.",
+                e,
+                work_dir.join(generate_config::IMPORTS_TF).display(),
+                tool_config.tf_tool,
+                generate_config::GENERATED_TF,
+                work_dir.join(generate_config::GENERATED_TF).display(),
+            )
+        })?;
+    println!("\ngenerate-unmapped: {} — reading it back as Satz", generated.display());
+    let src = generated.to_str().ok_or_else(|| format!("{}: the generated path is not UTF-8", generated.display()))?;
+    import_hcl(src, PathBuf::from(format!("{}-generated.satz", stem)), false, verbose, runtime_config)
+}
+
+/// The providers the candidates' types come from, at the versions the tool
+/// config pins — so the scratch directory reads the same provider the estate is
+/// compiled against.
+fn providers_for(
+    candidates: &[crate::generate_config::Candidate],
+    registry: &ResourceRegistry,
+    tool_config: &ToolConfig,
+) -> Vec<crate::generate_config::Provider> {
+    let pinned = tool_config.parsed_providers();
+    let names: std::collections::BTreeSet<String> = candidates
+        .iter()
+        .filter_map(|c| registry.resources.get(&c.tf_type))
+        .map(|(provider, _)| provider.rsplit('/').next().unwrap_or(provider).to_string())
+        .collect();
+    names
+        .into_iter()
+        .map(|name| {
+            let version = pinned
+                .iter()
+                .find(|(p, _)| crate::schema::derive_registry_source(p).0 == name)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| tool_config.provider_version.clone());
+            let (short, source) = crate::schema::derive_registry_source(&name);
+            crate::generate_config::Provider { name: short.to_string(), source, version }
+        })
+        .collect()
 }
 
 pub(crate) fn write_imported(
@@ -109,7 +202,7 @@ pub(crate) fn write_imported(
     registry: &ResourceRegistry,
     vocab: &crate::vocabulary::Vocabulary,
     runtime_config: &ToolConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let final_output = satz_output_path(&runtime_config.yaml_dir, output);
     for line in vocab.report() {
         println!("{}", line);
@@ -120,7 +213,7 @@ pub(crate) fn write_imported(
     }
     fsx::write_generated_satz(&final_output, &text)?;
     println!("Wrote {} — review it, then `satz transpile` and `tofu plan`.", final_output.display());
-    Ok(())
+    Ok(final_output)
 }
 
 pub(crate) fn missing_import_config(presets_dir: &str) -> Box<dyn std::error::Error> {

@@ -872,6 +872,19 @@ grep -q 'id = "organizations/123456789012/policies/compute.skipDefaultNetworkCre
 "$satz" --config . import state.json --customer-shortname acme -o imported-state-named.satz > /dev/null 2>&1 || fail "import with --customer-shortname failed"
 grep -qE '^  customer_shortname += "acme"$' yaml/imported-state-named.satz || fail "--customer-shortname did not win over the inference"
 
+step "import --generate-unmapped: the fallback is the live shape's, and the others say so"
+if "$satz" --config . import state.json --generate-unmapped >tmp/gen-state.txt 2>&1; then
+  fail "--generate-unmapped must be refused on the state shape"
+fi
+grep -q 'applies to the live shape' tmp/gen-state.txt || fail "the state refusal did not say which shape it belongs to:\n$(cat tmp/gen-state.txt)"
+grep -q 'hcl shape' tmp/gen-state.txt || fail "the state refusal did not name the shape that reads existing .tf:\n$(cat tmp/gen-state.txt)"
+if "$satz" --config . import tf --generate-unmapped >tmp/gen-hcl.txt 2>&1; then
+  fail "--generate-unmapped must be refused on the hcl shape"
+fi
+grep -q -- '-generate-config-out' tmp/gen-hcl.txt || fail "the hcl refusal did not say that this shape already reads that output:\n$(cat tmp/gen-hcl.txt)"
+[ -d yaml/imported-state-generate ] && fail "a refused run wrote a scratch directory"
+ls yaml | grep -q -- '-generated.satz' && fail "a refused run wrote a generated estate"
+
 step "a YAML estate is refused by name, with the release that reads it"
 printf 'variables:\n  a: &a 1\n' > tmp/old-estate.yaml
 if "$satz" --config . import tmp/old-estate.yaml >tmp/yaml-refusal.txt 2>&1; then
