@@ -133,32 +133,227 @@ pub fn asset_resource_name(full_name: &str) -> Option<&str> {
 pub struct Discovered {
     pub config: Config,
     pub skipped: Vec<Skipped>,
-    /// Attributes dropped because the provider schema does not know them —
-    /// `(tf_type, key path)`. CAI data is API-shaped; a key the Terraform
-    /// schema lacks would not plan (roadmap F5).
-    pub dropped_attrs: Vec<(String, String)>,
+    /// Attributes the source carried and the estate does not, one row each.
+    /// Cloud Asset data is API-shaped; a key the Terraform schema lacks would
+    /// not plan (roadmap F5). What the schema DOES know and satz still could
+    /// not place is a loss, and says so (`DropReason`).
+    pub dropped_attrs: Vec<DroppedAttr>,
     /// The organization the assets' ancestors name (live shape only).
     pub organization: Option<String>,
     /// What the import rewrote on the way and says so: one line each.
     pub notes: Vec<String>,
 }
 
+/// Why a value the source carried is not in the imported estate.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DropReason {
+    /// The provider does not speak that name here: API vocabulary with no
+    /// Terraform counterpart. Written into HCL it would not plan.
+    Vocabulary,
+    /// The provider schema names the attribute and the asset data carried a
+    /// value for it, and satz did not place it — an apply of the imported
+    /// estate resets that attribute on the live resource. The text says what
+    /// stopped it.
+    NotCarried(String),
+}
+
+/// One attribute of one resource that the source had and the estate does not.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DroppedAttr {
+    pub tf_type: String,
+    /// The resource it belongs to, by the name the source gives it.
+    pub what: String,
+    /// Where it sat, dotted, in the spelling satz got it to.
+    pub path: String,
+    pub why: DropReason,
+}
+
 thread_local! {
     // `filter_values` is called from five places, three of them without a
     // collector in reach; the run is single-threaded, so the dropped-key
     // list is collected here and taken once per import.
-    static DROPPED_ATTRS: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static DROPPED_ATTRS: std::cell::RefCell<Vec<DroppedAttr>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn note_dropped(tf_type: &str, key: &str) {
-    DROPPED_ATTRS.with(|d| d.borrow_mut().push((tf_type.to_string(), key.to_string())));
+fn note_dropped(tf_type: &str, what: &str, path: &str, why: DropReason) {
+    DROPPED_ATTRS.with(|d| {
+        d.borrow_mut().push(DroppedAttr {
+            tf_type: tf_type.to_string(),
+            what: what.to_string(),
+            path: path.to_string(),
+            why,
+        })
+    });
 }
 
-fn take_dropped() -> Vec<(String, String)> {
+fn take_dropped() -> Vec<DroppedAttr> {
     let mut v = DROPPED_ATTRS.with(|d| std::mem::take(&mut *d.borrow_mut()));
     v.sort();
     v.dedup();
     v
+}
+
+/// Where the API states a fact in other terms than the provider — not another
+/// name for the same value, another value. A Cloud Storage lifecycle condition
+/// carries `isLive` as a boolean; the provider's `with_state` is `LIVE` /
+/// `ARCHIVED`. No name alignment can see this (the two fields share no name),
+/// so the pairs stand here, keyed by the type and the path they sit at, and a
+/// test reads each from the asset data it comes from.
+fn translate_api_values(map: &mut serde_yaml::Mapping, tf_type: &str, at: &str) {
+    let rows: &[(&str, &str, &str, &str)] = &[
+        // (tf type, path, API key, provider key)
+        ("google_storage_bucket", "lifecycle_rule.condition.", "is_live", "with_state"),
+    ];
+    for (t, path, from, to) in rows {
+        if *t != tf_type || *path != at {
+            continue;
+        }
+        let Some(v) = map.remove(serde_yaml::Value::String((*from).to_string())) else { continue };
+        let Some(live) = v.as_bool() else { continue };
+        map.insert(
+            serde_yaml::Value::String((*to).to_string()),
+            serde_yaml::Value::String(if live { "LIVE" } else { "ARCHIVED" }.to_string()),
+        );
+    }
+}
+
+/// Does this block take `name` as an attribute, with a value of that shape?
+/// An output (computed, neither optional nor required) takes nothing.
+fn attribute_takes(block: &BlockSchema, name: &str, v: &serde_yaml::Value) -> bool {
+    let Some(a) = block.attributes.get(name) else { return false };
+    if a.computed && !a.optional && !a.required {
+        return false;
+    }
+    match a.type_.as_ref() {
+        Some(t) if t.is_string() => match t.as_str().unwrap_or("") {
+            "string" => v.is_string(),
+            "bool" => v.is_bool(),
+            "number" => v.is_number(),
+            _ => false,
+        },
+        // `["list","string"]`, `["map","string"]`, `["set","string"]`
+        Some(t) if t.is_array() => v.is_sequence() || v.is_mapping(),
+        _ => false,
+    }
+}
+
+/// One scalar or list the API nested: its dotted path in provider spelling,
+/// its own name, how many fields sit beside it in its object, and its value.
+struct Leaf {
+    path: String,
+    name: String,
+    siblings: usize,
+    value: serde_yaml::Value,
+}
+
+/// Every scalar or list leaf under `v`, snake_cased on the way. A list is a
+/// leaf: what sits inside one is a block's business, not a flattening's.
+fn leaves(prefix: &str, v: &serde_yaml::Value, depth: usize, siblings: usize, out: &mut Vec<Leaf>) {
+    match v {
+        serde_yaml::Value::Mapping(m) if depth < 4 => {
+            for (k, v) in m {
+                let Some(k) = k.as_str() else { continue };
+                let name = crate::align::snake(k);
+                let path = if prefix.is_empty() { name } else { format!("{}.{}", prefix, name) };
+                leaves(&path, v, depth + 1, m.len(), out);
+            }
+        }
+        _ => {
+            let name = prefix.rsplit('.').next().unwrap_or(prefix).to_string();
+            out.push(Leaf { path: prefix.to_string(), name, siblings, value: v.clone() });
+        }
+    }
+}
+
+/// A key the provider schema does not name can still CARRY attributes it does:
+/// the API nests what Terraform flattens. `iamConfiguration.uniformBucketLevelAccess.enabled`
+/// IS the provider's `uniform_bucket_level_access` and `billing.requesterPays`
+/// its `requester_pays`; dropped as unknown vocabulary, an apply of the
+/// imported estate switches uniform bucket-level access back off.
+///
+/// The correspondence is the one `align` derives from the API's Discovery
+/// Document, read off the data instead, so it needs no generated map: a leaf
+/// whose snake_case name is an attribute of this block, or an object of that
+/// name holding a single `enabled` / `value`. One candidate carries. Two
+/// disagreeing ones carry nothing and say so — satz does not pick.
+fn flatten_nested(map: &mut serde_yaml::Mapping, block: &BlockSchema, tf_type: &str, what: &str, at: &str) {
+    let unknown: Vec<String> = map
+        .iter()
+        .filter_map(|(k, v)| k.as_str().filter(|_| v.is_mapping()).map(String::from))
+        .filter(|k| !block.attributes.contains_key(k) && !block.block_types.contains_key(k))
+        .collect();
+    // every nested container at once: two of them claiming one attribute is
+    // the same ambiguity as two fields of one container claiming it
+    let mut found: Vec<Leaf> = Vec::new();
+    for key in &unknown {
+        let Some(nested) = map.get(serde_yaml::Value::String(key.clone())).cloned() else { continue };
+        let mut under = Vec::new();
+        leaves(&format!("{}{}", at, key), &nested, 0, 0, &mut under);
+        found.append(&mut under);
+    }
+    // candidate per leaf: its own name, or — for the `{ enabled: … }` /
+    // `{ value: … }` wrapper — the name of the object holding it
+    let mut carried: BTreeMap<String, Vec<&Leaf>> = BTreeMap::new();
+    for leaf in &found {
+        let wrapper = match leaf.path.rsplit_once('.') {
+            Some((head, last)) if matches!(last, "enabled" | "value") && leaf.siblings <= 2 => {
+                head.rsplit('.').next().map(String::from)
+            }
+            _ => None,
+        };
+        for candidate in [Some(leaf.name.clone()), wrapper].into_iter().flatten() {
+            if attribute_takes(block, &candidate, &leaf.value) {
+                carried.entry(candidate).or_default().push(leaf);
+            }
+        }
+    }
+    let mut placed: HashSet<&str> = HashSet::new();
+    for (attr, sources) in &carried {
+        // the same value from two spellings of one API field (a bucket's
+        // `bucketPolicyOnly` mirrors `uniformBucketLevelAccess`) is one value
+        let agreed = sources.iter().all(|l| l.value == sources[0].value);
+        // the provider's own spelling, at this level, is the value; a nested
+        // field that says something else is named, never silently overruled
+        let present = map.get(serde_yaml::Value::String(attr.clone())).cloned();
+        let why = match (&present, agreed) {
+            (Some(v), _) if sources.iter().all(|l| l.value == *v) => None,
+            (Some(_), _) => Some(format!(
+                "`{}{}` is set at this level and the asset data says otherwise here",
+                at, attr
+            )),
+            (None, false) => Some(format!(
+                "`{}{}` is claimed by {} fields of the asset data that disagree: {}",
+                at,
+                attr,
+                sources.len(),
+                sources.iter().map(|l| l.path.as_str()).collect::<Vec<_>>().join(", ")
+            )),
+            (None, true) => None,
+        };
+        match why {
+            Some(why) => {
+                for l in sources {
+                    note_dropped(tf_type, what, &l.path, DropReason::NotCarried(why.clone()));
+                }
+            }
+            None => {
+                if present.is_none() {
+                    map.insert(serde_yaml::Value::String(attr.clone()), sources[0].value.clone());
+                }
+            }
+        }
+        sources.iter().for_each(|l| {
+            placed.insert(l.path.as_str());
+        });
+    }
+    for leaf in &found {
+        if !placed.contains(leaf.path.as_str()) {
+            note_dropped(tf_type, what, &leaf.path, DropReason::Vocabulary);
+        }
+    }
+    for key in unknown {
+        map.remove(serde_yaml::Value::String(key));
+    }
 }
 
 /// A grant entry carrying its Terraform import id: `{ role, "import-id" }`,
@@ -436,7 +631,9 @@ impl Discoverer {
         Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None, notes })
     }
 
-    pub fn filter_values(tf_type: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>, map: Option<&std::collections::BTreeMap<String, String>>) -> serde_yaml::Value {
+    /// `what` names the resource in the report: a value the source carried and
+    /// the estate does not is named with the resource it was carried on.
+    pub fn filter_values(tf_type: &str, what: &str, values: &Value, schema: Option<&ResourceSchema>, add_import_id: bool, exclude: Option<&Vec<String>>, map: Option<&std::collections::BTreeMap<String, String>>) -> serde_yaml::Value {
         let mut yaml_val = serde_yaml::to_value(values).unwrap_or(serde_yaml::Value::Null);
         // API vocabulary → Terraform vocabulary where the names differ (F5c),
         // on the API's own key spelling, before anything else looks at keys
@@ -461,7 +658,7 @@ impl Discoverer {
             full_blacklist.extend(ex.clone());
         }
 
-        Self::filter_recursive(&mut yaml_val, block_schema, &full_blacklist, tf_type, "");
+        Self::filter_recursive(&mut yaml_val, block_schema, &full_blacklist, tf_type, what, "");
 
         if let Some(id) = values["id"].as_str() {
             if add_import_id {
@@ -496,7 +693,7 @@ impl Discoverer {
     }
 
 
-    fn filter_recursive(val: &mut serde_yaml::Value, schema: Option<&BlockSchema>, blacklist: &[String], tf_type: &str, at: &str) {
+    fn filter_recursive(val: &mut serde_yaml::Value, schema: Option<&BlockSchema>, blacklist: &[String], tf_type: &str, what: &str, at: &str) {
         if let serde_yaml::Value::Mapping(map) = val {
             if map.keys().any(|k| k.as_str().is_some_and(|k| k.chars().any(|c| c.is_ascii_uppercase()))) {
                 let renamed: serde_yaml::Mapping = std::mem::take(map)
@@ -508,6 +705,7 @@ impl Discoverer {
                     .collect();
                 *map = renamed;
             }
+            translate_api_values(map, tf_type, at);
             for key in blacklist {
                 map.remove(serde_yaml::Value::String(key.to_string()));
             }
@@ -520,13 +718,14 @@ impl Discoverer {
             }
 
             if let Some(s) = schema {
+                flatten_nested(map, s, tf_type, what, at);
                 map.retain(|k, v| {
                     if let serde_yaml::Value::String(k_str) = k {
                         // A key neither the attributes nor the blocks know is
                         // API vocabulary the provider does not speak (F5):
                         // it would not plan, so it goes — and is reported.
                         if !s.attributes.contains_key(k_str) && !s.block_types.contains_key(k_str) {
-                            note_dropped(tf_type, &format!("{}{}", at, k_str));
+                            note_dropped(tf_type, what, &format!("{}{}", at, k_str), DropReason::Vocabulary);
                             return false;
                         }
                         if let Some(attr) = s.attributes.get(k_str) {
@@ -588,7 +787,7 @@ impl Discoverer {
                     }
                 }
                 let sub_schema = schema.and_then(|s| s.block_types.get(k_str)).map(|bt| &bt.block);
-                Self::filter_recursive(v, sub_schema, blacklist, tf_type, &format!("{}{}.", at, k_str));
+                Self::filter_recursive(v, sub_schema, blacklist, tf_type, what, &format!("{}{}.", at, k_str));
             }
 
             map.retain(|_, v| {
@@ -596,7 +795,7 @@ impl Discoverer {
             });
         } else if let serde_yaml::Value::Sequence(seq) = val {
              for item in seq.iter_mut() {
-                Self::filter_recursive(item, schema, blacklist, tf_type, at);
+                Self::filter_recursive(item, schema, blacklist, tf_type, what, at);
             }
             seq.retain(|v| {
                 !Self::is_empty_value(v)
@@ -692,7 +891,7 @@ impl Discoverer {
             }
             return Ok(());
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
+        let yaml_val = Self::filter_values(tf_type, tf_name, values, schema, true, None, None);
         if tf_type == "google_project_service" {
             if p.project_service.is_none() { p.project_service = Some(Vec::new()); }
             p.project_service.as_mut().unwrap().push(yaml_val);
@@ -720,7 +919,7 @@ impl Discoverer {
             }
             return Ok(());
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
+        let yaml_val = Self::filter_values(tf_type, tf_name, values, schema, true, None, None);
         if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = f.extra.get_mut(tf_type) {
              type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
@@ -756,7 +955,7 @@ impl Discoverer {
             }
             return Ok(());
         }
-        let yaml_val = Self::filter_values(tf_type, values, schema, true, None, None);
+        let yaml_val = Self::filter_values(tf_type, tf_name, values, schema, true, None, None);
         if !c.extra.contains_key(tf_type) { c.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
         if let Some(serde_yaml::Value::Mapping(type_map)) = c.extra.get_mut(tf_type) {
             type_map.insert(serde_yaml::Value::String(tf_name.to_string()), yaml_val);
@@ -1307,7 +1506,7 @@ impl Discoverer {
                    data_clone.insert("service".to_string(), serde_json::Value::String(service_name.clone()));
 
                    let data_val = serde_json::Value::Object(data_clone);
-                   Self::filter_values(tf_type, &data_val, schema, false, res_config.exclude.as_ref(), res_config.map.as_ref())
+                   Self::filter_values(tf_type, &service_name, &data_val, schema, false, res_config.exclude.as_ref(), res_config.map.as_ref())
                } else {
                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
                }
@@ -1546,7 +1745,7 @@ impl Discoverer {
                    // provider's import id, but Cloud Asset data carries the API's
                    // own `id` (compute: a bare number) which the provider does
                    // NOT import by; the asset path below is the import id here
-                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &data_val, schema, false, res_config.exclude.as_ref(), res_config.map.as_ref()) {
+                   if let serde_yaml::Value::Mapping(m) = Self::filter_values(tf_type, &raw_key, &data_val, schema, false, res_config.exclude.as_ref(), res_config.map.as_ref()) {
                         resource_val = m;
                    }
                }
@@ -2354,18 +2553,34 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
         println!("{}", n);
     }
     let skipped = &found.skipped;
-    if !found.dropped_attrs.is_empty() {
-        let mut by_type: BTreeMap<&str, usize> = BTreeMap::new();
-        for (t, _) in &found.dropped_attrs {
-            *by_type.entry(t.as_str()).or_default() += 1;
+    // An attribute the provider schema HAS, whose value the asset data carried
+    // and satz could not place, is a loss: apply the estate and the live
+    // resource loses that setting. It is named in full, every run, per
+    // resource — never a count behind a flag.
+    let (lost, vocabulary): (Vec<&DroppedAttr>, Vec<&DroppedAttr>) =
+        found.dropped_attrs.iter().partition(|d| matches!(d.why, DropReason::NotCarried(_)));
+    if !lost.is_empty() {
+        println!(
+            "import: {} attribute(s) the provider schema names are NOT in the estate — an apply would reset them on the live resource:",
+            lost.len()
+        );
+        for d in &lost {
+            let DropReason::NotCarried(why) = &d.why else { continue };
+            println!("  - {} {} .{} — {}", d.tf_type, d.what, d.path, why);
         }
-        println!("import: {} attribute(s) dropped — not in the provider schema (API vocabulary; would not plan):", found.dropped_attrs.len());
+    }
+    if !vocabulary.is_empty() {
+        let mut by_type: BTreeMap<&str, usize> = BTreeMap::new();
+        for d in &vocabulary {
+            *by_type.entry(d.tf_type.as_str()).or_default() += 1;
+        }
+        println!("import: {} attribute(s) dropped — not in the provider schema (API vocabulary; would not plan):", vocabulary.len());
         for (t, n) in &by_type {
             println!("  {:5} {}", n, t);
         }
         if verbose {
-            for (t, k) in &found.dropped_attrs {
-                println!("  - {} .{}", t, k);
+            for d in &vocabulary {
+                println!("  - {} {} .{}", d.tf_type, d.what, d.path);
             }
         }
     }
@@ -2831,5 +3046,153 @@ mod state_document_tests {
         let err = Discoverer::new(state, None, None, HashSet::new(), OnCollision::default()).discover().err().expect("no type is not a type");
         let msg = err.to_string();
         assert!(msg.contains("google_folder.x") && msg.contains("`type`"), "{msg}");
+    }
+}
+
+#[cfg(test)]
+mod asset_attributes {
+    //! What a Cloud Asset sweep hands back against what the estate must carry.
+    //! The fixture is a `storage.googleapis.com/Bucket` asset in the API's own
+    //! shape (`tests/assets/storage-bucket.json`), read through the shipped
+    //! import-config row and the provider schema fixture.
+    use super::*;
+    use std::path::Path;
+
+    fn repo(rel: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
+    fn asset_data() -> Value {
+        let text = std::fs::read_to_string(repo("tests/assets/storage-bucket.json")).expect("bucket asset fixture");
+        let asset: Value = serde_json::from_str(&text).expect("bucket asset fixture parses");
+        asset["resource"]["data"].clone()
+    }
+
+    fn registry() -> ResourceRegistry {
+        ResourceRegistry::load_all(&repo("tests/schemas").to_string_lossy()).expect("provider schema fixture")
+    }
+
+    /// The row `satz import` uses for a bucket, from the shipped table.
+    fn bucket_row() -> crate::config::ImportResourceConfig {
+        let text = std::fs::read_to_string(repo("presets/import-config.yaml")).expect("import-config");
+        let config: ImportConfig = serde_yaml::from_str(&text).expect("import-config parses");
+        config.resource_types["google_storage_bucket"].clone()
+    }
+
+    fn import_bucket(data: &Value) -> (serde_yaml::Value, Vec<DroppedAttr>) {
+        let _ = take_dropped();
+        let reg = registry();
+        let schema = reg.find_resource("google_storage_bucket").map(|(_, s)| s);
+        let row = bucket_row();
+        let out = Discoverer::filter_values(
+            "google_storage_bucket",
+            "acme-organization-audit-bucket",
+            data,
+            schema,
+            false,
+            row.exclude.as_ref(),
+            row.map.as_ref(),
+        );
+        (out, take_dropped())
+    }
+
+    fn losses(dropped: &[DroppedAttr]) -> Vec<String> {
+        dropped
+            .iter()
+            .filter_map(|d| match &d.why {
+                DropReason::NotCarried(why) => Some(format!("{} .{} — {}", d.what, d.path, why)),
+                DropReason::Vocabulary => None,
+            })
+            .collect()
+    }
+
+    /// Two hardened buckets came back from a live sweep without their
+    /// hardening: the API nests what the provider flattens, and the nesting
+    /// was dropped as unknown vocabulary. An apply of that estate switches
+    /// uniform bucket-level access off and public access prevention back to
+    /// inherited.
+    #[test]
+    fn a_hardened_bucket_is_imported_hardened() {
+        let (out, dropped) = import_bucket(&asset_data());
+        let text = serde_yaml::to_string(&out).expect("yaml");
+        assert_eq!(out["uniform_bucket_level_access"], serde_yaml::Value::Bool(true), "{text}");
+        assert_eq!(out["public_access_prevention"].as_str(), Some("enforced"), "{text}");
+        assert_eq!(out["requester_pays"], serde_yaml::Value::Bool(true), "{text}");
+        // `isLive: false` is the provider's `with_state = "ARCHIVED"`
+        assert_eq!(out["lifecycle_rule"][0]["condition"]["with_state"].as_str(), Some("ARCHIVED"), "{text}");
+        assert_eq!(out["lifecycle_rule"][0]["condition"]["age"].as_u64(), Some(365), "{text}");
+        assert!(out["encryption"]["default_kms_key_name"].as_str().is_some(), "{text}");
+        assert!(losses(&dropped).is_empty(), "{:?}", losses(&dropped));
+        // the API's own vocabulary is still dropped, and named per resource
+        let vocab: Vec<&str> = dropped.iter().map(|d| d.path.as_str()).collect();
+        assert!(vocab.contains(&"iam_configuration.bucket_policy_only.enabled"), "{:?}", vocab);
+        assert!(vocab.contains(&"kind"), "{:?}", vocab);
+        assert!(dropped.iter().all(|d| d.what == "acme-organization-audit-bucket"), "{:?}", dropped);
+    }
+
+    /// The guard: for every value the asset data carries under a key the
+    /// provider schema does not name, where the schema DOES name an attribute
+    /// that takes it, the estate carries it — or the report says it does not.
+    /// Silence is the defect.
+    #[test]
+    fn nothing_the_schema_names_is_dropped_in_silence() {
+        let data = asset_data();
+        let (out, dropped) = import_bucket(&data);
+        let reg = registry();
+        let block = &reg.find_resource("google_storage_bucket").expect("bucket schema").1.block;
+        let reported: HashSet<&str> = dropped
+            .iter()
+            .filter(|d| matches!(d.why, DropReason::NotCarried(_)))
+            .map(|d| d.path.as_str())
+            .collect();
+        let data: serde_yaml::Value = serde_yaml::to_value(&data).expect("yaml");
+        let serde_yaml::Value::Mapping(top) = &data else { panic!("the asset data is an object") };
+        for (key, value) in top {
+            let key = crate::align::snake(key.as_str().unwrap_or(""));
+            if block.block_types.contains_key(&key) || block.attributes.contains_key(&key) {
+                continue; // a block or an attribute of its own — not a flattening
+            }
+            let mut found = Vec::new();
+            leaves("", value, 0, 0, &mut found);
+            for leaf in &found {
+                let wrapper = match leaf.path.rsplit_once('.') {
+                    Some((head, last)) if matches!(last, "enabled" | "value") && leaf.siblings <= 2 => {
+                        head.rsplit('.').next().map(String::from)
+                    }
+                    _ => None,
+                };
+                for candidate in [Some(leaf.name.clone()), wrapper].into_iter().flatten() {
+                    if !attribute_takes(block, &candidate, &leaf.value) {
+                        continue;
+                    }
+                    let path = format!("{}.{}", key, leaf.path);
+                    assert!(
+                        out.get(candidate.as_str()).is_some() || reported.contains(path.as_str()),
+                        "{} carries `{}` and neither the estate nor the report has it:\n{}",
+                        path,
+                        candidate,
+                        serde_yaml::to_string(&out).unwrap_or_default()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Two fields of the asset data claiming one attribute, with different
+    /// values: satz carries neither and names both. Picking one would be a
+    /// guess about which of them the live resource is in.
+    #[test]
+    fn two_fields_claiming_one_attribute_carry_neither_and_say_so() {
+        let data: Value = serde_json::json!({
+            "name": "acme-organization-audit-bucket",
+            "location": "EU",
+            "iamConfiguration": {"publicAccessPrevention": "enforced"},
+            "legacyConfiguration": {"publicAccessPrevention": "inherited"}
+        });
+        let (out, dropped) = import_bucket(&data);
+        assert!(out.get("public_access_prevention").is_none(), "{:?}", out);
+        let lost = losses(&dropped);
+        assert_eq!(lost.len(), 2, "{:?}", dropped);
+        assert!(lost.iter().all(|l| l.contains("public_access_prevention") && l.contains("disagree")), "{:?}", lost);
     }
 }

@@ -1,0 +1,48 @@
+{
+  "_comment": "One asset as a Cloud Asset Inventory sweep returns it: the resource data is the Cloud Storage JSON API's own Bucket shape (Discovery Document `storage` v1, schema `Bucket`). The hardening a pack writes sits in three nested places — iamConfiguration.uniformBucketLevelAccess.enabled, iamConfiguration.publicAccessPrevention and lifecycle.rule[].condition.isLive — where the provider's schema has uniform_bucket_level_access, public_access_prevention and lifecycle_rule.condition.with_state.",
+  "name": "//storage.googleapis.com/acme-organization-audit-bucket",
+  "asset_type": "storage.googleapis.com/Bucket",
+  "ancestors": ["projects/100000000001", "folders/123456789", "organizations/123456789012"],
+  "resource": {
+    "version": "v1",
+    "discovery_document_uri": "https://www.googleapis.com/discovery/v1/apis/storage/v1/rest",
+    "discovery_name": "Bucket",
+    "parent": "//cloudresourcemanager.googleapis.com/projects/100000000001",
+    "data": {
+      "kind": "storage#bucket",
+      "id": "acme-organization-audit-bucket",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/acme-organization-audit-bucket",
+      "name": "acme-organization-audit-bucket",
+      "projectNumber": "100000000001",
+      "metageneration": "4",
+      "location": "EU",
+      "locationType": "multi-region",
+      "storageClass": "STANDARD",
+      "rpo": "DEFAULT",
+      "etag": "CAQ=",
+      "timeCreated": "2026-01-14T09:12:41.882Z",
+      "updated": "2026-02-02T11:03:07.115Z",
+      "satisfiesPZS": false,
+      "owner": {"entity": "project-owners-100000000001"},
+      "labels": {"environment": "prod"},
+      "billing": {"requesterPays": true},
+      "versioning": {"enabled": true},
+      "encryption": {"defaultKmsKeyName": "projects/acme-infra-001/locations/europe-west3/keyRings/audit/cryptoKeys/bucket"},
+      "retentionPolicy": {"retentionPeriod": "2592000", "effectiveTime": "2026-01-14T09:12:41.882Z", "isLocked": true},
+      "softDeletePolicy": {"retentionDurationSeconds": "604800", "effectiveTime": "2026-01-14T09:12:41.882Z"},
+      "iamConfiguration": {
+        "uniformBucketLevelAccess": {"enabled": true, "lockedTime": "2026-04-14T09:12:41.882Z"},
+        "bucketPolicyOnly": {"enabled": true, "lockedTime": "2026-04-14T09:12:41.882Z"},
+        "publicAccessPrevention": "enforced"
+      },
+      "lifecycle": {
+        "rule": [
+          {
+            "action": {"type": "Delete"},
+            "condition": {"age": 365, "isLive": false, "numNewerVersions": 3}
+          }
+        ]
+      }
+    }
+  }
+}

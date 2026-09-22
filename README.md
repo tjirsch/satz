@@ -894,18 +894,35 @@ declared (live id → address), what is new, and what is declared but not live.
 destroy.
 
 Live imports carry the API's vocabulary. Keys are snake-cased (`storageClass` →
-`storage_class`); where the names differ — `lifecycle.rule[]` is
-Terraform's `lifecycle_rule` (a reserved-word collision),
-`iamConfiguration.uniformBucketLevelAccess.enabled` is `uniform_bucket_level_access`
-(a flattening) — no rule relates the two, so **`satz map-types` derives the map**:
-for every `import: true` row it fetches the API's Discovery Document (cached under
-`presets/.discovery/`), aligns its schema against the provider schema (exact after
-snake_case; flattened leaves; renamed blocks by property overlap; the rest
-unmatched) and writes `presets/type-map.yaml`, which the live import applies before
-the schema filter. Review the rows it marks `renamed`; re-run after a provider
-bump; an ambiguous schema name is pinned with `api_schema:` on the row. What the
-schema still does not know is **dropped and reported** (names with `--verbose`)
-rather than written into HCL that would not plan. A fetch that fails aborts the
+`storage_class`), and what the API nests the import **flattens onto the attribute
+the provider names**: a value whose name is an attribute of the resource, or an
+object of that name holding a single `enabled` / `value`, is carried up —
+`iamConfiguration.uniformBucketLevelAccess.enabled` is `uniform_bucket_level_access`,
+`iamConfiguration.publicAccessPrevention` is `public_access_prevention`,
+`billing.requesterPays` is `requester_pays`. Two fields claiming one attribute
+with different values carry neither and are named. Where the API states a fact in
+other terms than the provider, the pair is written out: a lifecycle condition's
+`isLive` is the provider's `with_state` (`LIVE` / `ARCHIVED`).
+
+A renamed BLOCK — `lifecycle.rule[]` is Terraform's `lifecycle_rule`, a
+reserved-word collision — is a row in the `map:` of its `import-config.yaml`
+entry, and **`satz map-types` derives those rows**: for every `import: true` row it
+fetches the API's Discovery Document (cached under `presets/.discovery/`), aligns
+its schema against the provider schema (exact after snake_case; flattened leaves;
+renamed blocks by property overlap; the rest unmatched) and writes
+`presets/type-map.yaml`, which the live import applies before the schema filter,
+with the hand-maintained rows of `import-config.yaml` winning where both name a
+field. Review the rows it marks `renamed`; re-run after a provider bump; an
+ambiguous schema name is pinned with `api_schema:` on the row.
+
+What the provider does not speak is **dropped and reported** — a count per type,
+the names with `--verbose` — rather than written into HCL that would not plan. An
+attribute the provider schema does name, whose value the import could not place,
+is a different line: it is printed per resource on every run, with the attribute
+and the reason, because an apply of the estate would reset it on the live
+resource. `force_destroy` has no counterpart in any API and is read from nothing:
+it is a Terraform-only switch, never imported, and an estate that wants it
+declares it. A fetch that fails aborts the
 import — nothing is written from a partial sweep. A nested value the API does not
 return while it holds the provider's default — a subnet's `log_config.filter_expr`,
 default `"true"` — is read back into state as empty, so the first plan after the
