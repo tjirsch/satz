@@ -138,7 +138,7 @@ Nine syntactic ones — and, below them, the short list of attributes the emitte
   declared `lifecycle`); its `member` / `manager` / `owner` lists become
   `google_cloud_identity_group_membership` resources (§6.4);
 - `project_service = [ … ]` explodes into one `google_project_service` per
-  service; a project gets its own provider alias when it needs one;
+  service; each project gets its own provider alias, scoped to it (§6.8);
 - an org policy's structured `parameters { … }` is JSON-encoded into the
   string the provider wants;
 - the backend is chosen by `deployment_mode` (§6.8); `"import-id"` becomes an
@@ -786,8 +786,8 @@ type satz can emit is served by an API (`google_billing_budget` by
 `billingbudgets.googleapis.com`, `google_monitoring_alert_policy` by
 `monitoring.googleapis.com`), and the emitted resource carries `depends_on` on each
 `google_project_service` in the estate that enables one — bounded to the two projects
-that can matter: the project the resource lives in, and the infra project every
-provider call is billed to. `google_project_service` itself is never ordered behind
+that can matter: the project the resource lives in, and the infra project the default
+provider bills its calls to. `google_project_service` itself is never ordered behind
 another service, and no edge is added into a service block's own dependency closure,
 so the project a service is declared on and the folder above it never wait for it.
 Without the ordering `tofu` runs both at once and the apply dies on an API that was
@@ -795,14 +795,15 @@ about to be switched on. A resource whose API no `google_project_service` enable
 gets no edge — the compile reports that instead, because a dependency on nothing is
 not a thing.
 
-**The API has to be on the project the call is BILLED to.** Every provider block
-carries `user_project_override = true` with `billing_project = infra_project_name`,
-so Google requires the service enabled on the infra project whatever the resource's
-own scope is — a budget hangs off the billing account and an org policy off the
-organisation, and both still need their API there. That is what the compile checks:
-the APIs the estate's emitted types need, against the `project_service` list of the
-infra project. A pack that enables an API on a project of its own has answered a
-different question.
+**The API has to be on the project the call is BILLED to.** The estate's `google`
+provider carries `user_project_override = true` with `billing_project =
+infra_project_name`, so Google requires the service enabled on the infra project
+whatever the resource's own scope is — a budget hangs off the billing account and an
+org policy off the organisation, and both still need their API there. A resource
+written inside a `google_project { … }` is served by that project's alias, which is
+billed to the project itself, so its API has to be on that project. The compile
+checks the first half: the APIs the estate's emitted types need, against the
+`project_service` list of the infra project.
 
 **Every `*_iam_member` type takes the member map.** The organisation's scope
 comes from `customer_organization_id`, a project's or folder's from the node the
@@ -1043,6 +1044,18 @@ providers {
   }
 }
 ```
+
+**Every `google_project` gets a provider alias.** Beside the blocks the estate
+writes, the emitter adds one `provider "google"` per project entity, aliased
+`project_<label>`, and every resource written inside that `google_project { … }`
+carries `provider = google.project_<label>`. It is the estate's `google`
+provider scoped to that project: the same region the estate's `google` block
+names — an estate whose block names none gets an alias that names none, and a
+regional resource in it writes its own — the same
+`impersonate_service_account` in cloud mode, and the project itself as
+`project` and as the quota project (`user_project_override = true` with
+`billing_project = <that project>`), so the APIs those resources need are the
+ones enabled on the project they live in.
 
 ### 6.9 `use` — composition
 

@@ -1577,6 +1577,38 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.79.0
+
+**A project's provider alias works in the estate's region and bills to its own
+project.** Every `google_project { … }` an estate declares gets a provider alias
+(`provider "google" { alias = project_<label> }`) and every resource written inside
+that project's body is served by it. Two of its attributes change.
+
+`region` is the region the estate's own `google` provider block names — through
+`default_region` in the scaffold — where it was the literal `"europe-west3"` for every
+estate. **The plan moves for an estate that works in another region and holds a
+regional resource inside a `google_project { … }` that writes no `region` of its own:**
+that resource was created in `europe-west3` and is now replaced in the estate's region.
+Find them with `grep -n "region" <hcl-dir>/providers.tf` before and after a `satz
+transpile`, and read the `tofu plan` — a destroy-and-create of a resource holding data
+is moved deliberately or not at all.
+
+**The edit:** none, if `europe-west3` is where the resource belongs — write `region =
+"europe-west3"` into that resource's body in the estate and the plan is empty again.
+An estate whose `providers { "google" { … } }` block names no `region` at all now
+emits aliases without one, and a regional resource inside a project that writes none
+is refused by the provider naming the attribute: bind `default_region` and write
+`region = default_region` in the provider block, as `satz init` does.
+
+`billing_project` is the alias's own project, where it was the infrastructure project.
+Google tests API enablement and quota on the project sent as the quota project, so a
+resource inside a project node now needs its API enabled on THAT project, not on the
+infrastructure project. **The edit:** for each project whose body holds resources, make
+sure its `project_service = [ … ]` list carries the APIs they need —
+`satz transpile <estate>` names an API no `google_project_service` enables. The
+infrastructure project keeps its own list; nothing is removed from it, and the estate's
+`google` and `google-beta` blocks are untouched.
+
 ### v0.77.0
 
 **The S1 security group model ships in one spelling, and the two files of the other one

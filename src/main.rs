@@ -1473,7 +1473,7 @@ Thumbs.db
                         customer_id: c_id.clone(),
                         shortname: customer_shortname.unwrap_or_default(),
                         billing_id: billing_account_infra.unwrap_or_default(),
-                        region: default_region.unwrap_or_else(|| "europe-west3".to_string()),
+                        region: default_region.unwrap_or_else(|| crate::bootstrap::DEFAULT_REGION.to_string()),
                         // never a placeholder: unset stays empty, and the
                         // bootstrap gate refuses it by name
                         org_id: customer_organization_id.unwrap_or_default(),
@@ -3053,6 +3053,12 @@ fn bound_param(file: &str, line: u32, attribute: &str) -> Option<String> {
 /// writes them, `error` refuses, `none` skips. A type the table does not know is a
 /// note, never an error: satz cannot say what it needs. The role line is the
 /// estate's `svc_iac_account` param, the nearest thing the grant has to a site.
+///
+/// Each half needs a param to judge against — the project the default provider
+/// bills to for the APIs, the IaC service account for the roles. An estate that
+/// binds neither gets a note per half naming the param it is missing: a check
+/// that says nothing reads as a check that passed, and this one used to say
+/// nothing for both halves whenever the service account was unbound.
 fn prerequisite_findings(
     manifest: &crate::manifest::Manifest,
     env: &satz_core::pipeline::Env,
@@ -3064,22 +3070,34 @@ fn prerequisite_findings(
 ) {
     use crate::findings::{Finding, Kind, Severity};
     let Some(sev) = crate::findings::at_level(level) else { return };
-    let get = |k: &str| env.get(k).and_then(|v| v.as_str()).map(str::to_string);
-    let Some(sa) = crate::prerequisites::service_account_of(get) else { return };
-    // Judging the API half needs the project the calls are billed to; an estate
-    // that binds no infra project has a louder problem than this check.
-    let infra = get("infra_project_name").unwrap_or_default();
-    let missing_apis =
-        if infra.is_empty() { Vec::new() } else { crate::prerequisites::missing_apis(manifest, &infra) };
+    let get = |k: &str| env.get(k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
     let update = "satz update-prerequisites <estate>";
+    // The API half is judged on the project the default provider bills every
+    // call to. Without it there is nothing to judge against, and saying so is
+    // the finding.
+    let Some(infra) = get("infra_project_name") else {
+        f.push(Finding::new(
+            Severity::Info,
+            Kind::Prerequisites,
+            "the APIs this estate's resources need were not checked: the estate binds no \
+             `infra_project_name`, and that is the project the default provider bills its calls \
+             to and the project the check reads `project_service` entries on. Bind it in \
+             `params { }` to have them checked.",
+        ));
+        prerequisite_role_findings(manifest, get, estate, estate_arg, estate_src, sev, update, f);
+        return;
+    };
+    let missing_apis = crate::prerequisites::missing_apis(manifest, &infra);
     if !missing_apis.is_empty() {
         f.push(Finding::new(
             sev,
             Kind::Prerequisites,
             format!(
-                "{} API(s) this estate's resources need are not enabled on {} — every call \
-                 the provider makes is billed to the infra project, so each has to be a \
-                 `project_service` entry on it:\n  {}",
+                "{} API(s) this estate's resources need are not enabled on {} — the default \
+                 provider bills its calls to the infra project, so each has to be a \
+                 `project_service` entry on it. A resource written inside a `google_project` \
+                 node is served by that project's provider alias and billed there, and needs \
+                 the same entry on its own project:\n  {}",
                 missing_apis.len(),
                 infra,
                 missing_apis
@@ -3090,6 +3108,44 @@ fn prerequisite_findings(
             ),
         ).fix_in(update, estate_arg));
     }
+    prerequisite_role_findings(manifest, get, estate, estate_arg, estate_src, sev, update, f);
+}
+
+/// The role half of [`prerequisite_findings`]: what the IaC service account is
+/// missing for the types the estate emits. It is judged on that account, so an
+/// estate that binds neither param it is derived from gets a note naming them
+/// instead of no output.
+#[allow(clippy::too_many_arguments)]
+fn prerequisite_role_findings(
+    manifest: &crate::manifest::Manifest,
+    get: impl Fn(&str) -> Option<String> + Copy,
+    estate: &Path,
+    estate_arg: &str,
+    estate_src: &str,
+    sev: crate::findings::Severity,
+    update: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let Some(sa) = crate::prerequisites::service_account_of(get) else {
+        let unbound: Vec<String> = ["svc_iac_account", "infra_project_name"]
+            .into_iter()
+            .filter(|k| get(k).is_none())
+            .map(|k| format!("`{}`", k))
+            .collect();
+        f.push(Finding::new(
+            Severity::Info,
+            Kind::Prerequisites,
+            format!(
+                "the roles this estate's resource types need were not checked: they are judged on \
+                 the IaC service account `{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com`, \
+                 and the estate binds no {}. Bind {} in `params {{ }}` to have them checked.",
+                unbound.join(" or "),
+                if unbound.len() == 1 { "it" } else { "them" }
+            ),
+        ));
+        return;
+    };
     let (needs, unknown) = crate::prerequisites::needs(manifest);
     let granted = crate::prerequisites::granted(manifest, &sa);
     let missing = crate::prerequisites::missing(&needs, &granted);
@@ -3747,9 +3803,8 @@ struct EmittedProvider {
 ///
 /// The DEFAULT provider is the block labelled `google` whose `alias` is
 /// `"google"`: the one every emitted resource without a provider of its own
-/// uses. The per-project aliases carry the same two values in cloud mode and
-/// their own project in local mode, and taking whichever came first would make
-/// the answer depend on emission order.
+/// uses. Each per-project alias bills to its own project, so taking whichever
+/// block came first would make the answer depend on emission order.
 fn emitted_provider(hcl_dir: &Path) -> Result<EmittedProvider, String> {
     let path = hcl_dir.join("providers.tf");
     let text = match std::fs::read_to_string(&path) {
@@ -3804,24 +3859,36 @@ fn configure_emitted_impersonation(provider: &EmittedProvider) -> Result<(), Str
 /// services enable` line that does it by hand, and fails — `tofu` is never
 /// started with an API off, because its refresh would stop halfway through,
 /// having already reported half an estate as drifted.
+///
+/// Every path says what it did, the ones that check nothing included: a
+/// preflight that prints nothing is read as a preflight that passed.
 async fn enable_declared_apis(hcl_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let provider = emitted_provider(hcl_dir)?;
     let Some(project) = provider.billing_project.clone() else {
         // A local-mode estate with no infrastructure project bills nothing
         // centrally; each resource's own project carries its APIs, and `tofu`
         // creates them.
+        eprintln!(
+            "APIs: not checked — the default `google` provider in {} names no `billing_project`, \
+             so there is no central project to check them on",
+            hcl_dir.join("providers.tf").display()
+        );
         return Ok(());
     };
     let main_tf = hcl_dir.join("main.tf");
     let text = match std::fs::read_to_string(&main_tf) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("APIs: not checked — there is no {}", main_tf.display());
+            return Ok(());
+        }
         Err(e) => return Err(format!("{}: {}", main_tf.display(), e).into()),
     };
     let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
     let manifest = crate::manifest::Manifest::from_blocks(body.blocks());
     let declared = crate::prerequisites::declared_apis(&manifest, &project);
     if declared.is_empty() {
+        eprintln!("APIs on {}: the estate declares none there — nothing to check", project);
         return Ok(());
     }
     configure_emitted_impersonation(&provider)?;
@@ -6155,6 +6222,114 @@ mod prerequisites_gate {
         ("google_compute_firewall_policy_rule", "…/firewallPolicies/<number>/rules/<priority> — the policy's number is assigned"),
         ("google_cloudbuild_trigger", "projects/<p>/locations/<l>/triggers/<uuid>, assigned on create — needs a lookup by name"),
     ];
+}
+
+#[cfg(test)]
+mod prerequisite_findings_speak {
+    //! The prerequisite check says what it did not check.
+    //!
+    //! It is judged on two params — the project the default provider bills to,
+    //! and the IaC service account — and it used to return at the first sight of
+    //! an unbound `svc_iac_account`, taking the API half with it. An estate
+    //! missing that one param therefore compiled with no prerequisite output at
+    //! all, which reads as "checked, nothing to report"; binding the param made
+    //! the same estate name a missing API. A check that cannot run says so.
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    /// One bucket in a project, which needs `storage.googleapis.com`, and no
+    /// `google_project_service` anywhere: the API half has something to say
+    /// whenever it can run at all.
+    fn manifest() -> crate::manifest::Manifest {
+        crate::manifest::Manifest::parse(
+            "resource \"google_storage_bucket\" \"state\" {\n  name = \"acme-data-001-state\"\n  project = \"acme-data-001\"\n}\n",
+        )
+    }
+
+    fn findings(params: &[(&str, &str)]) -> Vec<crate::findings::Finding> {
+        let env: satz_core::pipeline::Env =
+            params.iter().map(|(k, v)| ((*k).to_string(), serde_yaml::Value::from(*v))).collect();
+        let mut f = Vec::new();
+        crate::prerequisite_findings(&manifest(), &env, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
+        f
+    }
+
+    fn says(f: &[crate::findings::Finding], needle: &str) -> bool {
+        f.iter().any(|x| x.message.contains(needle))
+    }
+
+    /// The defect itself: an estate that binds the infra project but no service
+    /// account gets the API finding, and a note for the half that was skipped.
+    #[test]
+    fn an_estate_without_a_service_account_still_gets_the_api_half() {
+        let f = findings(&[("infra_project_name", "acme-infra-001")]);
+        assert!(
+            says(&f, "storage.googleapis.com") && says(&f, "acme-infra-001"),
+            "the API half stayed silent: {:?}",
+            f.iter().map(|x| &x.message).collect::<Vec<_>>()
+        );
+        assert!(
+            says(&f, "the roles this estate's resource types need were not checked")
+                && says(&f, "`svc_iac_account`"),
+            "the half that was skipped said nothing: {:?}",
+            f.iter().map(|x| &x.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// An estate that binds neither param gets one note per half, naming the
+    /// param each half needs — and neither note fails a compile: not being able
+    /// to check something is not a finding against the estate.
+    #[test]
+    fn an_estate_without_either_param_is_told_what_is_missing() {
+        let f = findings(&[]);
+        assert!(
+            says(&f, "the APIs this estate's resources need were not checked")
+                && says(&f, "`infra_project_name`"),
+            "the API half said nothing: {:?}",
+            f.iter().map(|x| &x.message).collect::<Vec<_>>()
+        );
+        assert!(
+            says(&f, "the roles this estate's resource types need were not checked"),
+            "the role half said nothing: {:?}",
+            f.iter().map(|x| &x.message).collect::<Vec<_>>()
+        );
+        assert!(
+            f.iter().all(|x| x.severity == crate::findings::Severity::Info),
+            "an unchecked half refuses a compile: {:?}",
+            f.iter().map(|x| (&x.severity, &x.message)).collect::<Vec<_>>()
+        );
+        assert!(!f.is_empty());
+    }
+
+    /// Both params bound: the check runs, and says nothing about not checking.
+    #[test]
+    fn an_estate_that_binds_both_is_checked() {
+        let f = findings(&[("infra_project_name", "acme-infra-001"), ("svc_iac_account", "svc-iac-001")]);
+        assert!(!says(&f, "were not checked"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
+        assert!(says(&f, "storage.googleapis.com"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
+        assert!(
+            says(&f, "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"),
+            "{:?}",
+            f.iter().map(|x| &x.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// `validation_level = "none"` still skips the whole check — the note is not
+    /// a way around that switch.
+    #[test]
+    fn the_level_none_still_silences_everything() {
+        let mut f = Vec::new();
+        crate::prerequisite_findings(
+            &manifest(),
+            &BTreeMap::new(),
+            Path::new("estate.satz"),
+            "estate.satz",
+            "",
+            "none",
+            &mut f,
+        );
+        assert!(f.is_empty(), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
+    }
 }
 
 #[cfg(test)]

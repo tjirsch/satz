@@ -798,13 +798,17 @@ pub(crate) fn membership_blocks(
     out
 }
 
-/// Google-provider injections: central billing project, user_project_override,
-/// cloud-mode impersonation, and the default region. Extracted verbatim from
-/// the walk's configure_google_provider.
+/// Google-provider injections: the central billing project,
+/// `user_project_override`, the impersonated identity, and the region the
+/// estate's own `google` provider works in.
 pub(crate) struct GoogleProviderDeps {
     pub infra_project: Option<String>,
     /// Precomputed impersonation SA email — Some only in cloud mode.
     pub impersonate: Option<String>,
+    /// The `region` of the estate's default `google` provider, which every
+    /// per-project alias carries as well. `None` when the estate's provider
+    /// block names none, and then no alias names one either.
+    pub region: Option<String>,
 }
 
 pub(crate) fn configure_google_provider(
@@ -869,19 +873,41 @@ pub(crate) fn provider_block_from_map(
     builder.build()
 }
 
-/// The per-project provider alias block (walk: transpile_google_project).
+/// The per-project provider alias block: the default `google` provider scoped
+/// to one project the estate declares. Every resource written inside that
+/// project node is emitted with `provider = google.project_<label>`.
+///
+/// It differs from the default provider in the project only. The project is its
+/// own quota project — `user_project_override` sends
+/// `X-Goog-User-Project: <this project>`, so Google tests API enablement and
+/// quota where the resource itself lives, which is the project the estate's
+/// `project_service` entries enable. Billing the alias to the infrastructure
+/// project instead demands every API on a second project as well and refuses
+/// the create with a 403 naming that project.
+///
+/// The region is the estate's, from its own `google` provider block; an estate
+/// whose provider names none gets an alias that names none, and a regional
+/// resource that writes no `region` is refused by the provider rather than
+/// created somewhere the estate never said.
 pub(crate) fn project_provider_block(
     project_key: &str,
     project_id: &str,
     deps: &GoogleProviderDeps,
 ) -> hcl::Block {
     let p_alias = format!("project_{}", project_key.replace('-', "_"));
-    let builder = hcl::Block::builder("provider")
+    let mut builder = hcl::Block::builder("provider")
         .add_label("google")
         .add_attribute(("alias", p_alias))
-        .add_attribute(("project", project_id.to_string()));
-    let builder = configure_google_provider(builder, Some(project_id.to_string()), false, false, deps);
-    builder.add_attribute(("region", "europe-west3")).build()
+        .add_attribute(("project", project_id.to_string()))
+        .add_attribute(("billing_project", project_id.to_string()))
+        .add_attribute(("user_project_override", true));
+    if let Some(sa_email) = &deps.impersonate {
+        builder = builder.add_attribute(("impersonate_service_account", sa_email.clone()));
+    }
+    if let Some(region) = &deps.region {
+        builder = builder.add_attribute(("region", region.clone()));
+    }
+    builder.build()
 }
 
 // ---------------------------------------------------------------------------
