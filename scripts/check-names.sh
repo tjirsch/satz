@@ -2,8 +2,8 @@
 # check-names.sh — the privacy gate. Neutral: it knows no customer, no
 # company, no person. It rejects anything SHAPED like private data that is
 # not one of the predefined example values (docs/examples.md), and
-# any commit made under an identity other than the maintainer's or a GitHub
-# noreply address.
+# any commit made under an identity other than a GitHub noreply address or
+# what $NAMES_IDENT allows in a local clone.
 #
 # The content rules have a second implementation in satz (src/privacy_shapes.rs,
 # what `satz review-pack` judges a pack with). Both read their allow-lists from
@@ -22,9 +22,10 @@
 # prose. Those have no shape — "Log Admins" and a real customer's project name are
 # the same kind of string — so they are the local denylist's job, below.
 #
-# Optional LOCAL denylist (never committed): $NAMES_DENYLIST, or
-# ~/Documents/thomas01/satz-core-history-rewrite/denylist.txt if present — one
-# extended regex per line. CI has none and stays structural.
+# Optional LOCAL settings, never committed and unset in CI, which stays
+# structural: $NAMES_DENYLIST is a file of one extended regex per line — the
+# names no shape can catch; $NAMES_IDENT is an extended regex of one more
+# address that may author or commit.
 #
 # bash 3.2 compatible (macOS default).
 set -uo pipefail
@@ -32,8 +33,12 @@ orig_pwd="$PWD"
 cd "$(git rev-parse --show-toplevel)"
 
 # ---- allowlists ---------------------------------------------------------------
-# identities that may author or commit: the maintainer, and GitHub's private noreply addresses
-ALLOW_IDENT='Thomas\.Jirsch@gmail\.com|[0-9]+\+[A-Za-z0-9-]+@users\.noreply\.github\.com|noreply@github\.com'
+# identities that may author or commit: GitHub's private noreply addresses, and the
+# one address $NAMES_IDENT adds in a local clone. No personal address is written here:
+# this file is public, and an address in it is the private datum the gate exists to keep out.
+ALLOW_IDENT='[0-9]+\+[A-Za-z0-9-]+@users\.noreply\.github\.com|noreply@github\.com'
+[[ -z "${NAMES_IDENT:-}" ]] || ALLOW_IDENT="$ALLOW_IDENT|$NAMES_IDENT"
+IDENT_FIX='set git config user.email to your GitHub noreply address (<id>+<user>@users.noreply.github.com), or NAMES_IDENT to an extended regex for a local clone'
 # The content allow-lists — example values, vendor hosts, vendor-default GUIDs —
 # live in ONE file both readers take them from: this script, and satz itself
 # (src/privacy_shapes.rs compiles it in for `satz review-pack`). One entry per
@@ -136,7 +141,7 @@ tokens() {
 if [[ "$mode" == "--staged" ]]; then
   a=$(git var GIT_AUTHOR_IDENT | sed 's/.*<\(.*\)>.*/\1/'); c=$(git var GIT_COMMITTER_IDENT | sed 's/.*<\(.*\)>.*/\1/')
   bad=""; for e in "$a" "$c"; do echo "$e" | grep -q -E "^($ALLOW_IDENT)$" || bad="$bad$e"$'\n'; done
-  report "commit identity is not the maintainer or a GitHub noreply address (set: git config user.email …)" "$bad"
+  report "commit identity is not an allowed address — $IDENT_FIX" "$bad"
 elif [[ -n "$range" ]]; then
   # Not via `awk -v`: it processes backslash escapes, so `\+` in the noreply
   # pattern lost its literal `+` and every GitHub squash-merge author
@@ -146,7 +151,7 @@ elif [[ -n "$range" ]]; then
       echo "$e" | grep -q -E "^($ALLOW_IDENT)$" || { echo "$h $a $c"; break; }
     done
   done)
-  report "commit identity in $range is not the maintainer or a GitHub noreply address" "$bad"
+  report "commit identity in $range is not an allowed address — $IDENT_FIX" "$bad"
   # commit messages in the range go through the same content rules as files
   msgs=$(git log --format='%h %B' "$range")
 fi
@@ -194,14 +199,14 @@ if [[ -n "$files" ]]; then
 fi
 
 # ---- 7. optional local denylist (never committed) ------------------------------
-DENY="${NAMES_DENYLIST:-$HOME/Documents/thomas01/satz-core-history-rewrite/denylist.txt}"
-if [[ -f "$DENY" && -n "$files" ]]; then
+DENY="${NAMES_DENYLIST:-}"
+if [[ -n "$DENY" && -f "$DENY" && -n "$files" ]]; then
   pat=$(grep -v -E '^[[:space:]]*(#|$)' "$DENY" | paste -sd '|' -)
   [[ -z "$pat" ]] || report "local denylist match" "$(g "$pat" | grep -i -E "$pat")"
 fi
 
 if (( fail )); then
-  echo; echo "check-names: FAILED — private data must not enter this repository; use docs/examples.md values and the maintainer identity"
+  echo; echo "check-names: FAILED — private data must not enter this repository; use docs/examples.md values and a GitHub noreply identity"
   exit 1
 fi
 n=$( [[ -n "$files" ]] && printf '%s\n' $files | wc -l | tr -d ' ' || echo 0 )

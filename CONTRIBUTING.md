@@ -87,7 +87,8 @@ neutral — it names nobody — and rejects:
   `.claude/`, `attestations.yaml`, `evidence/`;
 - commits whose author or committer is not a GitHub noreply address
   (`<id>+<user>@users.noreply.github.com` — enable "keep my email address
-  private" in your GitHub settings) or the maintainer's address.
+  private" in your GitHub settings — or `noreply@github.com`), unless
+  `$NAMES_IDENT` in your environment allows that address in your clone.
 
 Run it before you push: `bash scripts/check-names.sh`, and enable the
 pre-commit hook once per clone with `git config core.hooksPath .githooks`.
