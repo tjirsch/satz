@@ -1,0 +1,547 @@
+          "COMPREHENSIVE"
+          "ESSENTIAL",
+          "LIGHT",
+          "in:eu-locations",
+          "in:us-locations"
+        ]
+        ]
+        allowed_values = [
+        allowed_values = [
+      "api://d17a7d74-7e73-4e7d-bd41-8d9525e86cab"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      enforce = "TRUE"
+      parameters = "{\"allowedDomains\":[\"@example.com\"]}"
+      parameters = "{\"allowedPrincipalSets\":[\"//cloudresourcemanager.googleapis.com/organizations/123456789\"],\"allowedMemberSubjects\":[\"serviceAccount:local-exception@acme-infra-001.iam.gserviceaccount.com\",\"serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com\",\"serviceAccount:billing-export-bigquery@system.gserviceaccount.com\"]}"
+      parameters = "{\"allowedSchemes\":[\"INTERNAL\"]}"
+      values {
+      values {
+      }
+      }
+    "compute.projects.get",
+    "compute.projects.setCommonInstanceMetadata"
+    "google.subject" = "assertion.sub"
+    "iam.roles.list",
+    "resourcemanager.folders.get",
+    "resourcemanager.folders.list",
+    "resourcemanager.projects.get",
+    "resourcemanager.projects.list",
+    "serviceusage.services.enable",
+    ]
+    allowed_audiences = [
+    google_org_policy_policy.compute_managed_disableSerialPortAccess
+    google_org_policy_policy.compute_managed_requireOsLogin
+    google_org_policy_policy.compute_managed_restrictProtocolForwardingCreationForTypes
+    google_org_policy_policy.compute_managed_vmCanIpForward
+    google_org_policy_policy.compute_managed_vmExternalIpAccess
+    google_org_policy_policy.compute_requireOsLogin_superseded
+    google_org_policy_policy.compute_requireVpcFlowLogs
+    google_org_policy_policy.compute_restrictProtocolForwardingCreationForTypes_superseded
+    google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly
+    google_org_policy_policy.compute_skipDefaultNetworkCreation
+    google_org_policy_policy.essentialcontacts_allowedContactDomains_superseded
+    google_org_policy_policy.essentialcontacts_managed_allowedContactDomains
+    google_org_policy_policy.gcp_detailedAuditLoggingMode
+    google_org_policy_policy.gcp_resourceLocations
+    google_org_policy_policy.iam_allowedPolicyMemberDomains_superseded
+    google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts
+    google_org_policy_policy.iam_disableAuditLoggingExemption
+    google_org_policy_policy.iam_disableServiceAccountKeyCreation_superseded
+    google_org_policy_policy.iam_disableServiceAccountKeyUpload_superseded
+    google_org_policy_policy.iam_managed_allowedPolicyMembers
+    google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation
+    google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload
+    google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts
+    google_org_policy_policy.storage_publicAccessPrevention
+    google_project_service.billing_export_project_bigquery_googleapis_com
+    google_project_service.mdc_mgmt_iam_googleapis_com
+    google_project_service.mdc_mgmt_iam_googleapis_com
+    google_project_service.mdc_mgmt_iam_googleapis_com
+    google_service_account.mdc_onboarding
+    issuer_uri = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+    reset = true
+    reset = true
+    reset = true
+    reset = true
+    reset = true
+    reset = true
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    rules {
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  ]
+  account_id = "mdc-onboarding-sa"
+  attribute_mapping = {
+  billing_account = "01AA-BB-CC"
+  billing_account = "01AA-BB-CC"
+  dataset_id = "${google_bigquery_dataset.billing_export.dataset_id}"
+  dataset_id = "acme_billing_export"
+  delete_contents_on_destroy = false
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  depends_on = [
+  description = "Cloud Billing usage and cost data, exported continuously"
+  description = "Microsoft defender for cloud provisioner workload identity pool"
+  description = "Microsoft organization custom role for onboarding"
+  description = "OIDC identity pool provider for autoprovisioner"
+  display_name = "Microsoft Defender for Cloud"
+  display_name = "Microsoft Onboarding management service account"
+  location = "europe-west3"
+  member = "principalSet://iam.googleapis.com/projects/${google_project.mdc_mgmt.number}/locations/global/workloadIdentityPools/acmetenantpoolexample0000000001/*"
+  member = "serviceAccount:billing-export-bigquery@system.gserviceaccount.com"
+  member = "serviceAccount:mdc-onboarding-sa@acme-mdc-mgmt.iam.gserviceaccount.com"
+  name = "Microsoft MGMT Project"
+  name = "acme-billing-001"
+  name = "organizations/123456789/policies/compute.managed.disableSerialPortAccess"
+  name = "organizations/123456789/policies/compute.managed.requireOsLogin"
+  name = "organizations/123456789/policies/compute.managed.restrictProtocolForwardingCreationForTypes"
+  name = "organizations/123456789/policies/compute.managed.vmCanIpForward"
+  name = "organizations/123456789/policies/compute.managed.vmExternalIpAccess"
+  name = "organizations/123456789/policies/compute.requireOsLogin"
+  name = "organizations/123456789/policies/compute.requireVpcFlowLogs"
+  name = "organizations/123456789/policies/compute.restrictProtocolForwardingCreationForTypes"
+  name = "organizations/123456789/policies/compute.setNewProjectDefaultToZonalDNSOnly"
+  name = "organizations/123456789/policies/compute.skipDefaultNetworkCreation"
+  name = "organizations/123456789/policies/essentialcontacts.allowedContactDomains"
+  name = "organizations/123456789/policies/essentialcontacts.managed.allowedContactDomains"
+  name = "organizations/123456789/policies/gcp.detailedAuditLoggingMode"
+  name = "organizations/123456789/policies/gcp.resourceLocations"
+  name = "organizations/123456789/policies/iam.allowedPolicyMemberDomains"
+  name = "organizations/123456789/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+  name = "organizations/123456789/policies/iam.disableAuditLoggingExemption"
+  name = "organizations/123456789/policies/iam.disableServiceAccountKeyCreation"
+  name = "organizations/123456789/policies/iam.disableServiceAccountKeyUpload"
+  name = "organizations/123456789/policies/iam.managed.allowedPolicyMembers"
+  name = "organizations/123456789/policies/iam.managed.disableServiceAccountKeyCreation"
+  name = "organizations/123456789/policies/iam.managed.disableServiceAccountKeyUpload"
+  name = "organizations/123456789/policies/iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts"
+  name = "organizations/123456789/policies/storage.publicAccessPrevention"
+  name = "organizations/123456789/policies/storage.uniformBucketLevelAccess"
+  oidc {
+  org_id = "123456789"
+  org_id = "123456789"
+  org_id = "123456789"
+  org_id = "123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  permissions = [
+  project = "${google_project_service.billing_export_project_bigquery_googleapis_com.project}"
+  project = "acme-billing-001"
+  project = "acme-mdc-mgmt"
+  project = google_project.billing_export_project.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project = google_project.mdc_mgmt.project_id
+  project_id = "acme-billing-001"
+  project_id = "acme-mdc-mgmt"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.project_mdc_mgmt
+  provider = google.project_mdc_mgmt
+  role = "organizations/123456789/roles/MDCCustomRole"
+  role = "roles/bigquery.dataEditor"
+  role = "roles/iam.workloadIdentityUser"
+  role_id = "MDCCustomRole"
+  service = "apikeys.googleapis.com"
+  service = "bigquery.googleapis.com"
+  service = "cloudasset.googleapis.com"
+  service = "cloudkms.googleapis.com"
+  service = "cloudresourcemanager.googleapis.com"
+  service = "compute.googleapis.com"
+  service = "iam.googleapis.com"
+  service = "iamcredentials.googleapis.com"
+  service = "sqladmin.googleapis.com"
+  service = "sts.googleapis.com"
+  service_account_id = "${google_service_account.mdc_onboarding.name}"
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  spec {
+  title = "MDCCustomRole"
+  workload_identity_pool_id = "${google_iam_workload_identity_pool.mdc_pool.workload_identity_pool_id}"
+  workload_identity_pool_id = "acmetenantpoolexample0000000001"
+  workload_identity_pool_provider_id = "auto-provisioner"
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# Declared reset: while the state holds its rules, the API refuses the in-place update (Cannot set PolicyRules if reset is true).
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.compute_requireOsLogin_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.compute_restrictProtocolForwardingCreationForTypes_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.essentialcontacts_allowedContactDomains_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.iam_allowedPolicyMemberDomains_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.iam_disableServiceAccountKeyCreation_superseded
+# satz plan and satz apply add the replace; a bare apply needs: tofu apply -replace=google_org_policy_policy.iam_disableServiceAccountKeyUpload_superseded
+resource "google_bigquery_dataset" "billing_export" {
+resource "google_bigquery_dataset_iam_member" "billing_export_writer" {
+resource "google_iam_workload_identity_pool" "mdc_pool" {
+resource "google_iam_workload_identity_pool_provider" "mdc_auto_provisioner" {
+resource "google_org_policy_policy" "compute_managed_disableSerialPortAccess" {
+resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
+resource "google_org_policy_policy" "compute_managed_restrictProtocolForwardingCreationForTypes" {
+resource "google_org_policy_policy" "compute_managed_vmCanIpForward" {
+resource "google_org_policy_policy" "compute_managed_vmExternalIpAccess" {
+resource "google_org_policy_policy" "compute_requireOsLogin_superseded" {
+resource "google_org_policy_policy" "compute_requireVpcFlowLogs" {
+resource "google_org_policy_policy" "compute_restrictProtocolForwardingCreationForTypes_superseded" {
+resource "google_org_policy_policy" "compute_setNewProjectDefaultToZonalDNSOnly" {
+resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
+resource "google_org_policy_policy" "essentialcontacts_allowedContactDomains_superseded" {
+resource "google_org_policy_policy" "essentialcontacts_managed_allowedContactDomains" {
+resource "google_org_policy_policy" "gcp_detailedAuditLoggingMode" {
+resource "google_org_policy_policy" "gcp_resourceLocations" {
+resource "google_org_policy_policy" "iam_allowedPolicyMemberDomains_superseded" {
+resource "google_org_policy_policy" "iam_automaticIamGrantsForDefaultServiceAccounts" {
+resource "google_org_policy_policy" "iam_disableAuditLoggingExemption" {
+resource "google_org_policy_policy" "iam_disableServiceAccountKeyCreation_superseded" {
+resource "google_org_policy_policy" "iam_disableServiceAccountKeyUpload_superseded" {
+resource "google_org_policy_policy" "iam_managed_allowedPolicyMembers" {
+resource "google_org_policy_policy" "iam_managed_disableServiceAccountKeyCreation" {
+resource "google_org_policy_policy" "iam_managed_disableServiceAccountKeyUpload" {
+resource "google_org_policy_policy" "iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts" {
+resource "google_org_policy_policy" "storage_publicAccessPrevention" {
+resource "google_org_policy_policy" "storage_uniformBucketLevelAccess" {
+resource "google_organization_iam_custom_role" "MDCCustomRole" {
+resource "google_organization_iam_member" "iam_serviceAccount_mdc_onboarding_sa_acme_mdc_mgmt_iam_gserviceaccount_com_e75f6dd4c3ed9cfa" {
+resource "google_project" "billing_export_project" {
+resource "google_project" "mdc_mgmt" {
+resource "google_project_service" "billing_export_project_bigquery_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_apikeys_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_cloudasset_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_cloudkms_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_cloudresourcemanager_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_compute_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_iam_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_iamcredentials_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_sqladmin_googleapis_com" {
+resource "google_project_service" "mdc_mgmt_sts_googleapis_com" {
+resource "google_service_account" "mdc_onboarding" {
+resource "google_service_account_iam_member" "iam_principalSet___iam_googleapis_com_projects_google_project_mdc_mgmt_number_locations_global_workloadIdentityPools_acmetenantpoolexample0000000001___b4d70511b263cc1f" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+    "enforce" = "TRUE"
+  "//cloudresourcemanager.googleapis.com/organizations/123456789"
+  "@example.com"
+  "INTERNAL"
+  "in:eu-locations",
+  "in:us-locations"
+  "serviceAccount:billing-export-bigquery@system.gserviceaccount.com"
+  "serviceAccount:local-exception@acme-infra-001.iam.gserviceaccount.com",
+  "serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com",
+  {
+  }
+]
+]
+]
+]
+]
+]
+allowed-policy-member-principal-sets = [
+allowed-policy-member-subjects = [
+allowed-protocol-forwarding-schemes = [
+allowed-resource-locations = [
+billing-account-infra = "01AA-BB-CC"
+billing-export-dataset-id = "acme_billing_export"
+billing-export-description = "Cloud Billing usage and cost data, exported continuously"
+billing-export-location = "europe-west3"
+billing-export-project-display-name = "acme-billing-001"
+billing-export-project-folder = ""
+billing-export-project-id = "acme-billing-001"
+cis-access-approval = false
+cis-api-key-services = false
+cis-api-key-services-dry-run = false
+cis-block-internet-ssh-rdp = true
+cis-block-project-ssh-keys = false
+cis-block-project-ssh-keys-dry-run = false
+cis-bucket-retention = false
+cis-bucket-retention-dry-run = false
+cis-cloud-sql-hardening = false
+cis-cloud-sql-hardening-dry-run = false
+cis-cloud-sql-iam-and-deletion-protection = false
+cis-cloud-sql-iam-and-deletion-protection-dry-run = false
+cis-cmek-required = false
+cis-confidential-computing = false
+cis-confidential-computing-dry-run = false
+cis-dns-logging = true
+cis-require-shielded-vm = false
+cis-sa-key-creation-rules = [
+customer-domain = "example.com"
+customer-organization-id = "123456789"
+customer-shortname = "acme"
+default-region = "europe-west3"
+essential-contacts-allowed-domains = [
+mdc-cspm-default-access = false
+mdc-cspm-least-privilege = false
+mdc-mgmt-project-folder = ""
+mdc-mgmt-project-id = "acme-mdc-mgmt"
+mdc-plan-cspm = false
+mdc-workload-pool-id = "acmetenantpoolexample0000000001"
+---imports---

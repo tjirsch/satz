@@ -362,6 +362,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_billing_permissions` | on | `billing-account-permissions` |
 | `use_essential_contacts` | on | `essential-contacts-organization` |
 | `use_budget` | off | `organization-budget` |
+| `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
 | `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the three below are asked only when it is on |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
@@ -545,6 +546,29 @@ the param — keeping the five SCC agents — and apply. The legacy
 `iam.allowedPolicyMemberDomains` cannot name a principal as an exception; Google's
 remedy there is to disable the constraint, grant, and re-enable it, so the pack
 declares it off.
+
+**A pack brings its own.** `allowed_policy_member_subjects` is the ESTATE's list, for
+its own exceptions. A pack that needs an external principal allowed declares it itself,
+as a contribution:
+
+```
+params {
+  contributes_allowed_policy_member_subjects = [
+    "serviceAccount:billing-export-bigquery@system.gserviceaccount.com",
+  ]
+}
+```
+
+A `contributes_<param>` declaration is no param of its own: it is never a variable, the
+estate never binds it, and its entries are added to whatever `<param>` holds — the
+estate's binding, else the declaring pack's default — while the contributing pack is on.
+Switch that pack off and its entries go with it. Two packs contributing the same entry
+add it once. Where the contributing line stands decides nothing: the entries are merged
+before anything is compiled. Where no pack in the estate declares the param at all —
+the CIS baseline is off, so nothing is restricting anyway — the entries are dropped, and
+`satz packs` names the requirement. Two packs contribute today: `billing-export` and
+`integrations/microsoft-defender-for-cloud`, each named on its page below, and
+`satz packs <estate>` prints which pack put which entry in this estate's list.
 
 ### SCC activation under the §1.1 lock
 
@@ -791,6 +815,44 @@ it for a fresh budget, or replace it with the real budget id (`satz adopt` does 
 resolve budgets: they are matched by display name, which needs the Budgets API). The
 amount and the thresholds are literals, not params.
 
+## billing-export.satz
+
+Cloud Billing usage and cost data, exported to BigQuery — what the money went on, per
+project, per SKU, per day, queryable months later. Where `organization-budget` alarms
+on a threshold, this keeps the record. The pack declares a project of its own, BigQuery's
+API on it, the dataset, and Google's export account's `roles/bigquery.dataEditor` on that
+dataset; it CONTRIBUTES that account to `allowed_policy_member_subjects`, so
+domain-restricted sharing lets the grant through while the pack is on.
+
+The dataset lives in a project of its own rather than in the infrastructure project:
+whoever reviews spend reads the billing dataset, and that must not also mean reading
+the state bucket.
+
+**Use** (root level): `use "presets/billing-export.satz" when use_billing_export`
+
+**Overridable defaults:**
+
+| Param | Default | Meaning |
+|---|---|---|
+| `billing_export_project_id` | `{customer_shortname}-billing-001` | the export's own project |
+| `billing_export_project_folder` | `""` | the folder it is created in; empty is the organisation |
+| `billing_export_project_display_name` | the project id | what the console shows |
+| `billing_export_dataset_id` | `{customer_shortname}_billing_export` | the dataset; a dataset id takes underscores, never hyphens |
+| `billing_export_location` | `default_region` | where the dataset lives; it cannot move |
+| `billing_export_description` | a sentence | the dataset's description |
+
+**Notice.** Cloud Billing has no API, no gcloud command and no Terraform resource for
+switching the export on. Apply the pack, then in the Cloud console open Billing, pick the
+billing account, go to Billing export, BigQuery export, and point Standard usage cost at
+the project and dataset the params name. The dataset stays empty until that is done, and
+the notice stays open until the estate binds `billing_export_enabled = true`. It is a
+warning, not an error: the apply that creates the dataset has to come first.
+
+**Questions.** Four: the project, the folder it lands in, the dataset and its location.
+The project, the dataset and the location cannot be changed afterwards.
+
+**No claim.** No catalog control covers billing export.
+
 ## essential-contacts-organization.satz
 
 One organization-level Essential Contact subscribed to ALL notification categories.
@@ -851,7 +913,7 @@ every customer and not a param.
 no CIS control and contributes to none, so the pack asserts nothing.
 
 **Two prerequisites before the first apply.** The Defender agentless-scanning service
-account lives in a Microsoft project, so it must be in `allowed_policy_member_subjects`
+account lives in a Microsoft project, and the pack CONTRIBUTES it to `allowed_policy_member_subjects`
 BEFORE any grant to it is applied — the constraints AND together and an incomplete list
 refuses the grant. And a deny-all on `iam.workloadIdentityPoolProviders` blocks the
 providers: the estate must allow the `sts.windows.net/<microsoft tenant>` issuer or
@@ -1518,6 +1580,30 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.76.0
+
+**A param whose name begins with `contributes_` is a CONTRIBUTION, not a param.** The
+name after the prefix is the list param whose entries the file adds to, so a pack that
+happens to call a param `contributes_<something>` is now read as adding to
+`<something>`. The compile refuses one in an estate ("a contribution belongs in a pack"),
+one whose value is not a list, one in a file that declares the target itself, and
+`contributes_` with nothing after it.
+
+**The edit:** rename the param. Nothing in the preset library carried such a name, so
+this reaches only an estate or a `.local` fork that chose one.
+
+**An estate that uses both the CIS baseline and the Defender foundation plans one more
+subject.** `presets/integrations/microsoft-defender-for-cloud.satz` now contributes
+`serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com`
+to `allowed_policy_member_subjects`, which the pack's header used to ask an operator to
+add by hand. The next plan therefore updates
+`google_org_policy_policy.iam_managed_allowedPolicyMembers` with that entry.
+
+**The edit:** none — that is the entry the grant to Defender's scanner needs. An estate
+that already added it by hand to its own `allowed_policy_member_subjects` keeps it once:
+a contribution is not added twice, and that estate's plan does not move. The hand-added
+line may be deleted, and then the entry leaves with the pack.
+
 ### v0.75.0
 
 **`satz review-pack` refuses a pack that holds a value shaped like private data.** A
@@ -1897,6 +1983,9 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `billing_export` | 1.0 | 2026-09-22 | Cloud Billing usage and cost data exported to BigQuery: a project of its own, the BigQuery API on it, the dataset, and Google's export account's dataEditor on it — with that account contributed to `allowed_policy_member_subjects`, and a notice for the console step Cloud Billing has no API for |
+| `estate_map` | 2.1 | 2026-09-22 | offers `billing-export` on `use_billing_export`, off by default |
+| `integrations.microsoft_defender_for_cloud` | 0.5 | 2026-09-22 | contributes the agentless disk-scanning account to `allowed_policy_member_subjects` instead of naming it as a manual prerequisite in the header |
 | `estate_core` | 2.1 | 2026-09-21 | `compliance_frameworks`, the catalogs this customer is HELD TO — a contract, an auditor, a regulator — as a list of catalog ids, with the question that asks for them. What an estate CLAIMS comes from its packs and is a different fact: an estate can claim CIS controls while its customer is audited against ISO 27001. The default is `["cis-gcp-5.0"]`; the values are the ids of the catalogs in `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) and a value that names no catalog is refused by the compile, with the list. `satz report-compliance <estate>` reports one section per framework named here, `satz prowler` scans for them beside the frameworks the packs claim, and a pack reads the param like any other. An estate that binds nothing keeps working: `report-compliance <framework> <estate>` is unchanged |
 | `monitoring.organization_audit_logsink` | 1.6 | 2026-09-21 | a question for `logsink_project_folder`: the folder the audit-archive project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation; an estate `satz init` wrote answers `"google_folder.infra_folder.name"`, which init binds itself. Nothing emitted changes for an estate that already binds the param |
 | `integrations.microsoft_defender_for_cloud` | 0.4 | 2026-09-21 | a question for `mdc_mgmt_project_folder`: the folder the Defender management project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation, which is where every estate that binds nothing has it today |

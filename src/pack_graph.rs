@@ -312,7 +312,14 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
     });
     let graph = PackGraph { nodes, edges };
     findings.extend(check_notices(&graph, &by_path, &declared));
-    findings.extend(check(&graph));
+    // the (pack, param) pairs a pack CONTRIBUTES to: check 6 holds a reader to the order
+    // of the two `use` lines and a contribution to nothing, because it is merged into the
+    // param before the walk rather than read out of the namespace during it
+    let contributed: BTreeSet<(String, String)> = by_path
+        .iter()
+        .flat_map(|(path, f)| doc_packs::contributed(f).into_iter().map(move |p| ((*path).to_string(), p)))
+        .collect();
+    findings.extend(check(&graph, &contributed));
     Ok((graph, findings))
 }
 
@@ -371,7 +378,7 @@ fn check_notices(g: &PackGraph, by_path: &BTreeMap<String, &File>, declared: &BT
 /// There is no 7: it held that every block a line is placed in exists in the estate satz
 /// writes, and a line now stands at the top level or in a resource type map, which is
 /// written where the estate lacks it. The numbers a finding prints are not reused.
-fn check(g: &PackGraph) -> Vec<Finding> {
+fn check(g: &PackGraph, contributed: &BTreeSet<(String, String)>) -> Vec<Finding> {
     let mut out = Vec::new();
     let declared_between = |a: &str, b: &str| {
         g.edges.iter().any(|e| {
@@ -446,6 +453,9 @@ fn check(g: &PackGraph) -> Vec<Finding> {
         match e.kind {
             EdgeKind::Data => {
                 for p in &e.params {
+                    if contributed.contains(&(e.from.clone(), p.clone())) {
+                        continue; // merged before the walk: the line's position decides nothing
+                    }
                     wants.entry((e.from.as_str(), format!("reads `{}`", p))).or_default().push(e.to.as_str());
                 }
             }

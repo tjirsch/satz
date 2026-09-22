@@ -1838,7 +1838,10 @@ document-ordered namespace (no anchors), `"{param}"` interpolates (no `!format`)
 includes, blocks nest with braces, and resource attribute names are **1:1 the Terraform
 provider names** — the registry docs are the docs. A `.satz` estate is parsed directly by
 the fragment pipeline (per-file fragments, folded by address, emitted as HCL); packs are
-Satz-native, pack params are overridable defaults, and **control claims are language
+Satz-native, pack params are overridable defaults — a pack that has to ADD to another
+pack's list param rather than replace it declares `contributes_<param> = [ … ]` in its own
+`params`, and its entries leave with it ([§6.3](docs/language.md#contributes_param--a-packs-entries-in-another-files-list)) —
+and **control claims are language
 syntax** —
 
 ```

@@ -145,8 +145,12 @@ params {
   // allowing them costs nothing. SCC activation grants roles to them, and
   // domain-restricted sharing blocks exactly that.
   //
-  // NOTE: overriding this param REPLACES the list — Satz v0 has no list
-  // concatenation — so keep these five entries when adding your own.
+  // This list is the ESTATE's: the five below and whatever local exception the estate
+  // binds. Overriding it REPLACES it — Satz v0 has no list concatenation — so keep
+  // these five entries when adding your own. A pack that needs an external principal
+  // allowed does NOT go here: it declares
+  // `contributes_allowed_policy_member_subjects` in its own params, and its entries
+  // are added to whatever this list holds while that pack is on and leave with it.
   // SCC's org-level service agents, READ OFF estate 1's live org IAM policy — not
   // inferred from the docs, which name two of them and misspell one. All follow
   // the canonical `service-org-<ORG_ID>@<service>` shape: derived from the org
@@ -338,7 +342,7 @@ question allowed_policy_member_principal_sets {
 
 question allowed_policy_member_subjects {
   prompt   = "Which individual principals may be granted roles despite the lock (Google service agents)?"
-  why      = "The default is Security Command Center's five organisation-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding."
+  why      = "The default is Security Command Center's five organisation-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding. A pack that needs a principal allowed contributes it itself; this answer is for the estate's own exceptions."
   reversal = edit
   blast    = high
 }

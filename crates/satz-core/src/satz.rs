@@ -257,6 +257,20 @@ pub struct OffersDecl {
 /// The one pack that may carry `offers` entries.
 pub const MAP_PACK: &str = "estate_map";
 
+/// The param-name prefix that makes a declaration a CONTRIBUTION rather than a param:
+/// `contributes_<target>` adds its entries to the list param `<target>` that another
+/// file declares.
+///
+/// It is a param name and not a statement of its own, so it travels with the pack's
+/// contract in `params { … }`, forks an estate when it changes like every other
+/// default, and the formatter and the grammar read it as what it is.
+pub const CONTRIBUTES_PREFIX: &str = "contributes_";
+
+/// The param a `contributes_…` declaration adds to, or `None` for an ordinary param.
+pub fn contribution_target(name: &str) -> Option<&str> {
+    name.strip_prefix(CONTRIBUTES_PREFIX).filter(|t| !t.is_empty())
+}
+
 /// How much a pack-declared message holds back, declared by the pack that says it.
 ///
 /// The pack sets the floor: a reader may silence an `Info` or a `Warning`, never an
@@ -1792,6 +1806,30 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
         }
         if file.questions.iter().any(|q| q.subject == n.param || q.options.iter().any(|o| o.param == n.param)) {
             return err(n.line, format!("notice {}: a question asks this param — an acknowledgement is no customer decision", n.param));
+        }
+    }
+    // `contributes_<target>` adds entries to a list param another file declares, so it
+    // is no param of its own: it belongs in a pack, its value is a list, the file that
+    // declares the target writes its entries into that default instead, and no question
+    // asks it — what a customer answers is the target, not a pack's contribution to it.
+    for (name, v, line) in &file.params {
+        if !name.starts_with(CONTRIBUTES_PREFIX) {
+            continue;
+        }
+        let Some(target) = contribution_target(name) else {
+            return err(*line, format!("`{}` names no param — a contribution is written `{}<param>`", name, CONTRIBUTES_PREFIX));
+        };
+        if !file.is_pack {
+            return err(*line, format!("{}: a contribution belongs in a pack — an estate binds `{}` itself", name, target));
+        }
+        if !matches!(v, Value::List(_)) {
+            return err(*line, format!("{}: a contribution is a list of the entries added to `{}`", name, target));
+        }
+        if declared.contains(target) {
+            return err(*line, format!("{}: this file declares `{}` itself — its entries belong in that default", name, target));
+        }
+        if file.questions.iter().any(|q| q.subject == *name || q.options.iter().any(|o| o.param == *name)) {
+            return err(*line, format!("{}: a question asks this — what a customer answers is `{}`, not a pack's contribution to it", name, target));
         }
     }
     Ok(file)

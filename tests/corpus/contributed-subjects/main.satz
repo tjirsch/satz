@@ -1,0 +1,41 @@
+// Corpus case: what two packs contribute to a third pack's list param, and what the
+// estate contributes to it itself.
+//
+// The CIS baseline declares `allowed_policy_member_subjects`; the billing export and the
+// Defender foundation each declare `contributes_allowed_policy_member_subjects`. The
+// emitted §1.1 policy must carry, in this order: the estate's own binding, then the
+// billing export's account, then Defender's scanning account — each once, and Defender's
+// account only once although the estate already names it, which is the duplicate the
+// merge drops. The pack line of the billing export stands BEFORE the CIS baseline's, so
+// the snapshot also pins that a contribution does not depend on where its line is.
+// Snapshot-gated.
+
+estate corpus_contributed_subjects
+
+params {
+  customer_organization_id = "123456789"
+  customer_shortname       = "acme"
+  customer_domain          = "example.com"
+  billing_account_infra    = "01AA-BB-CC"
+  default_region           = "europe-west3"
+
+  mdc_workload_pool_id = "acmetenantpoolexample0000000001"
+  mdc_mgmt_project_id  = "acme-mdc-mgmt"
+
+  // the estate's own exception, beside what the packs contribute — and one entry the
+  // Defender pack contributes too, so the snapshot shows it is not added twice
+  allowed_policy_member_subjects = [
+    "serviceAccount:local-exception@acme-infra-001.iam.gserviceaccount.com",
+    "serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com",
+  ]
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/billing-export.satz"
+use "presets/cis/CIS-GCP-Foundation-4.0.satz"
+use "presets/integrations/microsoft-defender-for-cloud.satz"

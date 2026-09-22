@@ -1,0 +1,138 @@
+// Cloud Billing usage and cost data, exported to BigQuery in a project of its own —
+// where the spend is KEPT, as opposed to the budget that alarms on it.
+//
+//   use "presets/billing-export.satz" when use_billing_export
+//
+// A budget (`presets/organization-budget.satz`) says when a threshold is crossed; this
+// says what the money went on, per project, per SKU, per day, queryable months later.
+//
+// ITS OWN PROJECT. The export is not infrastructure and its dataset is read by whoever
+// reviews spend, so it lives in a project of its own rather than in the infrastructure
+// project: reading the billing dataset then never means reading the state bucket beside
+// it. The project takes the same billing account as the infrastructure project and
+// carries one API, BigQuery's.
+//
+// SWITCHING THE EXPORT ON IS A CONSOLE STEP. Cloud Billing has no API, no gcloud command
+// and no Terraform resource for pointing a billing account at a dataset. This pack
+// builds everything the console asks for — the project, the dataset, and the export
+// account's access to it — and the `notice` below names the step and the param that
+// acknowledges it. Until it is done the dataset stays empty.
+//
+// THE EXPORT ACCOUNT. Google writes the export as
+// `billing-export-bigquery@system.gserviceaccount.com`, a Google-owned account in a
+// Google-owned domain, the same for every customer. Two things follow, and this pack
+// does both: it holds `roles/bigquery.dataEditor` on the dataset, and — because it lives
+// outside the customer's organisation — it is CONTRIBUTED to the CIS baseline's
+// `allowed_policy_member_subjects`, so domain-restricted sharing lets the grant through.
+// Switch this pack off and the entry goes with it.
+//
+// NO CLAIM. No catalog control covers billing export, so this pack witnesses nothing.
+
+pack billing_export version "1.0"
+
+params {
+  // The export's own project. Globally unique, so it derives from the short name the
+  // way every other project id in the library does.
+  billing_export_project_id           = "{customer_shortname}-billing-001"
+  // The folder it is created in. Empty says nothing and the project is created under
+  // the organisation. A folder the estate declares is named by reference,
+  // `google_folder.<label>.name`; one that already exists by its id, `"123456789012"`.
+  billing_export_project_folder       = ""
+  // What the console shows. Google defaults a project's display name to its id, and so
+  // does this: set it only where the two should differ.
+  billing_export_project_display_name = billing_export_project_id
+  // A dataset id takes letters, digits and underscores — never a hyphen — so the short
+  // name is joined with one rather than the hyphen a project id uses.
+  billing_export_dataset_id           = "{customer_shortname}_billing_export"
+  billing_export_location             = default_region
+  billing_export_description          = "Cloud Billing usage and cost data, exported continuously"
+  // acknowledges the notice below: the estate binds it true once the console step is done
+  billing_export_enabled              = false
+
+  // Google's export account writes into the dataset from outside the customer's
+  // organisation, so the managed §1.1 constraint has to name it before the grant below
+  // can apply. Contributed rather than written into the estate: the entry is this
+  // pack's, and it leaves with it.
+  contributes_allowed_policy_member_subjects = [
+    "serviceAccount:billing-export-bigquery@system.gserviceaccount.com",
+  ]
+}
+
+notice billing_export_enabled {
+  text     = "Cloud Billing has no API, no gcloud command and no Terraform resource for switching the export on. Apply this pack first, then in the Cloud console open Billing, pick the billing account, go to Billing export, BigQuery export, and point Standard usage cost at the project `billing_export_project_id` names and the dataset `billing_export_dataset_id` names. The dataset stays empty until that is done. Bind this param true once it is."
+  run      = "https://console.cloud.google.com/billing — the billing account, Billing export, BigQuery export, Edit settings"
+  severity = warning
+}
+
+// ---- what a customer decides, asked -------------------------------------------
+// The project and the dataset are immutable once created and the location cannot move.
+// The display name and the description are technical defaults and are not asked.
+
+question billing_export_project_id {
+  prompt   = "The project that holds the billing export"
+  why      = "A project id is immutable. Changing it later creates a second project and abandons the first, with the billing history inside it — and the console export has to be pointed at the new dataset by hand."
+  reversal = recreate
+  blast    = high
+}
+
+question billing_export_project_folder {
+  prompt   = "The folder the billing-export project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits."
+  reversal = edit
+  blast    = low
+}
+
+question billing_export_dataset_id {
+  prompt   = "The dataset the billing export writes into"
+  why      = "Whoever can read it reads what every project in the organisation costs. A dataset id cannot be renamed: a new one is a new dataset the console export has to be pointed at, and the history stays in the old one."
+  reversal = recreate
+  blast    = high
+}
+
+question billing_export_location {
+  prompt   = "Where the billing dataset lives (a BigQuery location, e.g. europe-west3 or EU)"
+  why      = "A dataset's location cannot change: moving it means a new dataset and no history. Where the CIS pack enforces allowed resource locations, a location outside that list is refused. The default follows the estate's own default region."
+  reversal = recreate
+  blast    = high
+}
+
+// 1) The project, with BigQuery's API on it. `project_service` expands to one
+//    google_project_service per entry.
+google_project {
+  billing_export_project {
+    project_id      = billing_export_project_id
+    name            = billing_export_project_display_name
+    folder_id       = billing_export_project_folder
+    billing_account = billing_account_infra
+    project_service = [
+      "bigquery.googleapis.com",
+    ]
+  }
+}
+
+// 2) The dataset. It takes its project THROUGH the API enablement above, so the two are
+//    ordered rather than raced — a dataset created before BigQuery is on fails with
+//    "The project … has not enabled BigQuery". `delete_contents_on_destroy` stays false:
+//    removing the pack from an estate must not silently delete the spend history.
+google_bigquery_dataset {
+  billing_export {
+    dataset_id                 = billing_export_dataset_id
+    project                    = "${{google_project_service.billing_export_project_bigquery_googleapis_com.project}}"
+    location                   = billing_export_location
+    description                = billing_export_description
+    delete_contents_on_destroy = false
+  }
+}
+
+// 3) Google's export account writes into that dataset. The console grants it when the
+//    export is created; the estate declares the grant anyway, because an access the
+//    estate depends on belongs in the estate, and a non-authoritative `_iam_member`
+//    converges with what Google wrote.
+google_bigquery_dataset_iam_member {
+  billing_export_writer {
+    dataset_id = "${{google_bigquery_dataset.billing_export.dataset_id}}"
+    project    = billing_export_project_id
+    role       = "roles/bigquery.dataEditor"
+    member     = "serviceAccount:billing-export-bigquery@system.gserviceaccount.com"
+  }
+}

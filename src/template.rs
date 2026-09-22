@@ -726,6 +726,11 @@ pub(crate) mod tests {
                 // that one's reads too, and this test would not see them
                 assert!(!uses_a_pack(&file(path).items), "{} uses another pack; teach this test to follow it", path);
                 let mut reads = crate::doc_packs::needs(file(path));
+                // a contribution is merged into its param before the walk, so where the
+                // contributing line stands decides nothing — only a READ needs the order
+                for contributed in crate::doc_packs::contributed(file(path)) {
+                    reads.remove(&contributed);
+                }
                 if let Some(gate) = gate {
                     reads.insert(gate.to_string());
                 }

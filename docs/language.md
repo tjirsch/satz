@@ -449,7 +449,45 @@ Resolution rules:
    without the pack that declares the name, the reference stops with
    `unknown param`, and the estate has to bind the value.
 4. Overriding a **list replaces it** — Satz has no list concatenation — so an estate
-   that adds to a pack's list repeats the entries it keeps.
+   that adds to a pack's list repeats the entries it keeps. A PACK adds to one instead
+   of replacing it, through `contributes_<param>`, below.
+
+#### `contributes_<param>` — a pack's entries in another file's list
+
+A param named `contributes_<param>` is not a param: it is a **contribution**, the entries
+a pack adds to the list param `<param>` that another file declares.
+
+```
+pack billing_export version "1.0"
+
+params {
+  contributes_allowed_policy_member_subjects = [
+    "serviceAccount:billing-export-bigquery@system.gserviceaccount.com",
+  ]
+}
+```
+
+What it does:
+
+- The entries are added after whatever `<param>` holds — the estate's binding, else the
+  default of the file that declares it. The list stays the estate's; a contribution only
+  adds.
+- A pack behind a false `use … when` gate contributes nothing, like everything else it
+  declares. Switching the pack off takes its entries out.
+- An entry the list already holds is not added twice, whoever wrote it.
+- The merge happens **before** the compile walks the estate, so where the contributing
+  `use` line stands decides nothing.
+- It is no value of its own: it is never a `variable`, never in `terraform.tfvars`, and
+  no `question` may ask it — what a customer answers is `<param>`.
+- Where no file the estate uses declares `<param>`, the entries are dropped. The pack
+  graph carries the requirement as a `data` edge, and `satz packs` names it.
+
+What a pack writes it as is checked where it is written: it belongs in a pack, its value
+is a list, and a file that declares `<param>` itself writes the entries into that default
+instead. A `<param>` that is not a list is refused, naming the contributing file.
+
+`satz packs <estate>` prints each pack's contributions, so every entry in a list has a
+pack beside it; a pack's own page under `presets/docs/` lists them under **Contributes**.
 
 What the compiler does with them: every param becomes a typed `variable` in
 `variables.tf` (underscores → hyphens) with its resolved value in
@@ -1725,10 +1763,13 @@ in `pack estate_map` is refused at parse time.
 
 `satz pack-graph` reads the entries and writes `presets/pack-graph.json`: every library
 file as a node, and the edges between them. Most edges are derived from the packs — a
-param one pack reads and another declares (`data`), a gate a pack declares for another
-(`gate`), an `ask_when` (`asks`), the options of one `question oneof` (`excludes`) — so
+param one pack reads or contributes to and another declares (`data`), a gate a pack
+declares for another (`gate`), an `ask_when` (`asks`), the options of one `question oneof`
+(`excludes`) — so
 `requires` and `excludes` on an entry name only what the packs cannot show, and
-`pack-graph` refuses a declared edge it derives. Several `requires` on packs that exclude
+`pack-graph` refuses a declared edge it derives. A `data` edge from a READ also puts the
+reading pack's line after the declaring pack's; one from a contribution does not, because
+a contribution is merged before the compile walks anything. Several `requires` on packs that exclude
 one another are one requirement: any of them meets it.
 
 The estate commands read that file from the estate's `presets_dir`, and one pack logic
@@ -2055,6 +2096,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | multi-line string | `"""…"""` |
 | offer a pack from the map | `offers "presets/x.satz" { when = use_x phase = "…" }` |
 | name the command a pack needs once it is on | `notice x_adopted { text = "…" run = "satz adopt <estate> --execute --import" severity = error }` |
+| add a pack's entries to another file's list param | `params { contributes_allowed_policy_member_subjects = ["serviceAccount:…"] }` |
 | comment | `#`, `//`, `/* … */` |
 
 ### Commands that consume this language
@@ -2161,7 +2203,8 @@ across files it is the fold's conflict above.
 
 - **Param scoping is document-ordered, not lexical.** Packs see every earlier
   file's params.
-- **No list concatenation.** Overriding a list param replaces it.
+- **No list concatenation.** Overriding a list param replaces it. A pack adds to one
+  with `contributes_<param>`; an estate repeats the entries it keeps.
 - **`use … when` is followed unconditionally when computing which presets an
   estate uses** (`check-presets`), so a conditionally-disabled pack may be
   reported as included, so drift is over-reported rather than missed.

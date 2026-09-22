@@ -28,18 +28,26 @@
 // NO CLAIM is made here. Defender for Cloud is an external CSPM that READS the
 // estate; it implements no CIS control and contributes to none.
 //
-// BEFORE THE FIRST APPLY, two estate-side prerequisites:
-//   1. The Defender agentless-scanning service account lives in a Microsoft
-//      project, so it must be in `allowed_policy_member_subjects` (or the
-//      principal-set allowlist) BEFORE any grant to it is applied — the
-//      constraints AND together and an incomplete list refuses the grant.
-//   2. A deny-all on `iam.workloadIdentityPoolProviders` blocks the providers
-//      below. The estate must allow the `sts.windows.net/<microsoft tenant>`
-//      issuer, or document the exception.
+// BEFORE THE FIRST APPLY, one estate-side prerequisite: a deny-all on
+// `iam.workloadIdentityPoolProviders` blocks the providers below. The estate must allow
+// the `sts.windows.net/<microsoft tenant>` issuer, or document the exception.
+//
+// Domain-restricted sharing is the pack's own: the agentless-scanning account lives in a
+// Microsoft-owned project, outside the customer's organisation, so the managed §1.1
+// constraint refuses every grant to it while it is not named. The pack CONTRIBUTES it to
+// `allowed_policy_member_subjects` below, and it leaves with the pack.
 
-pack integrations.microsoft_defender_for_cloud version "0.4"
+pack integrations.microsoft_defender_for_cloud version "0.5"
 
 params {
+  // Microsoft publishes the agentless disk-scanning account, and it is the same for
+  // every customer. It is in a Microsoft-owned project, so the customer's organisation
+  // principal set does not cover it and the managed §1.1 constraint has to name it
+  // before any role granted to it can apply.
+  contributes_allowed_policy_member_subjects = [
+    "serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com",
+  ]
+
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
   // workload identity pool id Microsoft's wizard generates. Take it from the
   // generated script; there is no default because it is per customer.

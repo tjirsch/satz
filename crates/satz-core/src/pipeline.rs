@@ -186,6 +186,12 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
     // Params may reference each other regardless of declaration order — the same
     // dependency-ordered resolution the YAML emitter uses.
     for (name, v, line) in satz::sort_params_by_deps(&file.params) {
+        // A `contributes_<target>` declaration is no param: it is merged into the
+        // target before this env is built (`contribution_seed`), and it names no
+        // value of its own.
+        if satz::contribution_target(name).is_some() {
+            continue;
+        }
         // Before anything else: a param a release renamed stops the compile here,
         // whether it is the estate's own binding or a fork's default.
         if let Some(e) = renamed_param(name, file_name, *line) {
@@ -232,6 +238,10 @@ pub struct FrontEnd {
     /// Declared `notice`s from every pack the estate actually `use`s. Their params
     /// are not in `tfvars`: an acknowledgement is never emitted.
     pub notices: Vec<PackNotices>,
+    /// What the packs contributed to the estate's list params, with the pack that
+    /// contributed each entry. Already merged into `env` and `tfvars`; this is the
+    /// record a reader is shown.
+    pub contributions: Vec<Contribution>,
 }
 
 /// One pack's notices, carried with the file that declared them (a fork declares its own).
@@ -630,7 +640,8 @@ pub fn compile_estate(
 ) -> Result<FrontEnd, PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    let env = build_env(&file, &Env::new(), file_name)?;
+    let (seed, contributions, deferred) = seed_or_deferred(&file, file_name, load);
+    let env = build_env(&file, &seed, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
     let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
@@ -713,7 +724,10 @@ pub fn compile_estate(
     questions.extend(w.questions);
     check_oneof(&questions, &tfvars, true)?;
 
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices })
+    if let Some(e) = deferred {
+        return Err(e); // the walk was happy; the seed pass was not, and it is the one with something to say
+    }
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices, contributions })
 }
 
 /// Resolve one action's arguments against the finished parameter namespace. An
@@ -840,9 +854,147 @@ pub fn estate_params(
 ) -> Result<Env, PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    let mut env = build_env(&file, &Env::new(), file_name)?;
-    collect_params(&file.items, file_name, load, &mut env, 0)?;
+    let (seed, _, deferred) = seed_or_deferred(&file, file_name, load);
+    let mut env = build_env(&file, &seed, file_name)?;
+    let mut sink = Vec::new();
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink)?;
+    if let Some(e) = deferred {
+        return Err(e);
+    }
     Ok(env)
+}
+
+/// One pack's contribution to a list param another file declares: what a pack needs
+/// allowed, added where the estate's own binding of that param is.
+///
+/// `applied` is false when no file this estate uses declares `param` — the pack that
+/// declares it is off, so there is nothing to add to and nothing enforcing either. The
+/// pack graph carries the requirement (a `data` edge to the pack that declares the
+/// param) and `satz packs` names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Contribution {
+    /// the list param the entries are added to
+    pub param: String,
+    /// the contributing pack's own `pack` name
+    pub pack: String,
+    /// the file that declared it
+    pub file: String,
+    pub line: usize,
+    /// the entries, as the contributing pack wrote them, resolved
+    pub values: Vec<String>,
+    /// whether they reached the param
+    pub applied: bool,
+}
+
+/// A contribution as parsed, before the whole `use` graph has been walked: its value is
+/// resolved against the FINISHED param table, so a contribution may read any param.
+struct RawContribution {
+    param: String,
+    pack: String,
+    file: String,
+    line: usize,
+    value: Value,
+}
+
+fn take_contributions(file: &File, file_name: &str, out: &mut Vec<RawContribution>) {
+    let pack = file.estate.clone().unwrap_or_default();
+    for (name, value, line) in &file.params {
+        if let Some(target) = satz::contribution_target(name) {
+            out.push(RawContribution {
+                param: target.to_string(),
+                pack: pack.clone(),
+                file: file_name.to_string(),
+                line: *line,
+                value: value.clone(),
+            });
+        }
+    }
+}
+
+/// One entry of a contribution, as a reader sees it.
+fn contributed_entry(v: &serde_yaml::Value) -> String {
+    match v {
+        serde_yaml::Value::String(s) => s.clone(),
+        other => serde_yaml::to_string(other).unwrap_or_default().trim().to_string(),
+    }
+}
+
+/// The param table the packs' contributions produce: for every list param a pack
+/// contributes to, the estate's own value (its binding, else the declaring pack's
+/// default) with the contributed entries after it, duplicates dropped.
+///
+/// It is a pass of its own, before the compile's walk, because the walk resolves a
+/// resource body against the namespace as it stands when it reaches that body — the CIS
+/// baseline's line comes before the packs that contribute to it, so a value completed
+/// during the walk would reach the policy in some estates and not in others. Seeding the
+/// estate's outermost env instead makes the merged value the only one anything sees.
+///
+/// An estate no pack contributes to gets an EMPTY seed, so nothing about its compile
+/// changes.
+/// `contribution_seed`, with its error held back rather than raised.
+///
+/// The seed pass walks the same `use` graph the compile does, but without the compile's
+/// own refusals — a pack that MOVED, the `use` chain a cycle is reported with. Raising
+/// its error first would replace those messages with a worse one for the same estate, so
+/// the caller lets the compile speak and returns the held-back error only if the compile
+/// has nothing to say.
+fn seed_or_deferred(
+    file: &File,
+    file_name: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> (Env, Vec<Contribution>, Option<PipelineError>) {
+    match contribution_seed(file, file_name, load) {
+        Ok((seed, records)) => (seed, records, None),
+        Err(e) => (Env::new(), Vec::new(), Some(e)),
+    }
+}
+
+fn contribution_seed(
+    file: &File,
+    file_name: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<(Env, Vec<Contribution>), PipelineError> {
+    let mut raw = Vec::new();
+    let mut env = build_env(file, &Env::new(), file_name)?;
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw)?;
+    if raw.is_empty() {
+        return Ok((Env::new(), Vec::new()));
+    }
+    let mut seed = Env::new();
+    let mut records = Vec::new();
+    for r in raw {
+        let entries = match resolve_value(&r.value, &env, &r.file, r.line)? {
+            serde_yaml::Value::Sequence(s) => s,
+            // `parse` refuses a contribution that is not a list.
+            other => return perr(&r.file, r.line, format!("{}{}: expected a list, found {:?}", satz::CONTRIBUTES_PREFIX, r.param, other)),
+        };
+        let values: Vec<String> = entries.iter().map(contributed_entry).collect();
+        let base = seed.get(&r.param).or_else(|| env.get(&r.param)).cloned();
+        let applied = match base {
+            None => false,
+            Some(serde_yaml::Value::Sequence(mut list)) => {
+                for v in entries {
+                    if !list.contains(&v) {
+                        list.push(v);
+                    }
+                }
+                seed.insert(r.param.clone(), serde_yaml::Value::Sequence(list));
+                true
+            }
+            Some(_) => {
+                return perr(
+                    &r.file,
+                    r.line,
+                    format!(
+                        "{}{}: `{}` is not a list — a contribution adds entries to a list param",
+                        satz::CONTRIBUTES_PREFIX, r.param, r.param
+                    ),
+                )
+            }
+        };
+        records.push(Contribution { param: r.param, pack: r.pack, file: r.file, line: r.line, values, applied });
+    }
+    Ok((seed, records))
 }
 
 /// Depth cap for the `use` recursion. It cannot fire for a real estate — the
@@ -870,7 +1022,8 @@ pub fn estate_questions(
 ) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env), PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    let mut env = build_env(&file, &Env::new(), file_name)?;
+    let (seed, _, deferred) = seed_or_deferred(&file, file_name, load);
+    let mut env = build_env(&file, &seed, file_name)?;
     let mut out = (Vec::new(), Vec::new());
     if !file.questions.is_empty() {
         out.0.push(pack_questions(&file, file_name));
@@ -879,6 +1032,9 @@ pub fn estate_questions(
     // Contradictions only: a required choice nobody has made yet is what this
     // report is for.
     check_oneof(&out.0, &env, false)?;
+    if let Some(e) = deferred {
+        return Err(e);
+    }
     Ok((out.0, out.1, env))
 }
 
@@ -912,7 +1068,7 @@ fn collect_questions(
                 let used = satz::parse(&src)
                     .map_err(|e| PipelineError { file: path.to_string(), line: e.line, msg: e.msg })?;
                 for (name, v, pline) in satz::sort_params_by_deps(&used.params) {
-                    if env.contains_key(name) {
+                    if satz::contribution_target(name).is_some() || env.contains_key(name) {
                         continue;
                     }
                     let resolved = resolve_value(v, env, path, *pline)?;
@@ -938,6 +1094,7 @@ fn collect_params(
     load: &dyn Fn(&str) -> Result<String, String>,
     env: &mut Env,
     depth: usize,
+    contributions: &mut Vec<RawContribution>,
 ) -> Result<(), PipelineError> {
     if depth > MAX_USE_DEPTH {
         return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
@@ -961,16 +1118,17 @@ fn collect_params(
                     .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
                 let used = satz::parse(&src)
                     .map_err(|e| PipelineError { file: path.to_string(), line: e.line, msg: e.msg })?;
+                take_contributions(&used, path, contributions);
                 for (name, v, pline) in satz::sort_params_by_deps(&used.params) {
-                    if env.contains_key(name) {
+                    if satz::contribution_target(name).is_some() || env.contains_key(name) {
                         continue;
                     }
                     let resolved = resolve_value(v, env, path, *pline)?;
                     env.insert(name.clone(), resolved);
                 }
-                collect_params(&used.items, path, load, env, depth + 1)?;
+                collect_params(&used.items, path, load, env, depth + 1, contributions)?;
             }
-            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth)?,
+            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions)?,
         }
     }
     Ok(())
@@ -1235,6 +1393,9 @@ impl Walk<'_> {
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
         for (name, v, line) in satz::sort_params_by_deps(&file.params) {
+            if satz::contribution_target(name).is_some() {
+                continue; // merged into its target before the walk, never a value of its own
+            }
             if let Some(e) = renamed_param(name, file_name, *line) {
                 return Err(e);
             }
@@ -2006,6 +2167,120 @@ mod tests {
         assert_eq!((err.file.as_str(), err.line), ("e.satz", 3), "with the line to edit");
         assert!(renamed_param("logsink_project_id", "e.satz", 3).is_none(), "the new name is fine");
         assert!(renamed_param("customer_shortname", "e.satz", 3).is_none(), "and so is every other param");
+    }
+
+    /// `contributes_<target>` — one pack adding entries to another pack's list param.
+    ///
+    /// Everything about the mechanism is here: a pack that is ON contributes, one behind
+    /// a false gate does not, two packs merge without a duplicate, the estate's own
+    /// binding stays the base, an estate with no contributing pack has an untouched
+    /// param table, and a target nobody declares is dropped rather than refused — the
+    /// pack graph carries that requirement, and there is nothing enforcing to be let
+    /// past when the pack that declares the param is off.
+    mod contributions {
+        use super::*;
+
+        const BASE: &str = r#"pack base version "1"
+params {
+  subjects = [ "a" ]
+}
+"#;
+        const ONE: &str = r#"pack one version "1"
+params {
+  contributes_subjects = [ "one" ]
+}
+"#;
+        const TWO: &str = r#"pack two version "1"
+params {
+  contributes_subjects = [ "one", "two" ]
+}
+"#;
+
+        fn load(path: &str) -> Result<String, String> {
+            match path {
+                "base.satz" => Ok(BASE.into()),
+                "one.satz" => Ok(ONE.into()),
+                "two.satz" => Ok(TWO.into()),
+                other => Err(format!("no such use: {}", other)),
+            }
+        }
+
+        fn subjects(estate: &str) -> Vec<String> {
+            let env = estate_params("main.satz", estate, &load).expect("compiles");
+            match env.get("subjects") {
+                Some(serde_yaml::Value::Sequence(s)) => s.iter().map(|v| v.as_str().unwrap_or_default().to_string()).collect(),
+                other => panic!("subjects is {:?}", other),
+            }
+        }
+
+        #[test]
+        fn a_pack_that_is_on_contributes_and_one_that_is_off_does_not() {
+            let estate = |on: bool| {
+                format!("estate e\nparams {{\n  want = {}\n}}\nuse \"base.satz\"\nuse \"one.satz\" when want\n", on)
+            };
+            assert_eq!(subjects(&estate(true)), ["a", "one"]);
+            assert_eq!(subjects(&estate(false)), ["a"], "a pack behind a false gate contributes nothing");
+        }
+
+        #[test]
+        fn two_packs_merge_without_duplicates_and_the_estates_binding_is_the_base() {
+            let estate = "estate e\nparams {\n  subjects = [ \"mine\" ]\n}\nuse \"base.satz\"\nuse \"one.satz\"\nuse \"two.satz\"\n";
+            assert_eq!(subjects(estate), ["mine", "one", "two"], "the estate's binding first, then each entry once");
+        }
+
+        #[test]
+        fn a_contribution_reaches_its_param_wherever_the_line_stands() {
+            // The contributing line before the declaring one and after it are the same
+            // estate: the merge happens before the walk, not during it.
+            let before = "estate e\nuse \"one.satz\"\nuse \"base.satz\"\n";
+            let after = "estate e\nuse \"base.satz\"\nuse \"one.satz\"\n";
+            assert_eq!(subjects(before), ["a", "one"]);
+            assert_eq!(subjects(after), ["a", "one"]);
+        }
+
+        #[test]
+        fn an_estate_with_no_contributing_pack_is_untouched() {
+            let env = estate_params("main.satz", "estate e\nuse \"base.satz\"\n", &load).unwrap();
+            assert_eq!(env.get("subjects"), Some(&serde_yaml::Value::Sequence(vec!["a".into()])));
+            assert!(!env.contains_key("contributes_subjects"), "a contribution is no param of the estate's");
+        }
+
+        #[test]
+        fn a_target_nobody_declares_is_dropped_and_named_in_the_record() {
+            let file = satz::parse("estate e\nuse \"one.satz\"\n").unwrap();
+            let (seed, records) = contribution_seed(&file, "main.satz", &load).unwrap();
+            assert!(seed.is_empty(), "nothing to add to, so nothing is added");
+            assert_eq!(records.len(), 1);
+            assert_eq!((records[0].param.as_str(), records[0].applied), ("subjects", false));
+            assert_eq!(records[0].values, ["one"]);
+            assert_eq!(records[0].pack, "one");
+        }
+
+        #[test]
+        fn a_contribution_to_something_that_is_not_a_list_is_refused() {
+            let scalar = "pack base version \"1\"\nparams {\n  subjects = \"a\"\n}\n";
+            let load = |p: &str| match p {
+                "base.satz" => Ok(scalar.to_string()),
+                "one.satz" => Ok(ONE.to_string()),
+                other => Err(format!("no such use: {}", other)),
+            };
+            let err = estate_params("main.satz", "estate e\nuse \"base.satz\"\nuse \"one.satz\"\n", &load)
+                .expect_err("a contribution adds entries, and a string has none");
+            assert!(err.msg.contains("not a list"), "{}", err.msg);
+            assert_eq!(err.file, "one.satz", "the refusal names the contributing file");
+        }
+
+        #[test]
+        fn what_a_contribution_may_be_written_as_is_checked_where_it_is_written() {
+            let refused = |src: &str, what: &str| {
+                let e = satz::parse(src).expect_err(what);
+                assert!(e.msg.contains(what), "{}: {}", what, e.msg);
+            };
+            refused("estate e\nparams {\n  contributes_x = [ \"v\" ]\n}\n", "belongs in a pack");
+            refused("pack p version \"1\"\nparams {\n  contributes_x = \"v\"\n}\n", "a list of the entries");
+            refused("pack p version \"1\"\nparams {\n  x = []\n  contributes_x = [ \"v\" ]\n}\n", "declares `x` itself");
+            refused("pack p version \"1\"\nparams {\n  contributes_ = [ \"v\" ]\n}\n", "names no param");
+        }
     }
 
     #[test]
