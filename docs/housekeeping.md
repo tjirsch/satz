@@ -315,7 +315,8 @@ e-mail addresses, domains that are neither IANA-reserved nor a known vendor host
 repository URLs and checkout paths — in files and in commit messages. It also
 refuses the local files that must never be staged (`CLAUDE.local.md`,
 `*.local.md`, `.claude/`, `attestations.yaml`, `evidence/`) and any commit whose
-author or committer is not the maintainer's identity or a GitHub noreply address.
+author or committer is not a GitHub noreply address
+(`<id>+<user>@users.noreply.github.com`, `noreply@github.com`).
 
 ```bash
 scripts/check-names.sh                  # the whole tree (CI)
@@ -354,6 +355,15 @@ What it **cannot** see is a NAME. A display name or a company in prose has no
 shape, and "Log Admins" and a real customer's project name are the same kind of
 string. That is what the local, never-committed denylist (`$NAMES_DENYLIST`) is
 for, and what review is for.
+
+Two settings come from the environment, so that no personal value is written into
+this public script. `$NAMES_DENYLIST` is the path of the denylist file, one
+extended regex per line; without it the denylist rule does not run. `$NAMES_IDENT`
+is an extended regex of one more address that may author or commit, appended to the
+noreply forms; without it only those forms pass, and a commit under any other
+address is refused with what to do: set `git config user.email` to the GitHub
+noreply address, or `NAMES_IDENT` in the clone that needs another one. CI sets
+neither, so what it judges is the same everywhere.
 
 Enable the hooks once per clone — they run the gate before a commit and again on
 the message:

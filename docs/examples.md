@@ -114,12 +114,14 @@ audit protobufs, as it appears in a Cloud Logging filter
 a `.cloud` domain because that is what the shape says; it is identical for every
 customer, so it is allowed by exact name.
 
-**Commit identity.** Every commit's author and committer must be the
-maintainer's address or a GitHub noreply address
-(`<id>+<user>@users.noreply.github.com` — enable "keep my email address
-private" in GitHub settings). Employer or customer addresses are rejected by
-the pre-commit hook and by CI on every pull request and push to `main`, so no
-contributor's affiliation reaches the public history.
+**Commit identity.** Every commit's author and committer must be a GitHub
+noreply address (`<id>+<user>@users.noreply.github.com` — enable "keep my email
+address private" in GitHub settings — or `noreply@github.com`). A clone may
+allow one more address through `$NAMES_IDENT`, an extended regex set in the
+environment and never committed. Every other address, an employer's or a
+customer's among them, is rejected by the pre-commit hook and by CI on every
+pull request and push to `main`, so no contributor's affiliation reaches the
+public history.
 
 **Other allowed identities:** `noreply@anthropic.com` (Claude's co-author
 trailer), `*.iam.gserviceaccount.com` service accounts built from the values

@@ -29,9 +29,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
   commit messages;
   it rejects local files (`CLAUDE.local.md`, `*.local.md`, `.claude/`,
   `attestations.yaml`, `evidence/`) if they are ever staged; and it rejects
-  any commit whose author or committer is not the maintainer's private
-  identity or a GitHub noreply address. CI runs it on every PR and every push
-  to `main`
+  any commit whose author or committer is not a GitHub noreply address —
+  `$NAMES_IDENT` in the environment allows one more address in a clone, and no
+  personal address is written into the script. CI runs it on every PR and
+  every push to `main`
   (`.github/workflows/names-gate.yml`), beside the smoke matrix
   (`scripts/smoke.sh`, `.github/workflows/smoke.yml`: every estate-consuming
   command end to end against `tests/smoke/` — a new command gets a step there
@@ -47,7 +48,8 @@ and in the maintainer's notes. Nothing in this file names a customer.
   table; a GUID the gate does not know is assumed to identify a customer.
   What the gate cannot see is a NAME: a display name or a company in prose has
   no shape. That is what the local, never-committed denylist
-  (`$NAMES_DENYLIST`) is for, and what review is for.
+  (`$NAMES_DENYLIST`, a file of one extended regex per line, unset by default)
+  is for, and what review is for.
 - **Release flow:** work commits on `main`; `cargo release patch|minor
   --execute --no-confirm` bumps, tags and pushes; the tag triggers cargo-dist.
   `.github/workflows/release.yml` is generated from `dist-workspace.toml`: change
