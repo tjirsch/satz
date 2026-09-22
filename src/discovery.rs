@@ -109,9 +109,24 @@ fn platform_owned(res_config: &crate::config::ImportResourceConfig, asset: &Asse
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skipped {
+    /// The Terraform resource type where a row gave the asset one, and the
+    /// Cloud Asset type where no row did — the provider schema tells the two
+    /// apart (`generate_config::plan`).
     pub tf_type: String,
+    /// The live shape names the resource by its Cloud Asset FULL resource name
+    /// (`//dns.googleapis.com/projects/p/managedZones/z`), which is what
+    /// `asset_resource_name` turns into the provider's import id; the state
+    /// shape names it by its Terraform label, which is not one.
     pub what: String,
     pub reason: SkipReason,
+}
+
+/// `//logging.googleapis.com/projects/p/sinks/x` → `projects/p/sinks/x`: a Cloud
+/// Asset full resource name minus its service, which is the resource name the
+/// provider imports by. `None` for anything that is not one.
+pub fn asset_resource_name(full_name: &str) -> Option<&str> {
+    let path = full_name.strip_prefix("//")?;
+    path.split_once('/').map(|(_, p)| p).filter(|p| !p.is_empty())
 }
 
 /// What an import produced: the estate, and everything it left out.
@@ -1622,8 +1637,7 @@ impl Discoverer {
 
     /// `//logging.googleapis.com/projects/p/sinks/x` → `projects/p/sinks/x`
     fn asset_path(asset: &Asset) -> &str {
-        let path = asset.name.trim_start_matches("//");
-        path.split_once('/').map(|(_, p)| p).unwrap_or(path)
+        asset_resource_name(&asset.name).unwrap_or_else(|| asset.name.trim_start_matches("//"))
     }
 
     /// Every attribute the provider REQUIRES must be present, or the block

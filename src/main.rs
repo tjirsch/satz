@@ -45,6 +45,7 @@ mod notices;
 mod org_write;
 mod github;
 mod import;
+mod generate_config;
 mod self_update;
 mod policy_tree;
 mod prowler;
@@ -418,6 +419,11 @@ pub(crate) enum Commands {
         /// fact carries — wins over the inference from the names found
         #[arg(long)]
         customer_shortname: Option<String>,
+        /// live shape: ask the provider for the resources this import leaves
+        /// unmapped — `tofu plan -generate-config-out` writes their
+        /// configuration and satz reads it back as <estate>-generated.satz
+        #[arg(long)]
+        generate_unmapped: bool,
     },
 
     /// Migrate state and configuration between local and cloud modes
@@ -1546,7 +1552,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, all, exclude, output, import_config, into, wrap_all, on_collision, customer_shortname } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, into, wrap_all, on_collision, customer_shortname, generate_unmapped } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1559,6 +1565,9 @@ Thumbs.db
                 }
                 "hcl" => {
                     let src = source.ok_or("the hcl shape needs a directory of .tf files, or one file")?;
+                    if generate_unmapped {
+                        return Err("--generate-unmapped is the live shape's: the hcl shape already READS `tofu plan -generate-config-out` output — point `satz import` at the file it wrote".into());
+                    }
                     let output = output.unwrap_or_else(|| PathBuf::from("imported-hcl.satz"));
                     import_hcl(&src, output, wrap_all, cli.verbose, &runtime_config)
                 }
@@ -1597,6 +1606,12 @@ Thumbs.db
                     if into.is_some() && shape != "org" {
                         return Err("--into applies to the live shape (organizations/…, folders/…, projects/…)".into());
                     }
+                    if generate_unmapped && shape != "org" {
+                        return Err("--generate-unmapped applies to the live shape (organizations/…, folders/…, projects/…): `tofu plan -generate-config-out` reads each resource from the platform. A state's resources are already managed, and their configuration is the `.tf` the state was applied from — import that directory with the hcl shape".into());
+                    }
+                    if generate_unmapped && into.is_some() {
+                        return Err("--generate-unmapped and --into do not go together: --into writes packs of what an estate does not yet declare, and generated configuration is not one of them. Run the plain live import for it".into());
+                    }
                     if shape == "state" {
                         let state_json = match source.as_deref() {
                             None | Some("-") => None,
@@ -1618,7 +1633,7 @@ Thumbs.db
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         match into_path {
                             Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, &tool_config, &runtime_config).await,
-                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, &runtime_config).await,
+                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, generate_unmapped, &tool_config, &runtime_config).await,
                         }
                     }
                 }
@@ -4711,7 +4726,10 @@ mod command_groups {
         ("report-compliance", Identity::EstateSa),
         ("adopt", Identity::EstateSa),
         // Only `--into` names an estate; plain discovery writes a NEW file and so
-        // has no estate to be, exactly like `init`.
+        // has no estate to be, exactly like `init`. `--generate-unmapped` runs
+        // `tofu plan -generate-config-out` under the plain shape, which inherits
+        // that same identity: the provider block it writes impersonates nobody,
+        // and the flag is refused with `--into`, so there is no second binding.
         ("import", Identity::EstateSa),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
         ("init", Identity::Human("--from-live runs before the estate exists")),
