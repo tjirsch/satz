@@ -95,6 +95,10 @@ controls:
     title: "Cloud Asset Inventory enabled"
     paraphrase: "The Cloud Asset API is enabled so the organisation's resource inventory can be queried and its history kept."
     automatability: technical
+  "2.14":
+    title: "Access Transparency enabled"
+    paraphrase: "Every action Google personnel take on the organisation's content is logged for the customer to read."
+    automatability: organizational
   "2.15":
     title: "Access Approval enabled"
     paraphrase: "Google personnel reach the organisation's content only after someone approves the request."

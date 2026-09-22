@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.16"
+pack CIS_GCP_Foundation_4_0 version "2.17"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_baseline_adopted = false
@@ -296,7 +296,7 @@ question cis_bucket_retention {
 
 question cis_access_approval {
   prompt   = "Require an approval before Google personnel reach the organisation's content (Access Approval, CIS 4.0 §2.15 / 5.0 §2.16)?"
-  why      = "Every support case that needs to look at the customer's content then waits for someone on the notification list to approve, and Access Transparency has to be switched on for the organisation first, in the console."
+  why      = "Every support case that needs to look at the customer's content then waits for someone on the notification list to approve. Access Transparency (CIS 4.0 §2.14 / 5.0 §2.15) is a MANUAL prerequisite: an organisation administrator holding Access Transparency Admin (roles/axt.admin) switches it on in the Cloud console under IAM & Admin → Settings → Enable Access Transparency, before the apply that creates the Access Approval settings — there is no gcloud command, API or provider resource for it, it needs a Standard, Enhanced or Premium support plan, and the apply fails without it."
   reversal = edit
   blast    = low
 }
