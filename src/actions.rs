@@ -467,16 +467,44 @@ mod tests {
 
     #[test]
     fn the_printed_command_line_is_the_one_that_is_spawned() {
-        let root = Path::new("/estate");
+        // Built through `absolutize`, so the root is absolute in the platform's own
+        // terms: on Windows a leading `/` is a root without a drive, which
+        // `Path::is_absolute` rejects, and a unix-shaped literal would make this test
+        // assert the unshortened fallback instead of the shortening.
+        let root = absolutize(Path::new("estate")).unwrap();
+        let py = root.join("scripts").join("seed.py");
+        let sh = root.join("scripts").join("seed.sh");
         let args = vec!["--organization".to_string(), "123456789012".to_string()];
+
+        // The path is printed in the platform's own shape, and `shell_quote` wraps a
+        // Windows one because a backslash is not a plain character.
+        #[cfg(unix)]
+        let (py_shown, sh_shown) = ("scripts/seed.py", "scripts/seed.sh");
+        #[cfg(windows)]
+        let (py_shown, sh_shown) = (r"'scripts\seed.py'", r"'scripts\seed.sh'");
+
         assert_eq!(
-            command_line(Path::new("/estate/scripts/seed.py"), &args, root),
-            "uv run --script scripts/seed.py --organization 123456789012"
+            command_line(&py, &args, &root),
+            format!("uv run --script {py_shown} --organization 123456789012")
         );
         assert_eq!(
-            command_line(Path::new("/estate/scripts/seed.sh"), &args, root),
-            "scripts/seed.sh --organization 123456789012"
+            command_line(&sh, &args, &root),
+            format!("{sh_shown} --organization 123456789012")
         );
+
+        // …and what is spawned is that same file, at its full path: the printed line
+        // differs from the spawned vector in the shortening and nothing else.
+        let (program, argv) = spawn_command(&py, &args);
+        assert_eq!(program, PathBuf::from(UV));
+        let want: Vec<String> = vec![
+            "run".to_string(),
+            "--script".to_string(),
+            py.display().to_string(),
+            "--organization".to_string(),
+            "123456789012".to_string(),
+        ];
+        assert_eq!(argv, want);
+        assert_eq!(spawn_command(&sh, &args), (sh.clone(), args));
     }
 
     #[test]
