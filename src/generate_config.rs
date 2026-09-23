@@ -10,22 +10,27 @@
 //! provider writes goes back through the HCL import arm — the same arm that
 //! reads `-generate-config-out` output an operator produced by hand.
 //!
-//! The import id is the asset's relative resource name, the derivation the
-//! imported resources' own `"import-id"` uses: `tofu plan` on the import block
-//! is what verifies it. What the provider refuses, satz reports — the child's
-//! own output, the scratch directory it ran in and the `imports.tf` it wrote, so
-//! the two commands can be finished by hand from there.
+//! The import id is the asset's relative resource name for every type whose
+//! provider id is that name, and a per-type derivation for the types where the
+//! two differ ([`import_id`]). An id no rule can build is refused by name; none
+//! is guessed.
 //!
 //! An unmapped resource that cannot even get an import block is listed with the
 //! reason: no Terraform type corresponds to its asset type, or its name is not a
 //! Cloud Asset resource name.
 //!
-//! The child reads the platform as the identity the sweep read it as: the
-//! provider block carries `impersonate_service_account` when the run is bound to
-//! an estate's IaC service account (`--into`), and nothing when it is the
-//! human's Application Default Credentials.
+//! The child reads the platform the way the estate the run writes reads it: the
+//! provider block carries the quota project the estate's own `providers` block
+//! gets, `user_project_override` with it, and `impersonate_service_account` when
+//! the run is bound to an estate's IaC service account (`--as` / `--into`).
+//!
+//! A `plan` that exits non-zero having generated SOME of the resources keeps
+//! what it generated (ADR 0065): `generated.tf` is the provider's own record of
+//! what it could read, and [`outcomes`] says per candidate whether its
+//! configuration is in that file, whether the provider reported it, and in the
+//! provider's own words.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::discovery::{SkipReason, Skipped};
@@ -118,6 +123,81 @@ fn label(import_id: &str, taken: &mut BTreeSet<String>) -> String {
     candidate
 }
 
+/// The provider's import id for a live resource, from its Cloud Asset full
+/// resource name.
+///
+/// For most types the id IS the asset's relative resource name — the derivation
+/// the mapped resources' own `"import-id"` uses. Where the provider imports by
+/// something else, the rule is here and named per type; where a rule cannot
+/// build the id from what the sweep holds, the resource is refused with the
+/// reason. Nothing is guessed: a wrong id costs a read against the live
+/// platform and a refusal the operator has to read back to this table.
+///
+/// `asset_names` is the sweep's own `full resource name → the name the resource
+/// calls itself` map (`Discovered::asset_names`).
+///
+/// The rules, each measured against a live organisation:
+///
+/// - `google_compute_instance_settings` is a singleton: Cloud Asset names it
+///   `projects/<p>/zones/<z>/instanceSettings/InstanceSettings`, and the
+///   provider imports the collection path without that trailing kind.
+/// - `google_dns_managed_zone` and `google_dns_record_set` import by the ZONE's
+///   name, where Cloud Asset names the zone by its numeric id. The zone asset's
+///   own data states the name and the sweep keeps it.
+pub(crate) fn import_id(
+    tf_type: &str,
+    full_name: &str,
+    asset_names: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let relative = crate::discovery::asset_resource_name(full_name).ok_or_else(|| {
+        format!("`{}` is not a Cloud Asset resource name, so there is no id to import by", full_name)
+    })?;
+    match tf_type {
+        "google_compute_instance_settings" => relative
+            .strip_suffix("/InstanceSettings")
+            .map(str::to_string)
+            .ok_or_else(|| {
+                format!(
+                    "{} imports by the collection path `projects/<p>/zones/<z>/instanceSettings`, and `{}` does not end in the /InstanceSettings Cloud Asset appends",
+                    tf_type, relative
+                )
+            }),
+        "google_dns_managed_zone" => {
+            let head = managed_zones_path(relative, tf_type)?;
+            Ok(format!("{}/{}", head, zone_name(full_name, full_name, asset_names)?))
+        }
+        "google_dns_record_set" => {
+            let (zone, rrset) = full_name.split_once("/rrsets/").ok_or_else(|| {
+                format!("{} imports by `…/managedZones/<zone>/rrsets/<name>/<type>`, and `{}` names no rrsets", tf_type, full_name)
+            })?;
+            let zone_relative = crate::discovery::asset_resource_name(zone).unwrap_or(zone);
+            let head = managed_zones_path(zone_relative, tf_type)?;
+            Ok(format!("{}/{}/rrsets/{}", head, zone_name(zone, full_name, asset_names)?, rrset))
+        }
+        _ => Ok(relative.to_string()),
+    }
+}
+
+/// `projects/<p>/managedZones` — the path a DNS zone's name hangs off, from a
+/// zone's relative resource name.
+fn managed_zones_path(zone_relative: &str, tf_type: &str) -> Result<String, String> {
+    zone_relative.rsplit_once("/managedZones/").map(|(head, _)| format!("{}/managedZones", head)).ok_or_else(|| {
+        format!("{} imports by `projects/<p>/managedZones/<zone>`, and `{}` names no managedZones", tf_type, zone_relative)
+    })
+}
+
+/// The name of the managed zone Cloud Asset calls `zone_asset`, from the sweep's
+/// own reading of that zone. A zone the sweep did not read is a refusal naming
+/// what is missing, never the numeric id the provider does not import by.
+fn zone_name(zone_asset: &str, what: &str, asset_names: &BTreeMap<String, String>) -> Result<String, String> {
+    asset_names.get(zone_asset).cloned().ok_or_else(|| {
+        format!(
+            "the managed zone {} is not among the assets this sweep read, and `{}` imports by the zone's name rather than by the number Cloud Asset gives it — sweep dns.googleapis.com/ManagedZone as well",
+            zone_asset, what
+        )
+    })
+}
+
 /// Which skipped resources the provider can be asked to generate configuration
 /// for, and why each of the others cannot.
 ///
@@ -132,7 +212,7 @@ fn label(import_id: &str, taken: &mut BTreeSet<String>) -> String {
 /// live sweep puts the Terraform type in `tf_type` where a row gave it one and
 /// the Cloud Asset type where no row did — so the schema is what tells the two
 /// apart, and the message says which of the two the reader is looking at.
-pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool) -> Plan {
+pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool, asset_names: &BTreeMap<String, String>) -> Plan {
     let mut out = Plan::default();
     let mut taken = BTreeSet::new();
     for s in skipped {
@@ -147,13 +227,6 @@ pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool) -> Pl
             }
             _ => continue,
         }
-        let Some(import_id) = crate::discovery::asset_resource_name(&s.what) else {
-            out.refused.push((
-                s.what.clone(),
-                format!("`{}` is not a Cloud Asset resource name, so there is no id to import by", s.what),
-            ));
-            continue;
-        };
         if !known_type(&s.tf_type) {
             let why = if s.tf_type.contains('/') {
                 format!("no import-config row names asset type {}, so there is no Terraform type to import as", s.tf_type)
@@ -163,23 +236,47 @@ pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool) -> Pl
             out.refused.push((s.what.clone(), why));
             continue;
         }
+        let import_id = match import_id(&s.tf_type, &s.what, asset_names) {
+            Ok(id) => id,
+            Err(why) => {
+                out.refused.push((s.what.clone(), why));
+                continue;
+            }
+        };
         out.candidates.push(Candidate {
-            label: label(import_id, &mut taken),
+            label: label(&import_id, &mut taken),
             tf_type: s.tf_type.clone(),
-            import_id: import_id.to_string(),
+            import_id,
             what: s.what.clone(),
         });
     }
     out
 }
 
+/// How the child's provider blocks are configured — the same two things the
+/// estate the run writes states in its own `providers` block.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChildProvider<'a> {
+    /// The service account the run is bound to (`--as` / `--into`), `None` on
+    /// the caller's own Application Default Credentials.
+    pub impersonate: Option<&'a str>,
+    /// The project the child bills its calls to and asks for quota on: the one
+    /// satz writes into the imported estate's `providers` block
+    /// (`import::quota_project`). Organization-, folder- and billing-account-
+    /// scoped reads name no project of their own, so without it the provider
+    /// has none to send and Google refuses the call.
+    pub quota_project: Option<&'a str>,
+}
+
 /// The scratch directory's only hand-written file: the providers to download and
 /// one `import` block per candidate.
 ///
-/// `impersonate` is the service account the run is bound to, and every provider
-/// block carries it — the child then reads each resource as the principal the
-/// sweep above it read the organisation as, rather than as whoever is logged in.
-pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider], impersonate: Option<&str>) -> String {
+/// Every provider block is the estate's own: the quota project as `project` and
+/// `billing_project` with `user_project_override`, so the child reads each
+/// resource the way the estate satz just wrote reads it, and the impersonation
+/// so it reads as the principal the sweep above it read the organisation as
+/// rather than as whoever is logged in.
+pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider], child: ChildProvider<'_>) -> String {
     let mut out = String::from(
         "# Written by `satz import --generate-unmapped`: one import block per live resource\n\
          # satz's own mapping left unmatched. `tofu plan -generate-config-out=generated.tf`\n\
@@ -194,12 +291,20 @@ pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider], imper
     }
     out.push_str("  }\n}\n");
     for p in providers {
-        match impersonate {
-            Some(sa) => out.push_str(&format!(
-                "\nprovider \"{}\" {{\n  impersonate_service_account = \"{}\"\n}}\n",
-                p.name, sa
-            )),
-            None => out.push_str(&format!("\nprovider \"{}\" {{}}\n", p.name)),
+        let mut body = String::new();
+        if let Some(project) = child.quota_project {
+            body.push_str(&format!(
+                "  project                     = \"{p}\"\n  billing_project             = \"{p}\"\n  user_project_override       = true\n",
+                p = project
+            ));
+        }
+        if let Some(sa) = child.impersonate {
+            body.push_str(&format!("  impersonate_service_account = \"{}\"\n", sa));
+        }
+        if body.is_empty() {
+            out.push_str(&format!("\nprovider \"{}\" {{}}\n", p.name));
+        } else {
+            out.push_str(&format!("\nprovider \"{}\" {{\n{}}}\n", p.name, body));
         }
     }
     for c in candidates {
@@ -229,18 +334,36 @@ pub(crate) const GENERATED_TF: &str = "generated.tf";
 /// The file satz writes there.
 pub(crate) const IMPORTS_TF: &str = "imports.tf";
 
+/// What the child left behind.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Generated {
+    /// The file the provider wrote, with the resources it could read.
+    pub file: PathBuf,
+    /// Its text, read once — [`outcomes`] judges against it.
+    pub text: String,
+    /// What the child said when it exited non-zero, `None` when it exited 0.
+    /// The resources it names are refused; [`outcomes`] ties them to candidates.
+    pub said: Option<String>,
+}
+
 /// Write the scratch directory, run `init` and the generating `plan`, and hand
 /// back the file the provider wrote.
 ///
-/// Every step that fails fails the command: a fallback that reports success on a
-/// plan it never got would leave the operator believing the estate is complete.
+/// A `plan` that exits non-zero is not the end of the run (ADR 0065). The
+/// provider reads the resources one by one and writes what it could read, so a
+/// non-zero exit with a `generated.tf` beside it means SOME resources were
+/// generated and the rest were reported; both halves are carried back and
+/// [`outcomes`] says which resource is which. A non-zero exit with no file at
+/// all, and a zero exit with no file, are failures — the fallback produced
+/// nothing, and saying otherwise would leave the operator believing the estate
+/// is complete. `init` failing is a failure too: no resource was ever read.
 pub(crate) fn generate(
     work_dir: &Path,
     candidates: &[Candidate],
     providers: &[Provider],
-    impersonate: Option<&str>,
+    child: ChildProvider<'_>,
     runner: &mut dyn Runner,
-) -> Result<PathBuf, String> {
+) -> Result<Generated, String> {
     if candidates.is_empty() {
         return Err("no resource to generate configuration for".to_string());
     }
@@ -255,7 +378,7 @@ pub(crate) fn generate(
         fsx::remove_file(&generated).map_err(|e| format!("{}: {}", generated.display(), e))?;
     }
     let imports = work_dir.join(IMPORTS_TF);
-    fsx::write(&imports, imports_tf(candidates, providers, impersonate)).map_err(|e| format!("{}: {}", imports.display(), e))?;
+    fsx::write(&imports, imports_tf(candidates, providers, child)).map_err(|e| format!("{}: {}", imports.display(), e))?;
     eprintln!(
         "generate-unmapped: {} import block(s) in {} — `init` downloads the provider once, then \
          `plan -generate-config-out` reads each resource …",
@@ -263,15 +386,132 @@ pub(crate) fn generate(
         imports.display()
     );
     runner.run(work_dir, &["init", "-input=false"])?;
-    runner.run(work_dir, &["plan", "-input=false", &format!("-generate-config-out={}", GENERATED_TF)])?;
-    if !generated.exists() {
-        return Err(format!(
-            "the plan succeeded but wrote no {} in {} — nothing was generated",
-            GENERATED_TF,
-            work_dir.display()
-        ));
+    let said = runner.run(work_dir, &["plan", "-input=false", &format!("-generate-config-out={}", GENERATED_TF)]).err();
+    let text = match fsx::read_to_string(&generated) {
+        Ok(t) if !generated_addresses(&t).is_empty() => t,
+        // No file, or a file with no resource in it: the fallback produced
+        // nothing, whatever the exit code said.
+        _ => {
+            return Err(match said {
+                Some(e) => e,
+                None => format!(
+                    "the plan succeeded but wrote no resource into {} in {} — nothing was generated",
+                    GENERATED_TF,
+                    work_dir.display()
+                ),
+            })
+        }
+    };
+    Ok(Generated { file: generated, text, said })
+}
+
+/// What became of one candidate once the child had run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    /// Its configuration is in the generated file and the child said nothing
+    /// against it.
+    Written,
+    /// Its configuration is in the generated file AND the child reported the
+    /// address: generated, and not usable as it stands. The provider's words say
+    /// what is missing.
+    Incomplete(String),
+    /// Nothing was generated for it, in the provider's words.
+    Refused(String),
+    /// Nothing was generated for it and nothing the child said names it. The
+    /// resource is not in the estate and satz cannot say why.
+    Unaccounted,
+}
+
+/// Per candidate, in the candidates' own order, what became of it — plus the
+/// blocks of the child's output that name no candidate, which are printed whole
+/// rather than dropped.
+///
+/// `generated` is the text of the file the provider wrote and `said` what it
+/// printed when it exited non-zero. The two together, never the exit code
+/// alone, decide: a resource counts as written because a `resource` block for
+/// its address is in the file, and as refused because the child named that
+/// address.
+pub(crate) fn outcomes(candidates: &[Candidate], generated: &str, said: Option<&str>) -> (Vec<Outcome>, Vec<String>) {
+    let written = generated_addresses(generated);
+    let blocks = said.map(error_blocks).unwrap_or_default();
+    let mut claimed = vec![false; blocks.len()];
+    let mut out = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        let address = format!("{}.{}", c.tf_type, c.label);
+        let mut reported: Vec<&str> = Vec::new();
+        for (i, b) in blocks.iter().enumerate() {
+            if names_resource(b, &c.tf_type, &c.label) {
+                claimed[i] = true;
+                reported.push(b);
+            }
+        }
+        out.push(match (written.contains(&address), reported.is_empty()) {
+            (true, true) => Outcome::Written,
+            (true, false) => Outcome::Incomplete(reported.join("\n")),
+            (false, false) => Outcome::Refused(reported.join("\n")),
+            (false, true) => Outcome::Unaccounted,
+        });
     }
-    Ok(generated)
+    let rest = blocks.into_iter().zip(claimed).filter(|(_, c)| !c).map(|(b, _)| b).collect();
+    (out, rest)
+}
+
+/// The addresses the provider wrote a `resource` block for. Generated
+/// configuration puts each block's header at column zero, one per line.
+fn generated_addresses(generated: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in generated.lines() {
+        let Some(rest) = line.strip_prefix("resource \"") else { continue };
+        let Some((tf_type, rest)) = rest.split_once('"') else { continue };
+        let Some((_, rest)) = rest.split_once('"') else { continue };
+        let Some((label, _)) = rest.split_once('"') else { continue };
+        out.insert(format!("{}.{}", tf_type, label));
+    }
+    out
+}
+
+/// The child's output cut into the blocks it prints one per problem: a block
+/// starts at a line whose text begins `Error:` — after the box-drawing prefix
+/// OpenTofu frames its diagnostics with — and runs to the next one.
+fn error_blocks(said: &str) -> Vec<String> {
+    let starts_block = |line: &str| line.trim_start_matches(['│', '╷', '╵', ' ', '\t']).starts_with("Error:");
+    let mut blocks: Vec<String> = Vec::new();
+    for line in said.lines() {
+        if starts_block(line) {
+            blocks.push(String::new());
+        }
+        if let Some(current) = blocks.last_mut() {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line.trim_end());
+        }
+    }
+    blocks.into_iter().map(|b| b.trim_end().to_string()).filter(|b| !b.is_empty()).collect()
+}
+
+/// Whether a diagnostic names this resource. The tool writes it two ways: as
+/// the address (`with google_dns_record_set.www,`) when it is about the import,
+/// and as the block header (`in resource "google_dns_record_set" "www":`) when
+/// it is about the configuration that was generated for it.
+fn names_resource(block: &str, tf_type: &str, label: &str) -> bool {
+    block.contains(&format!("\"{}\" \"{}\"", tf_type, label)) || names_address(block, &format!("{}.{}", tf_type, label))
+}
+
+/// Whether a diagnostic names exactly this address. `google_dns_record_set.www`
+/// is a prefix of `google_dns_record_set.www_2`, so the character after the
+/// match has to end the identifier.
+fn names_address(block: &str, address: &str) -> bool {
+    let mut from = 0;
+    while let Some(at) = block[from..].find(address) {
+        let end = from + at + address.len();
+        let after = block[end..].chars().next();
+        if !matches!(after, Some(c) if c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+            return true;
+        }
+        from = end;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -283,8 +523,25 @@ mod tests {
         Skipped { tf_type: tf_type.into(), what: what.into(), reason }
     }
 
+    fn unmapped(tf_type: &str, what: &str) -> Skipped {
+        skipped(tf_type, what, SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()))
+    }
+
     fn google() -> Vec<Provider> {
         vec![Provider { name: "google".into(), source: "hashicorp/google".into(), version: "7.14.1".into() }]
+    }
+
+    fn no_names() -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
+
+    /// The sweep's reading of one DNS managed zone: Cloud Asset names it by the
+    /// number, its data states the name.
+    fn zone_names() -> BTreeMap<String, String> {
+        BTreeMap::from([(
+            "//dns.googleapis.com/projects/acme-net/managedZones/1234567890".to_string(),
+            "corp".to_string(),
+        )])
     }
 
     /// A runner that records what it was asked to run and writes the file the
@@ -293,12 +550,23 @@ mod tests {
         calls: RefCell<Vec<String>>,
         dir: PathBuf,
         fail_at: Option<&'static str>,
+        /// What the failing step says, when it is not the default refusal.
+        says: Option<String>,
         write_output: bool,
+        /// What `plan` writes as `generated.tf`.
+        output: String,
     }
 
     impl FakeTofu {
         fn new(dir: &Path) -> Self {
-            Self { calls: RefCell::new(Vec::new()), dir: dir.to_path_buf(), fail_at: None, write_output: true }
+            Self {
+                calls: RefCell::new(Vec::new()),
+                dir: dir.to_path_buf(),
+                fail_at: None,
+                says: None,
+                write_output: true,
+                output: "resource \"google_dns_managed_zone\" \"corp\" {}\n".to_string(),
+            }
         }
     }
 
@@ -306,17 +574,19 @@ mod tests {
         fn run(&mut self, dir: &Path, args: &[&str]) -> Result<(), String> {
             assert_eq!(dir, self.dir, "the child runs in the scratch directory");
             self.calls.borrow_mut().push(args.join(" "));
-            if let Some(step) = self.fail_at {
-                if args[0] == step {
-                    return Err(format!(
+            let failing = self.fail_at == Some(args[0]);
+            // the real child writes what it could read before it reports the rest
+            if args[0] == "plan" && self.write_output {
+                std::fs::write(dir.join(GENERATED_TF), &self.output).unwrap();
+            }
+            if failing {
+                return Err(self.says.clone().unwrap_or_else(|| {
+                    format!(
                         "`tofu {}` failed in {}:\nError: Cannot import non-existent remote object",
                         args.join(" "),
                         dir.display()
-                    ));
-                }
-            }
-            if args[0] == "plan" && self.write_output {
-                std::fs::write(dir.join(GENERATED_TF), "resource \"google_dns_managed_zone\" \"corp\" {}\n").unwrap();
+                    )
+                }));
             }
             Ok(())
         }
@@ -332,12 +602,8 @@ mod tests {
     /// block's id is the asset's relative resource name.
     #[test]
     fn an_unmapped_type_the_schema_knows_becomes_an_import_block() {
-        let skipped = [skipped(
-            "google_dns_managed_zone",
-            "//dns.googleapis.com/projects/acme-net/managedZones/corp",
-            SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()),
-        )];
-        let plan = plan(&skipped, &|t| t == "google_dns_managed_zone");
+        let skipped = [unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")];
+        let plan = plan(&skipped, &|t| t == "google_dns_managed_zone", &zone_names());
         assert!(plan.refused.is_empty(), "{:?}", plan.refused);
         assert_eq!(
             plan.candidates,
@@ -345,34 +611,131 @@ mod tests {
                 tf_type: "google_dns_managed_zone".into(),
                 label: "corp".into(),
                 import_id: "projects/acme-net/managedZones/corp".into(),
-                what: "//dns.googleapis.com/projects/acme-net/managedZones/corp".into(),
+                what: "//dns.googleapis.com/projects/acme-net/managedZones/1234567890".into(),
             }]
         );
-        let tf = imports_tf(&plan.candidates, &google(), None);
+        let tf = imports_tf(&plan.candidates, &google(), ChildProvider::default());
         assert!(tf.contains("to = google_dns_managed_zone.corp"), "{tf}");
         assert!(tf.contains("id = \"projects/acme-net/managedZones/corp\""), "{tf}");
         assert!(tf.contains("version = \"7.14.1\""), "{tf}");
-        assert!(tf.contains("provider \"google\" {}"), "the plain ADC impersonates nobody:\n{tf}");
+        assert!(tf.contains("provider \"google\" {}"), "with neither an identity nor a quota project the block is empty:\n{tf}");
     }
 
-    /// Bound to an estate (`--into`), the child reads as that estate's IaC
-    /// service account: the provider block carries the impersonation, so one
-    /// command reads the platform as one principal.
+    /// The id per type, from a fixture asset name of each parent shape. For most
+    /// types it is the asset's relative resource name; the exceptions are the
+    /// ones a live rehearsal caught the provider refusing.
     #[test]
-    fn a_bound_run_writes_the_impersonation_into_the_provider_block() {
-        let plan = plan(
-            &[skipped(
+    fn the_import_id_per_type_is_the_one_the_provider_takes() {
+        let cases = [
+            // the four log sinks: one per parent, the id being the parent path
+            ("google_logging_project_sink", "//logging.googleapis.com/projects/acme-net/sinks/audit", "projects/acme-net/sinks/audit"),
+            ("google_logging_folder_sink", "//logging.googleapis.com/folders/123456789/sinks/audit", "folders/123456789/sinks/audit"),
+            (
+                "google_logging_organization_sink",
+                "//logging.googleapis.com/organizations/123456789012/sinks/audit",
+                "organizations/123456789012/sinks/audit",
+            ),
+            (
+                "google_logging_billing_account_sink",
+                "//logging.googleapis.com/billingAccounts/012345-6789AB-CDEF01/sinks/audit",
+                "billingAccounts/012345-6789AB-CDEF01/sinks/audit",
+            ),
+            // the four log buckets, the same four parents
+            (
+                "google_logging_project_bucket_config",
+                "//logging.googleapis.com/projects/acme-net/locations/global/buckets/audit",
+                "projects/acme-net/locations/global/buckets/audit",
+            ),
+            (
+                "google_logging_folder_bucket_config",
+                "//logging.googleapis.com/folders/123456789/locations/global/buckets/audit",
+                "folders/123456789/locations/global/buckets/audit",
+            ),
+            (
+                "google_logging_organization_bucket_config",
+                "//logging.googleapis.com/organizations/123456789012/locations/global/buckets/audit",
+                "organizations/123456789012/locations/global/buckets/audit",
+            ),
+            (
+                "google_logging_billing_account_bucket_config",
+                "//logging.googleapis.com/billingAccounts/012345-6789AB-CDEF01/locations/global/buckets/audit",
+                "billingAccounts/012345-6789AB-CDEF01/locations/global/buckets/audit",
+            ),
+            // a singleton: Cloud Asset appends the kind, the provider imports
+            // the collection path
+            (
+                "google_compute_instance_settings",
+                "//compute.googleapis.com/projects/acme-net/zones/europe-west3-b/instanceSettings/InstanceSettings",
+                "projects/acme-net/zones/europe-west3-b/instanceSettings",
+            ),
+            // the zone, by its name rather than by the number Cloud Asset gives it
+            (
                 "google_dns_managed_zone",
-                "//dns.googleapis.com/projects/acme-net/managedZones/corp",
-                SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()),
-            )],
-            &|_| true,
+                "//dns.googleapis.com/projects/acme-net/managedZones/1234567890",
+                "projects/acme-net/managedZones/corp",
+            ),
+            (
+                "google_dns_record_set",
+                "//dns.googleapis.com/projects/acme-net/managedZones/1234567890/rrsets/www.corp.example./A",
+                "projects/acme-net/managedZones/corp/rrsets/www.corp.example./A",
+            ),
+        ];
+        for (tf_type, what, want) in cases {
+            assert_eq!(import_id(tf_type, what, &zone_names()).as_deref(), Ok(want), "{tf_type} from {what}");
+        }
+    }
+
+    /// A record set whose zone the sweep did not read is refused by name: the
+    /// number Cloud Asset gives the zone is not an id the provider imports by,
+    /// and satz does not send it to find out.
+    #[test]
+    fn a_zone_the_sweep_did_not_read_is_refused_not_guessed() {
+        for tf_type in ["google_dns_managed_zone", "google_dns_record_set"] {
+            let what = "//dns.googleapis.com/projects/acme-net/managedZones/1234567890/rrsets/www.corp.example./A";
+            let what = if tf_type == "google_dns_managed_zone" { "//dns.googleapis.com/projects/acme-net/managedZones/1234567890" } else { what };
+            let why = import_id(tf_type, what, &no_names()).unwrap_err();
+            assert!(why.contains("is not among the assets this sweep read"), "{tf_type}: {why}");
+            assert!(why.contains("dns.googleapis.com/ManagedZone"), "{tf_type}: {why}");
+        }
+    }
+
+    /// A singleton whose name does not carry the kind is refused rather than
+    /// truncated: the rule says what the provider takes.
+    #[test]
+    fn an_instance_settings_name_without_the_kind_is_refused() {
+        let why = import_id("google_compute_instance_settings", "//compute.googleapis.com/projects/acme-net/zones/europe-west3-b", &no_names())
+            .unwrap_err();
+        assert!(why.contains("does not end in the /InstanceSettings"), "{why}");
+    }
+
+    /// Bound to an estate (`--as` / `--into`), the child reads as that estate's
+    /// IaC service account and bills where the estate bills: one command reads
+    /// the platform as one principal, against one quota project.
+    #[test]
+    fn the_child_provider_block_is_the_estates_own() {
+        let plan = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &zone_names());
+        let tf = imports_tf(
+            &plan.candidates,
+            &google(),
+            ChildProvider {
+                impersonate: Some("svc-iac-001@acme-infra-001.iam.gserviceaccount.com"),
+                quota_project: Some("acme-infra-001"),
+            },
         );
-        let tf = imports_tf(&plan.candidates, &google(), Some("svc-iac-001@acme-infra-001.iam.gserviceaccount.com"));
-        assert!(
-            tf.contains("impersonate_service_account = \"svc-iac-001@acme-infra-001.iam.gserviceaccount.com\""),
-            "{tf}"
-        );
+        assert!(tf.contains("impersonate_service_account = \"svc-iac-001@acme-infra-001.iam.gserviceaccount.com\""), "{tf}");
+        assert!(tf.contains("project                     = \"acme-infra-001\""), "{tf}");
+        assert!(tf.contains("billing_project             = \"acme-infra-001\""), "{tf}");
+        assert!(tf.contains("user_project_override       = true"), "{tf}");
+    }
+
+    /// A run that found no project has no quota project to name, and the block
+    /// says so by carrying none rather than by naming one satz made up.
+    #[test]
+    fn without_a_quota_project_the_block_names_none() {
+        let plan = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &zone_names());
+        let tf = imports_tf(&plan.candidates, &google(), ChildProvider { impersonate: Some("svc@acme-infra-001.iam.gserviceaccount.com"), quota_project: None });
+        assert!(!tf.contains("billing_project"), "{tf}");
+        assert!(tf.contains("impersonate_service_account"), "{tf}");
     }
 
     /// A type neither matched nor generatable is listed, with the reason. It is
@@ -387,12 +750,12 @@ mod tests {
             ),
             // the state shape names a resource by its Terraform label, which is
             // no live id: there is nothing to import by
-            skipped("google_compute_network", "vpc", SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into())),
+            unmapped("google_compute_network", "vpc"),
             skipped("google_pubsub_topic", "t", SkipReason::TypeOff),
             skipped("google_storage_bucket", "b", SkipReason::Filtered),
             skipped("google_logging_metric", "m", SkipReason::PlatformOwned("_Default".into())),
         ];
-        let plan = plan(&skipped, &|t| t.starts_with("google_"));
+        let plan = plan(&skipped, &|t| t.starts_with("google_"), &no_names());
         assert!(plan.candidates.is_empty(), "{:?}", plan.candidates);
         assert_eq!(plan.refused.len(), 2, "only the unmapped ones are this fallback's business: {:?}", plan.refused);
         assert!(plan.refused[0].1.contains("no import-config row names asset type aiplatform.googleapis.com/Dataset"), "{:?}", plan.refused);
@@ -415,32 +778,26 @@ mod tests {
     /// Two resources whose names end in the same segment get two addresses.
     #[test]
     fn labels_are_unique_within_a_run() {
-        let reason = || SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into());
         let skipped = [
-            skipped("google_dns_managed_zone", "//dns.googleapis.com/projects/a/managedZones/corp", reason()),
-            skipped("google_dns_managed_zone", "//dns.googleapis.com/projects/b/managedZones/corp", reason()),
+            unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp"),
+            unmapped("google_dns_policy", "//dns.googleapis.com/projects/b/policies/corp"),
         ];
-        let plan = plan(&skipped, &|_| true);
+        let plan = plan(&skipped, &|_| true, &no_names());
         let labels: Vec<&str> = plan.candidates.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, vec!["corp", "corp_2"]);
     }
 
     /// The happy path: the scratch directory is written, `init` and the
-    /// generating `plan` run in it, and the provider's file comes back.
+    /// generating `plan` run in it, and the provider's file comes back with
+    /// nothing said against it.
     #[test]
     fn the_child_runs_init_then_the_generating_plan() {
         let dir = scratch("happy");
-        let plan_ = plan(
-            &[skipped(
-                "google_dns_managed_zone",
-                "//dns.googleapis.com/projects/acme-net/managedZones/corp",
-                SkipReason::Unmapped("x".into()),
-            )],
-            &|_| true,
-        );
+        let plan_ = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &zone_names());
         let mut fake = FakeTofu::new(&dir);
-        let out = generate(&dir, &plan_.candidates, &google(), None, &mut fake).expect("generated");
-        assert_eq!(out, dir.join(GENERATED_TF));
+        let out = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).expect("generated");
+        assert_eq!(out.file, dir.join(GENERATED_TF));
+        assert_eq!(out.said, None);
         assert_eq!(
             *fake.calls.borrow(),
             vec!["init -input=false".to_string(), "plan -input=false -generate-config-out=generated.tf".to_string()]
@@ -450,17 +807,93 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The child failing surfaces what the child said, and generates nothing.
+    /// The child refusing some ids keeps what it generated for the rest: the
+    /// file comes back with what the child said beside it, so the run reads 1
+    /// resource back instead of throwing it away over the other 2.
     #[test]
-    fn a_failing_child_surfaces_its_output() {
-        let dir = scratch("failing");
+    fn a_child_that_refused_some_ids_keeps_what_it_generated() {
+        let dir = scratch("partial");
         let plan_ = plan(
-            &[skipped("google_dns_managed_zone", "//dns.googleapis.com/projects/a/managedZones/corp", SkipReason::Unmapped("x".into()))],
+            &[
+                unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890"),
+                unmapped("google_compute_instance_settings", "//compute.googleapis.com/projects/acme-net/zones/europe-west3-b/instanceSettings/InstanceSettings"),
+                unmapped("google_cloud_asset_organization_feed", "//cloudasset.googleapis.com/organizations/123456789012/feeds/estate"),
+            ],
             &|_| true,
+            &zone_names(),
         );
+        assert_eq!(plan_.candidates.len(), 3);
         let mut fake = FakeTofu::new(&dir);
         fake.fail_at = Some("plan");
-        let said = generate(&dir, &plan_.candidates, &google(), None, &mut fake).unwrap_err();
+        fake.output = "resource \"google_dns_managed_zone\" \"corp\" {}\nresource \"google_cloud_asset_organization_feed\" \"estate\" {}\n".to_string();
+        fake.says = Some(
+            "╷\n│ Error: Cannot import non-existent remote object\n│ \n│   with google_compute_instance_settings.instancesettings,\n│   on imports.tf line 20:\n│   20: import {\n╵\n╷\n│ Error: Missing required argument\n│ \n│   on generated.tf line 3, in resource \"google_cloud_asset_organization_feed\" \"estate\":\n│    3: resource \"google_cloud_asset_organization_feed\" \"estate\" {\n│ \n│ The argument \"billing_project\" is required, but no definition was found.\n╵"
+                .to_string(),
+        );
+        let out = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).expect("the generated file comes back");
+        assert_eq!(out.file, dir.join(GENERATED_TF));
+        let (outcomes, rest) = outcomes(&plan_.candidates, &out.text, out.said.as_deref());
+        assert_eq!(outcomes[0], Outcome::Written, "the zone was read and written");
+        let Outcome::Refused(why) = &outcomes[1] else { panic!("{:?}", outcomes[1]) };
+        assert!(why.contains("Cannot import non-existent remote object"), "{why}");
+        let Outcome::Incomplete(why) = &outcomes[2] else { panic!("{:?}", outcomes[2]) };
+        assert!(why.contains("The argument \"billing_project\" is required"), "{why}");
+        assert!(rest.is_empty(), "every block named a resource satz asked for: {rest:?}");
+        // the import blocks stay on disk: they are what the operator edits
+        assert!(dir.join(IMPORTS_TF).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A candidate the child neither generated for nor mentioned is said to be
+    /// unaccounted for. The run never reports a resource as imported on the
+    /// strength of having asked for it.
+    #[test]
+    fn a_candidate_the_child_never_mentions_is_unaccounted_for() {
+        let candidates = plan(
+            &[
+                unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890"),
+                unmapped("google_pubsub_topic", "//pubsub.googleapis.com/projects/acme-net/topics/events"),
+            ],
+            &|_| true,
+            &zone_names(),
+        )
+        .candidates;
+        let (outcomes, rest) =
+            outcomes(&candidates, "resource \"google_dns_managed_zone\" \"corp\" {}\n", Some("╷\n│ Error: something went wrong\n╵"));
+        assert_eq!(outcomes, vec![Outcome::Written, Outcome::Unaccounted]);
+        assert_eq!(rest.len(), 1, "a block naming no candidate is kept whole: {rest:?}");
+        assert!(rest[0].contains("something went wrong"));
+    }
+
+    /// A label that is another label's prefix is not confused with it: the
+    /// diagnostic about `corp_2` says nothing about `corp`.
+    #[test]
+    fn an_address_that_prefixes_another_is_not_confused_with_it() {
+        let candidates = plan(
+            &[
+                unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp"),
+                unmapped("google_dns_policy", "//dns.googleapis.com/projects/b/policies/corp"),
+            ],
+            &|_| true,
+            &no_names(),
+        )
+        .candidates;
+        let said = "╷\n│ Error: Cannot import non-existent remote object\n│ \n│   with google_dns_policy.corp_2,\n╵";
+        let (outcomes, _) = outcomes(&candidates, "", Some(said));
+        assert_eq!(outcomes[0], Outcome::Unaccounted, "corp is not what the diagnostic names");
+        assert!(matches!(outcomes[1], Outcome::Refused(_)), "{:?}", outcomes[1]);
+    }
+
+    /// A child that failed and generated nothing is a failure: there is nothing
+    /// to read back, and the operator gets the child's own output.
+    #[test]
+    fn a_failing_child_that_generated_nothing_surfaces_its_output() {
+        let dir = scratch("failing");
+        let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &no_names());
+        let mut fake = FakeTofu::new(&dir);
+        fake.fail_at = Some("plan");
+        fake.write_output = false;
+        let said = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).unwrap_err();
         assert!(said.contains("Cannot import non-existent remote object"), "{said}");
         assert!(!dir.join(GENERATED_TF).exists(), "nothing was generated");
         // the import blocks stay on disk: they are what the operator edits
@@ -468,19 +901,34 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A plan that exits 0 and writes nothing is a failure, not an empty success.
+    /// `init` failing is the end of the run: no resource was ever read, so
+    /// there is no partial result to keep.
     #[test]
-    fn a_plan_that_writes_nothing_is_an_error() {
-        let dir = scratch("silent");
-        let plan_ = plan(
-            &[skipped("google_dns_managed_zone", "//dns.googleapis.com/projects/a/managedZones/corp", SkipReason::Unmapped("x".into()))],
-            &|_| true,
-        );
+    fn a_failing_init_is_the_end_of_the_run() {
+        let dir = scratch("init");
+        let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &no_names());
         let mut fake = FakeTofu::new(&dir);
-        fake.write_output = false;
-        let said = generate(&dir, &plan_.candidates, &google(), None, &mut fake).unwrap_err();
-        assert!(said.contains("wrote no generated.tf"), "{said}");
+        fake.fail_at = Some("init");
+        let said = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).unwrap_err();
+        assert!(said.contains("Cannot import non-existent remote object"), "{said}");
+        assert_eq!(*fake.calls.borrow(), vec!["init -input=false".to_string()], "no plan runs after a failed init");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plan that exits 0 and generates nothing is a failure, not an empty
+    /// success — whether it wrote no file or a file with no resource in it.
+    #[test]
+    fn a_plan_that_generates_nothing_is_an_error() {
+        for (name, write_output) in [("silent", false), ("empty-file", true)] {
+            let dir = scratch(name);
+            let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &no_names());
+            let mut fake = FakeTofu::new(&dir);
+            fake.write_output = write_output;
+            fake.output = "# __generated__ by OpenTofu\n".to_string();
+            let said = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).unwrap_err();
+            assert!(said.contains("wrote no resource into generated.tf"), "{name}: {said}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// With nothing to generate, no child runs and no directory is written.
@@ -488,7 +936,7 @@ mod tests {
     fn nothing_to_generate_runs_nothing() {
         let dir = scratch("empty");
         let mut fake = FakeTofu::new(&dir);
-        let said = generate(&dir, &[], &google(), None, &mut fake).unwrap_err();
+        let said = generate(&dir, &[], &google(), ChildProvider::default(), &mut fake).unwrap_err();
         assert!(said.contains("no resource to generate configuration for"), "{said}");
         assert!(fake.calls.borrow().is_empty());
         assert!(!dir.exists(), "no scratch directory without a candidate");

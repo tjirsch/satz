@@ -123,7 +123,7 @@ pub(crate) async fn import_org(
     if generate_unmapped {
         // Nothing declared to subtract — a new file declares nothing — so the
         // whole skipped list, read as whoever the sweep above it read as.
-        generate_unmapped_config(&found.skipped, &[], &registry, &written, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
+        generate_unmapped_config(&found, &found.skipped, &[], &registry, &written, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
     }
     Ok(())
 }
@@ -147,8 +147,14 @@ pub(crate) async fn import_org(
 ///
 /// `already` is what the estate declares by that live id under `--into`: reported
 /// here with the rest, never generated for.
+///
+/// The child may exit non-zero having generated some of the resources. What it
+/// generated is read back and what it refused is reported per resource in the
+/// provider's own words (ADR 0065): `imports.tf` stays on disk with every block,
+/// so the refused ids can be corrected and the two commands run again by hand.
 #[allow(clippy::too_many_arguments)]
 fn generate_unmapped_config(
+    found: &crate::discovery::Discovered,
     skipped: &[crate::discovery::Skipped],
     already: &[(String, String)],
     registry: &ResourceRegistry,
@@ -159,7 +165,7 @@ fn generate_unmapped_config(
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::generate_config;
-    let plan = generate_config::plan(skipped, &|t| registry.resources.contains_key(t));
+    let plan = generate_config::plan(skipped, &|t| registry.resources.contains_key(t), &found.asset_names);
     // The third count is `--into`'s alone: a plain sweep has no estate to declare
     // anything, so the line does not offer a zero to read.
     let declared = if already.is_empty() { String::new() } else { format!(", {} the estate declares", already.len()) };
@@ -186,21 +192,71 @@ fn generate_unmapped_config(
     }
     let providers = providers_for(&plan.candidates, registry, tool_config);
     let (work_dir, out_name) = generate_config::output_names(base);
-    let generated = generate_config::generate(&work_dir, &plan.candidates, &providers, impersonate, &mut generate_config::Tofu { tool: &tool_config.tf_tool })
-        .map_err(|e| {
-            format!(
-                "{}\nThe import blocks are in {} — correct the ids the provider refused, then \
-                 `{} plan -generate-config-out={}` there and `satz import {}` on what it writes.",
-                e,
-                work_dir.join(generate_config::IMPORTS_TF).display(),
-                tool_config.tf_tool,
-                generate_config::GENERATED_TF,
-                work_dir.join(generate_config::GENERATED_TF).display(),
-            )
-        })?;
-    println!("\ngenerate-unmapped: {} — reading it back as Satz", generated.display());
-    let src = generated.to_str().ok_or_else(|| format!("{}: the generated path is not UTF-8", generated.display()))?;
+    // the same project the estate's own `providers` block names, so the child
+    // bills and asks for quota where the estate does
+    let quota = quota_project_choice(&found.config).map(|(id, _)| id);
+    let child = generate_config::ChildProvider { impersonate, quota_project: quota.as_deref() };
+    let by_hand = || {
+        format!(
+            "The import blocks are in {} — correct the ids the provider refused, then \
+             `{} plan -generate-config-out={}` there and `satz import {}` on what it writes.",
+            work_dir.join(generate_config::IMPORTS_TF).display(),
+            tool_config.tf_tool,
+            generate_config::GENERATED_TF,
+            work_dir.join(generate_config::GENERATED_TF).display(),
+        )
+    };
+    let generated =
+        generate_config::generate(&work_dir, &plan.candidates, &providers, child, &mut generate_config::Tofu { tool: &tool_config.tf_tool })
+            .map_err(|e| format!("{}\n{}", e, by_hand()))?;
+    let (outcomes, unattributed) = generate_config::outcomes(&plan.candidates, &generated.text, generated.said.as_deref());
+    report_outcomes(&plan.candidates, &outcomes, &unattributed);
+    if generated.said.is_some() {
+        println!("\n{}", by_hand());
+    }
+    println!("\ngenerate-unmapped: {} — reading it back as Satz", generated.file.display());
+    let src = generated.file.to_str().ok_or_else(|| format!("{}: the generated path is not UTF-8", generated.file.display()))?;
     import_hcl(src, PathBuf::from(out_name), false, verbose, runtime_config)
+}
+
+/// What the provider did with each resource it was asked for: one line per
+/// resource with the address it was asked under, and the provider's own words
+/// under the ones it reported.
+fn report_outcomes(
+    candidates: &[crate::generate_config::Candidate],
+    outcomes: &[crate::generate_config::Outcome],
+    unattributed: &[String],
+) {
+    use crate::generate_config::Outcome;
+    let count = |want: fn(&Outcome) -> bool| outcomes.iter().filter(|o| want(o)).count();
+    println!(
+        "\ngenerate-unmapped: {} written, {} written incomplete, {} refused, {} unaccounted for:",
+        count(|o| matches!(o, Outcome::Written)),
+        count(|o| matches!(o, Outcome::Incomplete(_))),
+        count(|o| matches!(o, Outcome::Refused(_))),
+        count(|o| matches!(o, Outcome::Unaccounted)),
+    );
+    for (c, outcome) in candidates.iter().zip(outcomes) {
+        let (verdict, said) = match outcome {
+            Outcome::Written => ("written       ", None),
+            Outcome::Incomplete(said) => ("incomplete    ", Some(said)),
+            Outcome::Refused(said) => ("refused       ", Some(said)),
+            Outcome::Unaccounted => ("unaccounted   ", None),
+        };
+        println!("  {} {} = {}.{}", verdict, c.what, c.tf_type, c.label);
+        for line in said.into_iter().flat_map(|s| s.lines()) {
+            println!("      {}", line);
+        }
+        if matches!(outcome, Outcome::Unaccounted) {
+            println!("      nothing was generated for it and the provider said nothing about it");
+        }
+    }
+    for block in unattributed {
+        println!("  the provider also reported, naming no resource satz asked for:");
+        for line in block.lines() {
+            println!("      {}", line);
+        }
+    }
 }
 
 /// The providers the candidates' types come from, at the versions the tool
@@ -799,7 +855,7 @@ pub(crate) async fn import_delta(
         // imported into one estate keep their own files, the way their packs do.
         let base = yaml_dir.join(delta::pack_name(parent, None));
         let (unmapped, already) = delta::undeclared(&found.skipped, &declared);
-        generate_unmapped_config(&unmapped, &already, &registry, &base, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
+        generate_unmapped_config(&found, &unmapped, &already, &registry, &base, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
     }
     Ok(())
 }
@@ -864,8 +920,9 @@ const QUOTA_PROJECT_APIS: [&str; 2] = ["orgpolicy.googleapis.com", "serviceusage
 
 /// The project the providers bill organization-scoped calls to: the first
 /// (by id) that enables the APIs those calls need — the day-0 infra project
-/// does — else the first project at all, said so. `None` without a project.
-pub(crate) fn quota_project(config: &Config) -> Option<String> {
+/// does — else the first project at all. `(id, whether it enables them)`, `None`
+/// without a project.
+pub(crate) fn quota_project_choice(config: &Config) -> Option<(String, bool)> {
     fn services(p: &crate::config::Project) -> Vec<String> {
         p.project_service
             .iter()
@@ -897,20 +954,25 @@ pub(crate) fn quota_project(config: &Config) -> Option<String> {
     projects.sort();
     let able = projects.iter().find(|(_, svcs)| QUOTA_PROJECT_APIS.iter().all(|api| svcs.iter().any(|s| s == api)));
     match (able, projects.first()) {
-        (Some((id, _)), _) => {
-            println!("import: providers' quota project {} — it enables {}", id, QUOTA_PROJECT_APIS.join(" and "));
-            Some(id.clone())
-        }
-        (None, Some((id, _))) => {
-            println!(
-                "import: providers' quota project {} — no project enables {}; organization-scoped reads may fail with 403 until one does (set `billing_project` in `providers` by hand)",
-                id,
-                QUOTA_PROJECT_APIS.join(" and ")
-            );
-            Some(id.clone())
-        }
+        (Some((id, _)), _) => Some((id.clone(), true)),
+        (None, Some((id, _))) => Some((id.clone(), false)),
         (None, None) => None,
     }
+}
+
+/// The same choice, said out loud — the estate write makes it once and names it.
+pub(crate) fn quota_project(config: &Config) -> Option<String> {
+    let (id, enables) = quota_project_choice(config)?;
+    if enables {
+        println!("import: providers' quota project {} — it enables {}", id, QUOTA_PROJECT_APIS.join(" and "));
+    } else {
+        println!(
+            "import: providers' quota project {} — no project enables {}; organization-scoped reads may fail with 403 until one does (set `billing_project` in `providers` by hand)",
+            id,
+            QUOTA_PROJECT_APIS.join(" and ")
+        );
+    }
+    Some(id)
 }
 
 /// The first organization number the tree names: an `organizations/<n>`
