@@ -57,6 +57,11 @@ and in the maintainer's notes. Nothing in this file names a customer.
   names, never edit the workflow. The `release-workflow` job of `smoke.yml` runs
   `dist generate --check` on every PR and every push to `main` and fails on a
   hand-edited or un-regenerated `release.yml`, printing the diff.
+  **What a release keeps (2026-09-23):** `prune-releases.yml` deletes every release but
+  the five newest, tags included. A release satz still NAMES survives that — the workflow
+  reads `satz_core::LAST_YAML_CONVERTING_RELEASE` out of the source at the commit being
+  released and keeps it however old it is, because a refusal that points at a 404 is a
+  dead end. A new constant that names a release adds a line there in the same change.
   **Minor or patch (2026-09-11, ADR 0010):** a release is a MINOR when the same
   estate or input, run through the new binary, needs an edit, is refused, or
   plans differently — a language change, a removed or renamed command or flag,

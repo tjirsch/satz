@@ -1,7 +1,13 @@
 name: Prune Old Releases
 
 # Runs after each successful Release workflow and deletes all but the 5
-# most recent releases (and their git tags).
+# most recent releases (and their git tags), plus every release satz still
+# NAMES: `satz_core::LAST_YAML_CONVERTING_RELEASE` is printed to an operator
+# holding a pre-Satz YAML estate as the release that converts it, so pruning it
+# would send that operator to a 404 — and `--cleanup-tag` would take the tag
+# with it, leaving nothing to build from either. The keep list is read out of
+# the source at the commit being released, so the constant and the prune cannot
+# drift apart.
 #
 # Uses workflow_run for the same reason as attach-checksum.yml — cargo-dist
 # creates releases with GITHUB_TOKEN, so release:published never fires.
@@ -25,19 +31,41 @@ jobs:
       contents: write
 
     steps:
-      - name: Delete releases beyond the 5 most recent
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - name: Delete releases beyond the 5 most recent, except the ones satz names
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
+          set -euo pipefail
           case "$HEAD_BRANCH" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "not a release tag: $HEAD_BRANCH"; exit 0 ;;
           esac
+
+          # The releases satz itself sends an operator to. A refusal that names a
+          # release satz no longer publishes is a dead end, so the release stays
+          # however old it is. One line per constant.
+          keep=$(grep -oE 'LAST_YAML_CONVERTING_RELEASE: &str = "[^"]+"' \
+                   crates/satz-core/src/lib.rs | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+          if [ -z "$keep" ]; then
+            echo "the release satz names could not be read from crates/satz-core/src/lib.rs" >&2
+            exit 1
+          fi
+          echo "keeping, because satz names it: $keep"
+
           gh release list --repo "$REPO" --limit 100 --json tagName \
-            --jq '.[5:][].tagName' \
-          | xargs -r -I{} gh release delete {} \
-              --repo "$REPO" \
-              --yes \
-              --cleanup-tag
+            --jq '.[5:][].tagName' > old.txt
+          while read -r tag; do
+            [ -z "${tag:-}" ] && continue
+            if [ "$tag" = "$keep" ]; then
+              echo "kept $tag"
+              continue
+            fi
+            echo "deleting $tag"
+            gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag
+          done < old.txt
