@@ -429,6 +429,10 @@ pub(crate) enum Commands {
         /// fact carries — wins over the inference from the names found
         #[arg(long)]
         customer_shortname: Option<String>,
+        /// state shape: the organization the state belongs to, for a state
+        /// that names none — a live sweep reads it from its own root
+        #[arg(long, value_name = "N")]
+        organization: Option<String>,
         /// live shape: ask the provider for the resources this import leaves
         /// unmapped — `tofu plan -generate-config-out` writes their
         /// configuration and satz reads it back as <estate>-generated.satz
@@ -1592,7 +1596,7 @@ Thumbs.db
             println!("Migration script generated: {}", final_output.display());
             Ok(())
         }
-        Commands::Import { source, from, only, all, exclude, output, import_config, into, as_estate, wrap_all, on_collision, customer_shortname, generate_unmapped } => {
+        Commands::Import { source, from, only, all, exclude, output, import_config, into, as_estate, wrap_all, on_collision, customer_shortname, organization, generate_unmapped } => {
             let cfg_opt = load_import_config(import_config, &tool_config, &runtime_config.presets_dir)?;
             let shape = match from {
                 Some(f) => f,
@@ -1603,6 +1607,12 @@ Thumbs.db
             // here, for every shape at once, rather than accepted and ignored.
             if as_estate.is_some() && shape != "org" {
                 return Err("--as applies to the live shape (organizations/…, folders/…, projects/…): it names the estate whose IaC service account reads the scope, and the state and hcl shapes read a file, calling no Google API".into());
+            }
+            // The live shape reads the organization from the root it sweeps and
+            // from the assets' ancestors, and the hcl shape from the `.tf` it
+            // reads: only a state can name none, so only a state takes the flag.
+            if organization.is_some() && shape != "state" {
+                return Err("--organization applies to the state shape: a live sweep reads the organization from its root (organizations/<n>) and from the assets' ancestors, and the hcl shape from the configuration it reads".into());
             }
             match shape.as_str() {
                 "yaml" => {
@@ -1660,7 +1670,7 @@ Thumbs.db
                             None | Some("-") => None,
                             Some(p) => Some(PathBuf::from(p)),
                         };
-                        import_state(state_json, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, &tool_config, &runtime_config)
+                        import_state(state_json, output, cfg, filtered, on_collision, customer_shortname.as_deref(), organization.as_deref(), cli.verbose, &tool_config, &runtime_config)
                     } else {
                         // A live sweep reads a customer's organisation, so it runs
                         // as that organisation's IaC service account — the account

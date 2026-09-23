@@ -511,6 +511,15 @@ tofu show -json > state.json
 satz import state.json -o migration-discovery.satz
 ```
 
+Every estate is bound to an organisation, and a state carries its number only where
+a resource names it (`organizations/<n>`, `org_id`) or a top-level folder hangs
+under it. A state of folders and projects nested under a folder outside it names
+none, and the import is refused with nothing written — name it:
+
+```bash
+satz import state.json --organization 123456789012 -o migration-discovery.satz
+```
+
 Or straight from Google Cloud, with no state at all:
 
 ```bash

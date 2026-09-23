@@ -497,6 +497,20 @@ fn translate_api_values(map: &mut serde_yaml::Mapping, tf_type: &str, at: &str) 
             serde_yaml::Value::String(if live { "LIVE" } else { "ARCHIVED" }.to_string()),
         );
     }
+    // The same fact the other way round: where the API states it by leaving a
+    // block EMPTY and the provider by an attribute set to "". A Pub/Sub
+    // `expirationPolicy` with no `ttl` is "never expires" — the provider writes
+    // `ttl = ""`; the block absent altogether is Google's 31-day default, after
+    // which the subscription deletes itself.
+    let empty_means: &[(&str, &str, &str)] = &[
+        // (tf type, path, the attribute the empty block stands for)
+        ("google_pubsub_subscription", "expiration_policy.", "ttl"),
+    ];
+    for (t, path, key) in empty_means {
+        if *t == tf_type && *path == at && map.is_empty() {
+            map.insert(serde_yaml::Value::String((*key).to_string()), serde_yaml::Value::String(String::new()));
+        }
+    }
 }
 
 /// Does this block take `name` as an attribute, with a value of that shape?
@@ -723,6 +737,39 @@ pub fn grant_import_id(tf_type: &str, parent: &str, role: &str, member: &str) ->
     format!("{} {} {}", parent, role, member)
 }
 
+/// What an `import_id` template's placeholders stand for in an asset path:
+/// `projects/{project}/locations/global/workloadIdentityPools/{workload_identity_pool_id}/providers/{workload_identity_pool_provider_id}`
+/// over `projects/1/locations/global/workloadIdentityPools/pool/providers/gh`
+/// binds the pool to `pool` and the provider to `gh`. The template is the
+/// provider's own import format for that type, so its placeholders name the
+/// attributes, and a path segment stands where each attribute belongs — which
+/// is what tells a parent's id from the resource's own.
+///
+/// Nothing is bound unless the two agree segment for segment: same count, and
+/// every literal segment equal. A template that is not a path (`{org_id} {role}
+/// {member}`) and a path the template does not describe both bind nothing,
+/// rather than a segment from the wrong place.
+fn template_segments(template: &str, path: &str) -> BTreeMap<String, String> {
+    let t: Vec<&str> = template.split('/').collect();
+    let p: Vec<&str> = path.split('/').collect();
+    let mut out = BTreeMap::new();
+    if t.len() != p.len() {
+        return out;
+    }
+    for (t, p) in t.iter().zip(p.iter()) {
+        match t.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            // one whole segment is one placeholder, or the segment is a
+            // literal both sides share
+            Some(key) if !key.contains('{') => {
+                out.insert(key.to_string(), (*p).to_string());
+            }
+            _ if t == p => {}
+            _ => return BTreeMap::new(),
+        }
+    }
+    out
+}
+
 /// The organization an asset's ancestor chain ends in.
 pub fn organization_from_ancestors<'a, I: IntoIterator<Item = &'a String>>(ancestors: I) -> Option<String> {
     ancestors
@@ -869,7 +916,9 @@ impl Discoverer {
         }
         
         link_projects_to_folders(&project_id_to_parent, &gcp_id_to_yaml_name, &mut project_map, &mut folder_map)?;
-        link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map)?;
+        // a top-level folder's parent is the one place a state of folders and
+        // projects names the organization; the folder itself does not carry it
+        let organization = link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map)?;
 
         if !folder_map.is_empty() { config.folder = Some(folder_map); }
         if !project_map.is_empty() { config.project = Some(project_map); }
@@ -911,7 +960,7 @@ impl Discoverer {
         let notes = resolve_grant_collisions(&mut config, self.on_collision)?;
 
         // the state shape asks no API: nothing can be refused by name
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None, notes, unserved: Vec::new() })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes, unserved: Vec::new() })
     }
 
     /// `what` names the resource in the report: a value the source carried and
@@ -1073,7 +1122,16 @@ impl Discoverer {
                 Self::filter_recursive(v, sub_schema, blacklist, tf_type, what, &format!("{}{}.", at, k_str));
             }
 
-            map.retain(|_, v| {
+            map.retain(|k, v| {
+                // An empty string ON AN ATTRIBUTE THE SCHEMA NAMES is a value:
+                // a subscription's `expiration_policy.ttl = ""` is "never
+                // expires", and dropped it becomes Google's 31-day default,
+                // after which the subscription deletes itself. Only the
+                // schema tells the two apart, so a key it does not name is
+                // still empty vocabulary and goes.
+                if v.as_str().is_some_and(|s| s.is_empty()) {
+                    return k.as_str().is_some_and(|k| schema.is_some_and(|s| s.attributes.contains_key(k)));
+                }
                 !Self::is_empty_value(v)
             });
         } else if let serde_yaml::Value::Sequence(seq) = val {
@@ -1190,7 +1248,11 @@ impl Discoverer {
     fn add_resource_to_folder(&self, f: &mut Folder, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) -> Result<(), String> {
         if tf_type.ends_with("_iam_member") {
             let (role, member) = grant_identity(tf_type, tf_name, values)?;
-            let parent = f.import_id.clone().unwrap_or_else(|| values["folder"].as_str().unwrap_or("").to_string());
+            let parent = f
+                .import_id
+                .clone()
+                .or_else(|| values["folder"].as_str().filter(|s| !s.is_empty()).map(String::from))
+                .ok_or_else(|| format!("state: {} `{}` names no folder and the folder it sits in carries no id — a grant is imported by `<scope> <role> <member>`", tf_type, tf_name))?;
             let id = grant_import_id(tf_type, &parent, &role, &member);
             if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = f.extra.get_mut(tf_type) {
@@ -1213,10 +1275,15 @@ impl Discoverer {
     fn add_resource_to_config(&self, c: &mut Config, tf_type: &str, tf_name: &str, values: &Value, schema: Option<&ResourceSchema>) -> Result<(), String> {
         if tf_type.ends_with("_iam_member") {
             let (role, member) = grant_identity(tf_type, tf_name, values)?;
-            let parent = ["org_id", "billing_account_id", "folder", "project", "bucket"]
+            let scope_attrs = ["org_id", "billing_account_id", "folder", "project", "bucket"];
+            // The import id is `<parent> <role> <member>`: without a parent it
+            // reads " roles/x user:…", which imports nothing.
+            let parent = scope_attrs
                 .iter()
                 .find_map(|k| values[*k].as_str().filter(|s| !s.is_empty()))
-                .unwrap_or("")
+                .ok_or_else(|| {
+                    format!("state: {} `{}` names no scope — one of {} carries it, and a grant is imported by `<scope> <role> <member>`", tf_type, tf_name, scope_attrs.join(", "))
+                })?
                 .to_string();
             let id = grant_import_id(tf_type, &parent, &role, &member);
 
@@ -1564,7 +1631,9 @@ impl Discoverer {
         }
         
         link_projects_to_folders(&project_id_to_parent, &gcp_id_to_yaml_name, &mut project_map, &mut folder_map)?;
-        link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map)?;
+        // the live sweep knows its own root; a top-level folder's parent adds
+        // nothing to it
+        let _ = link_folders_to_parents(&folder_id_to_parent, &gcp_id_to_yaml_name, &mut folder_map)?;
 
         if !folder_map.is_empty() { config.folder = Some(folder_map); }
         if !project_map.is_empty() { config.project = Some(project_map); }
@@ -2019,7 +2088,7 @@ impl Discoverer {
           if resource_val.is_empty() {
               return Err(SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()));
           }
-          Self::complete_required(tf_type, asset, registry, &mut resource_val)?;
+          Self::complete_required(tf_type, asset, registry, res_config.import_id.as_deref(), &mut resource_val)?;
           // the live shape has no `id` field (that is the state shape's); the
           // asset path IS the resource name the provider imports by —
           // `tofu plan` on the import block validates it
@@ -2111,10 +2180,16 @@ impl Discoverer {
     /// account's `account_id` is the local part of its email. Anything else
     /// still missing is not expressible from the asset — the resource is
     /// skipped with the attribute named.
+    ///
+    /// An asset path with nested collections names one segment per attribute,
+    /// and the row's `import_id` template says which is which — it is the
+    /// provider's own import format, over the same path. Without a template a
+    /// `<x>_id` is the path's last segment, which is the resource's own id.
     fn complete_required(
         tf_type: &str,
         asset: &Asset,
         registry: Option<&ResourceRegistry>,
+        import_id_template: Option<&str>,
         values: &mut serde_yaml::Mapping,
     ) -> Result<(), SkipReason> {
         let Some(schema) = registry.and_then(|r| r.find_resource(tf_type)).map(|(_, s)| s) else { return Ok(()) };
@@ -2124,10 +2199,15 @@ impl Discoverer {
         let segs: Vec<&str> = path.split('/').collect();
         // `organizations/1/…` → ("organizations", "1")
         let scope = (segs.len() >= 2).then(|| (segs[0], segs[1]));
+        let placed = import_id_template.map(|t| template_segments(t, path)).unwrap_or_default();
         let raw = asset.resource.as_ref().and_then(|r| r.data.as_ref());
         for key in required {
             let k = serde_yaml::Value::String(key.clone());
             if values.contains_key(&k) {
+                continue;
+            }
+            if let Some(v) = placed.get(key.as_str()) {
+                values.insert(k, serde_yaml::Value::String(v.clone()));
                 continue;
             }
             let derived = match key.as_str() {
@@ -2448,11 +2528,16 @@ fn link_projects_to_folders(
 /// in the sweep keeps that parent explicitly, for the same reason as above. A
 /// folder whose parent is the organization carries none: the top level IS that
 /// parent (language reference §6.6) and the emitter derives it.
+///
+/// That parent is the one place a state of folders and projects names the
+/// organization, so it is returned rather than dropped with the attribute —
+/// the estate is written from it. Two organizations among the top-level
+/// folders are refused: one state is one organization.
 fn link_folders_to_parents(
     folder_id_to_parent: &HashMap<String, String>,
     gcp_id_to_yaml_name: &HashMap<String, String>,
     folder_map: &mut HashMap<String, Folder>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let depth = |id: &String| -> usize {
         let mut d = 0;
         let mut cur = id;
@@ -2468,6 +2553,7 @@ fn link_folders_to_parents(
     let mut sorted_folder_ids: Vec<&String> = folder_id_to_parent.keys().collect();
     sorted_folder_ids.sort_by_key(|id| (std::cmp::Reverse(depth(id)), (*id).clone()));
     let mut kept_explicit = Vec::new();
+    let mut organization: Option<String> = None;
 
     for child_id in sorted_folder_ids {
         let parent_id = &folder_id_to_parent[child_id];
@@ -2477,7 +2563,19 @@ fn link_folders_to_parents(
         };
         if !parent_id.starts_with("folders/") {
             // organization root: the emitter derives it, so the parent the
-            // asset was discovered with must not be written beside it
+            // asset was discovered with must not be written beside it — and
+            // the organization it names is kept, or the estate loses it
+            if let Some(org) = parent_id.strip_prefix("organizations/") {
+                match &organization {
+                    Some(first) if first != org => {
+                        return Err(format!(
+                            "import: the top-level folders name two organizations, {} and {} — one source is one organization",
+                            first, org
+                        ))
+                    }
+                    _ => organization = Some(org.to_string()),
+                }
+            }
             if let Some(root) = folder_map.get_mut(&child_yaml) {
                 root.parent = None;
             }
@@ -2515,7 +2613,7 @@ fn link_folders_to_parents(
             kept_explicit.join(", ")
         );
     }
-    Ok(())
+    Ok(organization)
 }
 
 /// A Satz address is `<type>.<key>` across the whole estate, and two projects
@@ -3218,7 +3316,7 @@ mod nesting_tests {
         .map(|(a, b)| (a.to_string(), b.to_string()))
         .collect();
         let mut map: HashMap<String, Folder> = ["a", "b", "c"].into_iter().map(|n| (n.to_string(), folder(n))).collect();
-        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        let _ = link_folders_to_parents(&parents, &names, &mut map).unwrap();
         assert_eq!(map.keys().collect::<Vec<_>>(), vec!["a"]);
         let b = &map["a"].folder.as_ref().unwrap()["b"];
         assert!(b.folder.as_ref().unwrap().contains_key("c"), "c nests under b under a");
@@ -3238,7 +3336,7 @@ mod nesting_tests {
         ]
         .into_iter()
         .collect();
-        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        let _ = link_folders_to_parents(&parents, &names, &mut map).unwrap();
         assert_eq!(map["a"].folder.as_ref().unwrap()["b"].parent, None);
     }
 
@@ -3260,16 +3358,19 @@ mod nesting_tests {
     }
 
     #[test]
-    fn a_top_level_folder_carries_no_parent() {
+    fn a_top_level_folder_carries_no_parent_and_names_the_organization() {
         // the top level IS the organization parent; written beside it the
-        // estate repeats the organization id the emitter derives
+        // estate repeats the organization id the emitter derives — and that
+        // parent is what the estate's `customer_organization_id` is written
+        // from, so it is returned rather than lost with the attribute
         let parents: HashMap<String, String> =
             [("folders/1", "organizations/1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
         let names: HashMap<String, String> = [("folders/1", "a")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
         let mut map: HashMap<String, Folder> =
             [("a".to_string(), folder_with_parent("a", "organizations/1"))].into_iter().collect();
-        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        let organization = link_folders_to_parents(&parents, &names, &mut map).unwrap();
         assert_eq!(map["a"].parent, None);
+        assert_eq!(organization.as_deref(), Some("1"));
     }
 
     #[test]
@@ -3280,7 +3381,7 @@ mod nesting_tests {
             .collect();
         let names: HashMap<String, String> = [("folders/30000003", "c")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
         let mut map: HashMap<String, Folder> = [("c".to_string(), folder("c"))].into_iter().collect();
-        link_folders_to_parents(&parents, &names, &mut map).unwrap();
+        let _ = link_folders_to_parents(&parents, &names, &mut map).unwrap();
         assert_eq!(map["c"].parent.as_deref(), Some("folders/999999999"));
 
         let pparents: HashMap<String, String> = [("projects/p1", "folders/999999999")]
@@ -3877,5 +3978,221 @@ mod scope_attribute_tests {
         let (_, missing) = schema.block.extract_attributes(&data, "google_storage_bucket");
         assert!(missing.contains(&"location".to_string()), "{:?}", missing);
         assert!(!missing.contains(&"project".to_string()), "the enclosure writes the project: {:?}", missing);
+    }
+}
+
+#[cfg(test)]
+mod nested_segment_ids {
+    //! Which segment of an asset path is which attribute.
+    //!
+    //! Measured on a live organisation: an imported
+    //! `google_iam_workload_identity_pool_provider` carried the PROVIDER's id as
+    //! its `workload_identity_pool_id`, because a required `<x>_id` was read off
+    //! the path's last segment. Re-applied, that estate points the provider at a
+    //! pool that does not exist.
+    use super::*;
+    use std::path::Path;
+
+    fn repo(rel: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
+    fn registry() -> ResourceRegistry {
+        ResourceRegistry::load_all(&repo("tests/schemas").to_string_lossy()).expect("provider schema fixture")
+    }
+
+    fn row(tf_type: &str) -> crate::config::ImportResourceConfig {
+        let text = std::fs::read_to_string(repo("presets/import-config.yaml")).expect("import-config");
+        let config: ImportConfig = serde_yaml::from_str(&text).expect("import-config parses");
+        config.resource_types[tf_type].clone()
+    }
+
+    fn provider_asset() -> Asset {
+        let text = std::fs::read_to_string(repo("tests/assets/workload-identity-pool-provider.json"))
+            .expect("workload identity provider asset fixture");
+        serde_json::from_str(&text).expect("workload identity provider asset fixture parses")
+    }
+
+    /// The asset through the shipped row and the provider schema, as the live
+    /// sweep reads it.
+    fn imported(tf_type: &str, asset: &Asset) -> serde_yaml::Mapping {
+        let _ = take_dropped();
+        let reg = registry();
+        let schema = reg.find_resource(tf_type).map(|(_, s)| s);
+        let row = row(tf_type);
+        let data = asset.resource.as_ref().and_then(|r| r.data.as_ref()).expect("asset data").clone();
+        let mut values = match Discoverer::filter_values(
+            tf_type,
+            "acme-provider",
+            &serde_json::Value::Object(data),
+            schema,
+            false,
+            row.exclude.as_ref(),
+            row.map.as_ref(),
+        ) {
+            serde_yaml::Value::Mapping(m) => m,
+            other => panic!("not a mapping: {:?}", other),
+        };
+        Discoverer::complete_required(tf_type, asset, Some(&reg), row.import_id.as_deref(), &mut values)
+            .expect("the provider is imported");
+        let _ = take_dropped();
+        values
+    }
+
+    #[test]
+    fn a_workload_identity_provider_names_its_pool_and_itself() {
+        let tf_type = "google_iam_workload_identity_pool_provider";
+        let reg = registry();
+        let (_, schema) = reg.find_resource(tf_type).expect("provider schema");
+        for attr in ["workload_identity_pool_id", "workload_identity_pool_provider_id"] {
+            assert!(
+                schema.block.attributes[attr].required,
+                "the provider requires `{attr}`; without that this test proves nothing"
+            );
+        }
+        let values = imported(tf_type, &provider_asset());
+        let yaml = serde_yaml::to_string(&values).expect("yaml");
+        assert_eq!(
+            values["workload_identity_pool_id"].as_str(),
+            Some("acme-pool"),
+            "the pool is named by the provider's own id:\n{yaml}"
+        );
+        assert_eq!(values["workload_identity_pool_provider_id"].as_str(), Some("acme-provider"), "{yaml}");
+        assert_eq!(values["display_name"].as_str(), Some("Acme provider"), "{yaml}");
+    }
+
+    /// The template is the provider's import format over the same path, so it
+    /// says which segment stands for which attribute — for every row that has
+    /// one, not for the workload identity provider alone.
+    #[test]
+    fn a_templates_placeholders_bind_the_segments_they_stand_in_for() {
+        let bound = |t: &str, p: &str| template_segments(t, p);
+        let wif = bound(
+            "projects/{project}/locations/global/workloadIdentityPools/{workload_identity_pool_id}/providers/{workload_identity_pool_provider_id}",
+            "projects/100000000001/locations/global/workloadIdentityPools/acme-pool/providers/acme-provider",
+        );
+        assert_eq!(bound_value(&wif, "workload_identity_pool_id"), "acme-pool");
+        assert_eq!(bound_value(&wif, "workload_identity_pool_provider_id"), "acme-provider");
+        assert_eq!(bound_value(&wif, "project"), "100000000001");
+
+        // a parent's id in the middle of the path, the resource's own at the end
+        let dataset = bound("projects/{project}/datasets/{dataset_id}", "projects/100000000001/datasets/audit");
+        assert_eq!(bound_value(&dataset, "dataset_id"), "audit");
+        let bucket = bound(
+            "projects/{project}/locations/{location}/buckets/{bucket_id}",
+            "projects/100000000001/locations/global/buckets/_Default",
+        );
+        assert_eq!(bound_value(&bucket, "bucket_id"), "_Default");
+        assert_eq!(bound_value(&bucket, "location"), "global");
+        let approval = bound(
+            "organizations/{organization_id}/accessApprovalSettings",
+            "organizations/123456789012/accessApprovalSettings",
+        );
+        assert_eq!(bound_value(&approval, "organization_id"), "123456789012");
+
+        // a template that is not a path, and a path the template does not
+        // describe: nothing is bound rather than a segment from the wrong place
+        assert!(bound("{org_id} {role} {member}", "organizations/123456789012").is_empty());
+        assert!(bound("projects/{project}/datasets/{dataset_id}", "projects/100000000001/topics/audit").is_empty());
+        assert!(bound("projects/{project}/datasets/{dataset_id}", "projects/100000000001").is_empty());
+    }
+
+    fn bound_value(bound: &BTreeMap<String, String>, key: &str) -> String {
+        bound.get(key).cloned().unwrap_or_else(|| panic!("`{key}` is not bound: {:?}", bound))
+    }
+
+    /// Without a template the last segment is the resource's own id, which is
+    /// what a single-level path says.
+    #[test]
+    fn a_row_without_a_template_still_reads_the_resources_own_id() {
+        let tf_type = "google_iam_workload_identity_pool";
+        let reg = registry();
+        let asset: Asset = serde_json::from_value(serde_json::json!({
+            "name": "//iam.googleapis.com/projects/100000000001/locations/global/workloadIdentityPools/acme-pool",
+            "assetType": "iam.googleapis.com/WorkloadIdentityPool",
+        }))
+        .expect("asset");
+        let mut values = serde_yaml::Mapping::new();
+        values.insert("display_name".into(), "Acme pool".into());
+        Discoverer::complete_required(tf_type, &asset, Some(&reg), None, &mut values).expect("the pool is imported");
+        assert_eq!(values["workload_identity_pool_id"].as_str(), Some("acme-pool"), "{:?}", values);
+    }
+}
+
+#[cfg(test)]
+mod meaningful_empty_values {
+    //! An empty string the provider schema names is a VALUE, and survives the
+    //! import.
+    //!
+    //! Measured on a live organisation: a Pub/Sub subscription set to never
+    //! expire (`expiration_policy.ttl = ""`) came back without its
+    //! `expiration_policy` — from the state and from the live sweep alike. That
+    //! estate applied restores Google's 31-day default, after which the
+    //! subscription deletes itself.
+    use super::*;
+    use std::path::Path;
+
+    fn registry() -> ResourceRegistry {
+        ResourceRegistry::load_all(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schemas").to_string_lossy())
+            .expect("provider schema fixture")
+    }
+
+    fn imported(values: serde_json::Value) -> serde_yaml::Value {
+        let _ = take_dropped();
+        let reg = registry();
+        let schema = reg.find_resource("google_pubsub_subscription").map(|(_, s)| s);
+        let out = Discoverer::filter_values("google_pubsub_subscription", "never", &values, schema, false, None, None);
+        let _ = take_dropped();
+        out
+    }
+
+    /// The state shape: `tofu show -json` writes the block as a one-element list.
+    #[test]
+    fn a_state_carries_never_expire_into_the_estate() {
+        let out = imported(serde_json::json!({
+            "name": "projects/acme-infra-001/subscriptions/never",
+            "topic": "projects/acme-infra-001/topics/audit",
+            "expiration_policy": [{"ttl": ""}],
+        }));
+        let yaml = serde_yaml::to_string(&out).expect("yaml");
+        assert_eq!(out["expiration_policy"][0]["ttl"].as_str(), Some(""), "never expire is lost:\n{yaml}");
+    }
+
+    /// The live shape: the API states the same by leaving the message empty.
+    #[test]
+    fn a_live_sweep_carries_never_expire_into_the_estate() {
+        let out = imported(serde_json::json!({
+            "name": "projects/acme-infra-001/subscriptions/never",
+            "topic": "projects/acme-infra-001/topics/audit",
+            "expirationPolicy": {},
+        }));
+        let yaml = serde_yaml::to_string(&out).expect("yaml");
+        assert_eq!(out["expiration_policy"]["ttl"].as_str(), Some(""), "never expire is lost:\n{yaml}");
+    }
+
+    /// A subscription that says nothing about expiry says nothing in the
+    /// estate either — Google's 31-day default is not written as a value.
+    #[test]
+    fn an_attribute_the_source_does_not_carry_stays_absent() {
+        let out = imported(serde_json::json!({
+            "name": "projects/acme-infra-001/subscriptions/plain",
+            "topic": "projects/acme-infra-001/topics/audit",
+        }));
+        let yaml = serde_yaml::to_string(&out).expect("yaml");
+        assert!(out.get("expiration_policy").is_none(), "{yaml}");
+        assert!(out.get("filter").is_none(), "an attribute nothing carries is not written empty:\n{yaml}");
+    }
+
+    /// A key the schema does not name carries nothing when it is empty: that
+    /// is API vocabulary, not a value.
+    #[test]
+    fn an_empty_string_the_schema_does_not_name_is_still_dropped() {
+        let out = imported(serde_json::json!({
+            "name": "projects/acme-infra-001/subscriptions/never",
+            "topic": "projects/acme-infra-001/topics/audit",
+            "detached": "",
+        }));
+        let yaml = serde_yaml::to_string(&out).expect("yaml");
+        assert!(out.get("detached").is_none(), "{yaml}");
     }
 }
