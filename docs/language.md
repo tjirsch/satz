@@ -2348,13 +2348,33 @@ import {
 }
 ```
 
-per unmapped resource. The id is the asset's relative resource name, the same
-derivation the mapped resources' `"import-id"` uses. Then `tofu init` and `tofu
-plan -generate-config-out=generated.tf` run there, and `generated.tf` goes
-through the hcl shape of §12.1 into `<base>-generated.satz`. The two files stay
-separate: one is what satz translated, the other what the provider wrote, and
-which of it belongs in the estate is a reading decision — the generated file
-carries no `use` line, and joining it is one.
+per unmapped resource. Then `tofu init` and `tofu plan
+-generate-config-out=generated.tf` run there, and `generated.tf` goes through the
+hcl shape of §12.1 into `<base>-generated.satz`. The two files stay separate: one
+is what satz translated, the other what the provider wrote, and which of it
+belongs in the estate is a reading decision — the generated file carries no `use`
+line, and joining it is one.
+
+The id is the asset's relative resource name, the same derivation the mapped
+resources' `"import-id"` uses, for every type whose provider id is that name.
+Where the provider imports by something else, the rule is per type and the run
+refuses by name what it cannot build:
+
+| type | id | why |
+|---|---|---|
+| `google_compute_instance_settings` | `projects/<p>/zones/<z>/instanceSettings` | a singleton, whose Cloud Asset name appends the kind `/InstanceSettings` |
+| `google_dns_managed_zone` | `projects/<p>/managedZones/<zone name>` | the provider imports by the zone's name, Cloud Asset names it by a number |
+| `google_dns_record_set` | `projects/<p>/managedZones/<zone name>/rrsets/<name>/<type>` | the same zone name |
+
+The zone's name is in the zone asset's own data, so the sweep that finds the
+record sets has it. A record set whose managed zone this sweep did not read is
+refused with that reason — sweep `dns.googleapis.com/ManagedZone` as well, or
+correct the id by hand in `imports.tf`.
+
+The child's `provider` blocks are the estate's own: the quota project the run
+names as `project` and `billing_project`, `user_project_override = true`, and
+`impersonate_service_account` where the run is bound to an estate. A run that
+found no project writes a provider block that names none.
 
 `<base>` is the file the run is named after. A plain sweep is named after the
 estate it writes, `discovered.satz`, so its files are `discovered-generate/` and
@@ -2380,10 +2400,32 @@ generate-unmapped: 4 unmapped resource(s) the provider can be asked for, 1 it ca
                  type to import as
 ```
 
-The provider reads each resource, so an id it refuses fails the plan. satz
-reports the tool's own output and stops; `imports.tf` stays where it is, and
-correcting the ids there and running the two commands by hand — `tofu plan
--generate-config-out=generated.tf`, then `satz import <that file>` — finishes the
+The provider reads the resources one at a time, writes the configuration for the
+ones it could read and reports the rest, so a refused id costs that resource and
+not the run. What is on disk decides, never the exit code: every resource satz
+asked for gets one of four verdicts, and the ones the provider reported carry its
+own words.
+
+```
+generate-unmapped: 33 written, 1 written incomplete, 1 refused, 0 unaccounted for:
+  written        //dns.googleapis.com/projects/acme-net/managedZones/1234567890 = google_dns_managed_zone.corp
+  incomplete     //cloudasset.googleapis.com/organizations/123456789012/feeds/estate = google_cloud_asset_organization_feed.estate
+      │ Error: Missing required argument
+      │ The argument "billing_project" is required, but no definition was found.
+  refused        //compute.googleapis.com/projects/acme-net/zones/europe-west3-b/instanceSettings/InstanceSettings = google_compute_instance_settings.instancesettings
+      │ Error: Cannot import non-existent remote object
+```
+
+**written** is a `resource` block in `generated.tf` that no diagnostic names;
+**incomplete** is a block the provider still reported — generated, and not
+applicable as it stands, the message saying what is missing;
+**refused** is no block and a diagnostic; **unaccounted for** is no block and no
+diagnostic, which satz names rather than counting as either. A diagnostic that
+names no resource satz asked for is printed whole. `generated.tf` is read back as
+Satz with everything in it, and `imports.tf` stays where it is: correcting the
+refused ids there and running the two commands by hand — `tofu plan
+-generate-config-out=generated.tf`, then `satz import <that file>` — brings the
+rest in. `init` failing, and a plan that generated no resource at all, end the
 run.
 
 With `--into` the delta's own subtraction applies to the fallback as well: an

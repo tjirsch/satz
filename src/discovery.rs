@@ -293,6 +293,40 @@ pub fn asset_resource_name(full_name: &str) -> Option<&str> {
     path.split_once('/').map(|(_, p)| p).filter(|p| !p.is_empty())
 }
 
+/// The asset types whose Cloud Asset name carries a number where the provider's
+/// import id carries the resource's own name, so the sweep keeps that name.
+///
+/// Cloud Asset names a DNS managed zone `//dns.googleapis.com/projects/<p>/
+/// managedZones/<numeric id>`; `google_dns_managed_zone` imports by
+/// `projects/<p>/managedZones/<zone name>` and `google_dns_record_set` by that
+/// same path plus `/rrsets/<name>/<type>`. The name is in the zone asset's own
+/// data, so one sweep answers both.
+const NAMED_BY_DATA: [&str; 1] = ["dns.googleapis.com/ManagedZone"];
+
+/// `full resource name → the name the resource calls itself`, for the asset
+/// types of [`NAMED_BY_DATA`]. An asset whose data states no `name` is left out;
+/// what depends on it then says the name is not in the sweep rather than
+/// importing by the number.
+fn names_by_asset_name(assets: &[Asset]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for asset in assets {
+        if !NAMED_BY_DATA.contains(&asset.asset_type.as_str()) {
+            continue;
+        }
+        let name = asset
+            .resource
+            .as_ref()
+            .and_then(|r| r.data.as_ref())
+            .and_then(|d| d.get("name"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        if let Some(name) = name {
+            out.insert(asset.name.clone(), name.to_string());
+        }
+    }
+    out
+}
+
 /// What an import produced: the estate, and everything it left out.
 pub struct Discovered {
     pub config: Config,
@@ -307,6 +341,12 @@ pub struct Discovered {
     /// Asset types Cloud Asset Inventory refused by name: nothing of these is in
     /// the estate, and the run says so rather than coming out short in silence.
     pub unserved: Vec<UnservedType>,
+    /// The name a live resource calls itself, by its Cloud Asset full resource
+    /// name — kept for the asset types whose Cloud Asset name carries a number
+    /// where the provider's import id carries a name. Cloud Asset names a DNS
+    /// managed zone by its numeric id; the zone and every record set in it
+    /// import by the zone's name, which is in the zone asset's own data.
+    pub asset_names: BTreeMap<String, String>,
     /// What the import rewrote on the way and says so: one line each.
     pub notes: Vec<String>,
 }
@@ -960,7 +1000,17 @@ impl Discoverer {
         let notes = resolve_grant_collisions(&mut config, self.on_collision)?;
 
         // the state shape asks no API: nothing can be refused by name
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes, unserved: Vec::new() })
+        Ok(Discovered {
+            config,
+            skipped,
+            dropped_attrs: take_dropped(),
+            organization,
+            notes,
+            unserved: Vec::new(),
+            // a state file names every resource by its Terraform address, so
+            // there is no Cloud Asset name to key anything by
+            asset_names: BTreeMap::new(),
+        })
     }
 
     /// `what` names the resource in the report: a value the source carried and
@@ -1527,6 +1577,7 @@ impl Discoverer {
         }
 
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
+        let asset_names = names_by_asset_name(&all_assets);
         let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry, discovery_config.as_ref())?;
         qualify_duplicate_keys(&mut config);
         let notes = resolve_grant_collisions(&mut config, on_collision)?;
@@ -1538,7 +1589,7 @@ impl Discoverer {
             });
         }
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes, unserved })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes, unserved, asset_names })
     }
 
     fn construct_config_from_assets(
@@ -3718,6 +3769,56 @@ mod row_selection_tests {
         // the two content types in separate requests
         let grant = bucket.clone().set_or_clear_resource(None::<google_cloud_asset_v1::model::Resource>);
         assert_eq!(chosen(&all, &grant).as_deref(), Ok("google_storage_bucket_iam_member"));
+    }
+
+    /// The same question the selector answers per asset, asked of the TABLE: a
+    /// row whose Terraform type names a parent may not carry an `import_id`
+    /// template that starts at another one. `folders/{folder}/sinks/{name}` on
+    /// `google_logging_billing_account_sink` would be the type error of the
+    /// sinks over again, one level up.
+    #[test]
+    fn an_import_id_template_starts_at_the_parent_its_type_is_for() {
+        let cfg = shipped(true);
+        let collection = |scope: &str| match scope {
+            "billing_account" => "billingAccounts",
+            "project" => "projects",
+            "folder" => "folders",
+            _ => "organizations",
+        };
+        let mut checked = 0;
+        for (tf_type, row) in &cfg.resource_types {
+            let Some(template) = row.import_id.as_deref() else { continue };
+            let first = template.split('/').next().unwrap_or_default();
+            if !["projects", "folders", "organizations", "billingAccounts"].contains(&first) {
+                continue;
+            }
+            let Some(scope) = type_scope(tf_type) else { continue };
+            assert_eq!(collection(scope), first, "{} imports by `{}`, which starts at another parent", tf_type, template);
+            checked += 1;
+        }
+        assert!(checked >= 4, "the four parent-scoped templates are checked, not {checked}");
+    }
+
+    /// Cloud Asset names a DNS managed zone by its numeric id; the provider
+    /// imports the zone, and every record set in it, by the zone's name. The
+    /// sweep keeps that name off the zone's own data.
+    #[test]
+    fn the_sweep_keeps_the_name_a_dns_managed_zone_calls_itself() {
+        let zone = asset("dns.googleapis.com/ManagedZone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")
+            .set_resource(
+                google_cloud_asset_v1::model::Resource::new()
+                    .set_data(serde_json::json!({"name": "corp", "dnsName": "corp.example."}).as_object().unwrap().clone()),
+            );
+        let topic = asset("pubsub.googleapis.com/Topic", "//pubsub.googleapis.com/projects/acme-net/topics/events").set_resource(
+            google_cloud_asset_v1::model::Resource::new()
+                .set_data(serde_json::json!({"name": "projects/acme-net/topics/events"}).as_object().unwrap().clone()),
+        );
+        let names = names_by_asset_name(&[zone, topic]);
+        assert_eq!(
+            names,
+            BTreeMap::from([("//dns.googleapis.com/projects/acme-net/managedZones/1234567890".to_string(), "corp".to_string())]),
+            "only the types whose Cloud Asset name carries a number the provider does not import by"
+        );
     }
 }
 
