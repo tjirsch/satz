@@ -289,12 +289,14 @@ wrong object.
 
 ```satz
 hcl trust "reviewed: the provider has no resource for X" { resource "…" "…" { } }
-action "scc" { reason = "…" run = "../scripts/x.sh" args = ["--org", "{customer_organization_id}"] }
+action "scc" { reason = "…" run = "../scripts/x.py" args = ["--org", "{customer_organization_id}"] }
 ```
 
 `hcl { … }` deploys, but the compliance plane **cannot see into it** — it is never a
 witness, and it warns on every transpile unless you write `hcl trust "…"`. An `action`
-is inert until `satz run-actions`. Both are last resorts; prefer a real resource.
+is inert until `satz run-actions`, which launches it by extension: a `.py` script runs
+through `uv run --script` on every platform, a `.sh` one does not run on Windows. Write a
+new action in Python. Both are last resorts; prefer a real resource.
 
 ## Working through the MCP server
 

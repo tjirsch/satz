@@ -231,6 +231,17 @@ action "showcase-step" {
   phase        = "after-apply"
 }
 
+// The same step as a Python action, which is the form to write: the extension
+// decides how satz launches the file, `.py` runs through `uv run --script` on
+// every platform, and a `.sh` does not run on Windows at all.
+action "showcase-python-step" {
+  reason       = "stands in for a step with no google_* resource, written so it runs on every platform"
+  run          = "../scripts/showcase-action.py"
+  args         = ["--organization", "{customer_organization_id}"]
+  execute_args = ["--apply"]
+  phase        = "after-apply"
+}
+
 // --- Claims: what this estate proves, and what it declines on purpose. -------
 claim "cis-gcp" "4.0" "5.1" implements {
   resources         = ["google_storage_bucket.audit_logs"]

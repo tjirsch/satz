@@ -745,6 +745,12 @@ did, and nothing about it reaches `report-compliance`. Because
 when one declares an action, `--no-pack-actions` ignores pack-declared ones, and
 a downloaded script arrives without its executable bit, which satz does not set.
 
+A new action is written in Python unless a shell script is genuinely simpler for
+the job. The extension decides how satz launches the file: a `.py` action is
+spawned as `uv run --script <file>`, runs on every platform satz ships for and
+needs no executable bit, while a `.sh` action is refused on Windows before the
+spawn.
+
 The script enables every service except Web Security Scanner (it actively crawls
 the customer's web apps) and Artifact Analysis (billed per image scan), which
 `--with-optional` adds, and the AWS/Azure connectors, which `--with-multicloud` adds.
@@ -1576,6 +1582,26 @@ the resource the import flattens by itself, with or without the file.
 What a satz release refuses that the release before it compiled, and the edit that
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
+
+### v0.81.0
+
+**A `.py` action runs through `uv`, and is refused when `uv` is not on PATH.** An
+action's `run` is launched by its extension: a `.py` file is spawned as
+`uv run --script <file> <args>` instead of being executed directly under its own
+shebang, so one file runs on every platform satz ships for. `satz run-actions
+<estate>.satz` prints the resolved command line, which now begins `uv run --script`
+for such an action; `grep -n 'run *=' *.satz presets/**/*.satz` finds every action an
+estate declares.
+
+```
+error: action "seed-settings" (yaml/main.satz:41): scripts/seed-settings.py is a Python action, and satz runs one with `uv`, which is not on PATH.
+```
+
+**The edit:** install uv — `brew install uv`, `pipx install uv`, or the installer uv's
+own documentation names — on every machine that runs actions, and in CI. satz does not
+fall back to a `python` or `python3` on PATH: that is a different interpreter with
+different packages. A `.py` action no longer needs its executable bit, and a `.sh`
+action is unchanged.
 
 ### v0.80.0
 
