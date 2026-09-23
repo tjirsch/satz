@@ -16,6 +16,11 @@
 //! The executable is located the way a `use`d file is located — the declaring file's
 //! directory, then the configured include dirs — so a pack that ships a script is
 //! self-contained and an estate's own action reads relative to the estate file.
+//!
+//! The file's extension decides how it is launched, and that is the whole mechanism —
+//! there is no `interpreter` key and no per-OS variant. A `.py` action runs through
+//! `uv run --script`, so one file runs on every platform satz ships for; anything else
+//! is spawned directly, which on Windows means a `.sh` is refused before the spawn.
 
 use satz_core::pipeline::ResolvedAction;
 use std::path::{Path, PathBuf};
@@ -156,6 +161,69 @@ fn locate(a: &ResolvedAction, opts: &RunOptions) -> Result<PathBuf, String> {
     ))
 }
 
+/// What runs a Python action. Spawned by name, so it is found on PATH.
+const UV: &str = "uv";
+
+fn is_python(exe: &Path) -> bool {
+    exe.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("py"))
+}
+
+/// The process satz spawns for one action: the program, and the whole argument vector
+/// it is spawned with. Built in one place so the command line that is PRINTED and the
+/// process that runs can never disagree.
+///
+/// A `.py` action becomes `uv run --script <file> <args>`. `--script` is what makes the
+/// run reproducible wherever it happens: the file is a standalone script with its own
+/// PEP 723 dependencies, resolved by uv, and a `pyproject.toml` that happens to sit in
+/// the estate root has no say in it.
+fn spawn_command(exe: &Path, args: &[String]) -> (PathBuf, Vec<String>) {
+    if is_python(exe) {
+        let mut argv = vec!["run".to_string(), "--script".to_string(), exe.display().to_string()];
+        argv.extend(args.iter().cloned());
+        return (PathBuf::from(UV), argv);
+    }
+    (exe.to_path_buf(), args.to_vec())
+}
+
+/// Is a program on PATH? Windows spawns `uv.exe`, unix `uv`, so both names are tried.
+fn on_path(program: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path)
+        .any(|dir| dir.join(program).is_file() || dir.join(format!("{}.exe", program)).is_file())
+}
+
+/// What has to be true before an action can be spawned.
+///
+/// A Python action is READ by uv, so the executable bit says nothing about whether it
+/// can run; what has to be there is uv. Everything else is spawned as a program and
+/// must be one.
+fn check_runnable(path: &Path) -> Result<(), String> {
+    if is_python(path) {
+        return check_uv(path, on_path(UV));
+    }
+    check_executable(path)
+}
+
+/// `uv` is what runs a Python action, and there is no second way: a `python` or
+/// `python3` on PATH is a different interpreter with a different set of packages, and
+/// running one instead would mean the script that was tested is not the script that
+/// ran.
+fn check_uv(script: &Path, uv_on_path: bool) -> Result<(), String> {
+    if uv_on_path {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is a Python action, and satz runs one with `uv`, which is not on PATH.\n      \
+         Install uv — `brew install uv`, `pipx install uv`, or the installer uv's own documentation names — and run this again.\n      \
+         satz does not fall back to `python` or `python3`: that is a different interpreter with different packages.",
+        script.display()
+    ))
+}
+
 /// A file satz is about to execute must already be executable.
 ///
 /// It is not chmod-ed here on purpose. `get-presets` downloads preset blobs over HTTP
@@ -191,7 +259,7 @@ fn windows_runnable(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "{} is not a Windows executable, and satz runs an action's `run` directly — run it in a shell that can, e.g. `bash {}` from Git Bash or WSL",
+        "{} is not a Windows executable, and satz runs an action's `run` directly — run it in a shell that can, e.g. `bash {}` from Git Bash or WSL. A `.py` action runs through `uv` on every platform",
         path.display(),
         path.display()
     ))
@@ -207,9 +275,14 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
+/// The command line as the operator reads it — the same program and arguments that are
+/// spawned, with the script's path shortened where it sits under the estate root, so
+/// what is printed can be pasted back into a shell.
 fn command_line(exe: &Path, args: &[String], estate_root: &Path) -> String {
-    let mut out = shell_quote(&display_path(exe, estate_root));
-    for a in args {
+    let shown = PathBuf::from(display_path(exe, estate_root));
+    let (program, argv) = spawn_command(&shown, args);
+    let mut out = shell_quote(&program.display().to_string());
+    for a in &argv {
         out.push(' ');
         out.push_str(&shell_quote(a));
     }
@@ -275,7 +348,7 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
     for a in &selected {
         let exe = locate(a, opts).map_err(|e| format!("action \"{}\" ({}:{}): {}", a.name, a.file, a.line, e))?;
         if opts.mode != Mode::Plan && !opts.no_actions {
-            check_executable(&exe)
+            check_runnable(&exe)
                 .map_err(|e| format!("action \"{}\" ({}:{}): {}", a.name, a.file, a.line, e))?;
         }
         let mut args = a.args.clone();
@@ -332,8 +405,9 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
     for (a, exe, args) in &plan {
         println!();
         println!("==> {} ({})", a.name, command_line(exe, args, opts.estate_root));
-        let status = std::process::Command::new(exe)
-            .args(args)
+        let (program, argv) = spawn_command(exe, args);
+        let status = std::process::Command::new(&program)
+            .args(&argv)
             .current_dir(opts.estate_root)
             .env("SATZ_ACTION", &a.name)
             .env("SATZ_PHASE", &a.phase)
@@ -341,7 +415,14 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
             .env("SATZ_ESTATE", opts.estate_file)
             .env("SATZ_HCL_DIR", opts.hcl_dir)
             .status()
-            .map_err(|e| format!("action \"{}\": could not run {}: {}", a.name, exe.display(), e))?;
+            .map_err(|e| {
+                format!(
+                    "action \"{}\": could not run {}: {}",
+                    a.name,
+                    command_line(exe, args, opts.estate_root),
+                    e
+                )
+            })?;
         match status.code() {
             Some(0) => {}
             // Propagate rather than wrap. An action's exit code is its own contract
@@ -362,6 +443,96 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_python_action_is_spawned_through_uv_and_everything_else_directly() {
+        let args = vec!["--organization".to_string(), "123456789012".to_string()];
+
+        let (program, argv) = spawn_command(Path::new("/estate/scripts/seed.py"), &args);
+        assert_eq!(program, PathBuf::from("uv"));
+        assert_eq!(
+            argv,
+            vec!["run", "--script", "/estate/scripts/seed.py", "--organization", "123456789012"]
+        );
+
+        let (program, argv) = spawn_command(Path::new("/estate/scripts/seed.sh"), &args);
+        assert_eq!(program, PathBuf::from("/estate/scripts/seed.sh"));
+        assert_eq!(argv, args);
+
+        // --check is the same construction with `args` only: whatever the launcher,
+        // the execute_args are not in the vector.
+        let (_, argv) = spawn_command(Path::new("/estate/scripts/seed.py"), &args[..1]);
+        assert_eq!(argv, vec!["run", "--script", "/estate/scripts/seed.py", "--organization"]);
+    }
+
+    #[test]
+    fn the_printed_command_line_is_the_one_that_is_spawned() {
+        // Built through `absolutize`, so the root is absolute in the platform's own
+        // terms: on Windows a leading `/` is a root without a drive, which
+        // `Path::is_absolute` rejects, and a unix-shaped literal would make this test
+        // assert the unshortened fallback instead of the shortening.
+        let root = absolutize(Path::new("estate")).unwrap();
+        let py = root.join("scripts").join("seed.py");
+        let sh = root.join("scripts").join("seed.sh");
+        let args = vec!["--organization".to_string(), "123456789012".to_string()];
+
+        // The path is printed in the platform's own shape, and `shell_quote` wraps a
+        // Windows one because a backslash is not a plain character.
+        #[cfg(unix)]
+        let (py_shown, sh_shown) = ("scripts/seed.py", "scripts/seed.sh");
+        #[cfg(windows)]
+        let (py_shown, sh_shown) = (r"'scripts\seed.py'", r"'scripts\seed.sh'");
+
+        assert_eq!(
+            command_line(&py, &args, &root),
+            format!("uv run --script {py_shown} --organization 123456789012")
+        );
+        assert_eq!(
+            command_line(&sh, &args, &root),
+            format!("{sh_shown} --organization 123456789012")
+        );
+
+        // …and what is spawned is that same file, at its full path: the printed line
+        // differs from the spawned vector in the shortening and nothing else.
+        let (program, argv) = spawn_command(&py, &args);
+        assert_eq!(program, PathBuf::from(UV));
+        let want: Vec<String> = vec![
+            "run".to_string(),
+            "--script".to_string(),
+            py.display().to_string(),
+            "--organization".to_string(),
+            "123456789012".to_string(),
+        ];
+        assert_eq!(argv, want);
+        assert_eq!(spawn_command(&sh, &args), (sh.clone(), args));
+    }
+
+    #[test]
+    fn without_uv_a_python_action_is_refused_instead_of_run_by_some_other_python() {
+        let err = check_uv(Path::new("scripts/seed.py"), false).unwrap_err();
+        assert!(err.contains("scripts/seed.py"), "{err}");
+        assert!(err.contains("`uv`"), "{err}");
+        assert!(err.contains("not on PATH"), "{err}");
+        assert!(err.contains("python3"), "{err}");
+        assert!(check_uv(Path::new("scripts/seed.py"), true).is_ok());
+    }
+
+    #[test]
+    fn a_python_action_needs_no_executable_bit_and_a_shell_script_does() {
+        let dir = std::env::temp_dir().join(format!("satz-actions-runnable-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("seed.py");
+        std::fs::write(&script, "print('hi')\n").unwrap();
+        // 0644, as a `get-presets` download arrives: uv reads the file, so the mode bit
+        // decides nothing — uv on PATH is the whole condition.
+        assert_eq!(check_runnable(&script).is_ok(), on_path(UV));
+
+        let sh = dir.join("seed.sh");
+        std::fs::write(&sh, "#!/bin/sh\n").unwrap();
+        let err = check_runnable(&sh).unwrap_err();
+        assert!(err.contains("seed.sh"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn on_windows_a_script_is_refused_and_an_executable_is_not() {

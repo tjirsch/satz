@@ -2100,9 +2100,18 @@ satz does not know whether an action's `--check` form has side effects; **the
 action defines it**. A failed action stops the run and its exit code is
 propagated; the remaining actions do not run.
 
-What a script can rely on: the interpreter is whatever its shebang says (sh,
-bash, Python, a binary — satz executes the file, and it must already be
-executable); the working directory is always the one holding `config.toml`,
+**Write an action in Python** unless a shell script is genuinely simpler for the
+job: the file's extension decides how satz launches it, a `.py` action is spawned
+as `uv run --script <file>` and runs on every platform satz ships for, and a `.sh`
+action does not run on Windows — satz refuses it there before the spawn and names
+the `bash …` to run it by hand. A `.py` action needs `uv` on PATH, checked with
+everything else before the first action is spawned; without it the run is refused,
+and satz runs no other interpreter in its place.
+
+What a script can rely on: a `.py` file runs through uv and carries its own
+dependencies in PEP 723 inline metadata, anything else is spawned as a program,
+runs under whatever its shebang says and must already be executable; the working
+directory is always the one holding `config.toml`,
 whatever directory satz was invoked from; and the environment holds exactly five
 variables — `SATZ_ACTION`, `SATZ_PHASE`, `SATZ_MODE`
 (`check` or `execute`), `SATZ_ESTATE`, `SATZ_HCL_DIR`. Params are not exported,
@@ -2122,7 +2131,8 @@ global switches exist:
 | `--silence action` | leave the action findings out of this run's output; `satz silence add action --reason "…"` does it for every run ([Silencing a finding](#silencing-a-finding-silence)) |
 
 A downloaded script arrives without its executable bit and satz does not set
-it: the error names the `chmod +x` to run once the script has been read. The full reference is
+it: the error names the `chmod +x` to run once the script has been read. A `.py`
+action needs no bit, because uv reads the file. The full reference is
 [§6.13 of the language spec](docs/language.md#613-action--a-step-with-no-provider-resource);
 for a step that must run *between* two resources inside one apply, use a
 `terraform_data` provisioner in an `hcl trust` block instead, with the costs

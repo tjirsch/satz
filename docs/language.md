@@ -1425,7 +1425,7 @@ is that pack's, with its `reason` shortened.
 | key | required | meaning |
 |---|---|---|
 | `reason` | yes | Why this is not a resource. Quoted back in every warning. |
-| `run` | yes | The executable. Resolved relative to the directory of the file that **declares** it — so a pack that ships a script is self-contained — then against the include dirs, exactly as a `use` path is. Never interpolated. |
+| `run` | yes | The script. Resolved relative to the directory of the file that **declares** it — so a pack that ships a script is self-contained — then against the include dirs, exactly as a `use` path is. Never interpolated. Its extension decides how it is launched: a `.py` runs through `uv run --script`, anything else is spawned as a program. |
 | `args` | no | Always passed. `{param}` interpolates; an unknown param is a hard error. |
 | `execute_args` | no | Appended **only** under `--execute`. This is where a script's `--apply` lives. |
 | `phase` | no | `before-apply` for a prerequisite, `after-apply` for a step that needs what the apply created. Default `after-apply`. It orders the run and selects with `--phase`; `satz apply` does not run actions — see below. |
@@ -1499,7 +1499,8 @@ info     action
 A pack may declare an action, and the warning says when one did. The two
 switches exist because `get-presets` downloads packs from a public repository. A
 downloaded script arrives without its executable bit, and satz does not set it;
-the error names the `chmod +x` to run once the script has been read.
+the error names the `chmod +x` to run once the script has been read. A `.py`
+action needs no bit, because uv reads the file.
 
 Names are unique across the estate. Two actions answering to one name is a hard
 error naming both files, the rule the ⊕ fold already applies to a repeated
@@ -1521,9 +1522,10 @@ When `run-actions` does run, in this order:
 3. **The executable is located** relative to the directory of the file that
    declared it, then against the include dirs — the same search a `use` path
    gets.
-4. **Every action is located and checked before any one is spawned** (it exists,
-   it is executable), so a missing `+x` on the fourth script stops the run before
-   the first three change the organisation.
+4. **Every action is located and checked before any one is spawned** — it exists,
+   and it can run: a script satz spawns directly is executable, and `uv` is on PATH
+   for a `.py` one. A missing `+x` on the fourth script stops the run before the
+   first three change the organisation.
 5. **Each is spawned**, in phase order (`before-apply`, then `after-apply`) and
    declaration order within a phase — the estate's own actions first, then
    `use`-visit order.
@@ -1532,12 +1534,18 @@ When `run-actions` does run, in this order:
 
 #### Writing a script for an action
 
+**Write an action in Python**, unless a shell script is genuinely simpler for the
+job. satz ships for Windows as well, and a `.sh` action is refused there before the
+spawn — the message names the `bash …` to run it by hand from Git Bash or WSL. A
+`.py` action runs on every platform, from one file.
+
 What satz provides to a script:
 
 | | |
 |---|---|
-| **interpreter** | Whatever the file's shebang says. satz executes the file, whether the target is `sh`, `bash`, Python or a compiled binary. A Python script with dependencies can use `#!/usr/bin/env -S uv run --script` and PEP 723 inline metadata. |
-| **executable bit** | Required. satz does not set it; the error names the `chmod +x`. |
+| **interpreter** | The extension decides. A `.py` file is spawned as `uv run --script <file> <args>`, so it runs everywhere satz does and declares its own dependencies in PEP 723 inline metadata, which uv resolves. Anything else is spawned as a program and runs under whatever its shebang says — `sh`, `bash`, or a compiled binary. |
+| **`uv`** | Required for a `.py` action, and looked for on PATH with every other check before the first action is spawned. Without it the run is refused naming the script; satz does not fall back to a `python` or `python3` on PATH, which is a different interpreter with different packages. |
+| **executable bit** | Required for a script satz spawns directly; satz does not set it, and the error names the `chmod +x`. A `.py` action needs none — uv reads the file — so a Python action a pack shipped runs as `get-presets` downloaded it. |
 | **working directory** | Always the directory holding `config.toml`, whatever directory the operator invoked satz from. Never assume the caller's cwd. |
 | **arguments** | `args`, plus `execute_args` appended under `--execute`. |
 | **environment** | Exactly five variables: `SATZ_ACTION` (the name), `SATZ_PHASE`, `SATZ_MODE` (`check` or `execute`), `SATZ_ESTATE` (the estate file), `SATZ_HCL_DIR`. Params are **not** exported — anything a script needs must be named in `args`, so the declaration is the complete record of what the action was told. |
@@ -1549,32 +1557,30 @@ Put the form that **reads** in `args` and the flag that **writes** in
 `--execute` lets it write. Whether the `args` form has side effects is up to the
 script; satz cannot see what a script does.
 
-A script written to that contract. `tests/smoke/scripts/showcase-action.sh` is
+A script written to that contract. `tests/smoke/scripts/showcase-action.py` is
 this shape with a few extra echoes the smoke matrix asserts on, and CI runs it on
 every pull request and every push to `main`:
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+```python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+import argparse
+import os
+import sys
 
 # Dry run unless the estate's execute_args said otherwise. The flag is the
 # script's own, not satz's: satz only decides whether to pass it.
-apply=0
-org=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --organization) org="$2"; shift 2 ;;
-    --apply)        apply=1; shift ;;
-    *) echo "unknown argument: $1" >&2; exit 2 ;;
-  esac
-done
-[ -n "$org" ] || { echo "--organization is required" >&2; exit 2; }
+p = argparse.ArgumentParser()
+p.add_argument("--organization", required=True)
+p.add_argument("--apply", action="store_true")
+a = p.parse_args()
 
-echo "action ${SATZ_ACTION} (${SATZ_MODE}) on organizations/${org}"
-if [ "$apply" = 0 ]; then
-  echo "DRY RUN — re-run with --execute to write."
-  exit 0
-fi
+print(f"action {os.environ['SATZ_ACTION']} ({os.environ['SATZ_MODE']}) on organizations/{a.organization}")
+if not a.apply:
+    print("DRY RUN — re-run with --execute to write.")
+    sys.exit(0)
 
 # … the work. A non-zero exit here stops the whole run.
 ```
@@ -2211,6 +2217,7 @@ across files it is the fold's conflict above.
 | `action "x": declared twice — a.satz:3 and b.satz:9` | Names are unique across the estate. |
 | `run = "x.sh" not found. Looked in: …` | Every place that was tried, in order: the declaring file's directory, then the include dirs. |
 | `… is not executable. chmod +x …` | satz does not set the bit; a script that arrived via `get-presets` becomes executable when someone runs the `chmod +x`. |
+| `… is a Python action, and satz runs one with uv, which is not on PATH` | Install uv. satz runs no other interpreter for a `.py` action. |
 
 ## 11. Known limits
 

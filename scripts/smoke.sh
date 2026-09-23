@@ -169,11 +169,15 @@ step "run-actions: declared, resolved, and never run without being asked"
 # a line of its own if it ran, so its absence is the assertion.
 "$satz" --config . run-actions showcase.satz > tmp/actions-plan.txt 2>&1 \
   || fail "run-actions (plan) failed"
-grep -q '2 action(s) declared' tmp/actions-plan.txt || fail "both actions should be collected"
+grep -q '3 action(s) declared' tmp/actions-plan.txt || fail "every action should be collected"
 grep -q 'optional-step' tmp/actions-plan.txt && fail "a \`when\`=false pack contributed an action"
 grep -q 'from a pack' tmp/actions-plan.txt || fail "the pack-declared action is not reported as coming from a pack"
 grep -q 'scripts/showcase-action.sh --organization 123456789012' tmp/actions-plan.txt \
   || fail "the estate's param did not reach the resolved command line"
+# The extension decides the launcher: a .py action is spawned through uv, and the
+# printed line is the one that runs.
+grep -q 'uv run --script scripts/showcase-action.py --organization 123456789012' tmp/actions-plan.txt \
+  || fail "a .py action is not shown as \`uv run --script\`"
 grep -q -- '--apply' tmp/actions-plan.txt || fail "the --execute form should be shown in the plan"
 grep -q 'showcase-action: ' tmp/actions-plan.txt && fail "plan mode spawned the script"
 grep -q 'nothing was run' tmp/actions-plan.txt || fail "plan mode did not say it ran nothing"
@@ -187,10 +191,19 @@ grep -q 'showcase-action: name=showcase-step phase=after-apply mode=check' tmp/a
 grep -q 'WRITE MODE' tmp/actions-check.txt && fail "--check must not pass execute_args"
 grep -q 'customer_domain=not-exported' tmp/actions-check.txt \
   || fail "a param the estate did not put in args reached the script's environment"
+# The Python action ran through uv, in the same directory, with the same environment
+# and the same --check contract. Its file carries no executable bit: uv reads it.
+grep -q 'showcase-python: name=showcase-python-step phase=after-apply mode=check' tmp/actions-check.txt \
+  || fail "the .py action did not run through uv, or did not receive its environment"
+grep -q 'showcase-python: DRY RUN' tmp/actions-check.txt || fail "--check must not pass execute_args to a .py action"
+[ -x scripts/showcase-action.py ] \
+  && fail "the .py fixture is executable — a Python action runs without the bit, and this proves it"
 
 "$satz" --config . run-actions showcase.satz --execute > tmp/actions-exec.txt 2>&1 \
   || fail "run-actions --execute failed"
-grep -q 'WRITE MODE' tmp/actions-exec.txt || fail "--execute did not append execute_args"
+grep -q 'showcase-action: WRITE MODE' tmp/actions-exec.txt || fail "--execute did not append execute_args"
+grep -q 'showcase-python: WRITE MODE' tmp/actions-exec.txt \
+  || fail "--execute did not append execute_args to the .py action"
 
 # The switches.
 "$satz" --config . run-actions showcase.satz --execute --no-actions > tmp/actions-off.txt 2>&1 \
