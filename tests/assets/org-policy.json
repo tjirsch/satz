@@ -1,0 +1,23 @@
+{
+  "name": "//orgpolicy.googleapis.com/organizations/123456789012/policies/compute.managed.requireOsLogin",
+  "assetType": "orgpolicy.googleapis.com/Policy",
+  "ancestors": ["organizations/123456789012"],
+  "resource": {
+    "version": "v2",
+    "discoveryDocumentUri": "https://orgpolicy.googleapis.com/$discovery/rest",
+    "discoveryName": "Policy",
+    "parent": "//cloudresourcemanager.googleapis.com/organizations/123456789012",
+    "data": {
+      "name": "organizations/123456789012/policies/compute.managed.requireOsLogin",
+      "spec": {
+        "etag": "CNP2y8QGENiHxMED",
+        "updateTime": "2026-09-22T09:14:03.117813Z",
+        "rules": [
+          {
+            "enforce": true
+          }
+        ]
+      }
+    }
+  }
+}

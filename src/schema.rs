@@ -69,8 +69,19 @@ pub struct BlockSchema {
 }
 
 impl BlockSchema {
-    pub fn extract_attributes(&self, data: &serde_json::Map<String, serde_json::Value>, resource_type: &str, resource_name: &str) -> serde_yaml::Mapping {
+    /// The estate's form of one asset's data, and the required attributes the
+    /// data did not carry and the estate does not derive — the caller reports
+    /// those, because only it knows what the resource is called.
+    pub fn extract_attributes(&self, data: &serde_json::Map<String, serde_json::Value>, resource_type: &str) -> (serde_yaml::Mapping, Vec<String>) {
+        self.extract(data, resource_type, true)
+    }
+
+    /// `scoped` is true for the resource's own attributes and false inside a
+    /// nested block: only the resource's own carry the enclosure's values
+    /// (`scope_attribute`).
+    fn extract(&self, data: &serde_json::Map<String, serde_json::Value>, resource_type: &str, scoped: bool) -> (serde_yaml::Mapping, Vec<String>) {
         let mut map = serde_yaml::Mapping::new();
+        let mut missing: Vec<String> = Vec::new();
         
         // 1. Handle Attributes
         for (attr_name, attr_schema) in &self.attributes {
@@ -120,10 +131,9 @@ impl BlockSchema {
                          map.insert(serde_yaml::Value::String(attr_name.clone()), yaml_v);
                      }
                 }
-            } else if attr_schema.required {
-                // Required but missing. 
-                eprintln!("WARNING: Required attribute '{}' missing in asset data for resource type '{}' (name: '{}').\nData: {}", 
-                    attr_name, resource_type, resource_name, serde_json::to_string_pretty(data).unwrap_or_else(|_| "{}".to_string()));
+            } else if attr_schema.required && !(scoped && scope_attribute(resource_type, attr_name)) {
+                // Required, not in the data, and not one the enclosure writes.
+                missing.push(attr_name.clone());
             }
         }
 
@@ -137,7 +147,8 @@ impl BlockSchema {
                     let mut yaml_arr = Vec::new();
                     for item in arr {
                          if let Some(obj) = item.as_object() {
-                             let sub_map = block_type.block.extract_attributes(obj, resource_type, resource_name);
+                             let (sub_map, sub_missing) = block_type.block.extract(obj, resource_type, false);
+                             missing.extend(sub_missing.into_iter().map(|a| format!("{}.{}", block_name, a)));
                              if !sub_map.is_empty() {
                                  yaml_arr.push(serde_yaml::Value::Mapping(sub_map));
                              }
@@ -149,7 +160,8 @@ impl BlockSchema {
                 } else if let Some(obj) = v.as_object() {
                     // Sometimes blocks are single objects in API but list in TF?
                     // Or standard nested block.
-                    let sub_map = block_type.block.extract_attributes(obj, resource_type, resource_name);
+                    let (sub_map, sub_missing) = block_type.block.extract(obj, resource_type, false);
+                     missing.extend(sub_missing.into_iter().map(|a| format!("{}.{}", block_name, a)));
                      if !sub_map.is_empty() {
                          // If schema says nice max_items=1 it might be list.
                          // But usually blocks are lists in TF.
@@ -160,8 +172,21 @@ impl BlockSchema {
             }
         }
 
-        map
+        (map, missing)
     }
+}
+
+/// Whether the value of this attribute is where the resource STANDS rather than
+/// what it is. The emitter writes each one from the enclosing node — a project,
+/// folder or organization body gives `project`/`project_id`, `folder`/`folder_id`
+/// and `org_id`/`organization` to every type whose schema names one, and it
+/// builds an org policy's `parent` and a folder's `parent` from the same place
+/// (`emit_shared::render_resource`). Cloud Asset data therefore never has to
+/// carry it, and an import that leaves it out loses nothing: the estate says it
+/// by where the resource is written.
+pub(crate) fn scope_attribute(tf_type: &str, attr: &str) -> bool {
+    matches!(attr, "project" | "project_id" | "folder" | "folder_id" | "org_id" | "organization")
+        || (attr == "parent" && matches!(tf_type, "google_org_policy_policy" | "google_folder"))
 }
 
 /// `snake_case` → `snakeCase`: the attribute names the Discovery Documents and

@@ -16,9 +16,9 @@ ships it).
 | file | refreshed by | trigger | what catches staleness |
 |---|---|---|---|
 | `tests/schemas/google.json` | `scripts/update_schema_fixture.py --add` | the provider pin moves | **nothing** — run `--check` |
-| `presets/cai-asset-types.txt` | `scripts/update_cai_asset_types.py`, from Google's published list | new asset types appear | `--check` against the page, run by hand; indirect: unfilled `import-config` rows |
+| `presets/cai-asset-types.txt` | `scripts/update_cai_asset_types.py`, from Google's published list | new asset types appear; Google retires one | `--check` against the page, run by hand; indirect: unfilled `import-config` rows, and a live import naming the retired types it left out |
 | `presets/import-config.yaml` (rows) | `scripts/update_import_config.py --config-file … --schema-dir … --provider-version …` | the provider pin moves | `cargo test`: `provider_version` must equal the pin |
-| `presets/import-config.yaml` (`asset_type`) | `scripts/update_import_config.py --config-file … --cai-types <list>`, then `--probe <parent>` | the CAI list above changes; Google changes what ListAssets serves | smoke: *"every derivable asset_type is filled"*; a type ListAssets refuses: the live import aborts naming it |
+| `presets/import-config.yaml` (`asset_type`) | `scripts/update_import_config.py --config-file … --cai-types <list>`, then `--probe <parent>` | the CAI list above changes; Google changes what ListAssets serves | smoke: *"every derivable asset_type is filled"*; a type ListAssets refuses: the live import leaves it out and names it with the rows that asked for it |
 | `presets/type-map.yaml` — in an estate's `presets_dir`, not in this repository | `satz map-types`, from the Discovery Documents and the provider schema | the provider pin moves; Google changes an API | **nothing** — an import without it still flattens nested values onto the attributes the provider schema names, and reports what it could not place; what the file adds is the renamed BLOCKS |
 | `presets/managed-constraint-equivalents.txt` | `scripts/update_constraint_equivalents.py` | Google ships a new managed twin | `cargo test` catches the *effect*, not the table |
 | `presets/docs/*.md` | `satz doc-packs` | any pack changes | smoke: `doc-packs --check` |
@@ -95,6 +95,12 @@ Staleness shows up indirectly: rows in `import-config.yaml` whose `asset_type` s
 `TODO`/`UNKNOWN` when the type demonstrably has one. The smoke step *"import-config:
 every derivable asset_type is filled"* fails when the config is behind the list — it
 does **not** notice when the list itself is behind Google.
+
+The other direction — a type the list carries and Cloud Asset Inventory has since
+retired — shows up in a live `satz import`: the sweep finds it by halving the request
+the API refused, leaves it out and names it at the end of the run with the rows that
+asked for it. That is the signal to refresh, and the type is out of the estate until
+it is acted on.
 
 ## The managed/legacy constraint pairing
 

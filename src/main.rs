@@ -3631,6 +3631,39 @@ pub(crate) fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
     )
 }
 
+/// The Satz estate among the arguments `plan`, `apply` and `hcl-init` pass
+/// through, with the command that works instead.
+///
+/// These three take the estate through `--config` — what they run in is
+/// `hcl_dir`, which the config names — and hand everything else to the tool
+/// verbatim. `satz hcl-init C0example.satz`, written like every other satz
+/// command, therefore reaches `tofu init` as a positional argument, which it
+/// refuses: the operator sees the tool's usage text and not what is wrong.
+fn estate_among_tf_args(sub: &str, args: &[String]) -> Option<String> {
+    let estate = args.iter().find(|a| a.ends_with(".satz"))?;
+    let rest: Vec<&str> = args.iter().filter(|a| *a != estate).map(String::as_str).collect();
+    // The estate written with a directory names the one to pass; written bare it
+    // was found beside the working directory, and the command without it is the
+    // whole fix.
+    let dir = Path::new(estate).parent().filter(|p| !p.as_os_str().is_empty());
+    let mut try_line = format!("satz {}", sub);
+    if let Some(d) = dir {
+        try_line.push_str(&format!(" --config {}", d.display()));
+    }
+    for a in &rest {
+        try_line.push(' ');
+        try_line.push_str(a);
+    }
+    Some(format!(
+        "`{}` is a Satz estate, and `{}` takes no estate: it runs `<tf_tool> {}` in the estate's hcl dir, \
+         which `--config` names, and hands every other argument to the tool verbatim.\n  try: {}",
+        estate,
+        sub,
+        if sub == "hcl-init" { "init" } else { sub },
+        try_line
+    ))
+}
+
 /// Run the configured Terraform tool in the estate's hcl dir.
 ///
 /// A thin wrapper: the point is not to reimplement `plan`/`apply` but to make
@@ -3661,6 +3694,10 @@ async fn run_tf(
     args: &[String],
     api_preflight: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let named = if subcommand == "init" { "hcl-init" } else { subcommand };
+    if let Some(hint) = estate_among_tf_args(named, args) {
+        return Err(hint.into());
+    }
     let hcl_dir = Path::new(&runtime_config.hcl_dir);
     if !hcl_dir.is_dir() {
         return Err(format!(
@@ -6675,6 +6712,40 @@ google_cloud_identity_group {
         assert!(out.main_tf.contains("display_name = \"Shared\""), "{}", out.main_tf);
     }
 
+    /// satz writes no deletion default of its own (ADR 0061): a project and a
+    /// folder come out as the estate declares them, so the provider's own
+    /// protection stands until the estate says otherwise, and an estate meant to
+    /// be torn down says so in one attribute per node.
+    #[test]
+    fn deletion_protection_is_the_estates_word_and_never_satzs() {
+        let reg = super::corpus::registry();
+        let emit = |src: &str| {
+            let resolver = crate::EstateResolver { registry: &reg };
+            let fe = satz_core::pipeline::compile_estate("main.satz", src, &resolver, &|p| Err(format!("no use: {}", p)))
+                .expect("front-end");
+            let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+            ctx.registry = Some(&reg);
+            crate::emitter::emit(&folded, &ctx).expect("emit").main_tf
+        };
+        let folder = "google_folder {\n  shared {\n    display_name = \"Shared\"\n  }\n}\n\ngoogle_project {";
+
+        // declared nowhere: emitted nowhere — `tofu destroy` is refused by the
+        // provider, which is what protects a customer's project
+        let plain = emit(&ESTATE.replace("google_project {", folder));
+        assert!(!plain.contains("deletion_policy"), "satz wrote a deletion policy nobody declared:\n{}", plain);
+        assert!(!plain.contains("deletion_protection"), "satz wrote a deletion protection nobody declared:\n{}", plain);
+
+        // declared: emitted as declared — the teardown edit, one per node
+        let torn_down = emit(
+            &ESTATE
+                .replace("google_project {", &folder.replace("display_name = \"Shared\"", "display_name = \"Shared\"\n    deletion_protection = false"))
+                .replace("project_id = \"acme-infra-001\"", "project_id = \"acme-infra-001\"\n    deletion_policy  = \"DELETE\""),
+        );
+        assert!(torn_down.contains("deletion_protection = false"), "{}", torn_down);
+        assert!(torn_down.contains("deletion_policy  = \"DELETE\"") || torn_down.contains("deletion_policy = \"DELETE\""), "{}", torn_down);
+    }
+
     #[test]
     fn two_different_ids_for_one_binding_refuse() {
         use satz_core::algebra::GrantEdge;
@@ -7970,5 +8041,64 @@ google_storage_bucket {
         drop(stop);
         reviewer.join().expect("the reviewer failed");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+
+#[cfg(test)]
+mod tf_pass_through_tests {
+    //! What `plan`, `apply` and `hcl-init` hand to the tool. They take the
+    //! estate through `--config` and pass everything else on verbatim, so an
+    //! estate written among those arguments reaches the tool.
+    //!
+    //! Measured on a live organisation: `satz hcl-init C0example.satz`, written
+    //! like every other satz command, reached `tofu init` as a positional
+    //! argument and the operator got tofu's usage text.
+    use super::*;
+
+    #[test]
+    fn an_estate_among_the_arguments_is_refused_with_the_command_that_works() {
+        let args = vec!["C0example.satz".to_string()];
+        let msg = estate_among_tf_args("hcl-init", &args).expect("an estate is refused");
+        assert!(msg.contains("C0example.satz") && msg.contains("Satz estate"), "{msg}");
+        assert!(msg.contains("--config"), "the message does not name where the estate goes: {msg}");
+        assert!(msg.contains("try: satz hcl-init"), "{msg}");
+        assert!(!msg.contains("--config C0example.satz"), "a file is not a config directory: {msg}");
+    }
+
+    /// An estate named with its directory: that directory is the one to pass,
+    /// and the tool's own arguments stay.
+    #[test]
+    fn the_estates_directory_is_the_config_to_pass() {
+        let args = vec!["estates/acme/C0example.satz".to_string(), "-reconfigure".to_string()];
+        let msg = estate_among_tf_args("hcl-init", &args).expect("an estate is refused");
+        assert!(msg.contains("try: satz hcl-init --config estates/acme -reconfigure"), "{msg}");
+    }
+
+    /// Everything the tool takes passes through untouched — flags, a saved plan,
+    /// a `-var-file`.
+    #[test]
+    fn the_tools_own_arguments_are_not_an_estate() {
+        for args in [
+            vec!["-reconfigure".to_string()],
+            vec!["-target=google_folder.shared".to_string(), "-out=tf.plan".to_string()],
+            vec!["tf.plan".to_string()],
+            vec!["-var-file".to_string(), "extra.tfvars".to_string()],
+            vec![],
+        ] {
+            assert!(estate_among_tf_args("plan", &args).is_none(), "{:?} was refused", args);
+        }
+    }
+
+    /// `plan` and `apply` take the estate the same way, and their refusal names
+    /// the subcommand the operator typed.
+    #[test]
+    fn plan_and_apply_refuse_an_estate_too() {
+        let args = vec!["C0example.satz".to_string()];
+        for sub in ["plan", "apply"] {
+            let msg = estate_among_tf_args(sub, &args).expect("an estate is refused");
+            assert!(msg.contains(&format!("try: satz {}", sub)), "{msg}");
+            assert!(msg.contains(&format!("`<tf_tool> {}`", sub)), "{msg}");
+        }
     }
 }

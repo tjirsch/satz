@@ -452,6 +452,52 @@ them and is complete; one the interview wrote is complete when it says so.
 | `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
 | `compliance_frameworks` | `["cis-gcp-5.0"]` | The frameworks this customer is HELD TO, as catalog ids from `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) — a contract, an auditor, a regulator. Not what the estate claims, which comes from its packs. A value naming no catalog is refused by the compile. |
 
+### Tear the estate down
+
+The provider protects the two nodes the tree is built from: a project's
+`deletion_policy` is `PREVENT` and a folder's `deletion_protection` is `true`
+unless the estate says otherwise, and satz writes neither attribute by itself. A
+`tofu destroy` is therefore refused — first for the project, then, once that is
+settled, for the folder.
+
+Both are ordinary attributes. Declare them, apply each one on its own, then
+destroy:
+
+```bash
+# 1. the project: deletion_policy = "DELETE" in every google_project body
+satz transpile C0example.satz
+satz apply --config . -target=google_project.infra
+
+# 2. the folder: deletion_protection = false in every google_folder body
+satz transpile C0example.satz
+satz apply --config . -target=google_folder.shared
+
+# 3. the destroy the two edits allow
+satz apply --config . -destroy
+```
+
+```satz
+google_folder {
+  shared {
+    display_name        = "Shared"
+    deletion_protection = false
+  }
+}
+
+google_project {
+  infra {
+    project_id      = "acme-infra-001"
+    deletion_policy = "DELETE"
+  }
+}
+```
+
+Each attribute has to be in the state before the destroy reads it, which is what
+the two targeted applies are for: a destroy run against a state that still holds
+the protection is refused whatever the configuration says. The edits stay in the
+estate — declared in git, visible in a plan, and the reason a project is
+destroyable is the line that made it so.
+
 ---
 
 ## Adopting an organisation that already exists
@@ -496,10 +542,23 @@ folders or two projects is refused, because the map form emits one address per
 member and role; `--on-collision counter` writes the second and later as labelled
 resources with a running number, and says which.
 
+Google retires asset types, and `presets/cai-asset-types.txt` is a snapshot of what
+it served when the file was refreshed. A type the API no longer serves makes it
+refuse the whole request of a hundred types it stands in, naming none of them: satz
+asks the request again in halves until the refusal is down to that one type, leaves
+it out and fetches the other 99. The run ends by naming each such type with the rows
+that asked for it, so what the estate is short of is on the screen; refresh the table
+or leave the rows out with `--exclude`. A scope the credential may not read, or a
+connection that broke, still ends the run with nothing written.
+
 A live resource whose provider block would not plan is never written: a required
 attribute the asset data lacks is derived where it can be (`parent`,
 `org_id`/`folder`/`project` from the asset path, a service account's `account_id`
-from its email) and the resource is otherwise skipped with the attribute named.
+from its email) and the resource is otherwise skipped with the attribute named. An
+attribute the estate says by where the resource STANDS — the enclosing project,
+folder or organization, and an org policy's `parent` — is no hole: the asset data
+never carries it and the emitter writes it from the node the resource is written
+under.
 Import ids of live resources are the asset path, with the project named by id (the
 provider keeps a project NUMBER on import and the declared id would then force a
 replacement). Verified on a test organization with folders, projects, services,

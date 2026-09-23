@@ -177,7 +177,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `hcl-init [ARGS]` | runs `<tf_tool> init` in `hcl_dir`; everything after the command is handed to the tool verbatim, so `--config` must come before it |
+| `hcl-init [ARGS]` | runs `<tf_tool> init` in `hcl_dir`; everything after the command is handed to the tool verbatim, so `--config` must come before it and the estate is no argument — it is the one `--config` names |
 | `plan [ARGS]` | runs `<tf_tool> plan` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace` |
 | `apply [ARGS]` | runs `<tf_tool> apply` in `hcl_dir`, arguments passed through; an org policy the state holds with rules and the estate declares reset gets `-replace`, which `main.tf` also names in a comment above that policy for an apply without satz |
 | `migrate <INPUT>` | `--mode` (`local`\|`cloud`; without it, the other of the two) |
@@ -876,6 +876,16 @@ output with the type to add: `9 google_monitoring_alert_policy need google_proje
 --only/--exclude left out — add google_project to --only`. The levers are the `import:`
 rows and `--only`.
 
+**An asset type Cloud Asset Inventory does not serve is left out and named.** The
+API answers `INVALID_ARGUMENT` for a whole request of a hundred types when one of
+them is a type it has retired, naming none of them; satz asks the request again in
+halves until the refusal is down to a single type, leaves that type out and fetches
+the rest. The run ends with each one named, the Terraform rows that asked for it and
+what the API said. Nothing of those types is in the estate: refresh the table with
+`uv run scripts/update_import_config.py --cai-types presets/cai-asset-types.txt`, or
+leave the rows out with `--exclude`. Any other failure — a scope the credential may
+not read, a connection that broke — still ends the run with nothing written.
+
 **Which Terraform type an asset becomes.** Several types share one Cloud Asset
 type: `logging.googleapis.com/LogSink` is four (`google_logging_project_sink`,
 `_folder_sink`, `_organization_sink`, `_billing_account_sink`), and
@@ -1217,7 +1227,9 @@ satz apply --config <estate> tf.plan
 
 Because the pass-through is verbatim, **`--config` must come before those arguments** —
 written after, it would be handed to OpenTofu instead. satz detects that case and
-prints the corrected command.
+prints the corrected command. The estate itself is no argument of these three: they run
+in `hcl_dir`, which the config names, so a `.satz` file among the arguments is refused
+with the command that works instead of reaching the tool as a positional argument.
 
 `plan` and `apply` add one argument of their own: `-replace=<address>` for each org
 policy the state holds with rules while the estate declares it `spec { reset = true }`,
@@ -1231,6 +1243,13 @@ replace. `tofu plan` run directly shows the in-place update instead.
 
 They do not transpile first, so the generated diff can be reviewed between `transpile`
 and `plan`; `transpile --plan` / `--apply` does both in one command.
+
+A destroy needs two estate edits first: the provider refuses to delete a project
+whose `deletion_policy` is `PREVENT` and a folder whose `deletion_protection` is
+`true`, which is what both are without the estate saying otherwise, and satz writes
+neither attribute by itself. Declare `deletion_policy = "DELETE"` on each project and
+`deletion_protection = false` on each folder, apply each edit on its own, then destroy
+— [the workflow page](docs/workflows.md#tear-the-estate-down) has the sequence.
 
 ### Live verification checks enforcement, not existence
 
