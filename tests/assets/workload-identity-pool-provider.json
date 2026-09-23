@@ -1,0 +1,19 @@
+{
+  "name": "//iam.googleapis.com/projects/100000000001/locations/global/workloadIdentityPools/acme-pool/providers/acme-provider",
+  "assetType": "iam.googleapis.com/WorkloadIdentityPoolProvider",
+  "ancestors": ["projects/100000000001", "folders/123456789", "organizations/123456789012"],
+  "resource": {
+    "version": "v1",
+    "discoveryName": "WorkloadIdentityPoolProvider",
+    "parent": "//cloudresourcemanager.googleapis.com/projects/100000000001",
+    "data": {
+      "name": "projects/100000000001/locations/global/workloadIdentityPools/acme-pool/providers/acme-provider",
+      "displayName": "Acme provider",
+      "state": "ACTIVE",
+      "disabled": false,
+      "attributeMapping": {
+        "google.subject": "assertion.sub"
+      }
+    }
+  }
+}

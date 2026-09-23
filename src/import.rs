@@ -23,6 +23,7 @@ pub(crate) fn import_state(
     filtered: std::collections::HashSet<String>,
     on_collision: crate::discovery::OnCollision,
     customer_shortname: Option<&str>,
+    organization: Option<&str>,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -51,11 +52,24 @@ pub(crate) fn import_state(
     let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered, on_collision);
     let mut found = discoverer.discover()?;
     let registry = discoverer.registry.as_ref().ok_or("the registry loaded above is gone")?;
-    // the state shape has no ADC: what the data carries, and the flag
-    let org = organization_of(&found.config, None);
+    // the state shape has no ADC: what the data carries, and the flag. A state
+    // names its organization in a resource (`organizations/<n>`, `org_id`) or
+    // in a top-level folder's parent, which the nesting drops.
+    let organization = organization.map(|o| o.trim_start_matches("organizations/").to_string());
+    let stated = infer_org_id(&serde_yaml::to_value(&found.config)?).or_else(|| found.organization.clone());
+    if let (Some(flag), Some(stated)) = (organization.as_deref(), stated.as_deref()) {
+        if flag != stated {
+            return Err(format!(
+                "--organization {} but the state names organization {} — one of the two is wrong, and satz does not pick. Nothing written.",
+                flag, stated
+            )
+            .into());
+        }
+    }
+    let org = organization_of(&found.config, organization.as_deref().or(stated.as_deref()));
     let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), None, customer_shortname);
     vocab.apply_billing(&mut found.config);
-    write_imported(&found.config, output, None, registry, &vocab, runtime_config)?;
+    write_imported(&found.config, output, org.as_deref(), registry, &vocab, runtime_config)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
     if verbose {
         crate::discovery::Discoverer::print_summary(&found.config);
@@ -319,13 +333,25 @@ pub(crate) fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
     }
 }
 
+/// What an import refuses to write without: the organization number every
+/// estate is bound to. A folder's parent is `organizations/{customer_organization_id}`
+/// and an organization grant's `org_id` is that param, so an estate written
+/// without one carries `organizations/` and `""` where an id belongs.
+pub(crate) const MISSING_ORGANIZATION: &str = "import: no organization id — nothing among the discovered resources names one \
+(an `organizations/<n>` reference or an `org_id`), and a folder's parent and an organization grant's `org_id` are written \
+from `customer_organization_id`. Nothing written. Name it with `--organization <n>` (state shape), or sweep \
+`organizations/<n>` (live shape).";
+
 /// A discovered `Config` as a Satz estate that compiles as-is: the local
-/// backend the emitter requires, `customer_organization_id` inferred from the
-/// resources (every `organizations/<n>` reference or `org_id` names it) and
-/// referenced wherever the number was written, the document shaped into the
-/// language's own forms (`satz_core::condense`), printed by the same printer
-/// the yaml import uses, and shorthand type keys (`folder`, `project`)
-/// normalised to provider names.
+/// backend the emitter requires, `customer_organization_id` taken from the
+/// resources (every `organizations/<n>` reference or `org_id` names it) or the
+/// hint the shape carries, and referenced wherever the number was written, the
+/// document shaped into the language's own forms (`satz_core::condense`),
+/// printed by the same printer the yaml import uses, and shorthand type keys
+/// (`folder`, `project`) normalised to provider names.
+///
+/// Nothing is written when neither names an organization: the estate would
+/// hold `MISSING_ORGANIZATION`'s invalid literals.
 ///
 /// Discovery emits plain data — no anchors, tags, includes or nulls — so no
 /// dialect pre-pass is needed; that is what makes the direct route possible.
@@ -376,14 +402,12 @@ pub(crate) fn discovered_to_satz(
             eprintln!("warning: no project among the imported resources — set `billing_project` in the estate's `providers` block by hand (org-scoped APIs need a quota project)");
         }
     }
-    let org = organization_of(config, org_hint);
+    let org = organization_of(config, org_hint).ok_or(MISSING_ORGANIZATION)?;
     let mut params = vocab.params();
-    if org.is_none() {
-        eprintln!("warning: no organization id found among the discovered resources — add `customer_organization_id` to `params` by hand");
-    } else if !params.iter().any(|(n, _)| n == satz_core::condense::ORG_PARAM) {
-        params.insert(0, (satz_core::condense::ORG_PARAM.to_string(), format!("\"{}\"", org.clone().unwrap_or_default())));
+    if !params.iter().any(|(n, _)| n == satz_core::condense::ORG_PARAM) {
+        params.insert(0, (satz_core::condense::ORG_PARAM.to_string(), format!("\"{}\"", org)));
     }
-    condense_document(&mut top, org.as_deref(), &vocab.substitutions(), registry);
+    condense_document(&mut top, Some(&org), &vocab.substitutions(), registry);
     let header = vec![
         "Discovered estate — review before use: the hierarchy is as found, folders are labelled".to_string(),
         "by display name, every resource carries its \"import-id\", what the platform owns was".to_string(),
@@ -1247,5 +1271,160 @@ folder:
         assert_eq!(infer_org_id(&v), None, "a policy name is not an org reference");
         assert_eq!(satz_output_path("yaml", PathBuf::from("discovered.yaml")), PathBuf::from("yaml/discovered.satz"));
         assert_eq!(satz_output_path("yaml", PathBuf::from("/abs/x.satz")), PathBuf::from("/abs/x.satz"));
+    }
+}
+
+#[cfg(test)]
+mod state_without_an_organization {
+    //! Every estate is bound to an organization, and a state file can name
+    //! none.
+    //!
+    //! Measured on a live organisation: `tofu show -json` carried no
+    //! organization id, and the import warned and wrote the estate anyway —
+    //! `parent = "organizations/"` on a folder and `org_id = ""` on an
+    //! organization grant, which no apply can use.
+    use super::*;
+
+    fn repo(rel: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
+    /// A state with a folder, a project under it and no organization anywhere:
+    /// the folder's own parent is a folder outside the state.
+    fn state(dir: &Path) -> PathBuf {
+        let path = dir.join("state.json");
+        std::fs::write(
+            &path,
+            r#"{"format_version":"1.0","values":{"root_module":{"resources":[
+              {"type":"google_folder","name":"workloads","values":{"name":"folders/123456789","display_name":"Workloads","parent":"folders/222222222"}},
+              {"type":"google_project","name":"infra","values":{"project_id":"acme-infra-001","name":"acme-infra-001","folder_id":"123456789"}}
+            ]}}}"#,
+        )
+        .expect("state fixture");
+        path
+    }
+
+    fn config(yaml_dir: &Path) -> ToolConfig {
+        let mut c: ToolConfig = toml::from_str("").expect("every field has a default");
+        c.yaml_dir = yaml_dir.to_string_lossy().into_owned();
+        c.hcl_dir = yaml_dir.to_string_lossy().into_owned();
+        c.schema_dir = repo("tests/schemas").to_string_lossy().into_owned();
+        c.presets_dir = repo("presets").to_string_lossy().into_owned();
+        c
+    }
+
+    fn import_config() -> ImportConfig {
+        let text = std::fs::read_to_string(repo("presets/import-config.yaml")).expect("import-config");
+        serde_yaml::from_str(&text).expect("import-config parses")
+    }
+
+    fn run(dir: &Path, organization: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+        let cfg = config(dir);
+        import_state(
+            Some(state(dir)),
+            PathBuf::from("discovered.satz"),
+            import_config(),
+            std::collections::HashSet::new(),
+            crate::discovery::OnCollision::default(),
+            None,
+            organization,
+            false,
+            &cfg,
+            &cfg,
+        )
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("satz-import-org-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        dir
+    }
+
+    #[test]
+    fn a_state_that_names_no_organization_is_refused_and_nothing_is_written() {
+        let dir = scratch("refused");
+        let err = run(&dir, None).expect_err("a state without an organization is refused").to_string();
+        assert!(err.contains("no organization id"), "{err}");
+        assert!(err.contains("customer_organization_id"), "the param to supply is not named: {err}");
+        assert!(err.contains("--organization"), "how to supply it is not named: {err}");
+        assert!(!dir.join("discovered.satz").exists(), "a refused import wrote an estate");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_same_state_with_the_organization_named_is_written() {
+        let dir = scratch("named");
+        run(&dir, Some("123456789012")).expect("the organization is supplied");
+        let text = std::fs::read_to_string(dir.join("discovered.satz")).expect("the estate is written");
+        assert!(text.contains(r#"customer_organization_id = "123456789012""#), "{text}");
+        assert!(!text.contains("organizations/\""), "a bare prefix reached the estate:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The flag names what the state does not carry; where the state carries an
+    /// organization of its own, two different answers are a refusal, not a pick.
+    #[test]
+    fn a_flag_that_contradicts_the_state_is_refused() {
+        let dir = scratch("conflict");
+        let path = dir.join("state.json");
+        std::fs::write(
+            &path,
+            r#"{"format_version":"1.0","values":{"root_module":{"resources":[
+              {"type":"google_folder","name":"workloads","values":{"name":"folders/123456789","display_name":"Workloads","parent":"organizations/123456789012"}}
+            ]}}}"#,
+        )
+        .expect("state fixture");
+        let cfg = config(&dir);
+        let err = import_state(
+            Some(path),
+            PathBuf::from("discovered.satz"),
+            import_config(),
+            std::collections::HashSet::new(),
+            crate::discovery::OnCollision::default(),
+            None,
+            Some("222222222222"),
+            false,
+            &cfg,
+            &cfg,
+        )
+        .expect_err("two organizations are a refusal")
+        .to_string();
+        assert!(err.contains("222222222222") && err.contains("123456789012"), "both are named: {err}");
+        assert!(!dir.join("discovered.satz").exists(), "a refused import wrote an estate");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A grant whose scope the state does not carry has no import id: `<scope>
+    /// <role> <member>` would begin with a space and import nothing.
+    #[test]
+    fn a_grant_without_a_scope_is_refused() {
+        let dir = scratch("scopeless");
+        let path = dir.join("state.json");
+        std::fs::write(
+            &path,
+            r#"{"format_version":"1.0","values":{"root_module":{"resources":[
+              {"type":"google_organization_iam_member","name":"admins","values":{"org_id":"","role":"roles/resourcemanager.organizationAdmin","member":"group:gcp-organization-admins@example.com"}}
+            ]}}}"#,
+        )
+        .expect("state fixture");
+        let cfg = config(&dir);
+        let err = import_state(
+            Some(path),
+            PathBuf::from("discovered.satz"),
+            import_config(),
+            std::collections::HashSet::new(),
+            crate::discovery::OnCollision::default(),
+            None,
+            Some("123456789012"),
+            false,
+            &cfg,
+            &cfg,
+        )
+        .expect_err("a grant with no scope is refused")
+        .to_string();
+        assert!(err.contains("google_organization_iam_member") && err.contains("org_id"), "{err}");
+        assert!(!dir.join("discovered.satz").exists(), "a refused import wrote an estate");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

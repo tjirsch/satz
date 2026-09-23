@@ -948,6 +948,44 @@ grep -q 'id = "organizations/123456789012/policies/compute.skipDefaultNetworkCre
 "$satz" --config . import state.json --customer-shortname acme -o imported-state-named.satz > /dev/null 2>&1 || fail "import with --customer-shortname failed"
 grep -qE '^  customer_shortname += "acme"$' yaml/imported-state-named.satz || fail "--customer-shortname did not win over the inference"
 
+step "import, state shape: a state that names no organization is refused, and --organization names it"
+# the same state with its organization taken out: folders and projects only,
+# the top folder's parent a folder outside the state
+python3 - <<'PY'
+import json, pathlib
+
+state = json.loads(pathlib.Path("state.json").read_text())
+resources = []
+for r in state["values"]["root_module"]["resources"]:
+    if r["type"] not in ("google_folder", "google_project"):
+        continue
+    if r["type"] == "google_folder":
+        r["values"]["parent"] = "folders/222222222"
+    resources.append(r)
+state["values"]["root_module"]["resources"] = resources
+pathlib.Path("tmp/state-no-org.json").write_text(json.dumps(state))
+PY
+if "$satz" --config . import tmp/state-no-org.json --from state -o imported-no-org.satz >tmp/import-no-org.txt 2>&1; then
+  fail "a state that names no organization must be refused"
+fi
+grep -q 'no organization id' tmp/import-no-org.txt || fail "the refusal did not say what is missing:\n$(cat tmp/import-no-org.txt)"
+grep -q -- '--organization' tmp/import-no-org.txt || fail "the refusal did not say how to supply it:\n$(cat tmp/import-no-org.txt)"
+[ -f yaml/imported-no-org.satz ] && fail "a refused import wrote an estate"
+"$satz" --config . import tmp/state-no-org.json --from state --organization 123456789012 -o imported-no-org.satz >/dev/null 2>&1 \
+  || fail "the same state with --organization must import"
+grep -qE '^  customer_organization_id += "123456789012"$' yaml/imported-no-org.satz \
+  || fail "--organization did not reach the estate's params"
+# the flag names what the state does not carry, never what it contradicts
+if "$satz" --config . import state.json --organization 222222222222 -o imported-conflict.satz >tmp/import-conflict.txt 2>&1; then
+  fail "--organization against a state that names another organization must be refused"
+fi
+grep -q '123456789012' tmp/import-conflict.txt || fail "the refusal did not name the organization the state carries:\n$(cat tmp/import-conflict.txt)"
+if "$satz" --config . import organizations/123456789012 --organization 123456789012 >tmp/import-org-flag.txt 2>&1; then
+  fail "--organization must be refused on the live shape"
+fi
+grep -q 'applies to the state shape' tmp/import-org-flag.txt \
+  || fail "the live refusal did not say which shape --organization belongs to:\n$(cat tmp/import-org-flag.txt)"
+
 step "import --generate-unmapped: the fallback is the live shape's, plain or --into; the other shapes say so"
 if "$satz" --config . import state.json --generate-unmapped >tmp/gen-state.txt 2>&1; then
   fail "--generate-unmapped must be refused on the state shape"

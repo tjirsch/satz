@@ -1577,6 +1577,47 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, and what to write instead; the error satz prints names the file and the line.
 
+### v0.80.0
+
+**`satz import <state>` refuses a state that names no organisation, and writes nothing.**
+Every estate is bound to one: a folder's parent is
+`organizations/{customer_organization_id}` and an organisation grant's `org_id` is that
+param. A state carries the number only where a resource names it
+(`organizations/<n>`, `org_id`) or a top-level folder hangs under the organisation. A
+state of folders and projects nested under a folder outside it names none — that import
+used to warn and write the estate anyway, with `parent = "organizations/"` on the folder
+and `org_id = ""` on the grant, which no apply can use. It now refuses:
+
+```
+error: import: no organization id — nothing among the discovered resources names one (an `organizations/<n>` reference or an `org_id`), and a folder's parent and an organization grant's `org_id` are written from `customer_organization_id`. Nothing written. Name it with `--organization <n>` (state shape), or sweep `organizations/<n>` (live shape).
+```
+
+**The edit:** name the organisation on the command line —
+`satz import state.json --organization 123456789012`. Where the state names one of its
+own and the flag says another, the import is refused naming both, and one of the two is
+corrected. A live sweep reads the organisation from its own root and from the assets'
+ancestors, so it takes no flag.
+
+**A grant in a state that names no scope is refused.** A `*_iam_member` is imported by
+`<scope> <role> <member>`, and a resource whose `org_id`, `billing_account_id`, `folder`,
+`project` or `bucket` is missing or empty used to be written with an import id beginning
+in a space, which imports nothing. The refusal names the resource and the attributes that
+carry the scope. **The edit:** none in the estate — the state is wrong, and the resource
+is applied or removed with the tool that wrote it before the import is run again.
+
+**An estate written by an earlier import may carry two values that were wrong.** Nothing
+rereads it, so it is read once by hand:
+
+- `google_iam_workload_identity_pool_provider.workload_identity_pool_id` held the
+  PROVIDER's id instead of the pool's, from a live import. Re-applied, that provider
+  points at a pool that does not exist. **The edit:** set it to the pool's id — the
+  provider's own `"import-id"` carries both, as
+  `projects/<p>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`.
+- A Pub/Sub subscription set to never expire lost its `expiration_policy`, from a state
+  and from a live import alike, which restores Google's 31-day default — after which the
+  subscription deletes itself. **The edit:** write `expiration_policy { ttl = "" }` into
+  the subscription's body.
+
 ### v0.79.0
 
 **A project's provider alias works in the estate's region and bills to its own
