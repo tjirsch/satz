@@ -23,6 +23,10 @@ variable "bucket_suffix" {
 }
 
 resource "google_storage_bucket" "logs" {
+  # an alias that is not the estate's own: a Satz body key, so it travels with
+  # the resource and the emitter renders it back as the reference it was
+  provider = google-beta.google-beta
+
   # a template over a promoted variable: resolves to the same literal it did
   name     = "corp-logs-${var.bucket_suffix}"
   location = "EU"
@@ -59,15 +63,21 @@ resource "google_project" "infra" {
   folder_id  = google_folder.workloads.name
 }
 
+# the estate's own provider, which the emitter writes on every resource that
+# names no other, and an ordering edge satz derives from the estate itself:
+# both are dropped, and the service still becomes an entry in the project's list
 resource "google_project_service" "infra_iam" {
-  project = google_project.infra.project_id
-  service = "iam.googleapis.com"
+  provider   = google.google
+  project    = google_project.infra.project_id
+  service    = "iam.googleapis.com"
+  depends_on = [google_project.infra]
 }
 
 resource "google_project_iam_member" "infra_viewer" {
-  project = google_project.infra.project_id
-  role    = "roles/viewer"
-  member  = "group:gcp-auditors@example.com"
+  project    = google_project.infra.project_id
+  role       = "roles/viewer"
+  member     = "group:gcp-auditors@example.com"
+  depends_on = [google_project_service.infra_iam]
 }
 
 resource "google_organization_iam_member" "admins" {

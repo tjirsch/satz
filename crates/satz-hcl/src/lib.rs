@@ -16,7 +16,10 @@
 //! **Translate**: a `resource` block of a schema-known type becomes a Satz
 //! resource when every value is a literal, a promoted param, or a reference to
 //! a managed resource — the last carried verbatim as Satz `${{…}}`, which the
-//! emitter renders back byte-identically. Positional types are placed: a
+//! emitter renders back byte-identically. `provider` is a Satz body key, so the
+//! alias travels with the resource; `depends_on` is not one, because satz
+//! derives a plan's ordering from the estate itself, so the edge is dropped and
+//! reported — and only to a block this import carries. Positional types are placed: a
 //! folder whose `parent` is the organisation goes to the top, one whose parent
 //! references another folder nests under it; a project nests under the folder
 //! its `folder_id` references (or sits at the top when its `org_id` is the
@@ -36,6 +39,13 @@
 //!
 //! An import may be partial, never silent. Note that *translated* is not
 //! *proven*: a `${…}` reference is opaque to the compliance plane.
+//!
+//! A translated resource may reference only another TRANSLATED one. satz emits
+//! no address for a verbatim block — `hcl trust` is text, and the emission
+//! manifest does not hold it — so a `${…}` that crosses from a translated block
+//! to a wrapped one, or out of the import altogether, is an estate
+//! `satz transpile` refuses. The import refuses first, names both sides, and
+//! writes nothing.
 //!
 //! This crate keeps `hcl-rs`/`hcl-edit` out of satz-core.
 
@@ -79,8 +89,12 @@ pub struct Imported {
     pub satz: String,
     pub rows: Vec<Row>,
     /// Facts that are not about one block: params the reviewer must bind,
-    /// references that leave the import.
+    /// how many ordering edges were dropped.
     pub notes: Vec<String>,
+    /// Per translated block, the `depends_on` it no longer writes: satz derives
+    /// a plan's ordering from the estate, so the edge is not carried. `--verbose`
+    /// prints them.
+    pub ordering_dropped: Vec<(String, Vec<String>)>,
 }
 
 /// One input file: its path (as shown in provenance) and text.
@@ -115,8 +129,44 @@ fn is_map_form(form: &GrantForm) -> bool {
     matches!(form, GrantForm::Org | GrantForm::Node | GrantForm::Pinned(_))
 }
 
+/// Whether a type's Satz form is the resource body, so a `provider` in it
+/// reaches the emission. A folder, a project and its service list, a group and
+/// its memberships, and every grant written as a member map are built from a
+/// form of their own, which takes the alias from the estate and reads none from
+/// the body — there an alias that is not the estate's own cannot be written.
+fn body_carries_provider(tf_type: &str, form: &GrantForm) -> bool {
+    !is_map_form(form)
+        && !matches!(
+            tf_type,
+            "google_folder"
+                | "google_project"
+                | "google_project_service"
+                | "google_cloud_identity_group"
+                | "google_cloud_identity_group_membership"
+        )
+}
+
+/// What a grant map reads as a member rather than as the scope it pins. The
+/// mirror of `satz_core::pipeline`'s own rule: a key with no `:` is a scope
+/// attribute there, so a member the import cannot write as one wraps instead of
+/// becoming an estate the front end refuses.
+fn is_member(s: &str) -> bool {
+    s.contains(':') || s == "allUsers" || s == "allAuthenticatedUsers"
+}
+
 const META_BLOCKS: &[&str] = &["dynamic", "provisioner", "connection"];
-const META_ATTRS: &[&str] = &["count", "for_each", "provider", "depends_on"];
+/// The meta-arguments no Satz form carries. `count` is expanded where it is
+/// Terraform's "one per entry" idiom (`count_expansion`) and wraps otherwise.
+/// `provider` and `depends_on` are NOT here: `provider` is a Satz body key and
+/// `depends_on` is ordering satz derives itself.
+const UNEXPRESSIBLE_META_ATTRS: &[&str] = &["count", "for_each"];
+/// The provider reference the emitter puts on every resource of an estate this
+/// import writes, because `base_estate` declares `google` with alias `google`.
+/// A resource carrying exactly this gets it back whether or not the Satz body
+/// says so — which is what lets a grant map, which has no room for a provider,
+/// still translate. `base_estate_declares_the_default_provider` proves the two
+/// agree.
+const DEFAULT_PROVIDER: &str = "google.google";
 
 /// Where a translated resource lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,6 +352,8 @@ fn one_pass(
     let mut verbatim: Vec<(String, usize, String)> = Vec::new();
     let mut resources: Vec<Res> = Vec::new();
     let mut org_ids: BTreeSet<String> = BTreeSet::new();
+    // every `<type>.<label>` this input declares, whatever becomes of it
+    let mut declared: BTreeSet<String> = BTreeSet::new();
 
     for (input, body) in parsed {
         for s in body.iter() {
@@ -361,6 +413,7 @@ fn one_pass(
                     continue;
                 }
             };
+            declared.insert(format!("{}.{}", tf_type, label));
             let project_id = if tf_type == "google_project" {
                 attr_string(block, "project_id", &consts)
             } else {
@@ -453,6 +506,27 @@ fn one_pass(
                     r.place = Place::Project(host_label.clone());
                 }
             }
+        }
+    }
+
+    // `depends_on` is dropped, so the edge has to be one the emitter can put
+    // back from the estate — which it can only do for a block that is IN the
+    // estate. An edge to something this import never saw is ordering nothing
+    // recovers, and the block keeps it by staying verbatim.
+    let mut dropped_edges: Vec<(String, Vec<String>)> = Vec::new();
+    for r in resources.iter_mut() {
+        if r.reason.is_some() || r.uses.ordering.is_empty() {
+            continue;
+        }
+        match r.uses.ordering.iter().find(|a| !declared.contains(*a)) {
+            Some(missing) => {
+                r.reason = Some(format!(
+                    "`depends_on` names `{}`, which no block in this import declares — satz derives a plan's ordering from the estate and cannot re-derive an edge to a resource it does not hold",
+                    missing
+                ))
+            }
+            None => dropped_edges
+                .push((format!("{}.{}", r.tf_type, r.label), r.uses.ordering.iter().cloned().collect())),
         }
     }
 
@@ -628,22 +702,52 @@ fn one_pass(
     }
     let known: BTreeSet<String> =
         translated.iter().map(|r| format!("{}.{}", r.tf_type, r.label)).collect();
-    let outside: Vec<String> = translated
-        .iter()
-        .flat_map(|r| r.uses.refs.iter().cloned())
-        .filter(|a| !known.contains(a))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    if !outside.is_empty() {
+    // A `${…}` from a translated block to one that is NOT translated is an
+    // estate satz refuses: `hcl trust` is text, the emission manifest holds no
+    // address for it, and `satz transpile` reports `written-reference`. Refuse
+    // here instead, where both sides can still be named.
+    let mut crossings: Vec<String> = Vec::new();
+    for r in &translated {
+        for address in r.uses.refs.iter().filter(|a| !known.contains(*a)) {
+            let other = resources.iter().enumerate().find(|(_, o)| format!("{}.{}", o.tf_type, o.label) == *address);
+            let fate = match other {
+                Some((i, o)) if wrapped_idx.contains(&i) => format!(
+                    ", which stays verbatim inside `hcl trust` ({}:{} — {})",
+                    o.file,
+                    o.line,
+                    reasons.get(&(o.file.clone(), o.line)).cloned().unwrap_or_default()
+                ),
+                Some(_) => ", which this estate does not emit under that address".to_string(),
+                None if declared.contains(address) => {
+                    ", which `count` expands into one resource per entry, so that address is gone".to_string()
+                }
+                None => ", which no block in this import declares".to_string(),
+            };
+            crossings.push(format!(
+                "  {}:{} `{}.{}` references `{}`{}",
+                r.file, r.line, r.tf_type, r.label, address, fate
+            ));
+        }
+    }
+    if !crossings.is_empty() {
+        crossings.sort();
+        return Err(format!(
+            "the import would write an estate `satz transpile` refuses, so nothing was written: a translated resource references an address this estate does not emit.\n{}\nEither make the referenced block translatable (its reason is above), import the file that declares it too, or carry everything verbatim with `--wrap-all`.",
+            crossings.join("\n")
+        ));
+    }
+    // a block the closure wrapped afterwards kept its `depends_on` in its text
+    dropped_edges.retain(|(from, _)| known.contains(from));
+    dropped_edges.sort();
+    if !dropped_edges.is_empty() {
         notes.push(format!(
-            "verbatim ${{…}} reference(s) leave this import and must resolve in the target module: {}",
-            outside.join(", ")
+            "{} translated block(s) no longer write the `depends_on` they carried — satz derives a plan's ordering from the estate itself; `--verbose` lists them",
+            dropped_edges.len()
         ));
     }
 
     let satz = render(&top, name, &params, &header, &verbatim)?;
-    Ok(Pass::Done(Box::new(Imported { satz, rows, notes })))
+    Ok(Pass::Done(Box::new(Imported { satz, rows, notes, ordering_dropped: dropped_edges })))
 }
 
 fn base_estate() -> Result<serde_yaml::Mapping, String> {
@@ -711,7 +815,7 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str) -> Result<Imported, St
         "No organisation id was inferred — add `customer_organization_id` to `params` by hand.".to_string(),
     ];
     let satz = render(&base_estate()?, name, &[], &header, &verbatim)?;
-    Ok(Imported { satz, rows, notes: Vec::new() })
+    Ok(Imported { satz, rows, notes: Vec::new(), ordering_dropped: Vec::new() })
 }
 
 /// Closure by dependency, recomputed from the current reasons.
@@ -1330,6 +1434,76 @@ fn wrapped(reason: String) -> Classified {
     Classified { body: None, place: Place::Top, reason: Some(reason) }
 }
 
+/// `provider = google.beta` / `provider = google-beta` as the alias Satz writes
+/// in the body. Only the reference forms: the quoted one is Terraform's pre-0.12
+/// legacy spelling, and rewriting it into a reference would change what the
+/// block emits.
+fn provider_reference(e: &Expression) -> Result<String, String> {
+    let (root, segs) = match e {
+        Expression::Variable(v) => (v.as_str().to_string(), Vec::new()),
+        Expression::Traversal(t) => {
+            let Expression::Variable(v) = &t.expr else {
+                return Err(format!("`{}`, which is not a provider reference", t.expr.to_string().trim()));
+            };
+            let mut segs = Vec::new();
+            for op in t.operators.iter() {
+                match op.value() {
+                    TraversalOperator::GetAttr(k) => segs.push(k.as_str().to_string()),
+                    _ => return Err(format!("`{}`, which is not a provider reference", e.to_string().trim())),
+                }
+            }
+            (v.as_str().to_string(), segs)
+        }
+        Expression::String(_) => {
+            return Err("the quoted form, which Terraform reads as a legacy provider name".into())
+        }
+        other => return Err(format!("`{}`, which is not a provider reference", other.to_string().trim())),
+    };
+    if segs.len() > 1 {
+        return Err(format!("`{}.{}`, which is deeper than <provider>.<alias>", root, segs.join(".")));
+    }
+    Ok(match segs.first() {
+        Some(alias) => format!("{}.{}", root, alias),
+        None => root,
+    })
+}
+
+/// `depends_on = [google_project_service.x, …]` as the addresses it names. Satz
+/// has no `depends_on`: the emitter derives the ordering a plan needs from the
+/// estate — a grant on a declared service account waits for it, the policies on
+/// one parent are chained, a resource waits for the services that enable its
+/// APIs — so the edge is dropped rather than carried. `one_pass` refuses to drop
+/// one that points out of the import, where nothing can re-derive it.
+fn ordering_targets(e: &Expression, schema: &dyn Schema) -> Result<Vec<String>, String> {
+    let Expression::Array(items) = e else {
+        return Err(format!("`{}`, which is not a list of addresses", e.to_string().trim()));
+    };
+    let mut out = Vec::new();
+    for item in items.iter() {
+        let Expression::Traversal(t) = item else {
+            return Err(format!("`{}`, which is not a resource address", item.to_string().trim()));
+        };
+        let Expression::Variable(root) = &t.expr else {
+            return Err(format!("`{}`, which is not a resource address", item.to_string().trim()));
+        };
+        let mut segs = Vec::new();
+        for op in t.operators.iter() {
+            match op.value() {
+                TraversalOperator::GetAttr(k) => segs.push(k.as_str().to_string()),
+                _ => return Err(format!("`{}`, which is not a resource address", item.to_string().trim())),
+            }
+        }
+        let [label] = segs.as_slice() else {
+            return Err(format!("`{}`, which is not a resource address", item.to_string().trim()));
+        };
+        if !schema.has_type(root.as_str()) {
+            return Err(format!("`{}.{}`, which is not a resource of the provider schema", root.as_str(), label));
+        }
+        out.push(format!("{}.{}", root.as_str(), label));
+    }
+    Ok(out)
+}
+
 /// Classify one resource block: translatable (with its body and place) or the
 /// reason it is not.
 fn classify(
@@ -1361,14 +1535,29 @@ fn classify(
         );
     }
 
+    let form = grant_form_of(cx.schema, tf_type);
+
     // meta-arguments first: they are the reason, and naming a later attribute
     // instead would send the reviewer to the wrong line
+    let mut provider: Option<String> = None;
     for s in block.body.iter() {
         match s {
             Structure::Attribute(a) => {
                 let k = a.key.to_string();
-                if META_ATTRS.contains(&k.as_str()) {
+                if UNEXPRESSIBLE_META_ATTRS.contains(&k.as_str()) {
                     return wrapped(format!("uses `{}`", k));
+                }
+                if k == "provider" {
+                    match provider_reference(&a.value) {
+                        Ok(p) => provider = Some(p),
+                        Err(why) => return wrapped(format!("`provider` is {}", why)),
+                    }
+                }
+                if k == "depends_on" {
+                    match ordering_targets(&a.value, cx.schema) {
+                        Ok(targets) => cx.uses.ordering.extend(targets),
+                        Err(why) => return wrapped(format!("`depends_on` names {}", why)),
+                    }
                 }
             }
             Structure::Block(b) => {
@@ -1379,6 +1568,18 @@ fn classify(
             }
         }
     }
+    // the two the body carries away from the schema's own vocabulary: the
+    // provider alias travels IN the body where the form has room for it, the
+    // ordering edge is dropped.
+    let dropped_meta = |k: &str| k == "depends_on" || k == "provider";
+    if let Some(p) = &provider {
+        if p != DEFAULT_PROVIDER && !body_carries_provider(tf_type, &form) {
+            return wrapped(format!(
+                "`provider = {}` has no place in the Satz form of `{}`, which is built from the estate's own provider",
+                p, tf_type
+            ));
+        }
+    }
 
     // the attributes Satz's special forms are keyed by must resolve
     let resolvable = |k: &str, cx: &mut Cx| -> Option<Result<serde_yaml::Value, String>> {
@@ -1387,7 +1588,6 @@ fn classify(
             _ => None,
         })
     };
-    let form = grant_form_of(cx.schema, tf_type);
     if is_map_form(&form) {
         let pin = match &form {
             GrantForm::Pinned(attr) => Some(attr.as_str()),
@@ -1397,6 +1597,12 @@ fn classify(
             match resolvable(k, cx) {
                 None => return wrapped(format!("`{}` is missing", k)),
                 Some(Err(why)) => return wrapped(format!("`{}` is {}", k, why)),
+                Some(Ok(serde_yaml::Value::String(v))) if k == "member" && !is_member(&v) => {
+                    return wrapped(format!(
+                        "`member = \"{}\"` is not a member (`<type>:<value>`), and a grant map reads a key with no `:` as the scope it pins",
+                        v
+                    ))
+                }
                 Some(Ok(_)) => {}
             }
         }
@@ -1407,6 +1613,9 @@ fn classify(
                 Structure::Attribute(a) => a.key.to_string(),
                 Structure::Block(b) => b.ident.to_string(),
             };
+            if dropped_meta(&k) {
+                continue;
+            }
             if !matches!(k.as_str(), "member" | "role" | "condition") && !is_scope_attr(tf_type, &k) && Some(k.as_str()) != pin {
                 return wrapped(format!("`{}` has no place in a Satz grant", k));
             }
@@ -1425,6 +1634,9 @@ fn classify(
                 Structure::Attribute(a) => a.key.to_string(),
                 Structure::Block(b) => b.ident.to_string(),
             };
+            if dropped_meta(&k) {
+                continue;
+            }
             if !matches!(k.as_str(), "service" | "project") {
                 return wrapped(format!("`{}` has no place in a project's service list", k));
             }
@@ -1436,8 +1648,8 @@ fn classify(
         match s {
             Structure::Attribute(a) => {
                 let k = a.key.to_string();
-                if is_scope_attr(tf_type, &k) {
-                    continue; // judged below
+                if is_scope_attr(tf_type, &k) || dropped_meta(&k) {
+                    continue; // judged above, or judged below
                 }
                 if let Err(why) = cx.literal(&a.value) {
                     return wrapped(format!("`{}` is {}", k, why));
@@ -1460,10 +1672,19 @@ fn classify(
             }
         }
     }
-    let mut body = match cx.body(&block.body, &|k| is_scope_attr(tf_type, k)) {
+    let mut body = match cx.body(&block.body, &|k| is_scope_attr(tf_type, k) || dropped_meta(k)) {
         Ok(b) => b,
         Err(why) => return wrapped(why),
     };
+    // the alias as a Satz body key: the emitter renders the string back as the
+    // reference it was. The estate's own provider is left out — the emitter
+    // writes it on every resource that names no other, so carrying it would
+    // only move the attribute down the block.
+    if let Some(p) = &provider {
+        if p != DEFAULT_PROVIDER {
+            body.insert("provider".into(), serde_yaml::Value::String(p.clone()));
+        }
+    }
 
     // the scope attribute decides the place
     let scope = scope_attr_value(tf_type, block, cx.consts);
@@ -1619,6 +1840,10 @@ struct Uses {
     params: BTreeSet<String>,
     /// `<type>.<label>` addresses carried verbatim as `${…}`
     refs: BTreeSet<String>,
+    /// `<type>.<label>` addresses its `depends_on` named — dropped from the
+    /// body, kept here so `one_pass` can check each one is a block this import
+    /// carries and report the edge
+    ordering: BTreeSet<String>,
 }
 
 /// One piece of a Satz string. `Text` carries literal characters — including a
@@ -1898,10 +2123,15 @@ fn wrap_block(path: &str, line: usize, text: &str) -> String {
     format!("hcl trust \"imported from {}:{}\" {{\n{}\n}}\n\n", path, line, indent(text))
 }
 
+/// A label a Satz resource can be written under, emitted back under the same
+/// name. The emitter's label is the Satz one with `-` replaced by `_`
+/// (`emit_shared::single_resource_block`), so a label already spelled with `_`
+/// survives unchanged — including the mixed case satz itself emits for an org
+/// policy (`compute_managed_requireOsLogin`) and for a grant's hashed label.
 fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
-    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_lowercase())
-        && chars.all(|c| c == '_' || c.is_ascii_lowercase() || c.is_ascii_digit())
+    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
 fn describe(s: &Structure) -> String {
@@ -2545,5 +2775,233 @@ resource "google_service_account" "sa" {
             dropped.action
         );
         satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
+    }
+
+    /// satz puts `provider` and `depends_on` on nearly every resource it emits,
+    /// so refusing both is refusing satz's own output. `provider` is a Satz body
+    /// key; `depends_on` is ordering the emitter derives from the estate.
+    #[test]
+    fn a_provider_alias_travels_in_the_body_and_an_ordering_edge_is_dropped() {
+        let tf = r#"
+resource "google_project" "p" {
+  provider   = google.google
+  name       = "p"
+  project_id = "corp-infra-001"
+  org_id     = "123456789012"
+}
+resource "google_project_service" "iam" {
+  provider   = google.google
+  project    = google_project.p.project_id
+  service    = "iam.googleapis.com"
+}
+resource "google_service_account" "sa" {
+  provider   = google-beta
+  project    = google_project.p.project_id
+  account_id = "svc-iac"
+  depends_on = [google_project_service.iam]
+}
+"#;
+        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        assert_eq!(
+            imported.rows.iter().filter(|r| r.action == Action::Translated).count(),
+            3,
+            "{:?}",
+            imported.rows
+        );
+        let s = &imported.satz;
+        // a non-default alias travels as a body key, which the emitter renders
+        // back as the reference it was
+        assert!(squash(s).contains(r#"provider="google-beta""#), "{}", s);
+        // the estate's own provider is left to the emitter, which writes it on
+        // every resource that names no other
+        assert!(!s.contains(r#""google.google""#), "the default alias was carried:\n{}", s);
+        // no ordering in the estate, and the edge is reported
+        assert!(!s.contains("depends_on"), "{}", s);
+        assert_eq!(
+            imported.ordering_dropped,
+            vec![("google_service_account.sa".to_string(), vec!["google_project_service.iam".to_string()])]
+        );
+        assert!(imported.notes.iter().any(|n| n.contains("no longer write the `depends_on`")), "{:?}", imported.notes);
+        satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
+    }
+
+    /// A folder, a project's service list and a grant map are built from a form
+    /// of their own, which takes the alias from the estate: an alias that is not
+    /// the estate's own has nowhere to go there.
+    #[test]
+    fn a_form_with_no_room_for_an_alias_wraps_naming_it() {
+        let tf = r#"
+resource "google_folder" "f" {
+  provider     = google-beta
+  display_name = "F"
+  parent       = "organizations/123456789012"
+}
+resource "google_organization_iam_member" "admins" {
+  provider = google-beta
+  org_id   = "123456789012"
+  role     = "roles/resourcemanager.organizationViewer"
+  member   = "group:gcp-organization-admins@example.com"
+}
+"#;
+        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let by = by_what(&imported);
+        for what in ["resource \"google_folder\" \"f\"", "resource \"google_organization_iam_member\" \"admins\""] {
+            assert!(
+                matches!(by[what], Action::Wrapped(r) if r.contains("`provider = google-beta` has no place")),
+                "{}: {:?}",
+                what,
+                by[what]
+            );
+        }
+    }
+
+    /// The edge is dropped because the emitter can put it back from the estate.
+    /// It cannot put back an edge to a resource the estate never holds.
+    #[test]
+    fn an_ordering_edge_that_leaves_the_import_wraps() {
+        let tf = r#"
+resource "google_storage_bucket" "b" {
+  name       = "corp-b"
+  location   = "EU"
+  project    = "corp-other-001"
+  depends_on = [google_project_service.elsewhere]
+}
+resource "google_storage_bucket" "c" {
+  name       = "corp-c"
+  location   = "EU"
+  project    = "corp-other-001"
+  depends_on = [module.vpc]
+}
+"#;
+        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let by = by_what(&imported);
+        assert!(
+            matches!(by["resource \"google_storage_bucket\" \"b\""], Action::Wrapped(r) if r.contains("`depends_on` names `google_project_service.elsewhere`, which no block in this import declares")),
+            "{:?}",
+            by["resource \"google_storage_bucket\" \"b\""]
+        );
+        assert!(
+            matches!(by["resource \"google_storage_bucket\" \"c\""], Action::Wrapped(r) if r.contains("not a resource of the provider schema")),
+            "{:?}",
+            by["resource \"google_storage_bucket\" \"c\""]
+        );
+    }
+
+    /// `hcl trust` is text: satz emits no address for it, so a `${…}` from a
+    /// translated block to a wrapped one is an estate `satz transpile` refuses
+    /// with `written-reference`. The import refuses first and writes nothing.
+    #[test]
+    fn a_reference_from_a_translated_block_to_a_wrapped_one_refuses() {
+        let tf = r#"
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "corp-infra-001"
+  org_id     = "123456789012"
+}
+resource "google_storage_bucket" "ring" {
+  for_each = var.nothing
+  name     = "corp-ring"
+  location = "EU"
+  project  = google_project.p.project_id
+}
+resource "google_service_account" "key" {
+  project     = google_project.p.project_id
+  account_id  = "svc-key"
+  description = "beside ${google_storage_bucket.ring.name}"
+}
+"#;
+        let e = import(&one(tf), "corp", false, &Known).unwrap_err();
+        assert!(e.contains("so nothing was written"), "{}", e);
+        assert!(
+            e.contains(
+                "`google_service_account.key` references `google_storage_bucket.ring`, which stays verbatim inside `hcl trust`"
+            ),
+            "{}",
+            e
+        );
+        assert!(e.contains("uses `for_each`"), "the other side's own reason: {}", e);
+        assert!(e.contains("--wrap-all"), "{}", e);
+        // and it is the import that refuses: --wrap-all carries both
+        import(&one(tf), "corp", true, &Known).unwrap();
+    }
+
+    /// A reference to an address no block declares was a note and a written
+    /// estate that does not transpile.
+    #[test]
+    fn a_reference_that_leaves_the_import_refuses_too() {
+        let tf = r#"
+resource "google_storage_bucket" "b" {
+  name     = "corp-b"
+  location = "EU"
+  project  = "corp-other-001"
+  labels   = { ring = "${google_project.elsewhere.project_id}" }
+}
+"#;
+        let e = import(&one(tf), "corp", false, &Known).unwrap_err();
+        assert!(e.contains("references `google_project.elsewhere`, which no block in this import declares"), "{}", e);
+    }
+
+    /// The label satz itself emits for an org policy is mixed case
+    /// (`compute_managed_requireOsLogin`), and a grant's is the hashed one. Both
+    /// are Satz labels, and the emitter writes them back unchanged.
+    #[test]
+    fn a_label_satz_itself_emits_is_a_label_this_import_keeps() {
+        let tf = r#"
+resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
+  name   = "organizations/123456789012/policies/compute.managed.requireOsLogin"
+  parent = "organizations/123456789012"
+  spec {
+    rules { enforce = "TRUE" }
+  }
+}
+"#;
+        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 1, "{:?}", imported.rows);
+        assert!(imported.satz.contains("compute_managed_requireOsLogin"), "{}", imported.satz);
+        satz_core::satz::parse(&imported.satz).unwrap();
+    }
+
+    /// A grant map is keyed by member, and satz-core reads a key with no `:` as
+    /// the scope the map pins — so a member that is a bare `${…}` reference
+    /// would become a scope attribute and the front end would refuse the estate.
+    #[test]
+    fn a_grant_whose_member_is_not_a_member_wraps() {
+        let tf = r#"
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "corp-infra-001"
+  org_id     = "123456789012"
+}
+resource "google_organization_iam_member" "sink_writer" {
+  org_id = "123456789012"
+  role   = "roles/logging.bucketWriter"
+  member = "${google_service_account.sa.email}"
+}
+resource "google_service_account" "sa" {
+  project    = google_project.p.project_id
+  account_id = "svc-iac"
+}
+"#;
+        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let by = by_what(&imported);
+        assert!(
+            matches!(by["resource \"google_organization_iam_member\" \"sink_writer\""], Action::Wrapped(r) if r.contains("is not a member (`<type>:<value>`)")),
+            "{:?}",
+            by["resource \"google_organization_iam_member\" \"sink_writer\""]
+        );
+    }
+
+    /// `DEFAULT_PROVIDER` is what the emitter writes for the estate this import
+    /// creates, so the two have to say the same thing.
+    #[test]
+    fn base_estate_declares_the_default_provider() {
+        let top = base_estate().unwrap();
+        let google = top
+            .get("providers")
+            .and_then(|p| p.get("google"))
+            .and_then(|g| g.get("alias"))
+            .and_then(|a| a.as_str())
+            .expect("base_estate declares a google provider with an alias");
+        assert_eq!(DEFAULT_PROVIDER, format!("google.{}", google));
     }
 }

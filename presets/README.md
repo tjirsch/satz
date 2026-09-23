@@ -1609,6 +1609,31 @@ sure its `project_service = [ … ]` list carries the APIs they need —
 infrastructure project keeps its own list; nothing is removed from it, and the estate's
 `google` and `google-beta` blocks are untouched.
 
+**`satz import <dir>` refuses a `.tf` directory whose translated resource references a
+block that stays verbatim.** satz emits no address for an `hcl trust` block — it is text,
+and the emission manifest does not hold it — so an estate in which a Satz resource writes
+`${google_storage_bucket.state.name}` for a bucket carried verbatim is one `satz transpile`
+refuses with `written-reference`. The import wrote that estate and warned; it now refuses,
+names both sides, and writes nothing:
+
+```
+error: the import would write an estate `satz transpile` refuses, so nothing was written: a translated resource references an address this estate does not emit.
+  main.tf:24 `google_storage_bucket_iam_member.state_reader` references `google_storage_bucket.state`, which stays verbatim inside `hcl trust` (main.tf:17 — uses `for_each`)
+```
+
+**The edit:** three ways out, in the order they are worth trying.
+
+1. Make the named block translatable — the refusal carries its reason (`uses
+   `for_each``, `label … is not an identifier`, …). Edit the `.tf` and import again.
+2. Import the file that declares the other side too, where the reference points outside
+   the directory being imported: `satz import <dir>` reads every `.tf` in one directory.
+3. `satz import <dir> --wrap-all`, which carries every block verbatim, translates nothing
+   and never crosses the boundary. The estate deploys as written; the compliance plane
+   does not see into it.
+
+An estate written by an earlier import is unaffected: nothing rereads it, and what it
+already holds still transpiles or already did not.
+
 ### v0.77.0
 
 **The S1 security group model ships in one spelling, and the two files of the other one
