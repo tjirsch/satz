@@ -1187,6 +1187,21 @@ grep -q '^fake-tofu plan -replace=google_org_policy_policy.twin_superseded$' tmp
   || fail "plan does not show the replace apply will make:\n$(cat tmp/reset/plan.txt)"
 unset FAKE_TOFU_STATE
 
+step "hcl-init: runs the tool's init in hcl_dir, and an estate among the arguments is refused with the command that works"
+"$satz" --config tmp/reset/config.toml hcl-init -reconfigure > tmp/reset/init.txt 2>&1 \
+  || fail "satz hcl-init failed:\n$(cat tmp/reset/init.txt)"
+grep -q '^fake-tofu init -reconfigure$' tmp/reset/init.txt \
+  || fail "hcl-init did not run the tool's init with its arguments:\n$(cat tmp/reset/init.txt)"
+# the estate is not an argument for the tool: written like every other satz
+# command it would reach `tofu init` as a positional and be refused there
+if "$satz" --config tmp/reset/config.toml hcl-init smoke.satz > tmp/reset/init-estate.txt 2>&1; then
+  fail "hcl-init handed a Satz estate to the tool:\n$(cat tmp/reset/init-estate.txt)"
+fi
+grep -q 'is a Satz estate' tmp/reset/init-estate.txt \
+  || fail "hcl-init did not say what is wrong with the estate argument:\n$(cat tmp/reset/init-estate.txt)"
+grep -q 'try: satz hcl-init' tmp/reset/init-estate.txt \
+  || fail "the refusal does not name the command that works:\n$(cat tmp/reset/init-estate.txt)"
+
 step "whoami: refuses without credentials naming the fix; reads an impersonated-SA ADC offline; answers for an estate"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" whoami --offline > tmp/who.txt 2>&1; then
   fail "whoami --offline must fail without an ADC file:\n$(cat tmp/who.txt)"

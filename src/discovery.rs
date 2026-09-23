@@ -222,9 +222,7 @@ fn row_for_asset<'a>(
 /// The identity is always named, because "as whom" is the first thing either
 /// answer needs and no output above says it when the run never minted a token.
 fn fetch_refusal(errors: &[String], identity: Option<&str>) -> String {
-    let denied = errors
-        .iter()
-        .any(|e| e.contains("PERMISSION_DENIED") || e.contains("403") || e.contains("Missing required IAM permission"));
+    let denied = errors.iter().any(|e| is_denied(e));
     let who = match identity {
         Some(sa) => format!("The sweep ran as {}, the service account the estate it was given impersonates.", sa),
         None => "The sweep ran as the caller's own Application Default Credentials: no estate was named, \
@@ -306,8 +304,126 @@ pub struct Discovered {
     pub dropped_attrs: Vec<DroppedAttr>,
     /// The organization the assets' ancestors name (live shape only).
     pub organization: Option<String>,
+    /// Asset types Cloud Asset Inventory refused by name: nothing of these is in
+    /// the estate, and the run says so rather than coming out short in silence.
+    pub unserved: Vec<UnservedType>,
     /// What the import rewrote on the way and says so: one line each.
     pub notes: Vec<String>,
+}
+
+/// An asset type the sweep asked for and Cloud Asset Inventory refused by name.
+/// `presets/cai-asset-types.txt` is a snapshot of what the API served the day it
+/// was refreshed and Google retires types, so a table that asks for one is a
+/// matter of time rather than of correctness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnservedType {
+    /// The Cloud Asset type, as the request named it.
+    pub asset_type: String,
+    /// The Terraform types whose import-config rows asked for it — the rows to
+    /// correct or to leave out with `--exclude`.
+    pub tf_types: Vec<String>,
+    /// What ListAssets answered when that type was asked for alone.
+    pub error: String,
+}
+
+/// What a run ends with when Cloud Asset Inventory refused asset types by name:
+/// each type, the import-config rows that asked for it and what the API said,
+/// then the two ways to stop asking for it. Empty when nothing was refused.
+fn unserved_report(unserved: &[UnservedType]) -> Vec<String> {
+    if unserved.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![format!(
+        "import: {} asset type(s) Cloud Asset Inventory does not serve — nothing of them is in the estate:",
+        unserved.len()
+    )];
+    for u in unserved {
+        let asked = if u.tf_types.is_empty() { String::new() } else { format!(" ({})", u.tf_types.join(", ")) };
+        out.push(format!("  - {}{}: {}", u.asset_type, asked, u.error.lines().next().unwrap_or("")));
+    }
+    out.push(
+        "  Refresh the table with `uv run scripts/update_import_config.py --cai-types presets/cai-asset-types.txt`, \
+         or leave the row(s) out of the run with --exclude."
+            .to_string(),
+    );
+    out
+}
+
+/// Whether the API refused the request for the credential or the scope rather
+/// than for one of the asset types in it. Asking such a request again in halves
+/// changes nothing, so the run ends on it.
+fn is_denied(e: &str) -> bool {
+    e.contains("PERMISSION_DENIED") || e.contains("403") || e.contains("Missing required IAM permission")
+}
+
+/// Whether the API refused the request for an asset type it does not serve.
+/// ListAssets answers `INVALID_ARGUMENT` for the whole request, naming no type,
+/// which is why the offender is found by halving rather than read off the error.
+fn is_unserved_type(e: &str) -> bool {
+    e.contains("INVALID_ARGUMENT")
+}
+
+/// How a batch of asset types is named in an error and in the progress line.
+fn types_label(types: &[String]) -> String {
+    match types {
+        [one] => one.clone(),
+        _ => format!("{} type(s) {} … {}", types.len(), types[0], types[types.len() - 1]),
+    }
+}
+
+/// One batch of asset types, and the other types of the batch kept when the API
+/// refuses it for one of them (ADR 0060).
+///
+/// `fetch` is one ListAssets request, all its pages. When it answers
+/// `INVALID_ARGUMENT` the batch is halved and each half asked again, down to the
+/// single type the API does not serve: that type goes into `refused` with what
+/// the API said and is left out, and every other type of the batch is fetched.
+/// Nothing is collected from a request that failed, so a type is never fetched
+/// twice.
+///
+/// Anything else — a denied scope, a broken connection — is returned as an
+/// error and ends the run: asking it again per type would report a hundred
+/// types as unserved and write an estate missing all of them. A request the API
+/// refuses for EVERY type in it is treated the same way, because a scope it
+/// cannot read is `INVALID_ARGUMENT` as well and reads, after the halving, as
+/// every type at once.
+async fn sweep_batch<F, Fut>(
+    types: Vec<String>,
+    fetch: F,
+    refused: &mut Vec<(String, String)>,
+) -> Result<Vec<Asset>, String>
+where
+    F: Fn(Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<Asset>, String>>,
+{
+    let asked = types.len();
+    let mut here: Vec<(String, String)> = Vec::new();
+    let mut out = Vec::new();
+    let mut queue = vec![types];
+    while let Some(chunk) = queue.pop() {
+        match fetch(chunk.clone()).await {
+            Ok(assets) => out.extend(assets),
+            Err(e) if is_denied(&e) => return Err(format!("{}: {}", types_label(&chunk), e)),
+            Err(e) if chunk.len() == 1 => {
+                if is_unserved_type(&e) {
+                    here.push((chunk[0].clone(), e));
+                } else {
+                    return Err(format!("{}: {}", chunk[0], e));
+                }
+            }
+            Err(e) if is_unserved_type(&e) => {
+                let half = chunk.len().div_ceil(2);
+                queue.push(chunk[half..].to_vec());
+                queue.push(chunk[..half].to_vec());
+            }
+            Err(e) => return Err(format!("{}: {}", types_label(&chunk), e)),
+        }
+    }
+    if asked > 1 && here.len() == asked {
+        return Err(format!("{}: {}", types_label(&here.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>()), here[0].1));
+    }
+    refused.append(&mut here);
+    Ok(out)
 }
 
 /// Why a value the source carried is not in the imported estate.
@@ -794,7 +910,8 @@ impl Discoverer {
         qualify_duplicate_keys(&mut config);
         let notes = resolve_grant_collisions(&mut config, self.on_collision)?;
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None, notes })
+        // the state shape asks no API: nothing can be refused by name
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization: None, notes, unserved: Vec::new() })
     }
 
     /// `what` names the resource in the report: a value the source carried and
@@ -1192,7 +1309,11 @@ impl Discoverer {
         let quota_project = crate::org_policy::resolve_quota_project();
 
         let mut type_map: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
-        
+        // Which enabled rows asked for each Cloud Asset type: a type the API
+        // refuses is reported with the Terraform types that wanted it, which are
+        // the rows to correct or to leave out.
+        let mut askers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
         // the enabled rows decide what is swept; a row that cannot be swept
         // is an error (TODO asset type, unknown content type) or, for types
         // Cloud Asset Inventory does not carry at all, reported once
@@ -1222,6 +1343,7 @@ impl Discoverer {
                     }
                 };
                 type_map.entry(idx).or_default().insert(cat.to_string());
+                askers.entry(cat.to_string()).or_default().push(tf_type.clone());
             }
         }
         if !not_inventoried.is_empty() {
@@ -1238,64 +1360,90 @@ impl Discoverer {
         let mut unscoped: Vec<(String, String)> = Vec::new();
         let rows = rows_by_asset_type(discovery_config.as_ref());
 
+        let mut refused: Vec<(String, String)> = Vec::new();
         for (ctype_int, asset_types) in type_map {
             let ctype = ContentType::from(ctype_int as i32);
             let asset_types: Vec<String> = asset_types.into_iter().collect();
+            // One ListAssets request, all of its pages: the assets of these types
+            // under the scope, or what the API answered instead. Owned arguments
+            // and an owned result, so a batch the API refuses can be asked again
+            // in halves without any of its assets being collected twice.
+            let fetch = |types: Vec<String>| {
+                let client = &client;
+                let ctype = ctype.clone();
+                let quota_project = quota_project.clone();
+                async move {
+                    // Same quota project every other Cloud Asset sweep sends; without
+                    // it a credential with no default quota project is refused.
+                    let mut builder = client
+                        .list_assets()
+                        .set_parent(parent.to_string())
+                        .set_asset_types(types)
+                        .set_content_type(ctype)
+                        .set_page_size(1000);
+                    if let Some(qp) = &quota_project {
+                        builder = builder.with_quota_project(qp);
+                    }
+                    let mut stream = builder.by_item();
+                    let mut got = Vec::new();
+                    while let Some(asset_result) = stream.next().await {
+                        match asset_result {
+                            Ok(asset) => got.push(asset),
+                            Err(e) => return Err(e.to_string()),
+                        }
+                    }
+                    Ok(got)
+                }
+            };
+
             for batch in asset_types.chunks(ASSET_TYPES_PER_REQUEST) {
                  println!("Fetching assets: {} type(s) (Content: {:?})", batch.len(), ctype);
                  if verbose {
                      for t in batch { println!("  {}", t); }
                  }
-                 let what = match batch {
-                     [one] => one.clone(),
-                     _ => format!("{} type(s) {} … {}", batch.len(), batch[0], batch[batch.len() - 1]),
-                 };
-
-                 // Same quota project every other Cloud Asset sweep sends; without
-                 // it a credential with no default quota project is refused.
-                 let mut builder = client.list_assets()
-                    .set_parent(parent.to_string())
-                    .set_asset_types(batch.to_vec())
-                    .set_content_type(ctype.clone())
-                    .set_page_size(1000);
-                 if let Some(qp) = &quota_project {
-                     builder = builder.with_quota_project(qp);
-                 }
-                 let mut stream = builder.by_item();
-                
-                 while let Some(asset_result) = stream.next().await {
-                     match asset_result {
-                         Ok(asset) => {
-                             if verbose { println!("DEBUG: Found asset: {} ({})", asset.name, asset.asset_type); }
-                             
-                             let Some((scope, _scope_id)) = Self::get_asset_scope(&asset) else {
-                                 unscoped.push((asset.asset_type.clone(), asset.name.clone()));
-                                 continue;
-                             };
-
-                             // The statistics count what the construction below will
-                             // build, so they read the same selector; a count taken
-                             // any other way is a number nothing has to honour.
-                             if let Ok((tf_type, _)) = row_for_asset(&asset, &scope, &rows) {
-                                 *stats.entry(tf_type.to_string()).or_insert(0) += 1;
-                             }
-                             all_assets.push(asset);
-                         },
-                         Err(e) => {
-                             eprintln!("Error fetching {}: {}", what, e);
-                             fetch_errors.push(format!("{}: {}", what, e));
-                             break;
-                         }
+                 let got = match sweep_batch(batch.to_vec(), &fetch, &mut refused).await {
+                     Ok(assets) => assets,
+                     Err(e) => {
+                         eprintln!("Error fetching {}", e);
+                         fetch_errors.push(e);
+                         break;
                      }
+                 };
+                 for asset in got {
+                     if verbose { println!("DEBUG: Found asset: {} ({})", asset.name, asset.asset_type); }
+
+                     let Some((scope, _scope_id)) = Self::get_asset_scope(&asset) else {
+                         unscoped.push((asset.asset_type.clone(), asset.name.clone()));
+                         continue;
+                     };
+
+                     // The statistics count what the construction below will
+                     // build, so they read the same selector; a count taken
+                     // any other way is a number nothing has to honour.
+                     if let Ok((tf_type, _)) = row_for_asset(&asset, &scope, &rows) {
+                         *stats.entry(tf_type.to_string()).or_insert(0) += 1;
+                     }
+                     all_assets.push(asset);
                  }
             }
         }
-        
+
         // Fail fast: an estate built from a partial sweep would be silently
         // missing whole types, and the plan would then propose to create them.
+        // A type the API refuses BY NAME is the exception (ADR 0060): it is out
+        // of the sweep, in `unserved`, and the run says so at the end.
         if !fetch_errors.is_empty() {
             return Err(fetch_refusal(&fetch_errors, crate::gcp::impersonation_target().as_deref()).into());
         }
+        let mut unserved: Vec<UnservedType> = refused
+            .into_iter()
+            .map(|(asset_type, error)| UnservedType {
+                tf_types: askers.get(&asset_type).cloned().unwrap_or_default(),
+                asset_type,
+                error,
+            })
+            .collect();
+        unserved.sort_by(|a, b| a.asset_type.cmp(&b.asset_type));
 
         if stats.is_empty() {
              println!("No assets discovered.");
@@ -1323,7 +1471,7 @@ impl Discoverer {
             });
         }
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes })
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes, unserved })
     }
 
     fn construct_config_from_assets(
@@ -1675,7 +1823,15 @@ impl Discoverer {
 
           if let Some(reg) = registry {
                 if let Some((_, schema)) = reg.find_resource(tf_type) {
-                     if let Some(map) = Self::process_organization_policy_family(tf_type, asset, schema, name, scope_id) {
+                     if let Some((map, missing)) = Self::process_organization_policy_family(tf_type, asset, schema, name, scope_id) {
+                          if !missing.is_empty() {
+                              eprintln!(
+                                  "WARNING: {} {} is imported without {}: the provider requires it, the asset data does not carry it and the estate does not derive it.",
+                                  tf_type,
+                                  name,
+                                  missing.join(", ")
+                              );
+                          }
                           resource_val = map;
                      }
                 }
@@ -2084,7 +2240,11 @@ impl Discoverer {
         }
     }
 
-    fn process_organization_policy_family(tf_type: &str, asset: &Asset, schema: &ResourceSchema, name: &str, _scope_id: &str) -> Option<serde_yaml::Mapping> {
+    /// The estate's form of an org policy, and the required attributes neither
+    /// the asset data nor the estate supplies — none, for a policy whose only
+    /// other required attribute is `parent`, which is the scope the sweep asked
+    /// about and which the emitter writes from the enclosing node.
+    fn process_organization_policy_family(tf_type: &str, asset: &Asset, schema: &ResourceSchema, name: &str, _scope_id: &str) -> Option<(serde_yaml::Mapping, Vec<String>)> {
          // Extract data to a mutable map to inject missing fields
          let mut data_map = if let Some(r) = &asset.resource {
              if let Some(d) = &r.data {
@@ -2121,12 +2281,11 @@ impl Discoverer {
              unreachable!("process_organization_policy_family called for {}", tf_type);
          }
 
-         let extracted = schema.block.extract_attributes(&data_map, tf_type, name);
-         
+         let (extracted, missing) = schema.block.extract_attributes(&data_map, tf_type);
          if extracted.is_empty() {
              None
          } else {
-             Some(extracted)
+             Some((extracted, missing))
          }
     }
 }
@@ -2660,6 +2819,13 @@ fn parents_left_out<'a>(skipped: &'a [Skipped], filtered_off: &HashSet<String>) 
 pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbose: bool) {
     for n in &found.notes {
         println!("{}", n);
+    }
+    // An asset type the API refused by name: the sweep went on without it, and
+    // the run ends by naming every one of them. Never behind --verbose — the
+    // estate is short by a whole type, and the rows that asked for it are the
+    // fix.
+    for line in unserved_report(&found.unserved) {
+        println!("{}", line);
     }
     let skipped = &found.skipped;
     // An attribute the provider schema HAS, whose value the asset data carried
@@ -3494,5 +3660,222 @@ mod fetch_refusal_tests {
         assert!(msg.contains("--exclude") && msg.contains("update_import_config.py --probe"), "{msg}");
         assert!(msg.contains("Application Default Credentials"), "{msg}");
         assert!(!msg.contains("cloudasset.viewer"), "{msg}");
+    }
+}
+
+
+#[cfg(test)]
+mod sweep_batch_tests {
+    //! A batch of asset types survives one type the API does not serve.
+    //!
+    //! Measured on a live organisation: `apigee.googleapis.com/SecurityProfileV2`
+    //! is in `presets/cai-asset-types.txt` and Cloud Asset Inventory no longer
+    //! serves it, so ListAssets answered INVALID_ARGUMENT for the whole request
+    //! of a hundred types and `satz import --all` wrote nothing at all.
+    use super::*;
+
+    const GONE: &str = "apigee.googleapis.com/SecurityProfileV2";
+
+    fn types(n: usize) -> Vec<String> {
+        let mut v: Vec<String> = (0..n).map(|i| format!("example.googleapis.com/Type{:03}", i)).collect();
+        v.push(GONE.to_string());
+        v.sort();
+        v
+    }
+
+    fn asset(t: &str) -> Asset {
+        Asset::new().set_name(format!("//{}/organizations/123456789012/x", t)).set_asset_type(t)
+    }
+
+    /// The API refuses the whole request when ONE of the types in it is unknown,
+    /// naming none of them — which is what the halving has to find.
+    fn api(unserved: &'static [&'static str]) -> impl Fn(Vec<String>) -> std::future::Ready<Result<Vec<Asset>, String>> {
+        move |asked: Vec<String>| {
+            let bad = asked.iter().any(|t| unserved.contains(&t.as_str()));
+            std::future::ready(if bad {
+                Err("INVALID_ARGUMENT: asset type is not supported".to_string())
+            } else {
+                Ok(asked.iter().map(|t| asset(t)).collect())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn one_unserved_type_does_not_take_the_other_ninety_nine() {
+        let asked = types(99);
+        let mut refused = Vec::new();
+        let got = sweep_batch(asked.clone(), api(&[GONE]), &mut refused).await.expect("the batch is kept");
+        let mut names: Vec<String> = got.iter().map(|a| a.asset_type.clone()).collect();
+        names.sort();
+        let want: Vec<String> = asked.iter().filter(|t| *t != GONE).cloned().collect();
+        assert_eq!(names, want, "the types the API serves are not all imported");
+        assert_eq!(refused.len(), 1, "{:?}", refused);
+        assert_eq!(refused[0].0, GONE);
+        assert!(refused[0].1.contains("INVALID_ARGUMENT"), "{:?}", refused);
+    }
+
+    /// Two retired types in one batch, and every other type still arrives.
+    #[tokio::test]
+    async fn two_unserved_types_are_both_named() {
+        const OTHER: &str = "example.googleapis.com/Type007";
+        let asked = types(20);
+        let mut refused = Vec::new();
+        let got = sweep_batch(asked.clone(), api(&[GONE, OTHER]), &mut refused).await.expect("the batch is kept");
+        assert_eq!(got.len(), asked.len() - 2, "{:?}", got.iter().map(|a| &a.asset_type).collect::<Vec<_>>());
+        let mut named: Vec<String> = refused.iter().map(|(t, _)| t.clone()).collect();
+        named.sort();
+        assert_eq!(named, vec![GONE.to_string(), OTHER.to_string()]);
+    }
+
+    /// Nothing is collected twice: the halves of a refused request are asked
+    /// again, and what the failed request had already streamed goes with it.
+    #[tokio::test]
+    async fn a_retried_batch_imports_each_asset_once() {
+        let asked = types(9);
+        let mut refused = Vec::new();
+        let got = sweep_batch(asked, api(&[GONE]), &mut refused).await.expect("the batch is kept");
+        let mut names: Vec<String> = got.iter().map(|a| a.asset_type.clone()).collect();
+        names.sort();
+        let mut unique = names.clone();
+        unique.dedup();
+        assert_eq!(names, unique, "an asset was collected twice");
+    }
+
+    /// A denied scope is the credential's, not a type's: it ends the run at the
+    /// first answer instead of being asked again a hundred times and reported as
+    /// a hundred unserved types.
+    #[tokio::test]
+    async fn a_denied_scope_ends_the_run_without_halving() {
+        let calls = std::cell::Cell::new(0);
+        let deny = |_: Vec<String>| {
+            calls.set(calls.get() + 1);
+            std::future::ready(Err::<Vec<Asset>, String>(
+                "PERMISSION_DENIED: Missing required IAM permission on requested scope".to_string(),
+            ))
+        };
+        let mut refused = Vec::new();
+        let err = sweep_batch(types(99), deny, &mut refused).await.expect_err("a denied scope is an error");
+        assert!(err.contains("PERMISSION_DENIED"), "{err}");
+        assert_eq!(calls.get(), 1, "the request was asked again after a denial");
+        assert!(refused.is_empty(), "{:?}", refused);
+    }
+
+    /// Anything that is not a refused type still ends the run: a connection that
+    /// broke mid-sweep is not an estate missing a hundred types.
+    #[tokio::test]
+    async fn a_broken_connection_is_still_an_error() {
+        let fail = |_: Vec<String>| std::future::ready(Err::<Vec<Asset>, String>("UNAVAILABLE: connection reset".to_string()));
+        let mut refused = Vec::new();
+        let err = sweep_batch(types(3), fail, &mut refused).await.expect_err("a transport error is an error");
+        assert!(err.contains("UNAVAILABLE"), "{err}");
+        assert!(refused.is_empty(), "{:?}", refused);
+    }
+
+    /// A request the API refuses for every type in it is the request's problem,
+    /// not the table's: a scope that cannot be read answers INVALID_ARGUMENT
+    /// too, and after the halving it reads as a hundred retired types.
+    #[tokio::test]
+    async fn a_batch_refused_in_full_is_an_error_not_a_hundred_unserved_types() {
+        let bad_scope = |_: Vec<String>| {
+            std::future::ready(Err::<Vec<Asset>, String>("INVALID_ARGUMENT: parent is not a valid scope".to_string()))
+        };
+        let mut refused = Vec::new();
+        let err = sweep_batch(types(9), bad_scope, &mut refused).await.expect_err("a refused request is an error");
+        assert!(err.contains("INVALID_ARGUMENT"), "{err}");
+        assert!(refused.is_empty(), "the whole table was reported as retired: {:?}", refused);
+    }
+
+    /// The report the run ends with names the type, the rows that asked for it,
+    /// what the API said, and both ways to stop asking.
+    #[test]
+    fn the_report_names_the_type_and_the_rows_that_asked_for_it() {
+        let lines = unserved_report(&[UnservedType {
+            asset_type: GONE.to_string(),
+            tf_types: vec!["google_apigee_security_profile_v2".to_string()],
+            error: "INVALID_ARGUMENT: asset type is not supported".to_string(),
+        }])
+        .join("\n");
+        assert!(lines.contains(GONE), "{lines}");
+        assert!(lines.contains("google_apigee_security_profile_v2"), "{lines}");
+        assert!(lines.contains("INVALID_ARGUMENT"), "{lines}");
+        assert!(lines.contains("--exclude") && lines.contains("update_import_config.py"), "{lines}");
+        assert!(unserved_report(&[]).is_empty(), "a sweep that was refused nothing says nothing");
+    }
+}
+
+
+#[cfg(test)]
+mod scope_attribute_tests {
+    //! An attribute whose value is where the resource STANDS is not a hole in
+    //! the asset data.
+    //!
+    //! Measured on a live organisation: every one of 25 org policies imported
+    //! correctly and every one of them printed `WARNING: Required attribute
+    //! 'parent' missing in asset data`, with the policy's JSON under it — the
+    //! parent IS the scope the sweep asked about, and the emitter writes it from
+    //! the enclosing node.
+    use super::*;
+    use std::path::Path;
+
+    fn repo(rel: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
+    fn registry() -> ResourceRegistry {
+        ResourceRegistry::load_all(&repo("tests/schemas").to_string_lossy()).expect("provider schema fixture")
+    }
+
+    /// The org-policy asset as Cloud Asset Inventory returns it under an
+    /// organization scope: no `parent` in the data, because the scope is it.
+    fn policy_asset() -> Asset {
+        let text = std::fs::read_to_string(repo("tests/assets/org-policy.json")).expect("org-policy asset fixture");
+        serde_json::from_str(&text).expect("org-policy asset fixture parses")
+    }
+
+    #[test]
+    fn a_policys_parent_is_the_scope_and_not_a_missing_attribute() {
+        let reg = registry();
+        let (_, schema) = reg.find_resource("google_org_policy_policy").expect("org policy schema");
+        assert!(
+            schema.block.attributes["parent"].required,
+            "the provider requires `parent`; without that this test proves nothing"
+        );
+        let asset = policy_asset();
+        let (map, missing) =
+            Discoverer::process_organization_policy_family("google_org_policy_policy", &asset, schema, &asset.name, "123456789012")
+                .expect("the policy is imported");
+        assert!(missing.is_empty(), "the scope is reported as a missing attribute: {:?}", missing);
+        // and the import is the one the emitter expands: the bare constraint,
+        // with the parent left to the enclosing node
+        let yaml = serde_yaml::to_string(&map).expect("yaml");
+        assert_eq!(map["name"].as_str(), Some("compute.managed.requireOsLogin"), "{yaml}");
+        assert!(map.get("parent").is_none(), "{yaml}");
+        assert_eq!(map["spec"][0]["rules"][0]["enforce"].as_str(), Some("TRUE"), "{yaml}");
+    }
+
+    /// The rule, stated once: the enclosure's attributes, and `parent` only
+    /// where the estate's own tree is the parent. Anything else missing is a
+    /// hole and still warns.
+    #[test]
+    fn only_what_the_enclosure_writes_is_the_scope() {
+        for attr in ["project", "project_id", "folder", "folder_id", "org_id", "organization"] {
+            assert!(crate::schema::scope_attribute("google_storage_bucket", attr), "{attr}");
+        }
+        assert!(crate::schema::scope_attribute("google_org_policy_policy", "parent"));
+        assert!(crate::schema::scope_attribute("google_folder", "parent"));
+        assert!(!crate::schema::scope_attribute("google_tags_tag_key", "parent"), "a tag key's parent is its own");
+        assert!(!crate::schema::scope_attribute("google_storage_bucket", "location"));
+    }
+
+    /// A required attribute the asset data does not carry and the enclosure does
+    /// not write is still reported, per resource.
+    #[test]
+    fn a_hole_that_is_not_the_scope_is_still_reported() {
+        let reg = registry();
+        let (_, schema) = reg.find_resource("google_storage_bucket").expect("bucket schema");
+        let data = serde_json::Map::new();
+        let (_, missing) = schema.block.extract_attributes(&data, "google_storage_bucket");
+        assert!(missing.contains(&"location".to_string()), "{:?}", missing);
+        assert!(!missing.contains(&"project".to_string()), "the enclosure writes the project: {:?}", missing);
     }
 }
