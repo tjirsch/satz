@@ -1020,6 +1020,9 @@ grep -q 'raw HCL passthrough' tmp/transpile-hcl.txt || fail "passthrough blocks 
 "$satz" --config . import tf -o imported-hcl2.satz --verbose | tee tmp/import-hcl2.txt
 grep -q '9 block(s) translated' tmp/import-hcl2.txt || fail "folder, project, service, grants and buckets should translate, the count over a list as two:\n$(cat tmp/import-hcl2.txt)"
 grep -q '3 promoted to params' tmp/import-hcl2.txt || fail "both variables and the locals block should be promoted, not wrapped:\n$(cat tmp/import-hcl2.txt)"
+grep -q 'no longer write the `depends_on`' tmp/import-hcl2.txt || fail "the dropped ordering edges were not reported:\n$(cat tmp/import-hcl2.txt)"
+grep -q 'ordering   google_project_iam_member' tmp/import-hcl2.txt || fail "--verbose did not name the dropped edge:\n$(cat tmp/import-hcl2.txt)"
+! grep -q 'depends_on' yaml/imported-hcl2.satz || fail "an ordering edge reached the estate; satz derives ordering itself"
 "$satz" fmt --check yaml/imported-hcl2.satz || fail "the hcl import wrote a file that is not in the canonical layout"
 ! grep -q 'count.index' yaml/imported-hcl2.satz || fail "count.index reached the estate"
 grep -q '^google_folder {' yaml/imported-hcl2.satz || fail "no translated folder in the estate"
@@ -1028,9 +1031,23 @@ grep -q 'lifecycle_rule {' tmp/imported-hcl2-hcl/main.tf || fail "the translated
 grep -q 'name *= *"corp-logs-001"' tmp/imported-hcl2-hcl/main.tf || fail "the promoted param did not resolve back to the source's literal"
 grep -q 'resource "google_organization_iam_member"' tmp/imported-hcl2-hcl/main.tf || fail "the org grant was not emitted"
 grep -q 'resource "google_storage_bucket_iam_member" "iam_group_gcp_auditors_example_com_' tmp/imported-hcl2-hcl/main.tf || fail "the pinned bucket grant did not emit"
+grep -q 'provider *= *google-beta.google-beta' tmp/imported-hcl2-hcl/main.tf || fail "the translated bucket lost the provider alias it carried"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/imported-hcl2-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
 fi
+
+step "import, hcl shape: a reference across the translated/verbatim boundary refuses and writes nothing"
+if "$satz" --config . import tf-crossing -o imported-crossing.satz >tmp/import-crossing.txt 2>&1; then
+  fail "the import must refuse a reference from a translated block to a wrapped one:\n$(cat tmp/import-crossing.txt)"
+fi
+grep -q 'so nothing was written' tmp/import-crossing.txt || fail "the refusal did not say that nothing was written:\n$(cat tmp/import-crossing.txt)"
+grep -q 'references `google_storage_bucket.state`, which stays verbatim' tmp/import-crossing.txt || fail "the refusal did not name both sides:\n$(cat tmp/import-crossing.txt)"
+grep -q -- '--wrap-all' tmp/import-crossing.txt || fail "the refusal did not say what to do:\n$(cat tmp/import-crossing.txt)"
+[ ! -f yaml/imported-crossing.satz ] || fail "the refused import wrote an estate"
+"$satz" --config . import tf-crossing --wrap-all -o imported-crossing.satz >tmp/import-crossing-wrapped.txt 2>&1 \
+  || fail "--wrap-all must still carry the same input:\n$(cat tmp/import-crossing-wrapped.txt)"
+"$satz" --config . transpile imported-crossing.satz --output "$PWD/tmp/imported-crossing-hcl" >/dev/null 2>&1 \
+  || fail "the --wrap-all estate must transpile"
 
 step "scan: Checkov over the transpiled estate, findings pointed at the Satz source"
 # Checkov is a stand-in on PATH that prints a report: the scanner is not what this

@@ -566,6 +566,11 @@ pub(crate) fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bo
             _ => {}
         }
     }
+    if verbose {
+        for (from, to) in &imported.ordering_dropped {
+            println!("  ordering   {} no longer waits for {}", from, to.join(", "));
+        }
+    }
     for n in &imported.notes {
         println!("  note       {}", n);
     }
