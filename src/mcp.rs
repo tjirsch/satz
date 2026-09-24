@@ -821,7 +821,7 @@ impl Doc {
 const DOCS: &[Doc] = &[
     Doc {
         uri: "satz://guide",
-        name: "satz for llms",
+        name: "satz llms",
         description: "How to write Satz: the estate shape, params, hierarchy, the three grant \
                       forms, packs, claims, questions, and the order to call the tools in. Read \
                       this before writing or editing a .satz file.",

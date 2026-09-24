@@ -59,7 +59,7 @@ the language. The server serves the documentation:
 
 | resource | what it is |
 |---|---|
-| `satz://guide` | [satz for llms](llms.md) — the working subset, the three grant forms, and the order to call the tools in. **Read this before writing a `.satz` file.** |
+| `satz://guide` | [satz llms](llms.md) — the working subset, the three grant forms, and the order to call the tools in. **Read this before writing a `.satz` file.** |
 | `satz://reference` | the complete language reference |
 | `satz://presets` | the preset library and its provenance rules |
 
