@@ -1470,7 +1470,7 @@ assert "apply (it hands stdio to the tool" in instructions, instructions
 uris = {r["uri"] for r in msgs[9]["result"]["resources"]}
 assert {"satz://guide", "satz://reference", "satz://presets"} <= uris, uris
 guide = msgs[10]["result"]["contents"][0]["text"]
-assert guide.startswith("# satz for llms"), guide[:80]
+assert guide.startswith("# satz llms"), guide[:80]
 assert "Never edit `hcl/`" in guide, "the guide lost its hard rules"
 tools = {t["name"]: t for t in msgs[2]["result"]["tools"]}
 # EXACTLY these: a tool that ships without a step in this matrix is exercised by

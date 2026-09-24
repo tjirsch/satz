@@ -166,7 +166,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov) |
-| `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error|counter`, `--customer-shortname`; state shape: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
+| `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state shape: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
 | `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
@@ -571,8 +571,8 @@ To import an existing resource, add the `"import-id"` attribute to its definitio
 google_org_policy_policy {
   "iam-managed-disableServiceAccountKeyCreation" {
     "import-id" = "organizations/123456789012/policies/iam.managed.disableServiceAccountKeyCreation"
-    name   = "iam.managed.disableServiceAccountKeyCreation"
-    parent = "organizations/{customer_organization_id}"
+    name        = "iam.managed.disableServiceAccountKeyCreation"
+    parent      = "organizations/{customer_organization_id}"
     spec { rules = [{ enforce = "TRUE" }] }
   }
 }
@@ -776,10 +776,10 @@ Any resource may declare a `lifecycle` block, which is rendered as a top-level
 ```
 google_cloud_identity_group {
   my_group {
-    display_name = "My Group"
+    display_name         = "My Group"
     initial_group_config = "EMPTY"
     lifecycle {
-      ignore_changes = ["initial_group_config"]
+      ignore_changes  = ["initial_group_config"]
       prevent_destroy = true
     }
   }
@@ -1280,8 +1280,8 @@ the claim reports **unmet**. The deviation states the decision:
 
 ```
 claim "cis-gcp" "4.0" "4.4" deviates {
-  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
-  reason  = "A service here depends on metadata SSH keys; enforcing OS Login breaks it."
+  resources     = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  reason        = "A service here depends on metadata SSH keys; enforcing OS Login breaks it."
   duty_reassess = "Re-assess when that service supports OS Login."
 }
 ```
@@ -2253,7 +2253,7 @@ without the provider prefix its full Terraform type name, against the schemas.
 #### 6. Organization Policy Engine (`src/org_policy.rs`)
 Aligns curated Org Policy sets (e.g. `presets/cis/CIS-GCP-Foundation-4.0.satz`) with the live organization via the GCP Org Policy API v2.
 - **Adoption** (`satz adopt --activate`): activates managed constraints that are missing (API create), then imports the existing policies into state — no manual console activation and no `import-id` editing. Adoption is a separate command, never part of `transpile` (`src/adopt.rs` drives it through this module's `OrgPolicyClient`).
-- **CLI commands**: `export-organizational-policies` (snapshot live state to a re-importable preset), `diff-organizational-policies` (semantic current-vs-desired report), `report-organizational-policies` (markdown/JSON/PDF inventory with constraint descriptions).
+- **CLI commands**: `export-organizational-policies` (snapshot live state to a Satz pack), `diff-organizational-policies` (semantic current-vs-desired report), `report-organizational-policies` (markdown/JSON/PDF inventory with constraint descriptions).
 - **Managed constraints**: constraints whose name contains `.managed.` must be *activated* (API create), then *imported as-is* (`tofu import`), then *modified* (`tofu apply`). `satz adopt --activate` sequences the activate+import; `tofu apply` does the modify.
 - **Pure diff core**: classification + `normalize_spec` are IO-free and unit-tested; they reconcile `enforce "TRUE"`↔`true`, `allowed_values` ordering, and `parameters` JSON-string↔object so semantically-equal policies don't show as diffs.
 

@@ -174,7 +174,7 @@ pub(crate) enum Commands {
         #[arg(long)]
         phase: Option<String>,
     },
-    /// Compile an estate to HCL (a `.yaml` estate is migrated with `satz import`, never transpiled)
+    /// Compile an estate to HCL (a `.yaml` estate is refused, naming the last release that converts one)
     Transpile {
         /// Estate file, .satz (inside yaml_dir if relative)
         ///
@@ -296,7 +296,7 @@ pub(crate) enum Commands {
         #[arg(long)]
         no_default_grants: bool,
     },
-    /// Export the current live Organization Policies to a re-importable YAML preset
+    /// Export the current live Organization Policies to a Satz pack
     #[command(visible_alias = "export-org-policies")]
     ExportOrganizationalPolicies {
         /// Estate file providing the parameter table, incl. customer-organization-id (inside yaml_dir if relative)

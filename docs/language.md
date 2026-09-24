@@ -51,15 +51,17 @@ written and as emitted:
 ```
 google_storage_bucket {
   org_audit_logs {
-    project  = "${{google_project.logsink_project.project_id}}"
-    name     = logsink_bucket_name
-    location = logsink_bucket_location
-    storage_class = "NEARLINE"
+    project                     = "${{google_project.logsink_project.project_id}}"
+    name                        = logsink_bucket_name
+    location                    = logsink_bucket_location
+    storage_class               = "NEARLINE"
     uniform_bucket_level_access = true
     public_access_prevention    = "enforced"
     lifecycle_rule = [
-      { action { type = "Delete" }
-        condition { age = logsink_retention_days } },
+      {
+        action { type = "Delete" }
+        condition { age = logsink_retention_days }
+      },
     ]
   }
 }
@@ -182,8 +184,8 @@ not ✓ or ✗:
 
 ```
 claim "cis-gcp" "4.0" "4.4" deviates {
-  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
-  reason    = "A service here depends on metadata SSH keys; enforcing OS Login breaks it."
+  resources     = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  reason        = "A service here depends on metadata SSH keys; enforcing OS Login breaks it."
   duty_reassess = "Re-assess when that service supports OS Login."
 }
 ```
@@ -429,7 +431,7 @@ params {
   versioning_enabled       = true
   extra_members            = []
   audit_bucket_name        = "{customer_shortname}-audit-001"
-  log_bucket_name          = audit_bucket_name       # bare identifier = param reference
+  log_bucket_name          = audit_bucket_name # bare identifier = param reference
 }
 ```
 
@@ -591,7 +593,7 @@ google_org_policy_policy {
     name   = "compute.managed.requireOsLogin"
     parent = "organizations/{customer_organization_id}"
     spec {
-      rules = [ { enforce = "TRUE" } ]
+      rules = [{ enforce = "TRUE" }]
     }
   }
 }
@@ -634,20 +636,20 @@ apply in parallel; `depends_on` changes no plan.
 ```
 google_storage_bucket {
   audit_logs {
-    name     = audit_bucket_name
-    location = "EU"
+    name                        = audit_bucket_name
+    location                    = "EU"
     uniform_bucket_level_access = true
-    versioning       { enabled = true }
+    versioning { enabled = true }
     retention_policy { retention_period = 34560000 }
     lifecycle_rule = [
       {
-        action    { type = "Delete" }
+        action { type = "Delete" }
         condition { age = 730 }
       },
       {
-        action    { type = "SetStorageClass" storage_class = "COLDLINE" }
+        action { type = "SetStorageClass" storage_class = "COLDLINE" }
         condition { age = 90 }
-      }
+      },
     ]
   }
 }
@@ -955,8 +957,8 @@ google_folder {
     display_name = "workloads"
     google_project {
       infra {
-        "import-id"     = "acme-infra-001"
-        project_id      = "acme-infra-001"
+        "import-id" = "acme-infra-001"
+        project_id  = "acme-infra-001"
         project_service = [
           "logging.googleapis.com",
           { service = "storage.googleapis.com" "import-id" = "acme-infra-001/storage.googleapis.com" },
@@ -1060,10 +1062,10 @@ ones enabled on the project they live in.
 ### 6.9 `use` — composition
 
 ```
-use "presets/cis/CIS-GCP-Foundation-4.0.satz"                            # a pack that carries its own types
-google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }   # inside a map
-use "presets/essential-contacts-organization.satz" as google_essential_contacts_contact    # as: same thing
-use "showcase-optional.satz" when want_optional                          # conditionally
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" # a pack that carries its own types
+google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" } # inside a map
+use "presets/essential-contacts-organization.satz" as google_essential_contacts_contact # as: same thing
+use "showcase-optional.satz" when want_optional # conditionally
 ```
 
 A `use` stands at the top level of a file, in `google_folder { … }` or in a resource
@@ -1287,7 +1289,7 @@ A duty is where the claim records what code cannot do. From the shipped pack:
 
 ```
 claim "cis-gcp" "4.0" "4.4" implements {
-  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  resources         = ["google_org_policy_policy.compute_managed_requireOsLogin"]
   interpretation    = "OS Login is required, so VM SSH access is governed by IAM rather than metadata keys."
   duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
 }
@@ -1300,8 +1302,8 @@ witnesses present, human step outstanding.
 
 ```
 claim "cis-gcp" "4.0" "4.4" deviates {
-  resources = ["google_org_policy_policy.compute_managed_requireOsLogin"]
-  reason    = "A service here depends on metadata SSH keys; enforcing OS Login breaks it."
+  resources     = ["google_org_policy_policy.compute_managed_requireOsLogin"]
+  reason        = "A service here depends on metadata SSH keys; enforcing OS Login breaks it."
   duty_reassess = "Re-assess when that service supports OS Login."
 }
 ```
@@ -1599,15 +1601,16 @@ fold, and never reaches the emission manifest.
 
 ```
 params {
-  customer_shortname = ""
-  default_region     = "europe-west3"
+  customer_shortname         = ""
+  default_region             = "europe-west3"
+  deploys_regional_resources = true
 }
 
 question customer_shortname {
-  prompt    = "Short name identifying this customer"
-  why       = "Project ids, bucket names and group prefixes derive from it, and those ids are globally unique."
-  reversal  = recreate
-  blast     = none
+  prompt   = "Short name identifying this customer"
+  why      = "Project ids, bucket names and group prefixes derive from it, and those ids are globally unique."
+  reversal = recreate
+  blast    = none
 }
 
 question default_region {
@@ -1615,7 +1618,7 @@ question default_region {
   reversal  = state_surgery
   blast     = low
   recommend = "europe-west3"
-  ask_when  = deploys_regional_resources     // optional: only ask when that param is true
+  ask_when  = deploys_regional_resources // optional: only ask when that param is true
 }
 ```
 
@@ -1653,8 +1656,8 @@ question oneof group_model {
   why      = "Splitting network authority out later means a new group, membership moves and re-granted roles."
   reversal = state_surgery
   blast    = low
-  required = true                          // exactly one, rather than at most one
-  option group_model_flat  { label = "Flat — network authority sits with project admins" }
+  required = true // exactly one, rather than at most one
+  option group_model_flat { label = "Flat — network authority sits with project admins" }
   option group_model_split { label = "Split — a separate network-admins group" why = "For a distinct network team." }
 }
 ```
@@ -1755,11 +1758,16 @@ pack in the library. The entry says what an estate's line for that pack looks li
 where it goes; the entries' order is the order the packs can be adopted.
 
 ```
+offers "presets/essential-contacts-organization.satz" {
+  when  = use_essential_contacts
+  phase = "once the estate runs as the service account — one contact for Google's notices"
+  block = "google_essential_contacts_contact"
+}
+
 offers "presets/monitoring/organization-audit-logsink.satz" {
   when  = use_audit_logsink
   phase = """once the estate runs as the service account — the audit archive, which every later
 logging pack points at"""
-  block = "google_folder.infra_folder"
 }
 
 offers "presets/cis/cloud-sql-dry-run.satz" {
