@@ -225,10 +225,125 @@ pub(crate) enum Wrote {
     Unchanged,
 }
 
+/// A JSON document as the file holds it: every object keeps its keys in the order
+/// they were written. `serde_json::Value` sorts them (the crate's `preserve_order`
+/// feature would change that for every JSON satz emits), and a file a person keeps
+/// by hand is written back in their order, not alphabetised.
+#[derive(Debug, Clone, PartialEq)]
+enum Doc {
+    Null,
+    Bool(bool),
+    Number(serde_json::Number),
+    String(String),
+    Array(Vec<Doc>),
+    Object(Vec<(String, Doc)>),
+}
+
+impl Doc {
+    fn get_mut(&mut self, key: &str) -> Option<&mut Doc> {
+        match self {
+            Doc::Object(kv) => kv.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    /// Set `key`, in place where it is already there, last where it is not.
+    fn set(&mut self, key: &str, value: Doc) {
+        if let Doc::Object(kv) = self {
+            match kv.iter_mut().find(|(k, _)| k == key) {
+                Some((_, v)) => *v = value,
+                None => kv.push((key.to_string(), value)),
+            }
+        }
+    }
+
+    /// The same value as `serde_json` reads it, to compare with an entry satz builds.
+    fn value(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("a parsed document serializes")
+    }
+}
+
+impl Serialize for Doc {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self {
+            Doc::Null => s.serialize_unit(),
+            Doc::Bool(b) => s.serialize_bool(*b),
+            Doc::Number(n) => n.serialize(s),
+            Doc::String(t) => s.serialize_str(t),
+            Doc::Array(items) => {
+                let mut seq = s.serialize_seq(Some(items.len()))?;
+                for i in items {
+                    seq.serialize_element(i)?;
+                }
+                seq.end()
+            }
+            Doc::Object(kv) => {
+                let mut map = s.serialize_map(Some(kv.len()))?;
+                for (k, v) in kv {
+                    map.serialize_entry(k, v)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Doc {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Doc, D::Error> {
+        struct Visit;
+        impl<'de> serde::de::Visitor<'de> for Visit {
+            type Value = Doc;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_unit<E>(self) -> Result<Doc, E> {
+                Ok(Doc::Null)
+            }
+            fn visit_bool<E>(self, b: bool) -> Result<Doc, E> {
+                Ok(Doc::Bool(b))
+            }
+            fn visit_i64<E>(self, n: i64) -> Result<Doc, E> {
+                Ok(Doc::Number(n.into()))
+            }
+            fn visit_u64<E>(self, n: u64) -> Result<Doc, E> {
+                Ok(Doc::Number(n.into()))
+            }
+            fn visit_f64<E: serde::de::Error>(self, n: f64) -> Result<Doc, E> {
+                serde_json::Number::from_f64(n).map(Doc::Number).ok_or_else(|| E::custom("a number JSON cannot hold"))
+            }
+            fn visit_str<E>(self, t: &str) -> Result<Doc, E> {
+                Ok(Doc::String(t.to_string()))
+            }
+            fn visit_string<E>(self, t: String) -> Result<Doc, E> {
+                Ok(Doc::String(t))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut a: A) -> Result<Doc, A::Error> {
+                let mut items = Vec::new();
+                while let Some(i) = a.next_element()? {
+                    items.push(i);
+                }
+                Ok(Doc::Array(items))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut a: A) -> Result<Doc, A::Error> {
+                let mut obj = Doc::Object(Vec::new());
+                // a repeated key keeps its first place and its last value, as a JSON reader does
+                while let Some((k, v)) = a.next_entry::<String, Doc>()? {
+                    obj.set(&k, v);
+                }
+                Ok(obj)
+            }
+        }
+        d.deserialize_any(Visit)
+    }
+}
+
 /// Write satz's key into the client's file, and nothing else.
 ///
-/// satz owns one key. Every other server in the file is read, kept and written back
-/// unchanged. A file that is not JSON is refused rather than replaced — satz cannot
+/// satz owns one key. Every other key in the file — the other servers, and every
+/// setting beside `mcpServers` — is read and written back as it was, in the order it
+/// was written; satz's key keeps its place when it is replaced and goes last when it
+/// is new. A file that is not JSON is refused rather than replaced — satz cannot
 /// merge into what it cannot read, and `--force` is for a satz key that differs, not
 /// for discarding a file whose contents are unknown.
 pub(crate) fn write(cfg: &ClientConfig, force: bool) -> Result<Wrote, String> {
@@ -248,22 +363,21 @@ pub(crate) fn write(cfg: &ClientConfig, force: bool) -> Result<Wrote, String> {
         return Ok(Wrote::Created);
     }
     let text = crate::fsx::read_to_string(&cfg.file).map_err(|e| format!("{}: {}", cfg.file.display(), e))?;
-    let mut doc: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| unreadable(format!("not valid JSON ({e})")))?;
-    if !doc.is_object() {
+    let mut doc: Doc = serde_json::from_str(&text).map_err(|e| unreadable(format!("not valid JSON ({e})")))?;
+    if !matches!(doc, Doc::Object(_)) {
         return Err(unreadable("its top level is not a JSON object".to_string()));
     }
-    let servers = doc
-        .as_object_mut()
-        .expect("checked above")
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    if !servers.is_object() {
-        return Err(unreadable("its `mcpServers` is not a JSON object".to_string()));
+    if doc.get_mut("mcpServers").is_none() {
+        doc.set("mcpServers", Doc::Object(Vec::new()));
     }
-    let servers = servers.as_object_mut().expect("checked above");
-    let replaced = match servers.get(&cfg.key) {
-        Some(existing) if *existing == entry => return Ok(Wrote::Unchanged),
+    let servers = doc.get_mut("mcpServers").expect("set above");
+    let Doc::Object(held) = &*servers else {
+        return Err(unreadable("its `mcpServers` is not a JSON object".to_string()));
+    };
+    let held = held.len();
+    let existing = servers.get_mut(&cfg.key).map(|v| v.value());
+    let replaced = match existing {
+        Some(existing) if existing == entry => return Ok(Wrote::Unchanged),
         Some(existing) => {
             if !force {
                 return Err(format!(
@@ -271,15 +385,17 @@ pub(crate) fn write(cfg: &ClientConfig, force: bool) -> Result<Wrote, String> {
                      --force replaces it. Every other server in the file is untouched either way.",
                     cfg.file.display(),
                     cfg.key,
-                    serde_json::to_string_pretty(existing).unwrap_or_else(|_| existing.to_string()),
+                    serde_json::to_string_pretty(&existing).unwrap_or_else(|_| existing.to_string()),
                 ));
             }
             true
         }
         None => false,
     };
-    servers.insert(cfg.key.clone(), entry);
-    let others = servers.len() - 1;
+    let others = held - usize::from(replaced);
+    // through the text, not `entry`: a `serde_json::Value` has sorted the entry's keys
+    let text = serde_json::to_string(&cfg.server).expect("a server entry of strings serializes");
+    servers.set(&cfg.key, serde_json::from_str(&text).expect("a server entry reads back"));
     let json = serde_json::to_string_pretty(&doc).map_err(|e| format!("{}: {}", cfg.file.display(), e))?;
     crate::fsx::write(&cfg.file, format!("{json}\n")).map_err(|e| format!("{}: {}", cfg.file.display(), e))?;
     Ok(Wrote::Merged { others, replaced })
@@ -465,18 +581,66 @@ mod tests {
     fn every_other_server_is_left_alone() {
         let dir = scratch("merge");
         let file = dir.join("claude_desktop_config.json");
+        // keys in no sorted order, at every level: the file is written back in this order
         std::fs::write(
             &file,
-            r#"{"globalShortcut":"Alt+Space","mcpServers":{"filesystem":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}}}"#,
+            r#"{"theme":"dark","mcpServers":{"zeta":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"],"env":{"Z":"1","A":"2"}},"alpha":{"command":"uvx","args":[],"port":8080.5}},"globalShortcut":"Alt+Space"}"#,
         )
         .expect("a desktop configuration");
         let c = cfg(Client::ClaudeDesktop, Path::new("/estates/acme"), Some(&file));
-        assert_eq!(write(&c, false), Ok(Wrote::Merged { others: 1, replaced: false }));
-        let v = block_of(&std::fs::read_to_string(&file).expect("the file"));
-        assert_eq!(v["globalShortcut"], "Alt+Space");
-        assert_eq!(v["mcpServers"]["filesystem"]["command"], "npx");
-        assert_eq!(v["mcpServers"]["filesystem"]["args"][2], "/tmp");
-        assert_eq!(v["mcpServers"]["satz-C0example"]["command"], "/opt/bin/satz");
+        assert_eq!(write(&c, false), Ok(Wrote::Merged { others: 2, replaced: false }));
+        let expected = r#"{
+  "theme": "dark",
+  "mcpServers": {
+    "zeta": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/tmp"
+      ],
+      "env": {
+        "Z": "1",
+        "A": "2"
+      }
+    },
+    "alpha": {
+      "command": "uvx",
+      "args": [],
+      "port": 8080.5
+    },
+    "satz-C0example": {
+      "command": "/opt/bin/satz",
+      "args": [
+        "mcp",
+        "--root",
+        "/estates/acme",
+        "--allow",
+        "read"
+      ]
+    }
+  },
+  "globalShortcut": "Alt+Space"
+}
+"#;
+        assert_eq!(std::fs::read_to_string(&file).expect("the file"), expected, "written back in the file's own key order");
+
+        // replaced, satz's key keeps its place
+        let wider = plan(
+            Client::ClaudeDesktop,
+            "C0example.satz",
+            Path::new("/estates/acme"),
+            level("read,write"),
+            Path::new("/opt/bin/satz"),
+            None,
+            Some(&file),
+        )
+        .expect("a configuration");
+        assert_eq!(write(&wider, true), Ok(Wrote::Merged { others: 2, replaced: true }));
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("the file"),
+            expected.replace("\"read\"\n", "\"read,write\"\n")
+        );
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

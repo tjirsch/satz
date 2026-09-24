@@ -903,18 +903,19 @@ pub(crate) enum Commands {
         #[arg(long)]
         self_gated: bool,
     },
-    /// The MCP client configuration this estate needs — printed, never installed
+    /// The MCP client configuration this estate needs — printed, or written with --write
     ///
     /// `satz mcp` is the server; this is the block a client reads to start it. The
     /// binary is the satz that prints it, named by absolute path; the root is the
-    /// estate's own directory; and the capability ceiling is always written out, so
-    /// no configuration hands an agent a level nobody chose. `--write` puts it where
-    /// the client reads it — satz's own key, and nothing else in the file.
+    /// directory holding the estate's config.toml; and the capability ceiling is always
+    /// written out, so no configuration hands an agent a level nobody chose. Without
+    /// `--write` it prints the block and changes nothing; `--write` puts it where the
+    /// client reads it — satz's own key, every other key of the file kept as it is.
     McpConfig {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// The client whose file this is for: claude-code (`.mcp.json` beside the
-        /// estate) or claude-desktop (the `mcpServers` block of its own file)
+        /// The client whose file this is for: claude-code (`.mcp.json` in the directory
+        /// holding config.toml) or claude-desktop (the `mcpServers` block of its own file)
         #[arg(long, value_enum, default_value = "claude-code")]
         client: crate::mcp_config::Client,
         /// Capability groups the server is granted, comma-separated: read, write, exec
