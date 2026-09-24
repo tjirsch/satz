@@ -139,6 +139,8 @@ impl Level {
 /// that agreed with it.
 #[derive(Clone)]
 struct Open {
+    /// the `config.toml` it was opened with, resolved
+    config: PathBuf,
     tool: ToolConfig,
     runtime: ToolConfig,
     estate: PathBuf,
@@ -181,18 +183,18 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
     ("silence", Parity::Off("it decides what a human's output leaves out; an agent is handed every finding, silenced ones included, each marked with the tier that silenced it and why")),
 
-    ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; init derives from the credentials and runs as the human, before there is an estate")),
+    ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; init writes the estate and its config before there is one to open, and with --from-live reads the organisation as the human")),
     ("bootstrap", Parity::Off("day 0: it runs as the operator's own credentials, because the IaC service account every other tool runs as does not exist until it has — creating the folder, project and state bucket, so a human runs it knowingly in their own shell")),
     ("plan", Parity::Off("it hands stdio to the tool; an agent runs tofu itself")),
     ("apply", Parity::Off("it hands stdio to the tool, approval prompt included")),
     ("hcl-init", Parity::Off("it hands stdio to the tool")),
-    ("import", Parity::Off("the live sweep runs for minutes against the platform and rewrites the estate; nothing reports progress over this protocol, and a call that returns after ten silent minutes is a call a client has already given up on")),
+    ("import", Parity::Off("it creates an estate from what exists, before there is one to open: the live sweep reads the platform for minutes — as the caller's own credentials, or as an estate's service account with --into or --as, bound for the whole process — and --generate-unmapped runs tofu init and plan besides; nothing reports progress over this protocol, and the state and hcl shapes write a new estate a human then opens")),
     ("adopt-org-policies", Parity::Off("the alias also imports and activates; `satz_adopt` serves the resolution, the writing half stays with the human")),
     ("run-actions", Parity::Off("it runs the estate's deployment steps against the organisation")),
     ("export-organizational-policies", Parity::Off("it writes a preset from a live organisation; `satz_report_compliance` answers what an agent asks of live policy")),
-    ("diff-organizational-policies", Parity::Off("the compliance plane compares policies by value over MCP; the specialist diff is a console report")),
-    ("report-organizational-policies", Parity::Off("a rendered human report (markdown, PDF)")),
-    ("migrate", Parity::Off("a one-off switch of deployment_mode — an estate edit")),
+    ("diff-organizational-policies", Parity::Off("the compliance plane compares policies by value over MCP; the specialist diff, and its node-level classification of the hierarchy, is a report a human runs")),
+    ("report-organizational-policies", Parity::Off("a rendered report of the live policies with their explanations, for a human reader")),
+    ("migrate", Parity::Off("it switches deployment_mode, moves the state between backends with tofu init -migrate-state, and with --mode cloud assigns Groups Admin to the IaC service account as the operator's own credentials — a one-off a human runs knowingly")),
     ("update-schema", Parity::Off("it refreshes the provider schema cache: environment setup, not estate work")),
     ("map-types", Parity::Off("it derives type-map.yaml from the Discovery Documents — a maintainer refresh of shipped data")),
     ("scan-plan", Parity::Off("plan-JSON plumbing for a tofu workflow MCP does not drive")),
@@ -204,7 +206,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("open-readme", Parity::Off("it opens a browser")),
     ("help", Parity::Off("clap prints it")),
     ("mcp", Parity::Off("this is the server")),
-    ("mcp-config", Parity::Off("it writes the client's own configuration file — what a human runs to reach satz over MCP at all; an agent that is already here has it")),
+    ("mcp-config", Parity::Off("it prints, or writes, the configuration a client starts this server with — the capability ceiling included — so a server that ran it could raise its own ceiling for the next session; a human or a front end runs it")),
 ];
 
 /// The satz command each tool stands for, so an agent that knows the CLI can
@@ -229,7 +231,7 @@ fn served_by() -> String {
 fn not_served() -> String {
     let mut rows: Vec<String> = MCP_PARITY
         .iter()
-        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "mcp-config" | "fmt" | "lsp" | "silence"))
+        .filter(|(c, _)| !matches!(*c, "completion" | "open-readme" | "self-update" | "help" | "mcp" | "lsp"))
         .filter_map(|(c, p)| match p {
             Parity::Off(why) => Some(format!("{} ({})", c, why)),
             Parity::Tools(_) => None,
@@ -345,6 +347,10 @@ pub(crate) struct InterviewReport {
     /// names, to run now, and the param that acknowledges it — answered `true` through
     /// `answers` once it has run. Shown once: a later call returns only what it opens.
     pub notices: Vec<crate::notices::NoticeRow>,
+    /// What the packs this call's answers switched on add to other packs' list params —
+    /// an external principal added to the CIS baseline's `allowed_policy_member_subjects`,
+    /// for one. Shown once, like `notices`.
+    pub contributes: Vec<crate::packs::ContributionRow>,
     #[serde(flatten)]
     pub report: crate::questions::QuestionsReport,
 }
@@ -366,8 +372,9 @@ pub(crate) struct OpenReport {
     pub estate: String,
     /// `cloud` or `local`, as the compile reads it: `local` when the estate declares none
     pub deployment_mode: String,
-    /// The identity this estate's LIVE tools run as. Null when the estate
-    /// impersonates nothing and the calls are the ADC identity itself.
+    /// The identity this estate's LIVE tools run as. Null when the calls are the ADC
+    /// identity itself: the estate impersonates nothing (local mode), or the server
+    /// was started with `satz --no-impersonate mcp`, which outranks every estate.
     pub runs_as: Option<String>,
 }
 
@@ -987,7 +994,7 @@ impl SatzMcp {
         let estate = match name {
             None => open.estate.clone(),
             Some(n) => {
-                let estate = self.estate_arg(n, &open.runtime)?;
+                let estate = self.estate_arg(n, &open.config, &open.runtime)?;
                 if !estate.is_file() {
                     return Err(refused(format!("no estate file at {}", estate.display())));
                 }
@@ -1002,17 +1009,65 @@ impl SatzMcp {
     /// `yaml_dir` — and confined. The working directory's reading is taken only when
     /// it is inside the root: whether a file exists there is otherwise not this
     /// server's to tell. What comes back may not exist; the caller asks.
-    fn estate_arg(&self, name: &str, runtime: &ToolConfig) -> Result<PathBuf, CallToolResult> {
+    ///
+    /// It must also belong to `config`, the configuration the call works under: its
+    /// presets, include dirs and schemas are that config's, so an estate of another
+    /// `config.toml` under the same root would be compiled against a library that is
+    /// not its own. See [`Self::belongs`].
+    fn estate_arg(&self, name: &str, config: &std::path::Path, runtime: &ToolConfig) -> Result<PathBuf, CallToolResult> {
         let given = PathBuf::from(name);
-        if given.is_absolute() {
-            return self.confine(given);
-        }
-        if let Ok(here) = self.confine(given.clone()) {
-            if here.exists() {
-                return Ok(here);
+        let estate = if given.is_absolute() {
+            self.confine(given)?
+        } else {
+            match self.confine(given.clone()) {
+                Ok(here) if here.exists() => here,
+                _ => self.confine(PathBuf::from(&runtime.yaml_dir).join(given))?,
+            }
+        };
+        self.belongs(&estate, config, runtime)?;
+        Ok(estate)
+    }
+
+    /// Whether `estate` is one `config` gives a meaning to: the nearest `config.toml`
+    /// at or above its directory, inside the root, is `config` itself — or, where no
+    /// `config.toml` is above it, it lies in `config`'s `yaml_dir`. An estate of another
+    /// config is refused, naming both, rather than judged by the wrong library.
+    fn belongs(&self, estate: &std::path::Path, config: &std::path::Path, runtime: &ToolConfig) -> Result<(), CallToolResult> {
+        let root = crate::fsx::canonicalize(&self.ctx.root)
+            .map_err(|e| refused(format!("server root {}: {}", self.ctx.root.display(), e)))?;
+        let config = crate::fsx::canonicalize(config).map_err(|e| refused(format!("{}: {}", config.display(), e)))?;
+        let nearest = estate
+            .ancestors()
+            .skip(1)
+            .take_while(|d| d.starts_with(&root))
+            .map(|d| d.join("config.toml"))
+            .find(|c| c.is_file());
+        match nearest {
+            Some(c) if crate::fsx::canonicalize(&c).is_ok_and(|c| c == config) => Ok(()),
+            Some(c) => Err(refused(format!(
+                "{} belongs to {}, and this session is open under {} — its presets and include dirs are not \
+                 this estate's. Call `satz_open` with {} to work on it.",
+                estate.display(),
+                c.display(),
+                config.display(),
+                c.display()
+            ))),
+            None => {
+                let yaml_dir = crate::fsx::canonicalize(std::path::Path::new(&runtime.yaml_dir))
+                    .map_err(|e| refused(format!("yaml_dir {}: {}", runtime.yaml_dir, e)))?;
+                if estate.starts_with(&yaml_dir) {
+                    Ok(())
+                } else {
+                    Err(refused(format!(
+                        "{} is under no config.toml and outside the yaml_dir of {} ({}) — name an estate \
+                         that config holds, or `satz_open` the config the estate belongs to",
+                        estate.display(),
+                        config.display(),
+                        yaml_dir.display()
+                    )))
+                }
             }
         }
-        self.confine(PathBuf::from(&runtime.yaml_dir).join(given))
     }
 
     /// What is open, or the refusal that says how to open something. An agent
@@ -1105,7 +1160,10 @@ impl SatzMcp {
                        file. Every later tool then works on that estate, under that config — its \
                        presets, its schemas, its provider version. Call it again to move to the \
                        next estate; a server serves a fleet, one estate at a time. The answer \
-                       states which service account the estate's live tools will run as.",
+                       states which service account the estate's live tools will run as. Under \
+                       `satz --no-impersonate mcp` every call runs as the credentials themselves, \
+                       and `runs_as` is null. An estate named later in a call must belong to this \
+                       `config.toml`: one under another config is refused, naming both.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn open(
@@ -1137,7 +1195,7 @@ impl SatzMcp {
         let dir = config.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
         let runtime = crate::settings::resolved_config(&tool, &dir);
 
-        let estate = match self.estate_arg(&args.estate, &runtime) {
+        let estate = match self.estate_arg(&args.estate, &config, &runtime) {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
@@ -1155,10 +1213,14 @@ impl SatzMcp {
         let report = OpenReport {
             config: config.display().to_string(),
             estate: estate.display().to_string(),
-            runs_as: declared.impersonation_target().map(str::to_string),
+            // `--no-impersonate` outranks the estate, as it does in every live call
+            runs_as: declared
+                .impersonation_target()
+                .filter(|_| !crate::gcp::impersonation_disabled())
+                .map(str::to_string),
             deployment_mode: declared.mode,
         };
-        *self.ctx.open.lock().expect("the open lock is never poisoned") = Some(Open { tool, runtime, estate });
+        *self.ctx.open.lock().expect("the open lock is never poisoned") = Some(Open { config, tool, runtime, estate });
         Ok(Ok(Json(report)))
     }
 
@@ -1275,14 +1337,18 @@ impl SatzMcp {
     #[tool(
         name = "satz_interview",
         output_schema = rmcp::handler::server::tool::schema_for_output::<InterviewReport>(),
-        description = "Run an interview against an estate: the questions its packs declare that the \
-                       estate has not answered yet (or all of them, with `filter: all`), each with the \
-                       default the pack offers — or `blocking: true` when no default is possible and a \
-                       value must be typed. Answering is writing the param into the estate's `params {}`; \
-                       accepting a default is writing the default. `summary.complete` is the gate: \
-                       bootstrap and apply refuse until it is true. With `create: true` (needs 'write') \
-                       the estate file is written first if it does not exist, so an interview can start \
-                       before anything does. Offline and schema-free.",
+        description = "Run an interview against an estate: the questions its packs declare that the estate has not \
+                       answered yet (or all of them, with `filter: all`), each with the default the pack offers — \
+                       or `blocking: true` when no default is possible and a value must be typed. `answers` writes \
+                       the human's decisions into the estate's `params {}` and `accept_defaults` writes every \
+                       offered default (both need 'write'); an answer is checked against the question's shape, and \
+                       one refused answer writes nothing. Answering a pack's gate `true` switches its line on as \
+                       `satz_add_pack` does, and is refused while a pack it needs is off; `notices` carries the \
+                       commands the switched-on packs ask to be run, and `contributes` what they add to other \
+                       packs' list params. `summary.complete` is the gate: `satz bootstrap` and `satz transpile \
+                       --apply` refuse until it is true. With `create: true` (needs 'write') the estate file is \
+                       written first if it does not exist, so an interview can start before anything does. Offline \
+                       and schema-free.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn interview(
@@ -1300,7 +1366,7 @@ impl SatzMcp {
         // Confined before anything else is said about it, existence included.
         let estate = match &args.estate {
             None => open.estate.clone(),
-            Some(n) => match self.estate_arg(n, &open.runtime) {
+            Some(n) => match self.estate_arg(n, &open.config, &open.runtime) {
                 Ok(p) => p,
                 Err(r) => return Ok(Err(r)),
             },
@@ -1335,12 +1401,17 @@ impl SatzMcp {
         }
         let mut written = 0;
         let mut notices = Vec::new();
+        let mut contributes = Vec::new();
         if !args.answers.is_empty() || args.accept_defaults {
             if let Err(r) = self.permits(Group::Write, SERVES) {
                 return Ok(Err(r));
             }
             let open_before = match crate::notices::open(&estate, &open.runtime) {
                 Ok(n) => n,
+                Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
+            };
+            let contributed_before = match crate::packs::contributions(&estate, &open.runtime) {
+                Ok(c) => c,
                 Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
             };
             let mut answers = BTreeMap::new();
@@ -1358,6 +1429,10 @@ impl SatzMcp {
                 Ok(now) => crate::notices::opened(&open_before, &now),
                 Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
             };
+            contributes = match crate::packs::contributions(&estate, &open.runtime) {
+                Ok(now) => crate::packs::contributed(&contributed_before, &now),
+                Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
+            };
         }
         let mut report = match crate::questions::questions_report(&estate, &open.runtime) {
             Ok(r) => r,
@@ -1368,19 +1443,22 @@ impl SatzMcp {
             // The summary stays whole: it describes the estate, not the filter.
             report.questions.retain(|q| q.state == "unanswered");
         }
-        Ok(Ok(Json(InterviewReport { created, written, rename_to, notices, report })))
+        Ok(Ok(Json(InterviewReport { created, written, rename_to, notices, contributes, report })))
     }
 
     #[tool(
         name = "satz_packs",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PacksReport>(),
-        description = "Every pack the pack graph offers, as this estate has it — the rows satz-studio's Packs \
-                       view shows: the choice (the gate, the estate's `answer`, the library's `default`, the \
-                       `value` they give), the `line` (active, ungated, commented, absent, forked, misplaced) \
-                       at its line number, whether it `deploys`, what it `requires` (each with `met`) and what \
-                       it is `required_by`, what it `excludes`, and the compile's findings about it. A `use` the \
-                       graph does not know is `unmanaged`. With no pack-graph.json in the presets, `note` says \
-                       so. Offline and schema-free.",
+        description = "Every pack the pack graph offers, as this estate has it — the rows satz-studio's Packs view \
+                       shows: the choice (the gate, the estate's `answer`, the library's `default`, the `value` \
+                       they give), the `line` (active, ungated, commented, absent, forked, misplaced) at its line \
+                       number, whether it `deploys`, what it `requires` (each with `met`) and what it is \
+                       `required_by`, what it `excludes`, the `notices` it carries (each with `severity` and \
+                       `acknowledged`), what it `contributes` to another pack's list params while it deploys (each \
+                       `param` with its `values` — an external principal added to the CIS baseline's \
+                       `allowed_policy_member_subjects`, for one), and the compile's findings about it. A `use` the \
+                       graph does not know is `unmanaged`. With no pack-graph.json in the presets, `note` says so. \
+                       Offline and schema-free.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn packs(
@@ -1405,12 +1483,13 @@ impl SatzMcp {
         name = "satz_add_pack",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PackChange>(),
         description = "Switch a pack on, as `satz add-pack` does: bind its gate true (an option of a choice sets \
-                       its siblings false) and make its `use` line active where the pack graph places it, with \
-                       the packs whose gate follows it. Refused, naming them, while a pack it needs is off \
-                       (`with_requirements` switches those on where the graph names one) or a pack it excludes \
-                       is on. The edited estate is compiled and restored when it does not compile. Returns what \
-                       was bound, which lines moved, and the questions that opened — answer them with \
-                       `satz_interview`. Needs 'write'.",
+                       its siblings false) and make its `use` line active where the pack graph places it, with the \
+                       packs whose gate follows it. Refused, naming them, while a pack it needs is off \
+                       (`with_requirements` switches those on where the graph names one) or a pack it excludes is \
+                       on. The edited estate is compiled and restored when it does not compile. Returns what was \
+                       bound, which lines moved, the questions that opened — answer them with `satz_interview` — \
+                       the `notices` of the packs switched on, and what those packs `contributes` to other packs' \
+                       list params. Needs 'write'.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn add_pack(
@@ -1594,14 +1673,17 @@ impl SatzMcp {
     #[tool(
         name = "satz_review_pack",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::review_pack::Review>(),
-        description = "Judge one pack against the library's own bar, the way a pull request would: it \
-                       parses, it is formatted, its header says what it is, its version has a changelog \
-                       row, it declares no membership (presets define groups, humans grant membership), it \
-                       runs no legacy org-policy constraint beside its managed replacement, every resource \
-                       type it emits has a row in satz's prerequisite table, and it compiles. A pack is a \
-                       fragment, so it is folded into an estate to see what it emits — a synthesised one \
-                       unless `against` names a real estate. Returns the same findings the compile and the \
-                       language server produce, each anchored to file and line. Offline, reads only.",
+        description = "Judge one pack against the library's own bar, the way a pull request would: it parses, it is \
+                       formatted, its header says what it is, its version has a changelog row, it carries no value \
+                       shaped like private data (kind `private-shape`, one finding per token: an organisation, \
+                       folder or project number, a directory id, a billing account, a GUID, a project id, an e-mail \
+                       address or a domain that is not a documented example value), it declares no membership \
+                       (presets define groups, humans grant membership), it runs no legacy org-policy constraint \
+                       beside its managed replacement, every resource type it emits has a row in satz's \
+                       prerequisite table, and it compiles. A pack is a fragment, so it is folded into an estate to \
+                       see what it emits — a synthesised one unless `against` names a real estate. Returns the same \
+                       findings the compile and the language server produce, each anchored to file and line. \
+                       Offline, reads only.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn review_pack(
@@ -1624,7 +1706,7 @@ impl SatzMcp {
         // an estate, so it resolves as one: `C0example.satz` names the file in `yaml_dir`
         // here exactly as it does in `estate`
         let against = match args.against.as_deref() {
-            Some(a) => match self.estate_arg(a, &open.runtime) {
+            Some(a) => match self.estate_arg(a, &open.config, &open.runtime) {
                 Ok(p) if p.is_file() => Some(p),
                 Ok(p) => return Ok(Err(refused(format!("no estate file at {}", p.display())))),
                 Err(r) => return Ok(Err(r)),
@@ -1837,8 +1919,10 @@ impl SatzMcp {
         name = "satz_adopt",
         output_schema = rmcp::handler::server::tool::schema_for_output::<AdoptReport>(),
         description = "Resolve every resource the estate declares against the LIVE organisation — natural-key \
-                       lookups and the import-config rules — and say per resource whether it would be imported, \
-                       moved in the state, is already managed, or cannot be resolved. With `execute` (needs \
+                       lookups, the import-config rules, and for an IAM grant the live policy of its parent — \
+                       and say per resource whether it would be imported, moved in the state, is already \
+                       managed, is created by the next apply (a grant the live policy does not hold, or whose \
+                       parent does not exist yet), or cannot be resolved. With `execute` (needs \
                        'write') it writes the verified ids into the estate as \"import-id\". Running `tofu \
                        import`, a state move or activating a managed constraint stays on the command line \
                        (`satz adopt --execute --import`). Runs as the estate's service account. The table \
@@ -1965,7 +2049,9 @@ impl SatzMcp {
                        fork it to `X.local.satz` and repoint the estate — proving the repoint by transpile \
                        identity. `adopt` takes upstream in place for the packs named (`all` for every pack \
                        merely behind) and reports the emission delta instead. `report_only` writes nothing. \
-                       The answer is the run as events in walk order, plus the counts and `attention`, which \
+                       It writes the commented `use` line for a pack the library has and the estate names \
+                       nowhere, and last writes the roles and APIs the estate's packs need, as \
+                       `satz_update_prerequisites` does (a `prerequisites` event). The answer is the run as events in walk order, plus the counts and `attention`, which \
                        is what the command exits non-zero on. Needs the 'write' capability; `report_only` \
                        still needs it, because the walk fetches upstream.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
@@ -2178,18 +2264,20 @@ impl SatzMcp {
     #[tool(
         name = "satz_report_compliance",
         output_schema = rmcp::handler::server::tool::schema_for_output::<serde_json::Map<String, serde_json::Value>>(),
-        description = "Evidence report: the goal view joined with LIVE verification through Cloud \
-                       Asset Inventory, manual-duty attestations and optional Prowler corroboration. \
-                       Reads the organisation with the estate's credentials. Writes nothing — unlike \
-                       the command, it does not append to the evidence history, because being ASKED \
-                       for state is not a report run. Name a `framework` for one report; omit it \
-                       to report every framework the estate is HELD TO \
-                       (`compliance_frameworks`), which answers `{frameworks, reports}` with one \
-                       report per framework. Check `live_status` before trusting the rows: \
-                       a run whose inventory could not be read answers `live: false` with the reason \
-                       in `warnings`, and every witness reads unverified. `exemption_bindings` lists \
-                       the live bindings of the estate's exemption tag key that the estate does not \
-                       declare; its `undeclared` is null unless they were read.",
+        description = "Evidence report: the goal view joined with LIVE verification through Cloud Asset Inventory, \
+                       manual-duty attestations and optional Prowler corroboration. Reads the organisation as the \
+                       estate's IaC service account (cloud mode) or as the credentials themselves (local mode). \
+                       Writes nothing — unlike the command, it does not append to the evidence history, because \
+                       being ASKED for state is not a report run. Name a `framework` for one report; omit it to \
+                       report every framework the estate is HELD TO (`compliance_frameworks`), which answers \
+                       `{frameworks, reports}` with one report per framework. Check `live_status` before trusting \
+                       the rows: a run whose inventory could not be read answers `live: false` with the reason in \
+                       `warnings`, and every witness reads unverified. `exemption_bindings` is null when the estate \
+                       declares no exemption tag key; otherwise its `status` says whether the live bindings were \
+                       read, and `undeclared` — null unless they were — lists each live binding of that key the \
+                       estate does not declare, which is what `satz report-compliance --fail-on \
+                       undeclared-exemption` fails on, a check that did not run included. Checkov's column \
+                       (`--checkov`) is not served here: run `satz_scan_checkov`.",
         annotations(read_only_hint = true, idempotent_hint = false, open_world_hint = true)
     )]
     async fn report_compliance(
@@ -2265,14 +2353,15 @@ impl SatzMcp {
     #[tool(
         name = "satz_whoami",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::gcp::identity::WhoamiReport>(),
-        description = "BOTH halves of the identity: the Application Default Credentials account \
-                       and its file, and what the open estate's live tools actually run as — its \
-                       deployment mode, the service account it declares, and whether the calls \
-                       impersonate it (cloud mode) or run as the credentials themselves (local \
-                       mode). Online it also CHECKS them — whether this credential may become that \
-                       service account, and whether the quota project is reachable — so a refused \
-                       live call is explained here rather than guessed at. The first thing to check \
-                       when anything live fails.",
+        description = "BOTH halves of the identity: the Application Default Credentials account and its file, and \
+                       what the open estate's live tools — or those of the estate `estate` names — actually run as: \
+                       its deployment mode, the service account it declares, and whether the calls impersonate it \
+                       (cloud mode) or run as the credentials themselves (local mode, or a server started with \
+                       `--no-impersonate`). Online it also CHECKS them — whether this credential may become that \
+                       service account, whether the quota project is reachable, and whether the account holds the \
+                       permissions the estate's resource types need (`permissions`, each missing one named with its \
+                       role) — so a refused live call is explained here rather than guessed at. The first thing to \
+                       check when anything live fails.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
     )]
     async fn whoami(
@@ -2939,6 +3028,99 @@ mod confine_tests {
             "{said}"
         );
         assert_eq!(std::fs::read(&estate).unwrap(), before, "a refused answer writes nothing");
+    }
+
+    /// The library copied into the fixture's root, so `add-pack` compiles, and a skeleton
+    /// with the map switched on — the estate every pack switch starts from.
+    async fn with_the_map(f: &Fixture) {
+        for (from, to) in [("presets", "presets"), ("tests/schemas", "schemas")] {
+            let from = Path::new(env!("CARGO_MANIFEST_DIR")).join(from);
+            let copy = std::process::Command::new("cp").arg("-R").arg(&from).arg(f.root.join(to)).status().unwrap();
+            assert!(copy.success(), "copying {} into the root", from.display());
+        }
+        let opened = f.server.open(Parameters(serde_json::from_value(json!({"config": ".", "estate": "e.satz"})).unwrap())).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
+        interview(f, json!({"estate": "new.satz", "create": true})).await.expect("a skeleton");
+        let map = f
+            .server
+            .add_pack(Parameters(serde_json::from_value(json!({"estate": "new.satz", "pack": "presets/estate-map.satz", "with_requirements": true})).unwrap()))
+            .await
+            .unwrap();
+        assert!(map.is_ok(), "{:?}", map.err().map(|r| text(&r)));
+    }
+
+    const EXPORT_ACCOUNT: &str = "serviceAccount:billing-export-bigquery@system.gserviceaccount.com";
+
+    /// Switching `billing_export` on widens the CIS baseline's
+    /// `allowed_policy_member_subjects` through a contribution. The switch says so — in
+    /// `satz_add_pack`'s result and in `satz_interview`'s — rather than leaving the
+    /// widened list to be found in the compiled policy.
+    #[tokio::test]
+    async fn a_switch_reports_what_the_pack_contributes_to_another_pack_s_list() {
+        let f = fixture("contributes-add");
+        with_the_map(&f).await;
+        let change = match f
+            .server
+            .add_pack(Parameters(serde_json::from_value(json!({"estate": "new.satz", "pack": "use_billing_export", "with_requirements": true})).unwrap()))
+            .await
+            .unwrap()
+        {
+            Ok(Json(c)) => c,
+            Err(r) => panic!("add-pack billing_export refused: {}", text(&r)),
+        };
+        let c = change
+            .contributes
+            .iter()
+            .find(|c| c.param == "allowed_policy_member_subjects")
+            .unwrap_or_else(|| panic!("the contribution is not reported: {change:?}"));
+        assert!(c.pack.ends_with("billing-export.satz") && c.applied && c.values == vec![EXPORT_ACCOUNT.to_string()], "{c:?}");
+        assert!(crate::packs::render_change(&change).contains(EXPORT_ACCOUNT), "the CLI prints it too");
+
+        // the same switch through an answer
+        let g = fixture("contributes-interview");
+        with_the_map(&g).await;
+        // the baseline the export account is contributed to first, as add-pack requires
+        let baseline = interview(&g, json!({"estate": "new.satz", "answers": {"use_cis_baseline": true}})).await.expect("the baseline");
+        assert!(baseline.contributes.is_empty(), "the baseline contributes nothing: {:?}", baseline.contributes);
+        let report = interview(&g, json!({"estate": "new.satz", "answers": {"use_billing_export": true}}))
+            .await
+            .expect("answering the gate switches the pack on");
+        assert!(
+            report.contributes.iter().any(|c| c.param == "allowed_policy_member_subjects" && c.applied && c.values.iter().any(|v| v == EXPORT_ACCOUNT)),
+            "{:?}",
+            report.contributes
+        );
+        // shown once: a call that switches nothing reports nothing
+        let again = interview(&g, json!({"estate": "new.satz", "answers": {"use_billing_export": true}})).await.expect("the same answer");
+        assert!(again.contributes.is_empty(), "{:?}", again.contributes);
+    }
+
+    /// An estate under another `config.toml` is that config's: judged with the open one's
+    /// presets and include dirs it would be compiled against a library that is not its
+    /// own. It is refused, naming both configs, before anything reads it.
+    #[tokio::test]
+    async fn an_estate_of_another_config_is_refused_naming_both() {
+        let f = fixture("other-config");
+        let other = f.root.join("other");
+        std::fs::create_dir_all(other.join("yaml")).unwrap();
+        std::fs::write(other.join("config.toml"), "yaml_dir = \"yaml\"\nhcl_dir = \"hcl\"\npresets_dir = \"presets\"\n").unwrap();
+        std::fs::write(other.join("yaml/o.satz"), "estate o\n").unwrap();
+        let opened = f.server.open(Parameters(serde_json::from_value(json!({"config": ".", "estate": "e.satz"})).unwrap())).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
+        let other_config = crate::fsx::canonicalize(other.join("config.toml")).unwrap().display().to_string();
+        let open_config = crate::fsx::canonicalize(f.root.join("config.toml")).unwrap().display().to_string();
+        for name in [other.join("yaml/o.satz").display().to_string(), "../other/yaml/o.satz".to_string()] {
+            let r = f.server.target(Some(&name)).map(|(_, e)| e).expect_err("another config's estate");
+            let said = text(&r);
+            assert!(said.contains(&other_config) && said.contains(&open_config), "{said}");
+            let said = interview(&f, json!({"estate": name})).await.expect_err("the interview refuses it too");
+            assert!(said.contains(&other_config), "{said}");
+        }
+        // the open config's own estates still resolve
+        assert!(f.server.target(Some("e.satz")).is_ok());
+        // and opening it under its own config works
+        let opened = f.server.open(Parameters(serde_json::from_value(json!({"config": "other", "estate": "o.satz"})).unwrap())).await.unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err().map(|r| text(&r)));
     }
 
     /// `against` names an estate, so it resolves the way every other estate argument

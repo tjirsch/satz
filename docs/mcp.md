@@ -43,6 +43,11 @@ consequence, not a severity level:
 may *lower* its own level at runtime through the `satz_restrict` tool and can never
 raise it again — so an agent can prove it stayed read-only for a phase of its own work.
 
+The ceiling bounds this server and nothing else. An agent that also has a shell of its
+own — Claude Code's Bash tool, say — can run any satz command there, `apply` included,
+with the rights of the user who started it; what the ceiling is for is an agent whose
+only way to satz is this server.
+
 At every level **`self-update` is not exposed** (it replaces the binary), and
 **every path argument is confined** to the directory the server was started in:
 `use "…"` resolves through `include_dirs`, so an estate can pull in other files.
@@ -67,12 +72,12 @@ every `satz` block in the guide.
 | tool | group | what it answers |
 |---|---|---|
 | `satz_estates` | `read` | which estates this server can open: every `config.toml` under its root, with the estate files beside it — each with its `deployment_mode` as the compile reads it, or, for one `satz_open` refuses, `refused` with the reason and no mode |
-| `satz_open` | `read` | open one for the session — its `config.toml` and its main `.satz`. Answers with what it resolved, including the identity that estate's live tools will run as |
+| `satz_open` | `read` | open one for the session — its `config.toml` and its main `.satz`. Answers with what it resolved, including the identity that estate's live tools will run as — `runs_as`, null when they run as the credentials themselves (local mode, or `satz --no-impersonate mcp`) |
 | `satz_require` | `read` | which controls of a catalog the **declared** estate satisfies, from its packs' claims. Offline |
-| `satz_questions` | `read` | every question the estate's packs declare with its state — `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible, and each param question's declared `shape` (`string` \| `number` \| `bool` \| `list` \| `map`) — and `summary.complete`, the gate bootstrap and apply refuse on |
-| `satz_interview` | `read` / `write` | the interview: the open questions (or all, with `filter: all`), each with its pack's description and its offer. With `write`: `create` writes the estate first, `answers` writes what the human decided, `accept_defaults` writes every offer — and the report comes back as it now stands. An answer whose shape contradicts the question's `shape` is refused and nothing is written. `create` writes the day-0 estate: seventeen questions, and every pack's `use` line commented out under the phase it can be adopted in, from the `pack-graph.json` in `presets_dir` — with none there, the estate is written without pack lines. Answering a pack's question `true` switches its line on as `satz_add_pack` does — uncommented, or written where the pack graph places it — so an answer and what the estate uses cannot disagree; like it, the answer is refused while a pack it needs is off, and an answer that would leave an estate satz refuses writes nothing. `notices` carries what those answers opened: a pack that names a command to run once it is on ([§6.15](language.md#615-notice--the-command-a-pack-asks-for-once-it-is-on)) — its `text`, the `run`, and the `param` to answer `true` through `answers` once the command has run. A call that answers nothing returns none. [satz interview](interview.md) |
-| `satz_packs` | `read` | every pack the pack graph offers, as the estate has it — the rows satz-studio's Packs view shows: the gate with the estate's `answer`, the library's `default` and the `value` they give; the `line` (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`) and its number; whether it `deploys`; what it `requires` (each with `met`), what it is `required_by` and what it `excludes`; the `notices` it carries, each with its `severity` and `acknowledged`; and the compile's findings about it. A `use` the graph does not know is `unmanaged`; with no `pack-graph.json` in `presets_dir`, `note` says so. The same value `satz packs --format json` prints |
-| `satz_add_pack` | `write` | switches a pack on by its gate or path, as `satz add-pack` does: the gate bound true, the line made active where the graph places it, the packs that follow its gate with it. Refused, naming them, while a pack it needs is off (`with_requirements` switches those on where the graph names one) or one it excludes is on. The edited estate is compiled and restored when it does not compile. Returns what was bound, which lines moved, the questions that opened, and in `notices` the commands the packs it switched on ask to be run — each acknowledged by answering its `param` `true` through `satz_interview` once it has run |
+| `satz_questions` | `read` | every question the estate's packs declare with its state — `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible, and each param question's declared `shape` (`string` \| `number` \| `bool` \| `list` \| `map`) — and `summary.complete`, the gate `satz bootstrap` and `satz transpile --apply` refuse on |
+| `satz_interview` | `read` / `write` | the interview: the open questions (or all, with `filter: all`), each with its pack's description and its offer. With `write`: `create` writes the estate first, `answers` writes what the human decided, `accept_defaults` writes every offer — and the report comes back as it now stands. An answer whose shape contradicts the question's `shape` is refused and nothing is written. `create` writes the day-0 estate: seventeen questions, and every pack's `use` line commented out under the phase it can be adopted in, from the `pack-graph.json` in `presets_dir` — with none there, the estate is written without pack lines. Answering a pack's question `true` switches its line on as `satz_add_pack` does — uncommented, or written where the pack graph places it — so an answer and what the estate uses cannot disagree; like it, the answer is refused while a pack it needs is off, and an answer that would leave an estate satz refuses writes nothing. `notices` carries what those answers opened: a pack that names a command to run once it is on ([§6.15](language.md#615-notice--the-command-a-pack-asks-for-once-it-is-on)) — its `text`, the `run`, and the `param` to answer `true` through `answers` once the command has run. `contributes` carries what the packs those answers switched on add to other packs' list params ([language: `contributes_<param>`](language.md#contributes_param--a-packs-entries-in-another-files-list)) — each with the `pack`, the `param`, its `values`, and `applied`, false when nothing the estate uses declares that param. A call that answers nothing returns neither. [satz interview](interview.md) |
+| `satz_packs` | `read` | every pack the pack graph offers, as the estate has it — the rows satz-studio's Packs view shows: the gate with the estate's `answer`, the library's `default` and the `value` they give; the `line` (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`) and its number; whether it `deploys`; what it `requires` (each with `met`), what it is `required_by` and what it `excludes`; the `notices` it carries, each with its `severity` and `acknowledged`; what it `contributes` to other packs' list params while it deploys, each `param` with its `values`; and the compile's findings about it. A `use` the graph does not know is `unmanaged`; with no `pack-graph.json` in `presets_dir`, `note` says so. The same value `satz packs --format json` prints |
+| `satz_add_pack` | `write` | switches a pack on by its gate or path, as `satz add-pack` does: the gate bound true, the line made active where the graph places it, the packs that follow its gate with it. Refused, naming them, while a pack it needs is off (`with_requirements` switches those on where the graph names one) or one it excludes is on. The edited estate is compiled and restored when it does not compile. Returns what was bound, which lines moved, the questions that opened, in `notices` the commands the packs it switched on ask to be run — each acknowledged by answering its `param` `true` through `satz_interview` once it has run — and in `contributes` what those packs add to other packs' list params: `billing_export` adds Google's export account to the CIS baseline's `allowed_policy_member_subjects`, for one. `satz add-pack` prints the same lines |
 | `satz_remove_pack` | `write` | switches a pack off, as `satz remove-pack` does: the gate bound false, the line left. Refused, naming them, while a pack that needs it is on (`cascade` switches those off too) or while its line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
 | `satz_triage` | `read` | a Prowler export's FAILs sorted into buckets A–E against what the estate claims |
 | `satz_prowler` | `read` | the Prowler invocation this estate needs — the frameworks it is HELD TO and those its packs CLAIM, together; the projects; and an output path named for the UTC minute, so no two scans share a file; `unresolved_projects` names each project left out because its id is built from a reference to another resource. It prints the command; nothing runs the scanner |
@@ -80,10 +85,10 @@ every `satz` block in the guide.
 | `satz_check_presets` | `read` | which packs are clean, behind upstream, locally edited, or changed only in the questions they ask |
 | `satz_fmt` | `read` | Satz text in, the canonical layout out — two-space indent, `=` aligned over a run, one list item per line. No path and no write: the client holds the file. `satz_review_pack` refuses a pack that is not formatted, and this is what formats it |
 | `satz_review_pack` | `read` | one pack against the library's bar — it parses, is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data (kind `private-shape`, one finding per token), it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles. Folded into a synthesised estate unless `against` names one. Findings anchored to file and line |
-| `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration. `framework` is optional: named, the answer is that catalog's report; omitted, it is `{frameworks, reports}` — one report per framework the estate is HELD TO (`compliance_frameworks`) |
+| `satz_report_compliance` | `read` | the goal view joined with **live** verification through Cloud Asset Inventory, attestations and optional Prowler corroboration, read as the estate's IaC service account (cloud mode) or as the credentials themselves (local mode). Checkov's column is not served here — `satz_scan_checkov` runs Checkov — and neither is `--fail-on`: the report carries every status, and an agent judges them. `framework` is optional: named, the answer is that catalog's report; omitted, it is `{frameworks, reports}` — one report per framework the estate is HELD TO (`compliance_frameworks`) |
 | `satz_whoami` | `read` | both halves of the identity — the ADC account, and what the open estate's calls run as: its mode, the service account it declares, and whether that account is impersonated — with the live checks that decide whether the next call works: may this credential become that account, is the quota project reachable, does it hold the permissions the estate's resource types need (`permissions`, each missing one named with its role). The first thing to check when a live call is refused |
 | `satz_transpile` | `write` | compiles the estate and writes its OpenTofu HCL into `hcl_dir`, as `satz transpile` does; `written` lists the files |
-| `satz_adopt` | `read` / `write`; `out` also `write` | every declared resource resolved against the **live** organisation, as the estate's service account: per row whether it would be imported, moved in the state, is already managed, or cannot be resolved, what it matched on, and the Satz line that declared it. `rows` carries the rows that ask for something — a decision, a state move, an import, in that order — and at most fifty of them; `rows_total`, `rows_omitted` and `note` say what is not there and where the rest is, and `out` writes the whole report as JSON to that path under the root. With `execute` (`write`) the verified ids are written into the estate as `"import-id"`, refused while any row is unanswered or a live object is declared twice; `written` and `hints` are a line per resource and are capped the same way, with `written_total` and `hints_total` beside them. `tofu import`, a state move and activating a managed constraint stay on the command line |
+| `satz_adopt` | `read` / `write`; `out` also `write` | every declared resource resolved against the **live** organisation, as the estate's service account: per row whether it would be imported, moved in the state, is already managed, is created by the next apply (an IAM grant the live policy of its parent does not hold, or whose parent does not exist yet), or cannot be resolved, what it matched on, and the Satz line that declared it. `rows` carries the rows that ask for something — a decision, a state move, an import, in that order — and at most fifty of them; `rows_total`, `rows_omitted` and `note` say what is not there and where the rest is, and `out` writes the whole report as JSON to that path under the root. With `execute` (`write`) the verified ids are written into the estate as `"import-id"`, refused while any row is unanswered or a live object is declared twice; `written` and `hints` are a line per resource and are capped the same way, with `written_total` and `hints_total` beside them. `tofu import`, a state move and activating a managed constraint stay on the command line |
 | `satz_update_prerequisites` | `read` / `write` | what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing (with the fewest roles that close the gap) and the APIs its infrastructure project does not enable (with the types that need each), plus the emitted types the table has no row for. Offline. It WRITES both into the estate file and re-checks — a gap that survives the write restores the file — so the default needs `write`; `report_only` lists the gap and needs only `read` |
 | `satz_merge_presets` | `write` | the reconciling update: what was installed, taken as doc/format only, forked to `X.local.satz` with the estate repointed, adopted in place, deferred or refused — as events in the walk's own order, with the counts and `attention`. `adopt` takes upstream in place for the packs named (`all` for every pack merely behind) and the answer carries the emission delta; `report_only` writes nothing. It writes the commented `use` line for a pack the library has that the estate has none for, so a new pack's question never binds an answer that nothing emits, and last writes the roles and APIs the estate's packs need as `satz_update_prerequisites` does — a `prerequisites` event, at validation level `error` too |
 | `satz_get_presets` | `write` | the upstream library into the open estate's `presets_dir`: missing files installed, identical ones left, changed ones the estate does not use refreshed; a pack the estate uses that upstream changed is refused unless `force`. `pristine_dir` copies from a library under the root instead of downloading. `presets_dir` must be inside the root |
@@ -102,15 +107,19 @@ a client has ([result size](#result-size)).
 none does, and a command in neither column fails `cargo test` — the same way every
 command must declare an identity. What is not served, by class: the commands
 that hand stdio to `tofu` (`plan`, `apply`, `hcl-init`), the day-0 ones that run as
-the human (`init`, `bootstrap`), the ones that write to an organisation
-(`run-actions`, `adopt-org-policies`), the live sweep that rewrites an estate
-(`import`), the specialist org-policy tools the compliance plane answers for
-(`export-`, `diff-` and `report-organizational-policies`), the maintainer refreshes
-of shipped data (`map-types`, `update-schema`, `doc-packs`, `pack-graph`), the `tofu`-workflow
-plumbing (`scan-plan`, `generate-migration`, `migrate`), what decides a human's own
-output (`silence` — an agent is handed every finding, the silenced ones included and
-marked), and the terminal
-affordances (`completion`, `open-readme`, `self-update`). The table in `src/mcp.rs`
+the human (`init`, `bootstrap`), the one-off that moves an estate between deployment
+modes as the operator's own credentials (`migrate`), the ones that write to an
+organisation (`run-actions`, `adopt-org-policies`), the live sweep that creates an
+estate from what exists before there is one to open (`import`), the specialist
+org-policy tools the compliance plane answers for (`export-`, `diff-` and
+`report-organizational-policies`), the maintainer refreshes of shipped data
+(`map-types`, `update-schema`, `doc-packs`, `pack-graph`), the `tofu`-workflow plumbing
+(`scan-plan`, `generate-migration`), what decides a human's own output (`silence` — an
+agent is handed every finding, the silenced ones included and marked), the client
+configuration that sets this server's own ceiling (`mcp-config`), and the terminal
+affordances (`completion`, `open-readme`, `self-update`). Every one of them except the
+terminal affordances, `mcp` itself and `lsp` is named with its reason in the
+`instructions` the server returns at initialize, so an agent asks a human for it. The table in `src/mcp.rs`
 is the full list, with a reason per command. The tools
 the table has no command for — `satz_open`, `satz_estates`, `satz_restrict` — are
 the session and capability plumbing a terminal does not need.
@@ -213,22 +222,24 @@ platforms, which is the scope that puts an estate's server in the estate's own r
 ### Written by satz
 
 `satz mcp-config` prints the block for one estate, and `--write` puts it in `.mcp.json`
-in that estate's directory — the `project` scope above, which is where an estate's
-server belongs:
+in the directory holding the estate's `config.toml` — the `project` scope above, which is
+where an estate's server belongs:
 
 ```bash
 satz mcp-config C0example.satz                              # print it
-satz mcp-config C0example.satz --write                      # write .mcp.json beside the estate
+satz mcp-config C0example.satz --write                      # write .mcp.json beside config.toml
 satz mcp-config C0example.satz --allow read,write --write
 ```
 
 satz fills in the three values a hand-written block gets wrong. The **binary** is the
 satz that prints the block, by absolute path, so the client needs no `PATH` of its own.
-The **root** is the estate's own directory, canonicalised. The **ceiling** is written
+The **root** is the directory holding the estate's `config.toml`, canonicalised. The **ceiling** is written
 out even when it is the default, because a block that omits `--allow` grants `read`
 without saying that anyone chose it.
 
-`--write` merges satz's own key and leaves every other server in the file as it is. A
+`--write` merges satz's own key and leaves every other key in the file as it is, in the
+order the file has them; satz's key keeps its place when it is replaced and goes last
+when it is new. A
 `satz` key already there with other arguments is printed and refused — `--force`
 replaces it — and a file that is not JSON is refused and left alone, since satz cannot
 merge into what it cannot read. A second run writes nothing.
@@ -326,8 +337,8 @@ estate's name because one file holds every server: a second estate is a second k
 the first, and `--name <KEY>` writes a key of your choosing, which is what two estates
 with the same file name under two different roots need.
 
-satz owns that one key. Every other server in the file is read, kept and written back
-with its command, its arguments and its environment; the refusals are the same as for
+satz owns that one key. Every other server in the file, and every setting beside
+`mcpServers`, is read, kept and written back as it was, in the file's own key order; the refusals are the same as for
 `.mcp.json`. Claude Desktop reads the file when it starts, so restart it after a write.
 
 ## The MCP SDK
@@ -382,6 +393,12 @@ directory when a file of that name is there and inside the root; otherwise it na
 file in the config's `yaml_dir`. That is every estate argument — `estate`, and
 `satz_review_pack`'s `against`.
 
+An estate argument also has to belong to the open `config.toml`, because the call runs
+under that config's presets, include dirs and schemas: the nearest `config.toml` at or
+above the estate's directory is the open one, or, with none above it, the estate lies in
+the open config's `yaml_dir`. An estate of another config under the same root is refused,
+naming both configs; `satz_open` with its own config is how to work on it.
+
 ### Which identity, and who decides
 
 A live tool runs as the estate it is working on — the one its `estate` argument names,
@@ -391,8 +408,8 @@ it. The ADC authenticates, and satz's first act is to exchange it for the accoun
 estate itself names — `svc_iac_account` + `infra_project_name`, the same derivation the
 emitted provider block uses — read from the estate as it stands when the call is made.
 `satz_open` reports the result as `runs_as` so it is stated rather than assumed, and
-`null` there means the estate impersonates nothing and the calls are the ADC identity
-itself; its `deployment_mode` is the mode the compile reads, `local` when the estate
+`null` there means the calls are the ADC identity itself — the estate impersonates
+nothing, or the server was started as `satz --no-impersonate mcp`; its `deployment_mode` is the mode the compile reads, `local` when the estate
 declares none.
 
 An estate whose params do not parse, whose `deployment_mode` is neither `local` nor
@@ -429,5 +446,8 @@ as the plain ADC.
 - **`satz adopt --execute --import` is not exposed** — the `tofu import`, the state
   moves and activating a managed constraint stay with a human; `satz_adopt` writes the
   ids.
+- **`satz report-compliance --checkov` and `--fail-on` have no counterpart** —
+  `satz_scan_checkov` runs Checkov as a tool of its own, and `satz_report_compliance`
+  returns every row's status rather than an exit code.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.

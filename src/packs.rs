@@ -1249,6 +1249,55 @@ pub(crate) struct PackChange {
     /// the notices the switch opened: the command each pack names, to run now, and the
     /// param that acknowledges it
     pub notices: Vec<crate::notices::NoticeRow>,
+    /// what the packs the switch turned on add to other packs' list params — an external
+    /// principal added to the CIS baseline's `allowed_policy_member_subjects`, for one
+    pub contributes: Vec<ContributionRow>,
+}
+
+/// One pack's entries in another pack's list param, as the compile merges them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ContributionRow {
+    /// the file that contributes, as the `use` that reached it names it
+    pub pack: String,
+    /// the list param the entries are added to
+    pub param: String,
+    /// the entries, resolved
+    pub values: Vec<String>,
+    /// false when no file this estate uses declares `param`: the entries reach nothing
+    pub applied: bool,
+}
+
+/// Every contribution of the packs this estate deploys, from the compile's own
+/// schema-free walk.
+pub(crate) fn contributions(estate: &Path, runtime: &ToolConfig) -> Result<Vec<ContributionRow>, String> {
+    let src = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let load = crate::questions::loader(estate, runtime);
+    let records = satz_core::pipeline::estate_contributions(&estate.display().to_string(), &src, &load)
+        .map_err(|e| format!("{}:{}: {}", e.file, e.line, e.msg))?;
+    Ok(records
+        .into_iter()
+        .map(|c| ContributionRow { pack: c.file, param: c.param, values: c.values, applied: c.applied })
+        .collect())
+}
+
+/// The contributions present `after` that were not `before`: what a switch just added.
+pub(crate) fn contributed(before: &[ContributionRow], after: &[ContributionRow]) -> Vec<ContributionRow> {
+    after.iter().filter(|c| !before.contains(c)).cloned().collect()
+}
+
+/// The contributions a switch added, one line each — empty when there are none.
+pub(crate) fn render_contributions(rows: &[ContributionRow]) -> String {
+    rows.iter()
+        .map(|c| {
+            format!(
+                "  {} {} {}: {}\n",
+                c.pack,
+                if c.applied { "contributes to" } else { "would contribute to (nothing here declares it)" },
+                c.param,
+                c.values.join(", ")
+            )
+        })
+        .collect()
 }
 
 /// The nodes `arg` names: one pack by path (`presets/…`, the path without `presets/`,
@@ -1367,6 +1416,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
     let rows = crate::questions::questions_report(estate, runtime)?;
     let asked: BTreeSet<String> = rows.questions.iter().filter(|q| q.state != "not-applicable").map(|q| q.subject.clone()).collect();
     let open_before = crate::notices::open(estate, runtime)?;
+    let contributed_before = contributions(estate, runtime)?;
     let mut change = PackChange { estate: estate.display().to_string(), action: "add", left, ..PackChange::default() };
     let mut src = before.clone();
     let yes = serde_yaml::Value::Bool(true);
@@ -1407,6 +1457,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
     let after = crate::questions::questions_report(estate, runtime)?;
     change.opened = after.questions.iter().filter(|q| q.state == "unanswered" && !asked.contains(&q.subject)).map(|q| q.subject.clone()).collect();
     change.notices = crate::notices::opened(&open_before, &crate::notices::open(estate, runtime)?);
+    change.contributes = contributed(&contributed_before, &contributions(estate, runtime)?);
     Ok(change)
 }
 
@@ -1540,6 +1591,7 @@ pub(crate) fn render_change(c: &PackChange) -> String {
         ));
     }
     s.push_str(&crate::notices::render(&c.notices));
+    s.push_str(&render_contributions(&c.contributes));
     s
 }
 
