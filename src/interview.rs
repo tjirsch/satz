@@ -497,17 +497,22 @@ pub(crate) fn run(
         accept_defaults = !matches!(line.trim().to_ascii_lowercase().as_str(), "n" | "no");
     }
     // A yes that switches a pack on opens its notice; it is shown once, when it opens.
+    // So is what it adds to another pack's list params.
     let mut open_notices = crate::notices::open(estate, runtime)?;
-    let mut notices_opened = |out: &mut dyn Write| -> Result<(), String> {
+    let mut contributions = crate::packs::contributions(estate, runtime)?;
+    let mut switch_opened = |out: &mut dyn Write| -> Result<(), String> {
         let now = crate::notices::open(estate, runtime)?;
         w(out, &crate::notices::render(&crate::notices::opened(&open_notices, &now)))?;
         open_notices = now;
+        let now = crate::packs::contributions(estate, runtime)?;
+        w(out, &crate::packs::render_contributions(&crate::packs::contributed(&contributions, &now)))?;
+        contributions = now;
         Ok(())
     };
     if accept_defaults {
         let n = apply(estate, runtime, &BTreeMap::new(), true)?;
         w(out, &format!("  accepted {} default(s).\n", n))?;
-        notices_opened(out)?;
+        switch_opened(out)?;
         report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
     }
 
@@ -584,7 +589,7 @@ pub(crate) fn run(
             continue;
         }
         w(out, &format!("  ✓ {} = {}\n", q.subject, literal(&value)))?;
-        notices_opened(out)?;
+        switch_opened(out)?;
         done.insert(q.subject.clone());
         // Re-read: a derived default may have become usable, a `use … when` may
         // have switched a pack on or off.

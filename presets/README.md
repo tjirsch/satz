@@ -390,8 +390,8 @@ their headers show.
 **This is where STANDING authority is modelled** — who administers projects, networks,
 guardrails, billing, org-wide and continuously. Its counterpart is
 [exemptions/](#exemptions), which says who may make a narrow, named EXCEPTION to a
-control this authority set, without holding this authority. Keeping the two apart is
-deliberate: `gcp-security-admins` holds `roles/orgpolicy.policyAdmin` and can rewrite any
+control this authority set, without holding this authority. The two stay apart:
+`gcp-security-admins` holds `roles/orgpolicy.policyAdmin` and can rewrite any
 policy, and that is a much bigger thing to hand someone than "may let one service account
 hold a key".
 
@@ -640,7 +640,7 @@ use "presets/scc/scc-notifications.satz"
   Google-managed service agents, so a domain-restricted organisation permits it;
 - `google_scc_v2_organization_notification_config` at `location = "global"`, with
   the filter the customer decides (`scc_notification_filter`, asked; active HIGH and
-  CRITICAL findings by default). The **v2** resource is deliberate: the v1
+  CRITICAL findings by default). The resource is **v2**: the v1
   notification API answers "This API is no longer available" on a live organisation.
 
 Nothing here subscribes to the topic: an organisation with a SIEM points it at the
@@ -745,7 +745,7 @@ did, and nothing about it reaches `report-compliance`. Because
 when one declares an action, `--no-pack-actions` ignores pack-declared ones, and
 a downloaded script arrives without its executable bit, which satz does not set.
 
-A new action is written in Python unless a shell script is genuinely simpler for
+A new action is written in Python unless a shell script is simpler for
 the job. The extension decides how satz launches the file: a `.py` action is
 spawned as `uv run --script <file>`, runs on every platform satz ships for and
 needs no executable bit, while a `.sh` action is refused on Windows before the
@@ -1075,16 +1075,17 @@ params {
 }
 
 notice cis_baseline_adopted {
-  text   = "Google sets some of these policies on every new organisation …"
-  run    = "satz adopt <estate> --execute --import"
-  before = apply
+  text     = "Google sets some of these policies on every new organisation …"
+  run      = "satz adopt <estate> --execute --import"
+  severity = error
 }
 ```
 
 satz shows it when the pack goes on — the interview's yes, `satz add-pack`,
 `merge-presets` bringing the pack in — and the compile warns at the estate's `use` line
-until the estate binds the param `true`. `before = apply` makes `transpile --apply` and
-`bootstrap` refuse while it is open. The param is the notice's alone: declared `false` in
+until the estate binds the param `true`. `severity = error` makes every command that
+writes to the organisation refuse while it is open (§6.15 of the language reference lists
+the three severities). The param is the notice's alone: declared `false` in
 the same pack, asked by no question, read by nothing, and never emitted — binding it
 moves no line of the HCL. `satz packs` lists every pack's notices with their state, and
 `satz doc-packs` gives a pack a Notices section.
@@ -1099,7 +1100,7 @@ Where Google replaces a legacy org-policy constraint with a managed one, a pack 
 
 ```
 "compute-requireOsLogin-superseded" {
-  name = "compute.requireOsLogin"
+  name   = "compute.requireOsLogin"
   parent = "organizations/{customer_organization_id}"
   spec {
     reset = true
@@ -1204,12 +1205,12 @@ that kind:
 | `encryption` | a resource that may use Google-managed keys | `gcp.restrictNonCmekServices`, `gcp.restrictCmekCryptoKeyProjects` |
 | `network-appliance` | an instance that forwards traffic for others | `compute.managed.vmCanIpForward`, `compute.managed.restrictProtocolForwardingCreationForTypes` |
 
-The classes are deliberately narrow, and `vm-image` is separate from `vm-access` for that
+The classes are narrow, and `vm-image` is separate from `vm-access` for that
 reason: what a machine can run and who can get into it are different risks and should be
 different grants. A wide class is a grant that hands over more than the person asking for
 it described.
 
-**What has no class, on purpose.** Audit logging (`gcp.detailedAuditLoggingMode`,
+**What has no class.** Audit logging (`gcp.detailedAuditLoggingMode`,
 `iam.disableAuditLoggingExemption`), VPC flow logs, DNS query logging and
 domain-restricted sharing (`iam.managed.allowedPolicyMembers`). Exempting the record of
 what happened, or letting an outside identity in, is not a delegation — it is a decision
@@ -1352,8 +1353,7 @@ level to it, which is why it is safe in the baseline. Measured on a live organis
 subnet created with no flow-log flags at all came back with `enable: true` and 0.1
 sampling. What it DOES refuse is a subnet whose flow-log settings are hand-tuned to
 something outside Google's three named levels (ESSENTIAL, LIGHT, COMPREHENSIVE) — so a
-customer who wants a custom sampling rate must pick one of the three or widen the policy
-deliberately.
+customer who wants a custom sampling rate must pick one of the three or widen the policy.
 
 
 CIS coverage beyond the baseline, one fragment per control, all **opt-in**. The base
@@ -1400,7 +1400,7 @@ switching the dry-run param off and `cis_cloud_sql_hardening` on.
 is refused, naming both and what each choice means: the twin declares the same policy
 addresses, so an estate asking for both asks for one policy to block and measure at once.
 
-**A twin carries no claim**, and that is deliberate. A dry run discharges no control
+**A twin carries no claim.** A dry run discharges no control
 while it measures, so `require` reports the control unmet — the truth. A claim over a
 dry-run policy would be contradicted by its own witness.
 
@@ -1581,7 +1581,8 @@ the resource the import flattens by itself, with or without the file.
 
 What a satz release refuses that the release before it compiled, and the edit that
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
-estate, and what to write instead; the error satz prints names the file and the line.
+estate, what to write instead, and whether the plan moves; the error satz prints
+names the file and the line.
 
 ### v0.82.0
 
@@ -1658,11 +1659,13 @@ action's `run` is launched by its extension: a `.py` file is spawned as
 `uv run --script <file> <args>` instead of being executed directly under its own
 shebang, so one file runs on every platform satz ships for. `satz run-actions
 <estate>.satz` prints the resolved command line, which now begins `uv run --script`
-for such an action; `grep -n 'run *=' *.satz presets/**/*.satz` finds every action an
-estate declares.
+for such an action; `grep -rn --include='*.satz' 'run *= *".*\.py"' .` finds every
+Python action an estate declares. Nothing emitted changes; the plan does not move.
 
 ```
 error: action "seed-settings" (yaml/main.satz:41): scripts/seed-settings.py is a Python action, and satz runs one with `uv`, which is not on PATH.
+      Install uv — `brew install uv`, `pipx install uv`, or the installer uv's own documentation names — and run this again.
+      satz does not fall back to `python` or `python3`: that is a different interpreter with different packages.
 ```
 
 **The edit:** install uv — `brew install uv`, `pipx install uv`, or the installer uv's
@@ -1699,6 +1702,8 @@ in a space, which imports nothing. The refusal names the resource and the attrib
 carry the scope. **The edit:** none in the estate — the state is wrong, and the resource
 is applied or removed with the tool that wrote it before the import is run again.
 
+The import writes nothing, so no plan moves.
+
 **An estate written by an earlier import may carry two values that were wrong.** Nothing
 rereads it, so it is read once by hand:
 
@@ -1712,6 +1717,11 @@ rereads it, so it is read once by hand:
   subscription deletes itself. **The edit:** write `expiration_policy { ttl = "" }` into
   the subscription's body.
 
+A provider carrying the provider's id as its pool id plans a replacement, and the
+replacement fails because no pool has that id; with the pool's id the plan is empty. A
+subscription the import adopted keeps its live `expiration_policy` while the estate
+writes none, so writing it back plans no change.
+
 ### v0.79.0
 
 **A project's provider alias works in the estate's region and bills to its own
@@ -1724,9 +1734,10 @@ that project's body is served by it. Two of its attributes change.
 estate. **The plan moves for an estate that works in another region and holds a
 regional resource inside a `google_project { … }` that writes no `region` of its own:**
 that resource was created in `europe-west3` and is now replaced in the estate's region.
-Find them with `grep -n "region" <hcl-dir>/providers.tf` before and after a `satz
-transpile`, and read the `tofu plan` — a destroy-and-create of a resource holding data
-is moved deliberately or not at all.
+Transpile with the previous and the current binary and compare `providers.tf`: when an
+alias's `region` differs, every regional resource inside that `google_project { … }`
+that writes no `region` of its own moves, and `tofu plan` lists each one as a
+replacement.
 
 **The edit:** none, if `europe-west3` is where the resource belongs — write `region =
 "europe-west3"` into that resource's body in the estate and the plan is empty again.
@@ -1754,6 +1765,7 @@ names both sides, and writes nothing:
 ```
 error: the import would write an estate `satz transpile` refuses, so nothing was written: a translated resource references an address this estate does not emit.
   main.tf:24 `google_storage_bucket_iam_member.state_reader` references `google_storage_bucket.state`, which stays verbatim inside `hcl trust` (main.tf:17 — uses `for_each`)
+Either make the referenced block translatable (its reason is above), import the file that declares it too, or carry everything verbatim with `--wrap-all`.
 ```
 
 **The edit:** three ways out, in the order they are worth trying.
@@ -1772,16 +1784,28 @@ already holds still transpiles or already did not.
 ### v0.77.0
 
 **The S1 security group model ships in one spelling, and the two files of the other one
-are gone.** The library no longer carries
+are gone from the library.** The library no longer carries
 `presets/security-group-models/s1-group-definitions.satz` (the five admin groups) or
 `presets/security-group-models/s1-group-permissions.satz` (their organization-level role
-grants). An estate that uses either gets a file-not-found refusal from every command that
-reads it, naming the file and the line:
+grants). Neither `get-presets` nor `merge-presets` deletes a file the library dropped, so
+an estate whose `presets_dir` still holds the two keeps compiling them, unchanged and
+without a finding. `satz check-presets` is the command that names them:
+
+```
+  local-only [included]: security-group-models/s1-group-definitions.satz (not an upstream preset — kept as-is)
+  local-only [included]: security-group-models/s1-group-permissions.satz (not an upstream preset — kept as-is)
+```
+
+Where `presets_dir` does not hold them — a new checkout, a library installed after the
+release — every command that reads the estate refuses it, naming the file and the line:
 
 ```
 error    front-end  main.satz:18
     use "presets/security-group-models/s1-group-definitions.satz": file not found
 ```
+
+Either way the estate is edited, because no release of the library updates the two
+files again.
 
 **The edit:** delete the two lines the estate holds today — one nested inside the
 `google_cloud_identity_group` block, one inside `google_organization_iam_member`:
@@ -1801,7 +1825,9 @@ use "presets/security-group-models/s1-security-groups.satz" when security_model_
 (`when security_model_s1` for an estate that uses `presets/estate-map.satz`; without the
 map, the bare `use` line.) A `google_cloud_identity_group { }` or
 `google_organization_iam_member { }` block left empty by the deletion is deleted with it;
-a block that also holds the estate's own groups or grants stays as it is.
+a block that also holds the estate's own groups or grants stays as it is. Then delete
+`s1-group-definitions.satz` and `s1-group-permissions.satz` from `presets_dir`, where
+`satz check-presets` lists them as `local-only`.
 
 The params do not change: `gcp_organization_admins_name`, `gcp_project_admins_name`,
 `gcp_security_admins_name`, `gcp_security_viewers_name` and `gcp_billing_admins_name`

@@ -1038,6 +1038,20 @@ pub fn estate_questions(
     Ok((out.0, out.1, env))
 }
 
+/// What the packs this estate uses contribute to other files' list params — the
+/// records the compile merges, from the same schema-free walk. A switch that turns a
+/// pack on compares these before and after to say what it added to a list the estate
+/// does not write itself.
+pub fn estate_contributions(
+    file_name: &str,
+    src: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<Vec<Contribution>, PipelineError> {
+    let file = satz::parse(src)
+        .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
+    Ok(contribution_seed(&file, file_name, load)?.1)
+}
+
 /// The `use` walk of `collect_params`, gathering questions and notices on the way. A
 /// pack behind a false `when` contributes neither params, questions nor notices.
 fn collect_questions(
