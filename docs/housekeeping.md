@@ -40,7 +40,7 @@ ships it).
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
 Six have **no** automatic check, and the IaC role table has none for a changed
-role: refresh them on their trigger.
+role, nor the fonts for a face behind the crate: refresh them on their trigger.
 
 ## The provider schema fixture
 
@@ -825,7 +825,7 @@ mirrors the parser by hand (`crates/satz-core/src/satz.rs`). The grammar lives i
 own repository, `satz-tree-sitter`, and `editors/zed/extension.toml` pins one commit of
 it. A statement the parser gains and the grammar has not followed reads as an error in
 the editor — or, where the statement is shaped like a resource block, as a resource
-block, which is no error anywhere and disagrees with satz silently.
+block: nothing reports an error, and the editor reads the statement differently from satz.
 
 `scripts/check-grammar.sh` clones the pinned commit into a temporary directory and runs
 two checks against it.
@@ -1012,7 +1012,8 @@ organization's own state:
   org where it is disabled and the subscription does not carry it. The script passes
   the API's message through.
 - **The built-in fallback list is in the API's own names**, which is what discovery
-  returns; a CLI spelling there would break the fallback path silently.
+  returns; a CLI spelling there names no service the API
+  knows.
 
 ### What it does
 

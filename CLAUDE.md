@@ -77,9 +77,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
   reads or writes a customer's estate runs as that estate's IaC service
   account, derived from `svc_iac_account` + `infra_project_name` exactly as the
   emitter derives the provider's `impersonate_service_account`. The exceptions
-  are bare `whoami` (given an estate it binds like everything else, to answer
-  what that estate acts as), `bootstrap`, `init` and `map-types`, each named with
-  its reason in `IDENTITIES` (`src/main.rs`), which a test forces every new
+  are bare `whoami` and bare `import` (given an estate — `whoami <estate>`,
+  `import --into`/`--as` — they bind like everything else), `bootstrap`, `init`,
+  `migrate` (`--mode cloud` assigns Groups Admin, which the account cannot give
+  itself) and `map-types`, each named with its reason in `IDENTITIES` (`src/main.rs`), which a test forces every new
   command to join. One command, one identity: the CLI binds it for the process
   and a second, different binding is refused, never ignored. `satz mcp` is
   long-lived and works through estates in turn, so it SCOPES the identity to each
@@ -140,11 +141,9 @@ and in the maintainer's notes. Nothing in this file names a customer.
 - **`cargo test` does NOT rebuild the debug binary** — `cargo build` before a
   live test, or a stale binary shadows the fix. Same family: an edit to
   `crates/satz-core/` was once not picked up — `touch` the file and confirm
-  "Compiling satz-core" before trusting a live run. `scripts/smoke.sh` used to
-  belong here too: it ran `target/release/satz` and rebuilt it only when the
-  file was MISSING, so a local run after a pull or a merge judged the leftover
-  binary instead of the tree. It now always builds (2026-09-03); pass `SATZ=`
-  only when you built the binary yourself and want that one.
+  "Compiling satz-core" before trusting a live run. `scripts/smoke.sh` always
+  builds the binary it judges; pass `SATZ=` only when you built the binary
+  yourself and want that one.
 - **Corpus (`tests/corpus/`) is snapshot-gated:** `UPDATE_CORPUS=1` + review
   the diff.
 - **Every Satz file in the repository is formatted (2026-09-13, ADR 0017).** `satz fmt`

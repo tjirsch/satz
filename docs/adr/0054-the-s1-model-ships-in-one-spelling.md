@@ -40,11 +40,15 @@ use "presets/security-group-models/s1-security-groups.satz" when security_model_
 
 `s1-group-definitions.satz` and `s1-group-permissions.satz` are deleted, with their
 `offers` entries, their pages under `presets/docs/`, their changelog rows and the
-`tests/iac/s1-split` case. An estate that still holds their lines is refused by name and
-line — `use "…/s1-group-definitions.satz": file not found` — and `presets/README.md`'s
+`tests/iac/s1-split` case. Neither `get-presets` nor `merge-presets` deletes a file the
+library dropped, so an estate whose `presets_dir` still holds the two files keeps
+compiling them, and `satz check-presets` lists them as `local-only [included]`; an
+estate whose `presets_dir` lacks them is refused by name and line — `use
+"…/s1-group-definitions.satz": file not found`. `presets/README.md`'s
 `## Breaking changes` carries the edit: delete the two nested lines, write the one
-top-level line, keep every param as it is. No alias, no shim, no migration: the plan
-does not move, so the edit is two lines and a re-transpile.
+top-level line, keep every param as it is, delete the two files from `presets_dir`. No
+alias, no shim, no migration: the plan does not move, so the edit is two lines, two
+deleted files and a re-transpile.
 
 With the only instance gone, the same-gate alternative-spelling handling goes with it.
 Two packs that exclude one another and both deploy are now always the
@@ -71,9 +75,11 @@ argue for itself, and would then bring back the handling with a case that exerci
 
 ## Consequences
 
-- An estate on the two-file spelling does not compile until it is edited. The edit is
-  mechanical and the emitted HCL is unchanged, so the estate's `tofu plan` after it
-  reports no change.
+- An estate on the two-file spelling keeps compiling while its `presets_dir` holds its
+  own copies of the two files, which no library update refreshes or removes; it does not
+  compile where they are missing. Either way it is edited, and the two files are deleted
+  by hand. The edit is mechanical and the emitted HCL is unchanged, so the estate's
+  `tofu plan` after it reports no change.
 - `estate_map` 2.2 offers two fewer packs and its `requires` on
   `billing-account-permissions.satz` names the two models.
 - ADR 0033's "the two spellings of one security model on one gate are no contradiction"

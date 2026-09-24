@@ -156,8 +156,7 @@ Before it asks for a credential, `bootstrap` checks the params it is about to us
 is the one `estate-core` declares — the organisation id is
 a number, the billing account reads `XXXXXX-XXXXXX-XXXXXX`, and the project id and
 bucket name are shaped the way Google accepts them. A failure names the param and the
-flag that sets it, and nothing is called — an empty value used to travel into a URL
-and come back as an HTML error page. Then, before any permission is tested, the
+flag that sets it, and nothing is called, so an empty value never reaches a URL. Then, before any permission is tested, the
 organisation itself is resolved: one that is not visible to the caller is reported as
 that, with the ones that are listed, rather than as a wall of missing permissions.
 Where the estate binds `customer_id` as well, the two are cross-checked, so an
@@ -611,7 +610,7 @@ What is left is what only a person decides:
 - Declare the groups and memberships: they are not in Cloud Asset Inventory, and
   `satz adopt` resolves their ids.
 - Look through the skipped list and the numbered grants (`--on-collision counter`),
-  and keep or drop them deliberately.
+  and keep or drop each.
 - Write the switches no API reports, so no import can read them: `force_destroy` on
   a bucket is Terraform's own, and an estate that wants it declares it. The
   attributes the import names as not carried — the provider knows them, the sweep
@@ -735,8 +734,8 @@ controls while its customer is audited against ISO 27001 — and the export an a
 reads has to cover both. An estate that binds no `compliance_frameworks` is scanned for
 what its packs claim, and stderr says that is all the line had. A framework satz ships a
 catalog for but Prowler has no equivalent of is NAMED as unmapped rather than mapped to
-something that looks close: a wrong `--compliance` argument silently scans the wrong
-control set.
+something that looks close: a wrong `--compliance` argument scans the wrong control
+set.
 
 `--format json` is the same answer for an agent, and `satz_prowler` serves it over MCP.
 
