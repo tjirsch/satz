@@ -202,8 +202,14 @@ fn on_path(program: &str) -> bool {
 /// can run; what has to be there is uv. Everything else is spawned as a program and
 /// must be one.
 fn check_runnable(path: &Path) -> Result<(), String> {
+    runnable(path, on_path(UV))
+}
+
+/// [`check_runnable`] with the one fact it reads from the machine handed in, so
+/// both branches are judged whatever this machine has installed.
+fn runnable(path: &Path, uv_on_path: bool) -> Result<(), String> {
     if is_python(path) {
-        return check_uv(path, on_path(UV));
+        return check_uv(path, uv_on_path);
     }
     check_executable(path)
 }
@@ -524,13 +530,25 @@ mod tests {
         let script = dir.join("seed.py");
         std::fs::write(&script, "print('hi')\n").unwrap();
         // 0644, as a `get-presets` download arrives: uv reads the file, so the mode bit
-        // decides nothing — uv on PATH is the whole condition.
-        assert_eq!(check_runnable(&script).is_ok(), on_path(UV));
+        // decides nothing — uv on PATH is the whole condition, both ways.
+        runnable(&script, true).expect("a .py action with uv on PATH runs without its executable bit");
+        let err = runnable(&script, false).unwrap_err();
+        assert!(err.contains("`uv`") && err.contains("seed.py"), "{err}");
 
+        // a shell script is spawned as a program: without the bit it is refused, and
+        // uv changes nothing about that
         let sh = dir.join("seed.sh");
         std::fs::write(&sh, "#!/bin/sh\n").unwrap();
-        let err = check_runnable(&sh).unwrap_err();
-        assert!(err.contains("seed.sh"), "{err}");
+        for uv in [true, false] {
+            let err = runnable(&sh, uv).unwrap_err();
+            assert!(err.contains("seed.sh"), "uv on PATH: {uv}: {err}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            runnable(&sh, false).expect("an executable shell script runs, uv or not");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 

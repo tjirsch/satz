@@ -121,6 +121,34 @@ pub(crate) async fn get_project_number(
     Ok(project.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
 }
 
+/// The organisation a folder or a project hangs under, `organizations/<n>`, read
+/// by walking `parent` up one `folders.get` / `projects.get` at a time. A
+/// resource with no organisation above it, a chain deeper than Resource Manager
+/// allows, and every failed read are errors naming where the walk stopped.
+pub(crate) async fn organization_of(client: &reqwest::Client, token: &str, name: &str) -> Result<String, String> {
+    // ten folder levels, the project, and the organisation
+    const MAX_HOPS: usize = 12;
+    let mut at = name.to_string();
+    for _ in 0..MAX_HOPS {
+        if at.starts_with("organizations/") {
+            return Ok(at);
+        }
+        if !(at.starts_with("folders/") || at.starts_with("projects/")) {
+            return Err(format!("{} is neither a folder, a project nor an organisation", at));
+        }
+        let res = client.get(format!("{}/{}", BASE, at)).bearer_auth(token).send().await.map_err(|e| format!("{}: {}", at, e))?;
+        if !res.status().is_success() {
+            return Err(format!("{}: {}", at, String::from(super::api_error(res).await)));
+        }
+        let body: serde_json::Value = res.json().await.map_err(|e| format!("{}: {}", at, e))?;
+        at = match body.get("parent").and_then(|v| v.as_str()).filter(|p| !p.is_empty()) {
+            Some(parent) => parent.to_string(),
+            None => return Err(format!("{} has no parent: it belongs to no organisation", at)),
+        };
+    }
+    Err(format!("{}: no organisation within {} levels above it", name, MAX_HOPS))
+}
+
 /// Poll a long-running operation until it reports `done`, or the deadline
 /// passes. Without a deadline a stuck operation loops forever; without
 /// inspecting the terminal object, a failed operation reads as a success.

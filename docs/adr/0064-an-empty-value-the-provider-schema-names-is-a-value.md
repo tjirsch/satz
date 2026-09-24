@@ -1,6 +1,6 @@
 # 0064 — an empty value the provider schema names is a value
 
-- **Status:** accepted
+- **Status:** accepted; decision 1 superseded by ADR-0067 (an empty string is kept only on a required attribute)
 - **Date:** 2026-09-23
 - **Shipped in:** the release that follows
 

@@ -146,12 +146,12 @@ fn body_carries_provider(tf_type: &str, form: &GrantForm) -> bool {
         )
 }
 
-/// What a grant map reads as a member rather than as the scope it pins. The
-/// mirror of `satz_core::pipeline`'s own rule: a key with no `:` is a scope
-/// attribute there, so a member the import cannot write as one wraps instead of
-/// becoming an estate the front end refuses.
+/// What a grant map reads as a member rather than as the scope it pins: the
+/// front end's own rule (`satz_core::pipeline::is_scope_attr_key`), so a member
+/// the import cannot write as one wraps instead of becoming an estate the front
+/// end refuses.
 fn is_member(s: &str) -> bool {
-    s.contains(':') || s == "allUsers" || s == "allAuthenticatedUsers"
+    !satz_core::pipeline::is_scope_attr_key(s)
 }
 
 const META_BLOCKS: &[&str] = &["dynamic", "provisioner", "connection"];
@@ -298,7 +298,18 @@ type Reasons = BTreeMap<(String, usize), String>;
 
 /// Import every file. `wrap_all` carries the input verbatim and promotes
 /// nothing — a param is a translation, and under that flag none happens.
-pub fn import(inputs: &[Input], name: &str, wrap_all: bool, schema: &dyn Schema) -> Result<Imported, String> {
+///
+/// `organization` is `--organization <n>`: the organisation the estate is bound
+/// to when the configuration names none, and a check on the one it names. An
+/// estate is written bound to exactly one organisation or not at all
+/// ([`bound_organization`]).
+pub fn import(
+    inputs: &[Input],
+    name: &str,
+    wrap_all: bool,
+    organization: Option<&str>,
+    schema: &dyn Schema,
+) -> Result<Imported, String> {
     // parse once: one error site, and the pre-pass and the block loop share it
     let mut parsed: Vec<(&Input, Body)> = Vec::new();
     for input in inputs {
@@ -307,13 +318,13 @@ pub fn import(inputs: &[Input], name: &str, wrap_all: bool, schema: &dyn Schema)
     }
 
     if wrap_all {
-        return wrap_everything(&parsed, name);
+        return wrap_everything(&parsed, name, organization);
     }
 
     let mut forced: BTreeSet<String> = BTreeSet::new();
     let mut reasons: Reasons = Reasons::new();
     loop {
-        match one_pass(&parsed, name, schema, &forced, &mut reasons)? {
+        match one_pass(&parsed, name, organization, schema, &forced, &mut reasons)? {
             Pass::Done(mut imported) => {
                 if !forced.is_empty() {
                     imported.notes.push(format!(
@@ -336,6 +347,7 @@ pub fn import(inputs: &[Input], name: &str, wrap_all: bool, schema: &dyn Schema)
 fn one_pass(
     parsed: &[(&Input, Body)],
     name: &str,
+    organization: Option<&str>,
     schema: &dyn Schema,
     forced: &BTreeSet<String>,
     reasons: &mut Reasons,
@@ -650,12 +662,6 @@ fn one_pass(
 
     // params: the inferred organisation id, then every promoted constant
     let mut params: Vec<(String, String)> = Vec::new();
-    if let Some(org) = org_ids.iter().next() {
-        params.push((
-            "customer_organization_id".to_string(),
-            migrate::param_value(&serde_yaml::Value::String(org.clone())).map_err(|e| e.to_string())?,
-        ));
-    }
     let mut required: Vec<String> = Vec::new();
     for (hcl_name, c) in &consts.by_name {
         if c.conflict.is_some() {
@@ -681,12 +687,6 @@ fn one_pass(
         "A `${…}` reference is opaque to the compliance plane: translated is not proven.".to_string(),
     ];
     let mut notes: Vec<String> = Vec::new();
-    if params.is_empty() {
-        header.push(
-            "No organisation id was found among the literals — add `customer_organization_id` to `params` by hand."
-                .to_string(),
-        );
-    }
     if !required.is_empty() {
         header.push(String::new());
         header.push("Bind these before transpiling — the source declared them without a default,".to_string());
@@ -746,8 +746,43 @@ fn one_pass(
         ));
     }
 
+    // the organisation last among the refusals: a reference across the verbatim
+    // boundary says more about the input than a missing `--organization` does
+    let org = bound_organization(&org_ids, organization)?;
+    params.insert(
+        0,
+        ("customer_organization_id".to_string(), migrate::param_value(&serde_yaml::Value::String(org)).map_err(|e| e.to_string())?),
+    );
     let satz = render(&top, name, &params, &header, &verbatim)?;
     Ok(Pass::Done(Box::new(Imported { satz, rows, notes, ordering_dropped: dropped_edges })))
+}
+
+/// The organisation an imported estate is bound to: the one the configuration
+/// names (a literal `organizations/<n>` parent or `org_id`, an org policy's
+/// parent), or `--organization` when it names none — never both disagreeing, never
+/// two, never none. The same refusals as the state shape's: an estate written
+/// without one carries `organizations/` and `""` where an id belongs.
+fn bound_organization(found: &BTreeSet<String>, flag: Option<&str>) -> Result<String, String> {
+    let named: Vec<&String> = found.iter().collect();
+    match (named.as_slice(), flag) {
+        ([], None) => Err("import: no organization id — nothing in the configuration names one (a literal \
+             `organizations/<n>` parent, an `org_id`, an org policy's parent), and a folder's parent and an \
+             organization grant's `org_id` are written from `customer_organization_id`. Nothing written. Name it \
+             with `--organization <n>`."
+            .to_string()),
+        ([], Some(flag)) => Ok(flag.to_string()),
+        ([one], None) => Ok((*one).clone()),
+        ([one], Some(flag)) if *one == flag => Ok(flag.to_string()),
+        ([one], Some(flag)) => Err(format!(
+            "--organization {} but the configuration names organization {} — one of the two is wrong, and satz does not pick. Nothing written.",
+            flag, one
+        )),
+        (many, _) => Err(format!(
+            "import: the configuration names {} organizations ({}), and an estate is bound to one — import each organisation's files on their own. Nothing written.",
+            many.len(),
+            many.iter().map(|o| o.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
 }
 
 fn base_estate() -> Result<serde_yaml::Mapping, String> {
@@ -778,7 +813,17 @@ fn render(
 }
 
 /// `--wrap-all`: every block verbatim except the two the emitter owns.
-fn wrap_everything(parsed: &[(&Input, Body)], name: &str) -> Result<Imported, String> {
+fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&str>) -> Result<Imported, String> {
+    // nothing is translated, so nothing names an organisation but the flag
+    let org = organization.ok_or(
+        "import: no organization id — --wrap-all translates nothing, so nothing in the configuration names one, and every \
+         estate is bound to one: a folder's parent and an organization grant's `org_id` are written from \
+         `customer_organization_id`. Nothing written. Name it with `--organization <n>`.",
+    )?;
+    let params = vec![(
+        "customer_organization_id".to_string(),
+        migrate::param_value(&serde_yaml::Value::String(org.to_string())).map_err(|e| e.to_string())?,
+    )];
     let mut rows = Vec::new();
     let mut verbatim = Vec::new();
     for (input, body) in parsed {
@@ -810,11 +855,11 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str) -> Result<Imported, St
     rows.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
     let header = vec![
         "Imported from existing Terraform with --wrap-all: every block is carried verbatim".to_string(),
-        "inside `hcl trust`, nothing is translated and no params are promoted. It deploys".to_string(),
-        "exactly as written; `tofu plan` against the source's state must show no changes.".to_string(),
-        "No organisation id was inferred — add `customer_organization_id` to `params` by hand.".to_string(),
+        "inside `hcl trust`, nothing is translated and no params are promoted beyond the".to_string(),
+        "organisation `--organization` names. It deploys exactly as written; `tofu plan`".to_string(),
+        "against the source's state must show no changes.".to_string(),
     ];
-    let satz = render(&base_estate()?, name, &[], &header, &verbatim)?;
+    let satz = render(&base_estate()?, name, &params, &header, &verbatim)?;
     Ok(Imported { satz, rows, notes: Vec::new(), ordering_dropped: Vec::new() })
 }
 
@@ -2335,7 +2380,7 @@ module "vpc" {
 
     #[test]
     fn resources_are_placed_by_the_folder_and_project_they_reference() {
-        let imported = import(&one(TF), "acme", false, &Known).unwrap();
+        let imported = import(&one(TF), "acme", false, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         assert!(s.contains("customer_organization_id = \"123456789012\""), "{}", s);
         // team nests under workloads, infra under team, the bucket/service/grant under infra
@@ -2389,16 +2434,41 @@ module "vpc" {
 
     #[test]
     fn wrap_all_wraps_everything_that_is_not_dropped() {
-        let imported = import(&one(TF), "acme", true, &Known).unwrap();
+        let imported = import(&one(TF), "acme", true, Some("123456789012"), &Known).unwrap();
         assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 0);
         assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Promoted(_))).count(), 0);
         assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 14);
         satz_core::satz::parse(&imported.satz).unwrap();
     }
 
+    /// An estate is bound to one organisation. The hcl shape writes one only when
+    /// it knows which: named by the configuration, or by `--organization` — the
+    /// flag filling what the configuration does not say, never overruling it.
+    #[test]
+    fn the_estate_is_written_bound_to_one_organisation_or_not_at_all() {
+        let no_org = "resource \"google_storage_bucket\" \"b\" {\n  name     = \"corp-logs-001\"\n  location = \"EU\"\n}\n";
+        let e = import(&one(no_org), "e", false, None, &Known).unwrap_err();
+        assert!(e.contains("no organization id") && e.contains("--organization <n>"), "{e}");
+        let e = import(&one(no_org), "e", true, None, &Known).unwrap_err();
+        assert!(e.contains("--wrap-all translates nothing") && e.contains("--organization <n>"), "{e}");
+        for wrap_all in [false, true] {
+            let s = import(&one(no_org), "e", wrap_all, Some("123456789012"), &Known).unwrap().satz;
+            assert!(s.contains("customer_organization_id = \"123456789012\""), "wrap_all={wrap_all}: {s}");
+        }
+        // the configuration names one: the flag agrees or is refused
+        let named = "resource \"google_folder\" \"f\" {\n  display_name = \"Shared\"\n  parent       = \"organizations/123456789012\"\n}\n";
+        import(&one(named), "e", false, None, &Known).expect("the configuration names it");
+        let e = import(&one(named), "e", false, Some("222222222222"), &Known).unwrap_err();
+        assert!(e.contains("--organization 222222222222") && e.contains("names organization 123456789012"), "{e}");
+        // two organisations are two estates
+        let two = format!("{}resource \"google_folder\" \"g\" {{\n  display_name = \"Other\"\n  parent       = \"organizations/222222222222\"\n}}\n", named);
+        let e = import(&one(&two), "e", false, None, &Known).unwrap_err();
+        assert!(e.contains("names 2 organizations") && e.contains("222222222222"), "{e}");
+    }
+
     #[test]
     fn a_syntax_error_names_the_file() {
-        let e = import(&[Input { path: "bad.tf".into(), text: "resource \"x\" {".into() }], "e", true, &Known).unwrap_err();
+        let e = import(&[Input { path: "bad.tf".into(), text: "resource \"x\" {".into() }], "e", true, Some("123456789012"), &Known).unwrap_err();
         assert!(e.starts_with("bad.tf: "), "{}", e);
     }
 
@@ -2426,7 +2496,7 @@ resource "google_project_iam_member" "no_member" {
   role    = "roles/viewer"
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let c = squash(&imported.satz);
         assert!(
             c.contains("\"group:auditors@example.com\"=[{role=\"roles/viewer\"condition{title=\"office-hours\""),
@@ -2462,7 +2532,7 @@ resource "google_project_iam_member" "viewers" {
   member  = var.viewers[count.index]
 }
 "#;
-        let imported = import(&one(tf), "e", false, &Known).unwrap();
+        let imported = import(&one(tf), "e", false, Some("123456789012"), &Known).unwrap();
         let expanded: Vec<&Row> = imported.rows.iter().filter(|r| matches!(r.action, Action::Expanded(_))).collect();
         assert_eq!(expanded.len(), 1, "{:?}", imported.rows);
         assert_eq!(expanded[0].action, Action::Expanded(2), "one resource per list entry");
@@ -2493,7 +2563,7 @@ resource "google_storage_bucket" "state" {
   location = var.regions[count.index]
 }
 "#;
-        let imported = import(&one(tf), "e", false, &Known).unwrap();
+        let imported = import(&one(tf), "e", false, Some("123456789012"), &Known).unwrap();
         assert!(imported.satz.contains("state_europe_west3"), "{}", imported.satz);
         assert!(imported.satz.contains("state_europe_west4"), "{}", imported.satz);
         assert!(imported.satz.contains("acme-state-europe-west3"), "the template took the entry:\n{}", imported.satz);
@@ -2514,7 +2584,7 @@ resource "google_storage_bucket" "b" {
   location = "EU"
 }
 "#;
-        let imported = import(&one(unknown), "e", false, &Known).unwrap();
+        let imported = import(&one(unknown), "e", false, Some("123456789012"), &Known).unwrap();
         assert!(
             imported.rows.iter().any(|r| matches!(&r.action, Action::Wrapped(w) if w.contains("count"))),
             "{:?}",
@@ -2532,7 +2602,7 @@ resource "google_storage_bucket" "b" {
   location = "EU"
 }
 "#;
-        let imported = import(&one(other), "e", false, &Known).unwrap();
+        let imported = import(&one(other), "e", false, Some("123456789012"), &Known).unwrap();
         assert!(
             imported.rows.iter().any(|r| matches!(&r.action, Action::Wrapped(_))),
             "an index into another list is not this expansion: {:?}",
@@ -2556,7 +2626,7 @@ resource "google_project" "infra" {
   billing_account = var.billing
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         // promoted, with values
         assert!(s.contains("pid = \"acme-infra-001\""), "{}", s);
@@ -2603,7 +2673,7 @@ resource "google_organization_iam_member" "grant" {
   member = "serviceAccount:${google_service_account.sa.email}"
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         // a mixed template: the param interpolates, the resource ref is verbatim
         assert!(s.contains(r#""organizations/{org_id}/roles/custom""#), "{}", s);
@@ -2632,7 +2702,7 @@ resource "google_storage_bucket_iam_member" "m" {
   member = "group:auditors@example.com"
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         // a bucket grant is the scope-pinned member map: the bucket beside the members
         assert!(
@@ -2656,7 +2726,7 @@ resource "google_storage_bucket" "b" {
   project  = "p"
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let row = imported.rows.iter().find(|r| r.what.contains("google_storage_bucket")).unwrap();
         assert!(
             matches!(&row.action, Action::Wrapped(r) if r.contains("list or object")),
@@ -2681,7 +2751,7 @@ resource "google_storage_bucket" "b" {
   project  = "p"
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let by = by_what(&imported);
         assert!(
             matches!(by["resource \"google_storage_bucket\" \"a\""], Action::Wrapped(r) if r.contains("does not declare")),
@@ -2704,7 +2774,7 @@ resource "google_storage_bucket" "b" {
   project  = "p"
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let row = imported.rows.iter().find(|r| r.what.contains("google_storage_bucket")).unwrap();
         assert!(matches!(&row.action, Action::Wrapped(r) if r.contains("literal `${`")), "{:?}", row.action);
     }
@@ -2724,7 +2794,7 @@ resource "google_project_service" "s" {
   service = element(var.svc_list, count.index)
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         let by = by_what(&imported);
         // the count block wraps, naming count — not a later attribute
@@ -2760,7 +2830,7 @@ resource "google_service_account" "sa" {
   account_id = "svc-iac"
 }
 "#;
-        let imported = import(&one(tf), "acme", false, &Known).unwrap();
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         // the service account has no `project` of its own; it inherits the
         // provider default, which resolves to the imported project
@@ -2801,7 +2871,7 @@ resource "google_service_account" "sa" {
   depends_on = [google_project_service.iam]
 }
 "#;
-        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let imported = import(&one(tf), "corp", false, Some("123456789012"), &Known).unwrap();
         assert_eq!(
             imported.rows.iter().filter(|r| r.action == Action::Translated).count(),
             3,
@@ -2843,7 +2913,7 @@ resource "google_organization_iam_member" "admins" {
   member   = "group:gcp-organization-admins@example.com"
 }
 "#;
-        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let imported = import(&one(tf), "corp", false, Some("123456789012"), &Known).unwrap();
         let by = by_what(&imported);
         for what in ["resource \"google_folder\" \"f\"", "resource \"google_organization_iam_member\" \"admins\""] {
             assert!(
@@ -2873,7 +2943,7 @@ resource "google_storage_bucket" "c" {
   depends_on = [module.vpc]
 }
 "#;
-        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let imported = import(&one(tf), "corp", false, Some("123456789012"), &Known).unwrap();
         let by = by_what(&imported);
         assert!(
             matches!(by["resource \"google_storage_bucket\" \"b\""], Action::Wrapped(r) if r.contains("`depends_on` names `google_project_service.elsewhere`, which no block in this import declares")),
@@ -2910,7 +2980,7 @@ resource "google_service_account" "key" {
   description = "beside ${google_storage_bucket.ring.name}"
 }
 "#;
-        let e = import(&one(tf), "corp", false, &Known).unwrap_err();
+        let e = import(&one(tf), "corp", false, Some("123456789012"), &Known).unwrap_err();
         assert!(e.contains("so nothing was written"), "{}", e);
         assert!(
             e.contains(
@@ -2922,7 +2992,7 @@ resource "google_service_account" "key" {
         assert!(e.contains("uses `for_each`"), "the other side's own reason: {}", e);
         assert!(e.contains("--wrap-all"), "{}", e);
         // and it is the import that refuses: --wrap-all carries both
-        import(&one(tf), "corp", true, &Known).unwrap();
+        import(&one(tf), "corp", true, Some("123456789012"), &Known).unwrap();
     }
 
     /// A reference to an address no block declares was a note and a written
@@ -2937,7 +3007,7 @@ resource "google_storage_bucket" "b" {
   labels   = { ring = "${google_project.elsewhere.project_id}" }
 }
 "#;
-        let e = import(&one(tf), "corp", false, &Known).unwrap_err();
+        let e = import(&one(tf), "corp", false, Some("123456789012"), &Known).unwrap_err();
         assert!(e.contains("references `google_project.elsewhere`, which no block in this import declares"), "{}", e);
     }
 
@@ -2955,7 +3025,7 @@ resource "google_org_policy_policy" "compute_managed_requireOsLogin" {
   }
 }
 "#;
-        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let imported = import(&one(tf), "corp", false, Some("123456789012"), &Known).unwrap();
         assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 1, "{:?}", imported.rows);
         assert!(imported.satz.contains("compute_managed_requireOsLogin"), "{}", imported.satz);
         satz_core::satz::parse(&imported.satz).unwrap();
@@ -2982,7 +3052,7 @@ resource "google_service_account" "sa" {
   account_id = "svc-iac"
 }
 "#;
-        let imported = import(&one(tf), "corp", false, &Known).unwrap();
+        let imported = import(&one(tf), "corp", false, Some("123456789012"), &Known).unwrap();
         let by = by_what(&imported);
         assert!(
             matches!(by["resource \"google_organization_iam_member\" \"sink_writer\""], Action::Wrapped(r) if r.contains("is not a member (`<type>:<value>`)")),

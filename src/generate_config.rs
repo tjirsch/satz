@@ -10,10 +10,11 @@
 //! provider writes goes back through the HCL import arm — the same arm that
 //! reads `-generate-config-out` output an operator produced by hand.
 //!
-//! The import id is the asset's relative resource name for every type whose
-//! provider id is that name, and a per-type derivation for the types where the
-//! two differ ([`import_id`]). An id no rule can build is refused by name; none
-//! is guessed.
+//! The import id is the one the mapped route writes as `"import-id"`
+//! (`discovery::import_id`, ADR 0068): the asset's relative resource name with the
+//! names the sweep read put where Cloud Asset has numbers, rendered through the
+//! import-config row's `import_id` template where the row has one. An id that
+//! derivation cannot build is refused by name; none is guessed.
 //!
 //! An unmapped resource that cannot even get an import block is listed with the
 //! reason: no Terraform type corresponds to its asset type, or its name is not a
@@ -30,7 +31,7 @@
 //! configuration is in that file, whether the provider reported it, and in the
 //! provider's own words.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::discovery::{SkipReason, Skipped};
@@ -123,81 +124,6 @@ fn label(import_id: &str, taken: &mut BTreeSet<String>) -> String {
     candidate
 }
 
-/// The provider's import id for a live resource, from its Cloud Asset full
-/// resource name.
-///
-/// For most types the id IS the asset's relative resource name — the derivation
-/// the mapped resources' own `"import-id"` uses. Where the provider imports by
-/// something else, the rule is here and named per type; where a rule cannot
-/// build the id from what the sweep holds, the resource is refused with the
-/// reason. Nothing is guessed: a wrong id costs a read against the live
-/// platform and a refusal the operator has to read back to this table.
-///
-/// `asset_names` is the sweep's own `full resource name → the name the resource
-/// calls itself` map (`Discovered::asset_names`).
-///
-/// The rules, each measured against a live organisation:
-///
-/// - `google_compute_instance_settings` is a singleton: Cloud Asset names it
-///   `projects/<p>/zones/<z>/instanceSettings/InstanceSettings`, and the
-///   provider imports the collection path without that trailing kind.
-/// - `google_dns_managed_zone` and `google_dns_record_set` import by the ZONE's
-///   name, where Cloud Asset names the zone by its numeric id. The zone asset's
-///   own data states the name and the sweep keeps it.
-pub(crate) fn import_id(
-    tf_type: &str,
-    full_name: &str,
-    asset_names: &BTreeMap<String, String>,
-) -> Result<String, String> {
-    let relative = crate::discovery::asset_resource_name(full_name).ok_or_else(|| {
-        format!("`{}` is not a Cloud Asset resource name, so there is no id to import by", full_name)
-    })?;
-    match tf_type {
-        "google_compute_instance_settings" => relative
-            .strip_suffix("/InstanceSettings")
-            .map(str::to_string)
-            .ok_or_else(|| {
-                format!(
-                    "{} imports by the collection path `projects/<p>/zones/<z>/instanceSettings`, and `{}` does not end in the /InstanceSettings Cloud Asset appends",
-                    tf_type, relative
-                )
-            }),
-        "google_dns_managed_zone" => {
-            let head = managed_zones_path(relative, tf_type)?;
-            Ok(format!("{}/{}", head, zone_name(full_name, full_name, asset_names)?))
-        }
-        "google_dns_record_set" => {
-            let (zone, rrset) = full_name.split_once("/rrsets/").ok_or_else(|| {
-                format!("{} imports by `…/managedZones/<zone>/rrsets/<name>/<type>`, and `{}` names no rrsets", tf_type, full_name)
-            })?;
-            let zone_relative = crate::discovery::asset_resource_name(zone).unwrap_or(zone);
-            let head = managed_zones_path(zone_relative, tf_type)?;
-            Ok(format!("{}/{}/rrsets/{}", head, zone_name(zone, full_name, asset_names)?, rrset))
-        }
-        _ => Ok(relative.to_string()),
-    }
-}
-
-/// `projects/<p>/managedZones` — the path a DNS zone's name hangs off, from a
-/// zone's relative resource name.
-fn managed_zones_path(zone_relative: &str, tf_type: &str) -> Result<String, String> {
-    zone_relative.rsplit_once("/managedZones/").map(|(head, _)| format!("{}/managedZones", head)).ok_or_else(|| {
-        format!("{} imports by `projects/<p>/managedZones/<zone>`, and `{}` names no managedZones", tf_type, zone_relative)
-    })
-}
-
-/// The name of the managed zone Cloud Asset calls `zone_asset`, from the sweep's
-/// own reading of that zone. A zone the sweep did not read is a refusal naming
-/// what is missing, never the numeric id the provider does not import by.
-fn zone_name(zone_asset: &str, what: &str, asset_names: &BTreeMap<String, String>) -> Result<String, String> {
-    asset_names.get(zone_asset).cloned().ok_or_else(|| {
-        format!(
-            "the managed zone {} is not among the assets this sweep read, and `{}` imports by the zone's name rather than by the number Cloud Asset gives it — sweep dns.googleapis.com/ManagedZone as well",
-            zone_asset, what
-        )
-    })
-}
-
 /// Which skipped resources the provider can be asked to generate configuration
 /// for, and why each of the others cannot.
 ///
@@ -212,7 +138,14 @@ fn zone_name(zone_asset: &str, what: &str, asset_names: &BTreeMap<String, String
 /// live sweep puts the Terraform type in `tf_type` where a row gave it one and
 /// the Cloud Asset type where no row did — so the schema is what tells the two
 /// apart, and the message says which of the two the reader is looking at.
-pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool, asset_names: &BTreeMap<String, String>) -> Plan {
+///
+/// `id_of` is the import id of a skipped resource, or why there is none:
+/// `Discovered::skipped_import_id`, the derivation every route shares.
+pub(crate) fn plan(
+    skipped: &[Skipped],
+    known_type: &dyn Fn(&str) -> bool,
+    id_of: &dyn Fn(&Skipped) -> Result<String, String>,
+) -> Plan {
     let mut out = Plan::default();
     let mut taken = BTreeSet::new();
     for s in skipped {
@@ -236,7 +169,7 @@ pub(crate) fn plan(skipped: &[Skipped], known_type: &dyn Fn(&str) -> bool, asset
             out.refused.push((s.what.clone(), why));
             continue;
         }
-        let import_id = match import_id(&s.tf_type, &s.what, asset_names) {
+        let import_id = match id_of(s) {
             Ok(id) => id,
             Err(why) => {
                 out.refused.push((s.what.clone(), why));
@@ -320,13 +253,27 @@ pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider], child
 /// the file the run is known by — the estate a plain sweep wrote, the scope's
 /// top-level pack under `--into`.
 ///
-/// `(scratch directory, the Satz file name)`: `<base>-generate/` beside the base,
-/// and `<base>-generated.satz`, which lands where every other file of the run
-/// does. One base, one pair of names, so a second scope imported into the same
-/// estate neither overwrites the first nor plans in its directory.
-pub(crate) fn output_names(base: &Path) -> (PathBuf, String) {
+/// `(scratch directory, the Satz file)`: `<base>-generate/` and
+/// `<base>-generated.satz`, both beside the base. One base, one pair of paths, so
+/// a second scope imported into the same estate neither overwrites the first nor
+/// plans in its directory.
+pub(crate) fn output_names(base: &Path) -> (PathBuf, PathBuf) {
     let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("discovered");
-    (base.with_file_name(format!("{}-generate", stem)), format!("{}-generated.satz", stem))
+    (base.with_file_name(format!("{}-generate", stem)), base.with_file_name(format!("{}-generated.satz", stem)))
+}
+
+/// Refused when the Satz file a `--generate-unmapped` run writes is already there:
+/// it is the operator's to merge and edit, and a second run would replace it.
+pub(crate) fn refuse_existing_output(base: &Path) -> Result<(), String> {
+    let (_, file) = output_names(base);
+    if file.exists() {
+        return Err(format!(
+            "{} exists — an earlier --generate-unmapped run wrote it, and this run would replace it. \
+             Merge what you keep of it into the estate, delete it, and run again. Nothing was swept.",
+            file.display()
+        ));
+    }
+    Ok(())
 }
 
 /// The file `tofu plan -generate-config-out` writes inside the scratch directory.
@@ -518,6 +465,7 @@ fn names_address(block: &str, address: &str) -> bool {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
 
     fn skipped(tf_type: &str, what: &str, reason: SkipReason) -> Skipped {
         Skipped { tf_type: tf_type.into(), what: what.into(), reason }
@@ -533,6 +481,23 @@ mod tests {
 
     fn no_names() -> BTreeMap<String, String> {
         BTreeMap::new()
+    }
+
+    /// The id of a skipped resource the way the run derives it
+    /// (`Discovered::skipped_import_id`): the shipped rows' templates over the names
+    /// the sweep read.
+    fn ids(names: BTreeMap<String, String>) -> impl Fn(&Skipped) -> Result<String, String> {
+        let cfg: crate::config::ImportConfig =
+            serde_yaml::from_str(include_str!("../presets/import-config.yaml")).expect("the shipped table parses");
+        move |s: &Skipped| {
+            crate::discovery::import_id(
+                &s.tf_type,
+                &s.what,
+                cfg.resource_types.get(&s.tf_type).and_then(|r| r.import_id.as_deref()),
+                &serde_yaml::Mapping::new(),
+                &names,
+            )
+        }
     }
 
     /// The sweep's reading of one DNS managed zone: Cloud Asset names it by the
@@ -603,7 +568,7 @@ mod tests {
     #[test]
     fn an_unmapped_type_the_schema_knows_becomes_an_import_block() {
         let skipped = [unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")];
-        let plan = plan(&skipped, &|t| t == "google_dns_managed_zone", &zone_names());
+        let plan = plan(&skipped, &|t| t == "google_dns_managed_zone", &ids(zone_names()));
         assert!(plan.refused.is_empty(), "{:?}", plan.refused);
         assert_eq!(
             plan.candidates,
@@ -621,99 +586,12 @@ mod tests {
         assert!(tf.contains("provider \"google\" {}"), "with neither an identity nor a quota project the block is empty:\n{tf}");
     }
 
-    /// The id per type, from a fixture asset name of each parent shape. For most
-    /// types it is the asset's relative resource name; the exceptions are the
-    /// ones a live rehearsal caught the provider refusing.
-    #[test]
-    fn the_import_id_per_type_is_the_one_the_provider_takes() {
-        let cases = [
-            // the four log sinks: one per parent, the id being the parent path
-            ("google_logging_project_sink", "//logging.googleapis.com/projects/acme-net/sinks/audit", "projects/acme-net/sinks/audit"),
-            ("google_logging_folder_sink", "//logging.googleapis.com/folders/123456789/sinks/audit", "folders/123456789/sinks/audit"),
-            (
-                "google_logging_organization_sink",
-                "//logging.googleapis.com/organizations/123456789012/sinks/audit",
-                "organizations/123456789012/sinks/audit",
-            ),
-            (
-                "google_logging_billing_account_sink",
-                "//logging.googleapis.com/billingAccounts/012345-6789AB-CDEF01/sinks/audit",
-                "billingAccounts/012345-6789AB-CDEF01/sinks/audit",
-            ),
-            // the four log buckets, the same four parents
-            (
-                "google_logging_project_bucket_config",
-                "//logging.googleapis.com/projects/acme-net/locations/global/buckets/audit",
-                "projects/acme-net/locations/global/buckets/audit",
-            ),
-            (
-                "google_logging_folder_bucket_config",
-                "//logging.googleapis.com/folders/123456789/locations/global/buckets/audit",
-                "folders/123456789/locations/global/buckets/audit",
-            ),
-            (
-                "google_logging_organization_bucket_config",
-                "//logging.googleapis.com/organizations/123456789012/locations/global/buckets/audit",
-                "organizations/123456789012/locations/global/buckets/audit",
-            ),
-            (
-                "google_logging_billing_account_bucket_config",
-                "//logging.googleapis.com/billingAccounts/012345-6789AB-CDEF01/locations/global/buckets/audit",
-                "billingAccounts/012345-6789AB-CDEF01/locations/global/buckets/audit",
-            ),
-            // a singleton: Cloud Asset appends the kind, the provider imports
-            // the collection path
-            (
-                "google_compute_instance_settings",
-                "//compute.googleapis.com/projects/acme-net/zones/europe-west3-b/instanceSettings/InstanceSettings",
-                "projects/acme-net/zones/europe-west3-b/instanceSettings",
-            ),
-            // the zone, by its name rather than by the number Cloud Asset gives it
-            (
-                "google_dns_managed_zone",
-                "//dns.googleapis.com/projects/acme-net/managedZones/1234567890",
-                "projects/acme-net/managedZones/corp",
-            ),
-            (
-                "google_dns_record_set",
-                "//dns.googleapis.com/projects/acme-net/managedZones/1234567890/rrsets/www.corp.example./A",
-                "projects/acme-net/managedZones/corp/rrsets/www.corp.example./A",
-            ),
-        ];
-        for (tf_type, what, want) in cases {
-            assert_eq!(import_id(tf_type, what, &zone_names()).as_deref(), Ok(want), "{tf_type} from {what}");
-        }
-    }
-
-    /// A record set whose zone the sweep did not read is refused by name: the
-    /// number Cloud Asset gives the zone is not an id the provider imports by,
-    /// and satz does not send it to find out.
-    #[test]
-    fn a_zone_the_sweep_did_not_read_is_refused_not_guessed() {
-        for tf_type in ["google_dns_managed_zone", "google_dns_record_set"] {
-            let what = "//dns.googleapis.com/projects/acme-net/managedZones/1234567890/rrsets/www.corp.example./A";
-            let what = if tf_type == "google_dns_managed_zone" { "//dns.googleapis.com/projects/acme-net/managedZones/1234567890" } else { what };
-            let why = import_id(tf_type, what, &no_names()).unwrap_err();
-            assert!(why.contains("is not among the assets this sweep read"), "{tf_type}: {why}");
-            assert!(why.contains("dns.googleapis.com/ManagedZone"), "{tf_type}: {why}");
-        }
-    }
-
-    /// A singleton whose name does not carry the kind is refused rather than
-    /// truncated: the rule says what the provider takes.
-    #[test]
-    fn an_instance_settings_name_without_the_kind_is_refused() {
-        let why = import_id("google_compute_instance_settings", "//compute.googleapis.com/projects/acme-net/zones/europe-west3-b", &no_names())
-            .unwrap_err();
-        assert!(why.contains("does not end in the /InstanceSettings"), "{why}");
-    }
-
     /// Bound to an estate (`--as` / `--into`), the child reads as that estate's
     /// IaC service account and bills where the estate bills: one command reads
     /// the platform as one principal, against one quota project.
     #[test]
     fn the_child_provider_block_is_the_estates_own() {
-        let plan = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &zone_names());
+        let plan = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &ids(zone_names()));
         let tf = imports_tf(
             &plan.candidates,
             &google(),
@@ -732,7 +610,7 @@ mod tests {
     /// says so by carrying none rather than by naming one satz made up.
     #[test]
     fn without_a_quota_project_the_block_names_none() {
-        let plan = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &zone_names());
+        let plan = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &ids(zone_names()));
         let tf = imports_tf(&plan.candidates, &google(), ChildProvider { impersonate: Some("svc@acme-infra-001.iam.gserviceaccount.com"), quota_project: None });
         assert!(!tf.contains("billing_project"), "{tf}");
         assert!(tf.contains("impersonate_service_account"), "{tf}");
@@ -755,7 +633,7 @@ mod tests {
             skipped("google_storage_bucket", "b", SkipReason::Filtered),
             skipped("google_logging_metric", "m", SkipReason::PlatformOwned("_Default".into())),
         ];
-        let plan = plan(&skipped, &|t| t.starts_with("google_"), &no_names());
+        let plan = plan(&skipped, &|t| t.starts_with("google_"), &ids(no_names()));
         assert!(plan.candidates.is_empty(), "{:?}", plan.candidates);
         assert_eq!(plan.refused.len(), 2, "only the unmapped ones are this fallback's business: {:?}", plan.refused);
         assert!(plan.refused[0].1.contains("no import-config row names asset type aiplatform.googleapis.com/Dataset"), "{:?}", plan.refused);
@@ -769,10 +647,29 @@ mod tests {
     fn the_scratch_directory_and_the_generated_file_are_named_after_the_run() {
         let (dir, file) = output_names(Path::new("yaml/discovered.satz"));
         assert_eq!(dir, PathBuf::from("yaml/discovered-generate"));
-        assert_eq!(file, "discovered-generated.satz");
+        assert_eq!(file, PathBuf::from("yaml/discovered-generated.satz"));
         let (dir, file) = output_names(Path::new("yaml/imported-organizations-123456789012.satz"));
         assert_eq!(dir, PathBuf::from("yaml/imported-organizations-123456789012-generate"));
-        assert_eq!(file, "imported-organizations-123456789012-generated.satz");
+        assert_eq!(file, PathBuf::from("yaml/imported-organizations-123456789012-generated.satz"));
+        // `-o` outside yaml_dir: both land beside the file the run wrote
+        let (dir, file) = output_names(Path::new("/srv/estates/acme.satz"));
+        assert_eq!(dir, PathBuf::from("/srv/estates/acme-generate"));
+        assert_eq!(file, PathBuf::from("/srv/estates/acme-generated.satz"));
+    }
+
+    /// A `-generated.satz` an earlier run wrote is the operator's: a second run is
+    /// refused, naming it, rather than replacing what may have been edited.
+    #[test]
+    fn a_generated_file_already_there_is_refused_by_name() {
+        let dir = scratch("existing");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = dir.join("discovered.satz");
+        refuse_existing_output(&base).expect("nothing there yet");
+        std::fs::write(dir.join("discovered-generated.satz"), "estate edited {}\n").unwrap();
+        let why = refuse_existing_output(&base).unwrap_err();
+        assert!(why.contains(&dir.join("discovered-generated.satz").display().to_string()), "{why}");
+        assert!(why.contains("Nothing was swept"), "{why}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Two resources whose names end in the same segment get two addresses.
@@ -782,7 +679,7 @@ mod tests {
             unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp"),
             unmapped("google_dns_policy", "//dns.googleapis.com/projects/b/policies/corp"),
         ];
-        let plan = plan(&skipped, &|_| true, &no_names());
+        let plan = plan(&skipped, &|_| true, &ids(no_names()));
         let labels: Vec<&str> = plan.candidates.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, vec!["corp", "corp_2"]);
     }
@@ -793,7 +690,7 @@ mod tests {
     #[test]
     fn the_child_runs_init_then_the_generating_plan() {
         let dir = scratch("happy");
-        let plan_ = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &zone_names());
+        let plan_ = plan(&[unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")], &|_| true, &ids(zone_names()));
         let mut fake = FakeTofu::new(&dir);
         let out = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).expect("generated");
         assert_eq!(out.file, dir.join(GENERATED_TF));
@@ -820,7 +717,7 @@ mod tests {
                 unmapped("google_cloud_asset_organization_feed", "//cloudasset.googleapis.com/organizations/123456789012/feeds/estate"),
             ],
             &|_| true,
-            &zone_names(),
+            &ids(zone_names()),
         );
         assert_eq!(plan_.candidates.len(), 3);
         let mut fake = FakeTofu::new(&dir);
@@ -855,7 +752,7 @@ mod tests {
                 unmapped("google_pubsub_topic", "//pubsub.googleapis.com/projects/acme-net/topics/events"),
             ],
             &|_| true,
-            &zone_names(),
+            &ids(zone_names()),
         )
         .candidates;
         let (outcomes, rest) =
@@ -875,7 +772,7 @@ mod tests {
                 unmapped("google_dns_policy", "//dns.googleapis.com/projects/b/policies/corp"),
             ],
             &|_| true,
-            &no_names(),
+            &ids(no_names()),
         )
         .candidates;
         let said = "╷\n│ Error: Cannot import non-existent remote object\n│ \n│   with google_dns_policy.corp_2,\n╵";
@@ -889,7 +786,7 @@ mod tests {
     #[test]
     fn a_failing_child_that_generated_nothing_surfaces_its_output() {
         let dir = scratch("failing");
-        let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &no_names());
+        let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &ids(no_names()));
         let mut fake = FakeTofu::new(&dir);
         fake.fail_at = Some("plan");
         fake.write_output = false;
@@ -906,7 +803,7 @@ mod tests {
     #[test]
     fn a_failing_init_is_the_end_of_the_run() {
         let dir = scratch("init");
-        let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &no_names());
+        let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &ids(no_names()));
         let mut fake = FakeTofu::new(&dir);
         fake.fail_at = Some("init");
         let said = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).unwrap_err();
@@ -921,7 +818,7 @@ mod tests {
     fn a_plan_that_generates_nothing_is_an_error() {
         for (name, write_output) in [("silent", false), ("empty-file", true)] {
             let dir = scratch(name);
-            let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &no_names());
+            let plan_ = plan(&[unmapped("google_dns_policy", "//dns.googleapis.com/projects/a/policies/corp")], &|_| true, &ids(no_names()));
             let mut fake = FakeTofu::new(&dir);
             fake.write_output = write_output;
             fake.output = "# __generated__ by OpenTofu\n".to_string();

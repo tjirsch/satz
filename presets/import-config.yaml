@@ -596,6 +596,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_dns_record_set:
+    import_id: "projects/{project}/managedZones/{managed_zone}/rrsets/{name}/{type}"
     description: Cloud DNS record set
     import: false
     asset_type: dns.googleapis.com/ResourceRecordSet
@@ -2120,6 +2121,7 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_instance_settings:
+    import_id: "projects/{project}/zones/{zone}/instanceSettings"
     description: Auto-generated entry for google_compute_instance_settings
     import: false
     asset_type: compute.googleapis.com/InstanceSettings
